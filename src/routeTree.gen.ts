@@ -33,6 +33,7 @@ import { Route as PortalSupportRouteImport } from './routes/portal.support'
 import { Route as PortalUsersRouteImport } from './routes/portal.users'
 import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
+import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
@@ -157,6 +158,11 @@ const ProductsSkuRoute = ProductsSkuRouteImport.update({
   path: '/products/$sku',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QuoteIdRoute = QuoteIdRouteImport.update({
+  id: '/quote/$id',
+  path: '/quote/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SalesIndexRoute = SalesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -194,6 +200,7 @@ export interface FileRoutesByFullPath {
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/quote/$id': typeof QuoteIdRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/quote/$id': typeof QuoteIdRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
   '/portal': typeof PortalIndexRoute
@@ -250,6 +258,7 @@ export interface FileRoutesById {
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/quote/$id': typeof QuoteIdRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
@@ -281,6 +290,7 @@ export interface FileRouteTypes {
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
+    | '/quote/$id'
     | '/brands/'
     | '/crm/'
     | '/portal/'
@@ -307,6 +317,7 @@ export interface FileRouteTypes {
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
+    | '/quote/$id'
     | '/brands'
     | '/crm'
     | '/portal'
@@ -336,6 +347,7 @@ export interface FileRouteTypes {
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
+    | '/quote/$id'
     | '/brands/'
     | '/crm/'
     | '/portal/'
@@ -359,6 +371,7 @@ export interface RootRouteChildren {
   WhyAutomotiveBrandsRoute: typeof WhyAutomotiveBrandsRoute
   BrandsSlugRoute: typeof BrandsSlugRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
+  QuoteIdRoute: typeof QuoteIdRoute
   BrandsIndexRoute: typeof BrandsIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
 }
@@ -533,6 +546,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProductsSkuRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/quote/$id': {
+      id: '/quote/$id'
+      path: '/quote/$id'
+      fullPath: '/quote/$id'
+      preLoaderRoute: typeof QuoteIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sales/': {
       id: '/sales/'
       path: '/'
@@ -620,6 +640,7 @@ const rootRouteChildren: RootRouteChildren = {
   WhyAutomotiveBrandsRoute: WhyAutomotiveBrandsRoute,
   BrandsSlugRoute: BrandsSlugRoute,
   ProductsSkuRoute: ProductsSkuRoute,
+  QuoteIdRoute: QuoteIdRoute,
   BrandsIndexRoute: BrandsIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
 }
