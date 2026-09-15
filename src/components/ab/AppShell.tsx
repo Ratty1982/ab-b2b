@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Menu, Search, X } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
+import { signOutCurrent } from "@/server/auth/session";
 
 export interface NavItem {
   label: string;
@@ -75,6 +76,18 @@ export function AppShell({
                 <span className="block truncate text-[12px] font-semibold">{user.name}</span>
                 <span className="block truncate text-[10px] text-steel">{user.role}</span>
               </span>
+              <button
+                type="button"
+                className="ml-1 text-[11px] font-semibold text-steel hover:text-foreground"
+                onClick={() => {
+                  void (async () => {
+                    await signOutCurrent();
+                    window.location.href = "/login";
+                  })();
+                }}
+              >
+                Sign out
+              </button>
             </div>
           </div>
         </div>
@@ -130,7 +143,9 @@ export function Metric({
 }) {
   return (
     <div className="border border-border bg-surface/60 p-4">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">
+        {label}
+      </div>
       <div
         className={cn(
           "num mt-1.5 font-display text-2xl font-semibold",
