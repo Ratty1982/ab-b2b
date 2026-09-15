@@ -41,7 +41,7 @@ const stockTone: Record<Stock, Tone> = {
   out: "bad",
 };
 
-export function StockBadge({ stock, qty }: { stock: Stock; qty?: number }) {
+export function StockBadge({ stock, qty }: { stock: Stock; qty?: number | undefined }) {
   return (
     <StatusBadge tone={stockTone[stock]}>
       <span aria-hidden className="text-[8px]">

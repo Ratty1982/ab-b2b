@@ -40,8 +40,7 @@ function ProductPage() {
   const { product: p } = Route.useLoaderData();
   const { signedIn } = useSession();
   const [qty, setQty] = useState(p.packQty);
-  const unit =
-    [...p.breaks].reverse().find((b) => qty >= b.qty)?.price ?? p.trade;
+  const unit = [...p.breaks].reverse().find((b) => qty >= b.qty)?.price ?? p.trade;
   const related = products.filter((r) => r.sku !== p.sku).slice(0, 4);
 
   return (
@@ -161,8 +160,7 @@ function ProductPage() {
                   </div>
                   <div className="num mt-1 font-display text-4xl font-semibold">{gbp(unit)}</div>
                   <div className="num mt-1 text-[12px] text-steel">
-                    RRP {gbp(p.rrp)} ·{" "}
-                    {p.vat === "zero" ? "Zero rated VAT" : "Excludes VAT at 20%"}
+                    RRP {gbp(p.rrp)} · {p.vat === "zero" ? "Zero rated VAT" : "Excludes VAT at 20%"}
                   </div>
                   <div className="mt-2">
                     <StatusBadge tone="brand">Account ABC001 pricing applied</StatusBadge>
@@ -175,7 +173,10 @@ function ProductPage() {
                     <table className="num mt-2 w-full text-[12px]">
                       <tbody>
                         {p.breaks.map((b) => (
-                          <tr key={b.qty} className={qty >= b.qty ? "text-foreground" : "text-steel"}>
+                          <tr
+                            key={b.qty}
+                            className={qty >= b.qty ? "text-foreground" : "text-steel"}
+                          >
                             <td className="py-1">{b.qty}+</td>
                             <td className="py-1 text-right font-semibold">{gbp(b.price)}</td>
                           </tr>

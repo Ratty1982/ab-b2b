@@ -67,10 +67,26 @@ const brandArt: Record<string, { image: string; strap: string; ranges: string[] 
 };
 
 const propositions = [
-  { icon: Warehouse, title: "UK stockholding", body: "Five brands picked from one warehouse and consolidated onto one delivery." },
-  { icon: Truck, title: "Same-day despatch", body: "Orders placed before 3pm leave the same working day on next-day or pallet service." },
-  { icon: ClipboardList, title: "Account ordering", body: "Purchase order references, agreed terms and full order history on every account." },
-  { icon: Headphones, title: "Named representative", body: "A dedicated account manager, not a general enquiry queue." },
+  {
+    icon: Warehouse,
+    title: "UK stockholding",
+    body: "Five brands picked from one warehouse and consolidated onto one delivery.",
+  },
+  {
+    icon: Truck,
+    title: "Same-day despatch",
+    body: "Orders placed before 3pm leave the same working day on next-day or pallet service.",
+  },
+  {
+    icon: ClipboardList,
+    title: "Account ordering",
+    body: "Purchase order references, agreed terms and full order history on every account.",
+  },
+  {
+    icon: Headphones,
+    title: "Named representative",
+    body: "A dedicated account manager, not a general enquiry queue.",
+  },
 ];
 
 function Eyebrow({ children, tone = "primary" }: { children: string; tone?: "primary" | "cyan" }) {
@@ -128,7 +144,10 @@ function Home() {
             </div>
             <ul className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px] text-steel">
               {brands.map((b) => (
-                <li key={b.slug} className="font-display text-sm uppercase tracking-wide text-foreground">
+                <li
+                  key={b.slug}
+                  className="font-display text-sm uppercase tracking-wide text-foreground"
+                >
                   {b.name}
                 </li>
               ))}
@@ -209,7 +228,9 @@ function Home() {
                     <div className="mt-1 text-[12px] uppercase tracking-[0.16em] text-cyan">
                       {art?.strap ?? brand.category}
                     </div>
-                    <p className="mt-3 max-w-md text-[13px] leading-relaxed text-steel">{brand.blurb}</p>
+                    <p className="mt-3 max-w-md text-[13px] leading-relaxed text-steel">
+                      {brand.blurb}
+                    </p>
                     <ul className="mt-4 flex flex-wrap gap-1.5">
                       {art?.ranges.map((r) => (
                         <li
@@ -222,7 +243,10 @@ function Home() {
                     </ul>
                     <span className="mt-5 inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-primary">
                       View brand
-                      <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-1" aria-hidden />
+                      <ArrowRight
+                        className="size-3.5 transition-transform group-hover:translate-x-1"
+                        aria-hidden
+                      />
                     </span>
                   </div>
                   <img
@@ -386,9 +410,7 @@ function Home() {
                         <div className="num text-[11px] text-steel">{p.sku}</div>
                       </td>
                       <td className="px-3 py-2.5 text-steel">{p.brand}</td>
-                      <td className="num px-3 py-2.5 text-right">
-                        £{p.rrp.toFixed(2)}
-                      </td>
+                      <td className="num px-3 py-2.5 text-right">£{p.rrp.toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -500,7 +522,9 @@ function Home() {
                     <span aria-hidden>·</span>
                     {n.date}
                   </div>
-                  <h3 className="mt-2 font-display text-lg font-semibold leading-snug">{n.title}</h3>
+                  <h3 className="mt-2 font-display text-lg font-semibold leading-snug">
+                    {n.title}
+                  </h3>
                   <p className="mt-1 text-[13px] leading-relaxed text-steel">{n.summary}</p>
                 </li>
               ))}

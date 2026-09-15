@@ -47,7 +47,8 @@ function Catalogue() {
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     return products.filter((p) => {
-      if (q && !`${p.name} ${p.sku} ${p.brand} ${p.category}`.toLowerCase().includes(q)) return false;
+      if (q && !`${p.name} ${p.sku} ${p.brand} ${p.category}`.toLowerCase().includes(q))
+        return false;
       if (brandFilter.length && !brandFilter.includes(p.brand)) return false;
       if (catFilter.length && !catFilter.includes(p.category)) return false;
       if (avail === "in" && p.stock !== "in") return false;
@@ -143,7 +144,10 @@ function Catalogue() {
 
           <FilterGroup title="Availability">
             {availabilities.map((a) => (
-              <label key={a.key} className="flex cursor-pointer items-center gap-2 text-[13px] text-steel">
+              <label
+                key={a.key}
+                className="flex cursor-pointer items-center gap-2 text-[13px] text-steel"
+              >
                 <input
                   type="radio"
                   name="availability"
@@ -253,9 +257,7 @@ function ProductCard({ product: p }: { product: Product }) {
         </div>
         {signedIn && (
           <div className="num mt-2 text-[11px] text-steel">
-            {p.breaks[1]
-              ? `${p.breaks[1].qty}+ @ ${gbp(p.breaks[1].price)}`
-              : "No quantity breaks"}
+            {p.breaks[1] ? `${p.breaks[1].qty}+ @ ${gbp(p.breaks[1].price)}` : "No quantity breaks"}
           </div>
         )}
         <div className="mt-3 flex gap-2">
@@ -291,6 +293,7 @@ function ProductCard({ product: p }: { product: Product }) {
 }
 
 function CompactTable({ rows }: { rows: Product[] }) {
+  const { signedIn } = useSession();
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[840px] text-[13px]">
