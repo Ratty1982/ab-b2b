@@ -156,7 +156,7 @@ function AdminContent() {
         ) : tab === "News" ? (
           <Table
             head={["Article", "Date", "Category", "Status", ""]}
-            rows={news.map((n) => [n.title, n.date, n.category, <StatusBadge key={n.title} tone="good">Published</StatusBadge>, "Edit"])}
+            rows={news.map((n) => [n.title, n.date, n.kind, <StatusBadge key={n.title} tone="good">Published</StatusBadge>, "Edit"])}
           />
         ) : (
           <Table
