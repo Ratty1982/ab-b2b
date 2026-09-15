@@ -10,11 +10,16 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AboutRouteImport } from './routes/about'
+import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as RegisterRouteImport } from './routes/register'
+import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as SalesRouteImport } from './routes/sales'
+import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
+import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
@@ -31,6 +36,16 @@ import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactRoute = ContactRouteImport.update({
+  id: '/contact',
+  path: '/contact',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CrmRoute = CrmRouteImport.update({
@@ -53,9 +68,24 @@ const RegisterRoute = RegisterRouteImport.update({
   path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ResourcesRoute = ResourcesRouteImport.update({
+  id: '/resources',
+  path: '/resources',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SalesRoute = SalesRouteImport.update({
   id: '/sales',
   path: '/sales',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TradeSolutionsRoute = TradeSolutionsRouteImport.update({
+  id: '/trade-solutions',
+  path: '/trade-solutions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WhyAutomotiveBrandsRoute = WhyAutomotiveBrandsRouteImport.update({
+  id: '/why-automotive-brands',
+  path: '/why-automotive-brands',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
@@ -121,11 +151,16 @@ const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
+  '/resources': typeof ResourcesRoute
   '/sales': typeof SalesRouteWithChildren
+  '/trade-solutions': typeof TradeSolutionsRoute
+  '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
@@ -141,8 +176,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/contact': typeof ContactRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/resources': typeof ResourcesRoute
+  '/trade-solutions': typeof TradeSolutionsRoute
+  '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
@@ -159,11 +199,16 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
+  '/resources': typeof ResourcesRoute
   '/sales': typeof SalesRouteWithChildren
+  '/trade-solutions': typeof TradeSolutionsRoute
+  '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
@@ -181,11 +226,16 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/about'
+    | '/contact'
     | '/crm'
     | '/login'
     | '/portal'
     | '/register'
+    | '/resources'
     | '/sales'
+    | '/trade-solutions'
+    | '/why-automotive-brands'
     | '/brands/$slug'
     | '/portal/orders'
     | '/portal/quick-order'
@@ -201,8 +251,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/about'
+    | '/contact'
     | '/login'
     | '/register'
+    | '/resources'
+    | '/trade-solutions'
+    | '/why-automotive-brands'
     | '/brands/$slug'
     | '/portal/orders'
     | '/portal/quick-order'
@@ -218,11 +273,16 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/about'
+    | '/contact'
     | '/crm'
     | '/login'
     | '/portal'
     | '/register'
+    | '/resources'
     | '/sales'
+    | '/trade-solutions'
+    | '/why-automotive-brands'
     | '/brands/$slug'
     | '/portal/orders'
     | '/portal/quick-order'
@@ -239,11 +299,16 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AboutRoute: typeof AboutRoute
+  ContactRoute: typeof ContactRoute
   CrmRoute: typeof CrmRouteWithChildren
   LoginRoute: typeof LoginRoute
   PortalRoute: typeof PortalRouteWithChildren
   RegisterRoute: typeof RegisterRoute
+  ResourcesRoute: typeof ResourcesRoute
   SalesRoute: typeof SalesRouteWithChildren
+  TradeSolutionsRoute: typeof TradeSolutionsRoute
+  WhyAutomotiveBrandsRoute: typeof WhyAutomotiveBrandsRoute
   BrandsSlugRoute: typeof BrandsSlugRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
   BrandsIndexRoute: typeof BrandsIndexRoute
@@ -257,6 +322,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contact': {
+      id: '/contact'
+      path: '/contact'
+      fullPath: '/contact'
+      preLoaderRoute: typeof ContactRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/crm': {
@@ -287,11 +366,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/resources': {
+      id: '/resources'
+      path: '/resources'
+      fullPath: '/resources'
+      preLoaderRoute: typeof ResourcesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sales': {
       id: '/sales'
       path: '/sales'
       fullPath: '/sales'
       preLoaderRoute: typeof SalesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trade-solutions': {
+      id: '/trade-solutions'
+      path: '/trade-solutions'
+      fullPath: '/trade-solutions'
+      preLoaderRoute: typeof TradeSolutionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/why-automotive-brands': {
+      id: '/why-automotive-brands'
+      path: '/why-automotive-brands'
+      fullPath: '/why-automotive-brands'
+      preLoaderRoute: typeof WhyAutomotiveBrandsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/brands/': {
@@ -424,11 +524,16 @@ const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AboutRoute: AboutRoute,
+  ContactRoute: ContactRoute,
   CrmRoute: CrmRouteWithChildren,
   LoginRoute: LoginRoute,
   PortalRoute: PortalRouteWithChildren,
   RegisterRoute: RegisterRoute,
+  ResourcesRoute: ResourcesRoute,
   SalesRoute: SalesRouteWithChildren,
+  TradeSolutionsRoute: TradeSolutionsRoute,
+  WhyAutomotiveBrandsRoute: WhyAutomotiveBrandsRoute,
   BrandsSlugRoute: BrandsSlugRoute,
   ProductsSkuRoute: ProductsSkuRoute,
   BrandsIndexRoute: BrandsIndexRoute,
