@@ -305,7 +305,7 @@ function ProductPage() {
                   <div className="text-[11px] text-cyan">{r.brand}</div>
                   <div className="text-sm font-semibold leading-snug">{r.name}</div>
                   <div className="mt-2">
-                    <TradePrice trade={r.trade} rrp={r.rrp} size="sm" />
+                    <TradePrice trade={r.trade} rrp={r.rrp} size="sm" ctaMode="text" />
                   </div>
                 </div>
               </Link>

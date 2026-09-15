@@ -330,7 +330,7 @@ function Home() {
                     SKU {p.sku} · Case ×{p.caseQty}
                   </div>
                   <div className="mt-auto pt-3">
-                    <TradePrice trade={p.trade} rrp={p.rrp} size="sm" />
+                    <TradePrice trade={p.trade} rrp={p.rrp} size="sm" ctaMode="text" />
                     <div className="mt-2">
                       <StockBadge stock={p.stock} />
                     </div>

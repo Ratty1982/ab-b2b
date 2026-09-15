@@ -40,8 +40,6 @@ export const Route = createFileRoute("/login")({
 function Login() {
   const navigate = Route.useNavigate();
   const { returnTo } = Route.useSearch();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -71,6 +69,12 @@ function Login() {
           className="rounded-lg border border-border bg-surface/60 p-6"
           onSubmit={(e) => {
             e.preventDefault();
+            const form = e.currentTarget;
+            const fd = new FormData(form);
+            const email = String(fd.get("email") ?? "")
+              .trim()
+              .toLowerCase();
+            const password = String(fd.get("password") ?? "");
             void (async () => {
               setPending(true);
               setError(null);
@@ -99,10 +103,9 @@ function Login() {
               </label>
               <input
                 id="email"
+                name="email"
                 type="email"
                 autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 required
                 className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
               />
@@ -113,10 +116,9 @@ function Login() {
               </label>
               <input
                 id="password"
+                name="password"
                 type="password"
                 autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 required
                 className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
               />

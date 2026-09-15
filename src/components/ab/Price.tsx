@@ -15,15 +15,20 @@ export function TradePrice({
   rrp,
   size = "md",
   className,
+  /** Use plain text when rendered inside another link (avoids nested <a> hydration failures). */
+  ctaMode = "link",
 }: {
   trade: number;
   rrp: number;
   size?: "sm" | "md" | "lg";
   className?: string;
+  ctaMode?: "link" | "text";
 }) {
   const { signedIn } = useSession();
 
   if (!signedIn) {
+    const ctaClass =
+      "mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary";
     return (
       <div className={cn("min-w-0", className)}>
         <div
@@ -36,13 +41,17 @@ export function TradePrice({
         >
           {gbp(rrp)} <span className="text-[11px] font-normal">RRP</span>
         </div>
-        <Link
-          to="/login"
-          className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline"
-        >
-          <Lock className="size-3" aria-hidden />
-          Trade customer? Sign in to view your price
-        </Link>
+        {ctaMode === "link" ? (
+          <Link to="/login" className={cn(ctaClass, "hover:underline")}>
+            <Lock className="size-3" aria-hidden />
+            Trade customer? Sign in to view your price
+          </Link>
+        ) : (
+          <span className={ctaClass}>
+            <Lock className="size-3" aria-hidden />
+            Trade customer? Sign in to view your price
+          </span>
+        )}
       </div>
     );
   }
