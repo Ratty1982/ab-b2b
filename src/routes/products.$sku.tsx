@@ -4,6 +4,8 @@ import { Download, Heart, Minus, Plus } from "lucide-react";
 import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { StockBadge, StatusBadge } from "@/components/ab/Badges";
 import { products, gbp } from "@/lib/data";
+import { TradeOnly, TradePrice } from "@/components/ab/Price";
+import { useSession } from "@/lib/session";
 
 export const Route = createFileRoute("/products/$sku")({
   loader: ({ params }) => {
@@ -21,7 +23,7 @@ export const Route = createFileRoute("/products/$sku")({
       };
     }
     const { product } = loaderData;
-    const desc = `${product.name} (${product.sku}) by ${product.brand}. Trade price ${gbp(product.trade)} ex VAT, RRP ${gbp(product.rrp)}.`;
+    const desc = `${product.name} (${product.sku}) by ${product.brand}. RRP ${gbp(product.rrp)}. Trade customers sign in to view account pricing.`;
     return {
       meta: [
         { title: `${product.name} — ${product.sku} — Automotive Brands` },
@@ -36,6 +38,7 @@ export const Route = createFileRoute("/products/$sku")({
 
 function ProductPage() {
   const { product: p } = Route.useLoaderData();
+  const { signedIn } = useSession();
   const [qty, setQty] = useState(p.packQty);
   const unit =
     [...p.breaks].reverse().find((b) => qty >= b.qty)?.price ?? p.trade;
@@ -151,36 +154,57 @@ function ProductPage() {
 
           <aside className="lg:col-span-3">
             <div className="sticky top-20 rounded-lg border border-border bg-surface/60 p-5">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
-                Your trade price
-              </div>
-              <div className="num mt-1 font-display text-4xl font-semibold">{gbp(unit)}</div>
-              <div className="num mt-1 text-[12px] text-steel">
-                RRP {gbp(p.rrp)} ·{" "}
-                {p.vat === "zero" ? "Zero rated VAT" : "Excludes VAT at 20%"}
-              </div>
-              <div className="mt-2">
-                <StatusBadge tone="brand">Price group: Trade A</StatusBadge>
-              </div>
+              {signedIn ? (
+                <>
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
+                    Your price
+                  </div>
+                  <div className="num mt-1 font-display text-4xl font-semibold">{gbp(unit)}</div>
+                  <div className="num mt-1 text-[12px] text-steel">
+                    RRP {gbp(p.rrp)} ·{" "}
+                    {p.vat === "zero" ? "Zero rated VAT" : "Excludes VAT at 20%"}
+                  </div>
+                  <div className="mt-2">
+                    <StatusBadge tone="brand">Account ABC001 pricing applied</StatusBadge>
+                  </div>
 
-              <div className="mt-5 border-t border-border pt-4">
-                <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
-                  Quantity breaks
-                </div>
-                <table className="num mt-2 w-full text-[12px]">
-                  <tbody>
-                    {p.breaks.map((b) => (
-                      <tr key={b.qty} className={qty >= b.qty ? "text-foreground" : "text-steel"}>
-                        <td className="py-1">{b.qty}+</td>
-                        <td className="py-1 text-right font-semibold">{gbp(b.price)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="num mt-3 text-[12px] text-steel">
-                  Pack of {p.packQty} · Case of {p.caseQty}
-                </div>
-              </div>
+                  <div className="mt-5 border-t border-border pt-4">
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
+                      Quantity breaks
+                    </div>
+                    <table className="num mt-2 w-full text-[12px]">
+                      <tbody>
+                        {p.breaks.map((b) => (
+                          <tr key={b.qty} className={qty >= b.qty ? "text-foreground" : "text-steel"}>
+                            <td className="py-1">{b.qty}+</td>
+                            <td className="py-1 text-right font-semibold">{gbp(b.price)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="num mt-3 text-[12px] text-steel">
+                      Pack of {p.packQty} · Case of {p.caseQty}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
+                    Recommended retail
+                  </div>
+                  <div className="num mt-1 font-display text-4xl font-semibold text-steel">
+                    {gbp(p.rrp)}
+                  </div>
+                  <div className="num mt-1 text-[12px] text-steel">
+                    Pack of {p.packQty} · Case of {p.caseQty}
+                  </div>
+                  <div className="mt-4">
+                    <TradeOnly note="Trade pricing and quantity breaks are account-specific.">
+                      <span />
+                    </TradeOnly>
+                  </div>
+                </>
+              )}
 
               <div className="mt-5 flex items-center gap-2">
                 <button
@@ -213,24 +237,45 @@ function ProductPage() {
                 </button>
               </div>
 
-              <div className="num mt-3 flex items-center justify-between text-sm">
-                <span className="text-steel">Line total (ex VAT)</span>
-                <span className="font-display text-lg font-semibold">{gbp(unit * qty)}</span>
-              </div>
+              {signedIn && (
+                <div className="num mt-3 flex items-center justify-between text-sm">
+                  <span className="text-steel">Line total (ex VAT)</span>
+                  <span className="font-display text-lg font-semibold">{gbp(unit * qty)}</span>
+                </div>
+              )}
 
-              <button
-                type="button"
-                disabled={p.stock === "backorder" || p.stock === "out"}
-                className="mt-4 h-11 w-full rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-secondary disabled:text-steel"
-              >
-                {p.stock === "backorder" ? "Backorder — 5 working days" : "Add to basket"}
-              </button>
-              <button
-                type="button"
-                className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border text-sm font-semibold transition-colors hover:border-steel"
-              >
-                <Heart className="size-4" aria-hidden /> Add to order list
-              </button>
+              {signedIn ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={p.stock === "backorder" || p.stock === "out"}
+                    className="mt-4 h-11 w-full rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-secondary disabled:text-steel"
+                  >
+                    {p.stock === "backorder" ? "Backorder — 5 working days" : "Add to basket"}
+                  </button>
+                  <button
+                    type="button"
+                    className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border text-sm font-semibold transition-colors hover:border-steel"
+                  >
+                    <Heart className="size-4" aria-hidden /> Add to order list
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    to="/login"
+                    className="mt-4 grid h-11 w-full place-items-center rounded-md bg-primary text-sm font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
+                  >
+                    Sign in to view your price
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="mt-2 grid h-11 w-full place-items-center rounded-md border border-border text-sm font-semibold transition-colors hover:border-steel"
+                  >
+                    Open a trade account
+                  </Link>
+                </>
+              )}
             </div>
           </aside>
         </div>
@@ -258,7 +303,9 @@ function ProductPage() {
                 <div className="p-4">
                   <div className="text-[11px] text-cyan">{r.brand}</div>
                   <div className="text-sm font-semibold leading-snug">{r.name}</div>
-                  <div className="num mt-2 font-display text-lg font-semibold">{gbp(r.trade)}</div>
+                  <div className="mt-2">
+                    <TradePrice trade={r.trade} rrp={r.rrp} size="sm" />
+                  </div>
                 </div>
               </Link>
             ))}
