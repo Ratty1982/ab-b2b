@@ -6,12 +6,12 @@ const nav: NavItem[] = [
   { label: "Shop", to: "/products" },
   { label: "Quick Order", to: "/portal/quick-order" },
   { label: "Orders", to: "/portal/orders" },
-  { label: "Quotes", to: "/portal/orders" },
-  { label: "Invoices", to: "/portal/orders" },
-  { label: "Favourites / Order Lists", to: "/portal" },
+  { label: "Quotes", to: "/portal/quotes" },
+  { label: "Invoices & Statements", to: "/portal/invoices" },
+  { label: "Favourites / Order Lists", to: "/portal/favourites" },
   { label: "Downloads", to: "/resources" },
   { label: "Company & Users", to: "/portal/users" },
-  { label: "Support", to: "/contact" },
+  { label: "Support", to: "/portal/support" },
 ];
 
 export const Route = createFileRoute("/portal")({
