@@ -231,7 +231,7 @@ function ManagerDashboard() {
         onClose={() => setRep(null)}
         width="lg"
         title={rep?.name ?? ""}
-        sub={rep ? `${rep.region} · ${rep.accounts} accounts` : undefined}
+        sub={rep ? `${rep.region} · ${rep.accounts} accounts` : ""}
       >
         {rep ? (
           <>

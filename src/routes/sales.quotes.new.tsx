@@ -8,7 +8,7 @@ import { customers, gbp, products } from "@/lib/data";
 
 export const Route = createFileRoute("/sales/quotes/new")({
   validateSearch: (s: Record<string, unknown>) => ({
-    customer: typeof s.customer === "string" ? s.customer : "abc-motor-factors",
+    customer: typeof s['customer'] === "string" ? (s['customer'] as string) : "abc-motor-factors",
   }),
   head: () => ({
     meta: [
