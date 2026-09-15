@@ -23,6 +23,8 @@ import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
+import { Route as CrmApplicationsRouteImport } from './routes/crm.applications'
+import { Route as CrmManagerRouteImport } from './routes/crm.manager'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
 import { Route as PortalFavouritesRouteImport } from './routes/portal.favourites'
 import { Route as PortalInvoicesRouteImport } from './routes/portal.invoices'
@@ -109,6 +111,16 @@ const BrandsSlugRoute = BrandsSlugRouteImport.update({
 const CrmIndexRoute = CrmIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmApplicationsRoute = CrmApplicationsRouteImport.update({
+  id: '/applications',
+  path: '/applications',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmManagerRoute = CrmManagerRouteImport.update({
+  id: '/manager',
+  path: '/manager',
   getParentRoute: () => CrmRoute,
 } as any)
 const PortalIndexRoute = PortalIndexRouteImport.update({
@@ -210,6 +222,8 @@ export interface FileRoutesByFullPath {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/manager': typeof CrmManagerRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
@@ -240,6 +254,8 @@ export interface FileRoutesByTo {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/manager': typeof CrmManagerRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
@@ -274,6 +290,8 @@ export interface FileRoutesById {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/manager': typeof CrmManagerRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
@@ -309,6 +327,8 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/why-automotive-brands'
     | '/brands/$slug'
+    | '/crm/applications'
+    | '/crm/manager'
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
@@ -339,6 +359,8 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/why-automotive-brands'
     | '/brands/$slug'
+    | '/crm/applications'
+    | '/crm/manager'
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
@@ -372,6 +394,8 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/why-automotive-brands'
     | '/brands/$slug'
+    | '/crm/applications'
+    | '/crm/manager'
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
@@ -512,6 +536,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CrmIndexRouteImport
       parentRoute: typeof CrmRoute
     }
+    '/crm/applications': {
+      id: '/crm/applications'
+      path: '/applications'
+      fullPath: '/crm/applications'
+      preLoaderRoute: typeof CrmApplicationsRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/manager': {
+      id: '/crm/manager'
+      path: '/manager'
+      fullPath: '/crm/manager'
+      preLoaderRoute: typeof CrmManagerRouteImport
+      parentRoute: typeof CrmRoute
+    }
     '/portal/': {
       id: '/portal/'
       path: '/'
@@ -635,10 +673,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface CrmRouteChildren {
+  CrmApplicationsRoute: typeof CrmApplicationsRoute
+  CrmManagerRoute: typeof CrmManagerRoute
   CrmIndexRoute: typeof CrmIndexRoute
 }
 
 const CrmRouteChildren: CrmRouteChildren = {
+  CrmApplicationsRoute: CrmApplicationsRoute,
+  CrmManagerRoute: CrmManagerRoute,
   CrmIndexRoute: CrmIndexRoute,
 }
 
