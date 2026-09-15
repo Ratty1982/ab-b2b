@@ -10,12 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CrmRouteImport } from './routes/crm'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as SalesRouteImport } from './routes/sales'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
+import { Route as CrmIndexRouteImport } from './routes/crm.index'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
 import { Route as PortalOrdersRouteImport } from './routes/portal.orders'
 import { Route as PortalQuickOrderRouteImport } from './routes/portal.quick-order'
@@ -29,6 +31,11 @@ import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmRoute = CrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -60,6 +67,11 @@ const BrandsSlugRoute = BrandsSlugRouteImport.update({
   id: '/brands/$slug',
   path: '/brands/$slug',
   getParentRoute: () => rootRouteImport,
+} as any)
+const CrmIndexRoute = CrmIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CrmRoute,
 } as any)
 const PortalIndexRoute = PortalIndexRouteImport.update({
   id: '/',
@@ -109,6 +121,7 @@ const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
@@ -119,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands/': typeof BrandsIndexRoute
+  '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
@@ -135,6 +149,7 @@ export interface FileRoutesByTo {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands': typeof BrandsIndexRoute
+  '/crm': typeof CrmIndexRoute
   '/portal': typeof PortalIndexRoute
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
@@ -144,6 +159,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
@@ -154,6 +170,7 @@ export interface FileRoutesById {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands/': typeof BrandsIndexRoute
+  '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
@@ -164,6 +181,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/crm'
     | '/login'
     | '/portal'
     | '/register'
@@ -174,6 +192,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/brands/'
+    | '/crm/'
     | '/portal/'
     | '/products/'
     | '/sales/'
@@ -190,6 +209,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/brands'
+    | '/crm'
     | '/portal'
     | '/products'
     | '/sales'
@@ -198,6 +218,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/crm'
     | '/login'
     | '/portal'
     | '/register'
@@ -208,6 +229,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/brands/'
+    | '/crm/'
     | '/portal/'
     | '/products/'
     | '/sales/'
@@ -217,6 +239,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CrmRoute: typeof CrmRouteWithChildren
   LoginRoute: typeof LoginRoute
   PortalRoute: typeof PortalRouteWithChildren
   RegisterRoute: typeof RegisterRoute
@@ -234,6 +257,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm': {
+      id: '/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof CrmRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -277,6 +307,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/brands/$slug'
       preLoaderRoute: typeof BrandsSlugRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/crm/': {
+      id: '/crm/'
+      path: '/'
+      fullPath: '/crm/'
+      preLoaderRoute: typeof CrmIndexRouteImport
+      parentRoute: typeof CrmRoute
     }
     '/portal/': {
       id: '/portal/'
@@ -344,6 +381,16 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface CrmRouteChildren {
+  CrmIndexRoute: typeof CrmIndexRoute
+}
+
+const CrmRouteChildren: CrmRouteChildren = {
+  CrmIndexRoute: CrmIndexRoute,
+}
+
+const CrmRouteWithChildren = CrmRoute._addFileChildren(CrmRouteChildren)
+
 interface PortalRouteChildren {
   PortalOrdersRoute: typeof PortalOrdersRoute
   PortalQuickOrderRoute: typeof PortalQuickOrderRoute
@@ -377,6 +424,7 @@ const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CrmRoute: CrmRouteWithChildren,
   LoginRoute: LoginRoute,
   PortalRoute: PortalRouteWithChildren,
   RegisterRoute: RegisterRoute,
