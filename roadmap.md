@@ -1,31 +1,29 @@
-# Automotive Brands — Platform Prototype Roadmap
-
-## Brand
-- [x] Use uploaded AB logo + red as primary brand colour throughout
-- [x] Favicon from logo
+# Automotive Brands — prototype roadmap
 
 ## Phase 1 — complete
-- [x] Design system (tokens, typography, components)
-- [x] Public header/footer + navigation
-- [x] Public homepage
-- [x] Product catalogue (grid + compact list)
-- [x] Product detail page
-- [x] Trade registration (multi-step)
-- [x] Trade dashboard
-- [x] Quick Order
-- [x] Sales dashboard
-- [x] My Customers (desktop table + mobile rep cards)
-- [x] Customer 360 (overview, insights, activity timeline)
-- [x] CRM opportunity pipeline (drag and drop)
-- [x] Supporting public pages: About, Contact, Resources, Trade Solutions, Why Automotive Brands
-- [x] Portal order history + company users
+Design system, public site, catalogue, product detail, trade registration,
+trade dashboard, quick order, sales dashboard, my customers, customer 360,
+CRM pipeline.
 
-## Later phases
-- [ ] Basket & B2B checkout (PO number, delivery date, terms, card)
-- [ ] Quotes, invoices, statements, favourites/order lists
-- [ ] Sales portal: leads, quotes, tasks, calendar/activities
-- [ ] CRM: companies, contacts, leads, activities, tasks, sales team, reports
-- [ ] Trade application management queue + approval settings
-- [ ] Admin: products, brands, categories, pricing, promotions, roles & permissions
-- [ ] CMS (homepage, banners, brand/landing pages, downloads)
-- [ ] Reporting (sales vs target, by rep/customer/brand, retention, conversion)
+## Phase 2 — complete (second UX/UI pass)
+- Public homepage rebuilt around the five brands, categories, featured/new/best
+  sellers, trade customer types, resources, news, closing trade-account CTA.
+- Public vs trade pricing gate (RRP only for visitors; own price when signed in).
+- Trade dashboard expanded; quotes, invoices, favourites, support screens.
+- Quick Order rebuilt: barcode, typeahead, pack/case, paste, CSV, usual products.
+- Customer 360 deepened: account strip, six headline metrics, ten tabs,
+  insights with actions, 12-month vs last year chart, contacts, documents.
+- Quick activity drawer (call, note, visit, email, task, follow-up).
+- Sales rep mobile home (today, tasks, nearby customers, quotes).
+- Quotes: list, builder with customer pricing/discount/expiry, customer-facing
+  quote page, accept converts to order.
+- Customer ordering mode with persistent "ordering for" banner and safe exit.
+- CRM pipeline Kanban with filters and opportunity detail drawer.
+- Sales manager dashboard with rep drill-down.
+- Trade application queue with approval and account set-up.
+- Admin: overview, catalogue, pricing/promotions, roles & permissions,
+  website content & downloads, settings.
+
+## Later
+Checkout/basket flow end to end, statements, reporting exports, CMS previews,
+notification centre.

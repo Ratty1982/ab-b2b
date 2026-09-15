@@ -160,7 +160,7 @@ function AdminPricing() {
                   <StatusBadge tone="good">Live</StatusBadge>
                 </div>
                 <p className="mt-1 text-[13px] font-semibold">{p.title}</p>
-                <p className="text-[12px] text-steel">{p.detail}</p>
+                
                 <p className="num mt-2 text-[11px] text-steel">Ends {p.ends}</p>
                 <div className="mt-3 flex gap-2">
                   <button type="button" className="h-9 flex-1 rounded-md border border-border text-[12px] font-semibold">

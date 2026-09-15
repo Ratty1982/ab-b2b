@@ -6,10 +6,10 @@ const nav: NavItem[] = [
   { label: "My Customers", to: "/sales/customers" },
   { label: "Leads", to: "/crm" },
   { label: "Opportunities", to: "/crm" },
-  { label: "Quotes", to: "/crm" },
+  { label: "Quotes", to: "/sales/quotes" },
   { label: "Orders", to: "/portal/orders" },
-  { label: "Tasks", to: "/sales" },
-  { label: "Calendar / Activities", to: "/sales" },
+  { label: "Trade Applications", to: "/crm/applications" },
+  { label: "Manager View", to: "/crm/manager" },
 ];
 
 export const Route = createFileRoute("/sales")({
