@@ -40,7 +40,7 @@ function PortalInvoices() {
       />
       <div className="grid gap-px bg-border sm:grid-cols-3">
         <Metric label="Outstanding balance" value={gbp0(outstanding)} tone="warn" hint="Across 3 invoices" />
-        <Metric label="Overdue" value={gbp0(overdue)} tone="bad" hint="1 invoice past due date" />
+        <Metric label="Overdue" value={gbp0(overdue)} tone="warn" hint="1 invoice past due date" />
         <Metric label="Paid last 90 days" value={gbp0(2210)} tone="good" hint="1 invoice settled" />
       </div>
       <div className="p-4 sm:p-6">
