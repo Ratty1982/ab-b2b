@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AboutRouteImport } from './routes/about'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as LoginRouteImport } from './routes/login'
@@ -20,9 +21,14 @@ import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as SalesRouteImport } from './routes/sales'
 import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
 import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
+import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
+import { Route as CrmApplicationsRouteImport } from './routes/crm.applications'
+import { Route as CrmManagerRouteImport } from './routes/crm.manager'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
 import { Route as PortalFavouritesRouteImport } from './routes/portal.favourites'
 import { Route as PortalInvoicesRouteImport } from './routes/portal.invoices'
@@ -37,6 +43,9 @@ import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
+import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
+import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
+import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +55,11 @@ const IndexRoute = IndexRouteImport.update({
 const AboutRoute = AboutRouteImport.update({
   id: '/about',
   path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ContactRoute = ContactRouteImport.update({
@@ -93,6 +107,21 @@ const WhyAutomotiveBrandsRoute = WhyAutomotiveBrandsRouteImport.update({
   path: '/why-automotive-brands',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPricingRoute = AdminPricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminProductsRoute = AdminProductsRouteImport.update({
+  id: '/products',
+  path: '/products',
+  getParentRoute: () => AdminRoute,
+} as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
   id: '/brands/',
   path: '/brands/',
@@ -106,6 +135,16 @@ const BrandsSlugRoute = BrandsSlugRouteImport.update({
 const CrmIndexRoute = CrmIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmApplicationsRoute = CrmApplicationsRouteImport.update({
+  id: '/applications',
+  path: '/applications',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmManagerRoute = CrmManagerRouteImport.update({
+  id: '/manager',
+  path: '/manager',
   getParentRoute: () => CrmRoute,
 } as any)
 const PortalIndexRoute = PortalIndexRouteImport.update({
@@ -178,10 +217,26 @@ const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesOrderIdRoute = SalesOrderIdRouteImport.update({
+  id: '/order/$id',
+  path: '/order/$id',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesQuotesIndexRoute = SalesQuotesIndexRouteImport.update({
+  id: '/quotes/',
+  path: '/quotes/',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesQuotesNewRoute = SalesQuotesNewRouteImport.update({
+  id: '/quotes/new',
+  path: '/quotes/new',
+  getParentRoute: () => SalesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
@@ -191,7 +246,11 @@ export interface FileRoutesByFullPath {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/products': typeof AdminProductsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/manager': typeof CrmManagerRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
@@ -201,13 +260,17 @@ export interface FileRoutesByFullPath {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
+  '/sales/quotes/': typeof SalesQuotesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -218,7 +281,11 @@ export interface FileRoutesByTo {
   '/resources': typeof ResourcesRoute
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/products': typeof AdminProductsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/manager': typeof CrmManagerRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
@@ -228,18 +295,23 @@ export interface FileRoutesByTo {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/admin': typeof AdminIndexRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
   '/portal': typeof PortalIndexRoute
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
+  '/sales/quotes': typeof SalesQuotesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
@@ -249,7 +321,11 @@ export interface FileRoutesById {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/products': typeof AdminProductsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/manager': typeof CrmManagerRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
@@ -259,19 +335,24 @@ export interface FileRoutesById {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
+  '/sales/quotes/': typeof SalesQuotesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/about'
+    | '/admin'
     | '/contact'
     | '/crm'
     | '/login'
@@ -281,7 +362,11 @@ export interface FileRouteTypes {
     | '/sales'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/pricing'
+    | '/admin/products'
     | '/brands/$slug'
+    | '/crm/applications'
+    | '/crm/manager'
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
@@ -291,13 +376,17 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/admin/'
     | '/brands/'
     | '/crm/'
     | '/portal/'
     | '/products/'
     | '/sales/'
     | '/sales/customers/$id'
+    | '/sales/order/$id'
+    | '/sales/quotes/new'
     | '/sales/customers/'
+    | '/sales/quotes/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -308,7 +397,11 @@ export interface FileRouteTypes {
     | '/resources'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/pricing'
+    | '/admin/products'
     | '/brands/$slug'
+    | '/crm/applications'
+    | '/crm/manager'
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
@@ -318,17 +411,22 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/admin'
     | '/brands'
     | '/crm'
     | '/portal'
     | '/products'
     | '/sales'
     | '/sales/customers/$id'
+    | '/sales/order/$id'
+    | '/sales/quotes/new'
     | '/sales/customers'
+    | '/sales/quotes'
   id:
     | '__root__'
     | '/'
     | '/about'
+    | '/admin'
     | '/contact'
     | '/crm'
     | '/login'
@@ -338,7 +436,11 @@ export interface FileRouteTypes {
     | '/sales'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/pricing'
+    | '/admin/products'
     | '/brands/$slug'
+    | '/crm/applications'
+    | '/crm/manager'
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
@@ -348,18 +450,23 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/admin/'
     | '/brands/'
     | '/crm/'
     | '/portal/'
     | '/products/'
     | '/sales/'
     | '/sales/customers/$id'
+    | '/sales/order/$id'
+    | '/sales/quotes/new'
     | '/sales/customers/'
+    | '/sales/quotes/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
+  AdminRoute: typeof AdminRouteWithChildren
   ContactRoute: typeof ContactRoute
   CrmRoute: typeof CrmRouteWithChildren
   LoginRoute: typeof LoginRoute
@@ -390,6 +497,13 @@ declare module '@tanstack/react-router' {
       path: '/about'
       fullPath: '/about'
       preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/contact': {
@@ -455,6 +569,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WhyAutomotiveBrandsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/pricing': {
+      id: '/admin/pricing'
+      path: '/pricing'
+      fullPath: '/admin/pricing'
+      preLoaderRoute: typeof AdminPricingRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/products': {
+      id: '/admin/products'
+      path: '/products'
+      fullPath: '/admin/products'
+      preLoaderRoute: typeof AdminProductsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/brands/': {
       id: '/brands/'
       path: '/brands'
@@ -474,6 +609,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/crm/'
       preLoaderRoute: typeof CrmIndexRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/applications': {
+      id: '/crm/applications'
+      path: '/applications'
+      fullPath: '/crm/applications'
+      preLoaderRoute: typeof CrmApplicationsRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/manager': {
+      id: '/crm/manager'
+      path: '/manager'
+      fullPath: '/crm/manager'
+      preLoaderRoute: typeof CrmManagerRouteImport
       parentRoute: typeof CrmRoute
     }
     '/portal/': {
@@ -574,14 +723,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesCustomersIdRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/sales/order/$id': {
+      id: '/sales/order/$id'
+      path: '/order/$id'
+      fullPath: '/sales/order/$id'
+      preLoaderRoute: typeof SalesOrderIdRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/quotes/': {
+      id: '/sales/quotes/'
+      path: '/quotes'
+      fullPath: '/sales/quotes/'
+      preLoaderRoute: typeof SalesQuotesIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/quotes/new': {
+      id: '/sales/quotes/new'
+      path: '/quotes/new'
+      fullPath: '/sales/quotes/new'
+      preLoaderRoute: typeof SalesQuotesNewRouteImport
+      parentRoute: typeof SalesRoute
+    }
   }
 }
 
+interface AdminRouteChildren {
+  AdminPricingRoute: typeof AdminPricingRoute
+  AdminProductsRoute: typeof AdminProductsRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminPricingRoute: AdminPricingRoute,
+  AdminProductsRoute: AdminProductsRoute,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 interface CrmRouteChildren {
+  CrmApplicationsRoute: typeof CrmApplicationsRoute
+  CrmManagerRoute: typeof CrmManagerRoute
   CrmIndexRoute: typeof CrmIndexRoute
 }
 
 const CrmRouteChildren: CrmRouteChildren = {
+  CrmApplicationsRoute: CrmApplicationsRoute,
+  CrmManagerRoute: CrmManagerRoute,
   CrmIndexRoute: CrmIndexRoute,
 }
 
@@ -615,13 +803,19 @@ const PortalRouteWithChildren =
 interface SalesRouteChildren {
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
+  SalesOrderIdRoute: typeof SalesOrderIdRoute
+  SalesQuotesNewRoute: typeof SalesQuotesNewRoute
   SalesCustomersIndexRoute: typeof SalesCustomersIndexRoute
+  SalesQuotesIndexRoute: typeof SalesQuotesIndexRoute
 }
 
 const SalesRouteChildren: SalesRouteChildren = {
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
+  SalesOrderIdRoute: SalesOrderIdRoute,
+  SalesQuotesNewRoute: SalesQuotesNewRoute,
   SalesCustomersIndexRoute: SalesCustomersIndexRoute,
+  SalesQuotesIndexRoute: SalesQuotesIndexRoute,
 }
 
 const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
@@ -629,6 +823,7 @@ const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
+  AdminRoute: AdminRouteWithChildren,
   ContactRoute: ContactRoute,
   CrmRoute: CrmRouteWithChildren,
   LoginRoute: LoginRoute,
