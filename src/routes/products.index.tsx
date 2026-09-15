@@ -7,9 +7,8 @@ import { brands, products, gbp, type Product } from "@/lib/data";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/products/")({
-  validateSearch: (search: Record<string, unknown>) => ({
-    brand: typeof search.brand === "string" ? search.brand : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): { brand?: string } =>
+    typeof search["brand"] === "string" ? { brand: search["brand"] } : {},
   head: () => ({
     meta: [
       { title: "Trade Product Catalogue — Automotive Brands" },
@@ -255,7 +254,7 @@ function ProductCard({ product: p }: { product: Product }) {
           <StockBadge stock={p.stock} qty={p.stockQty} />
         </div>
         <div className="num mt-2 text-[11px] text-steel">
-          {p.breaks.length > 1
+          {p.breaks[1]
             ? `${p.breaks[1].qty}+ @ ${gbp(p.breaks[1].price)}`
             : "No quantity breaks"}
         </div>
@@ -320,7 +319,7 @@ function CompactTable({ rows }: { rows: Product[] }) {
               <td className="num px-3 py-2 text-right font-semibold">{gbp(p.trade)}</td>
               <td className="num px-3 py-2 text-right text-steel">{gbp(p.rrp)}</td>
               <td className="num px-3 py-2 text-right text-steel">
-                {p.breaks.length > 1 ? `${p.breaks[1].qty}+ ${gbp(p.breaks[1].price)}` : "—"}
+                {p.breaks[1] ? `${p.breaks[1].qty}+ ${gbp(p.breaks[1].price)}` : "—"}
               </td>
               <td className="px-3 py-2">
                 <StockBadge stock={p.stock} qty={p.stockQty} />

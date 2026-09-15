@@ -29,7 +29,7 @@ export function AppShell({
         <Link
           key={item.to}
           to={item.to}
-          activeOptions={{ exact: item.exact }}
+          activeOptions={{ exact: item.exact ?? false }}
           onClick={() => setOpen(false)}
           className="rounded-md px-3 py-2 text-[13px] font-medium text-steel transition-colors hover:bg-secondary hover:text-foreground"
           activeProps={{
