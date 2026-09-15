@@ -245,34 +245,42 @@ function ProductCard({ product: p }: { product: Product }) {
           SKU {p.sku} · Pack {p.packQty} · Case {p.caseQty}
         </div>
         <div className="mt-3 flex items-end justify-between gap-2">
-          <div>
-            <div className="num font-display text-xl font-semibold">{gbp(p.trade)}</div>
-            <div className="num text-[11px] text-steel">
-              RRP {gbp(p.rrp)} · {p.vat === "zero" ? "Zero VAT" : "Ex VAT"}
-            </div>
-          </div>
+          <TradePrice trade={p.trade} rrp={p.rrp} />
           <StockBadge stock={p.stock} qty={p.stockQty} />
         </div>
-        <div className="num mt-2 text-[11px] text-steel">
-          {p.breaks[1]
-            ? `${p.breaks[1].qty}+ @ ${gbp(p.breaks[1].price)}`
-            : "No quantity breaks"}
-        </div>
+        {signedIn && (
+          <div className="num mt-2 text-[11px] text-steel">
+            {p.breaks[1]
+              ? `${p.breaks[1].qty}+ @ ${gbp(p.breaks[1].price)}`
+              : "No quantity breaks"}
+          </div>
+        )}
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            disabled={p.stock === "backorder" || p.stock === "out"}
-            className="h-9 flex-1 rounded-md bg-primary text-[12px] font-bold text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-secondary disabled:text-steel"
-          >
-            {p.stock === "backorder" ? "Backorder" : "Add to basket"}
-          </button>
-          <button
-            type="button"
-            aria-label={`Add ${p.name} to an order list`}
-            className="grid size-9 place-items-center rounded-md border border-border text-steel transition-colors hover:text-foreground"
-          >
-            <Heart className="size-4" aria-hidden />
-          </button>
+          {signedIn ? (
+            <>
+              <button
+                type="button"
+                disabled={p.stock === "backorder" || p.stock === "out"}
+                className="h-9 flex-1 rounded-md bg-primary text-[12px] font-bold text-primary-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-secondary disabled:text-steel"
+              >
+                {p.stock === "backorder" ? "Backorder" : "Add to basket"}
+              </button>
+              <button
+                type="button"
+                aria-label={`Add ${p.name} to an order list`}
+                className="grid size-9 place-items-center rounded-md border border-border text-steel transition-colors hover:text-foreground"
+              >
+                <Heart className="size-4" aria-hidden />
+              </button>
+            </>
+          ) : (
+            <Link
+              to="/login"
+              className="grid h-9 flex-1 place-items-center rounded-md border border-border text-[12px] font-bold transition-colors hover:border-primary hover:text-primary"
+            >
+              Sign in to order
+            </Link>
+          )}
         </div>
       </div>
     </article>
@@ -316,7 +324,9 @@ function CompactTable({ rows }: { rows: Product[] }) {
                 </Link>
               </td>
               <td className="px-3 py-2 text-steel">{p.brand}</td>
-              <td className="num px-3 py-2 text-right font-semibold">{gbp(p.trade)}</td>
+              <td className="num px-3 py-2 text-right font-semibold">
+                <TradePriceCell trade={p.trade} rrp={p.rrp} />
+              </td>
               <td className="num px-3 py-2 text-right text-steel">{gbp(p.rrp)}</td>
               <td className="num px-3 py-2 text-right text-steel">
                 {p.breaks[1] ? `${p.breaks[1].qty}+ ${gbp(p.breaks[1].price)}` : "—"}
