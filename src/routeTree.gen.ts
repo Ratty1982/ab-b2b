@@ -10,33 +10,150 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PortalRouteImport } from './routes/portal'
+import { Route as RegisterRouteImport } from './routes/register'
+import { Route as BrandsIndexRouteImport } from './routes/brands.index'
+import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
+import { Route as PortalIndexRouteImport } from './routes/portal.index'
+import { Route as PortalQuickOrderRouteImport } from './routes/portal.quick-order'
+import { Route as ProductsIndexRouteImport } from './routes/products.index'
+import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrandsIndexRoute = BrandsIndexRouteImport.update({
+  id: '/brands/',
+  path: '/brands/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrandsSlugRoute = BrandsSlugRouteImport.update({
+  id: '/brands/$slug',
+  path: '/brands/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalIndexRoute = PortalIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PortalRoute,
+} as any)
+const PortalQuickOrderRoute = PortalQuickOrderRouteImport.update({
+  id: '/quick-order',
+  path: '/quick-order',
+  getParentRoute: () => PortalRoute,
+} as any)
+const ProductsIndexRoute = ProductsIndexRouteImport.update({
+  id: '/products/',
+  path: '/products/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProductsSkuRoute = ProductsSkuRouteImport.update({
+  id: '/products/$sku',
+  path: '/products/$sku',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/portal': typeof PortalRouteWithChildren
+  '/register': typeof RegisterRoute
+  '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/products/$sku': typeof ProductsSkuRoute
+  '/brands/': typeof BrandsIndexRoute
+  '/portal/': typeof PortalIndexRoute
+  '/products/': typeof ProductsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/register': typeof RegisterRoute
+  '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/products/$sku': typeof ProductsSkuRoute
+  '/brands': typeof BrandsIndexRoute
+  '/portal': typeof PortalIndexRoute
+  '/products': typeof ProductsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/portal': typeof PortalRouteWithChildren
+  '/register': typeof RegisterRoute
+  '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/products/$sku': typeof ProductsSkuRoute
+  '/brands/': typeof BrandsIndexRoute
+  '/portal/': typeof PortalIndexRoute
+  '/products/': typeof ProductsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/portal'
+    | '/register'
+    | '/brands/$slug'
+    | '/portal/quick-order'
+    | '/products/$sku'
+    | '/brands/'
+    | '/portal/'
+    | '/products/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/login'
+    | '/register'
+    | '/brands/$slug'
+    | '/portal/quick-order'
+    | '/products/$sku'
+    | '/brands'
+    | '/portal'
+    | '/products'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/portal'
+    | '/register'
+    | '/brands/$slug'
+    | '/portal/quick-order'
+    | '/products/$sku'
+    | '/brands/'
+    | '/portal/'
+    | '/products/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LoginRoute: typeof LoginRoute
+  PortalRoute: typeof PortalRouteWithChildren
+  RegisterRoute: typeof RegisterRoute
+  BrandsSlugRoute: typeof BrandsSlugRoute
+  ProductsSkuRoute: typeof ProductsSkuRoute
+  BrandsIndexRoute: typeof BrandsIndexRoute
+  ProductsIndexRoute: typeof ProductsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +165,94 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brands/': {
+      id: '/brands/'
+      path: '/brands'
+      fullPath: '/brands/'
+      preLoaderRoute: typeof BrandsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brands/$slug': {
+      id: '/brands/$slug'
+      path: '/brands/$slug'
+      fullPath: '/brands/$slug'
+      preLoaderRoute: typeof BrandsSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal/': {
+      id: '/portal/'
+      path: '/'
+      fullPath: '/portal/'
+      preLoaderRoute: typeof PortalIndexRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/portal/quick-order': {
+      id: '/portal/quick-order'
+      path: '/quick-order'
+      fullPath: '/portal/quick-order'
+      preLoaderRoute: typeof PortalQuickOrderRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/products/': {
+      id: '/products/'
+      path: '/products'
+      fullPath: '/products/'
+      preLoaderRoute: typeof ProductsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/products/$sku': {
+      id: '/products/$sku'
+      path: '/products/$sku'
+      fullPath: '/products/$sku'
+      preLoaderRoute: typeof ProductsSkuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
+interface PortalRouteChildren {
+  PortalQuickOrderRoute: typeof PortalQuickOrderRoute
+  PortalIndexRoute: typeof PortalIndexRoute
+}
+
+const PortalRouteChildren: PortalRouteChildren = {
+  PortalQuickOrderRoute: PortalQuickOrderRoute,
+  PortalIndexRoute: PortalIndexRoute,
+}
+
+const PortalRouteWithChildren =
+  PortalRoute._addFileChildren(PortalRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LoginRoute: LoginRoute,
+  PortalRoute: PortalRouteWithChildren,
+  RegisterRoute: RegisterRoute,
+  BrandsSlugRoute: BrandsSlugRoute,
+  ProductsSkuRoute: ProductsSkuRoute,
+  BrandsIndexRoute: BrandsIndexRoute,
+  ProductsIndexRoute: ProductsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
