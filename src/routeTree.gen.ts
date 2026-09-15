@@ -37,7 +37,9 @@ import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
+import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
+import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -179,9 +181,19 @@ const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesOrderIdRoute = SalesOrderIdRouteImport.update({
+  id: '/order/$id',
+  path: '/order/$id',
+  getParentRoute: () => SalesRoute,
+} as any)
 const SalesQuotesIndexRoute = SalesQuotesIndexRouteImport.update({
   id: '/quotes/',
   path: '/quotes/',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesQuotesNewRoute = SalesQuotesNewRouteImport.update({
+  id: '/quotes/new',
+  path: '/quotes/new',
   getParentRoute: () => SalesRoute,
 } as any)
 
@@ -213,6 +225,8 @@ export interface FileRoutesByFullPath {
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
 }
@@ -241,6 +255,8 @@ export interface FileRoutesByTo {
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
 }
@@ -273,6 +289,8 @@ export interface FileRoutesById {
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
 }
@@ -306,6 +324,8 @@ export interface FileRouteTypes {
     | '/products/'
     | '/sales/'
     | '/sales/customers/$id'
+    | '/sales/order/$id'
+    | '/sales/quotes/new'
     | '/sales/customers/'
     | '/sales/quotes/'
   fileRoutesByTo: FileRoutesByTo
@@ -334,6 +354,8 @@ export interface FileRouteTypes {
     | '/products'
     | '/sales'
     | '/sales/customers/$id'
+    | '/sales/order/$id'
+    | '/sales/quotes/new'
     | '/sales/customers'
     | '/sales/quotes'
   id:
@@ -365,6 +387,8 @@ export interface FileRouteTypes {
     | '/products/'
     | '/sales/'
     | '/sales/customers/$id'
+    | '/sales/order/$id'
+    | '/sales/quotes/new'
     | '/sales/customers/'
     | '/sales/quotes/'
   fileRoutesById: FileRoutesById
@@ -586,11 +610,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesCustomersIdRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/sales/order/$id': {
+      id: '/sales/order/$id'
+      path: '/order/$id'
+      fullPath: '/sales/order/$id'
+      preLoaderRoute: typeof SalesOrderIdRouteImport
+      parentRoute: typeof SalesRoute
+    }
     '/sales/quotes/': {
       id: '/sales/quotes/'
       path: '/quotes'
       fullPath: '/sales/quotes/'
       preLoaderRoute: typeof SalesQuotesIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/quotes/new': {
+      id: '/sales/quotes/new'
+      path: '/quotes/new'
+      fullPath: '/sales/quotes/new'
+      preLoaderRoute: typeof SalesQuotesNewRouteImport
       parentRoute: typeof SalesRoute
     }
   }
@@ -634,6 +672,8 @@ const PortalRouteWithChildren =
 interface SalesRouteChildren {
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
+  SalesOrderIdRoute: typeof SalesOrderIdRoute
+  SalesQuotesNewRoute: typeof SalesQuotesNewRoute
   SalesCustomersIndexRoute: typeof SalesCustomersIndexRoute
   SalesQuotesIndexRoute: typeof SalesQuotesIndexRoute
 }
@@ -641,6 +681,8 @@ interface SalesRouteChildren {
 const SalesRouteChildren: SalesRouteChildren = {
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
+  SalesOrderIdRoute: SalesOrderIdRoute,
+  SalesQuotesNewRoute: SalesQuotesNewRoute,
   SalesCustomersIndexRoute: SalesCustomersIndexRoute,
   SalesQuotesIndexRoute: SalesQuotesIndexRoute,
 }
