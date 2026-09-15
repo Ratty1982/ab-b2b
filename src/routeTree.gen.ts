@@ -24,8 +24,12 @@ import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
+import { Route as PortalFavouritesRouteImport } from './routes/portal.favourites'
+import { Route as PortalInvoicesRouteImport } from './routes/portal.invoices'
 import { Route as PortalOrdersRouteImport } from './routes/portal.orders'
 import { Route as PortalQuickOrderRouteImport } from './routes/portal.quick-order'
+import { Route as PortalQuotesRouteImport } from './routes/portal.quotes'
+import { Route as PortalSupportRouteImport } from './routes/portal.support'
 import { Route as PortalUsersRouteImport } from './routes/portal.users'
 import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
@@ -108,6 +112,16 @@ const PortalIndexRoute = PortalIndexRouteImport.update({
   path: '/',
   getParentRoute: () => PortalRoute,
 } as any)
+const PortalFavouritesRoute = PortalFavouritesRouteImport.update({
+  id: '/favourites',
+  path: '/favourites',
+  getParentRoute: () => PortalRoute,
+} as any)
+const PortalInvoicesRoute = PortalInvoicesRouteImport.update({
+  id: '/invoices',
+  path: '/invoices',
+  getParentRoute: () => PortalRoute,
+} as any)
 const PortalOrdersRoute = PortalOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
@@ -116,6 +130,16 @@ const PortalOrdersRoute = PortalOrdersRouteImport.update({
 const PortalQuickOrderRoute = PortalQuickOrderRouteImport.update({
   id: '/quick-order',
   path: '/quick-order',
+  getParentRoute: () => PortalRoute,
+} as any)
+const PortalQuotesRoute = PortalQuotesRouteImport.update({
+  id: '/quotes',
+  path: '/quotes',
+  getParentRoute: () => PortalRoute,
+} as any)
+const PortalSupportRoute = PortalSupportRouteImport.update({
+  id: '/support',
+  path: '/support',
   getParentRoute: () => PortalRoute,
 } as any)
 const PortalUsersRoute = PortalUsersRouteImport.update({
@@ -162,8 +186,12 @@ export interface FileRoutesByFullPath {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/favourites': typeof PortalFavouritesRoute
+  '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/portal/quotes': typeof PortalQuotesRoute
+  '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands/': typeof BrandsIndexRoute
@@ -184,8 +212,12 @@ export interface FileRoutesByTo {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/favourites': typeof PortalFavouritesRoute
+  '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/portal/quotes': typeof PortalQuotesRoute
+  '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands': typeof BrandsIndexRoute
@@ -210,8 +242,12 @@ export interface FileRoutesById {
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/favourites': typeof PortalFavouritesRoute
+  '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/portal/quotes': typeof PortalQuotesRoute
+  '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands/': typeof BrandsIndexRoute
@@ -237,8 +273,12 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/why-automotive-brands'
     | '/brands/$slug'
+    | '/portal/favourites'
+    | '/portal/invoices'
     | '/portal/orders'
     | '/portal/quick-order'
+    | '/portal/quotes'
+    | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
     | '/brands/'
@@ -259,8 +299,12 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/why-automotive-brands'
     | '/brands/$slug'
+    | '/portal/favourites'
+    | '/portal/invoices'
     | '/portal/orders'
     | '/portal/quick-order'
+    | '/portal/quotes'
+    | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
     | '/brands'
@@ -284,8 +328,12 @@ export interface FileRouteTypes {
     | '/trade-solutions'
     | '/why-automotive-brands'
     | '/brands/$slug'
+    | '/portal/favourites'
+    | '/portal/invoices'
     | '/portal/orders'
     | '/portal/quick-order'
+    | '/portal/quotes'
+    | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
     | '/brands/'
@@ -422,6 +470,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalIndexRouteImport
       parentRoute: typeof PortalRoute
     }
+    '/portal/favourites': {
+      id: '/portal/favourites'
+      path: '/favourites'
+      fullPath: '/portal/favourites'
+      preLoaderRoute: typeof PortalFavouritesRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/portal/invoices': {
+      id: '/portal/invoices'
+      path: '/invoices'
+      fullPath: '/portal/invoices'
+      preLoaderRoute: typeof PortalInvoicesRouteImport
+      parentRoute: typeof PortalRoute
+    }
     '/portal/orders': {
       id: '/portal/orders'
       path: '/orders'
@@ -434,6 +496,20 @@ declare module '@tanstack/react-router' {
       path: '/quick-order'
       fullPath: '/portal/quick-order'
       preLoaderRoute: typeof PortalQuickOrderRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/portal/quotes': {
+      id: '/portal/quotes'
+      path: '/quotes'
+      fullPath: '/portal/quotes'
+      preLoaderRoute: typeof PortalQuotesRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/portal/support': {
+      id: '/portal/support'
+      path: '/support'
+      fullPath: '/portal/support'
+      preLoaderRoute: typeof PortalSupportRouteImport
       parentRoute: typeof PortalRoute
     }
     '/portal/users': {
@@ -492,15 +568,23 @@ const CrmRouteChildren: CrmRouteChildren = {
 const CrmRouteWithChildren = CrmRoute._addFileChildren(CrmRouteChildren)
 
 interface PortalRouteChildren {
+  PortalFavouritesRoute: typeof PortalFavouritesRoute
+  PortalInvoicesRoute: typeof PortalInvoicesRoute
   PortalOrdersRoute: typeof PortalOrdersRoute
   PortalQuickOrderRoute: typeof PortalQuickOrderRoute
+  PortalQuotesRoute: typeof PortalQuotesRoute
+  PortalSupportRoute: typeof PortalSupportRoute
   PortalUsersRoute: typeof PortalUsersRoute
   PortalIndexRoute: typeof PortalIndexRoute
 }
 
 const PortalRouteChildren: PortalRouteChildren = {
+  PortalFavouritesRoute: PortalFavouritesRoute,
+  PortalInvoicesRoute: PortalInvoicesRoute,
   PortalOrdersRoute: PortalOrdersRoute,
   PortalQuickOrderRoute: PortalQuickOrderRoute,
+  PortalQuotesRoute: PortalQuotesRoute,
+  PortalSupportRoute: PortalSupportRoute,
   PortalUsersRoute: PortalUsersRoute,
   PortalIndexRoute: PortalIndexRoute,
 }
