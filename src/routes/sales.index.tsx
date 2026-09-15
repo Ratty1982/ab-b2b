@@ -1,7 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PanelHeader, Metric } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
+import { Search } from "lucide-react";
 import { customers, gbp0, opportunities, pipelineStages } from "@/lib/data";
+import { quotes, quoteTotal } from "@/lib/crm-data";
 
 export const Route = createFileRoute("/sales/")({
   head: () => ({
@@ -46,14 +48,16 @@ function SalesDashboard() {
         }
       />
 
-      <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
+      <div className="hidden gap-px bg-border md:grid sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="My sales MTD" value={gbp0(mtd)} tone="brand" hint={`${Math.round((mtd / target) * 100)}% of ${gbp0(target)} target`} />
         <Metric label="Pipeline value" value={gbp0(pipelineValue)} hint={`${opportunities.length} open opportunities`} />
         <Metric label="Open quotes" value={gbp0(14380)} tone="warn" hint="4 awaiting follow-up" />
         <Metric label="Orders this month" value="47" hint={`Avg order ${gbp0(742)}`} />
       </div>
 
-      <div className="grid gap-6 p-4 sm:p-6 xl:grid-cols-3">
+      <MobileHome />
+
+      <div className="hidden gap-6 p-4 sm:p-6 md:grid xl:grid-cols-3">
         <section className="xl:col-span-2 space-y-6">
           <div>
             <h2 className="mb-3 font-display text-lg font-semibold uppercase tracking-tight">
@@ -177,6 +181,141 @@ function SalesDashboard() {
           </Panel>
         </aside>
       </div>
+    </div>
+  );
+}
+
+
+function MobileHome() {
+  const today = [
+    { time: "09:30", what: "Visit — Penrose Autoparts", where: "Bristol BS2 0QS", id: "penrose-autoparts" },
+    { time: "12:15", what: "Visit — Hartley Tyre & Service", where: "Gloucester GL1 4EA", id: "abc-motor-factors" },
+    { time: "15:00", what: "Call — Northgate Garage Group", where: "Reactivation call", id: "northgate-garage-group" },
+  ];
+  const nearby = customers.slice(0, 4);
+
+  return (
+    <div className="space-y-6 p-4 md:hidden">
+      <div className="grid grid-cols-2 gap-px bg-border">
+        <div className="bg-surface/60 px-3 py-2.5">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-steel">Sales MTD</div>
+          <div className="num font-display text-xl font-semibold text-primary">{gbp0(mtd)}</div>
+        </div>
+        <div className="bg-surface/60 px-3 py-2.5">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-steel">Against target</div>
+          <div className="num font-display text-xl font-semibold">
+            {Math.round((mtd / target) * 100)}%
+          </div>
+        </div>
+      </div>
+
+      <Link
+        to="/sales/customers"
+        className="flex h-12 items-center gap-3 rounded-md border border-border bg-surface/50 px-4 text-[14px] text-steel"
+      >
+        <Search className="size-4" aria-hidden />
+        Find a customer
+      </Link>
+
+      <section>
+        <h2 className="mb-2 font-display text-base font-semibold uppercase">Today</h2>
+        <ul className="divide-y divide-border rounded-lg border border-border">
+          {today.map((t) => (
+            <li key={t.time} className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 px-3 py-3">
+              <span className="num pt-0.5 text-[12px] font-semibold text-primary">{t.time}</span>
+              <span className="min-w-0">
+                <Link
+                  to="/sales/customers/$id"
+                  params={{ id: t.id }}
+                  className="block truncate text-[14px] font-semibold"
+                >
+                  {t.what}
+                </Link>
+                <span className="block truncate text-[12px] text-steel">{t.where}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h2 className="mb-2 font-display text-base font-semibold uppercase">Tasks due today</h2>
+        <ul className="divide-y divide-border rounded-lg border border-border">
+          {[
+            "Call Northgate Garage Group — reactivation",
+            "Send Steel Seal case pricing to Seaforth",
+            "Chase quote AB-10428",
+          ].map((t) => (
+            <li key={t} className="flex items-start gap-3 px-3 py-3 text-[14px]">
+              <input type="checkbox" className="mt-1 size-4 accent-primary" aria-label={t} />
+              {t}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h2 className="mb-2 font-display text-base font-semibold uppercase">Customers nearby</h2>
+        <ul className="space-y-3">
+          {nearby.map((c) => (
+            <li key={c.id} className="rounded-lg border border-border bg-surface/40 p-3">
+              <Link
+                to="/sales/customers/$id"
+                params={{ id: c.id }}
+                className="block truncate text-[14px] font-semibold"
+              >
+                {c.company}
+              </Link>
+              <div className="num text-[12px] text-steel">
+                {c.location} · last order {c.lastOrder} · YTD {gbp0(c.ytd)}
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-[12px] font-semibold">
+                <a href="tel:01214960142" className="rounded-md border border-border py-2 text-center">
+                  Call
+                </a>
+                <a href="mailto:karen.doyle@abcmotorfactors.co.uk" className="rounded-md border border-border py-2 text-center">
+                  Email
+                </a>
+                <Link
+                  to="/sales/customers/$id"
+                  params={{ id: c.id }}
+                  className="rounded-md border border-border py-2 text-center"
+                >
+                  Visit
+                </Link>
+                <Link
+                  to="/sales/order/$id"
+                  params={{ id: c.id }}
+                  className="rounded-md bg-primary py-2 text-center text-primary-foreground"
+                >
+                  Order
+                </Link>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h2 className="mb-2 font-display text-base font-semibold uppercase">Quotes needing action</h2>
+        <ul className="divide-y divide-border rounded-lg border border-border">
+          {quotes
+            .filter((q) => ["Sent", "Viewed"].includes(q.status))
+            .map((q) => (
+              <li key={q.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-3 py-3 text-[13px]">
+                <span className="min-w-0">
+                  <Link to="/quote/$id" params={{ id: q.id }} className="num block font-semibold text-primary">
+                    {q.id}
+                  </Link>
+                  <span className="block truncate text-[12px] text-steel">
+                    {q.company} · {q.status}
+                  </span>
+                </span>
+                <span className="num self-center font-semibold">{gbp0(quoteTotal(q))}</span>
+              </li>
+            ))}
+        </ul>
+      </section>
     </div>
   );
 }

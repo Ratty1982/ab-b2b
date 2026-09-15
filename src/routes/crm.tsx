@@ -9,9 +9,11 @@ const nav: NavItem[] = [
   { label: "Opportunities", to: "/crm", exact: true },
   { label: "Activities", to: "/crm", exact: true },
   { label: "Tasks", to: "/crm", exact: true },
-  { label: "Quotes", to: "/crm", exact: true },
-  { label: "Sales Team", to: "/crm", exact: true },
-  { label: "Reports", to: "/crm", exact: true },
+  { label: "Quotes", to: "/sales/quotes" },
+  { label: "Trade Applications", to: "/crm/applications" },
+  { label: "Sales Team", to: "/crm/manager" },
+  { label: "Reports", to: "/crm/manager" },
+  { label: "Admin", to: "/admin" },
 ];
 
 export const Route = createFileRoute("/crm")({
