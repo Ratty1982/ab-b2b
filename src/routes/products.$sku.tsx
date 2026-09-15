@@ -96,7 +96,7 @@ function ProductPage() {
               <span>SKU {p.sku}</span>
               <span aria-hidden>·</span>
               <span>{p.category}</span>
-              <StockBadge stock={p.stock} qty={p.stockQty} />
+              <StockBadge stock={p.stock} qty={signedIn ? p.stockQty : undefined} />
             </div>
 
             <p className="mt-5 text-sm leading-relaxed text-steel">{p.description}</p>

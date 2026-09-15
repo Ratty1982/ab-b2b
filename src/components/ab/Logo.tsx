@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import logo from "@/assets/ab-logo.jpg.asset.json";
 import { cn } from "@/lib/utils";
+
+/** First-party brand mark — served from /public/brand (no Lovable CDN). */
+const LOGO_SRC = "/brand/ab-logo.jpg";
 
 export function Logo({
   to = "/",
@@ -18,7 +20,7 @@ export function Logo({
       aria-label="Automotive Brands home"
     >
       <img
-        src={logo.url}
+        src={LOGO_SRC}
         alt=""
         width={36}
         height={36}

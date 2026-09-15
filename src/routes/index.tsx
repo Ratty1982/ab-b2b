@@ -308,7 +308,7 @@ function Home() {
                   <div className="mt-auto pt-3">
                     <TradePrice trade={p.trade} rrp={p.rrp} size="sm" />
                     <div className="mt-2">
-                      <StockBadge stock={p.stock} qty={p.stockQty} />
+                      <StockBadge stock={p.stock} />
                     </div>
                   </div>
                 </div>

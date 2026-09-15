@@ -6,6 +6,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+bun-debug.log*
 
 node_modules
 dist
@@ -16,11 +17,23 @@ dist-ssr
 .nitro
 *.local
 
-# Wrangler / Cloudflare
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# npm lockfile — Bun is authoritative
+package-lock.json
+
+# Wrangler / Cloudflare (legacy Lovable target)
 .wrangler/
 .dev.vars
 
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea

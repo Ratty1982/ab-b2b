@@ -249,7 +249,7 @@ function ProductCard({ product: p }: { product: Product }) {
         </div>
         <div className="mt-3 flex items-end justify-between gap-2">
           <TradePrice trade={p.trade} rrp={p.rrp} />
-          <StockBadge stock={p.stock} qty={p.stockQty} />
+          <StockBadge stock={p.stock} qty={signedIn ? p.stockQty : undefined} />
         </div>
         {signedIn && (
           <div className="num mt-2 text-[11px] text-steel">
@@ -335,7 +335,7 @@ function CompactTable({ rows }: { rows: Product[] }) {
                 {p.breaks[1] ? `${p.breaks[1].qty}+ ${gbp(p.breaks[1].price)}` : "—"}
               </td>
               <td className="px-3 py-2">
-                <StockBadge stock={p.stock} qty={p.stockQty} />
+                <StockBadge stock={p.stock} qty={signedIn ? p.stockQty : undefined} />
               </td>
               <td className="px-3 py-2 text-right">
                 <label className="sr-only" htmlFor={`qty-${p.sku}`}>
