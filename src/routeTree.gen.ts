@@ -22,6 +22,8 @@ import { Route as SalesRouteImport } from './routes/sales'
 import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
 import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
+import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
@@ -108,6 +110,16 @@ const WhyAutomotiveBrandsRoute = WhyAutomotiveBrandsRouteImport.update({
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPricingRoute = AdminPricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminProductsRoute = AdminProductsRouteImport.update({
+  id: '/products',
+  path: '/products',
   getParentRoute: () => AdminRoute,
 } as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
@@ -234,6 +246,8 @@ export interface FileRoutesByFullPath {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/products': typeof AdminProductsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -267,6 +281,8 @@ export interface FileRoutesByTo {
   '/resources': typeof ResourcesRoute
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/products': typeof AdminProductsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -305,6 +321,8 @@ export interface FileRoutesById {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/products': typeof AdminProductsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -344,6 +362,8 @@ export interface FileRouteTypes {
     | '/sales'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/pricing'
+    | '/admin/products'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -377,6 +397,8 @@ export interface FileRouteTypes {
     | '/resources'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/pricing'
+    | '/admin/products'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -414,6 +436,8 @@ export interface FileRouteTypes {
     | '/sales'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/pricing'
+    | '/admin/products'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -550,6 +574,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/pricing': {
+      id: '/admin/pricing'
+      path: '/pricing'
+      fullPath: '/admin/pricing'
+      preLoaderRoute: typeof AdminPricingRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/products': {
+      id: '/admin/products'
+      path: '/products'
+      fullPath: '/admin/products'
+      preLoaderRoute: typeof AdminProductsRouteImport
       parentRoute: typeof AdminRoute
     }
     '/brands/': {
@@ -710,10 +748,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminPricingRoute: typeof AdminPricingRoute
+  AdminProductsRoute: typeof AdminProductsRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminPricingRoute: AdminPricingRoute,
+  AdminProductsRoute: AdminProductsRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 
