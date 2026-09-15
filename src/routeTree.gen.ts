@@ -22,8 +22,11 @@ import { Route as SalesRouteImport } from './routes/sales'
 import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
 import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminContentRouteImport } from './routes/admin.content'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
+import { Route as AdminRolesRouteImport } from './routes/admin.roles'
+import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
@@ -112,6 +115,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminContentRoute = AdminContentRouteImport.update({
+  id: '/content',
+  path: '/content',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminPricingRoute = AdminPricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
@@ -120,6 +128,16 @@ const AdminPricingRoute = AdminPricingRouteImport.update({
 const AdminProductsRoute = AdminProductsRouteImport.update({
   id: '/products',
   path: '/products',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminRolesRoute = AdminRolesRouteImport.update({
+  id: '/roles',
+  path: '/roles',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AdminRoute,
 } as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
@@ -246,8 +264,11 @@ export interface FileRoutesByFullPath {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/content': typeof AdminContentRoute
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
+  '/admin/roles': typeof AdminRolesRoute
+  '/admin/settings': typeof AdminSettingsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -281,8 +302,11 @@ export interface FileRoutesByTo {
   '/resources': typeof ResourcesRoute
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/content': typeof AdminContentRoute
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
+  '/admin/roles': typeof AdminRolesRoute
+  '/admin/settings': typeof AdminSettingsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -321,8 +345,11 @@ export interface FileRoutesById {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
+  '/admin/content': typeof AdminContentRoute
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
+  '/admin/roles': typeof AdminRolesRoute
+  '/admin/settings': typeof AdminSettingsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -362,8 +389,11 @@ export interface FileRouteTypes {
     | '/sales'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/content'
     | '/admin/pricing'
     | '/admin/products'
+    | '/admin/roles'
+    | '/admin/settings'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -397,8 +427,11 @@ export interface FileRouteTypes {
     | '/resources'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/content'
     | '/admin/pricing'
     | '/admin/products'
+    | '/admin/roles'
+    | '/admin/settings'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -436,8 +469,11 @@ export interface FileRouteTypes {
     | '/sales'
     | '/trade-solutions'
     | '/why-automotive-brands'
+    | '/admin/content'
     | '/admin/pricing'
     | '/admin/products'
+    | '/admin/roles'
+    | '/admin/settings'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -576,6 +612,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/content': {
+      id: '/admin/content'
+      path: '/content'
+      fullPath: '/admin/content'
+      preLoaderRoute: typeof AdminContentRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/pricing': {
       id: '/admin/pricing'
       path: '/pricing'
@@ -588,6 +631,20 @@ declare module '@tanstack/react-router' {
       path: '/products'
       fullPath: '/admin/products'
       preLoaderRoute: typeof AdminProductsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/roles': {
+      id: '/admin/roles'
+      path: '/roles'
+      fullPath: '/admin/roles'
+      preLoaderRoute: typeof AdminRolesRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
       parentRoute: typeof AdminRoute
     }
     '/brands/': {
@@ -748,14 +805,20 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminContentRoute: typeof AdminContentRoute
   AdminPricingRoute: typeof AdminPricingRoute
   AdminProductsRoute: typeof AdminProductsRoute
+  AdminRolesRoute: typeof AdminRolesRoute
+  AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminContentRoute: AdminContentRoute,
   AdminPricingRoute: AdminPricingRoute,
   AdminProductsRoute: AdminProductsRoute,
+  AdminRolesRoute: AdminRolesRoute,
+  AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 
