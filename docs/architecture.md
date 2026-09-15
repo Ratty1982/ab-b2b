@@ -58,8 +58,8 @@ See `src/server/validation/trust.ts`.
 
 ## Auth / MFA readiness
 
-Phase 0 schema includes MFA fields on `User` and Better Auth–compatible `AuthSession` / `AuthAccount` tables.  
-Phase 1 wires Better Auth (or equivalent) with HttpOnly cookies. Privileged internal roles will require MFA later.
+Phase 1 wires **Better Auth** with HttpOnly cookies, RBAC, audit events, and acting context.  
+See [authentication-rbac.md](./authentication-rbac.md). MFA schema is ready; enforcement for privileged roles is planned.
 
 ## Company model
 
@@ -83,8 +83,8 @@ Designed as a future adapter under `src/infra/integrations`. `externalRef` field
 
 ## Phase map
 
-0 Foundations ←  
-1 Auth / RBAC  
+0 Foundations  
+1 Auth / RBAC ←  
 2 Companies / applications  
 3 Catalogue / pricing  
 4 Trade portal  
