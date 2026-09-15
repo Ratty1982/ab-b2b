@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ab-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ab
+      POSTGRES_PASSWORD: ab
+      POSTGRES_DB: automotive_brands
+    volumes:
+      - ab_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ab -d automotive_brands"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ab_pg_data:
