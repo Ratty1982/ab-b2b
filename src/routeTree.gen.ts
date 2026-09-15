@@ -13,12 +13,16 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as RegisterRouteImport } from './routes/register'
+import { Route as SalesRouteImport } from './routes/sales'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
+import { Route as PortalOrdersRouteImport } from './routes/portal.orders'
 import { Route as PortalQuickOrderRouteImport } from './routes/portal.quick-order'
+import { Route as PortalUsersRouteImport } from './routes/portal.users'
 import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
+import { Route as SalesIndexRouteImport } from './routes/sales.index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,6 +44,11 @@ const RegisterRoute = RegisterRouteImport.update({
   path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SalesRoute = SalesRouteImport.update({
+  id: '/sales',
+  path: '/sales',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
   id: '/brands/',
   path: '/brands/',
@@ -55,9 +64,19 @@ const PortalIndexRoute = PortalIndexRouteImport.update({
   path: '/',
   getParentRoute: () => PortalRoute,
 } as any)
+const PortalOrdersRoute = PortalOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => PortalRoute,
+} as any)
 const PortalQuickOrderRoute = PortalQuickOrderRouteImport.update({
   id: '/quick-order',
   path: '/quick-order',
+  getParentRoute: () => PortalRoute,
+} as any)
+const PortalUsersRoute = PortalUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
   getParentRoute: () => PortalRoute,
 } as any)
 const ProductsIndexRoute = ProductsIndexRouteImport.update({
@@ -70,29 +89,41 @@ const ProductsSkuRoute = ProductsSkuRouteImport.update({
   path: '/products/$sku',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SalesIndexRoute = SalesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SalesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
+  '/sales': typeof SalesRouteWithChildren
   '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands/': typeof BrandsIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/sales/': typeof SalesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands': typeof BrandsIndexRoute
   '/portal': typeof PortalIndexRoute
   '/products': typeof ProductsIndexRoute
+  '/sales': typeof SalesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -100,12 +131,16 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
+  '/sales': typeof SalesRouteWithChildren
   '/brands/$slug': typeof BrandsSlugRoute
+  '/portal/orders': typeof PortalOrdersRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
+  '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/brands/': typeof BrandsIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/sales/': typeof SalesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -114,35 +149,46 @@ export interface FileRouteTypes {
     | '/login'
     | '/portal'
     | '/register'
+    | '/sales'
     | '/brands/$slug'
+    | '/portal/orders'
     | '/portal/quick-order'
+    | '/portal/users'
     | '/products/$sku'
     | '/brands/'
     | '/portal/'
     | '/products/'
+    | '/sales/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/register'
     | '/brands/$slug'
+    | '/portal/orders'
     | '/portal/quick-order'
+    | '/portal/users'
     | '/products/$sku'
     | '/brands'
     | '/portal'
     | '/products'
+    | '/sales'
   id:
     | '__root__'
     | '/'
     | '/login'
     | '/portal'
     | '/register'
+    | '/sales'
     | '/brands/$slug'
+    | '/portal/orders'
     | '/portal/quick-order'
+    | '/portal/users'
     | '/products/$sku'
     | '/brands/'
     | '/portal/'
     | '/products/'
+    | '/sales/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -150,6 +196,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PortalRoute: typeof PortalRouteWithChildren
   RegisterRoute: typeof RegisterRoute
+  SalesRoute: typeof SalesRouteWithChildren
   BrandsSlugRoute: typeof BrandsSlugRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
   BrandsIndexRoute: typeof BrandsIndexRoute
@@ -186,6 +233,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sales': {
+      id: '/sales'
+      path: '/sales'
+      fullPath: '/sales'
+      preLoaderRoute: typeof SalesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/brands/': {
       id: '/brands/'
       path: '/brands'
@@ -207,11 +261,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalIndexRouteImport
       parentRoute: typeof PortalRoute
     }
+    '/portal/orders': {
+      id: '/portal/orders'
+      path: '/orders'
+      fullPath: '/portal/orders'
+      preLoaderRoute: typeof PortalOrdersRouteImport
+      parentRoute: typeof PortalRoute
+    }
     '/portal/quick-order': {
       id: '/portal/quick-order'
       path: '/quick-order'
       fullPath: '/portal/quick-order'
       preLoaderRoute: typeof PortalQuickOrderRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/portal/users': {
+      id: '/portal/users'
+      path: '/users'
+      fullPath: '/portal/users'
+      preLoaderRoute: typeof PortalUsersRouteImport
       parentRoute: typeof PortalRoute
     }
     '/products/': {
@@ -228,27 +296,49 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProductsSkuRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sales/': {
+      id: '/sales/'
+      path: '/'
+      fullPath: '/sales/'
+      preLoaderRoute: typeof SalesIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
   }
 }
 
 interface PortalRouteChildren {
+  PortalOrdersRoute: typeof PortalOrdersRoute
   PortalQuickOrderRoute: typeof PortalQuickOrderRoute
+  PortalUsersRoute: typeof PortalUsersRoute
   PortalIndexRoute: typeof PortalIndexRoute
 }
 
 const PortalRouteChildren: PortalRouteChildren = {
+  PortalOrdersRoute: PortalOrdersRoute,
   PortalQuickOrderRoute: PortalQuickOrderRoute,
+  PortalUsersRoute: PortalUsersRoute,
   PortalIndexRoute: PortalIndexRoute,
 }
 
 const PortalRouteWithChildren =
   PortalRoute._addFileChildren(PortalRouteChildren)
 
+interface SalesRouteChildren {
+  SalesIndexRoute: typeof SalesIndexRoute
+}
+
+const SalesRouteChildren: SalesRouteChildren = {
+  SalesIndexRoute: SalesIndexRoute,
+}
+
+const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   PortalRoute: PortalRouteWithChildren,
   RegisterRoute: RegisterRoute,
+  SalesRoute: SalesRouteWithChildren,
   BrandsSlugRoute: BrandsSlugRoute,
   ProductsSkuRoute: ProductsSkuRoute,
   BrandsIndexRoute: BrandsIndexRoute,
