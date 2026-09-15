@@ -125,9 +125,9 @@ function ApplicationQueue() {
                   <td className="num px-3 py-2.5 text-primary">{a.id}</td>
                   <td className="px-3 py-2.5 font-medium">{a.company}</td>
                   <td className="px-3 py-2.5 text-steel">{a.type}</td>
-                  <td className="px-3 py-2.5 text-steel">{a.location}</td>
+                  <td className="px-3 py-2.5 text-steel">{a.town}</td>
                   <td className="px-3 py-2.5 text-steel">{a.submitted}</td>
-                  <td className="num px-3 py-2.5">{a.spend}</td>
+                  <td className="num px-3 py-2.5">{a.volume}</td>
                   <td className="num px-3 py-2.5 text-steel">{a.documents.length}</td>
                   <td className="px-3 py-2.5">
                     <StatusBadge tone={approved.includes(a.id) ? "good" : tone(a.status)}>
@@ -188,16 +188,17 @@ function ApplicationQueue() {
                 {[
                   ["Trading name", open.company],
                   ["Business type", open.type],
-                  ["Company registration", open.registration],
+                  ["Company registration", open.companyNumber],
                   ["VAT number", open.vat],
-                  ["Trading address", open.address],
-                  ["Primary contact", open.contact],
+                  ["Trading address", open.tradingAddress],
+                  ["Delivery address", open.deliveryAddress],
+                  ["Primary contact", `${open.contact} — ${open.contactRole}`],
+                  ["Accounts contact", open.accountsContact],
                   ["Telephone", open.telephone],
                   ["Email", open.email],
                   ["Website", open.website],
-                  ["Estimated monthly spend", open.spend],
-                  ["Brands of interest", open.interest],
-                  ["Existing reference", open.reference],
+                  ["Estimated monthly spend", open.volume],
+                  ["Brands of interest", open.interest.join(", ")],
                   ["Submitted", open.submitted],
                 ].map(([k, v]) => (
                   <div key={k} className="grid grid-cols-[180px_minmax(0,1fr)] gap-3 px-3 py-2.5">
@@ -211,10 +212,15 @@ function ApplicationQueue() {
             <section>
               <h3 className="mb-2 font-display text-base font-semibold uppercase">Uploaded documents</h3>
               <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
+                {open.documents.length === 0 ? (
+                  <li className="px-3 py-6 text-center text-steel">No documents uploaded</li>
+                ) : null}
                 {open.documents.map((d) => (
-                  <li key={d} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5">
+                  <li key={d.name} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5">
                     <FileText className="size-4 text-steel" aria-hidden />
-                    <span className="min-w-0 truncate">{d}</span>
+                    <span className="min-w-0 truncate">
+                      {d.name} <span className="num text-steel">· {d.type} · {d.size}</span>
+                    </span>
                     <button type="button" className="text-[12px] font-semibold text-primary hover:underline">
                       View
                     </button>
