@@ -23,6 +23,8 @@ import { Route as PortalUsersRouteImport } from './routes/portal.users'
 import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
+import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
+import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -94,6 +96,16 @@ const SalesIndexRoute = SalesIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesCustomersIndexRoute = SalesCustomersIndexRouteImport.update({
+  id: '/customers/',
+  path: '/customers/',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
+  id: '/customers/$id',
+  path: '/customers/$id',
+  getParentRoute: () => SalesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -110,6 +122,8 @@ export interface FileRoutesByFullPath {
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
+  '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/customers/': typeof SalesCustomersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -124,6 +138,8 @@ export interface FileRoutesByTo {
   '/portal': typeof PortalIndexRoute
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
+  '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/customers': typeof SalesCustomersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -141,6 +157,8 @@ export interface FileRoutesById {
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
+  '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/customers/': typeof SalesCustomersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -159,6 +177,8 @@ export interface FileRouteTypes {
     | '/portal/'
     | '/products/'
     | '/sales/'
+    | '/sales/customers/$id'
+    | '/sales/customers/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -173,6 +193,8 @@ export interface FileRouteTypes {
     | '/portal'
     | '/products'
     | '/sales'
+    | '/sales/customers/$id'
+    | '/sales/customers'
   id:
     | '__root__'
     | '/'
@@ -189,6 +211,8 @@ export interface FileRouteTypes {
     | '/portal/'
     | '/products/'
     | '/sales/'
+    | '/sales/customers/$id'
+    | '/sales/customers/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -303,6 +327,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesIndexRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/sales/customers/': {
+      id: '/sales/customers/'
+      path: '/customers'
+      fullPath: '/sales/customers/'
+      preLoaderRoute: typeof SalesCustomersIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/customers/$id': {
+      id: '/sales/customers/$id'
+      path: '/customers/$id'
+      fullPath: '/sales/customers/$id'
+      preLoaderRoute: typeof SalesCustomersIdRouteImport
+      parentRoute: typeof SalesRoute
+    }
   }
 }
 
@@ -325,10 +363,14 @@ const PortalRouteWithChildren =
 
 interface SalesRouteChildren {
   SalesIndexRoute: typeof SalesIndexRoute
+  SalesCustomersIdRoute: typeof SalesCustomersIdRoute
+  SalesCustomersIndexRoute: typeof SalesCustomersIndexRoute
 }
 
 const SalesRouteChildren: SalesRouteChildren = {
   SalesIndexRoute: SalesIndexRoute,
+  SalesCustomersIdRoute: SalesCustomersIdRoute,
+  SalesCustomersIndexRoute: SalesCustomersIndexRoute,
 }
 
 const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
