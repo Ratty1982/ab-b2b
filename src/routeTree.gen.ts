@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AboutRouteImport } from './routes/about'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as LoginRouteImport } from './routes/login'
@@ -20,6 +21,7 @@ import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as SalesRouteImport } from './routes/sales'
 import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
 import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
@@ -51,6 +53,11 @@ const IndexRoute = IndexRouteImport.update({
 const AboutRoute = AboutRouteImport.update({
   id: '/about',
   path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ContactRoute = ContactRouteImport.update({
@@ -97,6 +104,11 @@ const WhyAutomotiveBrandsRoute = WhyAutomotiveBrandsRouteImport.update({
   id: '/why-automotive-brands',
   path: '/why-automotive-brands',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
 } as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
   id: '/brands/',
@@ -212,6 +224,7 @@ const SalesQuotesNewRoute = SalesQuotesNewRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
@@ -233,6 +246,7 @@ export interface FileRoutesByFullPath {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
@@ -265,6 +279,7 @@ export interface FileRoutesByTo {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/admin': typeof AdminIndexRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
   '/portal': typeof PortalIndexRoute
@@ -280,6 +295,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
   '/login': typeof LoginRoute
@@ -301,6 +317,7 @@ export interface FileRoutesById {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
   '/portal/': typeof PortalIndexRoute
@@ -317,6 +334,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/about'
+    | '/admin'
     | '/contact'
     | '/crm'
     | '/login'
@@ -338,6 +356,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/admin/'
     | '/brands/'
     | '/crm/'
     | '/portal/'
@@ -370,6 +389,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/admin'
     | '/brands'
     | '/crm'
     | '/portal'
@@ -384,6 +404,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/about'
+    | '/admin'
     | '/contact'
     | '/crm'
     | '/login'
@@ -405,6 +426,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/admin/'
     | '/brands/'
     | '/crm/'
     | '/portal/'
@@ -420,6 +442,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
+  AdminRoute: typeof AdminRouteWithChildren
   ContactRoute: typeof ContactRoute
   CrmRoute: typeof CrmRouteWithChildren
   LoginRoute: typeof LoginRoute
@@ -450,6 +473,13 @@ declare module '@tanstack/react-router' {
       path: '/about'
       fullPath: '/about'
       preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/contact': {
@@ -514,6 +544,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/why-automotive-brands'
       preLoaderRoute: typeof WhyAutomotiveBrandsRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/brands/': {
       id: '/brands/'
@@ -672,6 +709,16 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AdminRouteChildren {
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 interface CrmRouteChildren {
   CrmApplicationsRoute: typeof CrmApplicationsRoute
   CrmManagerRoute: typeof CrmManagerRoute
@@ -734,6 +781,7 @@ const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
+  AdminRoute: AdminRouteWithChildren,
   ContactRoute: ContactRoute,
   CrmRoute: CrmRouteWithChildren,
   LoginRoute: LoginRoute,
