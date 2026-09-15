@@ -5,6 +5,8 @@ import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { StockBadge } from "@/components/ab/Badges";
 import { brands, products, gbp, type Product } from "@/lib/data";
 import { cn } from "@/lib/utils";
+import { TradePrice, TradePriceCell } from "@/components/ab/Price";
+import { useSession } from "@/lib/session";
 
 export const Route = createFileRoute("/products/")({
   validateSearch: (search: Record<string, unknown>): { brand?: string } =>
@@ -220,6 +222,7 @@ function Check({
 }
 
 function ProductCard({ product: p }: { product: Product }) {
+  const { signedIn } = useSession();
   return (
     <article className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40">
       <Link to="/products/$sku" params={{ sku: p.sku }}>
