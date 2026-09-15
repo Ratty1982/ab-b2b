@@ -51,7 +51,7 @@ function Resources() {
       <PageHeader
         eyebrow="Resources"
         title="Downloads for trade customers"
-        sub="Pricing, technical documentation and approved imagery. Trade account holders see account-specific price lists once signed in."
+        lead="Pricing, technical documentation and approved imagery. Trade account holders see account-specific price lists once signed in."
       />
       <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Resources" }]} />

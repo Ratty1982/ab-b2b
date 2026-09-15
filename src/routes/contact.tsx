@@ -26,7 +26,7 @@ const teams = [
 function Contact() {
   return (
     <PublicLayout>
-      <PageHeader eyebrow="Contact" title="Talk to the trade team" sub="Placeholder contact details — send us the real numbers and addresses and we will swap them in." />
+      <PageHeader eyebrow="Contact" title="Talk to the trade team" lead="Placeholder contact details — send us the real numbers and addresses and we will swap them in." />
       <div className="mx-auto grid max-w-5xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-2">
         <div>
           <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Contact" }]} />

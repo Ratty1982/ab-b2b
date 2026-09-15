@@ -32,7 +32,7 @@ function Why() {
       <PageHeader
         eyebrow="Why Automotive Brands"
         title="One trade account. Every brand."
-        sub="What trade customers get when they buy the group rather than five separate suppliers."
+        lead="What trade customers get when they buy the group rather than five separate suppliers."
       />
       <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Why Automotive Brands" }]} />

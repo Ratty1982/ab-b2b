@@ -46,7 +46,7 @@ function TradeSolutions() {
       <PageHeader
         eyebrow="Trade solutions"
         title="Built around how your business buys"
-        sub="Five brands, one account, and pricing structured for the way your trade operates."
+        lead="Five brands, one account, and pricing structured for the way your trade operates."
       />
       <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Trade Solutions" }]} />

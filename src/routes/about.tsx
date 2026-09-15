@@ -26,7 +26,7 @@ function About() {
       <PageHeader
         eyebrow="About us"
         title="The group behind five automotive brands"
-        sub="Manufacturing, distribution and trade supply from a single UK operation."
+        lead="Manufacturing, distribution and trade supply from a single UK operation."
       />
       <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "About Us" }]} />
