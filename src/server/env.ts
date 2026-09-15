@@ -23,6 +23,8 @@ const envSchema = z.object({
   EMAIL_PROVIDER: z.string().optional(),
   EMAIL_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  DEV_SEED_PASSWORD: z.string().optional(),
+  ALLOW_PRODUCTION_SEED: z.string().optional(),
   AUTOPART_BASE_URL: z.string().optional(),
   AUTOPART_API_KEY: z.string().optional(),
   AUTOPART_COMPANY_CODE: z.string().optional(),

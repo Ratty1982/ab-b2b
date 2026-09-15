@@ -1,72 +1,58 @@
+/**
+ * Client session helpers.
+ * Authoritative auth is server-side (HttpOnly cookies + RBAC guards).
+ * This module only exposes a safe client view for UI chrome.
+ */
 import { useEffect, useState } from "react";
+import { useRouter } from "@tanstack/react-router";
+
+import { getClientSession, type ClientSession } from "@/server/auth/session";
+
+export type { ClientSession } from "@/server/auth/session";
+
+export const guestSession: ClientSession = { signedIn: false };
 
 /**
- * Prototype-only session. Deliberately framework-agnostic and stored in
- * localStorage so the production build can swap it for a real auth provider
- * without touching any screen.
+ * Subscribe to the server session for UI (prices, chrome).
+ * Route protection must use beforeLoad + server guards — not this hook alone.
  */
-const KEY = "ab.session";
+export function useSession(): ClientSession & {
+  loading: boolean;
+  refresh: () => Promise<void>;
+} {
+  const [session, setSession] = useState<ClientSession>(guestSession);
+  const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
-export interface Session {
-  signedIn: boolean;
-  company: string;
-  accountNumber: string;
-  contact: string;
-  role: "Trade Account Admin" | "Trade Buyer" | "Trade Accounts User" | "Trade Read Only";
-}
-
-export const guest: Session = {
-  signedIn: false,
-  company: "",
-  accountNumber: "",
-  contact: "",
-  role: "Trade Read Only",
-};
-
-export const demoTradeSession: Session = {
-  signedIn: true,
-  company: "ABC Motor Factors Ltd",
-  accountNumber: "ABC001",
-  contact: "Dan Reeves",
-  role: "Trade Buyer",
-};
-
-const listeners = new Set<() => void>();
-
-function read(): Session {
-  if (typeof window === "undefined") return guest;
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Session) : guest;
-  } catch {
-    return guest;
-  }
-}
-
-export function signIn(session: Session = demoTradeSession) {
-  window.localStorage.setItem(KEY, JSON.stringify(session));
-  listeners.forEach((l) => l());
-}
-
-export function signOut() {
-  window.localStorage.removeItem(KEY);
-  listeners.forEach((l) => l());
-}
-
-/** Returns the guest session during SSR and the first client render. */
-export function useSession(): Session {
-  const [session, setSession] = useState<Session>(guest);
+  const refresh = async () => {
+    try {
+      const next = await getClientSession();
+      setSession(next);
+    } catch {
+      setSession(guestSession);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const sync = () => setSession(read());
-    sync();
-    listeners.add(sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      listeners.delete(sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
+    void refresh();
+    // Re-check when the router navigates (e.g. after login)
+    const unsub = router.subscribe("onResolved", () => {
+      void refresh();
+    });
+    return unsub;
+  }, [router]);
 
-  return session;
+  return { ...session, loading, refresh };
+}
+
+/** @deprecated Prototype localStorage sign-in removed — use signInWithPassword server fn */
+export function signIn(): never {
+  throw new Error("Client localStorage sign-in removed. Use /login.");
+}
+
+/** Prefer signOutCurrent server function from UI handlers */
+export function signOut(): never {
+  throw new Error("Client localStorage sign-out removed. Use signOutCurrent().");
 }

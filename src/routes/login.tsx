@@ -1,7 +1,27 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { useState } from "react";
+import { z } from "zod";
 import { PublicLayout } from "@/components/ab/PublicLayout";
+import {
+  getClientSession,
+  resolvePostLoginPath,
+  safeReturnPath,
+  signInWithPassword,
+} from "@/server/auth/session";
+
+const loginSearchSchema = z.object({
+  returnTo: z.string().optional(),
+});
 
 export const Route = createFileRoute("/login")({
+  validateSearch: (search) => loginSearchSchema.parse(search),
+  beforeLoad: async ({ search }) => {
+    const session = await getClientSession();
+    if (session.signedIn) {
+      const dest = safeReturnPath(search.returnTo, resolvePostLoginPath(session));
+      throw redirect({ href: dest });
+    }
+  },
   head: () => ({
     meta: [
       { title: "Trade Login — Automotive Brands" },
@@ -18,7 +38,12 @@ export const Route = createFileRoute("/login")({
 });
 
 function Login() {
-  const navigate = useNavigate();
+  const navigate = Route.useNavigate();
+  const { returnTo } = Route.useSearch();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
   return (
     <PublicLayout>
@@ -46,7 +71,25 @@ function Login() {
           className="rounded-lg border border-border bg-surface/60 p-6"
           onSubmit={(e) => {
             e.preventDefault();
-            navigate({ to: "/portal" });
+            void (async () => {
+              setPending(true);
+              setError(null);
+              const result = await signInWithPassword({
+                data: { email, password },
+              });
+              setPending(false);
+              if (!result.ok) {
+                setError(result.error);
+                return;
+              }
+              const session = await getClientSession();
+              if (!session.signedIn) {
+                setError("Invalid email or password");
+                return;
+              }
+              const dest = safeReturnPath(returnTo, resolvePostLoginPath(session));
+              await navigate({ href: dest });
+            })();
           }}
         >
           <div className="grid gap-4">
@@ -57,7 +100,10 @@ function Login() {
               <input
                 id="email"
                 type="email"
-                defaultValue="buyer@abcmotorfactors.co.uk"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
                 className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
               />
             </div>
@@ -68,23 +114,28 @@ function Login() {
               <input
                 id="password"
                 type="password"
-                defaultValue="demo-account"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
                 className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
               />
             </div>
+            {error ? (
+              <p className="text-[13px] text-warn" role="alert">
+                {error}
+              </p>
+            ) : null}
             <button
               type="submit"
-              className="h-11 rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110"
+              disabled={pending}
+              className="h-11 rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110 disabled:opacity-60"
             >
-              Sign in to the trade portal
+              {pending ? "Signing in…" : "Sign in to the trade portal"}
             </button>
             <div className="grid gap-2 border-t border-border pt-4 text-[13px]">
-              <span className="text-steel">Prototype shortcuts</span>
-              <Link to="/sales" className="font-semibold text-cyan hover:underline">
-                Sales representative portal →
-              </Link>
-              <Link to="/crm" className="font-semibold text-cyan hover:underline">
-                CRM pipeline →
+              <Link to="/forgot-password" className="font-semibold text-cyan hover:underline">
+                Forgot password?
               </Link>
             </div>
           </div>
