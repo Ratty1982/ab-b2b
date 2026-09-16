@@ -28,13 +28,14 @@ export function AppShell({
     <>
       {nav.map((item) => (
         <Link
-          key={item.to}
+          key={`${item.label}:${item.to}`}
           to={item.to}
-          activeOptions={{ exact: item.exact ?? false }}
+          activeOptions={{ exact: item.exact ?? false, includeSearch: false }}
           onClick={() => setOpen(false)}
-          className="rounded-md px-3 py-2 text-[13px] font-medium text-steel transition-colors hover:bg-secondary hover:text-foreground"
+          className="block rounded-md px-3 py-2 text-[13px] font-medium text-steel transition-colors hover:bg-secondary hover:text-foreground"
           activeProps={{
-            className: "bg-secondary text-foreground border-l-2 border-primary rounded-l-none",
+            className:
+              "block bg-secondary text-foreground border-l-2 border-primary rounded-l-none px-3 py-2 text-[13px] font-medium",
           }}
         >
           {item.label}

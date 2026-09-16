@@ -1,15 +1,17 @@
+import type { AppNavItem } from "@/lib/app-nav";
+import type { NavItem } from "@/components/ab/AppShell";
 import type { PermissionKey } from "@/domain/permissions";
 import type { SafeSessionUser } from "@/server/auth/session";
-import type { NavItem } from "@/components/ab/AppShell";
 
 export function filterNavByPermissions(
-  items: Array<NavItem & { permission?: PermissionKey | PermissionKey[] }>,
+  items: Array<AppNavItem | (NavItem & { permission?: PermissionKey | PermissionKey[]; deferred?: boolean })>,
   user: SafeSessionUser | null,
 ): NavItem[] {
   if (!user) return [];
   const set = new Set(user.navPermissions);
   return items
     .filter((item) => {
+      if (item.deferred) return false;
       if (!item.permission) return true;
       const required = Array.isArray(item.permission) ? item.permission : [item.permission];
       return required.some((p) => set.has(p));

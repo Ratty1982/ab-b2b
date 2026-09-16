@@ -3,8 +3,11 @@ import { ArrowRight, Truck, Warehouse, Headphones, ClipboardList, Download } fro
 import { PublicLayout } from "@/components/ab/PublicLayout";
 import { StockBadge } from "@/components/ab/Badges";
 import { TradePrice } from "@/components/ab/Price";
+import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
 import { brands, products } from "@/lib/data";
 import { categories, news, tradeCustomerTypes } from "@/lib/crm-data";
+import { getPublishedHomepage } from "@/server/cms/service";
+import type { CmsSectionTypeKey } from "@/domain/cms";
 import heroImage from "@/assets/hero-parts.jpg";
 import warehouse from "@/assets/warehouse.jpg";
 import tradeCounter from "@/assets/trade-counter.jpg";
@@ -14,29 +17,52 @@ import brakeDisc from "@/assets/prod-brake-disc.jpg";
 import battery from "@/assets/prod-battery.jpg";
 
 export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Automotive Brands — The brands behind the automotive aftermarket" },
-      {
-        name: "description",
-        content:
-          "Trade supply of Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion to UK motor factors, retailers, workshops and distributors. One trade account, every brand.",
-      },
-      {
-        property: "og:title",
-        content: "Automotive Brands — The brands behind the automotive aftermarket",
-      },
-      {
-        property: "og:description",
-        content:
-          "One trade account for the entire Automotive Brands portfolio. Trade pricing, live availability and fast ordering for UK trade customers.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
+  loader: async () => {
+    try {
+      const published = await getPublishedHomepage();
+      return { cms: published };
+    } catch {
+      return { cms: null };
+    }
+  },
+  head: ({ loaderData }) => {
+    const seoTitle =
+      loaderData?.cms?.seoTitle ??
+      "Automotive Brands — The brands behind the automotive aftermarket";
+    const seoDesc =
+      loaderData?.cms?.metaDescription ??
+      "Trade supply of Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion to UK motor factors, retailers, workshops and distributors. One trade account, every brand.";
+    return {
+      meta: [
+        { title: seoTitle },
+        { name: "description", content: seoDesc },
+        { property: "og:title", content: seoTitle },
+        { property: "og:description", content: seoDesc },
+        { property: "og:type", content: "website" },
+        { name: "twitter:card", content: "summary_large_image" },
+      ],
+    };
+  },
   component: Home,
 });
+
+function Home() {
+  const { cms } = Route.useLoaderData();
+  if (cms?.sections?.length) {
+    return (
+      <PublicLayout kinetic>
+        <CmsPageView
+          sections={cms.sections.map((s) => ({
+            id: s.id,
+            type: s.type as CmsSectionTypeKey,
+            config: s.config as Record<string, unknown>,
+          }))}
+        />
+      </PublicLayout>
+    );
+  }
+  return <LegacyHome />;
+}
 
 const brandArt: Record<string, { image: string; strap: string; ranges: string[] }> = {
   "power-maxed": {
@@ -99,7 +125,7 @@ function Eyebrow({ children, tone = "primary" }: { children: string; tone?: "pri
   );
 }
 
-function Home() {
+function LegacyHome() {
   const featured = products.slice(0, 4);
   const newProducts = products.slice(4, 7);
   const bestSellers = products.slice(0, 5);

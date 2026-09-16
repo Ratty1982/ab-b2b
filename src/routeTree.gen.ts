@@ -46,6 +46,10 @@ import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
 import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
+import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
+import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$slug'
+import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
+import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
@@ -238,6 +242,26 @@ const SalesIndexRoute = SalesIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SalesRoute,
 } as any)
+const AdminApplicationsIndexRoute = AdminApplicationsIndexRouteImport.update({
+  id: '/applications/',
+  path: '/applications/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminContentSlugRoute = AdminContentSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => AdminContentRoute,
+} as any)
+const AdminCustomersIndexRoute = AdminCustomersIndexRouteImport.update({
+  id: '/customers/',
+  path: '/customers/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
+  id: '/customers/$id',
+  path: '/customers/$id',
+  getParentRoute: () => AdminRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -284,7 +308,7 @@ export interface FileRoutesByFullPath {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
-  '/admin/content': typeof AdminContentRoute
+  '/admin/content': typeof AdminContentRouteWithChildren
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
   '/admin/roles': typeof AdminRolesRoute
@@ -307,10 +331,14 @@ export interface FileRoutesByFullPath {
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
+  '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/admin/applications/': typeof AdminApplicationsIndexRoute
+  '/admin/customers/': typeof AdminCustomersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
 }
@@ -325,7 +353,7 @@ export interface FileRoutesByTo {
   '/resources': typeof ResourcesRoute
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
-  '/admin/content': typeof AdminContentRoute
+  '/admin/content': typeof AdminContentRouteWithChildren
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
   '/admin/roles': typeof AdminRolesRoute
@@ -348,10 +376,14 @@ export interface FileRoutesByTo {
   '/portal': typeof PortalIndexRoute
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
+  '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/admin/applications': typeof AdminApplicationsIndexRoute
+  '/admin/customers': typeof AdminCustomersIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
 }
@@ -371,7 +403,7 @@ export interface FileRoutesById {
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
-  '/admin/content': typeof AdminContentRoute
+  '/admin/content': typeof AdminContentRouteWithChildren
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
   '/admin/roles': typeof AdminRolesRoute
@@ -394,10 +426,14 @@ export interface FileRoutesById {
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
+  '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/admin/applications/': typeof AdminApplicationsIndexRoute
+  '/admin/customers/': typeof AdminCustomersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
 }
@@ -441,10 +477,14 @@ export interface FileRouteTypes {
     | '/portal/'
     | '/products/'
     | '/sales/'
+    | '/admin/content/$slug'
+    | '/admin/customers/$id'
     | '/api/auth/$'
     | '/sales/customers/$id'
     | '/sales/order/$id'
     | '/sales/quotes/new'
+    | '/admin/applications/'
+    | '/admin/customers/'
     | '/sales/customers/'
     | '/sales/quotes/'
   fileRoutesByTo: FileRoutesByTo
@@ -482,10 +522,14 @@ export interface FileRouteTypes {
     | '/portal'
     | '/products'
     | '/sales'
+    | '/admin/content/$slug'
+    | '/admin/customers/$id'
     | '/api/auth/$'
     | '/sales/customers/$id'
     | '/sales/order/$id'
     | '/sales/quotes/new'
+    | '/admin/applications'
+    | '/admin/customers'
     | '/sales/customers'
     | '/sales/quotes'
   id:
@@ -527,10 +571,14 @@ export interface FileRouteTypes {
     | '/portal/'
     | '/products/'
     | '/sales/'
+    | '/admin/content/$slug'
+    | '/admin/customers/$id'
     | '/api/auth/$'
     | '/sales/customers/$id'
     | '/sales/order/$id'
     | '/sales/quotes/new'
+    | '/admin/applications/'
+    | '/admin/customers/'
     | '/sales/customers/'
     | '/sales/quotes/'
   fileRoutesById: FileRoutesById
@@ -819,6 +867,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesIndexRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/admin/applications/': {
+      id: '/admin/applications/'
+      path: '/applications'
+      fullPath: '/admin/applications/'
+      preLoaderRoute: typeof AdminApplicationsIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/content/$slug': {
+      id: '/admin/content/$slug'
+      path: '/$slug'
+      fullPath: '/admin/content/$slug'
+      preLoaderRoute: typeof AdminContentSlugRouteImport
+      parentRoute: typeof AdminContentRoute
+    }
+    '/admin/customers/': {
+      id: '/admin/customers/'
+      path: '/customers'
+      fullPath: '/admin/customers/'
+      preLoaderRoute: typeof AdminCustomersIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/customers/$id': {
+      id: '/admin/customers/$id'
+      path: '/customers/$id'
+      fullPath: '/admin/customers/$id'
+      preLoaderRoute: typeof AdminCustomersIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -864,22 +940,40 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AdminContentRouteChildren {
+  AdminContentSlugRoute: typeof AdminContentSlugRoute
+}
+
+const AdminContentRouteChildren: AdminContentRouteChildren = {
+  AdminContentSlugRoute: AdminContentSlugRoute,
+}
+
+const AdminContentRouteWithChildren = AdminContentRoute._addFileChildren(
+  AdminContentRouteChildren,
+)
+
 interface AdminRouteChildren {
-  AdminContentRoute: typeof AdminContentRoute
+  AdminContentRoute: typeof AdminContentRouteWithChildren
   AdminPricingRoute: typeof AdminPricingRoute
   AdminProductsRoute: typeof AdminProductsRoute
   AdminRolesRoute: typeof AdminRolesRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  AdminCustomersIdRoute: typeof AdminCustomersIdRoute
+  AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
+  AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
-  AdminContentRoute: AdminContentRoute,
+  AdminContentRoute: AdminContentRouteWithChildren,
   AdminPricingRoute: AdminPricingRoute,
   AdminProductsRoute: AdminProductsRoute,
   AdminRolesRoute: AdminRolesRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
+  AdminCustomersIdRoute: AdminCustomersIdRoute,
+  AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
+  AdminCustomersIndexRoute: AdminCustomersIndexRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
