@@ -19,7 +19,6 @@ export function defaultHomepageSections(): Array<{
         variant: "split",
         spacing: "relaxed",
         media: {
-          src: "/assets/hero-parts.jpg",
           alt: "Brake discs and alloy wheels under studio lighting",
         },
       },
