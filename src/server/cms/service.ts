@@ -30,6 +30,9 @@ export async function listCmsPages(actorUserId: string) {
     ...p,
     publishedAt: p.publishedAt?.toISOString() ?? null,
     updatedAt: p.updatedAt.toISOString(),
+    hasUnpublishedChanges: Boolean(
+      p.draftVersionId && p.draftVersionId !== p.publishedVersionId,
+    ),
   }));
 }
 

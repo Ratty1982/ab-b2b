@@ -1,8 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Copy, Eye, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Eye, Monitor, Plus, Smartphone, Tablet, Trash2 } from "lucide-react";
 import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
+import { SectionSettings } from "@/components/cms/SectionSettings";
 import { CMS_SECTION_TYPES, type CmsSectionTypeKey } from "@/domain/cms";
+import { cmsPublicPath } from "@/lib/cms-pages";
 import { getCmsPageDraftFn, publishCmsPageFn, saveCmsDraftFn } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -35,6 +37,7 @@ function defaultConfig(type: CmsSectionTypeKey): Record<string, unknown> {
         alignment: "left",
         variant: "split",
         spacing: "standard",
+        media: { alt: "" },
       };
     case "FEATURED_BRANDS":
       return {
@@ -76,6 +79,7 @@ function CmsEditor() {
   const [viewport, setViewport] = useState<Viewport>("desktop");
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     const r = await getCmsPageDraftFn({ data: { slug } });
@@ -92,7 +96,7 @@ function CmsEditor() {
       sortOrder: s.sortOrder,
     }));
     setSections(secs);
-    setSelectedId(secs[0]?.id ?? null);
+    setSelectedId((current) => current ?? secs[0]?.id ?? null);
   }, [slug]);
 
   useEffect(() => {
@@ -125,7 +129,7 @@ function CmsEditor() {
     setSaving(false);
     if (!r.ok) toast.error(r.error);
     else {
-      toast.success("Draft saved");
+      toast.success("Draft saved — live site unchanged");
       await load();
     }
   }
@@ -147,48 +151,75 @@ function CmsEditor() {
     }
     const r = await publishCmsPageFn({ data: { slug } });
     if (!r.ok) toast.error(r.error);
-    else toast.success("Published to live site");
+    else toast.success("Published to the live website");
   }
 
+  function addSection(type: CmsSectionTypeKey) {
+    const id = `tmp-${crypto.randomUUID()}`;
+    setSections((prev) => [
+      ...prev,
+      { id, type, config: defaultConfig(type), enabled: true, sortOrder: prev.length },
+    ]);
+    setSelectedId(id);
+    setAddOpen(false);
+  }
+
+  const publicPath = cmsPublicPath(slug);
+
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
-      <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+    <div className="flex h-[calc(100vh-3.5rem)] flex-col bg-ink">
+      <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4">
         <div className="min-w-0 flex-1">
-          <div className="font-display text-lg uppercase">{title || slug}</div>
-          <div className="text-[11px] text-steel">Draft editor · live site unchanged until publish</div>
+          <Link
+            to="/admin/content"
+            className="text-[11px] font-semibold uppercase tracking-wide text-steel hover:text-foreground"
+          >
+            ← Website
+          </Link>
+          <div className="font-display text-lg uppercase leading-tight">{title || slug}</div>
+          <div className="text-[11px] text-steel">
+            Draft editor · live {publicPath} does not change until Publish
+          </div>
         </div>
         <div className="flex gap-1 rounded-md border border-border p-0.5">
-          {(["desktop", "tablet", "mobile"] as const).map((v) => (
+          {(
+            [
+              { id: "desktop" as const, icon: Monitor, label: "Desktop" },
+              { id: "tablet" as const, icon: Tablet, label: "Tablet" },
+              { id: "mobile" as const, icon: Smartphone, label: "Mobile" },
+            ] as const
+          ).map((v) => (
             <button
-              key={v}
+              key={v.id}
               type="button"
-              onClick={() => setViewport(v)}
+              onClick={() => setViewport(v.id)}
               className={cn(
-                "h-8 rounded px-3 text-[11px] font-semibold uppercase",
-                viewport === v ? "bg-secondary text-foreground" : "text-steel",
+                "inline-flex h-8 items-center gap-1.5 rounded px-3 text-[11px] font-semibold uppercase",
+                viewport === v.id ? "bg-secondary text-foreground" : "text-steel",
               )}
             >
-              {v}
+              <v.icon className="size-3.5" aria-hidden />
+              <span className="hidden sm:inline">{v.label}</span>
             </button>
           ))}
         </div>
+        <a
+          href={publicPath}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-9 items-center gap-1 rounded-md border border-border px-3 text-[12px] font-semibold"
+        >
+          <Eye className="size-3.5" aria-hidden />
+          Preview
+        </a>
         <button
           type="button"
           onClick={() => void saveDraft()}
           disabled={saving}
           className="h-9 rounded-md border border-border px-4 text-[12px] font-semibold"
         >
-          Save draft
+          Save Draft
         </button>
-        <a
-          href="/"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-9 items-center gap-1 rounded-md border border-border px-3 text-[12px] font-semibold"
-        >
-          <Eye className="size-3.5" aria-hidden />
-          Preview live
-        </a>
         <button
           type="button"
           onClick={() => void publish()}
@@ -199,8 +230,10 @@ function CmsEditor() {
       </header>
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[240px_minmax(0,1fr)_300px]">
-        <aside className="hidden overflow-y-auto border-r border-border p-3 lg:block">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-steel">Structure</div>
+        <aside className="overflow-y-auto border-r border-border p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-steel">
+            Page structure
+          </div>
           <ul className="mt-2 grid gap-1">
             {sections.map((s, i) => (
               <li key={s.id}>
@@ -220,38 +253,34 @@ function CmsEditor() {
               </li>
             ))}
           </ul>
-          <div className="mt-4 text-[10px] font-semibold uppercase tracking-wider text-steel">
-            Add section
-          </div>
-          <div className="mt-2 grid gap-1">
-            {CMS_SECTION_TYPES.map((type) => (
-              <button
-                key={type}
-                type="button"
-                className="flex items-center gap-1 rounded-md px-2 py-1.5 text-left text-[11px] text-steel hover:bg-surface hover:text-foreground"
-                onClick={() => {
-                  const id = `tmp-${crypto.randomUUID()}`;
-                  setSections((prev) => [
-                    ...prev,
-                    {
-                      id,
-                      type,
-                      config: defaultConfig(type),
-                      enabled: true,
-                      sortOrder: prev.length,
-                    },
-                  ]);
-                  setSelectedId(id);
-                }}
-              >
-                <Plus className="size-3" aria-hidden />
-                {type.replaceAll("_", " ")}
-              </button>
-            ))}
-          </div>
+          <button
+            type="button"
+            className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1 rounded-md border border-border text-[12px] font-semibold"
+            onClick={() => setAddOpen((v) => !v)}
+          >
+            <Plus className="size-3.5" aria-hidden />
+            Add Section
+          </button>
+          {addOpen ? (
+            <div className="mt-2 grid gap-1 border border-border bg-surface/40 p-2">
+              {CMS_SECTION_TYPES.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className="rounded-md px-2 py-1.5 text-left text-[11px] text-steel hover:bg-surface hover:text-foreground"
+                  onClick={() => addSection(type)}
+                >
+                  {type.replaceAll("_", " ")}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </aside>
 
-        <div className="overflow-y-auto bg-ink/80 p-4">
+        <div className="overflow-y-auto bg-black/40 p-3 sm:p-5">
+          <div className="mb-2 text-center text-[11px] font-semibold uppercase tracking-wide text-steel">
+            Draft preview — click a section to edit
+          </div>
           <div
             className={cn(
               "mx-auto overflow-hidden rounded-md border border-border bg-ink shadow-xl transition-all",
@@ -260,17 +289,39 @@ function CmsEditor() {
               viewport === "mobile" && "max-w-[390px]",
             )}
           >
-            <CmsPageView
-              sections={sections
-                .filter((s) => s.enabled)
-                .map((s) => ({ id: s.id, type: s.type, config: s.config }))}
-            />
+            {sections.length === 0 ? (
+              <div className="px-6 py-16 text-center text-sm text-steel">
+                No sections yet. Add a section from the left panel.
+              </div>
+            ) : (
+              sections.map((s) => (
+                <div key={s.id} className="relative">
+                  <div
+                    className={cn(
+                      "pointer-events-none",
+                      !s.enabled && "opacity-40",
+                      selectedId === s.id && "ring-2 ring-inset ring-primary",
+                    )}
+                  >
+                    <CmsPageView
+                      sections={[{ id: s.id, type: s.type, config: s.config }]}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="absolute inset-0 z-10 cursor-pointer bg-transparent"
+                    aria-label={`Select ${s.type.replaceAll("_", " ")} section`}
+                    onClick={() => setSelectedId(s.id)}
+                  />
+                </div>
+              ))
+            )}
           </div>
         </div>
 
         <aside className="overflow-y-auto border-l border-border p-4">
           {!selected ? (
-            <p className="text-sm text-steel">Select a section</p>
+            <p className="text-sm text-steel">Select a section on the canvas or in the structure list.</p>
           ) : (
             <div className="grid gap-3">
               <div className="font-display text-base uppercase">
@@ -317,15 +368,12 @@ function CmsEditor() {
                     const id = `tmp-${crypto.randomUUID()}`;
                     setSections((prev) => {
                       const i = prev.findIndex((s) => s.id === selected.id);
-                      const copy = {
-                        ...selected,
-                        id,
-                        config: { ...selected.config },
-                      };
+                      const copy = { ...selected, id, config: { ...selected.config } };
                       const next = [...prev];
                       next.splice(i + 1, 0, copy);
                       return next;
                     });
+                    setSelectedId(id);
                   }}
                 >
                   <Copy className="size-3.5" />
@@ -335,6 +383,7 @@ function CmsEditor() {
                   className="grid size-8 place-items-center rounded border border-border text-bad"
                   aria-label="Remove"
                   onClick={() => {
+                    if (!window.confirm("Remove this section from the draft?")) return;
                     setSections((prev) => prev.filter((s) => s.id !== selected.id));
                     setSelectedId(null);
                   }}
@@ -354,21 +403,13 @@ function CmsEditor() {
                     );
                   }}
                 />
-                Enabled
+                Enabled on page
               </label>
-              {Object.entries(selected.config).map(([key, value]) => {
-                if (typeof value === "object") return null;
-                return (
-                  <label key={key} className="grid gap-1 text-[11px] font-semibold uppercase tracking-wide text-steel">
-                    {key}
-                    <input
-                      value={String(value ?? "")}
-                      onChange={(e) => updateSelectedConfig(key, e.target.value)}
-                      className="h-9 rounded-md border border-border bg-surface px-3 text-[13px] font-normal normal-case tracking-normal text-foreground"
-                    />
-                  </label>
-                );
-              })}
+              <SectionSettings
+                type={selected.type}
+                config={selected.config}
+                onChange={updateSelectedConfig}
+              />
             </div>
           )}
         </aside>

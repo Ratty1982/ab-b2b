@@ -47,6 +47,7 @@ import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
 import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
+import { Route as AdminContentIndexRouteImport } from './routes/admin.content.index'
 import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$slug'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
@@ -247,6 +248,11 @@ const AdminApplicationsIndexRoute = AdminApplicationsIndexRouteImport.update({
   path: '/applications/',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminContentIndexRoute = AdminContentIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminContentRoute,
+} as any)
 const AdminContentSlugRoute = AdminContentSlugRouteImport.update({
   id: '/$slug',
   path: '/$slug',
@@ -338,6 +344,7 @@ export interface FileRoutesByFullPath {
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
+  '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
@@ -353,7 +360,6 @@ export interface FileRoutesByTo {
   '/resources': typeof ResourcesRoute
   '/trade-solutions': typeof TradeSolutionsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
-  '/admin/content': typeof AdminContentRouteWithChildren
   '/admin/pricing': typeof AdminPricingRoute
   '/admin/products': typeof AdminProductsRoute
   '/admin/roles': typeof AdminRolesRoute
@@ -383,6 +389,7 @@ export interface FileRoutesByTo {
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/admin/applications': typeof AdminApplicationsIndexRoute
+  '/admin/content': typeof AdminContentIndexRoute
   '/admin/customers': typeof AdminCustomersIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
@@ -433,6 +440,7 @@ export interface FileRoutesById {
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
+  '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
@@ -484,6 +492,7 @@ export interface FileRouteTypes {
     | '/sales/order/$id'
     | '/sales/quotes/new'
     | '/admin/applications/'
+    | '/admin/content/'
     | '/admin/customers/'
     | '/sales/customers/'
     | '/sales/quotes/'
@@ -499,7 +508,6 @@ export interface FileRouteTypes {
     | '/resources'
     | '/trade-solutions'
     | '/why-automotive-brands'
-    | '/admin/content'
     | '/admin/pricing'
     | '/admin/products'
     | '/admin/roles'
@@ -529,6 +537,7 @@ export interface FileRouteTypes {
     | '/sales/order/$id'
     | '/sales/quotes/new'
     | '/admin/applications'
+    | '/admin/content'
     | '/admin/customers'
     | '/sales/customers'
     | '/sales/quotes'
@@ -578,6 +587,7 @@ export interface FileRouteTypes {
     | '/sales/order/$id'
     | '/sales/quotes/new'
     | '/admin/applications/'
+    | '/admin/content/'
     | '/admin/customers/'
     | '/sales/customers/'
     | '/sales/quotes/'
@@ -874,6 +884,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminApplicationsIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/content/': {
+      id: '/admin/content/'
+      path: '/'
+      fullPath: '/admin/content/'
+      preLoaderRoute: typeof AdminContentIndexRouteImport
+      parentRoute: typeof AdminContentRoute
+    }
     '/admin/content/$slug': {
       id: '/admin/content/$slug'
       path: '/$slug'
@@ -942,10 +959,12 @@ declare module '@tanstack/react-router' {
 
 interface AdminContentRouteChildren {
   AdminContentSlugRoute: typeof AdminContentSlugRoute
+  AdminContentIndexRoute: typeof AdminContentIndexRoute
 }
 
 const AdminContentRouteChildren: AdminContentRouteChildren = {
   AdminContentSlugRoute: AdminContentSlugRoute,
+  AdminContentIndexRoute: AdminContentIndexRoute,
 }
 
 const AdminContentRouteWithChildren = AdminContentRoute._addFileChildren(

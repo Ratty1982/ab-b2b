@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PanelHeader, Metric } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
+import { ROUTES } from "@/lib/app-nav";
 import { customers, gbp0, products, recentOrders } from "@/lib/data";
 import { applications, managerTotals, quotes, quoteTotal } from "@/lib/crm-data";
 
@@ -21,10 +22,10 @@ export const Route = createFileRoute("/admin/")({
 });
 
 const queues = [
-  { label: "Trade applications awaiting review", count: 3, to: "/crm/applications" as const },
-  { label: "Orders held for credit check", count: 2, to: "/portal/orders" as const },
-  { label: "Quotes expiring within 7 days", count: 2, to: "/sales/quotes" as const },
-  { label: "Products missing safety data sheets", count: 4, to: "/admin/products" as const },
+  { label: "Trade applications awaiting review", count: 3, to: ROUTES.adminApplications },
+  { label: "Orders held for credit check", count: 2, to: ROUTES.portalOrders },
+  { label: "Quotes expiring within 7 days", count: 2, to: ROUTES.salesQuotes },
+  { label: "Products missing safety data sheets", count: 4, to: ROUTES.adminProducts },
 ];
 
 const auditLog = [

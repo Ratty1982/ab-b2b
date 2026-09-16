@@ -251,12 +251,36 @@ describe("CMS draft vs published", () => {
     const hero = draftBefore.version?.sections.find((s) => s.type === "HERO");
     expect(hero).toBeTruthy();
 
+    const liveHeadlineA = "Published homepage A";
+    const draftHeadlineB = "Draft homepage B";
+
     await saveCmsDraftSections(adminId, "home", [
       {
         type: "HERO",
         enabled: true,
         config: {
-          headline: "DRAFT ONLY HEADLINE",
+          headline: liveHeadlineA,
+          supporting: "Published copy",
+          ctaLabel: "Apply",
+          ctaHref: "/register",
+        },
+      },
+    ]);
+    await publishCmsPage(adminId, "home");
+    const publishedA = await getPublishedHomepage();
+    const aHero = publishedA?.sections.find((s) => s.type === "HERO");
+    const aHeadline =
+      aHero && typeof aHero.config === "object" && aHero.config && "headline" in aHero.config
+        ? String((aHero.config as { headline: string }).headline)
+        : "";
+    expect(aHeadline).toBe(liveHeadlineA);
+
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          headline: draftHeadlineB,
           supporting: "Should not be live yet",
           ctaLabel: "Apply",
           ctaHref: "/register",
@@ -280,7 +304,8 @@ describe("CMS draft vs published", () => {
       liveHero && typeof liveHero.config === "object" && liveHero.config && "headline" in liveHero.config
         ? String((liveHero.config as { headline: string }).headline)
         : "";
-    expect(liveHeadline).not.toBe("DRAFT ONLY HEADLINE");
+    expect(liveHeadline).toBe(liveHeadlineA);
+    expect(liveHeadline).not.toBe(draftHeadlineB);
 
     await publishCmsPage(adminId, "home");
     const after = await getPublishedHomepage();
@@ -289,7 +314,7 @@ describe("CMS draft vs published", () => {
       afterHero && typeof afterHero.config === "object" && afterHero.config && "headline" in afterHero.config
         ? String((afterHero.config as { headline: string }).headline)
         : "";
-    expect(afterHeadline).toBe("DRAFT ONLY HEADLINE");
+    expect(afterHeadline).toBe(draftHeadlineB);
 
     // Restore a sensible homepage for local browsing
     await saveCmsDraftSections(adminId, "home", [
