@@ -68,6 +68,15 @@ bun run db:seed
 
 Uses `@example.invalid` addresses. Password from `DEV_SEED_PASSWORD` or a console-printed default. Refuses production unless `ALLOW_PRODUCTION_SEED=true`.
 
+**Production** uses a separate path — never `db:seed`:
+
+```bash
+bun run db:migrate:deploy
+bun run db:bootstrap:production
+```
+
+See [deployment-coolify.md](./deployment-coolify.md).
+
 ## Route protection
 
 | Area | Guard |

@@ -1,0 +1,84 @@
+# Production deployment (Coolify / Docker)
+
+## Startup sequence
+
+The container `ENTRYPOINT` (`scripts/docker-entrypoint.sh`) runs **before** the
+Nitro server accepts traffic:
+
+1. `prisma migrate deploy` (retries while Postgres is warming up; fails the container on error)
+2. Production system bootstrap (`.output/bootstrap/run-production.mjs`)
+   - Upsert permissions / system roles / role-permission maps
+   - Optional initial SUPER_ADMIN from env
+3. `node .output/server/index.mjs`
+
+No Coolify Pre/Post Deployment Command is required for migrations or RBAC —
+the image entrypoint handles it. If you already have a Pre-Deploy command that
+runs migrate, remove it to avoid double-running (harmless but redundant).
+
+## Required Coolify environment variables
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | Coolify Postgres connection string |
+| `AUTH_SECRET` | Yes | ≥ 32 chars; not the repo default |
+| `APP_URL` | Yes | `https://b2b.automotivebrands.co.uk` |
+| `NODE_ENV` | Yes | `production` |
+
+## Optional one-time initial administrator
+
+| Variable | Required together | Notes |
+| --- | --- | --- |
+| `INITIAL_ADMIN_EMAIL` | With password | Real work email |
+| `INITIAL_ADMIN_PASSWORD` | With email | ≥ 10 characters |
+| `INITIAL_ADMIN_NAME` | No | Defaults from email local-part |
+
+Behaviour:
+
+- **All absent** → bootstrap skips admin creation (safe for later deploys)
+- **Partial** → bootstrap fails and the container does not start (misconfiguration)
+- **First run** → creates Better Auth credential user + `SUPER_ADMIN`
+- **Later runs** → ensures `SUPER_ADMIN` role; **never resets password**
+
+### After first successful login
+
+1. Confirm you can sign in at `/login`
+2. **Remove `INITIAL_ADMIN_PASSWORD` from Coolify** (and ideally the email/name vars too)
+3. Redeploy is fine without those vars — admin already exists
+
+Do **not** set `ALLOW_PRODUCTION_SEED=true` in Coolify. That flag only unlocks the
+development sample seed (`db:seed`), which creates `@example.invalid` users.
+
+## Commands (local / ops)
+
+```bash
+bun run db:migrate:deploy          # apply migrations only
+bun run db:bootstrap:production    # RBAC + optional initial admin
+bun run db:seed                    # DEV ONLY — sample users/companies
+```
+
+## Log verification in Coolify
+
+Look for:
+
+```text
+[ab:entrypoint] Applying migrations (prisma migrate deploy)…
+[ab:entrypoint] Migrations applied.
+[ab:entrypoint] Running production RBAC / system bootstrap…
+[ab:bootstrap] RBAC complete { permissions: …, roles: …, … }
+[ab:bootstrap] Initial SUPER_ADMIN administrator created (you@…)
+  — or — Administrator already exists …
+  — or — … skipping initial admin creation
+[ab:entrypoint] Starting Nitro server…
+➜ Listening on: …
+```
+
+If migrate or bootstrap fails, the process exits non-zero and Coolify should
+mark the deploy unhealthy rather than serving against a wrong schema.
+
+## Verify admin + RBAC
+
+1. Open `https://b2b.automotivebrands.co.uk/login`
+2. Sign in with `INITIAL_ADMIN_EMAIL` / password
+3. Expect redirect to `/admin` (SUPER_ADMIN landing)
+4. Unauthenticated `/portal` → redirect to `/login?returnTo=…`
+5. Trade-only URLs remain forbidden for the admin class as designed by route guards

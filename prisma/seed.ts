@@ -5,16 +5,16 @@
  *
  * Credentials come from DEV_SEED_PASSWORD (default printed to console only).
  * Emails use @example.invalid — local-only fake addresses.
+ *
+ * Production system data (permissions/roles) is applied via:
+ *   bun run db:bootstrap:production
+ * which is also invoked by the Docker entrypoint after migrate deploy.
  */
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { hashPassword } from "better-auth/crypto";
 
-import {
-  PERMISSIONS,
-  SYSTEM_ROLE_KEYS,
-  type SystemRoleKey,
-} from "../src/domain/permissions";
-import { SYSTEM_ROLE_META, SYSTEM_ROLE_PERMISSIONS } from "../src/domain/role-permissions";
+import type { SystemRoleKey } from "../src/domain/permissions";
+import { bootstrapRbac } from "./bootstrap/rbac";
 
 const prisma = new PrismaClient();
 
@@ -22,55 +22,8 @@ function assertDevSeedAllowed() {
   const nodeEnv = process.env["NODE_ENV"] ?? "development";
   if (nodeEnv === "production" && process.env["ALLOW_PRODUCTION_SEED"] !== "true") {
     throw new Error(
-      "Refusing to seed in production. Set ALLOW_PRODUCTION_SEED=true only for controlled ops.",
+      "Refusing to seed development sample data in production. Use db:bootstrap:production for system RBAC.",
     );
-  }
-}
-
-async function upsertPermissions() {
-  for (const key of PERMISSIONS) {
-    await prisma.permission.upsert({
-      where: { key },
-      create: {
-        key,
-        name: key,
-        description: `Permission ${key}`,
-      },
-      update: {},
-    });
-  }
-}
-
-async function upsertRoles() {
-  for (const key of SYSTEM_ROLE_KEYS) {
-    const meta = SYSTEM_ROLE_META[key];
-    const role = await prisma.role.upsert({
-      where: { key },
-      create: {
-        key,
-        name: meta.name,
-        description: meta.description,
-        isSystem: true,
-      },
-      update: {
-        name: meta.name,
-        description: meta.description,
-        isSystem: true,
-      },
-    });
-
-    const desired = SYSTEM_ROLE_PERMISSIONS[key as SystemRoleKey];
-    const perms = await prisma.permission.findMany({
-      where: { key: { in: desired } },
-    });
-
-    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
-    if (perms.length) {
-      await prisma.rolePermission.createMany({
-        data: perms.map((p) => ({ roleId: role.id, permissionId: p.id })),
-        skipDuplicates: true,
-      });
-    }
   }
 }
 
@@ -83,7 +36,6 @@ async function createCredentialUser(opts: {
 }) {
   const existing = await prisma.user.findUnique({ where: { email: opts.email } });
   if (existing) {
-    // Ensure role links
     if (opts.roleKeys?.length) {
       for (const key of opts.roleKeys) {
         const role = await prisma.role.findUniqueOrThrow({ where: { key } });
@@ -133,12 +85,10 @@ async function createCredentialUser(opts: {
 async function main() {
   assertDevSeedAllowed();
 
-  const password =
-    process.env["DEV_SEED_PASSWORD"] ?? "DevOnly-ChangeMe-Phase1!";
+  const password = process.env["DEV_SEED_PASSWORD"] ?? "DevOnly-ChangeMe-Phase1!";
 
-  console.log("[ab:seed] Seeding roles, permissions, and development users…");
-  await upsertPermissions();
-  await upsertRoles();
+  console.log("[ab:seed] Bootstrapping RBAC, then development sample users…");
+  await bootstrapRbac(prisma);
 
   const company = await prisma.company.upsert({
     where: { accountNumber: "ABC001" },
@@ -153,7 +103,6 @@ async function main() {
     update: { name: "ABC Motor Factors Ltd", status: "ACTIVE" },
   });
 
-  // Internal users
   const superAdmin = await createCredentialUser({
     email: "superadmin@example.invalid",
     name: "Rachel Tibbs",
@@ -202,7 +151,6 @@ async function main() {
     roleKeys: ["MANAGEMENT"],
   });
 
-  // Trade users
   const tradeAdmin = await createCredentialUser({
     email: "trade.admin@example.invalid",
     name: "Sam Patel",
@@ -302,7 +250,6 @@ async function main() {
     update: { isPrimary: true },
   });
 
-  // Second company with NO assignment — for negative access tests
   await prisma.company.upsert({
     where: { accountNumber: "XYZ999" },
     create: {
@@ -313,7 +260,7 @@ async function main() {
     update: {},
   });
 
-  console.log("[ab:seed] Done.");
+  console.log("[ab:seed] Done (development sample data only).");
   console.log("[ab:seed] Development users (@example.invalid):");
   console.log("  superadmin@example.invalid");
   console.log("  sales.manager@example.invalid");
@@ -326,9 +273,7 @@ async function main() {
   console.log("  trade.accounts@example.invalid");
   console.log("  trade.readonly@example.invalid");
   if (!process.env["DEV_SEED_PASSWORD"]) {
-    console.log(
-      `[ab:seed] Password (DEV_SEED_PASSWORD not set): ${password}`,
-    );
+    console.log(`[ab:seed] Password (DEV_SEED_PASSWORD not set): ${password}`);
   } else {
     console.log("[ab:seed] Password: (from DEV_SEED_PASSWORD)");
   }

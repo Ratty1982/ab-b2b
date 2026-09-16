@@ -25,6 +25,10 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().optional(),
   DEV_SEED_PASSWORD: z.string().optional(),
   ALLOW_PRODUCTION_SEED: z.string().optional(),
+  /** Optional one-time first admin — validated by bootstrap, not app runtime */
+  INITIAL_ADMIN_EMAIL: z.string().optional(),
+  INITIAL_ADMIN_NAME: z.string().optional(),
+  INITIAL_ADMIN_PASSWORD: z.string().optional(),
   AUTOPART_BASE_URL: z.string().optional(),
   AUTOPART_API_KEY: z.string().optional(),
   AUTOPART_COMPANY_CODE: z.string().optional(),

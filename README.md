@@ -41,6 +41,9 @@ src/
 
 See [docs/architecture.md](docs/architecture.md) and [docs/authentication-rbac.md](docs/authentication-rbac.md).
 
+Coolify production deploy (migrate + RBAC bootstrap + optional first admin):
+[docs/deployment-coolify.md](docs/deployment-coolify.md).
+
 Original Lovable product brief: [docs/lovable-brief.md](docs/lovable-brief.md).
 
 ## Local setup
@@ -110,9 +113,10 @@ bun run start
 | `bun run lint` | ESLint |
 | `bun run db:generate` | Prisma client generate |
 | `bun run db:migrate` | Create/apply migrations (dev) |
-| `bun run db:migrate:deploy` | Apply migrations (prod) |
+| `bun run db:migrate:deploy` | Apply migrations (prod-safe) |
+| `bun run db:bootstrap:production` | Upsert system RBAC (+ optional initial admin) |
 | `bun run db:studio` | Prisma Studio |
-| `bun run db:seed` | Dev roles/users/company seed (not production) |
+| `bun run db:seed` | Dev-only sample users (not for Coolify) |
 
 ## Docker / Coolify
 

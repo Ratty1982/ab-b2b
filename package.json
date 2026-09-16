@@ -18,8 +18,10 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
+    "db:bootstrap:production": "bun run prisma/bootstrap/run-production.ts",
     "db:studio": "prisma studio",
-    "db:seed": "bun run prisma/seed.ts"
+    "db:seed": "bun run prisma/seed.ts",
+    "start:production": "./scripts/docker-entrypoint.sh"
   },
   "overrides": {
     "rolldown": "1.2.1"
@@ -28,6 +30,7 @@
     "@better-auth/prisma-adapter": "^1.7.4",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^6.16.1",
+    "prisma": "^6.16.1",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",
@@ -97,7 +100,6 @@
     "nitro": "3.0.260603-beta",
     "playwright": "^1.63.0",
     "prettier": "^3.7.3",
-    "prisma": "^6.16.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "8.1.5",
