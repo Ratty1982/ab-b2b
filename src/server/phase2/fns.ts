@@ -1,0 +1,284 @@
+import { createServerFn } from "@tanstack/react-start";
+import { getRequestHeaders } from "@tanstack/react-start/server";
+import { auth } from "@/infra/auth";
+import { AuthError } from "@/server/rbac/guards";
+import * as companies from "@/server/companies/service";
+import * as applications from "@/server/applications/service";
+import * as cms from "@/server/cms/service";
+
+async function requireUserId(): Promise<string> {
+  const headers = getRequestHeaders();
+  const session = await auth.api.getSession({ headers });
+  if (!session?.user?.id) {
+    throw new AuthError("Authentication required", "UNAUTHENTICATED", 401);
+  }
+  return session.user.id;
+}
+
+function toError(error: unknown): { ok: false; error: string; code?: string } {
+  if (error instanceof AuthError) {
+    return { ok: false, error: error.message, code: error.code };
+  }
+  if (error && typeof error === "object" && "issues" in error) {
+    return { ok: false, error: "Validation failed", code: "VALIDATION" };
+  }
+  console.error("[ab:fn]", error);
+  return { ok: false, error: "Request failed", code: "INTERNAL" };
+}
+
+export const listCompaniesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.listCompaniesForActor(userId, data ?? {});
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCompanyWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.getCompanyWorkspace(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCompanyFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.createCompany(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCompanyFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.updateCompany(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createContactFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.createContact(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateContactFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.updateContact(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createAddressFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.createAddress(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateAddressFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.updateAddress(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const inviteCompanyUserFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.inviteCompanyUser(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCompanyActivityFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.listCompanyActivity(userId, data.companyId);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listSalesRepsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await companies.listSalesRepsForSelect(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const listPriceListsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await companies.listPriceListsForSelect(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const submitTradeApplicationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const headers = getRequestHeaders();
+      const ip =
+        headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
+      const result = await applications.submitTradeApplication(data, { ip });
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listTradeApplicationsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { status?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.listTradeApplications(userId, data?.status);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getTradeApplicationFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.getTradeApplication(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const approveTradeApplicationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.approveTradeApplication(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const rejectTradeApplicationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.rejectTradeApplication(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCmsPagesFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await cms.listCmsPages(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getCmsPageDraftFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { slug: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cms.getCmsPageDraft(userId, data.slug);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveCmsDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { slug: string; sections: unknown[] })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cms.saveCmsDraftSections(userId, data.slug, data.sections);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const publishCmsPageFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { slug: string; note?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cms.publishCmsPage(userId, data.slug, data.note);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPublishedHomepageFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const result = await cms.getPublishedHomepage();
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});

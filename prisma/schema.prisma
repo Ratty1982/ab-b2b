@@ -25,10 +25,47 @@ enum ActorType {
 
 enum CompanyStatus {
   PROSPECT
+  /// Product language: Pending (trade application / onboarding)
   PENDING_APPROVAL
   ACTIVE
   ON_HOLD
+  SUSPENDED
   CLOSED
+}
+
+enum TaxStatus {
+  STANDARD
+  ZERO_RATED
+  EXEMPT
+  OUTSIDE_SCOPE
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum CmsPageStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CmsSectionType {
+  HERO
+  BRAND_LOGO_STRIP
+  FEATURED_BRANDS
+  CATEGORY_GRID
+  FEATURED_PRODUCTS
+  TEXT_IMAGE
+  IMAGE_TEXT
+  BENEFITS_GRID
+  TRADE_CTA
+  BANNER
+  RICH_TEXT
+  SPACER
 }
 
 /// Company-scoped trade access levels (distinct from system Role).
@@ -330,6 +367,7 @@ model Company {
   companyNumber  String?
   vatNumber      String?
   status         CompanyStatus @default(PROSPECT)
+  taxStatus      TaxStatus     @default(STANDARD)
   paymentTerms   String?
   creditLimit    Decimal?      @db.Decimal(12, 2)
   currency       String        @default("GBP")
@@ -337,6 +375,8 @@ model Company {
   /// External ERP / Autopart account key (source of truth later)
   externalRef    String?       @unique
   website        String?
+  phone          String?
+  primaryEmail   String?
   notes          String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -347,6 +387,7 @@ model Company {
   addresses      Address[]
   assignments    CompanyAssignment[]
   applications   TradeApplication[]
+  invitations    UserInvitation[]
   customerPrices CustomerPrice[]
   baskets        Basket[]
   orders         Order[]
@@ -363,6 +404,7 @@ model Company {
 
   @@index([status])
   @@index([name])
+  @@index([primaryEmail])
 }
 
 model CompanyUser {
@@ -383,17 +425,20 @@ model CompanyUser {
 }
 
 model Contact {
-  id          String   @id @default(cuid())
-  companyId   String
-  firstName   String
-  lastName    String
-  email       String?
-  phone       String?
-  mobile      String?
-  jobTitle    String?
-  isPrimary   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  companyId    String
+  firstName    String
+  lastName     String
+  email        String?
+  phone        String?
+  mobile       String?
+  jobTitle     String?
+  isPrimary    Boolean  @default(false)
+  isPurchasing Boolean  @default(false)
+  isAccounts   Boolean  @default(false)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -402,23 +447,55 @@ model Contact {
 }
 
 model Address {
-  id         String      @id @default(cuid())
-  companyId  String
-  type       AddressType @default(DELIVERY)
-  label      String?
-  line1      String
-  line2      String?
-  town       String
-  county     String?
-  postcode   String
-  country    String      @default("GB")
-  isDefault  Boolean     @default(false)
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  id               String      @id @default(cuid())
+  companyId        String
+  type             AddressType @default(DELIVERY)
+  label            String?
+  line1            String
+  line2            String?
+  town             String
+  county           String?
+  postcode         String
+  country          String      @default("GB")
+  /// Legacy generic default — prefer isDefaultBilling / isDefaultDelivery
+  isDefault        Boolean     @default(false)
+  isDefaultBilling Boolean     @default(false)
+  isDefaultDelivery Boolean    @default(false)
+  contactName      String?
+  contactPhone     String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, type])
+  @@index([companyId, isDefaultBilling])
+  @@index([companyId, isDefaultDelivery])
+}
+
+/// Portal / company-user invitation foundation (email delivery is optional later).
+model UserInvitation {
+  id              String            @id @default(cuid())
+  companyId       String
+  email           String
+  role            CompanyUserRole   @default(TRADE_BUYER)
+  status          InvitationStatus  @default(PENDING)
+  /// SHA-256 hex of the opaque invite token (never store raw token)
+  tokenHash       String            @unique
+  invitedById     String?
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  acceptedUserId  String?
+  /// When true, invite was created but outbound email was not sent (no provider)
+  emailDeferred   Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+  @@index([email])
+  @@index([expiresAt])
 }
 
 model SalesRep {
@@ -964,4 +1041,99 @@ model AuditEvent {
   @@index([targetUserId, createdAt])
   @@index([companyId, createdAt])
   @@index([action, createdAt])
+}
+
+// ─── CMS / page builder foundation ───────────────────────────────────────────
+
+model CmsPage {
+  id              String        @id @default(cuid())
+  slug            String        @unique
+  title           String
+  seoTitle        String?
+  metaDescription String?
+  status          CmsPageStatus @default(DRAFT)
+  draftVersionId  String?       @unique
+  publishedVersionId String?    @unique
+  publishedAt     DateTime?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  versions  CmsPageVersion[]
+  publishEvents CmsPublishEvent[]
+  draftVersion     CmsPageVersion? @relation("CmsPageDraft", fields: [draftVersionId], references: [id], onDelete: SetNull)
+  publishedVersion CmsPageVersion? @relation("CmsPagePublished", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}
+
+model CmsPageVersion {
+  id          String   @id @default(cuid())
+  pageId      String
+  version     Int
+  label       String?
+  /// Snapshot of page SEO fields at this version
+  seoTitle    String?
+  metaDescription String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  page     CmsPage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  sections CmsSection[]
+  draftFor     CmsPage? @relation("CmsPageDraft")
+  publishedFor CmsPage? @relation("CmsPagePublished")
+  publishEvents CmsPublishEvent[]
+
+  @@unique([pageId, version])
+  @@index([pageId, createdAt])
+}
+
+model CmsSection {
+  id        String         @id @default(cuid())
+  versionId String
+  type      CmsSectionType
+  /// Validated JSON config — never executable code
+  config    Json
+  sortOrder Int            @default(0)
+  enabled   Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  version CmsPageVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId, sortOrder])
+}
+
+model CmsMedia {
+  id           String   @id @default(cuid())
+  filename     String
+  contentType  String
+  sizeBytes    Int?
+  width        Int?
+  height       Int?
+  altText      String?
+  /// Object-storage key or abstract URI — not a local filesystem path contract
+  storageKey   String
+  storageProvider String @default("local")
+  uploadedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([contentType])
+  @@index([uploadedById])
+}
+
+model CmsPublishEvent {
+  id              String   @id @default(cuid())
+  pageId          String
+  versionId       String
+  publishedById   String?
+  note            String?
+  createdAt       DateTime @default(now())
+
+  page    CmsPage        @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  version CmsPageVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, createdAt])
 }

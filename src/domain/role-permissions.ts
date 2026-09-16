@@ -14,6 +14,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "companies.view",
   "companies.create",
   "companies.edit",
+  "companies.manage_users",
   "contacts.view",
   "contacts.create",
   "contacts.edit",
@@ -30,10 +31,12 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "tasks.manage",
   "applications.view",
   "applications.review",
+  "applications.approve",
   "sales.view_all_accounts",
   "reports.view",
   "reports.management",
   "cms.view",
+  "cms.page.read",
   "credit.view",
   "audit.view",
   "settings.view",
@@ -127,6 +130,11 @@ const MARKETING_PERMS: PermissionKey[] = [
   "cms.view",
   "cms.edit",
   "cms.publish",
+  "cms.page.read",
+  "cms.page.edit",
+  "cms.page.publish",
+  "cms.media.read",
+  "cms.media.manage",
 ];
 
 /** Company-scoped trade permissions (still require CompanyUser membership). */

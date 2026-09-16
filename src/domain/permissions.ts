@@ -58,6 +58,11 @@ export const PERMISSIONS = [
   "cms.view",
   "cms.edit",
   "cms.publish",
+  "cms.page.read",
+  "cms.page.edit",
+  "cms.page.publish",
+  "cms.media.read",
+  "cms.media.manage",
 
   "users.view",
   "users.manage",

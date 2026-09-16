@@ -148,6 +148,11 @@ export async function requireAdminAccess(
     hasPermission(profile, "cms.view") ||
     hasPermission(profile, "cms.edit") ||
     hasPermission(profile, "cms.publish") ||
+    hasPermission(profile, "cms.page.read") ||
+    hasPermission(profile, "cms.page.edit") ||
+    hasPermission(profile, "cms.page.publish") ||
+    hasPermission(profile, "cms.media.read") ||
+    hasPermission(profile, "cms.media.manage") ||
     hasPermission(profile, "products.create") ||
     hasPermission(profile, "products.edit") ||
     hasPermission(profile, "pricing.edit") ||

@@ -15,6 +15,7 @@ import { PrismaClient } from "@prisma/client";
 
 import { bootstrapRbac } from "./rbac";
 import { bootstrapInitialAdmin } from "./initial-admin";
+import { bootstrapHomepageCms } from "../../src/server/cms/service";
 
 async function main() {
   const databaseUrl = process.env["DATABASE_URL"];
@@ -47,6 +48,12 @@ async function main() {
     } else {
       console.log(`[ab:bootstrap] ${admin.message} (${admin.email})`);
     }
+
+    const cms = await bootstrapHomepageCms(prisma);
+    console.log("[ab:bootstrap] CMS homepage", {
+      created: cms.created,
+      pageId: cms.pageId,
+    });
 
     console.log("[ab:bootstrap] Done.");
   } finally {
