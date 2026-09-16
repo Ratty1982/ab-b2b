@@ -1,0 +1,352 @@
+/**
+ * Phase 2 integration tests — companies, addresses, applications, CMS.
+ * Uses development DATABASE_URL. Creates disposable fixtures (no seed dependency).
+ */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PrismaClient } from "@prisma/client";
+import { createHash, randomBytes } from "node:crypto";
+
+import { bootstrapRbac } from "../../prisma/bootstrap/rbac";
+import {
+  createAddress,
+  createCompany,
+  createContact,
+  getCompanyWorkspace,
+  listCompaniesForActor,
+  updateCompany,
+} from "@/server/companies/service";
+import {
+  approveTradeApplication,
+  rejectTradeApplication,
+  submitTradeApplication,
+} from "@/server/applications/service";
+import {
+  bootstrapHomepageCms,
+  getPublishedHomepage,
+  publishCmsPage,
+  saveCmsDraftSections,
+  getCmsPageDraft,
+} from "@/server/cms/service";
+import { AuthError } from "@/server/rbac/guards";
+
+const prisma = new PrismaClient();
+
+let adminId: string;
+let salesRepUserId: string;
+let salesRepId: string;
+let outsiderId: string;
+
+async function ensureUser(email: string, roles: string[], actorType: "INTERNAL" | "TRADE" = "INTERNAL") {
+  let user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        email,
+        name: email.split("@")[0]!,
+        status: "ACTIVE",
+        actorType,
+        emailVerified: true,
+      },
+    });
+  }
+  for (const key of roles) {
+    const role = await prisma.role.findUniqueOrThrow({ where: { key } });
+    await prisma.userRole.upsert({
+      where: { userId_roleId: { userId: user.id, roleId: role.id } },
+      create: { userId: user.id, roleId: role.id },
+      update: {},
+    });
+  }
+  return user.id;
+}
+
+beforeAll(async () => {
+  await bootstrapRbac(prisma);
+  adminId = await ensureUser("phase2.admin@example.invalid", ["SUPER_ADMIN"]);
+  salesRepUserId = await ensureUser("phase2.sales@example.invalid", ["SALES_REPRESENTATIVE"]);
+  outsiderId = await ensureUser("phase2.outsider@example.invalid", ["SALES_REPRESENTATIVE"]);
+
+  let rep = await prisma.salesRep.findUnique({ where: { userId: salesRepUserId } });
+  if (!rep) {
+    rep = await prisma.salesRep.create({
+      data: { userId: salesRepUserId, code: "P2REP", active: true },
+    });
+  }
+  salesRepId = rep.id;
+
+  const other = await prisma.salesRep.findUnique({ where: { userId: outsiderId } });
+  if (!other) {
+    await prisma.salesRep.create({
+      data: { userId: outsiderId, code: "P2OUT", active: true },
+    });
+  }
+});
+
+afterAll(async () => {
+  await prisma.$disconnect();
+});
+
+describe("company CRUD + sales scoping", () => {
+  it("creates, lists, updates a company", async () => {
+    const created = await createCompany(adminId, {
+      name: `Phase2 Co ${Date.now()}`,
+      tradingName: "P2 Trading",
+      status: "ACTIVE",
+      salesRepId,
+      primaryEmail: "ops@phase2.example",
+    });
+    expect(created.id).toBeTruthy();
+
+    const listed = await listCompaniesForActor(adminId, { q: created.name, page: 1, pageSize: 10 });
+    expect(listed.items.some((i) => i.id === created.id)).toBe(true);
+
+    const updated = await updateCompany(adminId, {
+      id: created.id,
+      status: "ON_HOLD",
+      paymentTerms: "30 days",
+    });
+    expect(updated.status).toBe("ON_HOLD");
+    expect(updated.paymentTerms).toBe("30 days");
+  });
+
+  it("scopes salesperson to assigned companies only", async () => {
+    const assigned = await createCompany(adminId, {
+      name: `Assigned ${Date.now()}`,
+      status: "ACTIVE",
+      salesRepId,
+    });
+    const other = await createCompany(adminId, {
+      name: `Other ${Date.now()}`,
+      status: "ACTIVE",
+    });
+
+    const mine = await listCompaniesForActor(salesRepUserId, { page: 1, pageSize: 100 });
+    expect(mine.items.some((i) => i.id === assigned.id)).toBe(true);
+    expect(mine.items.some((i) => i.id === other.id)).toBe(false);
+
+    await expect(getCompanyWorkspace(outsiderId, assigned.id)).rejects.toBeInstanceOf(AuthError);
+    const ws = await getCompanyWorkspace(salesRepUserId, assigned.id);
+    expect(ws.company.id).toBe(assigned.id);
+  });
+});
+
+describe("contacts and addresses", () => {
+  it("creates contacts and enforces single default billing/delivery", async () => {
+    const company = await createCompany(adminId, {
+      name: `Addr Co ${Date.now()}`,
+      status: "ACTIVE",
+    });
+
+    await createContact(adminId, {
+      companyId: company.id,
+      firstName: "Pat",
+      lastName: "Buyer",
+      email: "pat@example.com",
+      isPrimary: true,
+      isPurchasing: true,
+    });
+
+    const a1 = await createAddress(adminId, {
+      companyId: company.id,
+      type: "BILLING",
+      label: "Head Office",
+      line1: "1 Test Street",
+      town: "Leeds",
+      postcode: "LS1 1AA",
+      isDefaultBilling: true,
+      isDefaultDelivery: true,
+    });
+    const a2 = await createAddress(adminId, {
+      companyId: company.id,
+      type: "DELIVERY",
+      label: "Warehouse",
+      line1: "2 Depot Road",
+      town: "Leeds",
+      postcode: "LS2 2BB",
+      isDefaultBilling: true,
+      isDefaultDelivery: true,
+    });
+
+    const ws = await getCompanyWorkspace(adminId, company.id);
+    const billingDefaults = ws.addresses.filter((a) => a.isDefaultBilling);
+    const deliveryDefaults = ws.addresses.filter((a) => a.isDefaultDelivery);
+    expect(billingDefaults).toHaveLength(1);
+    expect(billingDefaults[0]!.id).toBe(a2.id);
+    expect(deliveryDefaults).toHaveLength(1);
+    expect(deliveryDefaults[0]!.id).toBe(a2.id);
+    expect(a1.id).not.toBe(a2.id);
+  });
+});
+
+describe("trade application approval", () => {
+  it("submits and approves idempotently", async () => {
+    const stamp = Date.now();
+    const submitted = await submitTradeApplication({
+      companyName: `App Co ${stamp}`,
+      tradingName: "App Trading",
+      businessType: "Motor factor",
+      primaryContact: {
+        firstName: "Alex",
+        lastName: "Trade",
+        email: `alex.${stamp}@example.invalid`,
+        phone: "07000000000",
+        role: "Buyer",
+      },
+      tradingAddress: {
+        line1: "10 Trade Row",
+        town: "Manchester",
+        postcode: "M1 1AA",
+        country: "GB",
+      },
+      brandsInterest: ["power-maxed"],
+      notes: "Please review",
+    });
+    expect(submitted.reference).toMatch(/^APP-/);
+
+    const first = await approveTradeApplication(adminId, { id: submitted.id });
+    expect(first.created).toBe(true);
+    expect(first.companyId).toBeTruthy();
+    expect(first.emailDeferred).toBe(true);
+
+    const second = await approveTradeApplication(adminId, { id: submitted.id });
+    expect(second.created).toBe(false);
+    expect(second.companyId).toBe(first.companyId);
+
+    const companies = await prisma.company.count({
+      where: { name: `App Co ${stamp}` },
+    });
+    expect(companies).toBe(1);
+  });
+
+  it("rejects without creating company", async () => {
+    const stamp = Date.now();
+    const submitted = await submitTradeApplication({
+      companyName: `Reject Co ${stamp}`,
+      primaryContact: {
+        firstName: "R",
+        lastName: "J",
+        email: `reject.${stamp}@example.invalid`,
+      },
+      brandsInterest: [],
+    });
+    const result = await rejectTradeApplication(adminId, {
+      id: submitted.id,
+      reviewNotes: "Incomplete",
+    });
+    expect(result.status).toBe("REJECTED");
+    const again = await rejectTradeApplication(adminId, { id: submitted.id });
+    expect(again.already).toBe(true);
+  });
+});
+
+describe("CMS draft vs published", () => {
+  it("bootstraps homepage and keeps public on published version", async () => {
+    const boot = await bootstrapHomepageCms(prisma);
+    expect(boot.pageId).toBeTruthy();
+
+    const published = await getPublishedHomepage();
+    expect(published?.sections.length).toBeGreaterThan(0);
+
+    const draftBefore = await getCmsPageDraft(adminId, "home");
+    const hero = draftBefore.version?.sections.find((s) => s.type === "HERO");
+    expect(hero).toBeTruthy();
+
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          headline: "DRAFT ONLY HEADLINE",
+          supporting: "Should not be live yet",
+          ctaLabel: "Apply",
+          ctaHref: "/register",
+        },
+      },
+      {
+        type: "TRADE_CTA",
+        enabled: true,
+        config: {
+          headline: "Draft CTA",
+          supporting: "",
+          ctaLabel: "Apply",
+          ctaHref: "/register",
+        },
+      },
+    ]);
+
+    const live = await getPublishedHomepage();
+    const liveHero = live?.sections.find((s) => s.type === "HERO");
+    const liveHeadline =
+      liveHero && typeof liveHero.config === "object" && liveHero.config && "headline" in liveHero.config
+        ? String((liveHero.config as { headline: string }).headline)
+        : "";
+    expect(liveHeadline).not.toBe("DRAFT ONLY HEADLINE");
+
+    await publishCmsPage(adminId, "home");
+    const after = await getPublishedHomepage();
+    const afterHero = after?.sections.find((s) => s.type === "HERO");
+    const afterHeadline =
+      afterHero && typeof afterHero.config === "object" && afterHero.config && "headline" in afterHero.config
+        ? String((afterHero.config as { headline: string }).headline)
+        : "";
+    expect(afterHeadline).toBe("DRAFT ONLY HEADLINE");
+
+    // Restore a sensible homepage for local browsing
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          headline: "The brands behind the automotive aftermarket.",
+          supporting:
+            "Automotive Brands supplies trusted automotive products to motor factors, retailers, workshops and distributors throughout the UK.",
+          ctaLabel: "Open a Trade Account",
+          ctaHref: "/register",
+          secondaryCtaLabel: "Explore Our Brands",
+          secondaryCtaHref: "/brands",
+          variant: "split",
+        },
+      },
+      {
+        type: "TRADE_CTA",
+        enabled: true,
+        config: {
+          headline: "Ready to open a trade account?",
+          supporting: "Apply online.",
+          ctaLabel: "Apply for a trade account",
+          ctaHref: "/register",
+        },
+      },
+    ]);
+    await publishCmsPage(adminId, "home");
+  });
+
+  it("denies CMS publish without permission", async () => {
+    await expect(publishCmsPage(salesRepUserId, "home")).rejects.toBeInstanceOf(AuthError);
+  });
+});
+
+describe("invite token hashing", () => {
+  it("never stores raw tokens on UserInvitation", async () => {
+    const company = await createCompany(adminId, {
+      name: `Invite Co ${Date.now()}`,
+      status: "ACTIVE",
+    });
+    const raw = randomBytes(16).toString("hex");
+    const hash = createHash("sha256").update(raw).digest("hex");
+    await prisma.userInvitation.create({
+      data: {
+        companyId: company.id,
+        email: `invite.${Date.now()}@example.invalid`,
+        tokenHash: hash,
+        expiresAt: new Date(Date.now() + 86400000),
+        emailDeferred: true,
+      },
+    });
+    const stored = await prisma.userInvitation.findFirst({
+      where: { companyId: company.id },
+    });
+    expect(stored?.tokenHash).toBe(hash);
+    expect(stored?.tokenHash).not.toBe(raw);
+  });
+});

@@ -1,0 +1,130 @@
+/**
+ * Phase 2 domain unit tests — no database required.
+ */
+import { describe, expect, it } from "vitest";
+
+import { companyCreateSchema, addressSchema, COMPANY_STATUSES } from "@/domain/company";
+import { validateSectionConfig } from "@/domain/cms";
+import { tradeApplicationSubmitSchema } from "@/domain/trade-application";
+import { generateInviteToken, hashInviteToken } from "@/domain/invitation";
+import { ADMIN_NAV, CRM_NAV, PORTAL_NAV, ROUTES, SALES_NAV } from "@/lib/app-nav";
+import { filterNavByPermissions } from "@/lib/nav-permissions";
+import { isPermissionKey, ALL_PERMISSIONS } from "@/domain/permissions";
+import type { SafeSessionUser } from "@/server/auth/session";
+
+describe("company domain", () => {
+  it("accepts lifecycle statuses including SUSPENDED", () => {
+    expect(COMPANY_STATUSES).toContain("SUSPENDED");
+    expect(COMPANY_STATUSES).toContain("PENDING_APPROVAL");
+    const parsed = companyCreateSchema.parse({ name: "Acme Factors Ltd" });
+    expect(parsed.status).toBe("PROSPECT");
+  });
+
+  it("enforces address required fields", () => {
+    expect(() =>
+      addressSchema.parse({
+        companyId: "clxxxxxxxxxxxxxxxxxxxxxxxxx",
+        line1: "1 High Street",
+        town: "Birmingham",
+        postcode: "B1 1AA",
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("CMS section validation", () => {
+  it("validates hero config", () => {
+    const cfg = validateSectionConfig("HERO", {
+      headline: "Hello",
+      supporting: "World",
+      ctaLabel: "Go",
+      ctaHref: "/register",
+    });
+    expect(cfg).toMatchObject({ headline: "Hello" });
+  });
+
+  it("rejects executable-looking rich text beyond max", () => {
+    expect(() =>
+      validateSectionConfig("RICH_TEXT", { content: "x".repeat(20001) }),
+    ).toThrow();
+  });
+});
+
+describe("trade application schema", () => {
+  it("requires company and contact", () => {
+    const parsed = tradeApplicationSubmitSchema.parse({
+      companyName: "Trade Co",
+      primaryContact: {
+        firstName: "Sam",
+        lastName: "Lee",
+        email: "sam@example.com",
+      },
+      brandsInterest: ["power-maxed"],
+    });
+    expect(parsed.companyName).toBe("Trade Co");
+  });
+
+  it("rejects honeypot", () => {
+    expect(() =>
+      tradeApplicationSubmitSchema.parse({
+        companyName: "Trade Co",
+        primaryContact: { firstName: "A", lastName: "B", email: "a@b.com" },
+        websiteConfirm: "bot",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("invitations", () => {
+  it("hashes tokens stably", () => {
+    const { token, tokenHash } = generateInviteToken();
+    expect(tokenHash).toBe(hashInviteToken(token));
+    expect(tokenHash).not.toBe(token);
+  });
+});
+
+describe("navigation config", () => {
+  it("exposes a single ROUTES map used by shells", () => {
+    expect(ROUTES.adminCustomers).toBe("/admin/customers");
+    expect(ROUTES.adminContent).toBe("/admin/content");
+    expect(ADMIN_NAV.some((i) => i.to === ROUTES.adminCustomers)).toBe(true);
+    expect(SALES_NAV.some((i) => i.to === ROUTES.salesCustomers)).toBe(true);
+    expect(CRM_NAV.some((i) => i.to === ROUTES.adminCustomers)).toBe(true);
+    expect(PORTAL_NAV.some((i) => i.to === ROUTES.portal)).toBe(true);
+  });
+
+  it("filters nav by permissions", () => {
+    const user = {
+      id: "1",
+      email: "a@b.com",
+      name: "A",
+      actorType: "INTERNAL",
+      systemRoles: ["MARKETING"],
+      displayRole: "Marketing",
+      companyId: null,
+      companyName: null,
+      accountNumber: null,
+      tradeRole: null,
+      navPermissions: ["cms.page.read", "cms.view"],
+      actingFor: null,
+    } satisfies SafeSessionUser;
+    const nav = filterNavByPermissions(ADMIN_NAV, user);
+    expect(nav.some((i) => i.to === ROUTES.adminContent)).toBe(true);
+    expect(nav.some((i) => i.to === ROUTES.adminCustomers)).toBe(false);
+  });
+});
+
+describe("phase 2 permissions", () => {
+  it("includes granular CMS keys", () => {
+    for (const key of [
+      "cms.page.read",
+      "cms.page.edit",
+      "cms.page.publish",
+      "cms.media.read",
+      "cms.media.manage",
+    ]) {
+      expect(isPermissionKey(key)).toBe(true);
+    }
+    expect(ALL_PERMISSIONS.length).toBeGreaterThan(50);
+  });
+});

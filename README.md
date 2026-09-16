@@ -4,17 +4,18 @@ Independent B2B trade platform for **Automotive Brands** (automotivebrands.co.uk
 
 This repository started as a Lovable UX prototype and is being converted into a production Node application. **It is completely separate from AlphaOps.**
 
-## Current status (Phase 1)
+## Current status (Phase 2)
 
 | Layer | Status |
 | --- | --- |
-| Approved UI / routes | Preserved prototype (mock catalogue/CRM data) |
-| TanStack Start + Vite | Production-oriented, Lovable-decoupled |
-| PostgreSQL + Prisma | Phase 0 + Phase 1 migrations |
-| Auth / sessions / RBAC / audit | Better Auth + relational RBAC |
-| Autopart / Stripe / email provider | Not started (email adapter interface only) |
+| Auth / RBAC / audit | Phase 1 live in production |
+| Customers / companies | Production CRUD + workspace (contacts, users, addresses, commercial) |
+| Trade applications | Public submit + admin approve/reject (idempotent) |
+| CMS homepage | Draft/publish page builder + published homepage rendering |
+| Autopart / orders / pricing engine / email send | Deferred |
 
-Prototype screens still read catalogue/CRM mocks from `src/lib/data.ts` and `src/lib/crm-data.ts`. Do not treat mock figures as live business data.
+Prototype catalogue screens may still use mock product data. Customer/application/CMS paths use Postgres.
+
 
 ## Stack
 

@@ -10,6 +10,7 @@ Nitro server accepts traffic:
 3. Production system bootstrap (`.output/bootstrap/run-production.mjs`)
    - Upsert permissions / system roles / role-permission maps
    - Optional initial SUPER_ADMIN from env
+   - Idempotent CMS homepage seed (published draft) if missing
 4. `node .output/server/index.mjs`
 
 Prisma is invoked via its **package entrypoint** (`node_modules/prisma/build/index.js`),
@@ -88,3 +89,14 @@ mark the deploy unhealthy.
 3. Expect redirect to `/admin` (SUPER_ADMIN landing)
 4. Unauthenticated `/portal` → redirect to `/login?returnTo=…`
 5. Trade-only URLs remain forbidden for the admin class as designed by route guards
+
+## Phase 2 deploy notes
+
+- Migration `20260916210000_phase2_customer_cms` extends companies/contacts/addresses, adds invitations + CMS tables, and `SUSPENDED` company status.
+- RBAC bootstrap now upserts ~55 permissions (adds `cms.page.*` / `cms.media.*`) and refreshes system role maps.
+- Bootstrap also ensures a published CMS `home` page exists (idempotent). Public `/` reads **published** version only.
+- No new required environment variables for Phase 2.
+- Optional later: object storage vars for CMS media uploads (abstraction only; uploads not required yet).
+- After deploy: open **Admin → Customers**, **Admin → Trade Applications**, **Admin → Website → Homepage** editor.
+- Invitations are created with `emailDeferred: true` until an email provider is configured — do not expect outbound mail.
+

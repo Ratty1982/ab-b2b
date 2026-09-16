@@ -13,6 +13,7 @@ describe("permission catalogue", () => {
       "orders.place_for_customer",
       "credit.edit",
       "cms.publish",
+      "cms.page.publish",
       "impersonation.order_for_customer",
       "audit.view",
     ];
