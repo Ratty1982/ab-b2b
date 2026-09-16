@@ -63,7 +63,7 @@ export function PublicHeader() {
               aria-expanded={open}
               className="grid size-9 shrink-0 place-items-center rounded-md border border-border xl:hidden"
             >
-              {open ? <Menu className="size-4" /> : <Menu className="size-4" />}
+              {open ? <X className="size-4" /> : <Menu className="size-4" />}
             </button>
           </div>
         </div>
@@ -172,5 +172,3 @@ export function Breadcrumbs({ items }: { items: { label: string; to?: string }[]
     </nav>
   );
 }
-
-export { X };
