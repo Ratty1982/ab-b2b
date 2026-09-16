@@ -1,9 +1,8 @@
 #!/bin/sh
 # Production container entrypoint (Coolify / Docker).
-# Fail-fast: any migration or bootstrap failure prevents the server starting.
+# Fail-fast: migration/bootstrap CLI failures prevent the server starting.
+# DB readiness retries ONLY for transient connectivity — never for Prisma install errors.
 set -eu
-
-echo "[ab:entrypoint] Starting Automotive Brands production bootstrap…"
 
 if [ -z "${DATABASE_URL:-}" ]; then
   echo "[ab:entrypoint] ERROR: DATABASE_URL is not set" >&2
@@ -15,24 +14,29 @@ if [ -z "${AUTH_SECRET:-}" ]; then
   exit 1
 fi
 
-PRISMA_BIN="./node_modules/.bin/prisma"
-if [ ! -x "$PRISMA_BIN" ]; then
-  echo "[ab:entrypoint] ERROR: Prisma CLI missing at $PRISMA_BIN" >&2
+# Invoke the package entrypoint — never a flattened/copied .bin wrapper.
+# Prisma 6 resolves WASM/engine assets relative to node_modules/prisma/build/.
+PRISMA_CLI="node ./node_modules/prisma/build/index.js"
+if [ ! -f "./node_modules/prisma/build/index.js" ]; then
+  echo "[ab:entrypoint] ERROR: Prisma CLI package missing at ./node_modules/prisma/build/index.js" >&2
+  exit 1
+fi
+if [ ! -f "./node_modules/prisma/build/prisma_schema_build_bg.wasm" ]; then
+  echo "[ab:entrypoint] ERROR: Prisma WASM asset missing (prisma_schema_build_bg.wasm)" >&2
   exit 1
 fi
 
+echo "[ab:entrypoint] Starting Automotive Brands production bootstrap…"
+
+echo "[ab:entrypoint] Waiting for database connectivity…"
+node ./scripts/wait-for-db.mjs
+
 echo "[ab:entrypoint] Applying migrations (prisma migrate deploy)…"
-attempt=1
-max_attempts=30
-until "$PRISMA_BIN" migrate deploy; do
-  if [ "$attempt" -ge "$max_attempts" ]; then
-    echo "[ab:entrypoint] ERROR: prisma migrate deploy failed after ${max_attempts} attempts" >&2
-    exit 1
-  fi
-  echo "[ab:entrypoint] Database not ready (attempt ${attempt}/${max_attempts}); retrying in 2s…"
-  attempt=$((attempt + 1))
-  sleep 2
-done
+# No retry loop here: schema/CLI/migration failures are deterministic and must fail the deploy.
+if ! $PRISMA_CLI migrate deploy; then
+  echo "[ab:entrypoint] ERROR: prisma migrate deploy failed" >&2
+  exit 1
+fi
 echo "[ab:entrypoint] Migrations applied."
 
 echo "[ab:entrypoint] Running production RBAC / system bootstrap…"

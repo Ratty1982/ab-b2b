@@ -5,11 +5,15 @@
 The container `ENTRYPOINT` (`scripts/docker-entrypoint.sh`) runs **before** the
 Nitro server accepts traffic:
 
-1. `prisma migrate deploy` (retries while Postgres is warming up; fails the container on error)
-2. Production system bootstrap (`.output/bootstrap/run-production.mjs`)
+1. Wait for Postgres connectivity (`scripts/wait-for-db.mjs`) — retries **only** transient connection errors
+2. `node node_modules/prisma/build/index.js migrate deploy` (fail-fast; no retry on CLI/schema errors)
+3. Production system bootstrap (`.output/bootstrap/run-production.mjs`)
    - Upsert permissions / system roles / role-permission maps
    - Optional initial SUPER_ADMIN from env
-3. `node .output/server/index.mjs`
+4. `node .output/server/index.mjs`
+
+Prisma is invoked via its **package entrypoint** (`node_modules/prisma/build/index.js`),
+not a copied `.bin` shim, so WASM/engine assets resolve correctly.
 
 No Coolify Pre/Post Deployment Command is required for migrations or RBAC —
 the image entrypoint handles it. If you already have a Pre-Deploy command that
@@ -61,9 +65,10 @@ bun run db:seed                    # DEV ONLY — sample users/companies
 Look for:
 
 ```text
+[ab:entrypoint] Waiting for database connectivity…
+[ab:wait-for-db] Database ready (attempt 1)
 [ab:entrypoint] Applying migrations (prisma migrate deploy)…
 [ab:entrypoint] Migrations applied.
-[ab:entrypoint] Running production RBAC / system bootstrap…
 [ab:bootstrap] RBAC complete { permissions: …, roles: …, … }
 [ab:bootstrap] Initial SUPER_ADMIN administrator created (you@…)
   — or — Administrator already exists …
@@ -72,8 +77,9 @@ Look for:
 ➜ Listening on: …
 ```
 
-If migrate or bootstrap fails, the process exits non-zero and Coolify should
-mark the deploy unhealthy rather than serving against a wrong schema.
+If migrate or bootstrap fails, the process exits non-zero immediately (no 30×
+“Database not ready” loop for Prisma CLI/install errors) and Coolify should
+mark the deploy unhealthy.
 
 ## Verify admin + RBAC
 
