@@ -97,8 +97,10 @@ App defaults to [http://localhost:43127](http://localhost:43127).
 
 ```bash
 bun run build
+# Local prod-like start (migrate + bootstrap + server):
+bun run start:production
+# Or server only (after migrate/bootstrap already done):
 bun run start
-# starts: node .output/server/index.mjs
 ```
 
 ### Useful scripts
@@ -107,7 +109,8 @@ bun run start
 | --- | --- |
 | `bun run dev` | Vite / TanStack Start dev server |
 | `bun run build` | Production build |
-| `bun run start` | Run Nitro Node server output |
+| `bun run start` | Run Nitro Node server output only |
+| `bun run start:production` | Entrypoint: migrate → bootstrap → server |
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run test` | Vitest (unit + RBAC integration) |
 | `bun run lint` | ESLint |
@@ -121,9 +124,15 @@ bun run start
 ## Docker / Coolify
 
 - `docker-compose.yml` — local Postgres 16
-- `Dockerfile` — multi-stage Bun install/build + Node runner for Coolify
+- `Dockerfile` — multi-stage Bun install/build + Node runner; **entrypoint** runs `prisma migrate deploy`, production RBAC bootstrap, then Nitro
 
-Set `DATABASE_URL`, `AUTH_SECRET`, and `APP_URL` in the Coolify environment. Run `prisma migrate deploy` as a release step before or on deploy. Do **not** run `db:seed` in production.
+Set at least `DATABASE_URL`, `AUTH_SECRET`, and `APP_URL` in Coolify.
+
+Optional one-time first admin: `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, `INITIAL_ADMIN_NAME` — remove the password after first successful login.
+
+Do **not** run `db:seed` or set `ALLOW_PRODUCTION_SEED` in Coolify.
+
+Full Coolify checklist: [docs/deployment-coolify.md](docs/deployment-coolify.md).
 
 ## Public catalogue policy
 
