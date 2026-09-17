@@ -54,6 +54,7 @@ import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$sl
 import { Route as AdminContentMediaRouteImport } from './routes/admin.content.media'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminProductsIndexRouteImport } from './routes/admin.products.index'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -292,6 +293,11 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminProductsIndexRoute = AdminProductsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminProductsRoute,
+} as any)
 const AdminProductsIdRoute = AdminProductsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -407,6 +413,7 @@ export interface FileRoutesByFullPath {
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
+  '/admin/products/': typeof AdminProductsIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -426,7 +433,6 @@ export interface FileRoutesByTo {
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/pricing': typeof AdminPricingRoute
-  '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/brands/$slug': typeof BrandsSlugRoute
@@ -461,6 +467,7 @@ export interface FileRoutesByTo {
   '/admin/applications': typeof AdminApplicationsIndexRoute
   '/admin/content': typeof AdminContentIndexRoute
   '/admin/customers': typeof AdminCustomersIndexRoute
+  '/admin/products': typeof AdminProductsIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -521,6 +528,7 @@ export interface FileRoutesById {
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
+  '/admin/products/': typeof AdminProductsIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -582,6 +590,7 @@ export interface FileRouteTypes {
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
+    | '/admin/products/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
@@ -601,7 +610,6 @@ export interface FileRouteTypes {
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/pricing'
-    | '/admin/products'
     | '/admin/roles'
     | '/admin/settings'
     | '/brands/$slug'
@@ -636,6 +644,7 @@ export interface FileRouteTypes {
     | '/admin/applications'
     | '/admin/content'
     | '/admin/customers'
+    | '/admin/products'
     | '/sales/customers'
     | '/sales/quotes'
     | '/admin/content/$slug/preview'
@@ -695,6 +704,7 @@ export interface FileRouteTypes {
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
+    | '/admin/products/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
@@ -1043,6 +1053,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/products/': {
+      id: '/admin/products/'
+      path: '/'
+      fullPath: '/admin/products/'
+      preLoaderRoute: typeof AdminProductsIndexRouteImport
+      parentRoute: typeof AdminProductsRoute
+    }
     '/admin/products/$id': {
       id: '/admin/products/$id'
       path: '/$id'
@@ -1171,11 +1188,13 @@ const AdminProductsImportsRouteWithChildren =
 interface AdminProductsRouteChildren {
   AdminProductsIdRoute: typeof AdminProductsIdRoute
   AdminProductsImportsRoute: typeof AdminProductsImportsRouteWithChildren
+  AdminProductsIndexRoute: typeof AdminProductsIndexRoute
 }
 
 const AdminProductsRouteChildren: AdminProductsRouteChildren = {
   AdminProductsIdRoute: AdminProductsIdRoute,
   AdminProductsImportsRoute: AdminProductsImportsRouteWithChildren,
+  AdminProductsIndexRoute: AdminProductsIndexRoute,
 }
 
 const AdminProductsRouteWithChildren = AdminProductsRoute._addFileChildren(
