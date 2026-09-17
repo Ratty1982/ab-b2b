@@ -116,19 +116,19 @@ function AdminBrands() {
               await load();
             })();
           }}>
-            <Field label="Name"><input required value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} className={inputClass} /></Field>
-            <Field label="Slug"><input value={edit.slug ?? ""} onChange={(e) => setEdit({ ...edit, slug: e.target.value })} className={inputClass} /></Field>
-            <Field label="Tagline"><input value={edit.tagline ?? ""} onChange={(e) => setEdit({ ...edit, tagline: e.target.value })} className={inputClass} /></Field>
-            <Field label="Description"><textarea value={edit.description ?? ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} className={`${inputClass} min-h-24`} /></Field>
-            <Field label="Display order"><input type="number" value={edit.sortOrder ?? 0} onChange={(e) => setEdit({ ...edit, sortOrder: Number(e.target.value) })} className={inputClass} /></Field>
+            <Field label="Name"><input required value={edit.name ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, name: e.target.value } : prev))} className={inputClass} /></Field>
+            <Field label="Slug"><input value={edit.slug ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, slug: e.target.value } : prev))} className={inputClass} /></Field>
+            <Field label="Tagline"><input value={edit.tagline ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, tagline: e.target.value } : prev))} className={inputClass} /></Field>
+            <Field label="Description"><textarea value={edit.description ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, description: e.target.value } : prev))} className={`${inputClass} min-h-24`} /></Field>
+            <Field label="Display order"><input type="number" value={edit.sortOrder ?? 0} onChange={(e) => setEdit((prev) => (prev ? { ...prev, sortOrder: Number(e.target.value) } : prev))} className={inputClass} /></Field>
             <label className="flex items-center gap-2 text-[13px]">
-              <input type="checkbox" checked={edit.isActive ?? true} onChange={(e) => setEdit({ ...edit, isActive: e.target.checked })} />
+              <input type="checkbox" checked={edit.isActive ?? true} onChange={(e) => setEdit((prev) => (prev ? { ...prev, isActive: e.target.checked } : prev))} />
               Active
             </label>
             <BrandLogoPicker
               label={edit.name || "Brand"}
               logo={edit.logoMediaId ? { mediaId: edit.logoMediaId, src: edit.logoSrc ?? undefined, alt: edit.logoAlt ?? undefined } : undefined}
-              onChange={(next) => setEdit({ ...edit, logoMediaId: next?.mediaId ?? null, logoSrc: next?.src ?? null, logoAlt: next?.alt ?? null })}
+              onChange={(next) => setEdit((prev) => (prev ? { ...prev, logoMediaId: next?.mediaId ?? null, logoSrc: next?.src ?? null, logoAlt: next?.alt ?? null } : prev))}
             />
             {edit.id && (edit.productCount ?? 0) > 0 ? (
               <p className="text-[12px] text-steel">This brand has {edit.productCount} products, so it cannot be deleted. Deactivate it instead.</p>

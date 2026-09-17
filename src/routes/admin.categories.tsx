@@ -138,26 +138,26 @@ function AdminCategories() {
               await load();
             })();
           }}>
-            <Field label="Name"><input required value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} className={inputClass} /></Field>
-            <Field label="Slug"><input value={edit.slug ?? ""} onChange={(e) => setEdit({ ...edit, slug: e.target.value })} className={inputClass} /></Field>
+            <Field label="Name"><input required value={edit.name ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, name: e.target.value } : prev))} className={inputClass} /></Field>
+            <Field label="Slug"><input value={edit.slug ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, slug: e.target.value } : prev))} className={inputClass} /></Field>
             <Field label="Parent">
-              <select value={edit.parentId ?? ""} onChange={(e) => setEdit({ ...edit, parentId: e.target.value || null })} className={inputClass}>
+              <select value={edit.parentId ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, parentId: e.target.value || null } : prev))} className={inputClass}>
                 <option value="">Top level</option>
                 {rows.filter((c) => c.id !== edit.id).map((c) => (
                   <option key={c.id} value={c.id}>{"— ".repeat(c.depth)}{c.name}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Description"><textarea value={edit.description ?? ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} className={`${inputClass} min-h-20`} /></Field>
-            <Field label="Display order"><input type="number" value={edit.sortOrder ?? 0} onChange={(e) => setEdit({ ...edit, sortOrder: Number(e.target.value) })} className={inputClass} /></Field>
+            <Field label="Description"><textarea value={edit.description ?? ""} onChange={(e) => setEdit((prev) => (prev ? { ...prev, description: e.target.value } : prev))} className={`${inputClass} min-h-20`} /></Field>
+            <Field label="Display order"><input type="number" value={edit.sortOrder ?? 0} onChange={(e) => setEdit((prev) => (prev ? { ...prev, sortOrder: Number(e.target.value) } : prev))} className={inputClass} /></Field>
             <label className="flex items-center gap-2 text-[13px]">
-              <input type="checkbox" checked={edit.isActive ?? true} onChange={(e) => setEdit({ ...edit, isActive: e.target.checked })} />
+              <input type="checkbox" checked={edit.isActive ?? true} onChange={(e) => setEdit((prev) => (prev ? { ...prev, isActive: e.target.checked } : prev))} />
               Active
             </label>
             <BrandLogoPicker
               label="Category image"
               logo={edit.imageMediaId ? { mediaId: edit.imageMediaId, src: edit.imageSrc ?? undefined, alt: edit.imageAlt ?? undefined } : undefined}
-              onChange={(next) => setEdit({ ...edit, imageMediaId: next?.mediaId ?? null, imageSrc: next?.src ?? null, imageAlt: next?.alt ?? null })}
+              onChange={(next) => setEdit((prev) => (prev ? { ...prev, imageMediaId: next?.mediaId ?? null, imageSrc: next?.src ?? null, imageAlt: next?.alt ?? null } : prev))}
             />
             <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save category</button>
             {edit.id ? (
