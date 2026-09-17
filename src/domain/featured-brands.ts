@@ -16,7 +16,7 @@ export type FeaturedBrandCard = {
   description: string;
   href: string;
   enabled: boolean;
-  logo?: BrandLogoRef | null;
+  logo?: BrandLogoRef | null | undefined;
 };
 
 /** Initial homepage marketing copy. Stored in CMS config so it can be edited later. */

@@ -168,7 +168,7 @@ function attachBrandLogos(
   if (!config || typeof config !== "object" || Array.isArray(config)) return config;
   const record = config as Record<string, unknown>;
   if (type === "FEATURED_BRANDS") {
-    return attachFeaturedBrandLogos(record, catalogueLogos);
+    return attachFeaturedBrandLogos(record, catalogueLogos) as Prisma.JsonValue;
   }
   const logos = mergeBrandLogoMaps(readBrandLogos(record), catalogueLogos);
   return { ...record, logos };

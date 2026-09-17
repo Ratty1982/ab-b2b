@@ -18,8 +18,8 @@ const catalogue = brands.map((b) => ({ slug: b.slug, name: b.name }));
 describe("featured brands CMS copy", () => {
   it("ships editable defaults rather than catalogue blurbs", () => {
     const cfg = defaultFeaturedBrandsConfig();
-    expect(cfg.heading).toBe(DEFAULT_FEATURED_BRANDS_HEADING);
-    expect(cfg.intro).toBe(DEFAULT_FEATURED_BRANDS_INTRO);
+    expect(cfg["heading"]).toBe(DEFAULT_FEATURED_BRANDS_HEADING);
+    expect(cfg["intro"]).toBe(DEFAULT_FEATURED_BRANDS_INTRO);
     const cards = resolveFeaturedBrandCards(cfg);
     expect(cards).toHaveLength(5);
     expect(cards.find((c) => c.slug === "power-maxed")?.description).toMatch(/cleaning, detailing/);
