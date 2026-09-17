@@ -79,15 +79,24 @@ describe("catalogue categories", () => {
     expect(renamed.description).toBe("Workshop pads");
   });
 
-  it("rejects a grandchild subcategory", async () => {
+  it("allows a deeper subcategory and rejects a circular parent", async () => {
     const tree = await listCategories(adminId);
     const child = tree.find((c) => c.parentId);
     expect(child).toBeTruthy();
+    const grandchild = await createCategory(adminId, {
+      name: `Deep ${Date.now()}`,
+      parentId: child!.id,
+      isActive: true,
+    });
+    expect(grandchild.parentId).toBe(child!.id);
     await expect(
-      createCategory(adminId, {
-        name: "Too deep",
-        parentId: child!.id,
+      updateCategory(adminId, {
+        id: child!.id,
+        name: child!.name,
+        slug: child!.slug,
+        parentId: grandchild.id,
         isActive: true,
+        sortOrder: child!.sortOrder,
       }),
     ).rejects.toBeInstanceOf(AuthError);
   });
@@ -165,3 +174,157 @@ describe("catalogue products import export delete", () => {
     await expect(deleteProduct(salesRepUserId, "NOPE")).rejects.toBeInstanceOf(AuthError);
   });
 });
+
+describe("phase 3 product master", () => {
+  it("creates a product, rejects duplicate SKU, and updates without wiping description", async () => {
+    const { createProduct, updateProductWorkspace, getProductWorkspace } = await import(
+      "@/server/catalogue/products"
+    );
+    const { listBrands, listCategories } = await import("@/server/catalogue/service");
+    const brands = await listBrands(adminId);
+    const cats = await listCategories(adminId);
+    const sku = `P3-${Date.now()}`;
+    const created = await createProduct(adminId, {
+      sku,
+      name: "Phase 3 sealant",
+      brandId: brands[0]!.id,
+      categoryId: cats[0]!.id,
+    });
+    await updateProductWorkspace(adminId, {
+      id: created.id,
+      description: "Keep this copy",
+      tradePrice: 9.5,
+      rrp: 12,
+    });
+    await expect(
+      createProduct(adminId, {
+        sku,
+        name: "Duplicate",
+        brandId: brands[0]!.id,
+        categoryId: cats[0]!.id,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    await updateProductWorkspace(adminId, { id: created.id, name: "Phase 3 sealant updated" });
+    const loaded = await getProductWorkspace(adminId, created.id);
+    expect(loaded.name).toBe("Phase 3 sealant updated");
+    expect(loaded.description).toBe("Keep this copy");
+    expect(loaded.tradePrice).toBe(9.5);
+  });
+
+  it("denies create without products.create", async () => {
+    const { createProduct } = await import("@/server/catalogue/products");
+    const { listBrands, listCategories } = await import("@/server/catalogue/service");
+    const brands = await listBrands(adminId);
+    const cats = await listCategories(adminId);
+    await expect(
+      createProduct(salesRepUserId, {
+        sku: `NOPE-${Date.now()}`,
+        name: "Nope",
+        brandId: brands[0]!.id,
+        categoryId: cats[0]!.id,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("previews then confirms an import, is idempotent, and does not blank unmapped fields", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { uploadProductImport, previewImport, confirmImport } = await import("@/server/catalogue/import");
+    const { getProductWorkspace } = await import("@/server/catalogue/products");
+    const sku = `P3IMP-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Original name",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 10,
+      rrp: 14,
+      packQty: 1,
+      caseQty: 4,
+      description: "Must survive a price-only import",
+    });
+
+    const csv = `sku,trade,rrp\n${sku},22.5,30\n${sku}-NEW,12,15\n`;
+    const uploaded = await uploadProductImport(adminId, { filename: "prices.csv", csv, mime: "text/csv" });
+    const previewed = await previewImport(adminId, uploaded.id);
+    expect(previewed.summary?.updateCount).toBeGreaterThanOrEqual(1);
+    expect(previewed.issues.some((i) => i.message.includes("Product name is required"))).toBe(true);
+
+    const csv2 = `sku,name,brand,category,trade,rrp\n${sku},Original name,Power Maxed,Braking,22.5,30\n`;
+    const job2 = await uploadProductImport(adminId, { filename: "prices2.csv", csv: csv2, mime: "text/csv" });
+    await previewImport(adminId, job2.id);
+    const applied = await confirmImport(adminId, job2.id);
+    expect(applied.updatedCount).toBeGreaterThanOrEqual(1);
+    const again = await confirmImport(adminId, job2.id);
+    expect(again.status).toBe("APPLIED");
+
+    const loaded = await getProductWorkspace(adminId, saved.id);
+    expect(loaded.tradePrice).toBe(22.5);
+    expect(loaded.description).toBe("Must survive a price-only import");
+
+    const { getPublicProduct } = await import("@/server/catalogue/products");
+    await updateProductWorkspaceSafe(saved.id);
+    const anon = await getPublicProduct(null, loaded.slug);
+    expect(anon?.card.price.trade).toBeNull();
+    expect(anon?.card.price.rrp).not.toBeNull();
+  });
+
+  it("excludes inactive products from the public catalogue", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { listPublicProducts, updateProductWorkspace } = await import("@/server/catalogue/products");
+    const sku = `HID-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Hidden line",
+      brand: "Steel Seal",
+      category: "Engine Chemicals",
+      trade: 8,
+      rrp: 11,
+      packQty: 1,
+      caseQty: 1,
+      description: "inactive",
+      active: false,
+    });
+    await updateProductWorkspace(adminId, { id: saved.id, status: "INACTIVE" });
+    const pub = await listPublicProducts({ userId: null, q: sku });
+    expect(pub.items.some((p) => p.sku === sku)).toBe(false);
+  });
+
+  it("attaches media without deleting the asset on detach", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { attachProductMedia, detachProductMedia, getProductWorkspace } = await import(
+      "@/server/catalogue/products"
+    );
+    const media = await prisma.cmsMedia.create({
+      data: {
+        filename: "p3.png",
+        contentType: "image/png",
+        storageKey: `test/${Date.now()}.png`,
+        storageProvider: "local",
+        sizeBytes: 10,
+      },
+    });
+    const sku = `IMG-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Imaged product",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 1,
+      rrp: 2,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await attachProductMedia(adminId, { productId: saved.id, mediaId: media.id, isPrimary: true });
+    const withImg = await getProductWorkspace(adminId, saved.id);
+    expect(withImg.media[0]?.mediaId).toBe(media.id);
+    await detachProductMedia(adminId, { id: withImg.media[0]!.id, productId: saved.id });
+    const still = await prisma.cmsMedia.findUnique({ where: { id: media.id } });
+    expect(still).toBeTruthy();
+  });
+});
+
+async function updateProductWorkspaceSafe(id: string) {
+  const { updateProductWorkspace } = await import("@/server/catalogue/products");
+  await updateProductWorkspace(adminId, { id, status: "ACTIVE", isTradeVisible: true });
+}

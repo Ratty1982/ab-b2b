@@ -38,6 +38,17 @@ export async function requireSystemPermission(
   return profile;
 }
 
+export async function requireAnySystemPermission(
+  userId: string | undefined | null,
+  permissions: PermissionKey[],
+): Promise<LoadedAccessProfile> {
+  const profile = await requireAuthenticatedUser(userId);
+  if (!permissions.some((permission) => hasPermission(profile, permission))) {
+    throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
+  }
+  return profile;
+}
+
 /**
  * Company isolation rule:
  * Never trust ?companyId=, form companyId, or client state companyId

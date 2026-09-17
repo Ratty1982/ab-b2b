@@ -158,6 +158,13 @@ async function mediaUsageCounts(): Promise<Map<string, number>> {
     select: { logoMediaId: true },
   });
   for (const brand of brands) bump(brand.logoMediaId);
+  const categories = await prisma.category.findMany({
+    where: { imageMediaId: { not: null } },
+    select: { imageMediaId: true },
+  });
+  for (const category of categories) bump(category.imageMediaId);
+  const productMedia = await prisma.productMedia.findMany({ select: { mediaId: true } });
+  for (const row of productMedia) bump(row.mediaId);
   return counts;
 }
 
@@ -302,7 +309,7 @@ export async function deleteCmsMedia(actorUserId: string, raw: unknown) {
   if (!existing) throw new AuthError("Image not found", "NOT_FOUND", 404);
   const usage = await mediaUsageCounts();
   if ((usage.get(existing.id) ?? 0) > 0) {
-    throw new AuthError("This image is still used on a page or brand. Remove it there first.", "VALIDATION", 400);
+    throw new AuthError("This image is still used on a page, brand, category or product. Remove it there first.", "VALIDATION", 400);
   }
   await deleteMediaObject(existing);
   await prisma.cmsMedia.delete({ where: { id: existing.id } });

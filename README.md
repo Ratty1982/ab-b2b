@@ -4,7 +4,7 @@ Independent B2B trade platform for **Automotive Brands** (automotivebrands.co.uk
 
 This repository started as a Lovable UX prototype and is being converted into a production Node application. **It is completely separate from AlphaOps.**
 
-## Current status (Phase 2)
+## Current status (Phase 3)
 
 | Layer | Status |
 | --- | --- |
@@ -12,9 +12,12 @@ This repository started as a Lovable UX prototype and is being converted into a 
 | Customers / companies | Production CRUD + workspace (contacts, users, addresses, commercial) |
 | Trade applications | Public submit + admin approve/reject (idempotent) |
 | CMS homepage | Draft/publish page builder, media picker, published homepage rendering |
-| Autopart / orders / pricing engine / email send | Deferred |
+| Product catalogue | Product workspace, brands, categories, staged CSV import, public/trade catalogue from Postgres |
+| Autopart / orders / customer pricing engine / basket | Deferred |
 
-Prototype catalogue product pages on the public site may still use mock stock. Admin Catalogue products persist in Postgres: add, edit, delete, and CSV upload/export. **Users, roles & permissions** lists real internal users (no dummy staff) and can add, manage, and reset passwords (shown once to share; email sending is not configured). **Website → Homepage** is a visual CMS editor (draft canvas, section library, media library). Live `/` still reads only the published version.
+Admin **Products**, **Brands**, **Categories** and **Imports** are the product master. SKU is the import identity. Public `/products` and `/brands` only list **Active** and **trade-visible** products; anonymous visitors never receive base trade prices. **Users, roles & permissions** lists real internal users (no dummy staff) and can add, manage, and reset passwords (shown once to share; email sending is not configured). **Website → Homepage** is a visual CMS editor. Live `/` still reads only the published version.
+
+CSV import is staged: upload → validate/map → preview → confirm. Empty cells do **not** clear existing fields. Unmapped columns are never written.
 
 
 ## Stack

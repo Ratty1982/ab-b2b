@@ -107,6 +107,20 @@ enum StockStatus {
   OUT_OF_STOCK
 }
 
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+}
+
+enum ProductImportStatus {
+  UPLOADED
+  READY
+  APPLIED
+  FAILED
+}
+
 enum BasketStatus {
   OPEN
   CONVERTED
@@ -239,6 +253,7 @@ model User {
   sessions           AuthSession[]
   accounts           AuthAccount[]
   actingContexts     ActingContext[]   @relation("ActingActor")
+  productImports     ProductImportJob[]
 
   @@index([actorType, status])
 }
@@ -586,73 +601,155 @@ model Brand {
   logoMedia CmsMedia? @relation("BrandLogo", fields: [logoMediaId], references: [id], onDelete: SetNull)
 
   @@index([logoMediaId])
+  @@index([isActive, sortOrder])
 }
 
 model Category {
-  id          String   @id @default(cuid())
-  slug        String   @unique
-  name        String
-  description String?
-  parentId    String?
-  sortOrder   Int      @default(0)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String
+  description  String?
+  parentId     String?
+  sortOrder    Int      @default(0)
+  isActive     Boolean  @default(true)
+  imageMediaId String?
+  imageAlt     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[] @relation("CategoryTree")
-  products Product[]
+  parent     Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children   Category[] @relation("CategoryTree")
+  products   Product[]
+  imageMedia CmsMedia?  @relation("CategoryImage", fields: [imageMediaId], references: [id], onDelete: SetNull)
 
   @@index([parentId])
+  @@index([imageMediaId])
+  @@index([isActive, sortOrder])
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  slug        String   @unique
-  name        String
-  brandId     String
-  categoryId  String?
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String        @id @default(cuid())
+  slug             String        @unique
+  name             String
+  brandId          String
+  categoryId       String?
+  description      String?
+  shortDescription String?
+  /// Spec rows: [{ name, value }]
+  specifications   Json?
+  isActive         Boolean       @default(true)
+  status           ProductStatus @default(ACTIVE)
+  isTradeVisible   Boolean       @default(true)
+  isFeatured       Boolean       @default(false)
+  isNew            Boolean       @default(false)
+  metaTitle        String?
+  metaDescription  String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   brand     Brand            @relation(fields: [brandId], references: [id])
   category  Category?        @relation(fields: [categoryId], references: [id])
   variants  ProductVariant[]
   documents Document[]
+  media     ProductMedia[]
 
   @@index([brandId])
   @@index([categoryId])
+  @@index([status, isTradeVisible])
+  @@index([updatedAt])
+  @@index([isFeatured])
+  @@index([isActive])
 }
 
 model ProductVariant {
-  id          String   @id @default(cuid())
-  productId   String
-  sku         String   @unique
-  barcode     String?
-  name        String?
-  packQty     Int      @default(1)
-  caseQty     Int?
-  weightKg    Decimal? @db.Decimal(10, 3)
-  rrp         Decimal? @db.Decimal(12, 2)
-  vatCode     String   @default("STANDARD")
+  id             String   @id @default(cuid())
+  productId      String
+  sku            String   @unique
+  barcode        String?
+  mpn            String?
+  name           String?
+  packQty        Int      @default(1)
+  caseQty        Int?
+  minOrderQty    Int      @default(1)
+  orderIncrement Int      @default(1)
+  unit           String   @default("EA")
+  weightKg       Decimal? @db.Decimal(10, 3)
+  lengthMm       Decimal? @db.Decimal(10, 2)
+  widthMm        Decimal? @db.Decimal(10, 2)
+  heightMm       Decimal? @db.Decimal(10, 2)
+  /// Base catalogue trade price (Phase 4 pricing engine replaces customer-facing calculation)
+  tradePrice     Decimal? @db.Decimal(12, 4)
+  rrp            Decimal? @db.Decimal(12, 2)
+  vatCode        String   @default("STANDARD")
   /// External ERP / Autopart SKU
-  externalRef String?  @unique
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  externalRef    String?  @unique
+  isDefault      Boolean  @default(true)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  product          Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
-  inventory        Inventory[]
-  priceListItems   PriceListItem[]
-  customerPrices   CustomerPrice[]
-  quantityBreaks   QuantityBreak[]
-  basketItems      BasketItem[]
-  orderItems       OrderItem[]
-  quoteItems       QuoteItem[]
+  product        Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventory      Inventory[]
+  priceListItems PriceListItem[]
+  customerPrices CustomerPrice[]
+  quantityBreaks QuantityBreak[]
+  basketItems    BasketItem[]
+  orderItems     OrderItem[]
+  quoteItems     QuoteItem[]
 
   @@index([productId])
+  @@index([barcode])
+  @@index([mpn])
+}
+
+/// Product ↔ CMS media. Detach does not delete CmsMedia.
+model ProductMedia {
+  id         String   @id @default(cuid())
+  productId  String
+  mediaId    String
+  sortOrder  Int      @default(0)
+  isPrimary  Boolean  @default(false)
+  altText    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media   CmsMedia @relation("ProductMedia", fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, mediaId])
+  @@index([productId, sortOrder])
+  @@index([mediaId])
+}
+
+model ProductImportJob {
+  id                String              @id @default(cuid())
+  filename          String
+  uploadedById      String
+  status            ProductImportStatus @default(UPLOADED)
+  rowCount          Int                 @default(0)
+  createdCount      Int                 @default(0)
+  updatedCount      Int                 @default(0)
+  skippedCount      Int                 @default(0)
+  errorCount        Int                 @default(0)
+  warningCount      Int                 @default(0)
+  /// Column header → canonical field key
+  mapping           Json
+  unknownBrands     Json?
+  unknownCategories Json?
+  /// Parsed rows + preview summary (not the raw CSV)
+  preview           Json?
+  result            Json?
+  errorReport       String?
+  sourceHash        String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  appliedAt         DateTime?
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  @@index([createdAt])
+  @@index([uploadedById])
+  @@index([status])
 }
 
 model Warehouse {
@@ -1128,7 +1225,9 @@ model CmsMedia {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  brandLogos Brand[] @relation("BrandLogo")
+  brandLogos    Brand[]        @relation("BrandLogo")
+  categoryImages Category[]    @relation("CategoryImage")
+  productMedia  ProductMedia[] @relation("ProductMedia")
 
   @@index([contentType])
   @@index([uploadedById])

@@ -32,6 +32,14 @@ export const categoryWriteSchema = z.object({
   parentId: z.string().cuid().optional().nullable().or(z.literal("")),
   isActive: z.boolean().default(true),
   sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
+  imageMediaId: z.string().cuid().optional().nullable().or(z.literal("")),
+  imageAlt: z
+    .string()
+    .trim()
+    .max(300)
+    .optional()
+    .nullable()
+    .transform((v) => (v === "" ? null : v)),
 });
 
 export const categoryCreateSchema = categoryWriteSchema;
@@ -95,6 +103,82 @@ export function normalizeVatCode(vat: string | undefined): "STANDARD" | "ZERO_RA
   const v = (vat ?? "standard").toLowerCase();
   return v === "zero" || v === "zero_rated" ? "ZERO_RATED" : "STANDARD";
 }
+
+export const PRODUCT_STATUSES = ["DRAFT", "ACTIVE", "INACTIVE", "DISCONTINUED"] as const;
+export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
+
+export const productCreateSchema = z.object({
+  sku: z.string().trim().min(1, "Enter a SKU").max(40),
+  name: z.string().trim().min(1, "Enter a product name").max(200),
+  brandId: z.string().cuid("Choose a brand"),
+  categoryId: z.string().cuid("Choose a category"),
+});
+
+export const productSpecSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  value: z.string().trim().min(1).max(240),
+});
+
+export const productWorkspaceSchema = z.object({
+  id: z.string().cuid(),
+  sku: z.string().trim().min(1).max(40).optional(),
+  name: z.string().trim().min(1).max(200).optional(),
+  brandId: z.string().cuid().optional(),
+  categoryId: z.string().cuid().optional().nullable(),
+  ean: z.string().trim().max(32).optional().nullable(),
+  mpn: z.string().trim().max(64).optional().nullable(),
+  externalRef: z.string().trim().max(80).optional().nullable(),
+  shortDescription: z.string().trim().max(500).optional().nullable(),
+  description: z.string().trim().max(20000).optional().nullable(),
+  specifications: z.array(productSpecSchema).max(40).optional(),
+  status: z.enum(PRODUCT_STATUSES).optional(),
+  isTradeVisible: z.boolean().optional(),
+  isFeatured: z.boolean().optional(),
+  isNew: z.boolean().optional(),
+  tradePrice: z.coerce.number().nonnegative().max(99_999_999).optional().nullable(),
+  rrp: z.coerce.number().nonnegative().max(99_999_999).optional().nullable(),
+  vat: z.enum(["standard", "zero", "STANDARD", "ZERO_RATED", "ZERO"]).optional(),
+  packQty: z.coerce.number().int().min(1).max(10_000).optional(),
+  caseQty: z.coerce.number().int().min(1).max(10_000).optional().nullable(),
+  minimumOrderQty: z.coerce.number().int().min(1).max(10_000).optional(),
+  orderIncrement: z.coerce.number().int().min(1).max(10_000).optional(),
+  unit: z.string().trim().min(1).max(16).optional(),
+  weightKg: z.coerce.number().nonnegative().max(10_000).optional().nullable(),
+  lengthMm: z.coerce.number().nonnegative().max(100_000).optional().nullable(),
+  widthMm: z.coerce.number().nonnegative().max(100_000).optional().nullable(),
+  heightMm: z.coerce.number().nonnegative().max(100_000).optional().nullable(),
+  slug: z
+    .string()
+    .trim()
+    .max(80)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .optional()
+    .or(z.literal("")),
+  metaTitle: z.string().trim().max(80).optional().nullable(),
+  metaDescription: z.string().trim().max(300).optional().nullable(),
+});
+
+export const productVariantWriteSchema = z.object({
+  productId: z.string().cuid(),
+  id: z.string().cuid().optional(),
+  sku: z.string().trim().min(1).max(40),
+  name: z.string().trim().max(120).optional().nullable(),
+  barcode: z.string().trim().max(32).optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+
+export const productMediaWriteSchema = z.object({
+  productId: z.string().cuid(),
+  mediaId: z.string().cuid(),
+  altText: z.string().trim().max(300).optional().nullable(),
+  isPrimary: z.boolean().optional(),
+});
+
+export const productMediaReorderSchema = z.object({
+  productId: z.string().cuid(),
+  orderedIds: z.array(z.string().cuid()).min(1).max(40),
+  primaryId: z.string().cuid().optional(),
+});
 
 export type CategoryWriteInput = z.infer<typeof categoryWriteSchema>;
 export type BrandWriteInput = z.infer<typeof brandWriteSchema>;

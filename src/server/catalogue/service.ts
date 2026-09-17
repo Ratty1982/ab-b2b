@@ -13,7 +13,6 @@ import {
   productDraftSchema,
   slugifyCatalogue,
 } from "@/domain/catalogue";
-import { parseProductCsv, serializeProductCsv } from "@/domain/catalogue-csv";
 import { cmsMediaPublicPath, type BrandLogoRef } from "@/lib/cms-media";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -30,6 +29,9 @@ export type CategoryRecord = {
   childCount: number;
   productCount: number;
   depth: number;
+  imageMediaId: string | null;
+  imageAlt: string | null;
+  imageSrc: string | null;
 };
 
 export type BrandRecord = {
@@ -41,6 +43,7 @@ export type BrandRecord = {
   sortOrder: number;
   isActive: boolean;
   productCount: number;
+  activeProductCount: number;
   logoMediaId: string | null;
   logoAlt: string | null;
   logoSrc: string | null;
@@ -68,6 +71,8 @@ function mapCategory(
     parentId: string | null;
     sortOrder: number;
     isActive: boolean;
+    imageMediaId: string | null;
+    imageAlt: string | null;
     parent: { name: string } | null;
     _count: { children: number; products: number };
   },
@@ -85,6 +90,9 @@ function mapCategory(
     childCount: row._count.children,
     productCount: row._count.products,
     depth,
+    imageMediaId: row.imageMediaId,
+    imageAlt: row.imageAlt,
+    imageSrc: row.imageMediaId ? cmsMediaPublicPath(row.imageMediaId) : null,
   };
 }
 
@@ -182,9 +190,21 @@ export async function listBrands(actorUserId: string): Promise<BrandRecord[]> {
   await requireSystemPermission(actorUserId, "products.view");
   await bootstrapCatalogue();
   const rows = await prisma.brand.findMany({
-    include: { _count: { select: { products: true } } },
+    include: {
+      _count: {
+        select: {
+          products: true,
+        },
+      },
+    },
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
   });
+  const activeCounts = await prisma.product.groupBy({
+    by: ["brandId"],
+    where: { status: "ACTIVE", isActive: true },
+    _count: { _all: true },
+  });
+  const activeByBrand = new Map(activeCounts.map((row) => [row.brandId, row._count._all]));
   return rows.map((b) => ({
     id: b.id,
     slug: b.slug,
@@ -194,6 +214,7 @@ export async function listBrands(actorUserId: string): Promise<BrandRecord[]> {
     sortOrder: b.sortOrder,
     isActive: b.isActive,
     productCount: b._count.products,
+    activeProductCount: activeByBrand.get(b.id) ?? 0,
     logoMediaId: b.logoMediaId,
     logoAlt: b.logoAlt,
     logoSrc: b.logoMediaId ? cmsMediaPublicPath(b.logoMediaId) : null,
@@ -224,13 +245,19 @@ async function assertParentAllowed(parentId: string | null | undefined, selfId?:
   }
   const parent = await prisma.category.findUnique({ where: { id: parentId } });
   if (!parent) throw new AuthError("Parent category not found", "NOT_FOUND", 404);
-  if (parent.parentId) {
-    throw new AuthError("Subcategories can only sit under a top-level category", "VALIDATION", 400);
-  }
   if (selfId) {
-    const childCount = await prisma.category.count({ where: { parentId: selfId } });
-    if (childCount > 0) {
-      throw new AuthError("Move or remove subcategories before nesting this category", "VALIDATION", 400);
+    let cursor: string | null = parentId;
+    const seen = new Set<string>([selfId]);
+    while (cursor) {
+      if (seen.has(cursor)) {
+        throw new AuthError("That parent would create a circular category tree", "VALIDATION", 400);
+      }
+      seen.add(cursor);
+      const row: { parentId: string | null } | null = await prisma.category.findUnique({
+        where: { id: cursor },
+        select: { parentId: true },
+      });
+      cursor = row?.parentId ?? null;
     }
   }
   return parent;
@@ -251,6 +278,8 @@ export async function createCategory(actorUserId: string, raw: unknown) {
       parentId,
       isActive: input.isActive,
       sortOrder: input.sortOrder,
+      imageMediaId: input.imageMediaId ? input.imageMediaId : null,
+      imageAlt: input.imageAlt ?? null,
     },
   });
 
@@ -283,6 +312,13 @@ export async function updateCategory(actorUserId: string, raw: unknown) {
       parentId,
       isActive: input.isActive,
       sortOrder: input.sortOrder,
+      imageMediaId:
+        input.imageMediaId === undefined
+          ? existing.imageMediaId
+          : input.imageMediaId
+            ? input.imageMediaId
+            : null,
+      imageAlt: input.imageAlt === undefined ? existing.imageAlt : (input.imageAlt ?? null),
     },
   });
 
@@ -556,6 +592,7 @@ export async function saveProduct(actorUserId: string, raw: unknown): Promise<Pr
           categoryId,
           description: input.description || null,
           isActive: input.active,
+          status: input.active ? "ACTIVE" : "INACTIVE",
         },
       });
     } else {
@@ -567,6 +604,7 @@ export async function saveProduct(actorUserId: string, raw: unknown): Promise<Pr
           categoryId,
           description: input.description || null,
           isActive: input.active,
+          status: input.active ? "ACTIVE" : "INACTIVE",
         },
       });
     }
@@ -576,8 +614,10 @@ export async function saveProduct(actorUserId: string, raw: unknown): Promise<Pr
       packQty: input.packQty,
       caseQty: input.caseQty,
       rrp: input.rrp,
+      tradePrice: input.trade,
       vatCode,
       isActive: input.active,
+      isDefault: true,
     };
 
     const variant = existingVariant
@@ -633,54 +673,19 @@ export async function deleteProduct(actorUserId: string, sku: string) {
 }
 
 export async function importProducts(actorUserId: string, csv: string) {
-  await requireSystemPermission(actorUserId, "products.edit");
-  if (csv.length > 1_500_000) {
-    throw new AuthError("CSV is larger than 1.5 MB", "VALIDATION", 400);
-  }
-  const parsed = parseProductCsv(csv);
-  if (!parsed.rows.length && parsed.errors.length) {
-    throw new AuthError(parsed.errors[0]?.message ?? "Invalid CSV", "VALIDATION", 400);
-  }
-  if (parsed.rows.length > 1000) {
-    throw new AuthError("Import is limited to 1,000 rows", "VALIDATION", 400);
-  }
-
-  let created = 0;
-  let updated = 0;
-  const rowErrors = [...parsed.errors];
-
-  for (const row of parsed.rows) {
-    try {
-      const existing = await prisma.productVariant.findUnique({
-        where: { sku: row.sku.trim().toUpperCase() },
-        select: { productId: true },
-      });
-      await saveProduct(actorUserId, {
-        ...row,
-        id: existing?.productId,
-        sku: row.sku.trim().toUpperCase(),
-      });
-      if (existing) updated += 1;
-      else created += 1;
-    } catch (error) {
-      rowErrors.push({
-        line: 0,
-        message: `${row.sku}: ${error instanceof Error ? error.message : "Import failed"}`,
-      });
-    }
-  }
-
-  await recordAuditEvent({
-    action: "catalogue.products_imported",
-    entityType: "Product",
-    actorUserId,
-    metadata: { created, updated, errors: rowErrors.length },
-  });
-
-  return { created, updated, errors: rowErrors.slice(0, 50) };
+  const { importProducts: run } = await import("@/server/catalogue/import");
+  const result = await run(actorUserId, csv);
+  return {
+    created: result.createdCount,
+    updated: result.updatedCount,
+    errors: (result.issues ?? []).slice(0, 50).map((issue) => ({
+      line: issue.line,
+      message: issue.message,
+    })),
+  };
 }
 
 export async function exportProductsCsv(actorUserId: string) {
-  const products = await listProducts(actorUserId);
-  return serializeProductCsv(products);
+  const { exportCatalogueCsv } = await import("@/server/catalogue/products");
+  return exportCatalogueCsv(actorUserId, { page: 1, pageSize: 5000 });
 }

@@ -1,226 +1,134 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { gbp } from "@/lib/data";
-import { productDraftSchema, slugifyCatalogue } from "@/domain/catalogue";
+import { ROUTES } from "@/lib/app-nav";
 import {
-  deleteCatalogueProductFn,
+  createCatalogueProductFn,
   exportCatalogueProductsFn,
-  importCatalogueProductsFn,
   listCatalogueBrandsFn,
   listCatalogueCategoriesFn,
-  listCatalogueProductsFn,
-  saveCatalogueBrandFn,
-  saveCatalogueCategoryFn,
-  saveCatalogueProductFn,
+  listCatalogueWorkspaceFn,
 } from "@/server/phase2/fns";
-import { PRODUCT_CSV_TEMPLATE } from "@/domain/catalogue-csv";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { BrandLogoPicker } from "@/components/cms/SectionSettings";
+import { useSession } from "@/lib/session";
 
 export const Route = createFileRoute("/admin/products")({
   head: () => ({
     meta: [
-      { title: "Catalogue Administration — Automotive Brands" },
+      { title: "Product catalogue — Automotive Brands Admin" },
       {
         name: "description",
-        content:
-          "Maintain the Automotive Brands catalogue: products, SKUs, brands, categories, pricing, stock, documents and marketing imagery.",
+        content: "Search, filter and maintain the Automotive Brands product master.",
       },
-      { property: "og:title", content: "Catalogue Administration — Automotive Brands" },
-      { property: "og:description", content: "Products, brands, categories and catalogue documents." },
     ],
   }),
   component: AdminProducts,
 });
 
-type Tab = "Products" | "Brands" | "Categories";
-
-type CategoryRow = {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  parentId: string | null;
-  parentName: string | null;
-  sortOrder: number;
-  isActive: boolean;
-  childCount: number;
-  productCount: number;
-  depth: number;
-};
-
-type BrandRow = {
-  id: string;
-  slug: string;
-  name: string;
-  tagline: string | null;
-  description: string | null;
-  sortOrder: number;
-  isActive: boolean;
-  productCount: number;
-  logoMediaId: string | null;
-  logoAlt: string | null;
-  logoSrc: string | null;
-};
-
+type CategoryRow = { id: string; name: string; parentId: string | null; depth: number };
+type BrandRow = { id: string; name: string };
 type ProductRow = {
   id: string;
   sku: string;
   name: string;
   brand: string;
   category: string;
-  subcategory: string;
-  trade: number;
-  rrp: number;
-  packQty: number;
-  caseQty: number;
-  description: string;
-  vat: "standard" | "zero";
-  isActive: boolean;
+  status: string;
+  trade: number | null;
+  rrp: number | null;
+  stockLabel: string;
+  imageSrc: string | null;
+  updatedAt: string;
 };
 
-function emptyProduct(brands: BrandRow[], categories: CategoryRow[]): ProductRow {
-  return {
-    id: "",
-    sku: "",
-    name: "",
-    brand: brands[0]?.name ?? "Power Maxed",
-    category: categories.find((c) => !c.parentId)?.name ?? "Braking",
-    subcategory: "",
-    trade: 0,
-    rrp: 0,
-    packQty: 1,
-    caseQty: 1,
-    description: "",
-    vat: "standard",
-    isActive: true,
-  };
+function statusTone(status: string) {
+  if (status === "ACTIVE") return "good" as const;
+  if (status === "DRAFT") return "warn" as const;
+  if (status === "DISCONTINUED") return "bad" as const;
+  return "warn" as const;
 }
 
 function AdminProducts() {
-  const [tab, setTab] = useState<Tab>("Products");
-  const [term, setTerm] = useState("");
-  const [catalog, setCatalog] = useState<ProductRow[]>([]);
-  const [productEdit, setProductEdit] = useState<ProductRow | null>(null);
-  const [productIsNew, setProductIsNew] = useState(false);
-  const [productError, setProductError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const session = useSession();
+  const canCreate =
+    session.signedIn && session.user.navPermissions.includes("products.create");
+  const canExport =
+    session.signedIn &&
+    (session.user.navPermissions.includes("products.export") ||
+      session.user.navPermissions.includes("products.edit"));
+  const canImport = session.signedIn && session.user.navPermissions.includes("products.import");
 
-  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [items, setItems] = useState<ProductRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageCount, setPageCount] = useState(1);
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [brandId, setBrandId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [status, setStatus] = useState("");
+  const [tradeVisible, setTradeVisible] = useState("");
+  const [featured, setFeatured] = useState("");
+  const [stock, setStock] = useState("");
+  const [sort, setSort] = useState<"name" | "sku" | "updated" | "brand">("updated");
   const [brands, setBrands] = useState<BrandRow[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [categoryEdit, setCategoryEdit] = useState<Partial<CategoryRow> | null>(null);
-  const [brandEdit, setBrandEdit] = useState<Partial<BrandRow> | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const loadTaxonomy = useCallback(async () => {
-    setLoadError(null);
-    const [cats, br, prods] = await Promise.all([
-      listCatalogueCategoriesFn(),
-      listCatalogueBrandsFn(),
-      listCatalogueProductsFn({ data: {} }),
-    ]);
-    if (!cats.ok) {
-      setLoadError(cats.error);
-      return;
-    }
-    if (!br.ok) {
-      setLoadError(br.error);
-      return;
-    }
-    if (!prods.ok) {
-      setLoadError(prods.error);
-      return;
-    }
-    setCategories(cats.data);
-    setBrands(br.data);
-    setCatalog(prods.data);
-  }, []);
+  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
-    void loadTaxonomy();
-  }, [loadTaxonomy]);
+    const t = setTimeout(() => setDebouncedQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
 
-  const topLevelCategories = useMemo(
-    () => categories.filter((c) => !c.parentId),
-    [categories],
-  );
-
-  const rows = catalog.filter(
-    (p) =>
-      !term ||
-      p.sku.toLowerCase().includes(term.toLowerCase()) ||
-      p.name.toLowerCase().includes(term.toLowerCase()) ||
-      p.brand.toLowerCase().includes(term.toLowerCase()) ||
-      p.category.toLowerCase().includes(term.toLowerCase()),
-  );
-
-  const productCategoryOptions = categories.length
-    ? topLevelCategories.map((c) => c.name)
-    : Array.from(new Set(catalog.map((p) => p.category)));
-
-  const productSubcategoryOptions = (parentName: string) => {
-    const parent = categories.find((c) => c.name === parentName && !c.parentId);
-    if (!parent) return [];
-    return categories.filter((c) => c.parentId === parent.id).map((c) => c.name);
+  const query = {
+    q: debouncedQ || undefined,
+    brandId: brandId || undefined,
+    categoryId: categoryId || undefined,
+    status: status || undefined,
+    tradeVisible: tradeVisible === "" ? undefined : tradeVisible === "true",
+    featured: featured === "" ? undefined : featured === "true",
+    stock: (stock || undefined) as "in" | "out" | "unknown" | undefined,
+    sort,
+    page,
+    pageSize: 25,
   };
 
-  async function saveProduct() {
-    if (!productEdit) return;
-    setProductError(null);
-    const parsed = productDraftSchema.safeParse({
-      id: productIsNew ? undefined : productEdit.id || undefined,
-      sku: productEdit.sku,
-      name: productEdit.name,
-      brand: productEdit.brand,
-      category: productEdit.category,
-      subcategory: productEdit.subcategory || null,
-      trade: productEdit.trade,
-      rrp: productEdit.rrp,
-      packQty: productEdit.packQty,
-      caseQty: productEdit.caseQty,
-      description: productEdit.description,
-      vat: productEdit.vat,
-      active: productEdit.isActive,
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const [list, brandRows, catRows] = await Promise.all([
+      listCatalogueWorkspaceFn({ data: query }),
+      listCatalogueBrandsFn(),
+      listCatalogueCategoriesFn(),
+    ]);
+    if (!list.ok) {
+      setError(list.error);
+      setItems([]);
+    } else {
+      setItems(list.data.items);
+      setTotal(list.data.total);
+      setPageCount(list.data.pageCount);
+    }
+    if (brandRows.ok) setBrands(brandRows.data);
+    if (catRows.ok) setCategories(catRows.data);
+    setLoading(false);
+  }, [debouncedQ, brandId, categoryId, status, tradeVisible, featured, stock, sort, page]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function exportCsv(filtered: boolean) {
+    const r = await exportCatalogueProductsFn({
+      data: filtered ? query : { page: 1, pageSize: 5000 },
     });
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((i) => i.message).join("; ");
-      setProductError(msg);
-      toast.error(msg);
-      return;
-    }
-    setSaving(true);
-    const r = await saveCatalogueProductFn({ data: parsed.data });
-    setSaving(false);
-    if (!r.ok) {
-      setProductError(r.error);
-      toast.error(r.error);
-      return;
-    }
-    toast.success(productIsNew ? "Product added" : "Product saved");
-    setProductEdit(null);
-    setProductIsNew(false);
-    await loadTaxonomy();
-  }
-
-  async function removeProduct(sku: string) {
-    if (!window.confirm(`Delete ${sku} from the catalogue? This cannot be undone.`)) return;
-    const r = await deleteCatalogueProductFn({ data: { sku } });
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    toast.success(`${sku} deleted`);
-    if (productEdit?.sku === sku) setProductEdit(null);
-    await loadTaxonomy();
-  }
-
-  async function exportProducts() {
-    const r = await exportCatalogueProductsFn();
     if (!r.ok) {
       toast.error(r.error);
       return;
@@ -232,771 +140,283 @@ function AdminProducts() {
     a.download = `automotive-brands-products-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success("Product CSV downloaded");
+    toast.success(filtered ? "Filtered catalogue exported" : "Full catalogue exported");
   }
 
-  async function importProductsFile(file: File) {
-    const csv = await file.text();
-    setSaving(true);
-    const r = await importCatalogueProductsFn({ data: { csv } });
-    setSaving(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    const extra = r.data.errors.length ? ` (${r.data.errors.length} row warnings)` : "";
-    toast.success(`Imported ${r.data.created} new, updated ${r.data.updated}${extra}`);
-    if (r.data.errors[0]) toast.error(r.data.errors[0].message);
-    await loadTaxonomy();
-  }
-
-  async function saveCategory() {
-    if (!categoryEdit?.name) {
-      toast.error("Enter a category name");
-      return;
-    }
-    setSaving(true);
-    const r = await saveCatalogueCategoryFn({
-      data: {
-        id: categoryEdit.id,
-        name: categoryEdit.name,
-        slug: categoryEdit.slug || slugifyCatalogue(categoryEdit.name),
-        description: categoryEdit.description ?? "",
-        parentId: categoryEdit.parentId || null,
-        isActive: categoryEdit.isActive ?? true,
-        sortOrder: categoryEdit.sortOrder ?? 0,
-      },
-    });
-    setSaving(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    toast.success(categoryEdit.id ? "Category saved" : "Category added");
-    setCategoryEdit(null);
-    await loadTaxonomy();
-  }
-
-  async function saveBrand() {
-    if (!brandEdit?.name) {
-      toast.error("Enter a brand name");
-      return;
-    }
-    setSaving(true);
-    const r = await saveCatalogueBrandFn({
-      data: {
-        id: brandEdit.id,
-        name: brandEdit.name,
-        slug: brandEdit.slug || slugifyCatalogue(brandEdit.name),
-        tagline: brandEdit.tagline ?? "",
-        description: brandEdit.description ?? "",
-        isActive: brandEdit.isActive ?? true,
-        sortOrder: brandEdit.sortOrder ?? 0,
-        logoMediaId: brandEdit.logoMediaId ?? "",
-        logoAlt: brandEdit.logoAlt ?? "",
-      },
-    });
-    setSaving(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    toast.success(brandEdit.id ? "Brand saved" : "Brand added");
-    setBrandEdit(null);
-    await loadTaxonomy();
-  }
-
-  const addLabel =
-    tab === "Products" ? "Add product" : tab === "Brands" ? "Add brand" : "Add category";
-
-  function onAdd() {
-    if (tab === "Products") {
-      setProductIsNew(true);
-      setProductError(null);
-      setProductEdit(emptyProduct(brands, categories));
-      return;
-    }
-    if (tab === "Brands") {
-      setBrandEdit({
-        name: "",
-        slug: "",
-        tagline: "",
-        description: "",
-        isActive: true,
-        sortOrder: brands.length + 1,
-        logoMediaId: null,
-        logoAlt: null,
-        logoSrc: null,
-      });
-      return;
-    }
-    setCategoryEdit({
-      name: "",
-      slug: "",
-      description: "",
-      parentId: null,
-      isActive: true,
-      sortOrder: topLevelCategories.length + 1,
-    });
-  }
+  const filterControls = (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <select value={brandId} onChange={(e) => { setPage(1); setBrandId(e.target.value); }} className={inputClass}>
+        <option value="">All brands</option>
+        {brands.map((b) => (
+          <option key={b.id} value={b.id}>{b.name}</option>
+        ))}
+      </select>
+      <select value={categoryId} onChange={(e) => { setPage(1); setCategoryId(e.target.value); }} className={inputClass}>
+        <option value="">All categories</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>{"— ".repeat(c.depth)}{c.name}</option>
+        ))}
+      </select>
+      <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className={inputClass}>
+        <option value="">All statuses</option>
+        <option value="DRAFT">Draft</option>
+        <option value="ACTIVE">Active</option>
+        <option value="INACTIVE">Inactive</option>
+        <option value="DISCONTINUED">Discontinued</option>
+      </select>
+      <select value={tradeVisible} onChange={(e) => { setPage(1); setTradeVisible(e.target.value); }} className={inputClass}>
+        <option value="">Trade visibility</option>
+        <option value="true">Visible to trade</option>
+        <option value="false">Hidden from trade</option>
+      </select>
+      <select value={featured} onChange={(e) => { setPage(1); setFeatured(e.target.value); }} className={inputClass}>
+        <option value="">Featured</option>
+        <option value="true">Featured only</option>
+        <option value="false">Not featured</option>
+      </select>
+      <select value={stock} onChange={(e) => { setPage(1); setStock(e.target.value); }} className={inputClass}>
+        <option value="">Stock (local)</option>
+        <option value="in">Has local qty</option>
+        <option value="out">Local qty zero</option>
+        <option value="unknown">No Autopart stock yet</option>
+      </select>
+      <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={inputClass}>
+        <option value="updated">Recently updated</option>
+        <option value="name">Name</option>
+        <option value="sku">SKU</option>
+        <option value="brand">Brand</option>
+      </select>
+    </div>
+  );
 
   return (
     <div>
       <PanelHeader
-        title="Catalogue"
-        sub="Products, brands and nested categories across all Automotive Brands ranges"
+        title="Products"
+        sub={`${total.toLocaleString("en-GB")} catalogue lines · SKU is the import identity`}
         actions={
           <div className="flex flex-wrap justify-end gap-2">
-            {tab === "Products" ? (
+            {canImport ? (
+              <Link
+                to={ROUTES.adminProductImports}
+                className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+              >
+                Import
+              </Link>
+            ) : null}
+            {canExport ? (
               <>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) void importProductsFile(file);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const blob = new Blob([PRODUCT_CSV_TEMPLATE], { type: "text/csv;charset=utf-8" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = "automotive-brands-products-template.csv";
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
-                >
-                  Template
+                <button type="button" onClick={() => void exportCsv(true)} className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide">
+                  Export filtered
                 </button>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => fileRef.current?.click()}
-                  className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide disabled:opacity-50"
-                >
-                  Upload CSV
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void exportProducts()}
-                  className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
-                >
-                  Export CSV
+                <button type="button" onClick={() => void exportCsv(false)} className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide">
+                  Export all
                 </button>
               </>
             ) : null}
-            <button
-              type="button"
-              onClick={onAdd}
-              className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
-            >
-              {addLabel}
-            </button>
+            {canCreate ? (
+              <button
+                type="button"
+                onClick={() => setAddOpen(true)}
+                className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground"
+              >
+                Add product
+              </button>
+            ) : null}
           </div>
         }
       />
 
-      <div className="flex gap-1 border-b border-border/70 px-4 sm:px-6">
-        {(["Products", "Brands", "Categories"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            aria-current={tab === t ? "page" : undefined}
-            className={cn(
-              "border-b-2 px-3 py-3 text-[13px] font-semibold",
-              tab === t ? "border-primary text-foreground" : "border-transparent text-steel hover:text-foreground",
-            )}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {loadError ? (
-        <div className="mx-4 mt-4 rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad sm:mx-6">
-          {loadError}
-        </div>
-      ) : null}
-
-      {tab === "Products" ? (
-        <div className="p-4 sm:p-6">
+      <div className="space-y-4 p-4 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <input
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="Search SKU, product or brand"
-            className={`${inputClass} mb-4 max-w-md`}
+            value={q}
+            onChange={(e) => { setPage(1); setQ(e.target.value); }}
+            placeholder="Search SKU, name, EAN or MPN"
+            className={`${inputClass} max-w-lg`}
           />
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1000px] text-[13px]">
-              <thead>
-                <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
-                  <th className="px-3 py-2 font-semibold">SKU</th>
-                  <th className="px-3 py-2 font-semibold">Product</th>
-                  <th className="px-3 py-2 font-semibold">Brand</th>
-                  <th className="px-3 py-2 font-semibold">Category</th>
-                  <th className="px-3 py-2 text-right font-semibold">Trade list</th>
-                  <th className="px-3 py-2 text-right font-semibold">RRP</th>
-                  <th className="px-3 py-2 text-right font-semibold">Pack</th>
-                  <th className="px-3 py-2 text-right font-semibold">Case</th>
-                  <th className="px-3 py-2 font-semibold">Status</th>
-                  <th className="px-3 py-2 text-right font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="px-3 py-10 text-center text-sm text-steel">
-                      No products in the catalogue yet. Upload a CSV or add a product.
-                    </td>
-                  </tr>
-                ) : (
-                  rows.map((p, i) => (
-                  <tr key={p.sku} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
-                    <td className="num px-3 py-2 text-primary">{p.sku}</td>
-                    <td className="px-3 py-2">{p.name}</td>
-                    <td className="px-3 py-2 text-steel">{p.brand}</td>
-                    <td className="px-3 py-2 text-steel">
-                      {p.category}
-                      {p.subcategory ? ` / ${p.subcategory}` : ""}
-                    </td>
-                    <td className="num px-3 py-2 text-right">{gbp(p.trade)}</td>
-                    <td className="num px-3 py-2 text-right text-steel">{gbp(p.rrp)}</td>
-                    <td className="num px-3 py-2 text-right">{p.packQty}</td>
-                    <td className="num px-3 py-2 text-right">{p.caseQty}</td>
+          <button
+            type="button"
+            className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase lg:hidden"
+            onClick={() => setFiltersOpen(true)}
+          >
+            Filters
+          </button>
+        </div>
+        <div className="hidden lg:block">{filterControls}</div>
+
+        {error ? (
+          <div className="rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm">{error}</div>
+        ) : null}
+
+        <div className="grid gap-3 md:hidden">
+          {loading ? <p className="text-[13px] text-steel">Loading catalogue…</p> : null}
+          {!loading && items.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-steel">
+              No products match. Add a product or import a CSV.
+            </p>
+          ) : null}
+          {items.map((p) => (
+            <Link
+              key={p.id}
+              to="/admin/products/$id"
+              params={{ id: p.id }}
+              className="flex gap-3 rounded-lg border border-border bg-surface/40 p-3"
+            >
+              <div className="size-14 overflow-hidden rounded border border-border bg-ink">
+                {p.imageSrc ? <img src={p.imageSrc} alt="" className="size-full object-cover" /> : null}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{p.name}</div>
+                <div className="num text-[12px] text-primary">{p.sku}</div>
+                <div className="text-[12px] text-steel">{p.brand} · {p.category}</div>
+                <StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge>
+              </div>
+            </Link>
+          ))}
+        </div>
+
+        <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
+          <table className="w-full min-w-[960px] text-[13px]">
+            <thead>
+              <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
+                <th className="px-3 py-2 font-semibold">Image</th>
+                <th className="px-3 py-2 font-semibold">SKU</th>
+                <th className="px-3 py-2 font-semibold">Product</th>
+                <th className="px-3 py-2 font-semibold">Brand</th>
+                <th className="px-3 py-2 font-semibold">Category</th>
+                <th className="px-3 py-2 font-semibold">Status</th>
+                <th className="px-3 py-2 text-right font-semibold">Trade</th>
+                <th className="px-3 py-2 text-right font-semibold">RRP</th>
+                <th className="px-3 py-2 text-right font-semibold">Stock</th>
+                <th className="px-3 py-2 font-semibold">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={10} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
+              ) : items.length === 0 ? (
+                <tr><td colSpan={10} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
+              ) : (
+                items.map((p, i) => (
+                  <tr key={p.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
                     <td className="px-3 py-2">
-                      <StatusBadge tone={p.isActive ? "good" : "warn"}>
-                        {p.isActive ? "Active" : "Hidden"}
-                      </StatusBadge>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex justify-end gap-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProductIsNew(false);
-                            setProductError(null);
-                            setProductEdit({ ...p, subcategory: p.subcategory ?? "" });
-                          }}
-                          className="text-[12px] font-semibold text-primary hover:underline"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void removeProduct(p.sku)}
-                          className="text-[12px] font-semibold text-bad hover:underline"
-                        >
-                          Delete
-                        </button>
+                      <div className="size-10 overflow-hidden rounded border border-border bg-ink">
+                        {p.imageSrc ? <img src={p.imageSrc} alt="" className="size-full object-cover" /> : null}
                       </div>
                     </td>
-                  </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
-
-      {tab === "Brands" ? (
-        <div className="p-4 sm:p-6">
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[720px] text-[13px]">
-              <thead>
-                <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
-                  <th className="px-3 py-2 font-semibold">Brand</th>
-                  <th className="px-3 py-2 font-semibold">Logo</th>
-                  <th className="px-3 py-2 font-semibold">Positioning</th>
-                  <th className="px-3 py-2 font-semibold">Brand page</th>
-                  <th className="px-3 py-2 font-semibold">Status</th>
-                  <th className="px-3 py-2 text-right font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {brands.map((b, i) => (
-                  <tr key={b.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
-                    <td className="px-3 py-2 font-semibold">{b.name}</td>
+                    <td className="num px-3 py-2 text-primary">
+                      <Link to="/admin/products/$id" params={{ id: p.id }} className="hover:underline">{p.sku}</Link>
+                    </td>
                     <td className="px-3 py-2">
-                      {b.logoSrc ? (
-                        <img src={b.logoSrc} alt={b.logoAlt || `${b.name} logo`} className="h-8 max-w-[96px] object-contain" />
-                      ) : (
-                        <span className="text-[12px] text-steel">None</span>
-                      )}
+                      <Link to="/admin/products/$id" params={{ id: p.id }} className="font-medium hover:underline">{p.name}</Link>
                     </td>
-                    <td className="px-3 py-2 text-steel">{b.tagline ?? "—"}</td>
-                    <td className="num px-3 py-2 text-steel">/brands/{b.slug}</td>
-                    <td className="px-3 py-2">
-                      <StatusBadge tone={b.isActive ? "good" : "warn"}>
-                        {b.isActive ? "Published" : "Hidden"}
-                      </StatusBadge>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setBrandEdit(b)}
-                        className="text-[12px] font-semibold text-primary hover:underline"
-                      >
-                        Edit
-                      </button>
-                    </td>
+                    <td className="px-3 py-2 text-steel">{p.brand}</td>
+                    <td className="px-3 py-2 text-steel">{p.category}</td>
+                    <td className="px-3 py-2"><StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge></td>
+                    <td className="num px-3 py-2 text-right">{p.trade != null ? gbp(p.trade) : "—"}</td>
+                    <td className="num px-3 py-2 text-right text-steel">{p.rrp != null ? gbp(p.rrp) : "—"}</td>
+                    <td className="num px-3 py-2 text-right text-steel">{p.stockLabel}</td>
+                    <td className="num px-3 py-2 text-steel">{new Date(p.updatedAt).toLocaleDateString("en-GB")}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-      ) : null}
 
-      {tab === "Categories" ? (
-        <div className="p-4 sm:p-6">
-          <p className="mb-4 max-w-2xl text-[13px] text-steel">
-            Top-level categories can contain subcategories. Products pick a category and, optionally, a
-            subcategory from this tree.
-          </p>
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[720px] text-[13px]">
-              <thead>
-                <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
-                  <th className="px-3 py-2 font-semibold">Category</th>
-                  <th className="px-3 py-2 font-semibold">Parent</th>
-                  <th className="px-3 py-2 font-semibold">Shown on site</th>
-                  <th className="px-3 py-2 text-right font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categories.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-3 py-8 text-center text-steel">
-                      No categories yet. Add a category to start the tree.
-                    </td>
-                  </tr>
-                ) : (
-                  categories.map((c, i) => (
-                    <tr key={c.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
-                      <td className="px-3 py-2 font-medium">
-                        <span className={cn(c.depth > 0 && "pl-6 text-[13px]")}>
-                          {c.depth > 0 ? "↳ " : ""}
-                          {c.name}
-                        </span>
-                        {c.description ? (
-                          <div className={cn("text-[12px] font-normal text-steel", c.depth > 0 && "pl-6")}>
-                            {c.description}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2 text-steel">{c.parentName ?? "—"}</td>
-                      <td className="px-3 py-2">
-                        <StatusBadge tone={c.isActive ? "good" : "warn"}>
-                          {c.isActive ? "Visible" : "Hidden"}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex justify-end gap-3">
-                          {!c.parentId ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setCategoryEdit({
-                                  name: "",
-                                  slug: "",
-                                  description: "",
-                                  parentId: c.id,
-                                  isActive: true,
-                                  sortOrder: c.childCount + 1,
-                                })
-                              }
-                              className="text-[12px] font-semibold text-primary hover:underline"
-                            >
-                              Add subcategory
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => setCategoryEdit(c)}
-                            className="text-[12px] font-semibold text-primary hover:underline"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
-
-      <Drawer
-        open={productEdit !== null}
-        onClose={() => setProductEdit(null)}
-        width="lg"
-        title={
-          productEdit
-            ? productIsNew
-              ? "Add product"
-              : `${productEdit.sku} — ${productEdit.name}`
-            : ""
-        }
-        sub="Catalogue record"
-        footer={
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void saveProduct()}
-              className="h-11 flex-1 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save changes"}
-            </button>
-            {productEdit && !productIsNew ? (
-              <button
-                type="button"
-                onClick={() => void removeProduct(productEdit.sku)}
-                className="h-11 rounded-md border border-bad/50 px-5 text-[13px] font-semibold text-bad"
-              >
-                Delete
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setProductEdit(null)}
-              className="h-11 rounded-md border border-border px-5 text-[13px] font-semibold"
-            >
-              Cancel
-            </button>
-          </div>
-        }
-      >
-        {productEdit ? (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {productError ? (
-              <div className="sm:col-span-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-[13px] text-bad">
-                {productError}
-              </div>
-            ) : null}
-            <Field label="SKU">
-              <input
-                className={inputClass}
-                value={productEdit.sku}
-                onChange={(e) => setProductEdit({ ...productEdit, sku: e.target.value })}
-              />
-            </Field>
-            <Field label="Product name">
-              <input
-                className={inputClass}
-                value={productEdit.name}
-                onChange={(e) => setProductEdit({ ...productEdit, name: e.target.value })}
-              />
-            </Field>
-            <Field label="Brand">
-              <select
-                className={inputClass}
-                value={productEdit.brand}
-                onChange={(e) => setProductEdit({ ...productEdit, brand: e.target.value })}
-              >
-                {(brands.length ? brands.map((b) => b.name) : ["Power Maxed"]).map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Category">
-              <select
-                className={inputClass}
-                value={productEdit.category}
-                onChange={(e) =>
-                  setProductEdit({ ...productEdit, category: e.target.value, subcategory: "" })
-                }
-              >
-                {productCategoryOptions.map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Subcategory">
-              <select
-                className={inputClass}
-                value={productEdit.subcategory ?? ""}
-                onChange={(e) => setProductEdit({ ...productEdit, subcategory: e.target.value })}
-              >
-                <option value="">None</option>
-                {productSubcategoryOptions(productEdit.category).map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Trade list price">
-              <input
-                className={inputClass}
-                value={String(productEdit.trade)}
-                onChange={(e) => setProductEdit({ ...productEdit, trade: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="RRP">
-              <input
-                className={inputClass}
-                value={String(productEdit.rrp)}
-                onChange={(e) => setProductEdit({ ...productEdit, rrp: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="Pack quantity">
-              <input
-                className={inputClass}
-                value={String(productEdit.packQty)}
-                onChange={(e) => setProductEdit({ ...productEdit, packQty: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="Case quantity">
-              <input
-                className={inputClass}
-                value={String(productEdit.caseQty)}
-                onChange={(e) => setProductEdit({ ...productEdit, caseQty: Number(e.target.value) })}
-              />
-            </Field>
-            <div className="sm:col-span-2">
-              <Field label="Description">
-                <textarea
-                  rows={4}
-                  className={inputClass}
-                  value={productEdit.description}
-                  onChange={(e) => setProductEdit({ ...productEdit, description: e.target.value })}
-                />
-              </Field>
-            </div>
-            <Field label="VAT">
-              <select
-                className={inputClass}
-                value={productEdit.vat}
-                onChange={(e) =>
-                  setProductEdit({ ...productEdit, vat: e.target.value === "zero" ? "zero" : "standard" })
-                }
-              >
-                <option value="standard">Standard</option>
-                <option value="zero">Zero rated</option>
-              </select>
-            </Field>
-            <label className="flex items-center gap-2 self-end text-[13px]">
-              <input
-                type="checkbox"
-                checked={productEdit.isActive}
-                onChange={(e) => setProductEdit({ ...productEdit, isActive: e.target.checked })}
-              />
-              Active in catalogue
-            </label>
+        {pageCount > 1 ? (
+          <div className="flex items-center justify-between text-[13px]">
+            <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="h-9 rounded-md border border-border px-3 disabled:opacity-40">Previous</button>
+            <span className="text-steel">Page {page} of {pageCount}</span>
+            <button type="button" disabled={page >= pageCount} onClick={() => setPage((p) => p + 1)} className="h-9 rounded-md border border-border px-3 disabled:opacity-40">Next</button>
           </div>
         ) : null}
+      </div>
+
+      <Drawer open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Filters">
+        {filterControls}
       </Drawer>
 
-      <Drawer
-        open={categoryEdit !== null}
-        onClose={() => setCategoryEdit(null)}
-        width="md"
-        title={
-          categoryEdit?.id
-            ? "Edit category"
-            : categoryEdit?.parentId
-              ? "Add subcategory"
-              : "Add category"
-        }
-        sub="Taxonomy used across the catalogue"
-        footer={
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void saveCategory()}
-              className="h-11 flex-1 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setCategoryEdit(null)}
-              className="h-11 rounded-md border border-border px-5 text-[13px] font-semibold"
-            >
-              Cancel
-            </button>
-          </div>
-        }
-      >
-        {categoryEdit ? (
-          <div className="grid gap-4">
-            <Field label="Name">
-              <input
-                className={inputClass}
-                value={categoryEdit.name ?? ""}
-                onChange={(e) => {
-                  const name = e.target.value;
-                  const autoSlug = !categoryEdit.id;
-                  setCategoryEdit({
-                    ...categoryEdit,
-                    name,
-                    slug: autoSlug ? slugifyCatalogue(name) : (categoryEdit.slug ?? ""),
-                  });
-                }}
-              />
-            </Field>
-            <Field label="Slug">
-              <input
-                className={inputClass}
-                value={categoryEdit.slug ?? ""}
-                onChange={(e) => setCategoryEdit({ ...categoryEdit, slug: e.target.value })}
-              />
-            </Field>
-            <Field label="Parent category">
-              <select
-                className={inputClass}
-                value={categoryEdit.parentId ?? ""}
-                onChange={(e) =>
-                  setCategoryEdit({ ...categoryEdit, parentId: e.target.value || null })
-                }
-              >
-                <option value="">None — top level</option>
-                {topLevelCategories
-                  .filter((c) => c.id !== categoryEdit.id)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-            <Field label="Description">
-              <textarea
-                rows={3}
-                className={inputClass}
-                value={categoryEdit.description ?? ""}
-                onChange={(e) => setCategoryEdit({ ...categoryEdit, description: e.target.value })}
-              />
-            </Field>
-            <Field label="Sort order">
-              <input
-                type="number"
-                className={inputClass}
-                value={String(categoryEdit.sortOrder ?? 0)}
-                onChange={(e) =>
-                  setCategoryEdit({ ...categoryEdit, sortOrder: Number(e.target.value) })
-                }
-              />
-            </Field>
-            <label className="flex items-center gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={categoryEdit.isActive ?? true}
-                onChange={(e) => setCategoryEdit({ ...categoryEdit, isActive: e.target.checked })}
-              />
-              Shown on public site
-            </label>
-          </div>
-        ) : null}
-      </Drawer>
-
-      <Drawer
-        open={brandEdit !== null}
-        onClose={() => setBrandEdit(null)}
-        width="md"
-        title={brandEdit?.id ? "Edit brand" : "Add brand"}
-        sub="Brand record used on catalogue and brand pages"
-        footer={
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void saveBrand()}
-              className="h-11 flex-1 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setBrandEdit(null)}
-              className="h-11 rounded-md border border-border px-5 text-[13px] font-semibold"
-            >
-              Cancel
-            </button>
-          </div>
-        }
-      >
-        {brandEdit ? (
-          <div className="grid gap-4">
-            <Field label="Name">
-              <input
-                className={inputClass}
-                value={brandEdit.name ?? ""}
-                onChange={(e) => {
-                  const name = e.target.value;
-                  const autoSlug = !brandEdit.id;
-                  setBrandEdit({
-                    ...brandEdit,
-                    name,
-                    slug: autoSlug ? slugifyCatalogue(name) : (brandEdit.slug ?? ""),
-                  });
-                }}
-              />
-            </Field>
-            <Field label="Slug">
-              <input
-                className={inputClass}
-                value={brandEdit.slug ?? ""}
-                onChange={(e) => setBrandEdit({ ...brandEdit, slug: e.target.value })}
-              />
-            </Field>
-            <Field label="Positioning / tagline">
-              <input
-                className={inputClass}
-                value={brandEdit.tagline ?? ""}
-                onChange={(e) => setBrandEdit({ ...brandEdit, tagline: e.target.value })}
-              />
-            </Field>
-            <Field label="Description">
-              <textarea
-                rows={4}
-                className={inputClass}
-                value={brandEdit.description ?? ""}
-                onChange={(e) => setBrandEdit({ ...brandEdit, description: e.target.value })}
-              />
-            </Field>
-            <BrandLogoPicker
-              label="Brand logo"
-              logo={
-                brandEdit.logoMediaId || brandEdit.logoSrc
-                  ? {
-                      mediaId: brandEdit.logoMediaId ?? undefined,
-                      src: brandEdit.logoSrc ?? undefined,
-                      alt: brandEdit.logoAlt ?? undefined,
-                    }
-                  : undefined
-              }
-              onChange={(next) =>
-                setBrandEdit({
-                  ...brandEdit,
-                  logoMediaId: next?.mediaId ?? null,
-                  logoSrc: next?.src ?? null,
-                  logoAlt: next?.alt ?? null,
-                })
-              }
-            />
-            <label className="flex items-center gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={brandEdit.isActive ?? true}
-                onChange={(e) => setBrandEdit({ ...brandEdit, isActive: e.target.checked })}
-              />
-              Published
-            </label>
-          </div>
-        ) : null}
-      </Drawer>
+      <AddProductDrawer
+        open={addOpen}
+        brands={brands}
+        categories={categories}
+        onClose={() => setAddOpen(false)}
+      />
     </div>
+  );
+}
+
+function AddProductDrawer({
+  open,
+  brands,
+  categories,
+  onClose,
+}: {
+  open: boolean;
+  brands: BrandRow[];
+  categories: CategoryRow[];
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const [sku, setSku] = useState("");
+  const [name, setName] = useState("");
+  const [brandId, setBrandId] = useState(brands[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setSku("");
+      setName("");
+      setBrandId(brands[0]?.id ?? "");
+      setCategoryId(categories[0]?.id ?? "");
+    }
+  }, [open, brands, categories]);
+
+  if (!open) return null;
+
+  return (
+    <Drawer open title="Add product" sub="SKU, name, brand and category. Enrich the rest in the workspace." onClose={onClose}>
+      <form
+        className="grid gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void (async () => {
+            setSaving(true);
+            const r = await createCatalogueProductFn({ data: { sku, name, brandId, categoryId } });
+            setSaving(false);
+            if (!r.ok) {
+              toast.error(r.error);
+              return;
+            }
+            toast.success("Product created as a draft");
+            onClose();
+            await navigate({ to: "/admin/products/$id", params: { id: r.data.id } });
+          })();
+        }}
+      >
+        <Field label="SKU" htmlFor="new-sku">
+          <input id="new-sku" required value={sku} onChange={(e) => setSku(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Product name" htmlFor="new-name">
+          <input id="new-name" required value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Brand" htmlFor="new-brand">
+          <select id="new-brand" required value={brandId} onChange={(e) => setBrandId(e.target.value)} className={inputClass}>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Category" htmlFor="new-cat">
+          <select id="new-cat" required value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputClass}>
+            {categories.map((c) => <option key={c.id} value={c.id}>{"— ".repeat(c.depth)}{c.name}</option>)}
+          </select>
+        </Field>
+        <button type="submit" disabled={saving} className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50">
+          {saving ? "Creating…" : "Create and open"}
+        </button>
+      </form>
+    </Drawer>
   );
 }

@@ -18,15 +18,15 @@ export function TradePrice({
   /** Use plain text when rendered inside another link (avoids nested <a> hydration failures). */
   ctaMode = "link",
 }: {
-  trade: number;
-  rrp: number;
+  trade: number | null;
+  rrp: number | null;
   size?: "sm" | "md" | "lg";
   className?: string;
   ctaMode?: "link" | "text";
 }) {
   const { signedIn } = useSession();
 
-  if (!signedIn) {
+  if (!signedIn || trade == null) {
     const ctaClass =
       "mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary";
     return (
@@ -39,18 +39,23 @@ export function TradePrice({
             size === "lg" && "text-2xl",
           )}
         >
-          {gbp(rrp)} <span className="text-[11px] font-normal">RRP</span>
+          {rrp != null ? gbp(rrp) : "Price on request"}{" "}
+          {rrp != null ? <span className="text-[11px] font-normal">RRP</span> : null}
         </div>
-        {ctaMode === "link" ? (
-          <Link to="/login" className={cn(ctaClass, "hover:underline")}>
-            <Lock className="size-3" aria-hidden />
-            Trade customer? Sign in to view your price
-          </Link>
+        {!signedIn ? (
+          ctaMode === "link" ? (
+            <Link to="/login" className={cn(ctaClass, "hover:underline")}>
+              <Lock className="size-3" aria-hidden />
+              Trade customer? Sign in to view your price
+            </Link>
+          ) : (
+            <span className={ctaClass}>
+              <Lock className="size-3" aria-hidden />
+              Trade customer? Sign in to view your price
+            </span>
+          )
         ) : (
-          <span className={ctaClass}>
-            <Lock className="size-3" aria-hidden />
-            Trade customer? Sign in to view your price
-          </span>
+          <div className="text-[11px] text-steel">Account pricing is not available on this login</div>
         )}
       </div>
     );
@@ -69,7 +74,7 @@ export function TradePrice({
         {gbp(trade)}
         <span className="ml-1.5 text-[11px] font-normal text-steel">your price · ex VAT</span>
       </div>
-      <div className="num text-[11px] text-steel">RRP {gbp(rrp)}</div>
+      {rrp != null ? <div className="num text-[11px] text-steel">RRP {gbp(rrp)}</div> : null}
     </div>
   );
 }

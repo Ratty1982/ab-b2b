@@ -8,6 +8,8 @@ import * as applications from "@/server/applications/service";
 import * as cms from "@/server/cms/service";
 import * as cmsMedia from "@/server/cms/media";
 import * as catalogue from "@/server/catalogue/service";
+import * as catalogueProducts from "@/server/catalogue/products";
+import * as catalogueImport from "@/server/catalogue/import";
 import * as staffUsers from "@/server/users/service";
 
 async function requireUserId(): Promise<string> {
@@ -17,6 +19,12 @@ async function requireUserId(): Promise<string> {
     throw new AuthError("Authentication required", "UNAUTHENTICATED", 401);
   }
   return session.user.id;
+}
+
+async function optionalUserId(): Promise<string | null> {
+  const headers = getRequestHeaders();
+  const session = await auth.api.getSession({ headers });
+  return session?.user?.id ?? null;
 }
 
 function toError(error: unknown): { ok: false; error: string; code?: string } {
@@ -468,15 +476,235 @@ export const importCatalogueProductsFn = createServerFn({ method: "POST" })
     }
   });
 
-export const exportCatalogueProductsFn = createServerFn({ method: "GET" }).handler(async () => {
+export const exportCatalogueProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as Record<string, unknown> | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.exportCatalogueCsv(userId, (data ?? {}) as catalogueProducts.CatalogueListQuery);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCatalogueWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as catalogueProducts.CatalogueListQuery)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.listCataloguePage(userId, data ?? {});
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCatalogueProductFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.createProduct(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCatalogueProductFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.getProductWorkspace(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCatalogueProductFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.updateProductWorkspace(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveCatalogueProductVariantFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.saveProductVariant(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const attachCatalogueProductMediaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.attachProductMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const reorderCatalogueProductMediaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.reorderProductMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const detachCatalogueProductMediaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.detachProductMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const uploadProductImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { filename: string; csv: string; mime?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueImport.uploadProductImport(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewProductImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string; mapping?: unknown; brandActions?: unknown; categoryActions?: unknown })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = data.mapping
+        ? await catalogueImport.updateImportMapping(userId, {
+            id: data.id,
+            mapping: data.mapping as never,
+            brandActions: data.brandActions as never,
+            categoryActions: data.categoryActions as never,
+          })
+        : await catalogueImport.previewImport(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmProductImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueImport.confirmImport(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listProductImportsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();
-    const result = await catalogue.exportProductsCsv(userId);
+    const result = await catalogueImport.listImportJobs(userId);
     return { ok: true as const, data: result };
   } catch (e) {
     return toError(e);
   }
 });
+
+export const getProductImportFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueImport.getImportJob(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const productImportErrorsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueImport.importErrorCsv(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPublicCatalogueFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string; brandSlug?: string; categorySlug?: string; page?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await optionalUserId();
+      const result = await catalogueProducts.listPublicProducts({ userId, ...data });
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPublicProductFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { slug: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await optionalUserId();
+      const result = await catalogueProducts.getPublicProduct(userId, data.slug);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPublicBrandsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const result = await catalogueProducts.listPublicBrands();
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getPublicBrandFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { slug: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await optionalUserId();
+      const result = await catalogueProducts.getPublicBrand(userId, data.slug);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
 
 export const listStaffUsersFn = createServerFn({ method: "GET" }).handler(async () => {
   try {

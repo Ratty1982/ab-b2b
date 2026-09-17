@@ -18,6 +18,8 @@ export const PERMISSIONS = [
   "products.view",
   "products.create",
   "products.edit",
+  "products.import",
+  "products.export",
 
   "pricing.view",
   "pricing.edit",

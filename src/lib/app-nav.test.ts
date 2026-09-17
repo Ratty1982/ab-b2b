@@ -67,7 +67,9 @@ describe("canonical navigation contract", () => {
     const visible = flattenVisible(backOfficeNavForUser(superAdmin));
     expect(visible.map((i) => i.id)).not.toContain("orders");
     expect(visible.map((i) => i.id)).not.toContain("invoices");
-    expect(visible.map((i) => i.id)).not.toContain("brands");
+    expect(visible.map((i) => i.id)).toContain("brands");
+    expect(visible.map((i) => i.id)).toContain("categories");
+    expect(visible.map((i) => i.id)).toContain("product-imports");
     expect(visible.map((i) => i.id)).not.toContain("crm-leads");
     expect(visible.map((i) => i.id)).not.toContain("audit-log");
   });
