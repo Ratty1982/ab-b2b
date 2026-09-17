@@ -106,7 +106,7 @@ export async function uploadCmsMedia(actorUserId: string, raw: unknown) {
       altText: input.altText?.trim() || null,
       storageProvider: "database",
       storageKey: `cms-media/${crypto.randomUUID()}/${filename}`,
-      bytes,
+      bytes: Uint8Array.from(bytes),
       uploadedById: actorUserId,
     },
     select: {
