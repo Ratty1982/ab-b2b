@@ -148,6 +148,41 @@ describe("catalogue categories", () => {
     await expect(deleteCategory(adminId, { id: parent.id })).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("does not recreate categories after they have all been deleted", async () => {
+    let remaining = await listCategories(adminId);
+    expect(remaining.length).toBeGreaterThan(0);
+    while (remaining.length) {
+      await deleteCategory(adminId, { id: remaining[0]!.id });
+      remaining = await listCategories(adminId);
+    }
+    expect(remaining).toHaveLength(0);
+
+    const boot = await bootstrapCatalogue(prisma);
+    expect(boot.created).toBe(false);
+    expect(boot.categories).toBe(0);
+    expect(await listCategories(adminId)).toHaveLength(0);
+
+    const { DEFAULT_CATEGORY_TREE } = await import("@/domain/catalogue");
+    for (const [i, group] of DEFAULT_CATEGORY_TREE.entries()) {
+      const parent = await createCategory(adminId, {
+        name: group.name,
+        description: group.description,
+        isActive: true,
+        sortOrder: i + 1,
+      });
+      for (const [j, child] of group.children.entries()) {
+        await createCategory(adminId, {
+          name: child.name,
+          description: child.description,
+          parentId: parent.id,
+          isActive: true,
+          sortOrder: j + 1,
+        });
+      }
+    }
+    expect((await listCategories(adminId)).some((c) => c.name === "Braking")).toBe(true);
+  });
+
   it("updates a brand record", async () => {
     const { listBrands } = await import("@/server/catalogue/service");
     const brands = await listBrands(adminId);

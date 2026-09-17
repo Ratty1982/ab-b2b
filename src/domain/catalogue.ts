@@ -188,6 +188,11 @@ export type CategoryWriteInput = z.infer<typeof categoryWriteSchema>;
 export type BrandWriteInput = z.infer<typeof brandWriteSchema>;
 export type ProductDraftInput = z.infer<typeof productDraftSchema>;
 
+/** First-install only. Never backfill brands or categories after either side already exists. */
+export function shouldSeedDefaultCatalogue(categoryCount: number, brandCount: number): boolean {
+  return categoryCount === 0 && brandCount === 0;
+}
+
 export const DEFAULT_CATEGORY_TREE: Array<{
   name: string;
   description: string;

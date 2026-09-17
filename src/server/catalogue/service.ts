@@ -12,6 +12,7 @@ import {
   DEFAULT_CATEGORY_TREE,
   normalizeVatCode,
   productDraftSchema,
+  shouldSeedDefaultCatalogue,
   slugifyCatalogue,
 } from "@/domain/catalogue";
 import { cmsMediaPublicPath, type BrandLogoRef } from "@/lib/cms-media";
@@ -104,7 +105,7 @@ export async function bootstrapCatalogue(
     prismaClient.category.count(),
     prismaClient.brand.count(),
   ]);
-  if (categoryCount > 0 && brandCount > 0) {
+  if (!shouldSeedDefaultCatalogue(categoryCount, brandCount)) {
     return { created: false, categories: categoryCount, brands: brandCount };
   }
 

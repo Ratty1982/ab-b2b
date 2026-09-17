@@ -3,6 +3,7 @@ import {
   categoryCreateSchema,
   categoryDeleteSchema,
   productDraftSchema,
+  shouldSeedDefaultCatalogue,
   slugifyCatalogue,
 } from "@/domain/catalogue";
 import { parseProductCsv, serializeProductCsv } from "@/domain/catalogue-csv";
@@ -28,6 +29,13 @@ describe("catalogue domain", () => {
   it("requires a category id to delete", () => {
     expect(categoryDeleteSchema.safeParse({}).success).toBe(false);
     expect(categoryDeleteSchema.parse({ id: "clxxxxxxxxxxxxxxxxxxxxxxxxx" }).id).toMatch(/^c/);
+  });
+
+  it("only seeds default catalogue data on a true first install", () => {
+    expect(shouldSeedDefaultCatalogue(0, 0)).toBe(true);
+    expect(shouldSeedDefaultCatalogue(0, 5)).toBe(false);
+    expect(shouldSeedDefaultCatalogue(8, 0)).toBe(false);
+    expect(shouldSeedDefaultCatalogue(8, 5)).toBe(false);
   });
 
   it("requires a product SKU and name to save", () => {
