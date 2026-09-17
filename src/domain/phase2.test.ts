@@ -11,6 +11,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { cmsEditorPath, cmsPublicPath } from "@/lib/cms-pages";
 import { cmsMediaDisplaySrc, cmsMediaPublicPath, mergeBrandLogoMaps } from "@/lib/cms-media";
 import { isPermissionKey, ALL_PERMISSIONS } from "@/domain/permissions";
+import { internalUserCreateSchema, STAFF_ROLE_OPTIONS } from "@/domain/users";
 
 describe("company domain", () => {
   it("accepts lifecycle statuses including SUSPENDED", () => {
@@ -166,5 +167,47 @@ describe("phase 2 permissions", () => {
       expect(isPermissionKey(key)).toBe(true);
     }
     expect(ALL_PERMISSIONS.length).toBeGreaterThan(50);
+  });
+});
+
+describe("internal staff users", () => {
+  it("requires name, email and a system role", () => {
+    expect(() =>
+      internalUserCreateSchema.parse({
+        name: "Priya Nayar",
+        email: "priya.nayar@automotivebrands.co.uk",
+        role: "SALES_REPRESENTATIVE",
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects blank names and short passwords", () => {
+    expect(() =>
+      internalUserCreateSchema.parse({
+        name: " ",
+        email: "not-an-email",
+        role: "ACCOUNTS",
+      }),
+    ).toThrow();
+    expect(() =>
+      internalUserCreateSchema.parse({
+        name: "Accounts",
+        email: "accounts@automotivebrands.co.uk",
+        role: "ACCOUNTS",
+        password: "short",
+      }),
+    ).toThrow();
+  });
+
+  it("lists every internal system role for assignment", () => {
+    expect(STAFF_ROLE_OPTIONS.map((r) => r.key)).toEqual([
+      "SUPER_ADMIN",
+      "MANAGEMENT",
+      "SALES_MANAGER",
+      "SALES_REPRESENTATIVE",
+      "CUSTOMER_SERVICE",
+      "ACCOUNTS",
+      "MARKETING",
+    ]);
   });
 });

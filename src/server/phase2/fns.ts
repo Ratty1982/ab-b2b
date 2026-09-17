@@ -8,6 +8,7 @@ import * as applications from "@/server/applications/service";
 import * as cms from "@/server/cms/service";
 import * as cmsMedia from "@/server/cms/media";
 import * as catalogue from "@/server/catalogue/service";
+import * as staffUsers from "@/server/users/service";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -417,3 +418,37 @@ export const exportCatalogueProductsFn = createServerFn({ method: "GET" }).handl
     return toError(e);
   }
 });
+
+export const listStaffUsersFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await staffUsers.listStaffUsers(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const createStaffUserFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await staffUsers.createStaffUser(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateStaffUserFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await staffUsers.updateStaffUser(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
