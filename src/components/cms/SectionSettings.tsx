@@ -280,7 +280,10 @@ export function SectionSettings({
             min={1}
             max={12}
             value={num(config, "displayCount", 5)}
-            onChange={(e) => onChange("displayCount", Number(e.target.value))}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              onChange("displayCount", Number.isFinite(n) && n > 0 ? n : 5);
+            }}
             className={inputClass}
           />
         </Field>

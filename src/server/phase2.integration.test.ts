@@ -348,6 +348,52 @@ describe("CMS draft vs published", () => {
     await publishCmsPage(adminId, "home");
   });
 
+  it("saves and publishes editor-shaped homepage sections including string counts", async () => {
+    const headline = `Editor publish ${Date.now()}`;
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          headline,
+          supporting: "From the CMS editor",
+          ctaLabel: "Open a Trade Account",
+          ctaHref: "/register",
+          alignment: "left",
+          variant: "split",
+          spacing: "relaxed",
+          media: { alt: "Hero" },
+        },
+      },
+      {
+        type: "FEATURED_BRANDS",
+        enabled: true,
+        config: {
+          heading: "Five brands. One supply partner.",
+          supporting: "Our brands",
+          brandSlugs: ["power-maxed", "steel-seal"],
+          displayCount: "5",
+          variant: "standard",
+          spacing: "standard",
+        },
+      },
+    ]);
+    await publishCmsPage(adminId, "home");
+    const live = await getPublishedHomepage();
+    const hero = live?.sections.find((s) => s.type === "HERO");
+    const brands = live?.sections.find((s) => s.type === "FEATURED_BRANDS");
+    const liveHeadline =
+      hero && typeof hero.config === "object" && hero.config && "headline" in hero.config
+        ? String((hero.config as { headline: string }).headline)
+        : "";
+    const count =
+      brands && typeof brands.config === "object" && brands.config && "displayCount" in brands.config
+        ? Number((brands.config as { displayCount: number }).displayCount)
+        : 0;
+    expect(liveHeadline).toBe(headline);
+    expect(count).toBe(5);
+  });
+
   it("denies CMS publish without permission", async () => {
     await expect(publishCmsPage(salesRepUserId, "home")).rejects.toBeInstanceOf(AuthError);
   });

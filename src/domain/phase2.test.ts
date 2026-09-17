@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { companyCreateSchema, addressSchema, COMPANY_STATUSES } from "@/domain/company";
-import { validateSectionConfig } from "@/domain/cms";
+import { formatZodError, validateSectionConfig } from "@/domain/cms";
 import { tradeApplicationSubmitSchema } from "@/domain/trade-application";
 import { generateInviteToken, hashInviteToken } from "@/domain/invitation";
 import { ROUTES } from "@/lib/app-nav";
@@ -47,6 +47,24 @@ describe("CMS section validation", () => {
     expect(() =>
       validateSectionConfig("RICH_TEXT", { content: "x".repeat(20001) }),
     ).toThrow();
+  });
+
+  it("accepts featured brands displayCount sent as a string from number inputs", () => {
+    const cfg = validateSectionConfig("FEATURED_BRANDS", {
+      heading: "Our brands",
+      brandSlugs: ["power-maxed"],
+      displayCount: "5",
+    }) as { displayCount: number };
+    expect(cfg.displayCount).toBe(5);
+  });
+
+  it("describes invalid hero headlines", () => {
+    try {
+      validateSectionConfig("HERO", { headline: "x".repeat(401) });
+      throw new Error("expected validation to fail");
+    } catch (error) {
+      expect(formatZodError(error)).toMatch(/headline/i);
+    }
   });
 
   it("accepts a media library ref on hero config", () => {

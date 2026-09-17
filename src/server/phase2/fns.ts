@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import { auth } from "@/infra/auth";
+import { formatZodError } from "@/domain/cms";
 import { AuthError } from "@/server/rbac/guards";
 import * as companies from "@/server/companies/service";
 import * as applications from "@/server/applications/service";
@@ -20,8 +21,12 @@ function toError(error: unknown): { ok: false; error: string; code?: string } {
   if (error instanceof AuthError) {
     return { ok: false, error: error.message, code: error.code };
   }
-  if (error && typeof error === "object" && "issues" in error) {
-    return { ok: false, error: "Validation failed", code: "VALIDATION" };
+  const validation = formatZodError(error);
+  if (validation) {
+    return { ok: false, error: validation, code: "VALIDATION" };
+  }
+  if (error instanceof Error && error.message) {
+    return { ok: false, error: error.message, code: "INTERNAL" };
   }
   console.error("[ab:fn]", error);
   return { ok: false, error: "Request failed", code: "INTERNAL" };

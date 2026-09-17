@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, Copy, Eye, Monitor, Plus, Smartphone, Tablet, Trash2 } from "lucide-react";
 import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
@@ -83,16 +83,20 @@ function defaultConfig(type: CmsSectionTypeKey): Record<string, unknown> {
 
 function CmsEditor() {
   const { slug } = Route.useParams();
+  const router = useRouter();
   const [sections, setSections] = useState<DraftSection[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewport, setViewport] = useState<Viewport>("desktop");
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     const r = await getCmsPageDraftFn({ data: { slug } });
     if (!r.ok) {
+      setActionError(r.error);
       toast.error(r.error);
       return;
     }
@@ -123,44 +127,62 @@ function CmsEditor() {
     );
   }
 
+  function draftPayload() {
+    return {
+      slug,
+      sections: sections.map((s) => ({
+        type: s.type,
+        config: s.config,
+        enabled: s.enabled,
+      })),
+    };
+  }
+
+  function failAction(message: string) {
+    setActionError(message);
+    toast.error(message);
+  }
+
   async function saveDraft() {
     setSaving(true);
-    const r = await saveCmsDraftFn({
-      data: {
-        slug,
-        sections: sections.map((s) => ({
-          type: s.type,
-          config: s.config,
-          enabled: s.enabled,
-        })),
-      },
-    });
-    setSaving(false);
-    if (!r.ok) toast.error(r.error);
-    else {
+    setActionError(null);
+    try {
+      const r = await saveCmsDraftFn({ data: draftPayload() });
+      if (!r.ok) {
+        failAction(r.error);
+        return;
+      }
       toast.success("Draft saved — live site unchanged");
       await load();
+    } catch (error) {
+      failAction(error instanceof Error ? error.message : "Could not save draft");
+    } finally {
+      setSaving(false);
     }
   }
 
   async function publish() {
-    const save = await saveCmsDraftFn({
-      data: {
-        slug,
-        sections: sections.map((s) => ({
-          type: s.type,
-          config: s.config,
-          enabled: s.enabled,
-        })),
-      },
-    });
-    if (!save.ok) {
-      toast.error(save.error);
-      return;
+    setPublishing(true);
+    setActionError(null);
+    try {
+      const save = await saveCmsDraftFn({ data: draftPayload() });
+      if (!save.ok) {
+        failAction(save.error);
+        return;
+      }
+      const r = await publishCmsPageFn({ data: { slug } });
+      if (!r.ok) {
+        failAction(r.error);
+        return;
+      }
+      toast.success("Published to the live website");
+      await router.invalidate();
+      await load();
+    } catch (error) {
+      failAction(error instanceof Error ? error.message : "Could not publish");
+    } finally {
+      setPublishing(false);
     }
-    const r = await publishCmsPageFn({ data: { slug } });
-    if (!r.ok) toast.error(r.error);
-    else toast.success("Published to the live website");
   }
 
   function addSection(type: CmsSectionTypeKey) {
@@ -217,7 +239,7 @@ function CmsEditor() {
           href={publicPath}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex h-9 items-center gap-1 rounded-md border border-border px-3 text-[12px] font-semibold"
+          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md border border-border px-3 text-[12px] font-semibold"
         >
           <Eye className="size-3.5" aria-hidden />
           Preview
@@ -225,19 +247,25 @@ function CmsEditor() {
         <button
           type="button"
           onClick={() => void saveDraft()}
-          disabled={saving}
-          className="h-9 rounded-md border border-border px-4 text-[12px] font-semibold"
+          disabled={saving || publishing}
+          className="h-9 shrink-0 rounded-md border border-border px-4 text-[12px] font-semibold disabled:opacity-50"
         >
-          Save Draft
+          {saving ? "Saving…" : "Save Draft"}
         </button>
         <button
           type="button"
           onClick={() => void publish()}
-          className="h-9 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+          disabled={saving || publishing}
+          className="relative z-10 h-9 shrink-0 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
         >
-          Publish
+          {publishing ? "Publishing…" : "Publish"}
         </button>
       </header>
+      {actionError ? (
+        <div role="alert" className="border-b border-bad/40 bg-bad/10 px-4 py-2 text-[13px] text-bad">
+          {actionError}
+        </div>
+      ) : null}
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[240px_minmax(0,1fr)_300px]">
         <aside className="overflow-y-auto border-r border-border p-3">

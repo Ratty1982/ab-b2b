@@ -1,11 +1,12 @@
 import type { CmsSectionType, Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
-import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
+import { AuthError, requireAuthenticatedUser, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
 import {
   cmsPageUpdateSchema,
   cmsSectionInputSchema,
+  formatZodError,
   validateSectionConfig,
   type CmsSectionTypeKey,
 } from "@/domain/cms";
@@ -233,10 +234,26 @@ export async function saveCmsDraftSections(
   if (!page) throw new AuthError("Page not found", "NOT_FOUND", 404);
 
   const draft = await ensureDraftVersion(page.id, actorUserId);
-  const parsed = sections.map((s) => {
-    const row = cmsSectionInputSchema.parse(s);
-    const config = validateSectionConfig(row.type, row.config);
-    return { ...row, config };
+  const parsed = sections.map((s, index) => {
+    const row = cmsSectionInputSchema.safeParse(s);
+    if (!row.success) {
+      throw new AuthError(
+        `Section ${index + 1}: ${formatZodError(row.error) ?? "Invalid section"}`,
+        "VALIDATION",
+        400,
+      );
+    }
+    try {
+      const config = validateSectionConfig(row.data.type, row.data.config);
+      return { ...row.data, config };
+    } catch (error) {
+      const detail = formatZodError(error) ?? (error instanceof Error ? error.message : "Invalid section config");
+      throw new AuthError(
+        `Section ${index + 1} (${row.data.type.replaceAll("_", " ")}): ${detail}`,
+        "VALIDATION",
+        400,
+      );
+    }
   });
 
   await prisma.$transaction(async (tx) => {
@@ -270,8 +287,7 @@ export async function saveCmsDraftSections(
 }
 
 export async function publishCmsPage(actorUserId: string, slug: string, note?: string) {
-  const profile = await requireSystemPermission(actorUserId, "cms.page.publish");
-  // Prefer granular; cms.publish still valid for MARKETING
+  const profile = await requireAuthenticatedUser(actorUserId);
   if (
     !hasPermission(profile, "cms.page.publish") &&
     !hasPermission(profile, "cms.publish")

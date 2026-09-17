@@ -21,10 +21,21 @@ const alignment = z.enum(["left", "center", "right"]).default("left");
 const spacing = z.enum(["compact", "standard", "relaxed"]).default("standard");
 const variant = z.enum(["standard", "wide", "split", "dark", "light"]).default("standard");
 
+/** Number inputs and JSON often send counts as strings; empty values fall back to default. */
+const displayCount = z.preprocess((value) => {
+  if (value === "" || value == null) return 5;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return value;
+}, z.number().int().min(1).max(12).default(5));
+
 const mediaRef = z
   .object({
     mediaId: z.string().optional(),
-    src: z.string().max(500).optional(),
+    src: z.string().max(2048).optional(),
     alt: z.string().max(300).default(""),
   })
   .optional()
@@ -32,8 +43,8 @@ const mediaRef = z
 
 export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
   HERO: z.object({
-    headline: z.string().max(200),
-    supporting: z.string().max(500).default(""),
+    headline: z.string().max(400),
+    supporting: z.string().max(2000).default(""),
     ctaLabel: z.string().max(80).default("Open a trade account"),
     ctaHref: z.string().max(300).default("/register"),
     secondaryCtaLabel: z.string().max(80).optional(),
@@ -52,7 +63,7 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     heading: z.string().max(120).default("Our brands"),
     supporting: z.string().max(400).default(""),
     brandSlugs: z.array(z.string().max(80)).max(12).default([]),
-    displayCount: z.number().int().min(1).max(12).default(5),
+    displayCount,
     variant,
     spacing,
   }),
@@ -111,8 +122,8 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     spacing,
   }),
   TRADE_CTA: z.object({
-    headline: z.string().max(200),
-    supporting: z.string().max(400).default(""),
+    headline: z.string().max(400),
+    supporting: z.string().max(2000).default(""),
     ctaLabel: z.string().max(80).default("Apply for a trade account"),
     ctaHref: z.string().max(300).default("/register"),
     variant,
@@ -133,6 +144,22 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     size: z.enum(["sm", "md", "lg"]).default("md"),
   }),
 };
+
+export function formatZodError(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("issues" in error)) return null;
+  const issues = (error as { issues: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  const parts = issues.map((issue) => {
+    if (!issue || typeof issue !== "object") return "Invalid value";
+    const row = issue as { path?: unknown; message?: unknown };
+    const path = Array.isArray(row.path)
+      ? row.path.filter((p) => p !== undefined && p !== null && `${p}` !== "").join(".")
+      : "";
+    const message = typeof row.message === "string" ? row.message : "Invalid value";
+    return path ? `${path}: ${message}` : message;
+  });
+  return parts.join("; ");
+}
 
 export function validateSectionConfig(type: CmsSectionTypeKey, config: unknown) {
   const schema = sectionConfigSchemas[type];
