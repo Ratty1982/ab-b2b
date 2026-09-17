@@ -228,7 +228,7 @@ function CmsEditor() {
     toast.error(message);
   }
 
-  async function saveDraft() {
+  async function saveDraft(options?: { quiet?: boolean }): Promise<boolean> {
     setSaving(true);
     setStatus("saving");
     setActionError(null);
@@ -244,7 +244,7 @@ function CmsEditor() {
       });
       if (!metaResult.ok) {
         failAction(metaResult.error);
-        return;
+        return false;
       }
       const r = await saveCmsDraftFn({
         data: {
@@ -254,13 +254,15 @@ function CmsEditor() {
       });
       if (!r.ok) {
         failAction(r.error);
-        return;
+        return false;
       }
-      toast.success("Draft saved — live site unchanged");
+      if (!options?.quiet) toast.success("Draft saved — live site unchanged");
       setStatus("saved");
       await load();
+      return true;
     } catch (error) {
       failAction(error instanceof Error ? error.message : "Could not save draft");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -270,7 +272,8 @@ function CmsEditor() {
     setPublishing(true);
     setActionError(null);
     try {
-      await saveDraft();
+      const saved = await saveDraft({ quiet: true });
+      if (!saved) return;
       const r = await publishCmsPageFn({ data: { slug } });
       if (!r.ok) {
         failAction(r.error);
