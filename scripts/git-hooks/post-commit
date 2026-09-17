@@ -1,0 +1,25 @@
+#!/bin/sh
+# Push the current branch after every commit. Failures are reported but do not
+# undo the commit.
+set -eu
+
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+  exit 0
+fi
+
+push_remote() {
+  remote=$1
+  set_upstream=$2
+  if git remote get-url "$remote" >/dev/null 2>&1; then
+    echo "[ab:git] Pushing $branch to $remote…"
+    if [ "$set_upstream" = "1" ]; then
+      git push -u "$remote" "$branch"
+    else
+      git push "$remote" "$branch"
+    fi && echo "[ab:git] Pushed $branch → $remote" || echo "[ab:git] WARNING: push to $remote failed" >&2
+  fi
+}
+
+push_remote origin 1
+push_remote github 0
