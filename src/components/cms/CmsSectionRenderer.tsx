@@ -4,7 +4,7 @@ import type { CmsSectionTypeKey } from "@/domain/cms";
 import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
-import { cmsMediaDisplaySrc, readBrandLogos } from "@/lib/cms-media";
+import { cmsMediaDisplaySrc, cmsFocalStyle, cmsImageFitClass, readBrandLogos } from "@/lib/cms-media";
 
 type Section = {
   id: string;
@@ -37,41 +37,90 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
       const mediaObj =
         media && typeof media === "object" ? (media as Record<string, unknown>) : null;
       const heroSrc = cmsMediaDisplaySrc(mediaObj) || heroImage;
-      return (
-        <section className="relative overflow-hidden border-b border-border/60">
-          <div className="mx-auto grid max-w-[1400px] items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-12 lg:px-10 lg:py-24">
-            <div className="lg:col-span-6">
-              <h1 className="font-display text-[44px] font-semibold uppercase leading-[0.92] tracking-tight sm:text-[72px]">
-                {str(c, "headline")}
-              </h1>
-              <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-steel">
-                {str(c, "supporting")}
-              </p>
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <a
-                  href={str(c, "ctaHref", "/register")}
-                  className="inline-flex h-12 items-center gap-2 rounded-md bg-primary px-6 text-sm font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
-                >
-                  {str(c, "ctaLabel", "Open a Trade Account")}
-                  <ArrowRight className="size-4" aria-hidden />
-                </a>
-                {str(c, "secondaryCtaLabel") ? (
-                  <a
-                    href={str(c, "secondaryCtaHref", "/brands")}
-                    className="inline-flex h-12 items-center rounded-md border border-border bg-surface/50 px-6 text-sm font-semibold uppercase tracking-wide transition-colors hover:border-steel"
-                  >
-                    {str(c, "secondaryCtaLabel")}
-                  </a>
-                ) : null}
-              </div>
+      const fit = mediaObj?.["fit"] ?? "fill";
+      const overlay = num(c, "overlayStrength", 0);
+      const align = str(c, "alignment", "left");
+      const position = str(c, "contentPosition", "middle");
+      const variant = str(c, "variant", "split");
+      const spacing = str(c, "spacing", "standard");
+      const pad = spacing === "compact" ? "py-10 lg:py-14" : spacing === "relaxed" ? "py-20 lg:py-28" : "py-16 lg:py-24";
+      const textAlign =
+        align === "center" ? "text-center mx-auto" : align === "right" ? "text-right ml-auto" : "text-left";
+      const vAlign =
+        position === "top" ? "items-start" : position === "bottom" ? "items-end" : "items-center";
+      const ctaWrap = align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start";
+      const copy = (
+        <div className={cn("max-w-xl", textAlign)}>
+          {str(c, "eyebrow") ? (
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary">
+              {str(c, "eyebrow")}
             </div>
-            <div className="lg:col-span-6">
+          ) : null}
+          <h1
+            className={cn(
+              "font-display text-[44px] font-semibold uppercase leading-[0.92] tracking-tight sm:text-[72px]",
+              str(c, "eyebrow") && "mt-4",
+            )}
+          >
+            {str(c, "headline")}
+          </h1>
+          <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-steel">{str(c, "supporting")}</p>
+          <div className={cn("mt-8 flex flex-wrap items-center gap-3", ctaWrap)}>
+            <a
+              href={str(c, "ctaHref", "/register")}
+              className="inline-flex h-12 items-center gap-2 rounded-md bg-primary px-6 text-sm font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
+            >
+              {str(c, "ctaLabel", "Open a Trade Account")}
+              <ArrowRight className="size-4" aria-hidden />
+            </a>
+            {str(c, "secondaryCtaLabel") ? (
+              <a
+                href={str(c, "secondaryCtaHref", "/brands")}
+                className="inline-flex h-12 items-center rounded-md border border-border bg-surface/50 px-6 text-sm font-semibold uppercase tracking-wide transition-colors hover:border-steel"
+              >
+                {str(c, "secondaryCtaLabel")}
+              </a>
+            ) : null}
+          </div>
+        </div>
+      );
+      const picture = (
+        <div className="relative overflow-hidden rounded-xl bg-ink outline outline-1 -outline-offset-1 outline-border/60">
+          <div className="aspect-[25/21] w-full">
+            <img
+              src={heroSrc}
+              alt={str(mediaObj ?? {}, "alt")}
+              className={cmsImageFitClass(fit)}
+              style={cmsFocalStyle(mediaObj)}
+            />
+          </div>
+        </div>
+      );
+
+      if (variant === "wide") {
+        return (
+          <section className="relative overflow-hidden border-b border-border/60">
+            <div className="absolute inset-0">
               <img
                 src={heroSrc}
-                alt={str(mediaObj ?? {}, "alt")}
-                className="aspect-[6/5] w-full rounded-xl object-cover outline outline-1 -outline-offset-1 outline-border/60"
+                alt=""
+                className={cn("h-full w-full", cmsImageFitClass("fill"))}
+                style={cmsFocalStyle(mediaObj)}
               />
+              <div className="absolute inset-0 bg-ink" style={{ opacity: overlay / 100 }} />
             </div>
+            <div className={cn("relative mx-auto flex min-h-[420px] max-w-[1400px] px-4 sm:px-6 lg:px-10", pad, vAlign)}>
+              {copy}
+            </div>
+          </section>
+        );
+      }
+
+      return (
+        <section className="relative overflow-hidden border-b border-border/60">
+          <div className={cn("mx-auto grid max-w-[1400px] gap-10 px-4 sm:px-6 lg:grid-cols-12 lg:px-10", pad, vAlign)}>
+            <div className="lg:col-span-6">{copy}</div>
+            <div className="lg:col-span-6">{picture}</div>
           </div>
         </section>
       );
@@ -259,7 +308,11 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
         <img
           src={imgSrc}
           alt={str(mediaObj ?? {}, "alt")}
-          className="aspect-[4/3] w-full rounded-xl object-cover outline outline-1 -outline-offset-1 outline-border/60"
+          className={cn(
+            "aspect-[4/3] w-full rounded-xl outline outline-1 -outline-offset-1 outline-border/60",
+            cmsImageFitClass(mediaObj?.["fit"] ?? "content"),
+          )}
+          style={cmsFocalStyle(mediaObj)}
         />
       ) : (
         <div className="grid aspect-[4/3] place-items-center rounded-xl border border-dashed border-border text-sm text-steel">
@@ -277,19 +330,52 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
     }
 
     case "FEATURED_PRODUCTS":
-    case "BRAND_LOGO_STRIP":
+    case "BRAND_LOGO_STRIP": {
+      if (section.type === "BRAND_LOGO_STRIP") {
+        const slugs = Array.isArray(c["brandSlugs"]) ? (c["brandSlugs"] as string[]) : [];
+        const selected = brands.filter((b) => slugs.includes(b.slug));
+        const logos = readBrandLogos(c);
+        return (
+          <section className="border-b border-border/60 px-4 py-10 sm:px-6">
+            <div className="mx-auto max-w-[1400px]">
+              {str(c, "heading") ? (
+                <h2 className="mb-6 font-display text-xl font-semibold uppercase">{str(c, "heading")}</h2>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-6">
+                {(selected.length ? selected : brands.slice(0, 5)).map((brand) => {
+                  const logoSrc = cmsMediaDisplaySrc(logos[brand.slug]);
+                  return (
+                    <div key={brand.slug} className="grid h-16 w-36 place-items-center border border-border bg-ink/60 px-3">
+                      {logoSrc ? (
+                        <img src={logoSrc} alt={logos[brand.slug]?.alt || brand.name} className="max-h-10 max-w-full object-contain" />
+                      ) : (
+                        <span className="text-[11px] font-semibold uppercase text-steel">{brand.name}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        );
+      }
+      const skus = Array.isArray(c["productSkus"]) ? (c["productSkus"] as string[]) : [];
       return (
         <section className="border-b border-border/60 px-4 py-12 sm:px-6">
           <div className="mx-auto max-w-[1400px]">
             <h2 className="font-display text-2xl font-semibold uppercase">
-              {str(c, "heading") || str(c, "headline") || section.type}
+              {str(c, "heading") || section.type}
             </h2>
-            <p className="mt-2 text-sm text-steel">
-              {str(c, "supporting") || str(c, "body")}
-            </p>
+            <p className="mt-2 text-sm text-steel">{str(c, "supporting")}</p>
+            {skus.length ? (
+              <p className="mt-4 text-[12px] uppercase tracking-wide text-steel">SKUs: {skus.join(", ")}</p>
+            ) : (
+              <p className="mt-4 text-sm text-steel">No products selected yet. Add SKUs in section settings.</p>
+            )}
           </div>
         </section>
       );
+    }
 
     default:
       return null;

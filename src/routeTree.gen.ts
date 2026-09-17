@@ -59,6 +59,7 @@ import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$
 import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
+import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -310,6 +311,11 @@ const SalesQuotesNewRoute = SalesQuotesNewRouteImport.update({
   path: '/quotes/new',
   getParentRoute: () => SalesRoute,
 } as any)
+const AdminContentSlugPreviewRoute = AdminContentSlugPreviewRouteImport.update({
+  id: '/preview',
+  path: '/preview',
+  getParentRoute: () => AdminContentSlugRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -349,7 +355,7 @@ export interface FileRoutesByFullPath {
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
-  '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -362,6 +368,7 @@ export interface FileRoutesByFullPath {
   '/admin/customers/': typeof AdminCustomersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
+  '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -396,7 +403,7 @@ export interface FileRoutesByTo {
   '/portal': typeof PortalIndexRoute
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
-  '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -409,6 +416,7 @@ export interface FileRoutesByTo {
   '/admin/customers': typeof AdminCustomersIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
+  '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -449,7 +457,7 @@ export interface FileRoutesById {
   '/portal/': typeof PortalIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
-  '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -462,6 +470,7 @@ export interface FileRoutesById {
   '/admin/customers/': typeof AdminCustomersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
+  '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -516,6 +525,7 @@ export interface FileRouteTypes {
     | '/admin/customers/'
     | '/sales/customers/'
     | '/sales/quotes/'
+    | '/admin/content/$slug/preview'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -563,6 +573,7 @@ export interface FileRouteTypes {
     | '/admin/customers'
     | '/sales/customers'
     | '/sales/quotes'
+    | '/admin/content/$slug/preview'
   id:
     | '__root__'
     | '/'
@@ -615,6 +626,7 @@ export interface FileRouteTypes {
     | '/admin/customers/'
     | '/sales/customers/'
     | '/sales/quotes/'
+    | '/admin/content/$slug/preview'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -993,17 +1005,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesQuotesNewRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/admin/content/$slug/preview': {
+      id: '/admin/content/$slug/preview'
+      path: '/preview'
+      fullPath: '/admin/content/$slug/preview'
+      preLoaderRoute: typeof AdminContentSlugPreviewRouteImport
+      parentRoute: typeof AdminContentSlugRoute
+    }
   }
 }
 
+interface AdminContentSlugRouteChildren {
+  AdminContentSlugPreviewRoute: typeof AdminContentSlugPreviewRoute
+}
+
+const AdminContentSlugRouteChildren: AdminContentSlugRouteChildren = {
+  AdminContentSlugPreviewRoute: AdminContentSlugPreviewRoute,
+}
+
+const AdminContentSlugRouteWithChildren =
+  AdminContentSlugRoute._addFileChildren(AdminContentSlugRouteChildren)
+
 interface AdminContentRouteChildren {
-  AdminContentSlugRoute: typeof AdminContentSlugRoute
+  AdminContentSlugRoute: typeof AdminContentSlugRouteWithChildren
   AdminContentMediaRoute: typeof AdminContentMediaRoute
   AdminContentIndexRoute: typeof AdminContentIndexRoute
 }
 
 const AdminContentRouteChildren: AdminContentRouteChildren = {
-  AdminContentSlugRoute: AdminContentSlugRoute,
+  AdminContentSlugRoute: AdminContentSlugRouteWithChildren,
   AdminContentMediaRoute: AdminContentMediaRoute,
   AdminContentIndexRoute: AdminContentIndexRoute,
 }

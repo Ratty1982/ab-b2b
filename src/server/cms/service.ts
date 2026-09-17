@@ -56,16 +56,57 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
 
   const version = page.draftVersion ?? page.publishedVersion;
   const catalogueLogos = await listPublicBrandLogos();
+  const latestPublish = await prisma.cmsPublishEvent.findFirst({
+    where: { pageId: page.id },
+    orderBy: { createdAt: "desc" },
+  });
+  const versions = await prisma.cmsPageVersion.findMany({
+    where: { pageId: page.id },
+    orderBy: { version: "desc" },
+    take: 20,
+    select: { id: true, version: true, label: true, createdAt: true, createdById: true },
+  });
+  const userIds = [
+    ...new Set(
+      [page.updatedById, page.createdById, latestPublish?.publishedById, ...versions.map((v) => v.createdById)].filter(
+        Boolean,
+      ) as string[],
+    ),
+  ];
+  const users = userIds.length
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } })
+    : [];
+  const nameOf = (id: string | null | undefined) => {
+    if (!id) return null;
+    const u = users.find((row) => row.id === id);
+    return u?.name?.trim() || u?.email || null;
+  };
+
   return {
     id: page.id,
     slug: page.slug,
     title: page.title,
     seoTitle: page.seoTitle,
     metaDescription: page.metaDescription,
+    ogImageMediaId: page.ogImageMediaId,
+    ogImageSrc: page.ogImageMediaId ? `/api/cms-media/${page.ogImageMediaId}` : null,
     status: page.status,
     publishedAt: page.publishedAt?.toISOString() ?? null,
+    publishedByName: nameOf(latestPublish?.publishedById),
+    draftSavedAt: page.updatedAt.toISOString(),
+    draftSavedByName: nameOf(page.updatedById),
+    hasUnpublishedChanges: Boolean(page.draftVersionId && page.draftVersionId !== page.publishedVersionId),
     draftVersionId: page.draftVersionId,
     publishedVersionId: page.publishedVersionId,
+    versions: versions.map((v) => ({
+      id: v.id,
+      version: v.version,
+      label: v.label,
+      createdAt: v.createdAt.toISOString(),
+      createdByName: nameOf(v.createdById),
+      isDraft: v.id === page.draftVersionId,
+      isPublished: v.id === page.publishedVersionId,
+    })),
     version: version
       ? {
           id: version.id,
@@ -98,6 +139,7 @@ export async function getPublishedHomepage() {
     title: page.title,
     seoTitle: page.seoTitle ?? page.publishedVersion.seoTitle,
     metaDescription: page.metaDescription ?? page.publishedVersion.metaDescription,
+    ogImageSrc: page.ogImageMediaId ? `/api/cms-media/${page.ogImageMediaId}` : null,
     sections: page.publishedVersion.sections.map((s) => ({
       id: s.id,
       type: s.type as CmsSectionTypeKey,
@@ -233,6 +275,7 @@ export async function updateCmsPageMeta(actorUserId: string, raw: unknown) {
       ...(input.metaDescription !== undefined
         ? { metaDescription: input.metaDescription }
         : {}),
+      ...(input.ogImageMediaId !== undefined ? { ogImageMediaId: input.ogImageMediaId } : {}),
       updatedById: actorUserId,
     },
   });

@@ -14,7 +14,7 @@ This repository started as a Lovable UX prototype and is being converted into a 
 | CMS homepage | Draft/publish page builder, media picker, published homepage rendering |
 | Autopart / orders / pricing engine / email send | Deferred |
 
-Prototype catalogue product pages on the public site may still use mock stock. Admin Catalogue products persist in Postgres: add, edit, delete, and CSV upload/export. **Users, roles & permissions** lists real internal users (no dummy staff) and can add/manage them.
+Prototype catalogue product pages on the public site may still use mock stock. Admin Catalogue products persist in Postgres: add, edit, delete, and CSV upload/export. **Users, roles & permissions** lists real internal users (no dummy staff) and can add/manage them. **Website → Homepage** is a visual CMS editor (draft canvas, section library, media library). Live `/` still reads only the published version.
 
 
 ## Stack

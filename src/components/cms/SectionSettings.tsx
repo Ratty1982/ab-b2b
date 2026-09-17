@@ -1,12 +1,14 @@
-import { useState } from "react";
-import type { CmsSectionTypeKey } from "@/domain/cms";
+import { useState, type ReactNode } from "react";
+import { CMS_IMAGE_FITS, CMS_IMAGE_FIT_LABELS, type CmsSectionTypeKey } from "@/domain/cms";
 import { brands } from "@/lib/data";
 import { cmsMediaDisplaySrc, readBrandLogos, type BrandLogoRef } from "@/lib/cms-media";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
 import heroImage from "@/assets/hero-parts.jpg";
+import { heroRecommendedCopy } from "@/lib/hero-image";
 
 const ALIGNMENTS = ["left", "center", "right"] as const;
+const POSITIONS = ["top", "middle", "bottom"] as const;
 const VARIANTS = ["standard", "wide", "split", "dark", "light"] as const;
 const SPACINGS = ["compact", "standard", "relaxed"] as const;
 
@@ -55,14 +57,25 @@ function SelectField({
   );
 }
 
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-3 border-t border-border/70 pt-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">{title}</div>
+      {children}
+    </div>
+  );
+}
+
 function MediaField({
   config,
   onChange,
   fallbackSrc,
+  hero,
 }: {
   config: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
   fallbackSrc?: string;
+  hero?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const current = mediaObject(config);
@@ -71,6 +84,9 @@ function MediaField({
     (typeof current["mediaId"] === "string" && current["mediaId"]) ||
       (typeof current["src"] === "string" && current["src"]),
   );
+  const fit = typeof current["fit"] === "string" ? current["fit"] : hero ? "fill" : "content";
+  const focalX = typeof current["focalX"] === "number" ? current["focalX"] : 50;
+  const focalY = typeof current["focalY"] === "number" ? current["focalY"] : 50;
 
   function applyItem(item: CmsMediaListItem) {
     onChange("media", {
@@ -78,6 +94,9 @@ function MediaField({
       mediaId: item.id,
       src: item.src,
       alt: mediaAlt(config) || item.altText || "",
+      fit,
+      focalX,
+      focalY,
     });
   }
 
@@ -86,19 +105,25 @@ function MediaField({
       <Field label="Image">
         <div className="overflow-hidden rounded-md border border-border bg-ink">
           {preview ? (
-            <img src={preview} alt={mediaAlt(config) || "Section image"} className="aspect-[6/4] w-full object-cover" />
+            <img
+              src={preview}
+              alt={mediaAlt(config) || "Section image"}
+              className="aspect-[25/21] w-full object-cover"
+              style={{ objectPosition: `${focalX}% ${focalY}%` }}
+            />
           ) : (
-            <div className="grid aspect-[6/4] place-items-center text-[12px] text-steel">No image selected</div>
+            <div className="grid aspect-[25/21] place-items-center text-[12px] text-steel">No image selected</div>
           )}
         </div>
       </Field>
+      {hero ? <p className="text-[11px] leading-relaxed text-steel">{heroRecommendedCopy()} Photographic images use Fill Area and are cropped, never stretched.</p> : null}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => setOpen(true)}
           className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
         >
-          Choose image
+          {hasPicked ? "Replace image" : "Choose image"}
         </button>
         {hasPicked ? (
           <button
@@ -106,6 +131,9 @@ function MediaField({
             onClick={() =>
               onChange("media", {
                 alt: mediaAlt(config),
+                fit,
+                focalX,
+                focalY,
               })
             }
             className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
@@ -114,6 +142,37 @@ function MediaField({
           </button>
         ) : null}
       </div>
+      <Field label="How the image fits">
+        <select
+          value={fit}
+          onChange={(e) => onChange("media", { ...current, fit: e.target.value })}
+          className={inputClass}
+        >
+          {CMS_IMAGE_FITS.map((option) => (
+            <option key={option} value={option}>
+              {CMS_IMAGE_FIT_LABELS[option]}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Focal position (horizontal)">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={focalX}
+          onChange={(e) => onChange("media", { ...current, focalX: Number(e.target.value) })}
+        />
+      </Field>
+      <Field label="Focal position (vertical)">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={focalY}
+          onChange={(e) => onChange("media", { ...current, focalY: Number(e.target.value) })}
+        />
+      </Field>
       <Field label="Image alt text">
         <input
           value={mediaAlt(config)}
@@ -194,69 +253,97 @@ export function SectionSettings({
   if (type === "HERO") {
     return (
       <div className="grid gap-3">
-        <Field label="Headline">
-          <textarea
-            rows={3}
-            value={str(config, "headline")}
-            onChange={(e) => onChange("headline", e.target.value)}
-            className={inputClass}
+        <Group title="Content">
+          <Field label="Eyebrow / small heading">
+            <input
+              value={str(config, "eyebrow")}
+              onChange={(e) => onChange("eyebrow", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Headline">
+            <textarea
+              rows={3}
+              value={str(config, "headline")}
+              onChange={(e) => onChange("headline", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Supporting text">
+            <textarea
+              rows={4}
+              value={str(config, "supporting")}
+              onChange={(e) => onChange("supporting", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA label">
+            <input
+              value={str(config, "ctaLabel")}
+              onChange={(e) => onChange("ctaLabel", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA URL">
+            <input
+              value={str(config, "ctaHref", "/register")}
+              onChange={(e) => onChange("ctaHref", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA label">
+            <input
+              value={str(config, "secondaryCtaLabel")}
+              onChange={(e) => onChange("secondaryCtaLabel", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA URL">
+            <input
+              value={str(config, "secondaryCtaHref")}
+              onChange={(e) => onChange("secondaryCtaHref", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        </Group>
+        <Group title="Image">
+          <MediaField config={config} onChange={onChange} fallbackSrc={heroImage} hero />
+        </Group>
+        <Group title="Style">
+          <SelectField
+            label="Text alignment"
+            value={str(config, "alignment", "left")}
+            options={ALIGNMENTS}
+            onChange={(v) => onChange("alignment", v)}
           />
-        </Field>
-        <Field label="Supporting text">
-          <textarea
-            rows={4}
-            value={str(config, "supporting")}
-            onChange={(e) => onChange("supporting", e.target.value)}
-            className={inputClass}
+          <SelectField
+            label="Content position"
+            value={str(config, "contentPosition", "middle")}
+            options={POSITIONS}
+            onChange={(v) => onChange("contentPosition", v)}
           />
-        </Field>
-        <Field label="CTA label">
-          <input
-            value={str(config, "ctaLabel")}
-            onChange={(e) => onChange("ctaLabel", e.target.value)}
-            className={inputClass}
+          <SelectField
+            label="Layout"
+            value={str(config, "variant", "split")}
+            options={VARIANTS}
+            onChange={(v) => onChange("variant", v)}
           />
-        </Field>
-        <Field label="CTA destination">
-          <input
-            value={str(config, "ctaHref", "/register")}
-            onChange={(e) => onChange("ctaHref", e.target.value)}
-            className={inputClass}
+          <SelectField
+            label="Spacing"
+            value={str(config, "spacing", "standard")}
+            options={SPACINGS}
+            onChange={(v) => onChange("spacing", v)}
           />
-        </Field>
-        <Field label="Secondary CTA label">
-          <input
-            value={str(config, "secondaryCtaLabel")}
-            onChange={(e) => onChange("secondaryCtaLabel", e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Secondary CTA destination">
-          <input
-            value={str(config, "secondaryCtaHref")}
-            onChange={(e) => onChange("secondaryCtaHref", e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <MediaField config={config} onChange={onChange} fallbackSrc={heroImage} />
-        <SelectField
-          label="Alignment"
-          value={str(config, "alignment", "left")}
-          options={ALIGNMENTS}
-          onChange={(v) => onChange("alignment", v)}
-        />
-        <SelectField
-          label="Layout variant"
-          value={str(config, "variant", "split")}
-          options={VARIANTS}
-          onChange={(v) => onChange("variant", v)}
-        />
-        <SelectField
-          label="Spacing"
-          value={str(config, "spacing", "standard")}
-          options={SPACINGS}
-          onChange={(v) => onChange("spacing", v)}
-        />
+          <Field label="Overlay strength">
+            <input
+              type="range"
+              min={0}
+              max={80}
+              value={num(config, "overlayStrength", 0)}
+              onChange={(e) => onChange("overlayStrength", Number(e.target.value))}
+            />
+          </Field>
+        </Group>
       </div>
     );
   }
@@ -474,6 +561,148 @@ export function SectionSettings({
             onChange={(v) => onChange("spacing", v)}
           />
         ) : null}
+      </div>
+    );
+  }
+
+  if (type === "CATEGORY_GRID") {
+    const cats = Array.isArray(config["categories"])
+      ? (config["categories"] as Array<{ name: string; href: string; imageAlt?: string }>)
+      : [];
+    return (
+      <div className="grid gap-3">
+        <Field label="Heading">
+          <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
+        </Field>
+        {cats.map((cat, i) => (
+          <div key={i} className="grid gap-2 rounded-md border border-border p-2">
+            <Field label={`Category ${i + 1} name`}>
+              <input
+                value={cat.name}
+                onChange={(e) => {
+                  const next = cats.map((row, idx) => (idx === i ? { ...row, name: e.target.value } : row));
+                  onChange("categories", next);
+                }}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Link">
+              <input
+                value={cat.href}
+                onChange={(e) => {
+                  const next = cats.map((row, idx) => (idx === i ? { ...row, href: e.target.value } : row));
+                  onChange("categories", next);
+                }}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="h-9 rounded-md border border-border text-[12px] font-semibold"
+          onClick={() => onChange("categories", [...cats, { name: "Category", href: "/products", imageAlt: "" }])}
+        >
+          Add category
+        </button>
+        <SelectField label="Spacing" value={str(config, "spacing", "standard")} options={SPACINGS} onChange={(v) => onChange("spacing", v)} />
+      </div>
+    );
+  }
+
+  if (type === "BENEFITS_GRID") {
+    const items = Array.isArray(config["items"])
+      ? (config["items"] as Array<{ title: string; body: string; icon?: string }>)
+      : [];
+    return (
+      <div className="grid gap-3">
+        <Field label="Heading">
+          <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
+        </Field>
+        {items.map((item, i) => (
+          <div key={i} className="grid gap-2 rounded-md border border-border p-2">
+            <Field label={`Benefit ${i + 1}`}>
+              <input
+                value={item.title}
+                onChange={(e) => {
+                  const next = items.map((row, idx) => (idx === i ? { ...row, title: e.target.value } : row));
+                  onChange("items", next);
+                }}
+                className={inputClass}
+              />
+            </Field>
+            <textarea
+              rows={2}
+              value={item.body}
+              onChange={(e) => {
+                const next = items.map((row, idx) => (idx === i ? { ...row, body: e.target.value } : row));
+                onChange("items", next);
+              }}
+              className={inputClass}
+            />
+          </div>
+        ))}
+        <SelectField label="Spacing" value={str(config, "spacing", "standard")} options={SPACINGS} onChange={(v) => onChange("spacing", v)} />
+      </div>
+    );
+  }
+
+  if (type === "FEATURED_PRODUCTS") {
+    const skus = Array.isArray(config["productSkus"]) ? (config["productSkus"] as string[]) : [];
+    return (
+      <div className="grid gap-3">
+        <Field label="Heading">
+          <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Supporting">
+          <input value={str(config, "supporting")} onChange={(e) => onChange("supporting", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Product SKUs (one per line)">
+          <textarea
+            rows={6}
+            value={skus.join("\n")}
+            onChange={(e) =>
+              onChange(
+                "productSkus",
+                e.target.value
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              )
+            }
+            className={inputClass}
+          />
+        </Field>
+        <SelectField
+          label="Layout"
+          value={str(config, "layout", "grid")}
+          options={["grid", "carousel"]}
+          onChange={(v) => onChange("layout", v)}
+        />
+      </div>
+    );
+  }
+
+  if (type === "BRAND_LOGO_STRIP") {
+    const selected = Array.isArray(config["brandSlugs"]) ? (config["brandSlugs"] as string[]) : [];
+    return (
+      <div className="grid gap-3">
+        <Field label="Heading">
+          <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
+        </Field>
+        {brands.map((b) => {
+          const on = selected.includes(b.slug);
+          return (
+            <label key={b.slug} className="flex items-center gap-2 text-[13px]">
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => onChange("brandSlugs", on ? selected.filter((s) => s !== b.slug) : [...selected, b.slug])}
+              />
+              {b.name}
+            </label>
+          );
+        })}
       </div>
     );
   }

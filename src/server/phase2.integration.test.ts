@@ -24,10 +24,12 @@ import {
   bootstrapHomepageCms,
   getPublishedHomepage,
   publishCmsPage,
+  restoreCmsVersion,
   saveCmsDraftSections,
   getCmsPageDraft,
+  updateCmsPageMeta,
 } from "@/server/cms/service";
-import { getPublicCmsMediaBytes, listCmsMedia, uploadCmsMedia } from "@/server/cms/media";
+import { deleteCmsMedia, getPublicCmsMediaBytes, listCmsMedia, updateCmsMedia, uploadCmsMedia } from "@/server/cms/media";
 import { AuthError } from "@/server/rbac/guards";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 
@@ -397,6 +399,63 @@ describe("CMS draft vs published", () => {
   it("denies CMS publish without permission", async () => {
     await expect(publishCmsPage(salesRepUserId, "home")).rejects.toBeInstanceOf(AuthError);
   });
+
+  it("saves multiple section ops and keeps unpublished draft off the public homepage", async () => {
+    const publishedBefore = await getPublishedHomepage();
+    const liveHeadline =
+      publishedBefore?.sections.find((s) => s.type === "HERO") &&
+      typeof publishedBefore.sections.find((s) => s.type === "HERO")?.config === "object"
+        ? String(
+            (publishedBefore.sections.find((s) => s.type === "HERO")!.config as { headline?: string }).headline ?? "",
+          )
+        : "";
+
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: { headline: "Editor v2 unpublished", supporting: "Draft only", ctaLabel: "Go", ctaHref: "/register" },
+      },
+      {
+        type: "BANNER",
+        enabled: false,
+        config: { text: "Hidden banner", tone: "brand" },
+      },
+      {
+        type: "SPACER",
+        enabled: true,
+        config: { size: "lg" },
+      },
+    ]);
+    const draft = await getCmsPageDraft(adminId, "home");
+    expect(draft.hasUnpublishedChanges).toBe(true);
+    expect(draft.version?.sections.map((s) => s.type)).toEqual(["HERO", "BANNER", "SPACER"]);
+    expect(draft.version?.sections.find((s) => s.type === "BANNER")?.enabled).toBe(false);
+    const publicPage = await getPublishedHomepage();
+    const publicHero = publicPage?.sections.find((s) => s.type === "HERO");
+    const publicHeadline =
+      publicHero && typeof publicHero.config === "object" && publicHero.config && "headline" in publicHero.config
+        ? String((publicHero.config as { headline: string }).headline)
+        : "";
+    expect(publicHeadline).toBe(liveHeadline);
+    expect(publicHeadline).not.toBe("Editor v2 unpublished");
+  });
+
+  it("updates SEO fields and can restore a previous version into a new draft", async () => {
+    await updateCmsPageMeta(adminId, {
+      slug: "home",
+      title: "Homepage",
+      seoTitle: "SEO title for editor v2",
+      metaDescription: "Meta description for editor v2 tests.",
+    });
+    const afterMeta = await getCmsPageDraft(adminId, "home");
+    expect(afterMeta.seoTitle).toBe("SEO title for editor v2");
+    const publishedVersionId = afterMeta.publishedVersionId;
+    expect(publishedVersionId).toBeTruthy();
+    const restored = await restoreCmsVersion(adminId, "home", publishedVersionId!);
+    expect(restored.draftVersionId).not.toBe(publishedVersionId);
+    expect(restored.hasUnpublishedChanges).toBe(true);
+  });
 });
 
 const PNG_1X1 =
@@ -412,6 +471,8 @@ describe("CMS media library", () => {
     });
     expect(uploaded.src).toBe(cmsMediaPublicPath(uploaded.id));
     expect(uploaded.contentType).toBe("image/png");
+    expect(uploaded.width).toBe(1);
+    expect(uploaded.height).toBe(1);
 
     const listed = await listCmsMedia(adminId);
     expect(listed.some((m) => m.id === uploaded.id)).toBe(true);
@@ -462,6 +523,33 @@ describe("CMS media library", () => {
         base64: Buffer.from("not-an-image").toString("base64"),
       }),
     ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("updates alt text and refuses delete while the image is referenced", async () => {
+    const uploaded = await uploadCmsMedia(adminId, {
+      filename: "alt-test.png",
+      contentType: "image/png",
+      base64: PNG_1X1,
+      altText: "Before",
+    });
+    const updated = await updateCmsMedia(adminId, { id: uploaded.id, altText: "After" });
+    expect(updated.altText).toBe("After");
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          headline: "Uses image",
+          media: { mediaId: uploaded.id, alt: "After", fit: "fill" },
+        },
+      },
+    ]);
+    await expect(deleteCmsMedia(adminId, { id: uploaded.id })).rejects.toBeInstanceOf(AuthError);
+    await saveCmsDraftSections(adminId, "home", [
+      { type: "HERO", enabled: true, config: { headline: "No image" } },
+    ]);
+    const deleted = await deleteCmsMedia(adminId, { id: uploaded.id });
+    expect(deleted.id).toBe(uploaded.id);
   });
 });
 

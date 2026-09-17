@@ -85,6 +85,20 @@ describe("canonical navigation contract", () => {
     expect(sections).toEqual(["home", "sales", "catalogue", "crm", "website", "operations", "system"]);
   });
 
+  it("keeps Website nav as Pages, Homepage, Media in that order", () => {
+    const website = BACK_OFFICE_NAV.find((s) => s.id === "website");
+    expect(website?.items.map((i) => i.id)).toEqual(["website-pages", "website-homepage", "website-media"]);
+    expect(website?.items.map((i) => i.label)).toEqual(["Pages", "Homepage", "Media"]);
+    expect(website?.items.map((i) => i.to)).toEqual([
+      ROUTES.adminContent,
+      ROUTES.adminHomepage,
+      ROUTES.adminMedia,
+    ]);
+    const sections = BACK_OFFICE_NAV.map((s) => s.id);
+    expect(sections.indexOf("website")).toBeGreaterThan(sections.indexOf("crm"));
+    expect(sections.indexOf("website")).toBeLessThan(sections.indexOf("operations"));
+  });
+
   it("gives SUPER_ADMIN unique visible destinations", () => {
     const tos = flattenVisible(backOfficeNavForUser(superAdmin)).map((i) => i.to);
     expect(new Set(tos).size).toBe(tos.length);

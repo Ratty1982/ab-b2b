@@ -40,6 +40,9 @@ export const Route = createFileRoute("/")({
         { property: "og:description", content: seoDesc },
         { property: "og:type", content: "website" },
         { name: "twitter:card", content: "summary_large_image" },
+        ...(loaderData?.cms?.ogImageSrc
+          ? [{ property: "og:image", content: loaderData.cms.ogImageSrc }]
+          : []),
       ],
     };
   },

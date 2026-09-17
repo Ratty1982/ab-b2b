@@ -270,6 +270,30 @@ export const saveCmsDraftFn = createServerFn({ method: "POST" })
     }
   });
 
+export const updateCmsPageMetaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cms.updateCmsPageMeta(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const restoreCmsVersionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { slug: string; versionId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cms.restoreCmsVersion(userId, data.slug, data.versionId);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const publishCmsPageFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { slug: string; note?: string })
   .handler(async ({ data }) => {
@@ -291,11 +315,22 @@ export const getPublishedHomepageFn = createServerFn({ method: "GET" }).handler(
   }
 });
 
-export const listCmsMediaFn = createServerFn({ method: "GET" }).handler(async () => {
+export const listCmsMediaFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cmsMedia.listCmsMedia(userId, data?.q);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCmsMediaStorageFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
-    const userId = await requireUserId();
-    const result = await cmsMedia.listCmsMedia(userId);
-    return { ok: true as const, data: result };
+    await requireUserId();
+    return { ok: true as const, data: cmsMedia.getMediaStorageStatus() };
   } catch (e) {
     return toError(e);
   }
@@ -307,6 +342,30 @@ export const uploadCmsMediaFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       const result = await cmsMedia.uploadCmsMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCmsMediaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cmsMedia.updateCmsMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const deleteCmsMediaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cmsMedia.deleteCmsMedia(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);

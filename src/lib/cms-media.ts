@@ -15,6 +15,21 @@ export function cmsMediaDisplaySrc(media: {
   return undefined;
 }
 
+export function cmsImageFitClass(fit: unknown): string {
+  if (fit === "contain") return "h-full w-full object-contain p-6";
+  if (fit === "content") return "h-full w-full object-cover";
+  return "h-full w-full object-cover";
+}
+
+export function cmsFocalStyle(media: {
+  focalX?: unknown;
+  focalY?: unknown;
+} | null | undefined): { objectPosition: string } {
+  const x = typeof media?.focalX === "number" ? media.focalX : 50;
+  const y = typeof media?.focalY === "number" ? media.focalY : 50;
+  return { objectPosition: `${x}% ${y}%` };
+}
+
 export type BrandLogoRef = {
   mediaId?: string | undefined;
   src?: string | undefined;

@@ -1060,6 +1060,7 @@ model CmsPage {
   draftVersionId  String?       @unique
   publishedVersionId String?    @unique
   publishedAt     DateTime?
+  ogImageMediaId  String?
   createdById     String?
   updatedById     String?
   createdAt       DateTime      @default(now())

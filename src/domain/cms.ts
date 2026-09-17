@@ -20,6 +20,36 @@ export type CmsSectionTypeKey = (typeof CMS_SECTION_TYPES)[number];
 const alignment = z.enum(["left", "center", "right"]).default("left");
 const spacing = z.enum(["compact", "standard", "relaxed"]).default("standard");
 const variant = z.enum(["standard", "wide", "split", "dark", "light"]).default("standard");
+const contentPosition = z.enum(["top", "middle", "bottom"]).default("middle");
+
+/** Fill Area = cover/crop, Show Whole Image = contain (cutouts), Standard Content Image = controlled crop. */
+export const CMS_IMAGE_FITS = ["fill", "contain", "content"] as const;
+export type CmsImageFit = (typeof CMS_IMAGE_FITS)[number];
+export const CMS_IMAGE_FIT_LABELS: Record<CmsImageFit, string> = {
+  fill: "Fill Area",
+  contain: "Show Whole Image",
+  content: "Standard Content Image",
+};
+
+const percent = z.preprocess((value) => {
+  if (value === "" || value == null) return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return value;
+}, z.number().min(0).max(100).optional());
+
+const overlayStrength = z.preprocess((value) => {
+  if (value === "" || value == null) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return value;
+}, z.number().min(0).max(80).default(0));
 
 /** Number inputs and JSON often send counts as strings; empty values fall back to default. */
 const displayCount = z.preprocess((value) => {
@@ -37,12 +67,16 @@ const mediaRef = z
     mediaId: z.string().optional(),
     src: z.string().max(2048).optional(),
     alt: z.string().max(300).default(""),
+    fit: z.enum(CMS_IMAGE_FITS).optional(),
+    focalX: percent,
+    focalY: percent,
   })
   .optional()
   .nullable();
 
 export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
   HERO: z.object({
+    eyebrow: z.string().max(80).optional().default(""),
     headline: z.string().max(400),
     supporting: z.string().max(2000).default(""),
     ctaLabel: z.string().max(80).default("Open a trade account"),
@@ -50,8 +84,10 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     secondaryCtaLabel: z.string().max(80).optional(),
     secondaryCtaHref: z.string().max(300).optional(),
     alignment,
+    contentPosition,
     variant,
     spacing,
+    overlayStrength,
     media: mediaRef,
   }),
   BRAND_LOGO_STRIP: z.object({
@@ -185,6 +221,7 @@ export const cmsPageUpdateSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   seoTitle: z.string().trim().max(200).optional().nullable(),
   metaDescription: z.string().trim().max(400).optional().nullable(),
+  ogImageMediaId: z.string().cuid().optional().nullable(),
 });
 
 export const cmsSectionInputSchema = z.object({
@@ -207,6 +244,15 @@ export const cmsMediaUploadSchema = z.object({
   /** Raw or data-URL base64 of the file body */
   base64: z.string().min(8).max(Math.ceil((CMS_MEDIA_MAX_BYTES * 4) / 3) + 64),
   altText: z.string().trim().max(300).optional().nullable(),
+});
+
+export const cmsMediaUpdateSchema = z.object({
+  id: z.string().cuid(),
+  altText: z.string().trim().max(300).optional().nullable(),
+});
+
+export const cmsMediaDeleteSchema = z.object({
+  id: z.string().cuid(),
 });
 
 export type CmsMediaUploadInput = z.infer<typeof cmsMediaUploadSchema>;
