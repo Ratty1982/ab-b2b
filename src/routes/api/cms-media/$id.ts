@@ -10,17 +10,22 @@ export const Route = createFileRoute("/api/cms-media/$id")({
   server: {
     handlers: {
       GET: async ({ params }: { params: { id: string } }) => {
-        const media = await getPublicCmsMediaBytes(params.id);
-        if (!media) {
+        try {
+          const media = await getPublicCmsMediaBytes(params.id);
+          if (!media) {
+            return new Response("Not found", { status: 404 });
+          }
+          return new Response(new Uint8Array(media.bytes), {
+            headers: {
+              "Content-Type": media.contentType,
+              "Cache-Control": "public, max-age=86400",
+              "Content-Disposition": `inline; filename="${asciiFilename(media.filename)}"`,
+            },
+          });
+        } catch (error) {
+          console.error("[ab:cms-media]", error);
           return new Response("Not found", { status: 404 });
         }
-        return new Response(new Uint8Array(media.bytes), {
-          headers: {
-            "Content-Type": media.contentType,
-            "Cache-Control": "public, max-age=86400",
-            "Content-Disposition": `inline; filename="${asciiFilename(media.filename)}"`,
-          },
-        });
       },
     },
   },
