@@ -16,6 +16,7 @@ import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "./rbac";
 import { bootstrapInitialAdmin } from "./initial-admin";
 import { bootstrapHomepageCms } from "../../src/server/cms/service";
+import { bootstrapCatalogue } from "../../src/server/catalogue/service";
 
 async function main() {
   const databaseUrl = process.env["DATABASE_URL"];
@@ -54,6 +55,9 @@ async function main() {
       created: cms.created,
       pageId: cms.pageId,
     });
+
+    const catalogue = await bootstrapCatalogue(prisma);
+    console.log("[ab:bootstrap] Catalogue taxonomy", catalogue);
 
     console.log("[ab:bootstrap] Done.");
   } finally {

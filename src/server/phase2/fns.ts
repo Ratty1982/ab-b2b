@@ -7,6 +7,7 @@ import * as companies from "@/server/companies/service";
 import * as applications from "@/server/applications/service";
 import * as cms from "@/server/cms/service";
 import * as cmsMedia from "@/server/cms/media";
+import * as catalogue from "@/server/catalogue/service";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -305,6 +306,54 @@ export const uploadCmsMediaFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       const result = await cmsMedia.uploadCmsMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCatalogueCategoriesFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await catalogue.listCategories(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const saveCatalogueCategoryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id?: string } & Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = data.id
+        ? await catalogue.updateCategory(userId, data)
+        : await catalogue.createCategory(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCatalogueBrandsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await catalogue.listBrands(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const saveCatalogueBrandFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id?: string } & Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = data.id
+        ? await catalogue.updateBrand(userId, data)
+        : await catalogue.createBrand(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);
