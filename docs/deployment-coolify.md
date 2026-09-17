@@ -99,5 +99,11 @@ mark the deploy unhealthy.
 - Migration `20260917100000_cms_media_blob` adds `CmsMedia.bytes` so CMS uploads persist in Postgres (no S3 required). Coolify entrypoint already runs `migrate deploy`.
 - No new required environment variables. Object storage vars remain unused.
 - After deploy: open **Admin → Website → Homepage**, select the Hero, **Choose image**, upload or pick from the library, save draft, then publish. Public pages load images from `/api/cms-media/:id`.
+
+## Image size / Coolify “exporting layers”
+
+The runner image only includes Prisma CLI + `@prisma/client`, not the full Vite/Radix `node_modules` tree. A previous Coolify deploy compiled successfully then failed at `#28 exporting layers` (exit 255) because that layer was too large for the helper container.
+
+If export still fails: free disk on the Coolify host (`docker system df` / `docker builder prune`) and raise the application build timeout (the compile itself is several minutes because `bun install` is slow on first pull).
 - Invitations are created with `emailDeferred: true` until an email provider is configured — do not expect outbound mail.
 

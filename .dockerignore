@@ -1,0 +1,23 @@
+# Build context only — keep Coolify/BuildKit transfers small
+.git
+.github
+.output
+.nitro
+.tanstack
+.vinxi
+.node-modules-cache
+node_modules
+dist
+coverage
+*.log
+.env
+.env.*
+!.env.example
+.cursor
+.vscode
+.idea
+*.md
+!README.md
+docs
+tmp
+.DS_Store
