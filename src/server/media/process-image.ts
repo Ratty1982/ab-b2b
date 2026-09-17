@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import sharp, { type Metadata, type Sharp } from "sharp";
 import { CMS_MEDIA_CONTENT_TYPES } from "@/domain/cms";
 import {
   mediaUsageAppliesProductCap,
@@ -66,7 +66,7 @@ function mimeFromSharpFormat(
 }
 
 async function encodeProcessed(
-  pipeline: sharp.Sharp,
+  pipeline: Sharp,
   mimeType: (typeof CMS_MEDIA_CONTENT_TYPES)[number],
 ): Promise<Buffer> {
   if (mimeType === "image/png") {
@@ -100,7 +100,7 @@ export async function processImageUpload(opts: {
     throw new AuthError("File contents do not match the declared type", "VALIDATION", 400);
   }
 
-  let meta: sharp.Metadata;
+  let meta: Metadata;
   try {
     meta =
       opts.usage === "CMS_GENERAL"
