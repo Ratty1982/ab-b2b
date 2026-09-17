@@ -6,6 +6,7 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   bootstrapCatalogue,
   createCategory,
+  deleteCategory,
   listCategories,
   updateCategory,
   updateBrand,
@@ -103,6 +104,48 @@ describe("catalogue categories", () => {
 
   it("denies catalogue edits without products.edit", async () => {
     await expect(createCategory(salesRepUserId, { name: "Nope" })).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("deletes a category, reparents children and unassigns products", async () => {
+    const parent = await createCategory(adminId, {
+      name: `Delete parent ${Date.now()}`,
+      isActive: true,
+      sortOrder: 90,
+    });
+    const child = await createCategory(adminId, {
+      name: `Delete child ${Date.now()}`,
+      parentId: parent.id,
+      isActive: true,
+      sortOrder: 91,
+    });
+    const { saveProduct, listProducts } = await import("@/server/catalogue/service");
+    const sku = `CATDEL-${Date.now()}`;
+    await saveProduct(adminId, {
+      sku,
+      name: "Category delete fixture",
+      brand: "Power Maxed",
+      category: parent.name,
+      trade: 1,
+      rrp: 2,
+      packQty: 1,
+      caseQty: 1,
+    });
+
+    await expect(deleteCategory(salesRepUserId, { id: parent.id })).rejects.toBeInstanceOf(AuthError);
+
+    const deleted = await deleteCategory(adminId, { id: parent.id });
+    expect(deleted.id).toBe(parent.id);
+
+    const tree = await listCategories(adminId);
+    expect(tree.some((c) => c.id === parent.id)).toBe(false);
+    const moved = tree.find((c) => c.id === child.id);
+    expect(moved?.parentId).toBeNull();
+
+    const products = await listProducts(adminId, sku);
+    const row = products.find((p) => p.sku === sku);
+    expect(row?.categoryId).toBeNull();
+
+    await expect(deleteCategory(adminId, { id: parent.id })).rejects.toBeInstanceOf(AuthError);
   });
 
   it("updates a brand record", async () => {

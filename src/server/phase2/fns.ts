@@ -404,6 +404,18 @@ export const saveCatalogueCategoryFn = createServerFn({ method: "POST" })
     }
   });
 
+export const deleteCatalogueCategoryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogue.deleteCategory(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listCatalogueBrandsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

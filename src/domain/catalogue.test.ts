@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   categoryCreateSchema,
+  categoryDeleteSchema,
   productDraftSchema,
   slugifyCatalogue,
 } from "@/domain/catalogue";
@@ -22,6 +23,11 @@ describe("catalogue domain", () => {
     });
     expect(parsed.name).toBe("Brake Pads");
     expect(parsed.parentId === "" || parsed.parentId == null).toBe(true);
+  });
+
+  it("requires a category id to delete", () => {
+    expect(categoryDeleteSchema.safeParse({}).success).toBe(false);
+    expect(categoryDeleteSchema.parse({ id: "clxxxxxxxxxxxxxxxxxxxxxxxxx" }).id).toMatch(/^c/);
   });
 
   it("requires a product SKU and name to save", () => {

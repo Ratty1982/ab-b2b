@@ -6,6 +6,7 @@ import {
   brandCreateSchema,
   brandUpdateSchema,
   categoryCreateSchema,
+  categoryDeleteSchema,
   categoryUpdateSchema,
   DEFAULT_BRANDS,
   DEFAULT_CATEGORY_TREE,
@@ -330,6 +331,40 @@ export async function updateCategory(actorUserId: string, raw: unknown) {
     metadata: { slug: updated.slug, parentId },
   });
   return updated;
+}
+
+export async function deleteCategory(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "products.edit");
+  const input = categoryDeleteSchema.parse(raw);
+  const existing = await prisma.category.findUnique({
+    where: { id: input.id },
+    include: { _count: { select: { children: true, products: true } } },
+  });
+  if (!existing) throw new AuthError("Category not found", "NOT_FOUND", 404);
+
+  const childCount = existing._count.children;
+  const productCount = existing._count.products;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.category.updateMany({
+      where: { parentId: existing.id },
+      data: { parentId: existing.parentId },
+    });
+    await tx.product.updateMany({
+      where: { categoryId: existing.id },
+      data: { categoryId: null },
+    });
+    await tx.category.delete({ where: { id: existing.id } });
+  });
+
+  await recordAuditEvent({
+    action: "catalogue.category_deleted",
+    entityType: "Category",
+    entityId: existing.id,
+    actorUserId,
+    metadata: { slug: existing.slug, childCount, productCount },
+  });
+  return { ok: true as const, id: existing.id, slug: existing.slug, childCount, productCount };
 }
 
 export async function createBrand(actorUserId: string, raw: unknown) {

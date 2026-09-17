@@ -48,6 +48,10 @@ export const categoryUpdateSchema = categoryWriteSchema.extend({
   id: z.string().cuid(),
 });
 
+export const categoryDeleteSchema = z.object({
+  id: z.string().cuid(),
+});
+
 export const brandWriteSchema = z.object({
   name: z.string().trim().min(1).max(120),
   slug: z

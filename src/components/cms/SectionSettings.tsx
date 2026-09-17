@@ -610,7 +610,17 @@ export function SectionSettings({
         </Field>
         {cats.map((cat, i) => (
           <div key={i} className="grid gap-2 rounded-md border border-border p-2">
-            <Field label={`Category ${i + 1} name`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[12px] font-semibold uppercase tracking-wide text-steel">Category {i + 1}</div>
+              <button
+                type="button"
+                className="text-[12px] font-semibold text-bad"
+                onClick={() => onChange("categories", cats.filter((_, idx) => idx !== i))}
+              >
+                Delete
+              </button>
+            </div>
+            <Field label="Name">
               <input
                 value={cat.name}
                 onChange={(e) => {

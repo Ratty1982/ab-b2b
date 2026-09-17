@@ -5,7 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { BrandLogoPicker } from "@/components/cms/SectionSettings";
 import { slugifyCatalogue } from "@/domain/catalogue";
-import { listCatalogueCategoriesFn, saveCatalogueCategoryFn } from "@/server/phase2/fns";
+import { listCatalogueCategoriesFn, saveCatalogueCategoryFn, deleteCatalogueCategoryFn } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +49,7 @@ function AdminCategories() {
     <div>
       <PanelHeader
         title="Categories"
-        sub="Hierarchical catalogue structure. A category cannot be nested under its own descendant."
+        sub="Hierarchical catalogue structure. Deleting a category unassigns its products and moves child categories up one level."
         actions={
           <button type="button" className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground" onClick={() => setEdit({ name: "", slug: "", parentId: null, isActive: true, sortOrder: 0 })}>
             Add category
@@ -78,6 +78,32 @@ function AdminCategories() {
                   <td className="px-3 py-2"><StatusBadge tone={c.isActive ? "good" : "warn"}>{c.isActive ? "Active" : "Hidden"}</StatusBadge></td>
                   <td className="px-3 py-2 text-right">
                     <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => setEdit(c)}>Manage</button>
+                    <button
+                      type="button"
+                      className="ml-3 text-[12px] font-semibold text-bad"
+                      onClick={() => {
+                        void (async () => {
+                          const products = c.productCount === 1 ? "1 product" : `${c.productCount} products`;
+                          const children = c.childCount === 1 ? "1 child category" : `${c.childCount} child categories`;
+                          if (
+                            !window.confirm(
+                              `Delete ${c.name}? ${products} will become uncategorised. ${children} will move up one level.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          const r = await deleteCatalogueCategoryFn({ data: { id: c.id } });
+                          if (!r.ok) {
+                            toast.error(r.error);
+                            return;
+                          }
+                          toast.success("Category deleted");
+                          await load();
+                        })();
+                      }}
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -134,6 +160,35 @@ function AdminCategories() {
               onChange={(next) => setEdit({ ...edit, imageMediaId: next?.mediaId ?? null, imageSrc: next?.src ?? null, imageAlt: next?.alt ?? null })}
             />
             <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save category</button>
+            {edit.id ? (
+              <button
+                type="button"
+                className="h-11 rounded-md border border-bad/40 text-[13px] font-bold uppercase text-bad"
+                onClick={() => {
+                  void (async () => {
+                    const products = (edit.productCount ?? 0) === 1 ? "1 product" : `${edit.productCount ?? 0} products`;
+                    const children = (edit.childCount ?? 0) === 1 ? "1 child category" : `${edit.childCount ?? 0} child categories`;
+                    if (
+                      !window.confirm(
+                        `Delete ${edit.name}? ${products} will become uncategorised. ${children} will move up one level.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    const r = await deleteCatalogueCategoryFn({ data: { id: edit.id! } });
+                    if (!r.ok) {
+                      toast.error(r.error);
+                      return;
+                    }
+                    toast.success("Category deleted");
+                    setEdit(null);
+                    await load();
+                  })();
+                }}
+              >
+                Delete category
+              </button>
+            ) : null}
           </form>
         </Drawer>
       ) : null}
