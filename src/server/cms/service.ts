@@ -11,6 +11,8 @@ import {
   type CmsSectionTypeKey,
 } from "@/domain/cms";
 import { defaultHomepageSections } from "@/server/cms/homepage-seed";
+import { listPublicBrandLogos } from "@/server/catalogue/service";
+import { mergeBrandLogoMaps, readBrandLogos } from "@/lib/cms-media";
 
 export async function listCmsPages(actorUserId: string) {
   await requireSystemPermission(actorUserId, "cms.page.read");
@@ -53,6 +55,7 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
   if (!page) throw new AuthError("Page not found", "NOT_FOUND", 404);
 
   const version = page.draftVersion ?? page.publishedVersion;
+  const catalogueLogos = await listPublicBrandLogos();
   return {
     id: page.id,
     slug: page.slug,
@@ -70,7 +73,7 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
           sections: version.sections.map((s) => ({
             id: s.id,
             type: s.type,
-            config: s.config,
+            config: attachBrandLogos(s.type as CmsSectionTypeKey, s.config, catalogueLogos),
             sortOrder: s.sortOrder,
             enabled: s.enabled,
           })),
@@ -90,6 +93,7 @@ export async function getPublishedHomepage() {
     },
   });
   if (!page?.publishedVersion) return null;
+  const catalogueLogos = await listPublicBrandLogos();
   return {
     title: page.title,
     seoTitle: page.seoTitle ?? page.publishedVersion.seoTitle,
@@ -97,9 +101,21 @@ export async function getPublishedHomepage() {
     sections: page.publishedVersion.sections.map((s) => ({
       id: s.id,
       type: s.type as CmsSectionTypeKey,
-      config: s.config,
+      config: attachBrandLogos(s.type, s.config, catalogueLogos),
     })),
   };
+}
+
+function attachBrandLogos(
+  type: CmsSectionTypeKey,
+  config: Prisma.JsonValue,
+  catalogueLogos: Awaited<ReturnType<typeof listPublicBrandLogos>>,
+): Prisma.JsonValue {
+  if (type !== "FEATURED_BRANDS" && type !== "BRAND_LOGO_STRIP") return config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return config;
+  const record = config as Record<string, unknown>;
+  const logos = mergeBrandLogoMaps(readBrandLogos(record), catalogueLogos);
+  return { ...record, logos };
 }
 
 async function ensureDraftVersion(pageId: string, actorUserId: string) {

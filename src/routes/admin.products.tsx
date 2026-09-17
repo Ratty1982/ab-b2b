@@ -13,6 +13,7 @@ import {
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { BrandLogoPicker } from "@/components/cms/SectionSettings";
 
 export const Route = createFileRoute("/admin/products")({
   head: () => ({
@@ -55,6 +56,9 @@ type BrandRow = {
   sortOrder: number;
   isActive: boolean;
   productCount: number;
+  logoMediaId: string | null;
+  logoAlt: string | null;
+  logoSrc: string | null;
 };
 
 type ProductDraft = Product & { subcategory?: string };
@@ -239,6 +243,8 @@ function AdminProducts() {
         description: brandEdit.description ?? "",
         isActive: brandEdit.isActive ?? true,
         sortOrder: brandEdit.sortOrder ?? 0,
+        logoMediaId: brandEdit.logoMediaId ?? "",
+        logoAlt: brandEdit.logoAlt ?? "",
       },
     });
     setSaving(false);
@@ -269,6 +275,9 @@ function AdminProducts() {
         description: "",
         isActive: true,
         sortOrder: brands.length + 1,
+        logoMediaId: null,
+        logoAlt: null,
+        logoSrc: null,
       });
       return;
     }
@@ -390,6 +399,7 @@ function AdminProducts() {
               <thead>
                 <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
                   <th className="px-3 py-2 font-semibold">Brand</th>
+                  <th className="px-3 py-2 font-semibold">Logo</th>
                   <th className="px-3 py-2 font-semibold">Positioning</th>
                   <th className="px-3 py-2 font-semibold">Brand page</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
@@ -400,6 +410,13 @@ function AdminProducts() {
                 {brands.map((b, i) => (
                   <tr key={b.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
                     <td className="px-3 py-2 font-semibold">{b.name}</td>
+                    <td className="px-3 py-2">
+                      {b.logoSrc ? (
+                        <img src={b.logoSrc} alt={b.logoAlt || `${b.name} logo`} className="h-8 max-w-[96px] object-contain" />
+                      ) : (
+                        <span className="text-[12px] text-steel">None</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-steel">{b.tagline ?? "—"}</td>
                     <td className="num px-3 py-2 text-steel">/brands/{b.slug}</td>
                     <td className="px-3 py-2">
@@ -804,6 +821,26 @@ function AdminProducts() {
                 onChange={(e) => setBrandEdit({ ...brandEdit, description: e.target.value })}
               />
             </Field>
+            <BrandLogoPicker
+              label="Brand logo"
+              logo={
+                brandEdit.logoMediaId || brandEdit.logoSrc
+                  ? {
+                      mediaId: brandEdit.logoMediaId ?? undefined,
+                      src: brandEdit.logoSrc ?? undefined,
+                      alt: brandEdit.logoAlt ?? undefined,
+                    }
+                  : undefined
+              }
+              onChange={(next) =>
+                setBrandEdit({
+                  ...brandEdit,
+                  logoMediaId: next?.mediaId ?? null,
+                  logoSrc: next?.src ?? null,
+                  logoAlt: next?.alt ?? null,
+                })
+              }
+            />
             <label className="flex items-center gap-2 text-[13px]">
               <input
                 type="checkbox"

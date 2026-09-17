@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { brands } from "@/lib/data";
-import { cmsMediaDisplaySrc } from "@/lib/cms-media";
+import { cmsMediaDisplaySrc, readBrandLogos, type BrandLogoRef } from "@/lib/cms-media";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
 import heroImage from "@/assets/hero-parts.jpg";
@@ -122,6 +122,62 @@ function MediaField({
         />
       </Field>
       <MediaPicker open={open} onClose={() => setOpen(false)} onSelect={applyItem} />
+    </div>
+  );
+}
+
+export function BrandLogoPicker({
+  label,
+  logo,
+  onChange,
+}: {
+  label: string;
+  logo: BrandLogoRef | undefined;
+  onChange: (next: BrandLogoRef | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const preview = cmsMediaDisplaySrc(logo);
+  return (
+    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-ink/40 p-2">
+      <div className="grid size-[72px] place-items-center overflow-hidden rounded border border-border bg-ink">
+        {preview ? (
+          <img src={preview} alt={logo?.alt || label} className="max-h-[64px] max-w-[64px] object-contain" />
+        ) : (
+          <span className="px-1 text-center text-[10px] uppercase leading-tight text-steel">No logo</span>
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-[12px] font-semibold uppercase">{label}</div>
+        <div className="mt-1 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex h-8 items-center rounded-md border border-border px-2 text-[11px] font-semibold uppercase hover:border-steel"
+          >
+            {preview ? "Change logo" : "Add logo"}
+          </button>
+          {preview ? (
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="inline-flex h-8 items-center rounded-md border border-border px-2 text-[11px] font-semibold uppercase hover:border-steel"
+            >
+              Remove
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <MediaPicker
+        open={open}
+        onClose={() => setOpen(false)}
+        onSelect={(item) =>
+          onChange({
+            mediaId: item.id,
+            src: item.src,
+            alt: logo?.alt || item.altText || `${label} logo`,
+          })
+        }
+      />
     </div>
   );
 }
@@ -258,6 +314,13 @@ export function SectionSettings({
     const selected = Array.isArray(config["brandSlugs"])
       ? (config["brandSlugs"] as string[])
       : [];
+    const logos = readBrandLogos(config);
+    function setLogo(slug: string, next: BrandLogoRef | null) {
+      const copy = { ...logos };
+      if (next) copy[slug] = next;
+      else copy[slug] = { alt: "" };
+      onChange("logos", copy);
+    }
     return (
       <div className="grid gap-3">
         <Field label="Heading">
@@ -310,6 +373,24 @@ export function SectionSettings({
                 </label>
               );
             })}
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-steel">
+            Brand logos
+          </div>
+          <p className="mb-2 text-[12px] text-steel">
+            Upload or pick a logo for each brand shown in this block. JPEG, PNG, WebP or GIF.
+          </p>
+          <div className="grid gap-2">
+            {(selected.length ? brands.filter((b) => selected.includes(b.slug)) : brands).map((b) => (
+              <BrandLogoPicker
+                key={b.slug}
+                label={b.name}
+                logo={logos[b.slug]}
+                onChange={(next) => setLogo(b.slug, next)}
+              />
+            ))}
           </div>
         </div>
         <SelectField

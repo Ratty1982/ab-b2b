@@ -11,6 +11,7 @@ import {
   DEFAULT_CATEGORY_TREE,
   slugifyCatalogue,
 } from "@/domain/catalogue";
+import { cmsMediaPublicPath, type BrandLogoRef } from "@/lib/cms-media";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -37,6 +38,9 @@ export type BrandRecord = {
   sortOrder: number;
   isActive: boolean;
   productCount: number;
+  logoMediaId: string | null;
+  logoAlt: string | null;
+  logoSrc: string | null;
 };
 
 async function uniqueSlug(db: Db, table: "category" | "brand", base: string, excludeId?: string) {
@@ -187,7 +191,28 @@ export async function listBrands(actorUserId: string): Promise<BrandRecord[]> {
     sortOrder: b.sortOrder,
     isActive: b.isActive,
     productCount: b._count.products,
+    logoMediaId: b.logoMediaId,
+    logoAlt: b.logoAlt,
+    logoSrc: b.logoMediaId ? cmsMediaPublicPath(b.logoMediaId) : null,
   }));
+}
+
+export async function listPublicBrandLogos(): Promise<Record<string, BrandLogoRef>> {
+  await bootstrapCatalogue();
+  const rows = await prisma.brand.findMany({
+    where: { isActive: true, logoMediaId: { not: null } },
+    select: { slug: true, logoMediaId: true, logoAlt: true },
+  });
+  const out: Record<string, BrandLogoRef> = {};
+  for (const row of rows) {
+    if (!row.logoMediaId) continue;
+    out[row.slug] = {
+      mediaId: row.logoMediaId,
+      src: cmsMediaPublicPath(row.logoMediaId),
+      alt: row.logoAlt ?? "",
+    };
+  }
+  return out;
 }
 
 async function assertParentAllowed(parentId: string | null | undefined, selfId?: string) {
@@ -281,6 +306,8 @@ export async function createBrand(actorUserId: string, raw: unknown) {
       description: input.description ?? null,
       isActive: input.isActive,
       sortOrder: input.sortOrder,
+      logoMediaId: input.logoMediaId ? input.logoMediaId : null,
+      logoAlt: input.logoAlt ?? null,
     },
   });
   await recordAuditEvent({
@@ -308,6 +335,9 @@ export async function updateBrand(actorUserId: string, raw: unknown) {
       description: input.description ?? null,
       isActive: input.isActive,
       sortOrder: input.sortOrder,
+      logoMediaId:
+        input.logoMediaId === undefined ? existing.logoMediaId : input.logoMediaId ? input.logoMediaId : null,
+      logoAlt: input.logoAlt === undefined ? existing.logoAlt : (input.logoAlt ?? null),
     },
   });
   await recordAuditEvent({

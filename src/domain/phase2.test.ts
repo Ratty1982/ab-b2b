@@ -9,7 +9,7 @@ import { tradeApplicationSubmitSchema } from "@/domain/trade-application";
 import { generateInviteToken, hashInviteToken } from "@/domain/invitation";
 import { ROUTES } from "@/lib/app-nav";
 import { cmsEditorPath, cmsPublicPath } from "@/lib/cms-pages";
-import { cmsMediaDisplaySrc, cmsMediaPublicPath } from "@/lib/cms-media";
+import { cmsMediaDisplaySrc, cmsMediaPublicPath, mergeBrandLogoMaps } from "@/lib/cms-media";
 import { isPermissionKey, ALL_PERMISSIONS } from "@/domain/permissions";
 
 describe("company domain", () => {
@@ -54,8 +54,12 @@ describe("CMS section validation", () => {
       heading: "Our brands",
       brandSlugs: ["power-maxed"],
       displayCount: "5",
-    }) as { displayCount: number };
+      logos: {
+        "power-maxed": { mediaId: "clxxxxxxxxxxxxxxxxxxxxxxxxx", src: "/api/cms-media/clxxxxxxxxxxxxxxxxxxxxxxxxx", alt: "Power Maxed" },
+      },
+    }) as { displayCount: number; logos?: Record<string, { mediaId?: string }> };
     expect(cfg.displayCount).toBe(5);
+    expect(cfg.logos?.["power-maxed"]?.mediaId).toBe("clxxxxxxxxxxxxxxxxxxxxxxxxx");
   });
 
   it("describes invalid hero headlines", () => {
@@ -91,6 +95,20 @@ describe("CMS media display src", () => {
         src: "https://example.invalid/old.jpg",
       }),
     ).toBe(cmsMediaPublicPath("abc"));
+  });
+
+  it("lets a section logo override the catalogue logo and an empty ref clear it", () => {
+    const merged = mergeBrandLogoMaps(
+      { "power-maxed": { mediaId: "cms-1" }, "steel-seal": { alt: "" } },
+      {
+        "power-maxed": { mediaId: "db-1" },
+        "steel-seal": { mediaId: "db-2" },
+        kidzmotion: { mediaId: "db-3" },
+      },
+    );
+    expect(merged["power-maxed"]?.mediaId).toBe("cms-1");
+    expect(merged["steel-seal"]).toBeUndefined();
+    expect(merged["kidzmotion"]?.mediaId).toBe("db-3");
   });
 });
 

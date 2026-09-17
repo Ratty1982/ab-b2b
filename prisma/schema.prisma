@@ -575,12 +575,17 @@ model Brand {
   name        String
   tagline     String?
   description String?
+  logoMediaId String?
+  logoAlt     String?
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  products Product[]
+  products  Product[]
+  logoMedia CmsMedia? @relation("BrandLogo", fields: [logoMediaId], references: [id], onDelete: SetNull)
+
+  @@index([logoMediaId])
 }
 
 model Category {
@@ -1121,6 +1126,8 @@ model CmsMedia {
   uploadedById String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  brandLogos Brand[] @relation("BrandLogo")
 
   @@index([contentType])
   @@index([uploadedById])

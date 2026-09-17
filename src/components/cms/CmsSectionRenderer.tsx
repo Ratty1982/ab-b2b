@@ -4,7 +4,7 @@ import type { CmsSectionTypeKey } from "@/domain/cms";
 import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
-import { cmsMediaDisplaySrc } from "@/lib/cms-media";
+import { cmsMediaDisplaySrc, readBrandLogos } from "@/lib/cms-media";
 
 type Section = {
   id: string;
@@ -83,6 +83,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
         .filter((b) => slugs.includes(b.slug))
         .slice(0, num(c, "displayCount", 5) || 5);
       const list = selected.length ? selected : brands.slice(0, 5);
+      const logos = readBrandLogos(c);
       return (
         <section className="border-b border-border/60">
           <div className="mx-auto max-w-[1400px] px-4 py-16 sm:px-6 lg:px-10">
@@ -93,20 +94,42 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
               {str(c, "heading")}
             </h2>
             <div className="mt-8 grid gap-px border border-border bg-border lg:grid-cols-2">
-              {list.map((brand, i) => (
-                <Link
-                  key={brand.slug}
-                  to="/brands/$slug"
-                  params={{ slug: brand.slug }}
-                  className={cn(
-                    "group bg-surface/70 p-6 transition-colors hover:bg-surface",
-                    i === 0 && "lg:col-span-2",
-                  )}
-                >
-                  <h3 className="font-display text-2xl font-semibold uppercase">{brand.name}</h3>
-                  <p className="mt-2 max-w-md text-[13px] text-steel">{brand.blurb}</p>
-                </Link>
-              ))}
+              {list.map((brand, i) => {
+                const logoSrc = cmsMediaDisplaySrc(logos[brand.slug]);
+                const logoAlt = logos[brand.slug]?.alt || `${brand.name} logo`;
+                return (
+                  <Link
+                    key={brand.slug}
+                    to="/brands/$slug"
+                    params={{ slug: brand.slug }}
+                    className={cn(
+                      "group grid gap-4 bg-surface/70 p-6 transition-colors hover:bg-surface sm:grid-cols-[minmax(0,1fr)_140px]",
+                      i === 0 && "lg:col-span-2 sm:grid-cols-[minmax(0,1fr)_220px]",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <h3 className="font-display text-2xl font-semibold uppercase">{brand.name}</h3>
+                      <p className="mt-2 max-w-md text-[13px] text-steel">{brand.blurb}</p>
+                    </div>
+                    <div className="flex items-center justify-center rounded-md border border-border/70 bg-ink/80 p-4">
+                      {logoSrc ? (
+                        <img
+                          src={logoSrc}
+                          alt={logoAlt}
+                          className={cn(
+                            "max-h-16 w-full object-contain",
+                            i === 0 && "max-h-24",
+                          )}
+                        />
+                      ) : (
+                        <div className="text-center text-[11px] font-semibold uppercase tracking-wide text-steel">
+                          Logo not set
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           </div>
         </section>

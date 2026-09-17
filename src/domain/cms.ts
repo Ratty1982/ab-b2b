@@ -66,6 +66,19 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     displayCount,
     variant,
     spacing,
+    logos: z
+      .record(
+        z.string().max(80),
+        z
+          .object({
+            mediaId: z.string().optional(),
+            src: z.string().max(2048).optional(),
+            alt: z.string().max(300).default(""),
+          })
+          .optional()
+          .nullable(),
+      )
+      .default({}),
   }),
   CATEGORY_GRID: z.object({
     heading: z.string().max(120).default("Shop by category"),

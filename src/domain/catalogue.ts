@@ -59,6 +59,14 @@ export const brandWriteSchema = z.object({
   description: optionalText,
   isActive: z.boolean().default(true),
   sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
+  logoMediaId: z.string().cuid().optional().nullable().or(z.literal("")),
+  logoAlt: z
+    .string()
+    .trim()
+    .max(300)
+    .optional()
+    .nullable()
+    .transform((v) => (v === "" ? null : v)),
 });
 
 export const brandCreateSchema = brandWriteSchema;
