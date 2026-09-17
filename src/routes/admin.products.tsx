@@ -1,16 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
-import { StockBadge, StatusBadge } from "@/components/ab/Badges";
+import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
-import { brands as mockBrands, gbp, products as mockProducts, type Product } from "@/lib/data";
+import { gbp } from "@/lib/data";
 import { productDraftSchema, slugifyCatalogue } from "@/domain/catalogue";
 import {
+  deleteCatalogueProductFn,
+  exportCatalogueProductsFn,
+  importCatalogueProductsFn,
   listCatalogueBrandsFn,
   listCatalogueCategoriesFn,
+  listCatalogueProductsFn,
   saveCatalogueBrandFn,
   saveCatalogueCategoryFn,
+  saveCatalogueProductFn,
 } from "@/server/phase2/fns";
+import { PRODUCT_CSV_TEMPLATE } from "@/domain/catalogue-csv";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { BrandLogoPicker } from "@/components/cms/SectionSettings";
@@ -61,41 +67,48 @@ type BrandRow = {
   logoSrc: string | null;
 };
 
-type ProductDraft = Product & { subcategory?: string };
+type ProductRow = {
+  id: string;
+  sku: string;
+  name: string;
+  brand: string;
+  category: string;
+  subcategory: string;
+  trade: number;
+  rrp: number;
+  packQty: number;
+  caseQty: number;
+  description: string;
+  vat: "standard" | "zero";
+  isActive: boolean;
+};
 
-function emptyProduct(): ProductDraft {
+function emptyProduct(brands: BrandRow[], categories: CategoryRow[]): ProductRow {
   return {
+    id: "",
     sku: "",
     name: "",
-    brand: mockBrands[0]?.name ?? "Power Maxed",
-    category: "Braking",
+    brand: brands[0]?.name ?? "Power Maxed",
+    category: categories.find((c) => !c.parentId)?.name ?? "Braking",
     subcategory: "",
-    type: "",
     trade: 0,
     rrp: 0,
-    stock: "in",
-    stockQty: 0,
     packQty: 1,
     caseQty: 1,
-    vat: "standard",
-    image: mockProducts[0]?.image ?? "",
-    breaks: [],
     description: "",
-    features: [],
-    specs: [],
-    downloads: [],
+    vat: "standard",
+    isActive: true,
   };
 }
 
 function AdminProducts() {
   const [tab, setTab] = useState<Tab>("Products");
   const [term, setTerm] = useState("");
-  const [catalog, setCatalog] = useState<ProductDraft[]>(() =>
-    mockProducts.map((p) => ({ ...p, subcategory: p.type })),
-  );
-  const [productEdit, setProductEdit] = useState<ProductDraft | null>(null);
+  const [catalog, setCatalog] = useState<ProductRow[]>([]);
+  const [productEdit, setProductEdit] = useState<ProductRow | null>(null);
   const [productIsNew, setProductIsNew] = useState(false);
   const [productError, setProductError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [brands, setBrands] = useState<BrandRow[]>([]);
@@ -106,7 +119,11 @@ function AdminProducts() {
 
   const loadTaxonomy = useCallback(async () => {
     setLoadError(null);
-    const [cats, br] = await Promise.all([listCatalogueCategoriesFn(), listCatalogueBrandsFn()]);
+    const [cats, br, prods] = await Promise.all([
+      listCatalogueCategoriesFn(),
+      listCatalogueBrandsFn(),
+      listCatalogueProductsFn({ data: {} }),
+    ]);
     if (!cats.ok) {
       setLoadError(cats.error);
       return;
@@ -115,8 +132,13 @@ function AdminProducts() {
       setLoadError(br.error);
       return;
     }
+    if (!prods.ok) {
+      setLoadError(prods.error);
+      return;
+    }
     setCategories(cats.data);
     setBrands(br.data);
+    setCatalog(prods.data);
   }, []);
 
   useEffect(() => {
@@ -151,6 +173,7 @@ function AdminProducts() {
     if (!productEdit) return;
     setProductError(null);
     const parsed = productDraftSchema.safeParse({
+      id: productIsNew ? undefined : productEdit.id || undefined,
       sku: productEdit.sku,
       name: productEdit.name,
       brand: productEdit.brand,
@@ -161,6 +184,8 @@ function AdminProducts() {
       packQty: productEdit.packQty,
       caseQty: productEdit.caseQty,
       description: productEdit.description,
+      vat: productEdit.vat,
+      active: productEdit.isActive,
     });
     if (!parsed.success) {
       const msg = parsed.error.issues.map((i) => i.message).join("; ");
@@ -168,37 +193,61 @@ function AdminProducts() {
       toast.error(msg);
       return;
     }
-    const next: ProductDraft = {
-      ...productEdit,
-      sku: parsed.data.sku,
-      name: parsed.data.name,
-      brand: parsed.data.brand,
-      category: parsed.data.category,
-      subcategory: parsed.data.subcategory ?? "",
-      type: parsed.data.subcategory || productEdit.type,
-      trade: parsed.data.trade,
-      rrp: parsed.data.rrp,
-      packQty: parsed.data.packQty,
-      caseQty: parsed.data.caseQty,
-      description: parsed.data.description,
-    };
-    setCatalog((prev) => {
-      const idx = prev.findIndex((p) => p.sku === next.sku);
-      if (productIsNew && idx >= 0) {
-        setProductError("A product with this SKU already exists");
-        toast.error("A product with this SKU already exists");
-        return prev;
-      }
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = next;
-        return copy;
-      }
-      return [...prev, next];
-    });
-    toast.success(productIsNew ? "Product added to the catalogue draft" : "Product saved");
+    setSaving(true);
+    const r = await saveCatalogueProductFn({ data: parsed.data });
+    setSaving(false);
+    if (!r.ok) {
+      setProductError(r.error);
+      toast.error(r.error);
+      return;
+    }
+    toast.success(productIsNew ? "Product added" : "Product saved");
     setProductEdit(null);
     setProductIsNew(false);
+    await loadTaxonomy();
+  }
+
+  async function removeProduct(sku: string) {
+    if (!window.confirm(`Delete ${sku} from the catalogue? This cannot be undone.`)) return;
+    const r = await deleteCatalogueProductFn({ data: { sku } });
+    if (!r.ok) {
+      toast.error(r.error);
+      return;
+    }
+    toast.success(`${sku} deleted`);
+    if (productEdit?.sku === sku) setProductEdit(null);
+    await loadTaxonomy();
+  }
+
+  async function exportProducts() {
+    const r = await exportCatalogueProductsFn();
+    if (!r.ok) {
+      toast.error(r.error);
+      return;
+    }
+    const blob = new Blob([r.data], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `automotive-brands-products-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Product CSV downloaded");
+  }
+
+  async function importProductsFile(file: File) {
+    const csv = await file.text();
+    setSaving(true);
+    const r = await importCatalogueProductsFn({ data: { csv } });
+    setSaving(false);
+    if (!r.ok) {
+      toast.error(r.error);
+      return;
+    }
+    const extra = r.data.errors.length ? ` (${r.data.errors.length} row warnings)` : "";
+    toast.success(`Imported ${r.data.created} new, updated ${r.data.updated}${extra}`);
+    if (r.data.errors[0]) toast.error(r.data.errors[0].message);
+    await loadTaxonomy();
   }
 
   async function saveCategory() {
@@ -264,7 +313,7 @@ function AdminProducts() {
     if (tab === "Products") {
       setProductIsNew(true);
       setProductError(null);
-      setProductEdit(emptyProduct());
+      setProductEdit(emptyProduct(brands, categories));
       return;
     }
     if (tab === "Brands") {
@@ -297,13 +346,60 @@ function AdminProducts() {
         title="Catalogue"
         sub="Products, brands and nested categories across all Automotive Brands ranges"
         actions={
-          <button
-            type="button"
-            onClick={onAdd}
-            className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
-          >
-            {addLabel}
-          </button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {tab === "Products" ? (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void importProductsFile(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob([PRODUCT_CSV_TEMPLATE], { type: "text/csv;charset=utf-8" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "automotive-brands-products-template.csv";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+                >
+                  Template
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => fileRef.current?.click()}
+                  className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide disabled:opacity-50"
+                >
+                  Upload CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportProducts()}
+                  className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+                >
+                  Export CSV
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={onAdd}
+              className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
+            >
+              {addLabel}
+            </button>
+          </div>
         }
       />
 
@@ -350,12 +446,19 @@ function AdminProducts() {
                   <th className="px-3 py-2 text-right font-semibold">RRP</th>
                   <th className="px-3 py-2 text-right font-semibold">Pack</th>
                   <th className="px-3 py-2 text-right font-semibold">Case</th>
-                  <th className="px-3 py-2 font-semibold">Stock</th>
+                  <th className="px-3 py-2 font-semibold">Status</th>
                   <th className="px-3 py-2 text-right font-semibold">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p, i) => (
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-10 text-center text-sm text-steel">
+                      No products in the catalogue yet. Upload a CSV or add a product.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((p, i) => (
                   <tr key={p.sku} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
                     <td className="num px-3 py-2 text-primary">{p.sku}</td>
                     <td className="px-3 py-2">{p.name}</td>
@@ -369,23 +472,35 @@ function AdminProducts() {
                     <td className="num px-3 py-2 text-right">{p.packQty}</td>
                     <td className="num px-3 py-2 text-right">{p.caseQty}</td>
                     <td className="px-3 py-2">
-                      <StockBadge stock={p.stock} />
+                      <StatusBadge tone={p.isActive ? "good" : "warn"}>
+                        {p.isActive ? "Active" : "Hidden"}
+                      </StatusBadge>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProductIsNew(false);
-                          setProductError(null);
-                          setProductEdit({ ...p, subcategory: p.subcategory ?? p.type });
-                        }}
-                        className="text-[12px] font-semibold text-primary hover:underline"
-                      >
-                        Edit
-                      </button>
+                      <div className="flex justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProductIsNew(false);
+                            setProductError(null);
+                            setProductEdit({ ...p, subcategory: p.subcategory ?? "" });
+                          }}
+                          className="text-[12px] font-semibold text-primary hover:underline"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeProduct(p.sku)}
+                          className="text-[12px] font-semibold text-bad hover:underline"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -538,11 +653,21 @@ function AdminProducts() {
           <div className="flex gap-2">
             <button
               type="button"
+              disabled={saving}
               onClick={() => void saveProduct()}
-              className="h-11 flex-1 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground"
+              className="h-11 flex-1 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
             >
-              Save changes
+              {saving ? "Saving…" : "Save changes"}
             </button>
+            {productEdit && !productIsNew ? (
+              <button
+                type="button"
+                onClick={() => void removeProduct(productEdit.sku)}
+                className="h-11 rounded-md border border-bad/50 px-5 text-[13px] font-semibold text-bad"
+              >
+                Delete
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setProductEdit(null)}
@@ -580,7 +705,7 @@ function AdminProducts() {
                 value={productEdit.brand}
                 onChange={(e) => setProductEdit({ ...productEdit, brand: e.target.value })}
               >
-                {(brands.length ? brands.map((b) => b.name) : mockBrands.map((b) => b.name)).map((name) => (
+                {(brands.length ? brands.map((b) => b.name) : ["Power Maxed"]).map((name) => (
                   <option key={name}>{name}</option>
                 ))}
               </select>
@@ -648,6 +773,26 @@ function AdminProducts() {
                 />
               </Field>
             </div>
+            <Field label="VAT">
+              <select
+                className={inputClass}
+                value={productEdit.vat}
+                onChange={(e) =>
+                  setProductEdit({ ...productEdit, vat: e.target.value === "zero" ? "zero" : "standard" })
+                }
+              >
+                <option value="standard">Standard</option>
+                <option value="zero">Zero rated</option>
+              </select>
+            </Field>
+            <label className="flex items-center gap-2 self-end text-[13px]">
+              <input
+                type="checkbox"
+                checked={productEdit.isActive}
+                onChange={(e) => setProductEdit({ ...productEdit, isActive: e.target.checked })}
+              />
+              Active in catalogue
+            </label>
           </div>
         ) : null}
       </Drawer>

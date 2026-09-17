@@ -359,3 +359,61 @@ export const saveCatalogueBrandFn = createServerFn({ method: "POST" })
       return toError(e);
     }
   });
+
+export const listCatalogueProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogue.listProducts(userId, data?.q);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveCatalogueProductFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogue.saveProduct(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const deleteCatalogueProductFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { sku: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogue.deleteProduct(userId, data.sku);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const importCatalogueProductsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { csv: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogue.importProducts(userId, data.csv);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCatalogueProductsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await catalogue.exportProductsCsv(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});

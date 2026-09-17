@@ -9,8 +9,11 @@ import {
   categoryUpdateSchema,
   DEFAULT_BRANDS,
   DEFAULT_CATEGORY_TREE,
+  normalizeVatCode,
+  productDraftSchema,
   slugifyCatalogue,
 } from "@/domain/catalogue";
+import { parseProductCsv, serializeProductCsv } from "@/domain/catalogue-csv";
 import { cmsMediaPublicPath, type BrandLogoRef } from "@/lib/cms-media";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -348,4 +351,337 @@ export async function updateBrand(actorUserId: string, raw: unknown) {
     metadata: { slug: updated.slug },
   });
   return updated;
+}
+
+export type ProductRecord = {
+  id: string;
+  variantId: string;
+  sku: string;
+  name: string;
+  brand: string;
+  brandId: string;
+  category: string;
+  subcategory: string;
+  categoryId: string | null;
+  trade: number;
+  rrp: number;
+  packQty: number;
+  caseQty: number;
+  description: string;
+  vat: "standard" | "zero";
+  isActive: boolean;
+};
+
+function money(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (value && typeof value === "object" && "toNumber" in value && typeof value.toNumber === "function") {
+    return (value as { toNumber: () => number }).toNumber();
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function uniqueProductSlug(db: Db, base: string, excludeId?: string) {
+  const root = slugifyCatalogue(base);
+  for (let i = 0; i < 50; i += 1) {
+    const slug = i === 0 ? root : `${root.slice(0, 70)}-${i + 1}`;
+    const existing = await db.product.findUnique({ where: { slug }, select: { id: true } });
+    if (!existing || existing.id === excludeId) return slug;
+  }
+  throw new AuthError("Could not allocate a unique product slug", "VALIDATION", 400);
+}
+
+async function findBrandRow(db: Db, nameOrSlug: string) {
+  const needle = nameOrSlug.trim();
+  return db.brand.findFirst({
+    where: { OR: [{ slug: slugifyCatalogue(needle) }, { name: { equals: needle, mode: "insensitive" } }] },
+  });
+}
+
+async function ensureBrand(db: Db, name: string) {
+  const existing = await findBrandRow(db, name);
+  if (existing) return existing;
+  return db.brand.create({
+    data: {
+      name: name.trim(),
+      slug: await uniqueSlug(db, "brand", name),
+      isActive: true,
+      sortOrder: 99,
+    },
+  });
+}
+
+async function ensureNamedCategory(db: Db, name: string, parentId: string | null) {
+  const existing = await db.category.findFirst({
+    where: { name: { equals: name.trim(), mode: "insensitive" }, parentId },
+  });
+  if (existing) return existing;
+  return db.category.create({
+    data: {
+      name: name.trim(),
+      slug: await uniqueSlug(db, "category", name),
+      parentId,
+      isActive: true,
+      sortOrder: 99,
+    },
+  });
+}
+
+async function resolveProductCategoryId(
+  db: Db,
+  categoryName: string,
+  subcategoryName: string | null | undefined,
+) {
+  const parent = await ensureNamedCategory(db, categoryName || "Uncategorised", null);
+  const childName = subcategoryName?.trim();
+  if (!childName) return parent.id;
+  const child = await ensureNamedCategory(db, childName, parent.id);
+  return child.id;
+}
+
+function mapProductRow(row: {
+  id: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  brandId: string;
+  categoryId: string | null;
+  brand: { name: string };
+  category: { name: string; parent: { name: string } | null } | null;
+  variants: Array<{
+    id: string;
+    sku: string;
+    packQty: number;
+    caseQty: number | null;
+    rrp: unknown;
+    vatCode: string;
+    quantityBreaks: Array<{ minQty: number; unitPrice: unknown }>;
+  }>;
+}): ProductRecord | null {
+  const variant = row.variants[0];
+  if (!variant) return null;
+  const tradeBreak = variant.quantityBreaks.find((b) => b.minQty === 1) ?? variant.quantityBreaks[0];
+  const parentName = row.category?.parent?.name ?? null;
+  return {
+    id: row.id,
+    variantId: variant.id,
+    sku: variant.sku,
+    name: row.name,
+    brand: row.brand.name,
+    brandId: row.brandId,
+    category: parentName ?? row.category?.name ?? "Uncategorised",
+    subcategory: parentName ? (row.category?.name ?? "") : "",
+    categoryId: row.categoryId,
+    trade: money(tradeBreak?.unitPrice ?? 0),
+    rrp: money(variant.rrp),
+    packQty: variant.packQty,
+    caseQty: variant.caseQty ?? 1,
+    description: row.description ?? "",
+    vat: variant.vatCode === "ZERO_RATED" ? "zero" : "standard",
+    isActive: row.isActive,
+  };
+}
+
+const productInclude = {
+  brand: { select: { name: true } },
+  category: { select: { name: true, parent: { select: { name: true } } } },
+  variants: {
+    orderBy: { createdAt: "asc" as const },
+    take: 1,
+    include: { quantityBreaks: true },
+  },
+} satisfies Prisma.ProductInclude;
+
+export async function listProducts(actorUserId: string, q?: string): Promise<ProductRecord[]> {
+  await requireSystemPermission(actorUserId, "products.view");
+  await bootstrapCatalogue();
+  const rows = await prisma.product.findMany({
+    where: q
+      ? {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { variants: { some: { sku: { contains: q, mode: "insensitive" } } } },
+            { brand: { name: { contains: q, mode: "insensitive" } } },
+          ],
+        }
+      : {},
+    include: {
+      brand: { select: { name: true } },
+      category: { select: { name: true, parent: { select: { name: true } } } },
+      variants: {
+        orderBy: { createdAt: "asc" },
+        take: 1,
+        include: { quantityBreaks: true },
+      },
+    },
+    orderBy: [{ name: "asc" }],
+    take: 2000,
+  });
+  return rows.map(mapProductRow).filter((p): p is ProductRecord => Boolean(p));
+}
+
+export async function saveProduct(actorUserId: string, raw: unknown): Promise<ProductRecord> {
+  await requireSystemPermission(actorUserId, "products.edit");
+  await bootstrapCatalogue();
+  const input = productDraftSchema.parse(raw);
+  const sku = input.sku.trim().toUpperCase();
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const brand = await ensureBrand(tx, input.brand);
+    const categoryId = await resolveProductCategoryId(tx, input.category, input.subcategory);
+    const vatCode = normalizeVatCode(input.vat);
+    const skuOwner = await tx.productVariant.findUnique({
+      where: { sku },
+      include: { product: true },
+    });
+    if (skuOwner && skuOwner.productId !== (input.id ?? "")) {
+      throw new AuthError(`SKU ${sku} is already used`, "VALIDATION", 400);
+    }
+
+    const productId = input.id;
+    const existingVariant = productId
+      ? await tx.productVariant.findFirst({
+          where: { productId },
+          orderBy: { createdAt: "asc" },
+        })
+      : null;
+    const isUpdate = Boolean(productId);
+    let product;
+    if (productId) {
+      product = await tx.product.update({
+        where: { id: productId },
+        data: {
+          name: input.name,
+          slug: await uniqueProductSlug(tx, `${input.brand} ${input.name} ${sku}`, productId),
+          brandId: brand.id,
+          categoryId,
+          description: input.description || null,
+          isActive: input.active,
+        },
+      });
+    } else {
+      product = await tx.product.create({
+        data: {
+          name: input.name,
+          slug: await uniqueProductSlug(tx, `${input.brand} ${input.name} ${sku}`),
+          brandId: brand.id,
+          categoryId,
+          description: input.description || null,
+          isActive: input.active,
+        },
+      });
+    }
+
+    const variantData = {
+      sku,
+      packQty: input.packQty,
+      caseQty: input.caseQty,
+      rrp: input.rrp,
+      vatCode,
+      isActive: input.active,
+    };
+
+    const variant = existingVariant
+      ? await tx.productVariant.update({
+          where: { id: existingVariant.id },
+          data: variantData,
+        })
+      : await tx.productVariant.create({
+          data: { ...variantData, productId: product.id },
+        });
+
+    await tx.quantityBreak.upsert({
+      where: { variantId_minQty: { variantId: variant.id, minQty: 1 } },
+      create: { variantId: variant.id, minQty: 1, unitPrice: input.trade },
+      update: { unitPrice: input.trade },
+    });
+
+    return { isUpdate, product: await tx.product.findUniqueOrThrow({
+      where: { id: product.id },
+      include: productInclude,
+    }) };
+  });
+
+  const mapped = mapProductRow(saved.product);
+  if (!mapped) throw new AuthError("Product saved without a SKU", "INTERNAL", 500);
+
+  await recordAuditEvent({
+    action: saved.isUpdate ? "catalogue.product_updated" : "catalogue.product_created",
+    entityType: "Product",
+    entityId: mapped.id,
+    actorUserId,
+    metadata: { sku: mapped.sku },
+  });
+  return mapped;
+}
+
+export async function deleteProduct(actorUserId: string, sku: string) {
+  await requireSystemPermission(actorUserId, "products.edit");
+  const variant = await prisma.productVariant.findUnique({
+    where: { sku: sku.trim().toUpperCase() },
+    select: { id: true, productId: true, sku: true },
+  });
+  if (!variant) throw new AuthError("Product not found", "NOT_FOUND", 404);
+  await prisma.product.delete({ where: { id: variant.productId } });
+  await recordAuditEvent({
+    action: "catalogue.product_deleted",
+    entityType: "Product",
+    entityId: variant.productId,
+    actorUserId,
+    metadata: { sku: variant.sku },
+  });
+  return { ok: true as const, sku: variant.sku };
+}
+
+export async function importProducts(actorUserId: string, csv: string) {
+  await requireSystemPermission(actorUserId, "products.edit");
+  if (csv.length > 1_500_000) {
+    throw new AuthError("CSV is larger than 1.5 MB", "VALIDATION", 400);
+  }
+  const parsed = parseProductCsv(csv);
+  if (!parsed.rows.length && parsed.errors.length) {
+    throw new AuthError(parsed.errors[0]?.message ?? "Invalid CSV", "VALIDATION", 400);
+  }
+  if (parsed.rows.length > 1000) {
+    throw new AuthError("Import is limited to 1,000 rows", "VALIDATION", 400);
+  }
+
+  let created = 0;
+  let updated = 0;
+  const rowErrors = [...parsed.errors];
+
+  for (const row of parsed.rows) {
+    try {
+      const existing = await prisma.productVariant.findUnique({
+        where: { sku: row.sku.trim().toUpperCase() },
+        select: { productId: true },
+      });
+      await saveProduct(actorUserId, {
+        ...row,
+        id: existing?.productId,
+        sku: row.sku.trim().toUpperCase(),
+      });
+      if (existing) updated += 1;
+      else created += 1;
+    } catch (error) {
+      rowErrors.push({
+        line: 0,
+        message: `${row.sku}: ${error instanceof Error ? error.message : "Import failed"}`,
+      });
+    }
+  }
+
+  await recordAuditEvent({
+    action: "catalogue.products_imported",
+    entityType: "Product",
+    actorUserId,
+    metadata: { created, updated, errors: rowErrors.length },
+  });
+
+  return { created, updated, errors: rowErrors.slice(0, 50) };
+}
+
+export async function exportProductsCsv(actorUserId: string) {
+  const products = await listProducts(actorUserId);
+  return serializeProductCsv(products);
 }

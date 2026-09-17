@@ -113,3 +113,55 @@ describe("catalogue categories", () => {
     expect(updated.tagline).toBe("Braking and drivetrain");
   });
 });
+
+describe("catalogue products import export delete", () => {
+  it("saves, exports, re-imports and deletes a SKU", async () => {
+    const {
+      saveProduct,
+      listProducts,
+      exportProductsCsv,
+      importProducts,
+      deleteProduct,
+    } = await import("@/server/catalogue/service");
+
+    const sku = `IMP-${Date.now()}`;
+    const created = await saveProduct(adminId, {
+      sku,
+      name: "Import disc kit",
+      brand: "Power Maxed",
+      category: "Braking",
+      subcategory: "Brake Discs",
+      trade: 41.2,
+      rrp: 55,
+      packQty: 2,
+      caseQty: 8,
+      description: "CSV fixture",
+    });
+    expect(created.sku).toBe(sku);
+    expect(created.trade).toBe(41.2);
+
+    const listed = await listProducts(adminId, sku);
+    expect(listed.some((p) => p.sku === sku)).toBe(true);
+
+    const csv = await exportProductsCsv(adminId);
+    expect(csv).toContain(sku);
+
+    const roundTrip = await importProducts(
+      adminId,
+      csv.replace("Import disc kit", "Import disc kit updated"),
+    );
+    expect(roundTrip.updated + roundTrip.created).toBeGreaterThan(0);
+
+    const after = await listProducts(adminId, sku);
+    expect(after.find((p) => p.sku === sku)?.name).toBe("Import disc kit updated");
+
+    await deleteProduct(adminId, sku);
+    const gone = await listProducts(adminId, sku);
+    expect(gone.some((p) => p.sku === sku)).toBe(false);
+  });
+
+  it("denies product delete without products.edit", async () => {
+    const { deleteProduct } = await import("@/server/catalogue/service");
+    await expect(deleteProduct(salesRepUserId, "NOPE")).rejects.toBeInstanceOf(AuthError);
+  });
+});

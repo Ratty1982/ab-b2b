@@ -76,6 +76,7 @@ export const brandUpdateSchema = brandWriteSchema.extend({
 });
 
 export const productDraftSchema = z.object({
+  id: z.string().cuid().optional(),
   sku: z.string().trim().min(1).max(40),
   name: z.string().trim().min(1).max(200),
   brand: z.string().trim().min(1).max(120),
@@ -86,7 +87,14 @@ export const productDraftSchema = z.object({
   packQty: z.coerce.number().int().min(1).max(10_000),
   caseQty: z.coerce.number().int().min(1).max(10_000),
   description: z.string().trim().max(4000).default(""),
+  vat: z.enum(["standard", "zero", "STANDARD", "ZERO_RATED", "ZERO"]).default("standard"),
+  active: z.coerce.boolean().default(true),
 });
+
+export function normalizeVatCode(vat: string | undefined): "STANDARD" | "ZERO_RATED" {
+  const v = (vat ?? "standard").toLowerCase();
+  return v === "zero" || v === "zero_rated" ? "ZERO_RATED" : "STANDARD";
+}
 
 export type CategoryWriteInput = z.infer<typeof categoryWriteSchema>;
 export type BrandWriteInput = z.infer<typeof brandWriteSchema>;

@@ -14,7 +14,7 @@ This repository started as a Lovable UX prototype and is being converted into a 
 | CMS homepage | Draft/publish page builder, media picker, published homepage rendering |
 | Autopart / orders / pricing engine / email send | Deferred |
 
-Prototype catalogue product SKUs still use mock stock/pricing until the PIM lands. Brands and the category tree (including subcategories) persist in Postgres and are edited from Catalogue administration.
+Prototype catalogue product pages on the public site may still use mock stock. Admin Catalogue products persist in Postgres: add, edit, delete, and CSV upload/export.
 
 
 ## Stack
