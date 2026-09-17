@@ -400,6 +400,15 @@ describe("CMS draft vs published", () => {
     await expect(publishCmsPage(salesRepUserId, "home")).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("loads homepage draft without bootstrapping an empty catalogue", async () => {
+    const { prisma: appPrisma } = await import("@/infra/database/client");
+    expect(typeof appPrisma.cmsPage.findUnique).toBe("function");
+    expect(typeof appPrisma.category.findUnique).toBe("function");
+    const draft = await getCmsPageDraft(adminId, "home");
+    expect(draft.slug).toBe("home");
+    expect(draft.title.length).toBeGreaterThan(0);
+  });
+
   it("saves multiple section ops and keeps unpublished draft off the public homepage", async () => {
     const publishedBefore = await getPublishedHomepage();
     const liveHeadline =

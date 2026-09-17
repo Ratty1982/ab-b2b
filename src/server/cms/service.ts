@@ -55,7 +55,12 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
   if (!page) throw new AuthError("Page not found", "NOT_FOUND", 404);
 
   const version = page.draftVersion ?? page.publishedVersion;
-  const catalogueLogos = await listPublicBrandLogos();
+  let catalogueLogos: Awaited<ReturnType<typeof listPublicBrandLogos>> = {};
+  try {
+    catalogueLogos = await listPublicBrandLogos();
+  } catch (error) {
+    console.error("[ab:cms] brand logos unavailable", error);
+  }
   const latestPublish = await prisma.cmsPublishEvent.findFirst({
     where: { pageId: page.id },
     orderBy: { createdAt: "desc" },
@@ -134,7 +139,12 @@ export async function getPublishedHomepage() {
     },
   });
   if (!page?.publishedVersion) return null;
-  const catalogueLogos = await listPublicBrandLogos();
+  let catalogueLogos: Awaited<ReturnType<typeof listPublicBrandLogos>> = {};
+  try {
+    catalogueLogos = await listPublicBrandLogos();
+  } catch (error) {
+    console.error("[ab:cms] brand logos unavailable", error);
+  }
   return {
     title: page.title,
     seoTitle: page.seoTitle ?? page.publishedVersion.seoTitle,

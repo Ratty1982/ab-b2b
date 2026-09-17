@@ -201,7 +201,6 @@ export async function listBrands(actorUserId: string): Promise<BrandRecord[]> {
 }
 
 export async function listPublicBrandLogos(): Promise<Record<string, BrandLogoRef>> {
-  await bootstrapCatalogue();
   const rows = await prisma.brand.findMany({
     where: { isActive: true, logoMediaId: { not: null } },
     select: { slug: true, logoMediaId: true, logoAlt: true },

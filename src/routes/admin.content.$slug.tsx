@@ -146,7 +146,7 @@ function CmsEditor() {
   const [status, setStatus] = useState<"idle" | "saved" | "saving" | "failed">("idle");
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [meta, setMeta] = useState<PageMeta>({
-    title: "",
+    title: slug === "home" ? "Homepage" : slug,
     seoTitle: "",
     metaDescription: "",
     ogImageMediaId: null,
@@ -236,7 +236,7 @@ function CmsEditor() {
       const metaResult = await updateCmsPageMetaFn({
         data: {
           slug,
-          title: meta.title,
+          title: meta.title.trim() || (slug === "home" ? "Homepage" : slug),
           seoTitle: meta.seoTitle || null,
           metaDescription: meta.metaDescription || null,
           ogImageMediaId: meta.ogImageMediaId,

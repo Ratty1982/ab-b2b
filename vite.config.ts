@@ -51,4 +51,7 @@ export default defineConfig({
     }),
     viteReact(),
   ],
+  ssr: {
+    external: ["@prisma/client", ".prisma/client"],
+  },
 });
