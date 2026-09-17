@@ -270,7 +270,10 @@ function AdminProducts() {
                 <div className="font-medium">{p.name}</div>
                 <div className="num text-[12px] text-primary">{p.sku}</div>
                 <div className="text-[12px] text-steel">{p.brand} · {p.category}</div>
-                <StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge>
+                  <span className="text-[12px] font-semibold text-primary">Edit product</span>
+                </div>
               </div>
             </Link>
           ))}
@@ -290,13 +293,14 @@ function AdminProducts() {
                 <th className="px-3 py-2 text-right font-semibold">RRP</th>
                 <th className="px-3 py-2 text-right font-semibold">Stock</th>
                 <th className="px-3 py-2 font-semibold">Updated</th>
+                <th className="px-3 py-2 text-right font-semibold">Action</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
+                <tr><td colSpan={11} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={10} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
+                <tr><td colSpan={11} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
               ) : (
                 items.map((p, i) => (
                   <tr key={p.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
@@ -318,6 +322,15 @@ function AdminProducts() {
                     <td className="num px-3 py-2 text-right text-steel">{p.rrp != null ? gbp(p.rrp) : "—"}</td>
                     <td className="num px-3 py-2 text-right text-steel">{p.stockLabel}</td>
                     <td className="num px-3 py-2 text-steel">{new Date(p.updatedAt).toLocaleDateString("en-GB")}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Link
+                        to="/admin/products/$id"
+                        params={{ id: p.id }}
+                        className="text-[12px] font-semibold text-primary hover:underline"
+                      >
+                        Edit
+                      </Link>
+                    </td>
                   </tr>
                 ))
               )}

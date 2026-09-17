@@ -74,7 +74,21 @@ function ProductWorkspace() {
       <PanelHeader
         title={product.name}
         sub={`${product.sku} · ${product.brandName}`}
-        actions={<StatusBadge tone={product.status === "ACTIVE" ? "good" : "warn"}>{product.status}</StatusBadge>}
+        crumbs={[
+          { label: "Products", to: "/admin/products" },
+          { label: product.name },
+        ]}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={product.status === "ACTIVE" ? "good" : "warn"}>{product.status}</StatusBadge>
+            <Link
+              to="/admin/products"
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+            >
+              Back to products
+            </Link>
+          </div>
+        }
       />
       <div className="flex gap-1 overflow-x-auto border-b border-border/70 px-4 sm:px-6">
         {tabs.map((t) => (
