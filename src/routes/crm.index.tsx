@@ -16,6 +16,7 @@ import {
   type PipelineStage,
 } from "@/lib/data";
 import { opportunityDetail, quotes, quoteTotal, salesTeam } from "@/lib/crm-data";
+import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/crm/")({
@@ -97,6 +98,7 @@ function Pipeline() {
       <PanelHeader
         title="Opportunity Pipeline"
         sub={`${open.length} open opportunities · ${gbp0(open.reduce((s, o) => s + o.value, 0))} pipeline value`}
+        crumbs={[{ label: "CRM" }, { label: "Opportunities", to: ROUTES.crm }]}
         actions={
           <button
             type="button"

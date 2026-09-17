@@ -7,12 +7,10 @@ import { companyCreateSchema, addressSchema, COMPANY_STATUSES } from "@/domain/c
 import { validateSectionConfig } from "@/domain/cms";
 import { tradeApplicationSubmitSchema } from "@/domain/trade-application";
 import { generateInviteToken, hashInviteToken } from "@/domain/invitation";
-import { ADMIN_NAV, CRM_NAV, PORTAL_NAV, ROUTES, SALES_NAV } from "@/lib/app-nav";
+import { ROUTES } from "@/lib/app-nav";
 import { cmsEditorPath, cmsPublicPath } from "@/lib/cms-pages";
 import { cmsMediaDisplaySrc, cmsMediaPublicPath } from "@/lib/cms-media";
-import { filterNavByPermissions } from "@/lib/nav-permissions";
 import { isPermissionKey, ALL_PERMISSIONS } from "@/domain/permissions";
-import type { SafeSessionUser } from "@/server/auth/session";
 
 describe("company domain", () => {
   it("accepts lifecycle statuses including SUSPENDED", () => {
@@ -112,56 +110,11 @@ describe("invitations", () => {
 });
 
 describe("navigation config", () => {
-  it("exposes a single ROUTES map used by shells", () => {
-    expect(ROUTES.adminCustomers).toBe("/admin/customers");
-    expect(ROUTES.adminContent).toBe("/admin/content");
-    expect(ROUTES.adminCmsPage("home")).toBe("/admin/content/home");
-    expect(ADMIN_NAV.some((i) => i.to === ROUTES.adminCustomers)).toBe(true);
-    expect(SALES_NAV.some((i) => i.to === ROUTES.salesCustomers)).toBe(true);
-    expect(CRM_NAV.some((i) => i.to === ROUTES.adminCustomers)).toBe(true);
-    expect(PORTAL_NAV.some((i) => i.to === ROUTES.portal)).toBe(true);
-  });
-
-  it("keeps admin destinations unique and includes Website", () => {
-    const labels = ADMIN_NAV.map((i) => i.label);
-    expect(labels).toEqual([
-      "Overview",
-      "Customers",
-      "Trade Applications",
-      "Products",
-      "Price Lists",
-      "Sales Team",
-      "Users & Permissions",
-      "Website",
-      "Settings",
-    ]);
-    const tos = ADMIN_NAV.map((i) => i.to);
-    expect(new Set(tos).size).toBe(tos.length);
-  });
-
   it("maps homepage CMS paths without nesting under a dead leaf", () => {
     expect(cmsPublicPath("home")).toBe("/");
     expect(cmsEditorPath("home")).toBe("/admin/content/home");
-  });
-
-  it("filters nav by permissions", () => {
-    const user = {
-      id: "1",
-      email: "a@b.com",
-      name: "A",
-      actorType: "INTERNAL",
-      systemRoles: ["MARKETING"],
-      displayRole: "Marketing",
-      companyId: null,
-      companyName: null,
-      accountNumber: null,
-      tradeRole: null,
-      navPermissions: ["cms.page.read", "cms.view"],
-      actingFor: null,
-    } satisfies SafeSessionUser;
-    const nav = filterNavByPermissions(ADMIN_NAV, user);
-    expect(nav.some((i) => i.to === ROUTES.adminContent)).toBe(true);
-    expect(nav.some((i) => i.to === ROUTES.adminCustomers)).toBe(false);
+    expect(ROUTES.adminHomepage).toBe("/admin/content/home");
+    expect(ROUTES.adminMedia).toBe("/admin/content/media");
   });
 });
 

@@ -102,6 +102,11 @@ function CustomerWorkspace() {
         sub={[company.accountNumber, company.tradingName ? `t/a ${company.tradingName}` : null]
           .filter(Boolean)
           .join(" · ")}
+        crumbs={[
+          { label: "Sales" },
+          { label: "Customers", to: ROUTES.adminCustomers },
+          { label: company.name },
+        ]}
         actions={
           <StatusBadge
             tone={

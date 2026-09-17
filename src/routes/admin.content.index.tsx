@@ -4,6 +4,7 @@ import { ExternalLink, Pencil } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { cmsPageBlurb, cmsPublicPath } from "@/lib/cms-pages";
+import { ROUTES } from "@/lib/app-nav";
 import { listCmsPagesFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/admin/content/")({
@@ -39,8 +40,9 @@ function CmsPages() {
   return (
     <div>
       <PanelHeader
-        title="Website"
+        title="Pages"
         sub="Edit public pages as drafts, then publish when they are ready"
+        crumbs={[{ label: "Website" }, { label: "Pages", to: ROUTES.adminContent }]}
       />
       <div className="p-4 sm:p-6">
         {error ? <p className="text-sm text-bad">{error}</p> : null}

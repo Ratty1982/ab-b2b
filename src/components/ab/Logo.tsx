@@ -8,16 +8,18 @@ export function Logo({
   to = "/",
   subtitle = "Trade Supply",
   className,
+  markOnly = false,
 }: {
   to?: string;
   subtitle?: string | null;
   className?: string;
+  markOnly?: boolean;
 }) {
   return (
     <Link
       to={to}
       className={cn("flex min-w-0 items-center gap-2.5", className)}
-      aria-label="Automotive Brands home"
+      aria-label="Automotive Brands area home"
     >
       <img
         src={LOGO_SRC}
@@ -26,16 +28,18 @@ export function Logo({
         height={36}
         className="size-9 shrink-0 rounded-sm object-cover"
       />
-      <span className="min-w-0 leading-none">
-        <span className="block font-display text-[15px] font-semibold tracking-[0.06em]">
-          AUTOMOTIVE BRANDS
-        </span>
-        {subtitle ? (
-          <span className="mt-1 block text-[9px] uppercase tracking-[0.32em] text-steel">
-            {subtitle}
+      {markOnly ? null : (
+        <span className="min-w-0 leading-none">
+          <span className="block font-display text-[15px] font-semibold tracking-[0.06em]">
+            AUTOMOTIVE BRANDS
           </span>
-        ) : null}
-      </span>
+          {subtitle ? (
+            <span className="mt-1 block text-[9px] uppercase tracking-[0.32em] text-steel">
+              {subtitle}
+            </span>
+          ) : null}
+        </span>
+      )}
     </Link>
   );
 }

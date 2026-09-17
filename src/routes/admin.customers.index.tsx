@@ -87,6 +87,7 @@ function AdminCustomers() {
       <PanelHeader
         title="Customers"
         sub={`${total} companies`}
+        crumbs={[{ label: "Sales" }, { label: "Customers", to: ROUTES.adminCustomers }]}
         actions={
           <button
             type="button"

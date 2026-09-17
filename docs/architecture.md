@@ -50,6 +50,12 @@ Server code must **recompute** commercial values. Never accept as authoritative 
 
 See `src/server/validation/trust.ts`.
 
+## Authenticated navigation (stable contract)
+
+**Authenticated navigation is a stable product contract. Do not reorganise, rename, remove or relocate existing navigation items as part of unrelated feature work.**
+
+The only source of truth is `src/lib/app-nav.ts` (`BACK_OFFICE_NAV` / `TRADE_PORTAL_NAV`). See [navigation.md](./navigation.md).
+
 ## Public catalogue policy
 
 - Anonymous: RRP allowed; trade price hidden; availability label allowed; **exact qty hidden**

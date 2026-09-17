@@ -38,7 +38,11 @@ const auditLog = [
 function AdminOverview() {
   return (
     <div>
-      <PanelHeader title="Administration" sub="Catalogue, commercial and platform control" />
+      <PanelHeader
+        title="Administration"
+        sub="Catalogue, commercial and platform control"
+        crumbs={[{ label: "Home" }, { label: "Dashboard", to: ROUTES.admin }]}
+      />
 
       <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="Active trade accounts" value={String(customers.length)} tone="brand" hint="Prototype data set" />

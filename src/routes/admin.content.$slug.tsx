@@ -176,15 +176,16 @@ function CmsEditor() {
   const publicPath = cmsPublicPath(slug);
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col bg-ink">
+    <div className="flex h-[calc(100svh-3.5rem)] flex-col bg-ink lg:h-svh">
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4">
         <div className="min-w-0 flex-1">
-          <Link
-            to="/admin/content"
-            className="text-[11px] font-semibold uppercase tracking-wide text-steel hover:text-foreground"
-          >
-            ← Website
-          </Link>
+          <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-steel">
+            <Link to="/admin/content" className="hover:text-foreground">
+              Website
+            </Link>
+            <span aria-hidden>›</span>
+            <span className="text-foreground">{slug === "home" ? "Homepage" : slug}</span>
+          </nav>
           <div className="font-display text-lg uppercase leading-tight">{title || slug}</div>
           <div className="text-[11px] text-steel">
             Draft editor · live {publicPath} does not change until Publish

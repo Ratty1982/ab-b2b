@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer } from "@/components/ab/Drawer";
 import { customers, gbp0, opportunities, pipelineStages } from "@/lib/data";
 import { managerTotals, monthlySales, salesByBrand, salesTeam, quotes, quoteTotal } from "@/lib/crm-data";
+import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/crm/manager")({
@@ -45,6 +46,7 @@ function ManagerDashboard() {
       <PanelHeader
         title="Sales Manager Dashboard"
         sub="Team performance, pipeline health and account risk · September 2026"
+        crumbs={[{ label: "Operations" }, { label: "Sales Team", to: ROUTES.crmManager }]}
       />
 
       <div className="grid gap-px bg-border sm:grid-cols-3 lg:grid-cols-6">

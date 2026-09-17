@@ -42,6 +42,8 @@ src/
 
 See [docs/architecture.md](docs/architecture.md) and [docs/authentication-rbac.md](docs/authentication-rbac.md).
 
+Authenticated back-office navigation is a **stable product contract** defined in `src/lib/app-nav.ts`. See [docs/navigation.md](docs/navigation.md). Do not reorganise, rename, remove or relocate existing nav items as part of unrelated feature work.
+
 Coolify production deploy (migrate + RBAC bootstrap + optional first admin):
 [docs/deployment-coolify.md](docs/deployment-coolify.md).
 

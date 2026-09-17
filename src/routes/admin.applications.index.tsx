@@ -85,7 +85,11 @@ function ApplicationsPage() {
 
   return (
     <div>
-      <PanelHeader title="Trade applications" sub="Review and approve new trade accounts" />
+      <PanelHeader
+        title="Trade applications"
+        sub="Review and approve new trade accounts"
+        crumbs={[{ label: "Sales" }, { label: "Trade Applications", to: ROUTES.adminApplications }]}
+      />
       <div className="grid gap-px bg-border sm:grid-cols-3">
         <Metric label="In queue" value={String(rows.length)} />
         <Metric label="New / submitted" value={String(submitted)} tone="brand" />

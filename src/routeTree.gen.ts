@@ -49,6 +49,7 @@ import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
 import { Route as AdminContentIndexRouteImport } from './routes/admin.content.index'
 import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$slug'
+import { Route as AdminContentMediaRouteImport } from './routes/admin.content.media'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -259,6 +260,11 @@ const AdminContentSlugRoute = AdminContentSlugRouteImport.update({
   path: '/$slug',
   getParentRoute: () => AdminContentRoute,
 } as any)
+const AdminContentMediaRoute = AdminContentMediaRouteImport.update({
+  id: '/media',
+  path: '/media',
+  getParentRoute: () => AdminContentRoute,
+} as any)
 const AdminCustomersIndexRoute = AdminCustomersIndexRouteImport.update({
   id: '/customers/',
   path: '/customers/',
@@ -344,6 +350,7 @@ export interface FileRoutesByFullPath {
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
@@ -390,6 +397,7 @@ export interface FileRoutesByTo {
   '/products': typeof ProductsIndexRoute
   '/sales': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
@@ -442,6 +450,7 @@ export interface FileRoutesById {
   '/products/': typeof ProductsIndexRoute
   '/sales/': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRoute
+  '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
@@ -495,6 +504,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/sales/'
     | '/admin/content/$slug'
+    | '/admin/content/media'
     | '/admin/customers/$id'
     | '/api/auth/$'
     | '/api/cms-media/$id'
@@ -541,6 +551,7 @@ export interface FileRouteTypes {
     | '/products'
     | '/sales'
     | '/admin/content/$slug'
+    | '/admin/content/media'
     | '/admin/customers/$id'
     | '/api/auth/$'
     | '/api/cms-media/$id'
@@ -592,6 +603,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/sales/'
     | '/admin/content/$slug'
+    | '/admin/content/media'
     | '/admin/customers/$id'
     | '/api/auth/$'
     | '/api/cms-media/$id'
@@ -911,6 +923,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminContentSlugRouteImport
       parentRoute: typeof AdminContentRoute
     }
+    '/admin/content/media': {
+      id: '/admin/content/media'
+      path: '/media'
+      fullPath: '/admin/content/media'
+      preLoaderRoute: typeof AdminContentMediaRouteImport
+      parentRoute: typeof AdminContentRoute
+    }
     '/admin/customers/': {
       id: '/admin/customers/'
       path: '/customers'
@@ -979,11 +998,13 @@ declare module '@tanstack/react-router' {
 
 interface AdminContentRouteChildren {
   AdminContentSlugRoute: typeof AdminContentSlugRoute
+  AdminContentMediaRoute: typeof AdminContentMediaRoute
   AdminContentIndexRoute: typeof AdminContentIndexRoute
 }
 
 const AdminContentRouteChildren: AdminContentRouteChildren = {
   AdminContentSlugRoute: AdminContentSlugRoute,
+  AdminContentMediaRoute: AdminContentMediaRoute,
   AdminContentIndexRoute: AdminContentIndexRoute,
 }
 

@@ -2,8 +2,8 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/ab/AppShell";
 import { ensureAdminAccess } from "@/server/auth/route-guards";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/session";
-import { filterNavByPermissions, shellUserFromSession } from "@/lib/nav-permissions";
-import { ADMIN_NAV, ROUTES } from "@/lib/app-nav";
+import { shellModelFromSession, shellUserFromSession } from "@/lib/nav-permissions";
+import { ROUTES } from "@/lib/app-nav";
 
 export const Route = createFileRoute("/admin")({
   beforeLoad: async ({ location }) => {
@@ -28,10 +28,15 @@ export const Route = createFileRoute("/admin")({
 function AdminLayout() {
   const { session } = Route.useRouteContext();
   const user = session.user;
-  const nav = filterNavByPermissions(ADMIN_NAV, user);
+  const model = shellModelFromSession(user);
 
   return (
-    <AppShell nav={nav} area="Internal Admin" user={shellUserFromSession(user)}>
+    <AppShell
+      sections={model.sections}
+      homeTo={model.homeTo}
+      areaLabel={model.areaLabel}
+      user={shellUserFromSession(user)}
+    >
       <Outlet />
     </AppShell>
   );
