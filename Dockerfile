@@ -17,7 +17,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NODE_ENV=production
-RUN bunx prisma generate
+# Use the lockfile Prisma CLI — `bunx prisma` can fetch a different version and
+# WASM-panic on generate (Coolify: psl/parser-database inline.rs OOB).
+RUN node ./node_modules/prisma/build/index.js generate
 RUN bun run build
 # Bundle production bootstrap (Prisma client stays external — provided at runtime)
 RUN bun build ./prisma/bootstrap/run-production.ts \
@@ -25,13 +27,14 @@ RUN bun build ./prisma/bootstrap/run-production.ts \
   --target node \
   --external @prisma/client
 
-# Minimal runtime deps — aligned with bun.lock resolved Prisma 6.19.3
+# Minimal runtime Prisma CLI — aligned with bun.lock resolved Prisma 6.19.3.
+# Do not `bunx prisma generate` here: bunx may download another CLI and the
+# WASM parser has panicked on Coolify (inline.rs index out of bounds).
 FROM oven/bun:1.2-alpine AS runtime-deps
 WORKDIR /app
 COPY bunfig.toml ./
 COPY prisma ./prisma
 RUN bun add prisma@6.19.3 @prisma/client@6.19.3
-RUN bunx prisma generate
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -48,6 +51,9 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
 COPY --from=build /app/scripts/wait-for-db.mjs ./scripts/wait-for-db.mjs
 COPY --from=runtime-deps /app/node_modules ./node_modules
+# Overlay the client generated from the lockfile install (build stage).
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 # Do NOT copy node_modules/.bin/prisma as a single file — Docker dereferences
 # the symlink and Prisma then looks for WASM next to .bin/ (ENOENT).
