@@ -12,6 +12,7 @@ import {
   listCatalogueCategoriesFn,
   listCatalogueWorkspaceFn,
 } from "@/server/phase2/fns";
+import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
@@ -263,9 +264,7 @@ function AdminProducts() {
               params={{ id: p.id }}
               className="flex gap-3 rounded-lg border border-border bg-surface/40 p-3"
             >
-              <div className="size-14 overflow-hidden rounded border border-border bg-ink">
-                {p.imageSrc ? <img src={p.imageSrc} alt="" className="size-full object-cover" /> : null}
-              </div>
+              <CatalogueMedia src={p.imageSrc} className="size-14 rounded border border-border bg-ink" />
               <div className="min-w-0 flex-1">
                 <div className="font-medium">{p.name}</div>
                 <div className="num text-[12px] text-primary">{p.sku}</div>
@@ -305,9 +304,7 @@ function AdminProducts() {
                 items.map((p, i) => (
                   <tr key={p.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
                     <td className="px-3 py-2">
-                      <div className="size-10 overflow-hidden rounded border border-border bg-ink">
-                        {p.imageSrc ? <img src={p.imageSrc} alt="" className="size-full object-cover" /> : null}
-                      </div>
+                      <CatalogueMedia src={p.imageSrc} className="size-10 rounded border border-border bg-ink" />
                     </td>
                     <td className="num px-3 py-2 text-primary">
                       <Link to="/admin/products/$id" params={{ id: p.id }} className="hover:underline">{p.sku}</Link>

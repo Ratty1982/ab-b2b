@@ -550,6 +550,44 @@ describe("CMS media library", () => {
     ).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("applies PRODUCT_IMAGE bounding box and stores processed dimensions", async () => {
+    const sharp = (await import("sharp")).default;
+    const raw = await sharp({
+      create: { width: 1500, height: 1500, channels: 3, background: { r: 12, g: 24, b: 48 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await uploadCmsMedia(adminId, {
+      filename: "product-square.jpg",
+      contentType: "image/jpeg",
+      base64: raw.toString("base64"),
+      usage: "PRODUCT_IMAGE",
+    });
+    expect(uploaded.width).toBe(1000);
+    expect(uploaded.height).toBe(1000);
+    expect(uploaded.sizeBytes).toBeTruthy();
+    const bytes = await getPublicCmsMediaBytes(uploaded.id);
+    const meta = await sharp(bytes!.bytes).metadata();
+    expect(meta.width).toBe(1000);
+    expect(meta.height).toBe(1000);
+  });
+
+  it("does not cap general CMS uploads to 1000px", async () => {
+    const sharp = (await import("sharp")).default;
+    const raw = await sharp({
+      create: { width: 2000, height: 1000, channels: 3, background: { r: 8, g: 8, b: 8 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await uploadCmsMedia(adminId, {
+      filename: "hero.jpg",
+      contentType: "image/jpeg",
+      base64: raw.toString("base64"),
+    });
+    expect(uploaded.width).toBe(2000);
+    expect(uploaded.height).toBe(1000);
+  });
+
   it("updates alt text and refuses delete while the image is referenced", async () => {
     const uploaded = await uploadCmsMedia(adminId, {
       filename: "alt-test.png",

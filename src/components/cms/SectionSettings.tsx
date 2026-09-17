@@ -9,7 +9,10 @@ import {
 } from "@/domain/featured-brands";
 import { brands } from "@/lib/data";
 import { cmsMediaDisplaySrc, type BrandLogoRef } from "@/lib/cms-media";
+import { mediaContainClass } from "@/lib/media-presentation";
+import { type MediaUploadUsage } from "@/domain/media-usage";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { cn } from "@/lib/utils";
 import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import heroImage from "@/assets/hero-parts.jpg";
@@ -197,10 +200,12 @@ export function BrandLogoPicker({
   label,
   logo,
   onChange,
+  usage = "BRAND_LOGO",
 }: {
   label: string;
   logo: BrandLogoRef | undefined;
   onChange: (next: BrandLogoRef | null) => void;
+  usage?: MediaUploadUsage;
 }) {
   const [open, setOpen] = useState(false);
   const preview = cmsMediaDisplaySrc(logo);
@@ -208,7 +213,7 @@ export function BrandLogoPicker({
     <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-ink/40 p-2">
       <div className="grid size-[72px] place-items-center overflow-hidden rounded border border-border bg-ink">
         {preview ? (
-          <img src={preview} alt={logo?.alt || label} className="max-h-[64px] max-w-[64px] object-contain" />
+          <img src={preview} alt={logo?.alt || label} className={cn("max-h-[64px] max-w-[64px]", mediaContainClass)} />
         ) : (
           <span className="px-1 text-center text-[10px] uppercase leading-tight text-steel">No logo</span>
         )}
@@ -236,6 +241,7 @@ export function BrandLogoPicker({
       </div>
       <MediaPicker
         open={open}
+        usage={usage}
         onClose={() => setOpen(false)}
         onSelect={(item) =>
           onChange({

@@ -10,6 +10,8 @@ import {
 import { toast } from "sonner";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { cn } from "@/lib/utils";
+import { defaultMediaUsage, type MediaUploadUsage } from "@/domain/media-usage";
+import { mediaLibraryThumbClass } from "@/lib/media-presentation";
 
 export type CmsMediaListItem = {
   id: string;
@@ -59,9 +61,11 @@ function formatBytes(n: number | null | undefined) {
 export function MediaLibraryPanel({
   onPick,
   autoLoad = true,
+  usage = defaultMediaUsage(),
 }: {
   onPick?: (item: CmsMediaListItem) => void;
   autoLoad?: boolean;
+  usage?: MediaUploadUsage;
 }) {
   const [items, setItems] = useState<CmsMediaListItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -112,6 +116,7 @@ export function MediaLibraryPanel({
           filename: file.name,
           contentType: file.type || guessContentType(file.name),
           base64: dataUrl,
+          usage,
         },
       });
       if (!r.ok) {
@@ -206,7 +211,11 @@ export function MediaLibraryPanel({
                     if (onPick) onPick(item);
                   }}
                 >
-                  <img src={item.src} alt={item.altText || item.filename} className="aspect-square w-full object-cover" />
+                  <img
+                    src={item.src}
+                    alt={item.altText || item.filename}
+                    className={mediaLibraryThumbClass(usage)}
+                  />
                   <div className="truncate px-2 py-1.5 text-[11px] text-steel">{item.filename}</div>
                 </button>
               </li>
@@ -229,6 +238,7 @@ export function MediaLibraryPanel({
                   : "Dimensions unknown"}
               </div>
               <div>{formatBytes(selected.sizeBytes)}</div>
+              <div>{selected.contentType}</div>
               <div>Uploaded {new Date(selected.createdAt).toLocaleString()}</div>
               <div>{selected.uploadedByName ? `By ${selected.uploadedByName}` : "Uploader unknown"}</div>
               <div>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MEDIA_UPLOAD_USAGES } from "@/domain/media-usage";
 
 export const CMS_SECTION_TYPES = [
   "HERO",
@@ -265,6 +266,8 @@ export const cmsMediaUploadSchema = z.object({
   /** Raw or data-URL base64 of the file body */
   base64: z.string().min(8).max(Math.ceil((CMS_MEDIA_MAX_BYTES * 4) / 3) + 64),
   altText: z.string().trim().max(300).optional().nullable(),
+  /** Processing policy. Defaults to CMS_GENERAL so heroes/banners are not resized. */
+  usage: z.enum(MEDIA_UPLOAD_USAGES).default("CMS_GENERAL"),
 });
 
 export const cmsMediaUpdateSchema = z.object({

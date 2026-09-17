@@ -2,7 +2,6 @@ import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import {
-  CMS_MEDIA_CONTENT_TYPES,
   CMS_MEDIA_MAX_BYTES,
   cmsMediaDeleteSchema,
   cmsMediaUpdateSchema,
@@ -16,6 +15,8 @@ import {
   getMediaStorageStatus,
   putMediaObject,
 } from "@/server/cms/storage";
+import { processImageUpload, sniffImageType } from "@/server/media/process-image";
+import { defaultMediaUsage, type MediaUploadUsage } from "@/domain/media-usage";
 
 function sanitizeFilename(name: string): string {
   const base = name.replaceAll("\\", "/").split("/").pop() ?? "image";
@@ -31,26 +32,6 @@ function decodeBase64Body(raw: string): Buffer {
   return Buffer.from(payload, "base64");
 }
 
-function sniffImageType(buf: Buffer): (typeof CMS_MEDIA_CONTENT_TYPES)[number] | null {
-  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
-    return "image/png";
-  }
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-    return "image/jpeg";
-  }
-  if (
-    buf.length >= 12 &&
-    buf.toString("ascii", 0, 4) === "RIFF" &&
-    buf.toString("ascii", 8, 12) === "WEBP"
-  ) {
-    return "image/webp";
-  }
-  if (buf.length >= 6) {
-    const header = buf.toString("ascii", 0, 6);
-    if (header === "GIF87a" || header === "GIF89a") return "image/gif";
-  }
-  return null;
-}
 
 export function readImageSize(buf: Buffer): { width: number; height: number } | null {
   const type = sniffImageType(buf);
@@ -211,6 +192,7 @@ export async function uploadCmsMedia(actorUserId: string, raw: unknown) {
     throw new AuthError(status.message, "VALIDATION", 400);
   }
   const input = cmsMediaUploadSchema.parse(raw);
+  const usage: MediaUploadUsage = input.usage ?? defaultMediaUsage();
   const bytes = decodeBase64Body(input.base64);
   if (!bytes.length) {
     throw new AuthError("Empty file", "VALIDATION", 400);
@@ -226,18 +208,27 @@ export async function uploadCmsMedia(actorUserId: string, raw: unknown) {
     throw new AuthError("File contents do not match the declared type", "VALIDATION", 400);
   }
 
+  const processed = await processImageUpload({
+    buffer: bytes,
+    mimeType: sniffed,
+    usage,
+  });
+
   const filename = sanitizeFilename(input.filename);
   const storageKey = `cms-media/${crypto.randomUUID()}/${filename}`;
-  const size = readImageSize(bytes);
-  const stored = await putMediaObject({ storageKey, bytes, contentType: sniffed });
+  const stored = await putMediaObject({
+    storageKey,
+    bytes: processed.buffer,
+    contentType: processed.mimeType,
+  });
 
   const created = await prisma.cmsMedia.create({
     data: {
       filename,
-      contentType: sniffed,
-      sizeBytes: bytes.length,
-      width: size?.width ?? null,
-      height: size?.height ?? null,
+      contentType: processed.mimeType,
+      sizeBytes: processed.fileSize,
+      width: processed.width,
+      height: processed.height,
       altText: input.altText?.trim() || null,
       storageProvider: stored.provider,
       storageKey: stored.storageKey,
@@ -267,6 +258,9 @@ export async function uploadCmsMedia(actorUserId: string, raw: unknown) {
       filename: created.filename,
       contentType: created.contentType,
       sizeBytes: created.sizeBytes,
+      width: created.width,
+      height: created.height,
+      usage,
       provider: stored.provider,
     },
   });

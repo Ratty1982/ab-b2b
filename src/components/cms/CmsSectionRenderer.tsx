@@ -5,6 +5,7 @@ import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
 import { cmsMediaDisplaySrc, cmsFocalStyle, cmsImageFitClass, readBrandLogos } from "@/lib/cms-media";
+import { mediaContainClass } from "@/lib/media-presentation";
 
 type Section = {
   id: string;
@@ -162,7 +163,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
                         <img
                           src={logoSrc}
                           alt={logoAlt}
-                          className={cn("max-h-16 w-full object-contain", i === 0 && "max-h-24")}
+                          className={cn("max-h-16 w-full", mediaContainClass, i === 0 && "max-h-24")}
                         />
                       ) : (
                         <div className="text-center text-[11px] font-semibold uppercase tracking-wide text-steel">
@@ -341,7 +342,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
                   return (
                     <div key={brand.slug} className="grid h-16 w-36 place-items-center border border-border bg-ink/60 px-3">
                       {logoSrc ? (
-                        <img src={logoSrc} alt={logos[brand.slug]?.alt || brand.name} className="max-h-10 max-w-full object-contain" />
+                        <img src={logoSrc} alt={logos[brand.slug]?.alt || brand.name} className={cn("max-h-10 max-w-full", mediaContainClass)} />
                       ) : (
                         <span className="text-[11px] font-semibold uppercase text-steel">{brand.name}</span>
                       )}

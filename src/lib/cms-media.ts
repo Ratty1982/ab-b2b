@@ -1,3 +1,5 @@
+import { photoCoverClass } from "@/lib/media-presentation";
+
 /** Public URL for a stored CMS media row (served by `/api/cms-media/$id`). */
 export function cmsMediaPublicPath(id: string): string {
   return `/api/cms-media/${id}`;
@@ -16,9 +18,8 @@ export function cmsMediaDisplaySrc(media: {
 }
 
 export function cmsImageFitClass(fit: unknown): string {
-  if (fit === "contain") return "h-full w-full object-contain p-6";
-  if (fit === "content") return "h-full w-full object-cover";
-  return "h-full w-full object-cover";
+  if (fit === "contain") return `h-full w-full object-contain object-center p-6`;
+  return photoCoverClass;
 }
 
 export function cmsFocalStyle(media: {

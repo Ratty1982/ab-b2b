@@ -156,6 +156,7 @@ function AdminCategories() {
             </label>
             <BrandLogoPicker
               label="Category image"
+              usage="CATEGORY_IMAGE"
               logo={edit.imageMediaId ? { mediaId: edit.imageMediaId, src: edit.imageSrc ?? undefined, alt: edit.imageAlt ?? undefined } : undefined}
               onChange={(next) => setEdit((prev) => (prev ? { ...prev, imageMediaId: next?.mediaId ?? null, imageSrc: next?.src ?? null, imageAlt: next?.alt ?? null } : prev))}
             />

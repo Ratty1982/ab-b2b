@@ -5,6 +5,7 @@ import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { gbp } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { TradePrice } from "@/components/ab/Price";
+import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { listPublicCatalogueFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/products/")({
@@ -96,9 +97,7 @@ function Catalogue() {
           {data.items.length === 0 ? <p className="text-sm text-steel">No live products in this view yet.</p> : null}
           {data.items.map((p) => (
             <Link key={p.id} to="/products/$sku" params={{ sku: p.slug }} className="rounded-lg border border-border bg-surface/40 p-3 transition hover:border-primary/50">
-              <div className="aspect-[4/3] overflow-hidden rounded bg-ink">
-                {p.imageSrc ? <img src={p.imageSrc} alt="" className="h-full w-full object-cover" /> : null}
-              </div>
+              <CatalogueMedia src={p.imageSrc} alt="" className="aspect-[4/3] rounded bg-ink" />
               <div className="mt-3 font-display text-sm font-semibold uppercase">{p.name}</div>
               <div className="num text-[12px] text-steel">{p.brand} · {p.sku}</div>
               <div className="mt-2">

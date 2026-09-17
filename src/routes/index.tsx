@@ -3,6 +3,7 @@ import { ArrowRight, Truck, Warehouse, Headphones, ClipboardList, Download } fro
 import { PublicLayout } from "@/components/ab/PublicLayout";
 import { StockBadge } from "@/components/ab/Badges";
 import { TradePrice } from "@/components/ab/Price";
+import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
 import { brands, products } from "@/lib/data";
 import { categories, news, tradeCustomerTypes } from "@/lib/crm-data";
@@ -344,13 +345,10 @@ function LegacyHome() {
                 params={{ sku: p.sku }}
                 className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40 transition-colors hover:border-primary/60"
               >
-                <img
+                <CatalogueMedia
                   src={p.image}
                   alt={p.name}
-                  loading="lazy"
-                  width={912}
-                  height={736}
-                  className="aspect-[4/3] w-full object-cover"
+                  className="aspect-[4/3] w-full"
                 />
                 <div className="flex flex-1 flex-col p-4">
                   <div className="text-[11px] text-cyan">{p.brand}</div>
@@ -387,14 +385,10 @@ function LegacyHome() {
                     params={{ sku: p.sku }}
                     className="grid grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 bg-ink p-3 transition-colors hover:bg-surface"
                   >
-                    <img
+                    <CatalogueMedia
                       src={p.image}
                       alt=""
-                      aria-hidden
-                      loading="lazy"
-                      width={128}
-                      height={128}
-                      className="size-16 rounded-sm object-cover"
+                      className="size-16 rounded-sm"
                     />
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] font-semibold">{p.name}</span>

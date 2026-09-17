@@ -2,6 +2,7 @@ import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useState } from "react";
 import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { TradePrice } from "@/components/ab/Price";
+import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { getPublicProductFn } from "@/server/phase2/fns";
 import { gbp } from "@/lib/data";
 
@@ -39,15 +40,19 @@ function ProductPage() {
         <div className="mt-6 grid gap-8 lg:grid-cols-12">
           <div className="lg:col-span-5">
             {images[active]?.src ? (
-              <img src={images[active]!.src} alt={images[active]!.alt} className="aspect-[4/3] w-full rounded-lg border border-border object-cover" />
+              <CatalogueMedia
+                src={images[active]!.src}
+                alt={images[active]!.alt}
+                className="aspect-[4/3] w-full rounded-lg border border-border"
+              />
             ) : (
               <div className="aspect-[4/3] rounded-lg border border-border bg-surface" />
             )}
             {images.length > 1 ? (
               <div className="mt-3 grid grid-cols-4 gap-2">
                 {images.map((img, i) => (
-                  <button key={img.src + i} type="button" onClick={() => setActive(i)}>
-                    <img src={img.src} alt="" className="aspect-[4/3] w-full rounded-md border border-border object-cover" />
+                  <button key={img.src + i} type="button" onClick={() => setActive(i)} className="block w-full">
+                    <CatalogueMedia src={img.src} alt="" className="aspect-[4/3] w-full rounded-md border border-border" />
                   </button>
                 ))}
               </div>

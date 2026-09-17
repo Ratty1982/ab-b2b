@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { companyCreateSchema, addressSchema, COMPANY_STATUSES } from "@/domain/company";
-import { formatZodError, validateSectionConfig } from "@/domain/cms";
+import { cmsMediaUploadSchema, formatZodError, validateSectionConfig } from "@/domain/cms";
 import { tradeApplicationSubmitSchema } from "@/domain/trade-application";
 import { generateInviteToken, hashInviteToken } from "@/domain/invitation";
 import { ROUTES } from "@/lib/app-nav";
@@ -89,6 +89,15 @@ describe("CMS section validation", () => {
 });
 
 describe("CMS media display src", () => {
+  it("defaults upload usage to CMS_GENERAL so heroes are not product-capped", () => {
+    const parsed = cmsMediaUploadSchema.parse({
+      filename: "hero.jpg",
+      contentType: "image/jpeg",
+      base64: "a".repeat(16),
+    });
+    expect(parsed.usage).toBe("CMS_GENERAL");
+  });
+
   it("prefers library id over a stale src", () => {
     expect(
       cmsMediaDisplaySrc({

@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicLayout, PageHeader } from "@/components/ab/PublicLayout";
+import { mediaContainClass } from "@/lib/media-presentation";
+import { cn } from "@/lib/utils";
 import { listPublicBrandsFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/brands/")({
@@ -34,7 +36,7 @@ function BrandsIndex() {
             className="flex flex-col gap-3 rounded-lg border border-border bg-surface/50 p-6 transition-colors hover:border-primary/60"
           >
             {b.logoSrc ? (
-              <img src={b.logoSrc} alt="" className="h-12 w-auto object-contain" />
+              <img src={b.logoSrc} alt="" className={cn("h-12 w-auto", mediaContainClass)} />
             ) : (
               <span className="grid size-12 place-items-center rounded-md bg-primary font-display text-sm font-bold text-primary-foreground">
                 {b.name.split(" ").map((w) => w[0]).join("")}

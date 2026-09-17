@@ -73,7 +73,7 @@ function AdminBrands() {
                 <tr key={b.id} className={cn("border-b border-border/60", i % 2 && "bg-surface/30")}>
                   <td className="px-3 py-2">
                     <div className="grid size-10 place-items-center overflow-hidden rounded border border-border bg-ink">
-                      {b.logoSrc ? <img src={b.logoSrc} alt="" className="max-h-9 max-w-9 object-contain" /> : null}
+                      {b.logoSrc ? <img src={b.logoSrc} alt="" className="max-h-9 max-w-9 object-contain object-center" /> : null}
                     </div>
                   </td>
                   <td className="px-3 py-2 font-medium">{b.name}</td>

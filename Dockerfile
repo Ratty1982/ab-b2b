@@ -34,7 +34,7 @@ FROM oven/bun:1.2-alpine AS runtime-deps
 WORKDIR /app
 COPY bunfig.toml ./
 COPY prisma ./prisma
-RUN bun add prisma@6.19.3 @prisma/client@6.19.3
+RUN bun add prisma@6.19.3 @prisma/client@6.19.3 sharp@0.35.4
 
 FROM node:22-alpine AS runner
 WORKDIR /app

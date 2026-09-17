@@ -396,9 +396,54 @@ describe("phase 3 product master", () => {
     await attachProductMedia(adminId, { productId: saved.id, mediaId: media.id, isPrimary: true });
     const withImg = await getProductWorkspace(adminId, saved.id);
     expect(withImg.media[0]?.mediaId).toBe(media.id);
+    const unchanged = await prisma.cmsMedia.findUnique({ where: { id: media.id } });
+    expect(unchanged?.storageKey).toBe(media.storageKey);
+    expect(unchanged?.sizeBytes).toBe(10);
     await detachProductMedia(adminId, { id: withImg.media[0]!.id, productId: saved.id });
     const still = await prisma.cmsMedia.findUnique({ where: { id: media.id } });
     expect(still).toBeTruthy();
+    expect(still?.storageKey).toBe(media.storageKey);
+  });
+
+  it("stores PRODUCT_IMAGE processing on new uploads then associates without rewriting", async () => {
+    const { uploadCmsMedia } = await import("@/server/cms/media");
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { attachProductMedia, getProductWorkspace } = await import("@/server/catalogue/products");
+    const sharp = (await import("sharp")).default;
+    const raw = await sharp({
+      create: { width: 2000, height: 1000, channels: 3, background: { r: 30, g: 30, b: 30 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await uploadCmsMedia(adminId, {
+      filename: "assoc-product.jpg",
+      contentType: "image/jpeg",
+      base64: raw.toString("base64"),
+      usage: "PRODUCT_IMAGE",
+    });
+    expect(uploaded.width).toBe(1000);
+    expect(uploaded.height).toBe(500);
+    const sku = `IMG2-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Processed image product",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 1,
+      rrp: 2,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await attachProductMedia(adminId, { productId: saved.id, mediaId: uploaded.id, isPrimary: true });
+    const before = await prisma.cmsMedia.findUnique({ where: { id: uploaded.id } });
+    await attachProductMedia(adminId, { productId: saved.id, mediaId: uploaded.id, isPrimary: true });
+    const after = await prisma.cmsMedia.findUnique({ where: { id: uploaded.id } });
+    expect(after?.storageKey).toBe(before?.storageKey);
+    expect(after?.sizeBytes).toBe(before?.sizeBytes);
+    expect(after?.width).toBe(1000);
+    const ws = await getProductWorkspace(adminId, saved.id);
+    expect(ws.media).toHaveLength(1);
+    expect(ws.media[0]?.isPrimary).toBe(true);
   });
 });
 

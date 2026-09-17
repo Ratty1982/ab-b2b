@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { MediaPicker } from "@/components/cms/MediaPicker";
 import {
   attachCatalogueProductMediaFn,
@@ -240,7 +241,7 @@ function ImagesForm({ product, onSaved }: { product: Workspace; onSaved: () => P
       <div className="grid gap-3 sm:grid-cols-3">
         {product.media.map((m, index) => (
           <div key={m.id} className="rounded-lg border border-border p-2">
-            <img src={m.src} alt={m.altText || ""} className="aspect-[4/3] w-full rounded object-cover" />
+            <CatalogueMedia src={m.src} alt={m.altText || ""} className="aspect-[4/3] w-full rounded" />
             <div className="mt-2 flex flex-wrap gap-2">
               {m.isPrimary ? <StatusBadge tone="good">Primary</StatusBadge> : (
                 <button type="button" className="text-[11px] font-semibold" onClick={() => void reorderCatalogueProductMediaFn({ data: { productId: product.id, orderedIds: product.media.map((x) => x.id), primaryId: m.id } }).then(onSaved)}>Set primary</button>
@@ -260,6 +261,7 @@ function ImagesForm({ product, onSaved }: { product: Workspace; onSaved: () => P
       <button type="button" className="mt-4 h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase" onClick={() => setPicker(true)}>Select or upload image</button>
       <MediaPicker
         open={picker}
+        usage="PRODUCT_IMAGE"
         onClose={() => setPicker(false)}
         onSelect={(item) => {
           void attachCatalogueProductMediaFn({

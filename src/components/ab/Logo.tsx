@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { mediaContainClass } from "@/lib/media-presentation";
 import { cn } from "@/lib/utils";
 
 /** First-party brand mark — served from /public/brand (no Lovable CDN). */
@@ -26,7 +27,7 @@ export function Logo({
         alt=""
         width={36}
         height={36}
-        className="size-9 shrink-0 rounded-sm object-cover"
+        className={cn("size-9 shrink-0 rounded-sm", mediaContainClass)}
       />
       {markOnly ? null : (
         <span className="min-w-0 leading-none">

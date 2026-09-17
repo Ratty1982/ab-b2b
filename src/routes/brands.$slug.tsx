@@ -1,6 +1,7 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { TradePrice } from "@/components/ab/Price";
+import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { getPublicBrandFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/brands/$slug")({
@@ -37,7 +38,7 @@ function BrandPage() {
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {brand.products.map((p) => (
             <Link key={p.id} to="/products/$sku" params={{ sku: p.slug }} className="rounded-lg border border-border p-3">
-              {p.imageSrc ? <img src={p.imageSrc} alt="" className="aspect-[4/3] w-full rounded object-cover" /> : null}
+              <CatalogueMedia src={p.imageSrc} alt="" className="aspect-[4/3] w-full rounded" />
               <div className="mt-2 font-medium">{p.name}</div>
               <TradePrice trade={p.price.trade} rrp={p.price.rrp} size="sm" ctaMode="text" />
             </Link>
