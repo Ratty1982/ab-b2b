@@ -5,6 +5,7 @@ import { AuthError } from "@/server/rbac/guards";
 import * as companies from "@/server/companies/service";
 import * as applications from "@/server/applications/service";
 import * as cms from "@/server/cms/service";
+import * as cmsMedia from "@/server/cms/media";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -282,3 +283,25 @@ export const getPublishedHomepageFn = createServerFn({ method: "GET" }).handler(
     return toError(e);
   }
 });
+
+export const listCmsMediaFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await cmsMedia.listCmsMedia(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const uploadCmsMediaFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await cmsMedia.uploadCmsMedia(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });

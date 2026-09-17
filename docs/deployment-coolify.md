@@ -96,7 +96,8 @@ mark the deploy unhealthy.
 - RBAC bootstrap now upserts ~55 permissions (adds `cms.page.*` / `cms.media.*`) and refreshes system role maps.
 - Bootstrap also ensures a published CMS `home` page exists (idempotent). Public `/` reads **published** version only.
 - No new required environment variables for Phase 2.
-- Optional later: object storage vars for CMS media uploads (abstraction only; uploads not required yet).
-- After deploy: open **Admin → Customers**, **Admin → Trade Applications**, **Admin → Website → Homepage** editor.
+- Migration `20260917100000_cms_media_blob` adds `CmsMedia.bytes` so CMS uploads persist in Postgres (no S3 required). Coolify entrypoint already runs `migrate deploy`.
+- No new required environment variables. Object storage vars remain unused.
+- After deploy: open **Admin → Website → Homepage**, select the Hero, **Choose image**, upload or pick from the library, save draft, then publish. Public pages load images from `/api/cms-media/:id`.
 - Invitations are created with `emailDeferred: true` until an email provider is configured — do not expect outbound mail.
 

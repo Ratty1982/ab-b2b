@@ -9,6 +9,7 @@ import { tradeApplicationSubmitSchema } from "@/domain/trade-application";
 import { generateInviteToken, hashInviteToken } from "@/domain/invitation";
 import { ADMIN_NAV, CRM_NAV, PORTAL_NAV, ROUTES, SALES_NAV } from "@/lib/app-nav";
 import { cmsEditorPath, cmsPublicPath } from "@/lib/cms-pages";
+import { cmsMediaDisplaySrc, cmsMediaPublicPath } from "@/lib/cms-media";
 import { filterNavByPermissions } from "@/lib/nav-permissions";
 import { isPermissionKey, ALL_PERMISSIONS } from "@/domain/permissions";
 import type { SafeSessionUser } from "@/server/auth/session";
@@ -48,6 +49,32 @@ describe("CMS section validation", () => {
     expect(() =>
       validateSectionConfig("RICH_TEXT", { content: "x".repeat(20001) }),
     ).toThrow();
+  });
+
+  it("accepts a media library ref on hero config", () => {
+    const cfg = validateSectionConfig("HERO", {
+      headline: "Hello",
+      supporting: "World",
+      media: {
+        mediaId: "clxxxxxxxxxxxxxxxxxxxxxxxxx",
+        src: "/api/cms-media/clxxxxxxxxxxxxxxxxxxxxxxxxx",
+        alt: "Warehouse rack",
+      },
+    }) as { media?: { mediaId?: string; src?: string; alt: string } };
+    expect(cfg.media?.mediaId).toBe("clxxxxxxxxxxxxxxxxxxxxxxxxx");
+    expect(cfg.media?.src).toContain("/api/cms-media/");
+    expect(cfg.media?.alt).toBe("Warehouse rack");
+  });
+});
+
+describe("CMS media display src", () => {
+  it("prefers library id over a stale src", () => {
+    expect(
+      cmsMediaDisplaySrc({
+        mediaId: "abc",
+        src: "https://example.invalid/old.jpg",
+      }),
+    ).toBe(cmsMediaPublicPath("abc"));
   });
 });
 

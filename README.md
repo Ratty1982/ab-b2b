@@ -11,7 +11,7 @@ This repository started as a Lovable UX prototype and is being converted into a 
 | Auth / RBAC / audit | Phase 1 live in production |
 | Customers / companies | Production CRUD + workspace (contacts, users, addresses, commercial) |
 | Trade applications | Public submit + admin approve/reject (idempotent) |
-| CMS homepage | Draft/publish page builder + published homepage rendering |
+| CMS homepage | Draft/publish page builder, media picker, published homepage rendering |
 | Autopart / orders / pricing engine / email send | Deferred |
 
 Prototype catalogue screens may still use mock product data. Customer/application/CMS paths use Postgres.

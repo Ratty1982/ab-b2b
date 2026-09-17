@@ -4,6 +4,7 @@ import type { CmsSectionTypeKey } from "@/domain/cms";
 import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
+import { cmsMediaDisplaySrc } from "@/lib/cms-media";
 
 type Section = {
   id: string;
@@ -35,6 +36,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
       const media = c["media"];
       const mediaObj =
         media && typeof media === "object" ? (media as Record<string, unknown>) : null;
+      const heroSrc = cmsMediaDisplaySrc(mediaObj) || heroImage;
       return (
         <section className="relative overflow-hidden border-b border-border/60">
           <div className="mx-auto grid max-w-[1400px] items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-12 lg:px-10 lg:py-24">
@@ -65,7 +67,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
             </div>
             <div className="lg:col-span-6">
               <img
-                src={str(mediaObj ?? {}, "src") || heroImage}
+                src={heroSrc}
                 alt={str(mediaObj ?? {}, "alt")}
                 className="aspect-[6/5] w-full rounded-xl object-cover outline outline-1 -outline-offset-1 outline-border/60"
               />
@@ -207,10 +209,52 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
       );
     }
 
+    case "TEXT_IMAGE":
+    case "IMAGE_TEXT": {
+      const media = c["media"];
+      const mediaObj =
+        media && typeof media === "object" ? (media as Record<string, unknown>) : null;
+      const imgSrc = cmsMediaDisplaySrc(mediaObj);
+      const imageFirst = section.type === "IMAGE_TEXT";
+      const copy = (
+        <div>
+          <h2 className="font-display text-2xl font-semibold uppercase">
+            {str(c, "heading") || section.type}
+          </h2>
+          <p className="mt-2 text-sm text-steel">{str(c, "body")}</p>
+          {str(c, "ctaLabel") ? (
+            <a
+              href={str(c, "ctaHref", "/")}
+              className="mt-4 inline-flex h-10 items-center text-sm font-semibold uppercase text-primary"
+            >
+              {str(c, "ctaLabel")}
+            </a>
+          ) : null}
+        </div>
+      );
+      const picture = imgSrc ? (
+        <img
+          src={imgSrc}
+          alt={str(mediaObj ?? {}, "alt")}
+          className="aspect-[4/3] w-full rounded-xl object-cover outline outline-1 -outline-offset-1 outline-border/60"
+        />
+      ) : (
+        <div className="grid aspect-[4/3] place-items-center rounded-xl border border-dashed border-border text-sm text-steel">
+          No image selected
+        </div>
+      );
+      return (
+        <section className="border-b border-border/60 px-4 py-12 sm:px-6">
+          <div className="mx-auto grid max-w-[1400px] items-center gap-8 lg:grid-cols-2">
+            {imageFirst ? picture : copy}
+            {imageFirst ? copy : picture}
+          </div>
+        </section>
+      );
+    }
+
     case "FEATURED_PRODUCTS":
     case "BRAND_LOGO_STRIP":
-    case "TEXT_IMAGE":
-    case "IMAGE_TEXT":
       return (
         <section className="border-b border-border/60 px-4 py-12 sm:px-6">
           <div className="mx-auto max-w-[1400px]">

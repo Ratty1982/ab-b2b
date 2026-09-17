@@ -1,6 +1,10 @@
+import { useState } from "react";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { brands } from "@/lib/data";
+import { cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
+import heroImage from "@/assets/hero-parts.jpg";
 
 const ALIGNMENTS = ["left", "center", "right"] as const;
 const VARIANTS = ["standard", "wide", "split", "dark", "light"] as const;
@@ -16,13 +20,15 @@ function num(config: Record<string, unknown>, key: string, fallback = 0): number
   return typeof v === "number" ? v : fallback;
 }
 
-function mediaAlt(config: Record<string, unknown>): string {
+function mediaObject(config: Record<string, unknown>): Record<string, unknown> {
   const media = config["media"];
-  if (media && typeof media === "object" && "alt" in media) {
-    const alt = (media as { alt?: unknown }).alt;
-    return typeof alt === "string" ? alt : "";
-  }
-  return "";
+  if (media && typeof media === "object") return { ...(media as Record<string, unknown>) };
+  return {};
+}
+
+function mediaAlt(config: Record<string, unknown>): string {
+  const alt = mediaObject(config)["alt"];
+  return typeof alt === "string" ? alt : "";
 }
 
 function SelectField({
@@ -46,6 +52,77 @@ function SelectField({
         ))}
       </select>
     </Field>
+  );
+}
+
+function MediaField({
+  config,
+  onChange,
+  fallbackSrc,
+}: {
+  config: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  fallbackSrc?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = mediaObject(config);
+  const preview = cmsMediaDisplaySrc(current) ?? fallbackSrc;
+  const hasPicked = Boolean(
+    (typeof current["mediaId"] === "string" && current["mediaId"]) ||
+      (typeof current["src"] === "string" && current["src"]),
+  );
+
+  function applyItem(item: CmsMediaListItem) {
+    onChange("media", {
+      ...current,
+      mediaId: item.id,
+      src: item.src,
+      alt: mediaAlt(config) || item.altText || "",
+    });
+  }
+
+  return (
+    <div className="grid gap-2">
+      <Field label="Image">
+        <div className="overflow-hidden rounded-md border border-border bg-ink">
+          {preview ? (
+            <img src={preview} alt={mediaAlt(config) || "Section image"} className="aspect-[6/4] w-full object-cover" />
+          ) : (
+            <div className="grid aspect-[6/4] place-items-center text-[12px] text-steel">No image selected</div>
+          )}
+        </div>
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
+        >
+          Choose image
+        </button>
+        {hasPicked ? (
+          <button
+            type="button"
+            onClick={() =>
+              onChange("media", {
+                alt: mediaAlt(config),
+              })
+            }
+            className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
+          >
+            Use default
+          </button>
+        ) : null}
+      </div>
+      <Field label="Image alt text">
+        <input
+          value={mediaAlt(config)}
+          onChange={(e) => onChange("media", { ...current, alt: e.target.value })}
+          className={inputClass}
+        />
+      </Field>
+      <MediaPicker open={open} onClose={() => setOpen(false)} onSelect={applyItem} />
+    </div>
   );
 }
 
@@ -105,23 +182,7 @@ export function SectionSettings({
             className={inputClass}
           />
         </Field>
-        <Field label="Image alt text">
-          <input
-            value={mediaAlt(config)}
-            onChange={(e) =>
-              onChange("media", {
-                ...(typeof config["media"] === "object" && config["media"]
-                  ? (config["media"] as object)
-                  : {}),
-                alt: e.target.value,
-              })
-            }
-            className={inputClass}
-          />
-        </Field>
-        <p className="text-[11px] text-steel">
-          Image uses the Automotive Brands hero asset unless a media library item is attached later.
-        </p>
+        <MediaField config={config} onChange={onChange} fallbackSrc={heroImage} />
         <SelectField
           label="Alignment"
           value={str(config, "alignment", "left")}
@@ -133,6 +194,55 @@ export function SectionSettings({
           value={str(config, "variant", "split")}
           options={VARIANTS}
           onChange={(v) => onChange("variant", v)}
+        />
+        <SelectField
+          label="Spacing"
+          value={str(config, "spacing", "standard")}
+          options={SPACINGS}
+          onChange={(v) => onChange("spacing", v)}
+        />
+      </div>
+    );
+  }
+
+  if (type === "TEXT_IMAGE" || type === "IMAGE_TEXT") {
+    return (
+      <div className="grid gap-3">
+        <Field label="Heading">
+          <input
+            value={str(config, "heading")}
+            onChange={(e) => onChange("heading", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Body">
+          <textarea
+            rows={6}
+            value={str(config, "body")}
+            onChange={(e) => onChange("body", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="CTA label">
+          <input
+            value={str(config, "ctaLabel")}
+            onChange={(e) => onChange("ctaLabel", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="CTA destination">
+          <input
+            value={str(config, "ctaHref")}
+            onChange={(e) => onChange("ctaHref", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <MediaField config={config} onChange={onChange} />
+        <SelectField
+          label="Alignment"
+          value={str(config, "alignment", "left")}
+          options={ALIGNMENTS}
+          onChange={(v) => onChange("alignment", v)}
         />
         <SelectField
           label="Spacing"

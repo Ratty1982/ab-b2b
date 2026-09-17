@@ -152,3 +152,21 @@ export const cmsSectionInputSchema = z.object({
   config: z.unknown(),
   enabled: z.boolean().default(true),
 });
+
+export const CMS_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+export const CMS_MEDIA_CONTENT_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+] as const;
+
+export const cmsMediaUploadSchema = z.object({
+  filename: z.string().trim().min(1).max(200),
+  contentType: z.enum(CMS_MEDIA_CONTENT_TYPES),
+  /** Raw or data-URL base64 of the file body */
+  base64: z.string().min(8).max(Math.ceil((CMS_MEDIA_MAX_BYTES * 4) / 3) + 64),
+  altText: z.string().trim().max(300).optional().nullable(),
+});
+
+export type CmsMediaUploadInput = z.infer<typeof cmsMediaUploadSchema>;

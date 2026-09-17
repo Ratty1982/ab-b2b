@@ -57,6 +57,15 @@ function defaultConfig(type: CmsSectionTypeKey): Record<string, unknown> {
         variant: "dark",
         spacing: "standard",
       };
+    case "TEXT_IMAGE":
+    case "IMAGE_TEXT":
+      return {
+        heading: "Section heading",
+        body: "Supporting copy",
+        alignment: "left",
+        spacing: "standard",
+        media: { alt: "" },
+      };
     case "SPACER":
       return { size: "md" };
     case "RICH_TEXT":

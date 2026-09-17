@@ -1116,6 +1116,8 @@ model CmsMedia {
   /// Object-storage key or abstract URI — not a local filesystem path contract
   storageKey   String
   storageProvider String @default("local")
+  /// Image bytes for the local/database provider (survives Coolify without S3)
+  bytes        Bytes?
   uploadedById String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

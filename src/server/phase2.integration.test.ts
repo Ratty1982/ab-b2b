@@ -27,7 +27,9 @@ import {
   saveCmsDraftSections,
   getCmsPageDraft,
 } from "@/server/cms/service";
+import { getPublicCmsMediaBytes, listCmsMedia, uploadCmsMedia } from "@/server/cms/media";
 import { AuthError } from "@/server/rbac/guards";
+import { cmsMediaPublicPath } from "@/lib/cms-media";
 
 const prisma = new PrismaClient();
 
@@ -348,6 +350,72 @@ describe("CMS draft vs published", () => {
 
   it("denies CMS publish without permission", async () => {
     await expect(publishCmsPage(salesRepUserId, "home")).rejects.toBeInstanceOf(AuthError);
+  });
+});
+
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+describe("CMS media library", () => {
+  it("uploads, lists, serves bytes, and applies mediaId on a draft hero", async () => {
+    const uploaded = await uploadCmsMedia(adminId, {
+      filename: "picker-test.png",
+      contentType: "image/png",
+      base64: PNG_1X1,
+      altText: "One pixel",
+    });
+    expect(uploaded.src).toBe(cmsMediaPublicPath(uploaded.id));
+    expect(uploaded.contentType).toBe("image/png");
+
+    const listed = await listCmsMedia(adminId);
+    expect(listed.some((m) => m.id === uploaded.id)).toBe(true);
+
+    const bytes = await getPublicCmsMediaBytes(uploaded.id);
+    expect(bytes?.contentType).toBe("image/png");
+    expect(bytes?.bytes.length).toBeGreaterThan(8);
+
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          headline: "Media picker hero",
+          supporting: "Uses library image",
+          ctaLabel: "Apply",
+          ctaHref: "/register",
+          media: { mediaId: uploaded.id, src: uploaded.src, alt: "One pixel" },
+        },
+      },
+    ]);
+    const draft = await getCmsPageDraft(adminId, "home");
+    const hero = draft.version?.sections.find((s) => s.type === "HERO");
+    const media =
+      hero && typeof hero.config === "object" && hero.config && "media" in hero.config
+        ? (hero.config as { media: { mediaId?: string; src?: string; alt?: string } }).media
+        : null;
+    expect(media?.mediaId).toBe(uploaded.id);
+    expect(media?.src).toBe(uploaded.src);
+    expect(media?.alt).toBe("One pixel");
+  });
+
+  it("denies media upload without cms.media.manage", async () => {
+    await expect(
+      uploadCmsMedia(salesRepUserId, {
+        filename: "nope.png",
+        contentType: "image/png",
+        base64: PNG_1X1,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("rejects non-image payloads", async () => {
+    await expect(
+      uploadCmsMedia(adminId, {
+        filename: "notes.txt",
+        contentType: "image/png",
+        base64: Buffer.from("not-an-image").toString("base64"),
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
   });
 });
 

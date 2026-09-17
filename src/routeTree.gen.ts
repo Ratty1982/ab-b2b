@@ -52,6 +52,7 @@ import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$sl
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
 import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
@@ -273,6 +274,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCmsMediaIdRoute = ApiCmsMediaIdRouteImport.update({
+  id: '/api/cms-media/$id',
+  path: '/api/cms-media/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SalesCustomersIndexRoute = SalesCustomersIndexRouteImport.update({
   id: '/customers/',
   path: '/customers/',
@@ -340,6 +346,7 @@ export interface FileRoutesByFullPath {
   '/admin/content/$slug': typeof AdminContentSlugRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
@@ -385,6 +392,7 @@ export interface FileRoutesByTo {
   '/admin/content/$slug': typeof AdminContentSlugRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
@@ -436,6 +444,7 @@ export interface FileRoutesById {
   '/admin/content/$slug': typeof AdminContentSlugRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
@@ -488,6 +497,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug'
     | '/admin/customers/$id'
     | '/api/auth/$'
+    | '/api/cms-media/$id'
     | '/sales/customers/$id'
     | '/sales/order/$id'
     | '/sales/quotes/new'
@@ -533,6 +543,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug'
     | '/admin/customers/$id'
     | '/api/auth/$'
+    | '/api/cms-media/$id'
     | '/sales/customers/$id'
     | '/sales/order/$id'
     | '/sales/quotes/new'
@@ -583,6 +594,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug'
     | '/admin/customers/$id'
     | '/api/auth/$'
+    | '/api/cms-media/$id'
     | '/sales/customers/$id'
     | '/sales/order/$id'
     | '/sales/quotes/new'
@@ -614,6 +626,7 @@ export interface RootRouteChildren {
   BrandsIndexRoute: typeof BrandsIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCmsMediaIdRoute: typeof ApiCmsMediaIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -919,6 +932,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cms-media/$id': {
+      id: '/api/cms-media/$id'
+      path: '/api/cms-media/$id'
+      fullPath: '/api/cms-media/$id'
+      preLoaderRoute: typeof ApiCmsMediaIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sales/customers/': {
       id: '/sales/customers/'
       path: '/customers'
@@ -1077,6 +1097,7 @@ const rootRouteChildren: RootRouteChildren = {
   BrandsIndexRoute: BrandsIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiCmsMediaIdRoute: ApiCmsMediaIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
