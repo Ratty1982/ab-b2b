@@ -1,4 +1,5 @@
 import { CMS_SECTION_TYPES, type CmsSectionTypeKey } from "@/domain/cms";
+import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
 
 export type EditorSection = {
   id: string;
@@ -52,15 +53,7 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
         media: { alt: "", fit: "fill", focalX: 50, focalY: 50 },
       };
     case "FEATURED_BRANDS":
-      return {
-        heading: "Our brands",
-        supporting: "Our brands",
-        brandSlugs: ["power-maxed", "steel-seal", "street-rhino", "bramley-power", "kidzmotion"],
-        displayCount: 5,
-        variant: "standard",
-        spacing: "standard",
-        logos: {},
-      };
+      return defaultFeaturedBrandsConfig();
     case "BRAND_LOGO_STRIP":
       return {
         heading: "Our brands",

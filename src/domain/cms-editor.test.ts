@@ -92,8 +92,9 @@ describe("hero image standard and schema", () => {
     const ids = collectMediaIds({
       media: { mediaId: "clxxxxxxxxxxxxxxxxxxxxxxxxx" },
       logos: { "steel-seal": { mediaId: "clyyyyyyyyyyyyyyyyyyyyyyy" } },
+      brandCards: [{ slug: "power-maxed", logo: { mediaId: "clzzzzzzzzzzzzzzzzzzzzzzz" } }],
     });
-    expect(ids.size).toBe(2);
+    expect(ids.size).toBe(3);
   });
 });
 

@@ -15,7 +15,7 @@ This repository started as a Lovable UX prototype and is being converted into a 
 | Product catalogue | Product workspace, brands, categories, staged CSV import, public/trade catalogue from Postgres |
 | Autopart / orders / customer pricing engine / basket | Deferred |
 
-Admin **Products**, **Brands**, **Categories** and **Imports** are the product master. SKU is the import identity. Public `/products` and `/brands` only list **Active** and **trade-visible** products; anonymous visitors never receive base trade prices. **Users, roles & permissions** lists real internal users (no dummy staff) and can add, manage, and reset passwords (shown once to share; email sending is not configured). **Website → Homepage** is a visual CMS editor. Live `/` still reads only the published version.
+Admin **Products**, **Brands**, **Categories** and **Imports** are the product master. SKU is the import identity. Public `/products` and `/brands` only list **Active** and **trade-visible** products; anonymous visitors never receive base trade prices. **Users, roles & permissions** lists real internal users (no dummy staff) and can add, manage, and reset passwords (shown once to share; email sending is not configured). **Website → Homepage** is a visual CMS editor: the Featured Brands block stores its own heading, intro, per-brand marketing copy, logos and links (separate from catalogue brand records). Live `/` still reads only the published version.
 
 CSV import is staged: upload → validate/map → preview → confirm. Empty cells do **not** clear existing fields. Unmapped columns are never written.
 

@@ -96,9 +96,30 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     spacing,
   }),
   FEATURED_BRANDS: z.object({
-    heading: z.string().max(120).default("Our brands"),
-    supporting: z.string().max(400).default(""),
+    heading: z.string().max(120).default("FIVE BRANDS. ONE SUPPLY PARTNER."),
+    intro: z.string().max(800).optional().default(""),
+    supporting: z.string().max(400).optional().default(""),
     brandSlugs: z.array(z.string().max(80)).max(12).default([]),
+    brandCards: z
+      .array(
+        z.object({
+          slug: z.string().max(80),
+          heading: z.string().max(120).default(""),
+          description: z.string().max(400).default(""),
+          href: z.string().max(300).default(""),
+          enabled: z.boolean().default(true),
+          logo: z
+            .object({
+              mediaId: z.string().optional(),
+              src: z.string().max(2048).optional(),
+              alt: z.string().max(300).default(""),
+            })
+            .optional()
+            .nullable(),
+        }),
+      )
+      .max(12)
+      .default([]),
     displayCount,
     variant,
     spacing,

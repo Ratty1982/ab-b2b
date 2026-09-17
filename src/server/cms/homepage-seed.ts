@@ -1,4 +1,5 @@
 import type { CmsSectionTypeKey } from "@/domain/cms";
+import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
 
 export function defaultHomepageSections(): Array<{
   type: CmsSectionTypeKey;
@@ -25,14 +26,7 @@ export function defaultHomepageSections(): Array<{
     },
     {
       type: "FEATURED_BRANDS",
-      config: {
-        heading: "Five brands. One supply partner.",
-        supporting: "Our brands",
-        brandSlugs: ["power-maxed", "steel-seal", "street-rhino", "bramley-power", "kidzmotion"],
-        displayCount: 5,
-        variant: "standard",
-        spacing: "standard",
-      },
+      config: defaultFeaturedBrandsConfig(),
     },
     {
       type: "CATEGORY_GRID",

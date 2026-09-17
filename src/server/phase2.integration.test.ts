@@ -372,8 +372,24 @@ describe("CMS draft vs published", () => {
         enabled: true,
         config: {
           heading: "Five brands. One supply partner.",
-          supporting: "Our brands",
+          intro: "Trusted automotive brands, supplied to the trade from one place.",
           brandSlugs: ["power-maxed", "steel-seal"],
+          brandCards: [
+            {
+              slug: "power-maxed",
+              heading: "Power Maxed",
+              description: "Professional automotive cleaning, detailing, workshop chemicals and vehicle care products.",
+              href: "/brands/power-maxed",
+              enabled: true,
+            },
+            {
+              slug: "steel-seal",
+              heading: "Steel Seal",
+              description: "Professional head gasket repair trusted by motorists, workshops and the automotive trade.",
+              href: "/brands/steel-seal",
+              enabled: true,
+            },
+          ],
           displayCount: "5",
           variant: "standard",
           spacing: "standard",

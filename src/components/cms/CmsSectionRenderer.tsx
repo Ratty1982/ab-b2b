@@ -1,6 +1,6 @@
-import { Link } from "@tanstack/react-router";
 import { ArrowRight, ClipboardList, Headphones, Truck, Warehouse } from "lucide-react";
 import type { CmsSectionTypeKey } from "@/domain/cms";
+import { resolveFeaturedBrandCards, featuredBrandsIntro } from "@/domain/featured-brands";
 import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
@@ -127,48 +127,42 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
     }
 
     case "FEATURED_BRANDS": {
-      const slugs = Array.isArray(c["brandSlugs"]) ? (c["brandSlugs"] as string[]) : [];
-      const selected = brands
-        .filter((b) => slugs.includes(b.slug))
-        .slice(0, num(c, "displayCount", 5) || 5);
-      const list = selected.length ? selected : brands.slice(0, 5);
-      const logos = readBrandLogos(c);
+      const list = resolveFeaturedBrandCards(c);
       return (
         <section className="border-b border-border/60">
           <div className="mx-auto max-w-[1400px] px-4 py-16 sm:px-6 lg:px-10">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary">
-              {str(c, "supporting", "Our brands")}
-            </div>
-            <h2 className="mt-2 font-display text-3xl font-semibold uppercase tracking-tight sm:text-4xl">
+            <h2 className="font-display text-3xl font-semibold uppercase tracking-tight sm:text-4xl">
               {str(c, "heading")}
             </h2>
+            {featuredBrandsIntro(c) ? (
+              <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-steel">{featuredBrandsIntro(c)}</p>
+            ) : null}
             <div className="mt-8 grid gap-px border border-border bg-border lg:grid-cols-2">
               {list.map((brand, i) => {
-                const logoSrc = cmsMediaDisplaySrc(logos[brand.slug]);
-                const logoAlt = logos[brand.slug]?.alt || `${brand.name} logo`;
+                const logoSrc = cmsMediaDisplaySrc(brand.logo);
+                const logoAlt = brand.logo?.alt || `${brand.heading} logo`;
+                const href = brand.href || `/brands/${brand.slug}`;
                 return (
-                  <Link
+                  <a
                     key={brand.slug}
-                    to="/brands/$slug"
-                    params={{ slug: brand.slug }}
+                    href={href}
                     className={cn(
                       "group grid gap-4 bg-surface/70 p-6 transition-colors hover:bg-surface sm:grid-cols-[minmax(0,1fr)_140px]",
                       i === 0 && "lg:col-span-2 sm:grid-cols-[minmax(0,1fr)_220px]",
                     )}
                   >
                     <div className="min-w-0">
-                      <h3 className="font-display text-2xl font-semibold uppercase">{brand.name}</h3>
-                      <p className="mt-2 max-w-md text-[13px] text-steel">{brand.blurb}</p>
+                      <h3 className="font-display text-2xl font-semibold uppercase">{brand.heading}</h3>
+                      {brand.description ? (
+                        <p className="mt-2 max-w-md text-[13px] text-steel">{brand.description}</p>
+                      ) : null}
                     </div>
                     <div className="flex items-center justify-center rounded-md border border-border/70 bg-ink/80 p-4">
                       {logoSrc ? (
                         <img
                           src={logoSrc}
                           alt={logoAlt}
-                          className={cn(
-                            "max-h-16 w-full object-contain",
-                            i === 0 && "max-h-24",
-                          )}
+                          className={cn("max-h-16 w-full object-contain", i === 0 && "max-h-24")}
                         />
                       ) : (
                         <div className="text-center text-[11px] font-semibold uppercase tracking-wide text-steel">
@@ -176,7 +170,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
                         </div>
                       )}
                     </div>
-                  </Link>
+                  </a>
                 );
               })}
             </div>

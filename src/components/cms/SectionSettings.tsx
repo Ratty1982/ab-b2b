@@ -1,9 +1,17 @@
 import { useState, type ReactNode } from "react";
 import { CMS_IMAGE_FITS, CMS_IMAGE_FIT_LABELS, type CmsSectionTypeKey } from "@/domain/cms";
+import {
+  DEFAULT_FEATURED_BRANDS_INTRO,
+  featuredBrandsIntro,
+  featuredBrandsSyncFields,
+  hydrateFeaturedBrandCards,
+  type FeaturedBrandCard,
+} from "@/domain/featured-brands";
 import { brands } from "@/lib/data";
-import { cmsMediaDisplaySrc, readBrandLogos, type BrandLogoRef } from "@/lib/cms-media";
+import { cmsMediaDisplaySrc, type BrandLogoRef } from "@/lib/cms-media";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import heroImage from "@/assets/hero-parts.jpg";
 import { heroRecommendedCopy } from "@/lib/hero-image";
 
@@ -398,88 +406,114 @@ export function SectionSettings({
   }
 
   if (type === "FEATURED_BRANDS") {
-    const selected = Array.isArray(config["brandSlugs"])
-      ? (config["brandSlugs"] as string[])
-      : [];
-    const logos = readBrandLogos(config);
-    function setLogo(slug: string, next: BrandLogoRef | null) {
-      const copy = { ...logos };
-      if (next) copy[slug] = next;
-      else copy[slug] = { alt: "" };
-      onChange("logos", copy);
+    const catalogue = brands.map((b) => ({ slug: b.slug, name: b.name }));
+    const cards = hydrateFeaturedBrandCards(config, catalogue);
+    function persistCards(next: FeaturedBrandCard[]) {
+      const synced = featuredBrandsSyncFields(next);
+      onChange("brandCards", synced.brandCards);
+      onChange("brandSlugs", synced.brandSlugs);
+      onChange("logos", synced.logos);
+      if (typeof config["intro"] !== "string") onChange("intro", DEFAULT_FEATURED_BRANDS_INTRO);
+    }
+    function patchCard(slug: string, patch: Partial<FeaturedBrandCard>) {
+      persistCards(cards.map((card) => (card.slug === slug ? { ...card, ...patch } : card)));
     }
     return (
       <div className="grid gap-3">
-        <Field label="Heading">
-          <input
-            value={str(config, "heading")}
-            onChange={(e) => onChange("heading", e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Eyebrow / supporting">
-          <input
-            value={str(config, "supporting")}
-            onChange={(e) => onChange("supporting", e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Display count">
-          <input
-            type="number"
-            min={1}
-            max={12}
-            value={num(config, "displayCount", 5)}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              onChange("displayCount", Number.isFinite(n) && n > 0 ? n : 5);
-            }}
-            className={inputClass}
-          />
-        </Field>
-        <div>
-          <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-steel">
-            Brands
-          </div>
-          <div className="grid gap-1">
-            {brands.map((b) => {
-              const on = selected.includes(b.slug);
+        <Group title="Section">
+          <Field label="Section heading">
+            <input
+              value={str(config, "heading")}
+              onChange={(e) => onChange("heading", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Intro / subheading (optional)">
+            <textarea
+              rows={3}
+              value={featuredBrandsIntro(config)}
+              onChange={(e) => onChange("intro", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Display count">
+            <input
+              type="number"
+              min={1}
+              max={12}
+              value={num(config, "displayCount", 5)}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                onChange("displayCount", Number.isFinite(n) && n > 0 ? n : 5);
+              }}
+              className={inputClass}
+            />
+          </Field>
+        </Group>
+        <Group title="Brands">
+          <p className="text-[12px] text-steel">
+            Homepage marketing copy for each brand. Changing these fields does not update the brand
+            catalogue record. Expand a brand to edit its heading, description, logo and link.
+          </p>
+          <Accordion type="single" collapsible className="rounded-md border border-border">
+            {cards.map((card) => {
+              const catalogueName = catalogue.find((b) => b.slug === card.slug)?.name ?? card.heading;
               return (
-                <label key={b.slug} className="flex items-center gap-2 text-[13px]">
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => {
-                      const next = on
-                        ? selected.filter((s) => s !== b.slug)
-                        : [...selected, b.slug];
-                      onChange("brandSlugs", next);
-                    }}
-                  />
-                  {b.name}
-                </label>
+                <AccordionItem key={card.slug} value={card.slug} className="border-border px-3">
+                  <AccordionTrigger className="py-3 text-[12px] font-semibold uppercase tracking-wide hover:no-underline">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate">{catalogueName}</span>
+                      {!card.enabled ? (
+                        <span className="rounded border border-border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-steel">
+                          Hidden
+                        </span>
+                      ) : null}
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="grid gap-3 pb-2">
+                      <label className="flex items-center gap-2 text-[13px]">
+                        <input
+                          type="checkbox"
+                          checked={card.enabled}
+                          onChange={(e) => patchCard(card.slug, { enabled: e.target.checked })}
+                        />
+                        Show this brand
+                      </label>
+                      <Field label="Display heading">
+                        <input
+                          value={card.heading}
+                          onChange={(e) => patchCard(card.slug, { heading: e.target.value })}
+                          className={inputClass}
+                        />
+                      </Field>
+                      <Field label="Description">
+                        <textarea
+                          rows={3}
+                          value={card.description}
+                          onChange={(e) => patchCard(card.slug, { description: e.target.value })}
+                          className={inputClass}
+                        />
+                      </Field>
+                      <BrandLogoPicker
+                        label="Logo"
+                        logo={card.logo ?? undefined}
+                        onChange={(next) => patchCard(card.slug, { logo: next ?? { alt: "" } })}
+                      />
+                      <Field label="Link">
+                        <input
+                          value={card.href}
+                          onChange={(e) => patchCard(card.slug, { href: e.target.value })}
+                          className={inputClass}
+                        />
+                      </Field>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
               );
             })}
-          </div>
-        </div>
-        <div>
-          <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-steel">
-            Brand logos
-          </div>
-          <p className="mb-2 text-[12px] text-steel">
-            Upload or pick a logo for each brand shown in this block. JPEG, PNG, WebP or GIF.
-          </p>
-          <div className="grid gap-2">
-            {(selected.length ? brands.filter((b) => selected.includes(b.slug)) : brands).map((b) => (
-              <BrandLogoPicker
-                key={b.slug}
-                label={b.name}
-                logo={logos[b.slug]}
-                onChange={(next) => setLogo(b.slug, next)}
-              />
-            ))}
-          </div>
-        </div>
+          </Accordion>
+        </Group>
         <SelectField
           label="Layout variant"
           value={str(config, "variant", "standard")}

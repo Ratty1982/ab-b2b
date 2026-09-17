@@ -12,6 +12,7 @@ import {
 } from "@/domain/cms";
 import { defaultHomepageSections } from "@/server/cms/homepage-seed";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
+import { attachFeaturedBrandLogos } from "@/domain/featured-brands";
 import { mergeBrandLogoMaps, readBrandLogos } from "@/lib/cms-media";
 
 export async function listCmsPages(actorUserId: string) {
@@ -166,6 +167,9 @@ function attachBrandLogos(
   if (type !== "FEATURED_BRANDS" && type !== "BRAND_LOGO_STRIP") return config;
   if (!config || typeof config !== "object" || Array.isArray(config)) return config;
   const record = config as Record<string, unknown>;
+  if (type === "FEATURED_BRANDS") {
+    return attachFeaturedBrandLogos(record, catalogueLogos);
+  }
   const logos = mergeBrandLogoMaps(readBrandLogos(record), catalogueLogos);
   return { ...record, logos };
 }
