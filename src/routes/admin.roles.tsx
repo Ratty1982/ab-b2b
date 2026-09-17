@@ -10,6 +10,7 @@ import type { SystemRoleKey } from "@/domain/permissions";
 import {
   createStaffUserFn,
   listStaffUsersFn,
+  resetStaffUserPasswordFn,
   updateStaffUserFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
@@ -228,6 +229,11 @@ function AdminRoles() {
         onClose={() => setManageUser(null)}
         onSaved={async () => {
           setManageUser(null);
+          await load();
+        }}
+        onPasswordReset={async (issued) => {
+          setManageUser(null);
+          setIssuedPassword(issued);
           await load();
         }}
       />
@@ -456,17 +462,22 @@ function ManageUserDrawer({
   roleOptions,
   onClose,
   onSaved,
+  onPasswordReset,
 }: {
   user: StaffUserRow | null;
   currentUserId: string | null;
   roleOptions: typeof STAFF_ROLE_OPTIONS;
   onClose: () => void;
   onSaved: () => Promise<void>;
+  onPasswordReset: (issued: { email: string; password: string }) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState<SystemRoleKey>("SALES_REPRESENTATIVE");
   const [status, setStatus] = useState<StaffUserStatus>("ACTIVE");
   const [saving, setSaving] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -474,6 +485,9 @@ function ManageUserDrawer({
       setRole(user.role ?? "SALES_REPRESENTATIVE");
       setStatus((user.status as StaffUserStatus) || "ACTIVE");
       setSaving(false);
+      setNewPassword("");
+      setConfirmReset(false);
+      setResetting(false);
     }
   }, [user]);
 
@@ -546,12 +560,71 @@ function ManageUserDrawer({
         ) : null}
         <button
           type="submit"
-          disabled={saving || !name.trim()}
+          disabled={saving || resetting || !name.trim()}
           className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save changes"}
         </button>
       </form>
+
+      <div className="mt-6 grid gap-3 border-t border-border pt-5">
+        <p className="text-[13px] font-semibold">Reset password</p>
+        <p className="text-[12px] text-steel">
+          Signs them out of every session. Email sending is not configured — you will see the new
+          password once and must share it yourself.
+        </p>
+        <Field label="New password (optional)" htmlFor="manage-reset-password">
+          <input
+            id="manage-reset-password"
+            type="password"
+            value={newPassword}
+            onChange={(e) => {
+              setNewPassword(e.target.value);
+              setConfirmReset(false);
+            }}
+            className={inputClass}
+            autoComplete="new-password"
+            placeholder="Leave blank to generate"
+          />
+        </Field>
+        {confirmReset ? (
+          <p className="text-[12px] text-warn">
+            Confirm to set a new password and end all of their signed-in sessions.
+          </p>
+        ) : null}
+        <button
+          type="button"
+          disabled={saving || resetting}
+          className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+          onClick={() => {
+            if (!confirmReset) {
+              setConfirmReset(true);
+              return;
+            }
+            void (async () => {
+              setResetting(true);
+              const result = await resetStaffUserPasswordFn({
+                data: {
+                  id: user.id,
+                  password: newPassword.trim() || undefined,
+                },
+              });
+              setResetting(false);
+              if (!result.ok) {
+                toast.error(result.error);
+                return;
+              }
+              toast.success("Password reset");
+              await onPasswordReset({
+                email: result.data.email,
+                password: result.data.temporaryPassword,
+              });
+            })();
+          }}
+        >
+          {resetting ? "Resetting…" : confirmReset ? "Confirm reset password" : "Reset password"}
+        </button>
+      </div>
     </Drawer>
   );
 }

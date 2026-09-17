@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 
 import { bootstrapRbac } from "../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
-import { createStaffUser, listStaffUsers, updateStaffUser } from "@/server/users/service";
+import { createStaffUser, listStaffUsers, resetStaffUserPassword, updateStaffUser } from "@/server/users/service";
 
 const prisma = new PrismaClient();
 let adminId = "";
@@ -114,5 +114,60 @@ describe("staff users", () => {
     await expect(
       updateStaffUser(adminId, { id: adminId, status: "DISABLED" }),
     ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("resets a staff password, creates a credential account if missing, and signs them out", async () => {
+    const created = await createStaffUser(adminId, {
+      name: "Reset Me",
+      email: `staff.reset.${Date.now()}@example.invalid`,
+      role: "MARKETING",
+      password: "long-enough-password",
+    });
+    const before = await prisma.authAccount.findFirst({
+      where: { userId: created.user.id, providerId: "credential" },
+    });
+    expect(before?.password).toBeTruthy();
+
+    await prisma.authSession.create({
+      data: {
+        userId: created.user.id,
+        token: `tok-${created.user.id}`,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+
+    const generated = await resetStaffUserPassword(adminId, { id: created.user.id });
+    expect(generated.email).toBe(created.user.email);
+    expect(generated.temporaryPassword).toMatch(/^Ab-/);
+
+    const afterGenerated = await prisma.authAccount.findFirst({
+      where: { userId: created.user.id, providerId: "credential" },
+    });
+    expect(afterGenerated?.password).toBeTruthy();
+    expect(afterGenerated?.password).not.toBe(before?.password);
+    expect(
+      await prisma.authSession.count({ where: { userId: created.user.id } }),
+    ).toBe(0);
+
+    const custom = await resetStaffUserPassword(adminId, {
+      id: created.user.id,
+      password: "another-long-password",
+    });
+    expect(custom.temporaryPassword).toBe("another-long-password");
+
+    await prisma.authAccount.deleteMany({
+      where: { userId: created.user.id, providerId: "credential" },
+    });
+    const recreated = await resetStaffUserPassword(adminId, { id: created.user.id });
+    expect(recreated.temporaryPassword).toMatch(/^Ab-/);
+    expect(
+      await prisma.authAccount.findFirst({
+        where: { userId: created.user.id, providerId: "credential" },
+      }),
+    ).toBeTruthy();
+
+    await expect(resetStaffUserPassword(salesRepUserId, { id: created.user.id })).rejects.toBeInstanceOf(
+      AuthError,
+    );
   });
 });

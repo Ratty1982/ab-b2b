@@ -511,3 +511,15 @@ export const updateStaffUserFn = createServerFn({ method: "POST" })
       return toError(e);
     }
   });
+
+export const resetStaffUserPasswordFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await staffUsers.resetStaffUserPassword(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });

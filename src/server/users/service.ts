@@ -5,7 +5,7 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import type { SystemRoleKey } from "@/domain/permissions";
 import { SYSTEM_ROLE_META } from "@/domain/role-permissions";
-import { internalUserCreateSchema, internalUserUpdateSchema } from "@/domain/users";
+import { internalUserCreateSchema, internalUserPasswordResetSchema, internalUserUpdateSchema } from "@/domain/users";
 
 export type StaffUserRecord = {
   id: string;
@@ -215,4 +215,52 @@ export async function updateStaffUser(actorUserId: string, raw: unknown) {
   return mapUser(
     await prisma.user.findUniqueOrThrow({ where: { id: existing.id }, include: staffInclude }),
   );
+}
+
+export async function resetStaffUserPassword(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const input = internalUserPasswordResetSchema.parse(raw);
+  const existing = await prisma.user.findUnique({ where: { id: input.id } });
+  if (!existing || existing.actorType !== "INTERNAL") {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+
+  const suppliedPassword = input.password?.trim() || "";
+  const temporaryPassword = suppliedPassword ? null : generateTemporaryPassword();
+  const password = suppliedPassword || temporaryPassword!;
+  const passwordHash = await hashPassword(password);
+
+  const credential = await prisma.authAccount.findFirst({
+    where: { userId: existing.id, providerId: "credential" },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    if (credential) {
+      await tx.authAccount.update({
+        where: { id: credential.id },
+        data: { password: passwordHash },
+      });
+    } else {
+      await tx.authAccount.create({
+        data: {
+          userId: existing.id,
+          accountId: existing.id,
+          providerId: "credential",
+          password: passwordHash,
+        },
+      });
+    }
+    await tx.authSession.deleteMany({ where: { userId: existing.id } });
+  });
+
+  await recordAuditEvent({
+    action: "USER_PASSWORD_RESET",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+    after: { generated: !suppliedPassword },
+  });
+
+  return { email: existing.email, temporaryPassword: password };
 }

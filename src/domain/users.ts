@@ -11,17 +11,19 @@ export const STAFF_ROLE_OPTIONS = SYSTEM_ROLE_KEYS.map((key) => ({
   description: SYSTEM_ROLE_META[key].description,
 }));
 
+export const staffPasswordField = z
+  .string()
+  .max(128)
+  .optional()
+  .refine((value) => value === undefined || value === "" || value.length >= 10, {
+    message: "Password must be at least 10 characters, or leave it blank to generate one",
+  });
+
 export const internalUserCreateSchema = z.object({
   name: z.string().trim().min(1, "Enter a name").max(120),
   email: z.string().trim().email("Enter a valid email").max(320),
   role: z.enum(SYSTEM_ROLE_KEYS),
-  password: z
-    .string()
-    .max(128)
-    .optional()
-    .refine((value) => value === undefined || value === "" || value.length >= 10, {
-      message: "Password must be at least 10 characters, or leave it blank to generate one",
-    }),
+  password: staffPasswordField,
 });
 
 export const internalUserUpdateSchema = z.object({
@@ -29,4 +31,9 @@ export const internalUserUpdateSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   role: z.enum(SYSTEM_ROLE_KEYS).optional(),
   status: z.enum(STAFF_USER_STATUSES).optional(),
+});
+
+export const internalUserPasswordResetSchema = z.object({
+  id: z.string().cuid(),
+  password: staffPasswordField,
 });
