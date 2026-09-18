@@ -158,7 +158,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
                         <p className="mt-2 max-w-md text-[13px] text-steel">{brand.description}</p>
                       ) : null}
                     </div>
-                    <div className="flex items-center justify-center rounded-md border border-border/70 bg-ink/80 p-4">
+                    <div className="flex items-center justify-center rounded-md border border-border/70 bg-white p-4">
                       {logoSrc ? (
                         <img
                           src={logoSrc}
@@ -340,7 +340,7 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
                 {(selected.length ? selected : brands.slice(0, 5)).map((brand) => {
                   const logoSrc = cmsMediaDisplaySrc(logos[brand.slug]);
                   return (
-                    <div key={brand.slug} className="grid h-16 w-36 place-items-center border border-border bg-ink/60 px-3">
+                    <div key={brand.slug} className="grid h-16 w-36 place-items-center border border-border bg-white px-3">
                       {logoSrc ? (
                         <img src={logoSrc} alt={logos[brand.slug]?.alt || brand.name} className={cn("max-h-10 max-w-full", mediaContainClass)} />
                       ) : (

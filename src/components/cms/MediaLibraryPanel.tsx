@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { cn } from "@/lib/utils";
 import { defaultMediaUsage, type MediaUploadUsage } from "@/domain/media-usage";
-import { mediaLibraryThumbClass } from "@/lib/media-presentation";
+import { catalogueStageClass, mediaLibraryThumbClass } from "@/lib/media-presentation";
 
 export type CmsMediaListItem = {
   id: string;
@@ -203,7 +203,8 @@ export function MediaLibraryPanel({
                 <button
                   type="button"
                   className={cn(
-                    "w-full overflow-hidden rounded-md border bg-ink text-left hover:border-primary",
+                    "w-full overflow-hidden rounded-md border text-left hover:border-primary",
+                    usage === "CMS_GENERAL" ? "bg-ink" : catalogueStageClass,
                     selected?.id === item.id ? "border-primary" : "border-border",
                   )}
                   onClick={() => {
@@ -229,7 +230,13 @@ export function MediaLibraryPanel({
           <p className="text-sm text-steel">Select an image to see details.</p>
         ) : (
           <div className="grid gap-3 text-[13px]">
-            <img src={selected.src} alt={selected.altText || selected.filename} className="w-full rounded-md object-contain" />
+            <div className={cn("overflow-hidden rounded-md", usage === "CMS_GENERAL" ? "bg-ink" : catalogueStageClass)}>
+              <img
+                src={selected.src}
+                alt={selected.altText || selected.filename}
+                className={cn("w-full object-contain", usage === "CMS_GENERAL" ? "" : catalogueStageClass)}
+              />
+            </div>
             <div className="font-medium">{selected.filename}</div>
             <dl className="grid gap-1 text-[12px] text-steel">
               <div>

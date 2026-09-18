@@ -264,7 +264,7 @@ function AdminProducts() {
               params={{ id: p.id }}
               className="flex gap-3 rounded-lg border border-border bg-surface/40 p-3"
             >
-              <CatalogueMedia src={p.imageSrc} className="size-14 rounded border border-border bg-ink" />
+              <CatalogueMedia src={p.imageSrc} className="size-14 rounded border border-border" />
               <div className="min-w-0 flex-1">
                 <div className="font-medium">{p.name}</div>
                 <div className="num text-[12px] text-primary">{p.sku}</div>
@@ -304,7 +304,7 @@ function AdminProducts() {
                 items.map((p, i) => (
                   <tr key={p.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
                     <td className="px-3 py-2">
-                      <CatalogueMedia src={p.imageSrc} className="size-10 rounded border border-border bg-ink" />
+                      <CatalogueMedia src={p.imageSrc} className="size-10 rounded border border-border" />
                     </td>
                     <td className="num px-3 py-2 text-primary">
                       <Link to="/admin/products/$id" params={{ id: p.id }} className="hover:underline">{p.sku}</Link>

@@ -18,6 +18,9 @@ describe("media presentation", () => {
     expect(mediaFitClassForUsage("PRODUCT_IMAGE")).toBe(catalogueMediaClass);
     expect(mediaLibraryThumbClass("PRODUCT_IMAGE")).toContain("object-contain");
     expect(mediaLibraryThumbClass("PRODUCT_IMAGE")).not.toContain("object-cover");
+    expect(catalogueMediaClass).toContain("bg-white");
+    expect(mediaLibraryThumbClass("PRODUCT_IMAGE")).toContain("bg-white");
+    expect(photoCoverClass).not.toContain("bg-white");
   });
 
   it("keeps photographic CMS fits on cover", () => {

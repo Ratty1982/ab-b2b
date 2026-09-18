@@ -1,4 +1,4 @@
-import { catalogueMediaClass } from "@/lib/media-presentation";
+import { catalogueMediaClass, catalogueStageClass } from "@/lib/media-presentation";
 import { cn } from "@/lib/utils";
 
 /** Square or letterboxed frame that always shows the full product. */
@@ -14,7 +14,7 @@ export function CatalogueMedia({
   imgClassName?: string;
 }) {
   return (
-    <div className={cn("overflow-hidden bg-surface/40", className)}>
+    <div className={cn("overflow-hidden", catalogueStageClass, className)}>
       {src ? <img src={src} alt={alt} className={cn(catalogueMediaClass, imgClassName)} /> : null}
     </div>
   );

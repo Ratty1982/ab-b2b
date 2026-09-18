@@ -29,7 +29,7 @@ function CategoryPage() {
               {p.imageSrc ? (
                 <CatalogueMedia src={p.imageSrc} alt="" className="aspect-[4/3] w-full rounded" />
               ) : (
-                <div className="aspect-[4/3] rounded bg-surface" />
+                <div className="aspect-[4/3] rounded bg-white" />
               )}
               <div className="mt-2 font-medium">{p.name}</div>
               <TradePrice trade={p.price.trade} rrp={p.price.rrp} size="sm" ctaMode="text" />

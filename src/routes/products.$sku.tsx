@@ -46,7 +46,7 @@ function ProductPage() {
                 className="aspect-[4/3] w-full rounded-lg border border-border"
               />
             ) : (
-              <div className="aspect-[4/3] rounded-lg border border-border bg-surface" />
+              <div className="aspect-[4/3] rounded-lg border border-border bg-white" />
             )}
             {images.length > 1 ? (
               <div className="mt-3 grid grid-cols-4 gap-2">

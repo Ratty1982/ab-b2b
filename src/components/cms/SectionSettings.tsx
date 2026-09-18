@@ -211,7 +211,7 @@ export function BrandLogoPicker({
   const preview = cmsMediaDisplaySrc(logo);
   return (
     <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-ink/40 p-2">
-      <div className="grid size-[72px] place-items-center overflow-hidden rounded border border-border bg-ink">
+      <div className="grid size-[72px] place-items-center overflow-hidden rounded border border-border bg-white">
         {preview ? (
           <img src={preview} alt={logo?.alt || label} className={cn("max-h-[64px] max-w-[64px]", mediaContainClass)} />
         ) : (

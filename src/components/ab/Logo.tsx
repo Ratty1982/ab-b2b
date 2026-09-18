@@ -27,7 +27,7 @@ export function Logo({
         alt=""
         width={36}
         height={36}
-        className={cn("size-9 shrink-0 rounded-sm", mediaContainClass)}
+        className={cn("size-9 shrink-0 rounded-sm bg-white", mediaContainClass)}
       />
       {markOnly ? null : (
         <span className="min-w-0 leading-none">
