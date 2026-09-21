@@ -357,6 +357,23 @@ describe("phase 3 product master", () => {
     expect(anon?.card.price.rrp).not.toBeNull();
   });
 
+  it("downloads an Excel template with category dropdowns and accepts that workbook as an import", async () => {
+    const { downloadProductImportTemplate, uploadProductImport, previewImport } = await import(
+      "@/server/catalogue/import"
+    );
+    const template = await downloadProductImportTemplate(adminId);
+    expect(template.filename.endsWith(".xlsx")).toBe(true);
+    const uploaded = await uploadProductImport(adminId, {
+      filename: template.filename,
+      workbookBase64: template.base64,
+      mime: template.mime,
+    });
+    expect(uploaded.rowCount).toBeGreaterThanOrEqual(1);
+    const previewed = await previewImport(adminId, uploaded.id);
+    expect(previewed.headers).toContain("category");
+    expect(previewed.headers).toContain("subcategory");
+  });
+
   it("excludes inactive products from the public catalogue", async () => {
     const { saveProduct } = await import("@/server/catalogue/service");
     const { listPublicProducts, updateProductWorkspace } = await import("@/server/catalogue/products");

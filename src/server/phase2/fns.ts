@@ -642,7 +642,7 @@ export const detachCatalogueProductMediaFn = createServerFn({ method: "POST" })
   });
 
 export const uploadProductImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data as { filename: string; csv: string; mime?: string })
+  .inputValidator((data: unknown) => data as { filename: string; csv?: string; workbookBase64?: string; mime?: string })
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
@@ -652,6 +652,16 @@ export const uploadProductImportFn = createServerFn({ method: "POST" })
       return toError(e);
     }
   });
+
+export const downloadProductImportTemplateFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const result = await catalogueImport.downloadProductImportTemplate(userId);
+    return { ok: true as const, data: result };
+  } catch (e) {
+    return toError(e);
+  }
+});
 
 export const previewProductImportFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { id: string; mapping?: unknown; brandActions?: unknown; categoryActions?: unknown })

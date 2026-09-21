@@ -3,8 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { decodeCsvBytes, ingestCsvText } from "@/domain/catalogue-csv";
-import { PRODUCT_CSV_IMPORT_TEMPLATE } from "@/domain/product-import";
-import { listProductImportsFn, uploadProductImportFn } from "@/server/phase2/fns";
+import { listProductImportsFn, uploadProductImportFn, downloadProductImportTemplateFn } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +12,14 @@ export const Route = createFileRoute("/admin/products/imports")({
   component: ProductImports,
 });
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 function ProductImports() {
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -43,20 +50,30 @@ function ProductImports() {
     <div>
       <PanelHeader
         title="Imports"
-        sub="Upload → validate → map → preview → confirm. Empty cells do not wipe existing values."
+        sub="Upload → validate → map → preview → confirm. The Excel template lists current categories as dropdowns. Empty cells do not wipe existing values."
         actions={
           <div className="flex gap-2">
             <button
               type="button"
               className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
               onClick={() => {
-                const blob = new Blob([PRODUCT_CSV_IMPORT_TEMPLATE], { type: "text/csv;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "automotive-brands-products-template.csv";
-                a.click();
-                URL.revokeObjectURL(url);
+                void (async () => {
+                  const r = await downloadProductImportTemplateFn();
+                  if (!r.ok) {
+                    toast.error(r.error);
+                    return;
+                  }
+                  const binary = atob(r.data.base64);
+                  const bytes = new Uint8Array(binary.length);
+                  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+                  const blob = new Blob([bytes], { type: r.data.mime });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = r.data.filename;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                })();
               }}
             >
               Template
@@ -64,16 +81,27 @@ function ProductImports() {
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (!file) return;
                 void (async () => {
-                  const csv = ingestCsvText(decodeCsvBytes(new Uint8Array(await file.arrayBuffer())));
+                  const buf = new Uint8Array(await file.arrayBuffer());
+                  const xlsx = file.name.toLowerCase().endsWith(".xlsx");
                   const r = await uploadProductImportFn({
-                    data: { filename: file.name, csv, mime: file.type || "text/csv" },
+                    data: xlsx
+                      ? {
+                          filename: file.name,
+                          workbookBase64: bytesToBase64(buf),
+                          mime: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        }
+                      : {
+                          filename: file.name,
+                          csv: ingestCsvText(decodeCsvBytes(buf)),
+                          mime: file.type || "text/csv",
+                        },
                   });
                   if (!r.ok) {
                     toast.error(r.error);
@@ -85,7 +113,7 @@ function ProductImports() {
               }}
             />
             <button type="button" className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground" onClick={() => fileRef.current?.click()}>
-              Upload CSV
+              Upload file
             </button>
           </div>
         }

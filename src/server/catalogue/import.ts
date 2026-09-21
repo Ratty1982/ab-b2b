@@ -14,26 +14,35 @@ import {
   type TaxonomyResolution,
 } from "@/domain/product-import";
 import { ingestCsvText, parseCsvRecords } from "@/domain/catalogue-csv";
+import { buildProductImportWorkbook, splitTaxonomyLists, workbookToCsv } from "@/domain/product-import-workbook";
 
 const MAX_CSV_BYTES = 1_500_000;
 const MAX_ROWS = 2000;
 
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 function assertCsvUpload(filename: string, mime: string | undefined, csv: string) {
   const name = filename.toLowerCase();
-  if (!name.endsWith(".csv")) {
-    throw new AuthError("Upload a .csv file", "VALIDATION", 400);
+  const spreadsheet = name.endsWith(".csv") || name.endsWith(".xlsx");
+  if (!spreadsheet) {
+    throw new AuthError("Upload a .csv or .xlsx file", "VALIDATION", 400);
   }
   const type = (mime ?? "").toLowerCase();
   if (
     type &&
-    !["text/csv", "application/csv", "application/vnd.ms-excel", "text/plain", "application/octet-stream"].includes(
-      type,
-    )
+    ![
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
+      "text/plain",
+      "application/octet-stream",
+      XLSX_MIME,
+    ].includes(type)
   ) {
-    throw new AuthError("File type must be CSV", "VALIDATION", 400);
+    throw new AuthError("File type must be CSV or Excel", "VALIDATION", 400);
   }
   if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
-    throw new AuthError("CSV is larger than 1.5 MB", "VALIDATION", 400);
+    throw new AuthError("File is larger than 1.5 MB", "VALIDATION", 400);
   }
 }
 
@@ -115,12 +124,18 @@ async function findVariantsBySkus(skus: string[]) {
 
 export async function uploadProductImport(
   actorUserId: string,
-  raw: { filename: string; csv: string; mime?: string },
+  raw: { filename: string; csv?: string; workbookBase64?: string; mime?: string },
 ) {
   await requireSystemPermission(actorUserId, "products.import");
   const { bootstrapCatalogue } = await import("@/server/catalogue/service");
   await bootstrapCatalogue();
-  const csv = ingestCsvText(raw.csv);
+  let csv = ingestCsvText(raw.csv ?? "");
+  if (raw.filename.toLowerCase().endsWith(".xlsx")) {
+    if (!raw.workbookBase64) {
+      throw new AuthError("Excel workbook is missing", "VALIDATION", 400);
+    }
+    csv = ingestCsvText(await workbookToCsv(new Uint8Array(Buffer.from(raw.workbookBase64, "base64"))));
+  }
   assertCsvUpload(raw.filename, raw.mime, csv);
   const table = parseCsvRecords(csv);
   if (!table.length) throw new AuthError("File is empty", "VALIDATION", 400);
@@ -716,6 +731,29 @@ export async function importErrorCsv(actorUserId: string, id: string) {
   const job = await prisma.productImportJob.findUnique({ where: { id } });
   if (!job) throw new AuthError("Import not found", "NOT_FOUND", 404);
   return job.errorReport || "line,sku,message\n";
+}
+
+export async function downloadProductImportTemplate(actorUserId: string) {
+  await requireSystemPermission(actorUserId, "products.import");
+  const { bootstrapCatalogue } = await import("@/server/catalogue/service");
+  await bootstrapCatalogue();
+  const [categories, brands] = await Promise.all([
+    prisma.category.findMany({
+      select: { name: true, parentId: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    }),
+    prisma.brand.findMany({
+      select: { name: true },
+      where: { isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    }),
+  ]);
+  const bytes = await buildProductImportWorkbook(splitTaxonomyLists({ categories, brands }));
+  return {
+    filename: "automotive-brands-products-template.xlsx",
+    mime: XLSX_MIME,
+    base64: Buffer.from(bytes).toString("base64"),
+  };
 }
 
 export async function importProducts(actorUserId: string, csv: string) {
