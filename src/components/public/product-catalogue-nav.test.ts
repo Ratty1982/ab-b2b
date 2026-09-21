@@ -56,7 +56,7 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     categorySlug: "vehicle-cleaning",
     imageSrc: "/media/gc5000.jpg",
     rrp: 17.99,
-    price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "account" },
+    price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "base_catalogue" },
     availability: "in",
     isNew: false,
     isFeatured: false,
@@ -144,20 +144,17 @@ describe("product detail catalogue navigation", () => {
 
   it("wraps product content in the shared catalogue layout grid and desktop sidebar", () => {
     const markup = html(
-      createElement(
-        PublicCatalogueLayout,
-        {
-          brands: navBrands,
-          categories: navCategories,
-          context: { brandSlug: "power-maxed", categorySlug: "vehicle-cleaning" },
-          breadcrumbs: [
-            { label: "Home", to: "/" },
-            { label: "Products", to: "/products" },
-            { label: "Window & Glass Cleaner 5 Litre" },
-          ],
-        },
-        createElement(ProductDetailView, { data: detail() }),
-      ),
+      createElement(PublicCatalogueLayout, {
+        brands: navBrands,
+        categories: navCategories,
+        context: { brandSlug: "power-maxed", categorySlug: "vehicle-cleaning" },
+        breadcrumbs: [
+          { label: "Home", to: "/" },
+          { label: "Products", to: "/products" },
+          { label: "Window & Glass Cleaner 5 Litre" },
+        ],
+        children: createElement(ProductDetailView, { data: detail() }),
+      }),
     );
     expect(markup).toContain('data-catalogue-shell="layout"');
     expect(markup).toContain('data-catalogue-sidebar="desktop"');
@@ -184,15 +181,12 @@ describe("product detail catalogue navigation", () => {
     expect(markup).toContain('data-catalogue-mobile-nav="trigger"');
     expect(markup).toContain("Filters / Categories");
     const layout = html(
-      createElement(
-        PublicCatalogueLayout,
-        {
-          brands: navBrands,
-          categories: navCategories,
-          context: { brandSlug: "power-maxed", categorySlug: "vehicle-cleaning" },
-        },
-        createElement("div", { "data-product-detail": "page" }),
-      ),
+      createElement(PublicCatalogueLayout, {
+        brands: navBrands,
+        categories: navCategories,
+        context: { brandSlug: "power-maxed", categorySlug: "vehicle-cleaning" },
+        children: createElement("div", { "data-product-detail": "page" }),
+      }),
     );
     expect(layout).toContain("Vehicle Cleaning");
     expect(layout).toContain("Steel Seal");

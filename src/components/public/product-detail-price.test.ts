@@ -25,7 +25,7 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     categorySlug: "vehicle-cleaning",
     imageSrc: "/media/gc5000.jpg",
     rrp: 17.99,
-    price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "account" },
+    price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "base_catalogue" },
     availability: "in",
     isNew: false,
     isFeatured: false,

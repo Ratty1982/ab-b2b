@@ -369,7 +369,7 @@ describe("product hero commerce presentation", () => {
       createElement(ProductDetailView, {
         data: detail({
           card: card({
-            price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "account" },
+            price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "base_catalogue" },
           }),
           caseQty: 2,
         }),
