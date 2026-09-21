@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import { auth } from "@/infra/auth";
 import { formatZodError } from "@/domain/cms";
+import type { HomepageJson } from "@/domain/homepage";
 import { AuthError } from "@/server/rbac/guards";
 import * as companies from "@/server/companies/service";
 import * as applications from "@/server/applications/service";
@@ -342,7 +343,7 @@ export const previewPublicHomepageFn = createServerFn({ method: "POST" })
         sections: Array<{
           id: string;
           type: string;
-          config: Record<string, unknown>;
+          config: Record<string, HomepageJson>;
           enabled: boolean;
         }>;
       },
@@ -357,7 +358,7 @@ export const previewPublicHomepageFn = createServerFn({ method: "POST" })
         data.sections.map((section) => ({
           id: section.id,
           type: section.type as import("@/domain/cms").CmsSectionTypeKey,
-          config: section.config,
+          config: section.config as { [key: string]: HomepageJson },
           enabled: section.enabled,
         })),
       );

@@ -12,6 +12,7 @@ import {
   type ProductStatus,
 } from "@/domain/catalogue";
 import { publicAvailabilityFromQty, type PublicAvailability } from "@/domain/availability";
+import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   moneyNumber,
   resolveDisplayPrice,

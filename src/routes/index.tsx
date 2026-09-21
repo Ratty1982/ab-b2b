@@ -13,7 +13,7 @@ const EMPTY_HOMEPAGE: PublicHomepageData = {
   sections: defaultHomepageSections().map((section, index) => ({
     id: `fallback-${section.type}-${index}`,
     type: section.type,
-    config: section.config,
+    config: section.config as PublicHomepageData["sections"][number]["config"],
     enabled: true,
   })),
   brands: [],

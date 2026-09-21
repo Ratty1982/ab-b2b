@@ -643,7 +643,7 @@ describe("canonical public homepage assembly", () => {
       config: section.config,
       enabled: true,
     }));
-    const data = await assembleHomepagePreview(null, fallback);
+    const data = await assembleHomepagePreview(null, fallback as import("@/domain/homepage").HomepageSection[]);
     expect(data.sections[0]?.type).toBe("HERO");
     expect(data.sections.some((section) => section.type === "FEATURED_BRANDS")).toBe(true);
   });

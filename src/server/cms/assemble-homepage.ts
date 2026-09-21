@@ -7,7 +7,7 @@ import {
   listRecentPublicProducts,
   type PublicProductCard,
 } from "@/server/catalogue/products";
-import { collectHomepageSkus, type HomepageProduct, type HomepageSection, type PublicHomepageData } from "@/domain/homepage";
+import { collectHomepageSkus, type HomepageJson, type HomepageProduct, type HomepageSection, type PublicHomepageData } from "@/domain/homepage";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 
 const DEFAULT_SEO_TITLE = "Automotive Brands — The brands behind the automotive aftermarket";
@@ -31,7 +31,7 @@ function fallbackSections(): HomepageSection[] {
   return defaultHomepageSections().map((section, index) => ({
     id: `default-${section.type}-${index}`,
     type: section.type,
-    config: section.config,
+    config: section.config as { [key: string]: HomepageJson },
     enabled: true,
   }));
 }
@@ -51,7 +51,7 @@ export async function loadPublicHomepage(userId: string | null): Promise<PublicH
       ? published.sections.map((section) => ({
           id: section.id,
           type: section.type as CmsSectionTypeKey,
-          config: (section.config ?? {}) as Record<string, unknown>,
+          config: ((section.config ?? {}) as { [key: string]: HomepageJson }),
           enabled: true,
         }))
       : fallbackSections();

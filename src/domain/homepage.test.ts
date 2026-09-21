@@ -32,8 +32,8 @@ describe("homepage SKU collection", () => {
 
 describe("homepage category resolution", () => {
   const cats = [
-    { slug: "cleaning", name: "Cleaning", description: "Workshop chemicals" },
-    { slug: "accessories", name: "Accessories", description: null },
+    { slug: "cleaning", name: "Cleaning", description: "Workshop chemicals", parentId: null },
+    { slug: "accessories", name: "Accessories", description: null, parentId: null },
   ];
 
   it("uses CMS categorySlugs against catalogue records", () => {

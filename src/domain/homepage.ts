@@ -2,10 +2,18 @@ import type { PublicAvailability } from "@/domain/availability";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import type { DisplayPrice } from "@/server/pricing/trade-price";
 
+export type HomepageJson =
+  | string
+  | number
+  | boolean
+  | null
+  | HomepageJson[]
+  | { [key: string]: HomepageJson };
+
 export type HomepageSection = {
   id: string;
   type: CmsSectionTypeKey;
-  config: Record<string, unknown>;
+  config: { [key: string]: HomepageJson };
   enabled: boolean;
 };
 
@@ -21,7 +29,7 @@ export type HomepageCategory = {
   slug: string;
   name: string;
   description: string | null;
-  parentId?: string | null;
+  parentId: string | null;
 };
 
 export type HomepageProduct = {

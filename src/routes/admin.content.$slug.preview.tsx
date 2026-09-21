@@ -4,6 +4,7 @@ import { PublicHomepage } from "@/components/public/PublicHomepage";
 import { PublicLayout } from "@/components/ab/PublicLayout";
 import { getCmsPageDraftFn, previewPublicHomepageFn } from "@/server/phase2/fns";
 import type { CmsSectionTypeKey } from "@/domain/cms";
+import type { HomepageJson } from "@/domain/homepage";
 
 export const Route = createFileRoute("/admin/content/$slug/preview")({
   loader: async ({ params }) => {
@@ -12,7 +13,7 @@ export const Route = createFileRoute("/admin/content/$slug/preview")({
     const sections = (r.data.version?.sections ?? []).map((s) => ({
       id: s.id,
       type: s.type as CmsSectionTypeKey,
-      config: s.config as Record<string, unknown>,
+      config: s.config as { [key: string]: HomepageJson },
       enabled: s.enabled,
     }));
     if (params.slug === "home") {
@@ -39,7 +40,7 @@ function DraftPreview() {
     .map((s) => ({
       id: s.id,
       type: s.type as CmsSectionTypeKey,
-      config: s.config as Record<string, unknown>,
+      config: s.config as { [key: string]: HomepageJson },
     }));
 
   return (

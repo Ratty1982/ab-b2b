@@ -870,7 +870,17 @@ export function SectionSettings({
   }
 
   if (type === "RESOURCES" || type === "NEWS") {
-    const items = Array.isArray(config["items"]) ? (config["items"] as Array<Record<string, string>>) : [];
+    const items = Array.isArray(config["items"])
+      ? (config["items"] as Array<{
+          label?: string;
+          meta?: string;
+          href?: string;
+          title?: string;
+          kind?: string;
+          date?: string;
+          summary?: string;
+        }>)
+      : [];
     return (
       <div className="grid gap-3">
         <Field label="Eyebrow">

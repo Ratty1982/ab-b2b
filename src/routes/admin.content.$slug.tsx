@@ -29,7 +29,7 @@ import { PublicHomepage } from "@/components/public/PublicHomepage";
 import { SectionSettings } from "@/components/cms/SectionSettings";
 import { MediaPicker } from "@/components/cms/MediaPicker";
 import type { CmsSectionTypeKey } from "@/domain/cms";
-import type { PublicHomepageData } from "@/domain/homepage";
+import type { HomepageSection, PublicHomepageData } from "@/domain/homepage";
 import {
   EDITOR_VIEWPORTS,
   SECTION_LIBRARY,
@@ -481,7 +481,7 @@ function CmsEditor() {
                         recentProducts: [],
                         cmsError: null,
                       }),
-                      sections,
+                      sections: sections as HomepageSection[],
                     }}
                   />
                 </div>
@@ -596,8 +596,12 @@ function CmsEditor() {
                 type={selected.type}
                 config={selected.config}
                 onChange={updateSelectedConfig}
-                catalogueBrands={homepagePreview?.brands}
-                catalogueCategories={homepagePreview?.categories}
+                {...(homepagePreview
+                  ? {
+                      catalogueBrands: homepagePreview.brands,
+                      catalogueCategories: homepagePreview.categories,
+                    }
+                  : {})}
               />
             </div>
           )}

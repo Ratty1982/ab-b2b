@@ -661,12 +661,13 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
   for (let i = 0; i < sections.length; i += 1) {
     const section = sections[i]!;
     const type = section.type as CmsSectionTypeKey;
+    const config = section.config as Record<string, unknown>;
     const next = sections[i + 1];
     if (type === "HERO") {
       nodes.push(
         <HeroSection
           key={section.id}
-          config={section.config}
+          config={config}
           brands={data.brands}
           productsBySku={data.productsBySku}
         />,
@@ -674,16 +675,16 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
       continue;
     }
     if (type === "FEATURED_BRANDS" || type === "BRAND_LOGO_STRIP") {
-      nodes.push(<BrandsSection key={section.id} config={section.config} brands={data.brands} />);
+      nodes.push(<BrandsSection key={section.id} config={config} brands={data.brands} />);
       continue;
     }
     if (type === "CATEGORY_GRID") {
-      nodes.push(<CategoriesSection key={section.id} config={section.config} categories={data.categories} />);
+      nodes.push(<CategoriesSection key={section.id} config={config} categories={data.categories} />);
       continue;
     }
     if (type === "FEATURED_PRODUCTS") {
       nodes.push(
-        <FeaturedProductsSection key={section.id} config={section.config} productsBySku={data.productsBySku} />,
+        <FeaturedProductsSection key={section.id} config={config} productsBySku={data.productsBySku} />,
       );
       continue;
     }
@@ -693,8 +694,8 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
       nodes.push(
         <NewAndPopular
           key={section.id}
-          recentConfig={section.config}
-          popularConfig={popular?.config ?? null}
+          recentConfig={config}
+          popularConfig={popular ? (popular.config as Record<string, unknown>) : null}
           recentProducts={data.recentProducts}
           productsBySku={data.productsBySku}
         />,
@@ -706,7 +707,7 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
         <NewAndPopular
           key={section.id}
           recentConfig={null}
-          popularConfig={section.config}
+          popularConfig={config}
           recentProducts={[]}
           productsBySku={data.productsBySku}
         />,
@@ -714,21 +715,27 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
       continue;
     }
     if (type === "BENEFITS_GRID") {
-      nodes.push(<BenefitsSection key={section.id} config={section.config} />);
+      nodes.push(<BenefitsSection key={section.id} config={config} />);
       continue;
     }
     if (type === "RESOURCES") {
       const news = next?.type === "NEWS" ? next : null;
       if (news) i += 1;
-      nodes.push(<ResourcesAndNews key={section.id} resources={section.config} news={news?.config ?? null} />);
+      nodes.push(
+        <ResourcesAndNews
+          key={section.id}
+          resources={config}
+          news={news ? (news.config as Record<string, unknown>) : null}
+        />,
+      );
       continue;
     }
     if (type === "NEWS") {
-      nodes.push(<ResourcesAndNews key={section.id} resources={null} news={section.config} />);
+      nodes.push(<ResourcesAndNews key={section.id} resources={null} news={config} />);
       continue;
     }
     if (type === "TRADE_CTA") {
-      nodes.push(<TradeCta key={section.id} config={section.config} />);
+      nodes.push(<TradeCta key={section.id} config={config} />);
       continue;
     }
     nodes.push(<GenericFallback key={section.id} section={section} />);
