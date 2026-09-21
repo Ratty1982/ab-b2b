@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import {
+  classifyPublicSpec,
   featuresForDisplay,
   formatCatalogueSize,
   formatPublicSpecRows,
@@ -8,6 +9,7 @@ import {
   formatSpecValue,
   hasPublicText,
   parseDirections,
+  selectPublicProductDetailRows,
 } from "@/domain/product-spec-display";
 import {
   PRODUCT_IMAGE_DETAIL_STAGE_CLASS,
@@ -58,6 +60,57 @@ describe("public product specification display", () => {
       { label: "Finish", value: "Streak-Free" },
       { label: "Residue Free", value: "Yes" },
     ]);
+  });
+
+  it("publishes only useful product details and technical specs", () => {
+    const gc5000 = selectPublicProductDetailRows({
+      specifications: [
+        { name: "size", value: "5L" },
+        { name: "productType", value: "Glass Cleaner" },
+        { name: "form", value: "Liquid" },
+        { name: "finish", value: "Streak-Free" },
+        { name: "residueFree", value: "true" },
+        { name: "fastEvaporating", value: "true" },
+        { name: "tinted_window_safe", value: "true" },
+      ],
+    });
+    expect(gc5000).toEqual([
+      { label: "Size", value: "5 Litre" },
+      { label: "Product Type", value: "Glass Cleaner" },
+      { label: "Form", value: "Liquid" },
+    ]);
+    expect(gc5000.some((row) => /residue|evaporat|tinted|finish/i.test(row.label))).toBe(false);
+    expect(classifyPublicSpec("residueFree", "true")).toBe("hidden");
+    expect(classifyPublicSpec("voltage", "12V")).toBe("technical");
+    const charger = selectPublicProductDetailRows({
+      specifications: [
+        { name: "productType", value: "Battery Charger" },
+        { name: "voltage", value: "12V" },
+        { name: "chargingCurrent", value: "5A" },
+        { name: "cableLength", value: "1.5m" },
+        { name: "residueFree", value: "true" },
+      ],
+    });
+    expect(charger).toEqual([
+      { label: "Product Type", value: "Battery Charger" },
+      { label: "Voltage", value: "12V" },
+      { label: "Charging Current", value: "5A" },
+      { label: "Cable Length", value: "1.5m" },
+    ]);
+  });
+
+  it("omits empty product-detail placeholders and does not invent EAN/MPN", () => {
+    expect(
+      selectPublicProductDetailRows({
+        specifications: [
+          { name: "size", value: "" },
+          { name: "form", value: "N/A" },
+          { name: "productType", value: "Glass Cleaner" },
+        ],
+        ean: null,
+        mpn: "  ",
+      }),
+    ).toEqual([{ label: "Product Type", value: "Glass Cleaner" }]);
   });
 });
 

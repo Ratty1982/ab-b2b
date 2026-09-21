@@ -7,6 +7,7 @@ import {
   isValidCustomerOrderQuantity,
   minimumCustomerOrderQuantity,
   publicOrderingFromVariant,
+  publicTradeOrderingCopy,
 } from "@/domain/case-ordering";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -53,20 +54,25 @@ describe("full-case ordering domain", () => {
     expect(publicOrderingFromVariant({ packQty: 1, caseQty: null, minOrderQty: 1, orderIncrement: 1 }).caseQty).toBeNull();
     expect(formatPublicCaseOrderingRows(null)).toEqual([]);
     expect(formatPublicCaseOrderingRows(undefined)).toEqual([]);
+    expect(publicTradeOrderingCopy(null)).toBeNull();
   });
 });
 
 describe("public case ordering presentation", () => {
-  it("shows GC5000 caseQty 2 as the order multiple and ignores orderIncrement 1", () => {
-    const rows = formatPublicCaseOrderingRows(2);
-    expect(rows).toEqual([
-      { label: "Case Quantity", value: "2" },
-      { label: "Order In Multiples Of", value: "2" },
-    ]);
-    const labels = rows.map((row) => row.label).join(" ");
-    const values = rows.map((row) => row.value).join(" ");
-    expect(labels).not.toMatch(/Pack Quantity|Minimum Order|Order Increment/i);
-    expect(values).not.toBe("1");
+  it("shows GC5000 caseQty 2 as a case multiple and ignores orderIncrement 1", () => {
+    expect(publicTradeOrderingCopy(2)).toEqual({
+      title: "Case of 2",
+      subtitle: "Sold in multiples of 2",
+    });
+    expect(publicTradeOrderingCopy(6)).toEqual({
+      title: "Case of 6",
+      subtitle: "Sold in multiples of 6",
+    });
+    expect(publicTradeOrderingCopy(1)).toEqual({
+      title: "Single unit",
+      subtitle: "Sold individually",
+    });
+    expect(publicTradeOrderingCopy(2)?.subtitle).not.toMatch(/individually/i);
     expect(customerOrderIncrement(2)).not.toBe(1);
   });
 

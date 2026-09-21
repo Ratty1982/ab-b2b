@@ -883,6 +883,8 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
       alt: m.altText || product.name,
     })),
     sku: variant?.sku ?? "",
+    ean: variant?.barcode ?? null,
+    mpn: variant?.mpn ?? null,
     ...publicOrderingFromVariant(variant),
     related: related.map((row) => toPublicCard(row, viewer)),
   };

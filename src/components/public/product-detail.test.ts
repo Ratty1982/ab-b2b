@@ -8,7 +8,8 @@ import {
   ProductDetailView,
   ProductDirections,
   ProductFeatures,
-  ProductSpecifications,
+  ProductDetails,
+  ProductTradeOrdering,
   ProductWarnings,
   type PublicProductDetail,
 } from "@/components/public/ProductDetail";
@@ -145,24 +146,20 @@ describe("public product detail sections", () => {
 
   it("renders additional specifications with human labels, Yes/No, and standardised size", () => {
     const markup = html(
-      createElement(ProductSpecifications, {
-        productRows: [
+      createElement(ProductDetails, {
+        rows: [
           { label: "Size", value: "5 Litre" },
-          { label: "Residue Free", value: "Yes" },
-          { label: "Fast Evaporating", value: "No" },
-          { label: "Tinted Window Safe", value: "Yes" },
+          { label: "Product Type", value: "Glass Cleaner" },
+          { label: "Form", value: "Liquid" },
         ],
       }),
     );
-    expect(markup).toContain("Specifications");
+    expect(markup).toContain("Product details");
     expect(markup).toContain("5 Litre");
+    expect(markup).toContain("Glass Cleaner");
     expect(markup).not.toContain(">5L<");
-    expect(markup).toContain("Residue Free");
-    expect(markup).toContain("Yes");
-    expect(markup).toContain("No");
-    expect(markup).not.toContain("residueFree");
-    expect(markup).not.toContain("fastEvaporating");
-    expect(ProductSpecifications({ productRows: [], orderingRows: [] })).toBeNull();
+    expect(ProductDetails({ rows: [] })).toBeNull();
+    expect(ProductTradeOrdering({ card: null })).toBeNull();
   });
 
   it("keeps anonymous stock quantity hidden and availability labels correct", () => {
@@ -244,6 +241,8 @@ describe("public product detail sections", () => {
     expect(markup).not.toContain("How to use");
     expect(markup).not.toContain("Important information");
     expect(markup).not.toContain("Specifications");
+    expect(markup).not.toContain("Product details");
+    expect(markup).not.toContain("Trade ordering");
     expect(markup).not.toContain("Related products");
     expect(markup).not.toContain("data-product-short-description");
   });
@@ -257,52 +256,87 @@ describe("public product detail sections", () => {
     expect(markup).not.toContain("alert(1)");
   });
 
-  it("renders case-based Ordering Information and hides internal increment/pack fields", () => {
+  it("renders a case-based Trade Ordering card and hides internal increment/pack fields", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
-    expect(markup).toContain("Ordering information");
-    expect(markup).toContain("Case Quantity");
-    expect(markup).toContain("Order In Multiples Of");
-    expect(markup).toContain(">2<");
+    expect(markup).toContain("Trade ordering");
+    expect(markup).toContain("Case of 2");
+    expect(markup).toContain("Sold in multiples of 2");
+    expect(markup).toContain("Product details");
+    expect(markup).toContain("5 Litre");
+    expect(markup).toContain("Glass Cleaner");
+    expect(markup).toContain("Liquid");
+    expect(markup).not.toContain("Residue Free");
+    expect(markup).not.toContain("Fast Evaporating");
+    expect(markup).not.toContain("Tinted Window Safe");
+    expect(markup).not.toContain("residueFree");
+    expect(markup).not.toContain("fastEvaporating");
+    expect(markup).not.toContain("tintedWindowSafe");
     expect(markup).not.toContain("Pack Quantity");
     expect(markup).not.toContain("Minimum Order");
     expect(markup).not.toContain("Order Increment");
     expect(markup).not.toContain("packQty");
     expect(markup).not.toContain("caseQty");
     expect(markup).not.toContain("orderIncrement");
-    expect(markup).not.toMatch(/order individually|sold individually/i);
+    const six = html(createElement(ProductDetailView, { data: detail({ caseQty: 6 }) }));
+    expect(six).toContain("Case of 6");
+    expect(six).toContain("Sold in multiples of 6");
+    const single = html(createElement(ProductDetailView, { data: detail({ caseQty: 1 }) }));
+    expect(single).toContain("Single unit");
+    expect(single).toContain("Sold individually");
+    expect(single).not.toContain("Case of 1");
     const hidden = html(
       createElement(ProductDetailView, {
         data: detail({ packQty: null, caseQty: null, minimumOrderQty: null, orderIncrement: null }),
       }),
     );
-    expect(hidden).not.toContain("Case Quantity");
-    expect(hidden).not.toContain("Order In Multiples Of");
+    expect(hidden).not.toContain("Trade ordering");
+    expect(hidden).not.toContain("Case of");
     const noCase = html(
       createElement(ProductDetailView, {
         data: detail({ caseQty: null, packQty: 1, minimumOrderQty: 1, orderIncrement: 1 }),
       }),
     );
-    expect(noCase).not.toContain("Case Quantity");
-    expect(noCase).not.toContain("Order In Multiples Of");
+    expect(noCase).not.toContain("Trade ordering");
     expect(noCase).not.toContain("Pack Quantity");
   });
 
-  it("places How to use beside Specifications on desktop and stacks on smaller viewports", () => {
+  it("places How to use beside Product details on desktop and stacks on smaller viewports", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
     expect(markup).toContain('data-product-lower="split"');
     expect(markup).toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
-    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Specifications"));
-    expect(markup.indexOf("Specifications")).toBeLessThan(markup.indexOf("Related products"));
-    const specsOnly = html(
+    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Product details"));
+    expect(markup.indexOf("Product details")).toBeLessThan(markup.indexOf("Trade ordering"));
+    expect(markup.indexOf("Trade ordering")).toBeLessThan(markup.indexOf("Related products"));
+    const detailsOnly = html(
       createElement(ProductDetailView, {
         data: detail({
           selling: { ...(detail().selling!), directions: null, warnings: null },
         }),
       }),
     );
-    expect(specsOnly).toContain('data-product-lower="specs"');
-    expect(specsOnly).toContain("max-w-3xl");
-    expect(specsOnly).not.toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+    expect(detailsOnly).toContain('data-product-lower="details"');
+    expect(detailsOnly).toContain("max-w-3xl");
+    expect(detailsOnly).not.toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+  });
+
+  it("can still render technical details for non-chemical products", () => {
+    const markup = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          sku: "CTEK-5A",
+          specifications: [
+            { name: "productType", value: "Battery Charger" },
+            { name: "voltage", value: "12V" },
+            { name: "chargingCurrent", value: "5A" },
+          ],
+          caseQty: 4,
+        }),
+      }),
+    );
+    expect(markup).toContain("Battery Charger");
+    expect(markup).toContain("12V");
+    expect(markup).toContain("5A");
+    expect(markup).toContain("Case of 4");
   });
 
   it("keeps benefits, features, applications and related products in the current layout", () => {

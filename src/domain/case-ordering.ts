@@ -78,10 +78,23 @@ export function publicOrderingFromVariant(variant: {
 export function formatPublicCaseOrderingRows(
   caseQty: number | null | undefined,
 ): Array<{ label: string; value: string }> {
-  const increment = customerOrderIncrement(caseQty);
-  if (increment == null) return [];
+  const card = publicTradeOrderingCopy(caseQty);
+  if (!card) return [];
   return [
-    { label: "Case Quantity", value: String(increment) },
-    { label: "Order In Multiples Of", value: String(increment) },
+    { label: card.title, value: card.subtitle },
   ];
+}
+
+export function publicTradeOrderingCopy(
+  caseQty: number | null | undefined,
+): { title: string; subtitle: string } | null {
+  const increment = customerOrderIncrement(caseQty);
+  if (increment == null) return null;
+  if (increment === 1) {
+    return { title: "Single unit", subtitle: "Sold individually" };
+  }
+  return {
+    title: `Case of ${increment}`,
+    subtitle: `Sold in multiples of ${increment}`,
+  };
 }

@@ -16,8 +16,87 @@ const KNOWN_SPEC_LABELS: Record<string, string> = {
   mpn: "MPN",
 };
 
+/** Factual catalogue attributes that help a trade buyer identify the pack. */
+const PRODUCT_DETAIL_KEYS = new Set([
+  "size",
+  "producttype",
+  "product_type",
+  "form",
+  "containertype",
+  "container_type",
+  "ean",
+  "mpn",
+]);
+
+/**
+ * Marketing / boolean extras that are usually already covered by benefits or
+ * features. Stored data is kept; public pages omit them.
+ */
+const MARKETING_SPEC_KEYS = new Set([
+  "finish",
+  "residuefree",
+  "residue_free",
+  "fastevaporating",
+  "fast_evaporating",
+  "tintedwindowsafe",
+  "tinted_window_safe",
+  "streakfree",
+  "streak_free",
+]);
+
+const TECHNICAL_KEY_HINTS = [
+  "voltage",
+  "volt",
+  "power",
+  "watt",
+  "current",
+  "amp",
+  "capacity",
+  "material",
+  "dimension",
+  "cable",
+  "load",
+  "temperature",
+  "iprating",
+  "ipcode",
+  "compatibility",
+  "connector",
+  "weight",
+  "length",
+  "width",
+  "height",
+  "depth",
+  "pressure",
+  "flow",
+  "frequency",
+  "battery",
+  "output",
+  "input",
+  "torque",
+];
+
 function compactKey(raw: string): string {
   return raw.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isBooleanish(value: string): boolean {
+  return /^(true|false|yes|no)$/i.test(value.trim());
+}
+
+function isTechnicalKey(key: string): boolean {
+  return TECHNICAL_KEY_HINTS.some((hint) => key.includes(hint));
+}
+
+export type PublicSpecKind = "detail" | "technical" | "hidden";
+
+export function classifyPublicSpec(name: string, value: string): PublicSpecKind {
+  const key = compactKey(name);
+  if (!key || key === "sku") return "hidden";
+  if (PRODUCT_DETAIL_KEYS.has(key) || PRODUCT_DETAIL_KEYS.has(name.trim().toLowerCase())) return "detail";
+  if (MARKETING_SPEC_KEYS.has(key)) return "hidden";
+  if (isTechnicalKey(key)) return "technical";
+  if (isBooleanish(value)) return "hidden";
+  return "technical";
 }
 
 /** Human-readable spec labels. Never show raw camelCase / snake_case keys. */
@@ -64,6 +143,36 @@ export function formatPublicSpecRows(rows: Array<{ name: string; value: string }
       label: formatSpecLabel(row.name),
       value: compactKey(row.name) === "size" || /size/i.test(row.name) ? formatCatalogueSize(row.value) : formatSpecValue(row.value),
     }));
+}
+
+export function selectPublicProductDetailRows(input: {
+  specifications: Array<{ name: string; value: string }>;
+  ean?: string | null | undefined;
+  mpn?: string | null | undefined;
+}): Array<{ label: string; value: string }> {
+  const formatted = input.specifications
+    .filter((row) => row.name.trim() && row.value.trim() && !/^n\/?a$|^-$|^—$/i.test(row.value.trim()))
+    .map((row) => ({
+      key: compactKey(row.name),
+      kind: classifyPublicSpec(row.name, row.value),
+      label: formatSpecLabel(row.name),
+      value: compactKey(row.name) === "size" || /size/i.test(row.name) ? formatCatalogueSize(row.value) : formatSpecValue(row.value),
+    }));
+  const details = formatted.filter((row) => row.kind === "detail");
+  const technical = formatted.filter((row) => row.kind === "technical");
+  const seen = new Set(details.concat(technical).map((row) => row.key));
+  const extras: Array<{ key: string; label: string; value: string }> = [];
+  if (input.ean?.trim() && !seen.has("ean")) extras.push({ key: "ean", label: "EAN", value: input.ean.trim() });
+  if (input.mpn?.trim() && !seen.has("mpn") && compactKey(input.mpn) !== compactKey("sku")) {
+    extras.push({ key: "mpn", label: "MPN", value: input.mpn.trim() });
+  }
+  const order = ["size", "producttype", "form", "containertype", "ean", "mpn"];
+  const ranked = [...details, ...extras].sort((a, b) => {
+    const ai = order.indexOf(a.key);
+    const bi = order.indexOf(b.key);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+  return [...ranked, ...technical].map((row) => ({ label: row.label, value: row.value }));
 }
 
 function copyKey(value: string): string {

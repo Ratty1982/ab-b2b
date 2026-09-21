@@ -5,12 +5,12 @@ import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
 import { ProductCard } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
-import { formatPublicCaseOrderingRows } from "@/domain/case-ordering";
+import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import {
   featuresForDisplay,
-  formatPublicSpecRows,
   hasPublicText,
   parseDirections,
+  selectPublicProductDetailRows,
 } from "@/domain/product-spec-display";
 import { cn } from "@/lib/utils";
 import type { PublicProductCard } from "@/server/catalogue/products";
@@ -29,6 +29,8 @@ export type PublicProductDetail = {
   caseQty?: number | null;
   minimumOrderQty?: number | null;
   orderIncrement?: number | null;
+  ean?: string | null;
+  mpn?: string | null;
 };
 
 export function ProductDetailView({ data }: { data: PublicProductDetail }) {
@@ -42,13 +44,17 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
   const benefits = selling.keyBenefits.filter(Boolean);
   const features = featuresForDisplay(benefits, selling.features.filter(Boolean));
   const applications = selling.applications.filter(Boolean);
-  const specs = formatPublicSpecRows(data.specifications);
-  const ordering = formatPublicCaseOrderingRows(data.caseQty);
+  const details = selectPublicProductDetailRows({
+    specifications: data.specifications,
+    ean: data.ean,
+    mpn: data.mpn,
+  });
+  const ordering = publicTradeOrderingCopy(data.caseQty);
   const showDescription = hasPublicText(data.description);
   const showDirections = hasPublicText(selling.directions);
   const showWarnings = hasPublicText(selling.warnings);
   const showLeft = showDirections || showWarnings;
-  const showRight = specs.length > 0 || ordering.length > 0;
+  const showRight = details.length > 0 || ordering != null;
 
   return (
     <div
@@ -72,7 +78,7 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
         {applications.length ? <ProductApplications items={applications} /> : null}
         {showLeft || showRight ? (
           <div
-            data-product-lower={showLeft && showRight ? "split" : showLeft ? "directions" : "specs"}
+            data-product-lower={showLeft && showRight ? "split" : showLeft ? "directions" : "details"}
             className={cn(
               "grid items-start gap-8",
               showLeft && showRight && "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]",
@@ -85,7 +91,12 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
                 {showWarnings ? <ProductWarnings text={selling.warnings!} /> : null}
               </div>
             ) : null}
-            {showRight ? <ProductSpecifications productRows={specs} orderingRows={ordering} /> : null}
+            {showRight ? (
+              <div className="space-y-6">
+                <ProductDetails rows={details} />
+                <ProductTradeOrdering card={ordering} />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -282,31 +293,29 @@ function SpecTable({ rows }: { rows: Array<{ label: string; value: string }> }) 
   );
 }
 
-export function ProductSpecifications({
-  productRows = [],
-  orderingRows = [],
-}: {
-  productRows?: Array<{ label: string; value: string }>;
-  orderingRows?: Array<{ label: string; value: string }>;
-}) {
-  if (!productRows.length && !orderingRows.length) return null;
+export function ProductDetails({ rows }: { rows: Array<{ label: string; value: string }> }) {
+  if (!rows.length) return null;
   return (
-    <section data-product-section="specifications">
-      <h2 className="font-display text-xl font-semibold uppercase tracking-tight">Specifications</h2>
-      {productRows.length ? (
-        <div className="mt-4">
-          {orderingRows.length ? (
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Product details</h3>
-          ) : null}
-          <SpecTable rows={productRows} />
-        </div>
-      ) : null}
-      {orderingRows.length ? (
-        <div className="mt-6" data-product-section="ordering">
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Ordering information</h3>
-          <SpecTable rows={orderingRows} />
-        </div>
-      ) : null}
+    <section data-product-section="details">
+      <h2 className="font-display text-xl font-semibold uppercase tracking-tight">Product details</h2>
+      <div className="mt-4">
+        <SpecTable rows={rows} />
+      </div>
+    </section>
+  );
+}
+
+export function ProductTradeOrdering({
+  card,
+}: {
+  card: { title: string; subtitle: string } | null;
+}) {
+  if (!card) return null;
+  return (
+    <section data-product-section="ordering" className="rounded-lg border border-border bg-surface/40 p-5">
+      <h2 className="font-display text-lg font-semibold uppercase tracking-tight">Trade ordering</h2>
+      <p className="mt-3 font-display text-2xl font-semibold uppercase tracking-tight">{card.title}</p>
+      <p className="mt-1 text-[13px] text-steel">{card.subtitle}</p>
     </section>
   );
 }
