@@ -11,15 +11,21 @@ import {
   getCatalogueProductFn,
   listCatalogueBrandsFn,
   listCatalogueCategoriesFn,
+  listCompaniesFn,
+  listQuantityBreaksFn,
+  previewTradePriceAsCustomerFn,
   reorderCatalogueProductMediaFn,
   saveCatalogueProductVariantFn,
   updateCatalogueProductFn,
+  upsertQuantityBreakFn,
+  deleteQuantityBreakFn,
 } from "@/server/phase2/fns";
 import { ImportProductJsonButton } from "@/components/catalogue/ImportProductJsonDrawer";
 import { EditableStringList } from "@/components/catalogue/EditableStringList";
 import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { gbp } from "@/lib/data";
 
 export const Route = createFileRoute("/admin/products/$id")({
   head: () => ({ meta: [{ title: "Product workspace — Automotive Brands Admin" }] }),
@@ -285,6 +291,12 @@ function ProductWorkspace() {
         </div>
         <div hidden={tab !== "Commercial"}>
           <CommercialForm draft={draft} onChange={updateDraft} />
+          {product.defaultVariantId ? (
+            <div className="mt-10 space-y-10 border-t border-border/70 pt-8">
+              <QuantityBreaksPanel variantId={product.defaultVariantId} />
+              <PriceAsCustomerPanel variantId={product.defaultVariantId} sku={product.sku} />
+            </div>
+          ) : null}
         </div>
         <div hidden={tab !== "Inventory"}>
           <InventoryPanel product={product} />
@@ -545,7 +557,7 @@ function CommercialForm({
 }) {
   return (
     <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
-      <p className="sm:col-span-2 text-[13px] text-steel">Base catalogue commercial data only. Customer price lists and promotions are Phase 4.</p>
+      <p className="sm:col-span-2 text-[13px] text-steel">Base catalogue commercial data. Customer prices and price lists are resolved by the trade pricing engine; preview below does not change stored prices.</p>
       <Field label="Base trade price" htmlFor="ws-trade"><input id="ws-trade" value={draft.tradePrice} onChange={(e) => onChange("tradePrice", e.target.value)} className={inputClass} /></Field>
       <Field label="RRP" htmlFor="ws-rrp"><input id="ws-rrp" value={draft.rrp} onChange={(e) => onChange("rrp", e.target.value)} className={inputClass} /></Field>
       <Field label="VAT" htmlFor="ws-vat">
@@ -672,5 +684,138 @@ function ActivityPanel({ product }: { product: Workspace }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function QuantityBreaksPanel({ variantId }: { variantId: string }) {
+  const [rows, setRows] = useState<Array<{ id: string; minQty: number; unitPrice: number | null; isBaseMirror: boolean }>>([]);
+  const [minQty, setMinQty] = useState("10");
+  const [unitPrice, setUnitPrice] = useState("");
+
+  async function reload() {
+    const result = await listQuantityBreaksFn({ data: { variantId } });
+    if (result.ok) setRows(result.data);
+  }
+  useEffect(() => {
+    void reload();
+  }, [variantId]);
+
+  return (
+    <section>
+      <h3 className="font-display text-lg font-semibold uppercase">Quantity breaks</h3>
+      <p className="mt-1 max-w-2xl text-[13px] text-steel">
+        Fixed unit prices at a quantity threshold. minQty=1 mirrors base trade and is not a volume break. Case multiples are enforced in Phase 6.
+      </p>
+      <form
+        className="mt-4 grid max-w-xl gap-2 sm:grid-cols-[8rem_8rem_auto]"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void upsertQuantityBreakFn({ data: { variantId, minQty: Number(minQty), unitPrice: Number(unitPrice) } }).then((r) => {
+            if (!r.ok) toast.error(r.error);
+            else void reload();
+          });
+        }}
+      >
+        <Field label="Min qty"><input value={minQty} onChange={(e) => setMinQty(e.target.value)} className={inputClass} /></Field>
+        <Field label="Unit price"><input value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className={inputClass} /></Field>
+        <button type="submit" className="mt-6 h-10 rounded-md border border-border px-3 text-[12px] font-semibold">Save break</button>
+      </form>
+      <ul className="mt-3 max-w-xl divide-y divide-border rounded-lg border border-border">
+        {rows.map((row) => (
+          <li key={row.id} className="flex items-center justify-between px-3 py-2 text-[13px]">
+            <span>{row.isBaseMirror ? "Base mirror (1)" : `${row.minQty}+`} · {row.unitPrice != null ? gbp(row.unitPrice) : "—"}</span>
+            {!row.isBaseMirror ? (
+              <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => void deleteQuantityBreakFn({ data: { id: row.id } }).then(() => reload())}>
+                Remove
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function PriceAsCustomerPanel({ variantId, sku }: { variantId: string; sku: string }) {
+  const [q, setQ] = useState("");
+  const [companies, setCompanies] = useState<Array<{ id: string; name: string; accountNumber: string | null }>>([]);
+  const [companyId, setCompanyId] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [result, setResult] = useState<{
+    resolved: {
+      unitPriceExVatDisplay: string;
+      source: string;
+      explanation: {
+        baseTradePrice: string | null;
+        priceListPrice: string | null;
+        priceListName: string | null;
+        customerOverride: string | null;
+        quantityBreak: string | null;
+        promotion: string | null;
+        resolvedPrice: string | null;
+      };
+    };
+  } | null>(null);
+
+  return (
+    <section>
+      <h3 className="font-display text-lg font-semibold uppercase">Price as customer</h3>
+      <p className="mt-1 max-w-2xl text-[13px] text-steel">
+        Diagnostic only for {sku}. Previewing does not write prices. Ordinary trade users cannot inspect another company.
+      </p>
+      <div className="mt-4 grid max-w-xl gap-2">
+        <Field label="Search customer">
+          <input
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              void listCompaniesFn({ data: { q: e.target.value, page: 1, pageSize: 8 } }).then((r) => {
+                if (r.ok) setCompanies(r.data.items.map((c: { id: string; name: string; accountNumber: string | null }) => c));
+              });
+            }}
+            className={inputClass}
+            placeholder="Company name or account"
+          />
+        </Field>
+        <Field label="Company">
+          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)} className={inputClass}>
+            <option value="">Select</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} {c.accountNumber ? `(${c.accountNumber})` : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Quantity">
+          <input value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputClass} />
+        </Field>
+        <button
+          type="button"
+          className="h-10 rounded-md bg-primary text-[12px] font-bold uppercase text-primary-foreground"
+          onClick={() => {
+            if (!companyId) return;
+            void previewTradePriceAsCustomerFn({
+              data: { variantId, companyId, quantity: Number(quantity) || 1 },
+            }).then((r) => {
+              if (!r.ok) toast.error(r.error);
+              else setResult(r.data);
+            });
+          }}
+        >
+          Resolve
+        </button>
+      </div>
+      {result ? (
+        <dl className="mt-4 max-w-xl divide-y divide-border border-y border-border text-[13px]">
+          <div className="flex justify-between py-2"><dt>Base trade</dt><dd className="num">{result.resolved.explanation.baseTradePrice ?? "—"}</dd></div>
+          <div className="flex justify-between py-2"><dt>Price list {result.resolved.explanation.priceListName ? `(${result.resolved.explanation.priceListName})` : ""}</dt><dd className="num">{result.resolved.explanation.priceListPrice ?? "—"}</dd></div>
+          <div className="flex justify-between py-2"><dt>Customer override</dt><dd className="num">{result.resolved.explanation.customerOverride ?? "—"}</dd></div>
+          <div className="flex justify-between py-2"><dt>Quantity break</dt><dd className="num">{result.resolved.explanation.quantityBreak ?? "Not applicable"}</dd></div>
+          <div className="flex justify-between py-2"><dt>Promotion</dt><dd>{result.resolved.explanation.promotion ?? "None"}</dd></div>
+          <div className="flex justify-between py-2 font-semibold"><dt>Resolved ({result.resolved.source})</dt><dd className="num">£{result.resolved.unitPriceExVatDisplay} ex VAT</dd></div>
+        </dl>
+      ) : null}
+    </section>
   );
 }

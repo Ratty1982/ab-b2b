@@ -8,15 +8,20 @@ import { ROUTES } from "@/lib/app-nav";
 import {
   createAddressFn,
   createContactFn,
+  deleteCustomerPriceFn,
   getCompanyWorkspaceFn,
   inviteCompanyUserFn,
   listCompanyActivityFn,
+  listCustomerPricesFn,
   listPriceListsFn,
   listSalesRepsFn,
+  searchPricingVariantsFn,
   updateCompanyFn,
+  upsertCustomerPriceFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { gbp } from "@/lib/data";
 
 export const Route = createFileRoute("/admin/customers/$id")({
   head: () => ({
@@ -324,6 +329,7 @@ function CustomerWorkspace() {
         ) : null}
 
         {tab === "Commercial" ? (
+          <div className="grid gap-10">
           <CommercialEditor
             company={company}
             permissions={permissions}
@@ -338,6 +344,8 @@ function CustomerWorkspace() {
               }
             }}
           />
+          <CustomerPricesEditor companyId={company.id} canEdit={permissions.canEditPricing} />
+          </div>
         ) : null}
 
         {tab === "Activity" ? (
@@ -858,5 +866,106 @@ function InviteDrawer({
         </button>
       </form>
     </Drawer>
+  );
+}
+
+function CustomerPricesEditor({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const [rows, setRows] = useState<Array<{
+    id: string;
+    sku: string;
+    productName: string;
+    variantId: string;
+    unitPrice: number | null;
+    startsAt: string | null;
+    endsAt: string | null;
+  }>>([]);
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [price, setPrice] = useState("");
+  const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
+
+  async function reload() {
+    const result = await listCustomerPricesFn({ data: { companyId } });
+    if (result.ok) setRows(result.data);
+  }
+  useEffect(() => {
+    void reload();
+  }, [companyId]);
+
+  return (
+    <section>
+      <h3 className="font-display text-lg font-semibold uppercase">Customer-specific prices</h3>
+      <p className="mt-1 max-w-2xl text-[13px] text-steel">Negotiated unit prices for this company only. They never leak to other accounts.</p>
+      {canEdit ? (
+        <form
+          className="mt-4 grid max-w-3xl gap-2 sm:grid-cols-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const hit = hits[0];
+            if (!hit) return;
+            void upsertCustomerPriceFn({
+              data: {
+                companyId,
+                variantId: hit.id,
+                unitPrice: Number(price),
+                startsAt: startsAt ? new Date(startsAt).toISOString() : null,
+                endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+              },
+            }).then((r) => {
+              if (!r.ok) toast.error(r.error);
+              else {
+                toast.success("Customer price saved");
+                setQ("");
+                setHits([]);
+                setPrice("");
+                void reload();
+              }
+            });
+          }}
+        >
+          <Field label="SKU / product">
+            <input
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                void searchPricingVariantsFn({ data: { q: e.target.value } }).then((r) => r.ok && setHits(r.data));
+              }}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Unit price ex VAT">
+            <input value={price} onChange={(e) => setPrice(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="Starts">
+            <input type="date" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="Ends">
+            <input type="date" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className={inputClass} />
+          </Field>
+          <button type="submit" className="sm:col-span-2 h-10 rounded-md border border-border text-[12px] font-semibold">
+            Save override {hits[0] ? `(${hits[0].sku})` : ""}
+          </button>
+        </form>
+      ) : null}
+      <ul className="mt-4 max-w-3xl divide-y divide-border rounded-lg border border-border">
+        {rows.map((row) => (
+          <li key={row.id} className="flex items-center justify-between px-3 py-2 text-[13px]">
+            <span>
+              <span className="num text-primary">{row.sku}</span> {row.productName} · {row.unitPrice != null ? gbp(row.unitPrice) : "—"}
+            </span>
+            {canEdit ? (
+              <button
+                type="button"
+                className="text-[12px] font-semibold text-primary"
+                onClick={() => void deleteCustomerPriceFn({ data: { id: row.id } }).then(() => reload())}
+              >
+                Remove
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
