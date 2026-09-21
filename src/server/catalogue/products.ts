@@ -12,6 +12,8 @@ import {
   type ProductStatus,
 } from "@/domain/catalogue";
 import { parseSpecificationsDocument, serializeSpecificationsDocument } from "@/domain/product-specifications";
+import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
+import { sanitizeSpecRows, sellingFromDraft } from "@/domain/product-content-editor";
 import { publicAvailabilityFromQty, type PublicAvailability } from "@/domain/availability";
 import { publicOrderingFromVariant } from "@/domain/case-ordering";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
@@ -386,6 +388,25 @@ export async function updateProductWorkspace(actorUserId: string, raw: unknown) 
   const nextStatus = input.status ?? existing.status;
   const nextActive = nextStatus === "ACTIVE";
   const statusChanged = nextStatus !== existing.status;
+  const existingDoc = parseSpecificationsDocument(existing.specifications);
+  const specChanged = input.specifications !== undefined || input.selling !== undefined;
+  const nextDoc = specChanged
+    ? {
+        ...existingDoc,
+        rows: input.specifications !== undefined ? sanitizeSpecRows(input.specifications) : existingDoc.rows,
+        selling:
+          input.selling !== undefined
+            ? sellingFromDraft({
+                keyBenefits: input.selling.keyBenefits ?? existingDoc.selling.keyBenefits,
+                features: input.selling.features ?? existingDoc.selling.features,
+                applications: input.selling.applications ?? existingDoc.selling.applications,
+                directions:
+                  input.selling.directions !== undefined ? input.selling.directions : existingDoc.selling.directions,
+                warnings: input.selling.warnings !== undefined ? input.selling.warnings : existingDoc.selling.warnings,
+              })
+            : existingDoc.selling,
+      }
+    : existingDoc;
 
   await prisma.$transaction(async (tx) => {
     await tx.product.update({
@@ -394,16 +415,11 @@ export async function updateProductWorkspace(actorUserId: string, raw: unknown) 
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.brandId !== undefined ? { brandId: input.brandId } : {}),
         ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
-        ...(input.shortDescription !== undefined ? { shortDescription: input.shortDescription } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.specifications !== undefined
-          ? {
-              specifications: serializeSpecificationsDocument({
-                ...parseSpecificationsDocument(existing.specifications),
-                rows: input.specifications,
-              }),
-            }
+        ...(input.shortDescription !== undefined ? { shortDescription: input.shortDescription || null } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description ? sanitizeProductDescriptionHtml(input.description) : null }
           : {}),
+        ...(specChanged ? { specifications: serializeSpecificationsDocument(nextDoc) } : {}),
         ...(input.status !== undefined ? { status: input.status, isActive: nextActive } : {}),
         ...(input.isTradeVisible !== undefined ? { isTradeVisible: input.isTradeVisible } : {}),
         ...(input.isFeatured !== undefined ? { isFeatured: input.isFeatured } : {}),

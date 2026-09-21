@@ -777,6 +777,125 @@ describe("per-product content JSON importer", () => {
       }),
     ).rejects.toBeInstanceOf((await import("@/server/rbac/guards")).AuthError);
   });
+
+  it("lets a later manual save edit imported selling copy and shows it on the public page", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { getProductWorkspace, updateProductWorkspace, getPublicProduct } = await import(
+      "@/server/catalogue/products"
+    );
+    const { applyProductJsonImport } = await import("@/server/catalogue/product-content-json");
+    const sku = `JSONE-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Editable after import",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 8.7,
+      rrp: 17.99,
+      packQty: 1,
+      caseQty: 2,
+    });
+    await updateProductWorkspaceSafe(saved.id);
+    const workspace = await getProductWorkspace(adminId, saved.id);
+    await applyProductJsonImport(adminId, {
+      productId: saved.id,
+      jsonText: JSON.stringify({
+        schemaVersion: "1.0",
+        identity: { sku, name: "Editable after import" },
+        content: {
+          shortDescription: "Imported short",
+          description: "<p>Imported description</p>",
+          keyBenefits: ["Suitable for tinted windows", "Streak-free"],
+          features: ["Professional-grade"],
+          applications: ["Mirrors"],
+          directions: "Apply and wipe",
+          warnings: "Original warning",
+        },
+        specifications: { additional: { finish: "Streak-Free" } },
+        commercial: { rrp: 17.99, packQty: 1, caseQty: 2 },
+        seo: { metaTitle: "Imported title", slug: workspace.slug },
+      }),
+    });
+    const imported = await getProductWorkspace(adminId, saved.id);
+    expect(imported.selling.keyBenefits).toEqual(["Suitable for tinted windows", "Streak-free"]);
+    expect(imported.tradePrice).toBe(8.7);
+    expect(imported.metaTitle).toBe("Imported title");
+
+    await expect(
+      updateProductWorkspace(salesRepUserId, {
+        id: saved.id,
+        selling: { keyBenefits: ["Hijack"] },
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    const updated = await updateProductWorkspace(adminId, {
+      id: saved.id,
+      shortDescription: "Manual short",
+      description: "<p>Manual description</p>",
+      selling: {
+        keyBenefits: ["Safe for tinted vehicle windows", "Streak-free", "Added benefit"],
+        features: ["Professional-grade", "Added feature"],
+        applications: ["Interior glass", "Mirrors"],
+        directions: "Spray, then wipe",
+        warnings: "",
+      },
+      specifications: [
+        { name: "Finish", value: "Streak-Free" },
+        { name: "Residue Free", value: "Yes" },
+      ],
+      tradePrice: 8.7,
+      rrp: 17.99,
+      metaTitle: "Manual SEO title",
+      metaDescription: "Manual SEO description",
+    });
+    expect(updated.shortDescription).toBe("Manual short");
+    expect(updated.selling.keyBenefits).toEqual([
+      "Safe for tinted vehicle windows",
+      "Streak-free",
+      "Added benefit",
+    ]);
+    expect(updated.selling.features).toContain("Added feature");
+    expect(updated.selling.applications[0]).toBe("Interior glass");
+    expect(updated.selling.directions).toBe("Spray, then wipe");
+    expect(updated.selling.warnings).toBeNull();
+    expect(updated.specifications.some((row) => row.name === "Residue Free" && row.value === "Yes")).toBe(true);
+    expect(updated.metaTitle).toBe("Manual SEO title");
+    expect(updated.rrp).toBe(17.99);
+
+    const removed = await updateProductWorkspace(adminId, {
+      id: saved.id,
+      selling: {
+        keyBenefits: ["Streak-free"],
+        features: ["Professional-grade"],
+        applications: ["Mirrors"],
+        directions: "Spray, then wipe",
+        warnings: null,
+      },
+      specifications: [{ name: "Finish", value: "Crystal" }],
+    });
+    expect(removed.selling.keyBenefits).toEqual(["Streak-free"]);
+    expect(removed.specifications).toEqual([{ name: "Finish", value: "Crystal" }]);
+
+    const reordered = await updateProductWorkspace(adminId, {
+      id: saved.id,
+      selling: {
+        keyBenefits: ["B", "A"],
+        features: ["F2", "F1"],
+        applications: ["App2", "App1"],
+        directions: "Spray, then wipe",
+        warnings: null,
+      },
+    });
+    expect(reordered.selling.keyBenefits).toEqual(["B", "A"]);
+    expect(reordered.selling.features).toEqual(["F2", "F1"]);
+    expect(reordered.selling.applications).toEqual(["App2", "App1"]);
+
+    const pub = await getPublicProduct(null, reordered.slug);
+    expect(pub?.shortDescription).toBe("Manual short");
+    expect(pub?.selling.keyBenefits).toEqual(["B", "A"]);
+    expect(pub?.selling.features).toEqual(["F2", "F1"]);
+    expect(pub?.card.price.trade).toBeNull();
+  });
 });
 
 async function updateProductWorkspaceSafe(id: string) {

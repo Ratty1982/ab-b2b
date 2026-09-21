@@ -16,6 +16,7 @@ import {
   updateCatalogueProductFn,
 } from "@/server/phase2/fns";
 import { ImportProductJsonButton } from "@/components/catalogue/ImportProductJsonDrawer";
+import { EditableStringList } from "@/components/catalogue/EditableStringList";
 import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,11 @@ type ProductDraft = {
   isNew: boolean;
   shortDescription: string;
   description: string;
+  keyBenefits: string[];
+  features: string[];
+  applications: string[];
+  directions: string;
+  warnings: string;
   specifications: Array<{ name: string; value: string }>;
   tradePrice: string;
   rrp: string;
@@ -78,6 +84,11 @@ function draftFromProduct(product: Workspace): ProductDraft {
     isNew: product.isNew,
     shortDescription: product.shortDescription ?? "",
     description: product.description ?? "",
+    keyBenefits: product.selling?.keyBenefits ?? [],
+    features: product.selling?.features ?? [],
+    applications: product.selling?.applications ?? [],
+    directions: product.selling?.directions ?? "",
+    warnings: product.selling?.warnings ?? "",
     specifications: product.specifications.length ? product.specifications : [{ name: "", value: "" }],
     tradePrice: String(product.tradePrice ?? ""),
     rrp: String(product.rrp ?? ""),
@@ -167,6 +178,13 @@ function ProductWorkspace() {
         isNew: draft.isNew,
         shortDescription: draft.shortDescription,
         description: draft.description,
+        selling: {
+          keyBenefits: draft.keyBenefits,
+          features: draft.features,
+          applications: draft.applications,
+          directions: draft.directions,
+          warnings: draft.warnings,
+        },
         specifications: draft.specifications.filter((row) => row.name && row.value),
         tradePrice: optionalNumber(draft.tradePrice),
         rrp: optionalNumber(draft.rrp),
@@ -260,12 +278,7 @@ function ProductWorkspace() {
             <p className="text-[13px] text-steel">Paste researched Product Content JSON to preview a merge. Nothing is written until you apply.</p>
             <ImportProductJsonButton productId={product.id} sku={draft.sku || product.sku} onApplied={() => load()} />
           </div>
-          <ContentForm
-            draft={draft}
-            selling={product.selling}
-            onChange={updateDraft}
-            onSpecsChange={(specifications) => updateDraft("specifications", specifications)}
-          />
+          <ContentForm draft={draft} onChange={updateDraft} />
         </div>
         <div hidden={tab !== "Images"}>
           <ImagesForm product={product} onSaved={refreshMedia} />
@@ -347,52 +360,134 @@ function OverviewForm({
 
 function ContentForm({
   draft,
-  selling,
   onChange,
-  onSpecsChange,
 }: {
   draft: ProductDraft;
-  selling: Workspace["selling"];
   onChange: <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => void;
-  onSpecsChange: (rows: Array<{ name: string; value: string }>) => void;
 }) {
+  const shortMax = 500;
   return (
-    <div className="grid max-w-3xl gap-4">
+    <div className="grid max-w-3xl gap-6">
       <Field label="Short description" htmlFor="ws-short">
-        <textarea id="ws-short" value={draft.shortDescription} onChange={(e) => onChange("shortDescription", e.target.value)} className={`${inputClass} min-h-20`} />
+        <textarea
+          id="ws-short"
+          value={draft.shortDescription}
+          maxLength={shortMax}
+          onChange={(e) => onChange("shortDescription", e.target.value)}
+          className={`${inputClass} min-h-20`}
+        />
+        <p className="mt-1 text-[11px] text-steel">{draft.shortDescription.length} / {shortMax}</p>
       </Field>
       <Field label="Description" htmlFor="ws-desc">
-        <textarea id="ws-desc" value={draft.description} onChange={(e) => onChange("description", e.target.value)} className={`${inputClass} min-h-40`} />
+        <textarea
+          id="ws-desc"
+          value={draft.description}
+          onChange={(e) => onChange("description", e.target.value)}
+          className={`${inputClass} min-h-40`}
+        />
+        <p className="mt-1 text-[11px] text-steel">Plain text or a small allowed HTML subset. Scripts and unsafe markup are stripped on save.</p>
       </Field>
-      {selling?.keyBenefits.length ? (
-        <div>
-          <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Key benefits</p>
-          <ul className="list-disc pl-5 text-[13px]">{selling.keyBenefits.map((item) => <li key={item}>{item}</li>)}</ul>
-        </div>
-      ) : null}
-      {selling?.features.length ? (
-        <div>
-          <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Features</p>
-          <ul className="list-disc pl-5 text-[13px]">{selling.features.map((item) => <li key={item}>{item}</li>)}</ul>
-        </div>
-      ) : null}
-      {selling?.applications.length ? (
-        <div>
-          <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Applications</p>
-          <ul className="list-disc pl-5 text-[13px]">{selling.applications.map((item) => <li key={item}>{item}</li>)}</ul>
-        </div>
-      ) : null}
-      {selling?.directions ? <p className="text-[13px]"><span className="font-semibold">Directions. </span>{selling.directions}</p> : null}
-      {selling?.warnings ? <p className="text-[13px]"><span className="font-semibold">Warnings. </span>{selling.warnings}</p> : null}
+      <div>
+        <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Key benefits</p>
+        <EditableStringList
+          value={draft.keyBenefits}
+          onChange={(keyBenefits) => onChange("keyBenefits", keyBenefits)}
+          addLabel="+ Add benefit"
+          placeholder="Customer outcome"
+          emptyLabel="No key benefits yet."
+        />
+      </div>
+      <div>
+        <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Features</p>
+        <EditableStringList
+          value={draft.features}
+          onChange={(features) => onChange("features", features)}
+          addLabel="+ Add feature"
+          placeholder="Product characteristic"
+          emptyLabel="No features yet."
+        />
+      </div>
+      <div>
+        <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Applications</p>
+        <EditableStringList
+          value={draft.applications}
+          onChange={(applications) => onChange("applications", applications)}
+          addLabel="+ Add application"
+          placeholder="Suitable for…"
+          compact
+          emptyLabel="No applications yet."
+        />
+      </div>
+      <Field label="Directions" htmlFor="ws-directions">
+        <textarea
+          id="ws-directions"
+          value={draft.directions}
+          onChange={(e) => onChange("directions", e.target.value)}
+          className={`${inputClass} min-h-28`}
+        />
+      </Field>
+      <Field label="Warnings / important information" htmlFor="ws-warnings">
+        <textarea
+          id="ws-warnings"
+          value={draft.warnings}
+          onChange={(e) => onChange("warnings", e.target.value)}
+          className={`${inputClass} min-h-24`}
+        />
+        <p className="mt-1 text-[11px] text-steel">Leave blank to hide this section on the public product page.</p>
+      </Field>
       <div>
         <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Specifications</p>
+        <div className="mb-2 hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem] gap-2 text-[11px] font-semibold uppercase tracking-wide text-steel sm:grid">
+          <span>Name</span>
+          <span>Value</span>
+          <span className="sr-only">Remove</span>
+        </div>
         {draft.specifications.map((row, i) => (
-          <div key={i} className="mb-2 grid grid-cols-2 gap-2">
-            <input value={row.name} placeholder="Name" className={inputClass} onChange={(e) => onSpecsChange(draft.specifications.map((s, idx) => idx === i ? { ...s, name: e.target.value } : s))} />
-            <input value={row.value} placeholder="Value" className={inputClass} onChange={(e) => onSpecsChange(draft.specifications.map((s, idx) => idx === i ? { ...s, value: e.target.value } : s))} />
+          <div key={i} className="mb-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem] gap-2">
+            <input
+              value={row.name}
+              placeholder="Name"
+              aria-label={`Specification ${i + 1} name`}
+              className={inputClass}
+              onChange={(e) =>
+                onChange(
+                  "specifications",
+                  draft.specifications.map((s, idx) => (idx === i ? { ...s, name: e.target.value } : s)),
+                )
+              }
+            />
+            <input
+              value={row.value}
+              placeholder="Value"
+              aria-label={`Specification ${i + 1} value`}
+              className={inputClass}
+              onChange={(e) =>
+                onChange(
+                  "specifications",
+                  draft.specifications.map((s, idx) => (idx === i ? { ...s, value: e.target.value } : s)),
+                )
+              }
+            />
+            <button
+              type="button"
+              className="grid size-9 place-items-center text-steel hover:text-bad"
+              aria-label={`Remove specification ${i + 1}`}
+              onClick={() => {
+                const next = draft.specifications.filter((_, idx) => idx !== i);
+                onChange("specifications", next.length ? next : [{ name: "", value: "" }]);
+              }}
+            >
+              ×
+            </button>
           </div>
         ))}
-        <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => onSpecsChange([...draft.specifications, { name: "", value: "" }])}>Add specification</button>
+        <button
+          type="button"
+          className="text-[12px] font-semibold text-primary"
+          onClick={() => onChange("specifications", [...draft.specifications, { name: "", value: "" }])}
+        >
+          + Add specification
+        </button>
       </div>
     </div>
   );

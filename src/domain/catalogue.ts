@@ -135,6 +135,15 @@ export const productWorkspaceSchema = z.object({
   shortDescription: z.string().trim().max(500).optional().nullable(),
   description: z.string().trim().max(20000).optional().nullable(),
   specifications: z.array(productSpecSchema).max(40).optional(),
+  selling: z
+    .object({
+      keyBenefits: z.array(z.string().max(240)).max(40).optional(),
+      features: z.array(z.string().max(240)).max(40).optional(),
+      applications: z.array(z.string().max(240)).max(40).optional(),
+      directions: z.string().max(4000).optional().nullable(),
+      warnings: z.string().max(4000).optional().nullable(),
+    })
+    .optional(),
   status: z.enum(PRODUCT_STATUSES).optional(),
   isTradeVisible: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
