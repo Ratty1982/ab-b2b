@@ -32,6 +32,11 @@ function ImportJobPage() {
       return;
     }
     setJob(r.data);
+    if (r.data.status === "UPLOADED") {
+      const previewed = await previewProductImportFn({ data: { id } });
+      if (previewed.ok) setJob(previewed.data);
+      else toast.error(previewed.error);
+    }
   }, [id]);
 
   useEffect(() => { void load(); }, [load]);
@@ -156,7 +161,7 @@ function ImportJobPage() {
         {job.status !== "APPLIED" ? (
           <button
             type="button"
-            disabled={confirming || !job.summary}
+            disabled={confirming || job.status === "UPLOADED"}
             className="h-11 rounded-md bg-primary px-6 text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
             onClick={() => {
               void (async () => {

@@ -66,6 +66,7 @@ import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
+import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -353,6 +354,12 @@ const AdminContentSlugPreviewRoute = AdminContentSlugPreviewRouteImport.update({
   path: '/preview',
   getParentRoute: () => AdminContentSlugRoute,
 } as any)
+const AdminProductsImportsIndexRoute =
+  AdminProductsImportsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AdminProductsImportsRoute,
+  } as any)
 const AdminProductsImportsIdRoute = AdminProductsImportsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -418,6 +425,7 @@ export interface FileRoutesByFullPath {
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -457,7 +465,6 @@ export interface FileRoutesByTo {
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
-  '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
@@ -472,6 +479,7 @@ export interface FileRoutesByTo {
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/admin/products/imports': typeof AdminProductsImportsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -533,6 +541,7 @@ export interface FileRoutesById {
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -595,6 +604,7 @@ export interface FileRouteTypes {
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
+    | '/admin/products/imports/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -634,7 +644,6 @@ export interface FileRouteTypes {
     | '/admin/content/media'
     | '/admin/customers/$id'
     | '/admin/products/$id'
-    | '/admin/products/imports'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/products/category/$slug'
@@ -649,6 +658,7 @@ export interface FileRouteTypes {
     | '/sales/quotes'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
+    | '/admin/products/imports'
   id:
     | '__root__'
     | '/'
@@ -709,6 +719,7 @@ export interface FileRouteTypes {
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
+    | '/admin/products/imports/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1137,6 +1148,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminContentSlugPreviewRouteImport
       parentRoute: typeof AdminContentSlugRoute
     }
+    '/admin/products/imports/': {
+      id: '/admin/products/imports/'
+      path: '/'
+      fullPath: '/admin/products/imports/'
+      preLoaderRoute: typeof AdminProductsImportsIndexRouteImport
+      parentRoute: typeof AdminProductsImportsRoute
+    }
     '/admin/products/imports/$id': {
       id: '/admin/products/imports/$id'
       path: '/$id'
@@ -1176,10 +1194,12 @@ const AdminContentRouteWithChildren = AdminContentRoute._addFileChildren(
 
 interface AdminProductsImportsRouteChildren {
   AdminProductsImportsIdRoute: typeof AdminProductsImportsIdRoute
+  AdminProductsImportsIndexRoute: typeof AdminProductsImportsIndexRoute
 }
 
 const AdminProductsImportsRouteChildren: AdminProductsImportsRouteChildren = {
   AdminProductsImportsIdRoute: AdminProductsImportsIdRoute,
+  AdminProductsImportsIndexRoute: AdminProductsImportsIndexRoute,
 }
 
 const AdminProductsImportsRouteWithChildren =

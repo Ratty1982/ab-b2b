@@ -172,7 +172,7 @@ export async function uploadProductImport(
       } satisfies JobPreview as unknown as Prisma.InputJsonValue,
     },
   });
-  return getImportJob(actorUserId, job.id);
+  return previewImport(actorUserId, job.id);
 }
 
 export async function updateImportMapping(
