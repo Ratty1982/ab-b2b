@@ -15,6 +15,8 @@ import {
   saveCatalogueProductVariantFn,
   updateCatalogueProductFn,
 } from "@/server/phase2/fns";
+import { ImportProductJsonButton } from "@/components/catalogue/ImportProductJsonDrawer";
+import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -254,7 +256,16 @@ function ProductWorkspace() {
           <OverviewForm draft={draft} brands={brands} categories={categories} onChange={updateDraft} />
         </div>
         <div hidden={tab !== "Content"}>
-          <ContentForm draft={draft} onChange={updateDraft} onSpecsChange={(specifications) => updateDraft("specifications", specifications)} />
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[13px] text-steel">Paste researched Product Content JSON to preview a merge. Nothing is written until you apply.</p>
+            <ImportProductJsonButton productId={product.id} sku={draft.sku || product.sku} onApplied={() => load()} />
+          </div>
+          <ContentForm
+            draft={draft}
+            selling={product.selling}
+            onChange={updateDraft}
+            onSpecsChange={(specifications) => updateDraft("specifications", specifications)}
+          />
         </div>
         <div hidden={tab !== "Images"}>
           <ImagesForm product={product} onSaved={refreshMedia} />
@@ -336,10 +347,12 @@ function OverviewForm({
 
 function ContentForm({
   draft,
+  selling,
   onChange,
   onSpecsChange,
 }: {
   draft: ProductDraft;
+  selling: Workspace["selling"];
   onChange: <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => void;
   onSpecsChange: (rows: Array<{ name: string; value: string }>) => void;
 }) {
@@ -351,6 +364,26 @@ function ContentForm({
       <Field label="Description" htmlFor="ws-desc">
         <textarea id="ws-desc" value={draft.description} onChange={(e) => onChange("description", e.target.value)} className={`${inputClass} min-h-40`} />
       </Field>
+      {selling?.keyBenefits.length ? (
+        <div>
+          <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Key benefits</p>
+          <ul className="list-disc pl-5 text-[13px]">{selling.keyBenefits.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      ) : null}
+      {selling?.features.length ? (
+        <div>
+          <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Features</p>
+          <ul className="list-disc pl-5 text-[13px]">{selling.features.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      ) : null}
+      {selling?.applications.length ? (
+        <div>
+          <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Applications</p>
+          <ul className="list-disc pl-5 text-[13px]">{selling.applications.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      ) : null}
+      {selling?.directions ? <p className="text-[13px]"><span className="font-semibold">Directions. </span>{selling.directions}</p> : null}
+      {selling?.warnings ? <p className="text-[13px]"><span className="font-semibold">Warnings. </span>{selling.warnings}</p> : null}
       <div>
         <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Specifications</p>
         {draft.specifications.map((row, i) => (
@@ -537,8 +570,10 @@ function ActivityPanel({ product }: { product: Workspace }) {
     <ul className="max-w-xl divide-y divide-border rounded-lg border border-border">
       {product.activity.map((event) => (
         <li key={event.id} className="px-3 py-2 text-[13px]">
-          <div className="font-medium">{event.action}</div>
-          <div className="num text-[12px] text-steel">{new Date(event.at).toLocaleString("en-GB")}</div>
+          <div className="font-medium">{catalogueActivityLabel(event.action)}</div>
+          <div className="num text-[12px] text-steel">
+            {[event.actorName, new Date(event.at).toLocaleString("en-GB")].filter(Boolean).join(" · ")}
+          </div>
         </li>
       ))}
     </ul>

@@ -637,6 +637,148 @@ describe("public catalogue navigation and cards", () => {
   });
 });
 
+describe("per-product content JSON importer", () => {
+  it("applies a merge, preserves omitted/null fields, sanitises HTML, and writes an audit event", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { getProductWorkspace } = await import("@/server/catalogue/products");
+    const { applyProductJsonImport, previewProductJsonImport } = await import(
+      "@/server/catalogue/product-content-json"
+    );
+    const sku = `JSON-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Glass Cleaner 1ltr",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 4.6,
+      rrp: 10.99,
+      packQty: 1,
+      caseQty: 6,
+      description: "Keep me if omitted",
+    });
+    await updateProductWorkspaceSafe(saved.id);
+    await prisma.product.update({
+      where: { id: saved.id },
+      data: {
+        specifications: {
+          rows: [],
+          selling: { keyBenefits: ["Existing benefit"], features: [], applications: [], directions: null, warnings: null },
+          provenance: { manufacturerUrl: null, supplierUrl: null, notes: "keep me" },
+          seoKeywords: [],
+        },
+      },
+    });
+    const before = await getProductWorkspace(adminId, saved.id);
+    const inventoryBefore = await prisma.inventory.findMany({ where: { variantId: before.defaultVariantId ?? "__none__" } });
+    const breaksBefore = await prisma.quantityBreak.findMany({ where: { variantId: before.defaultVariantId ?? "__none__" } });
+    const customerPricesBefore = await prisma.customerPrice.count({ where: { variantId: before.defaultVariantId ?? "__none__" } });
+
+    const preview = await previewProductJsonImport(adminId, {
+      productId: saved.id,
+      jsonText: JSON.stringify({
+        schemaVersion: "1.0",
+        identity: { sku, name: "Power Maxed Glass Cleaner 1 Litre", brand: "power maxed" },
+        content: {
+          shortDescription: "Ready-to-use glass cleaner.",
+          description: `<p>Updated</p><script>alert(1)</script>`,
+          keyBenefits: ["Streak-free"],
+          features: [],
+        },
+        commercial: { rrp: 11.49 },
+        source: { notes: null },
+      }),
+    });
+    expect(preview.canApply).toBe(true);
+    expect(preview.skuMatched).toBe(true);
+
+    const applied = await applyProductJsonImport(adminId, {
+      productId: saved.id,
+      jsonText: JSON.stringify({
+        schemaVersion: "1.0",
+        identity: { sku, name: "Power Maxed Glass Cleaner 1 Litre", brand: "power maxed" },
+        content: {
+          shortDescription: "Ready-to-use glass cleaner.",
+          description: `<p>Updated</p><script>alert(1)</script>`,
+          keyBenefits: ["Streak-free"],
+          features: [],
+        },
+        commercial: { rrp: 11.49 },
+        source: { notes: null },
+      }),
+    });
+    expect(applied.errorCount).toBe(0);
+
+    const after = await getProductWorkspace(adminId, saved.id);
+    expect(after.name).toBe("Power Maxed Glass Cleaner 1 Litre");
+    expect(after.shortDescription).toBe("Ready-to-use glass cleaner.");
+    expect(after.description).toContain("<p>Updated</p>");
+    expect(after.description).not.toMatch(/script/i);
+    expect(after.selling.keyBenefits).toEqual(["Streak-free"]);
+    expect(after.rrp).toBe(11.49);
+    expect(after.tradePrice).toBe(4.6);
+    expect(after.packQty).toBe(1);
+    expect(after.caseQty).toBe(6);
+    expect(after.provenance.notes).toBe("keep me");
+
+    const inventoryAfter = await prisma.inventory.findMany({ where: { variantId: after.defaultVariantId ?? "__none__" } });
+    expect(inventoryAfter).toEqual(inventoryBefore);
+    const breaksAfter = await prisma.quantityBreak.findMany({ where: { variantId: after.defaultVariantId ?? "__none__" } });
+    expect(breaksAfter.map((row) => row.id).sort()).toEqual(breaksBefore.map((row) => row.id).sort());
+    const customerPricesAfter = await prisma.customerPrice.count({ where: { variantId: after.defaultVariantId ?? "__none__" } });
+    expect(customerPricesAfter).toBe(customerPricesBefore);
+
+    const mediaCount = await prisma.productMedia.count({ where: { productId: saved.id } });
+    expect(mediaCount).toBe(before.media.length);
+
+    expect(after.activity.some((event) => event.action === "catalogue.product_json_import")).toBe(true);
+  });
+
+  it("blocks SKU mismatch, unknown brand, unknown category, and unauthorised users", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { applyProductJsonImport, previewProductJsonImport } = await import(
+      "@/server/catalogue/product-content-json"
+    );
+    const sku = `JSONB-${Date.now()}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "JSON block fixture",
+      brand: "Steel Seal",
+      category: "Braking",
+      trade: 1,
+      rrp: 2,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await updateProductWorkspaceSafe(saved.id);
+
+    const mismatch = await previewProductJsonImport(adminId, {
+      productId: saved.id,
+      jsonText: JSON.stringify({ schemaVersion: "1.0", identity: { sku: "OTHER-SKU", name: "Nope" } }),
+    });
+    expect(mismatch.canApply).toBe(false);
+    expect(mismatch.issues.some((i) => i.code === "SKU_MISMATCH")).toBe(true);
+
+    const brand = await previewProductJsonImport(adminId, {
+      productId: saved.id,
+      jsonText: JSON.stringify({ schemaVersion: "1.0", identity: { sku, brand: "Not A Real Brand" } }),
+    });
+    expect(brand.issues.some((i) => i.code === "UNKNOWN_BRAND")).toBe(true);
+
+    const category = await previewProductJsonImport(adminId, {
+      productId: saved.id,
+      jsonText: JSON.stringify({ schemaVersion: "1.0", identity: { sku, category: "No Such Category" } }),
+    });
+    expect(category.issues.some((i) => i.code === "UNKNOWN_CATEGORY")).toBe(true);
+
+    await expect(
+      applyProductJsonImport(salesRepUserId, {
+        productId: saved.id,
+        jsonText: JSON.stringify({ schemaVersion: "1.0", identity: { sku, name: "Hijack" } }),
+      }),
+    ).rejects.toBeInstanceOf((await import("@/server/rbac/guards")).AuthError);
+  });
+});
+
 async function updateProductWorkspaceSafe(id: string) {
   const { updateProductWorkspace } = await import("@/server/catalogue/products");
   await updateProductWorkspace(adminId, { id, status: "ACTIVE", isTradeVisible: true });

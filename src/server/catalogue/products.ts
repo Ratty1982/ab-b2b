@@ -11,6 +11,7 @@ import {
   slugifyCatalogue,
   type ProductStatus,
 } from "@/domain/catalogue";
+import { parseSpecificationsDocument, serializeSpecificationsDocument } from "@/domain/product-specifications";
 import { publicAvailabilityFromQty, type PublicAvailability } from "@/domain/availability";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
@@ -247,16 +248,7 @@ export async function createProduct(actorUserId: string, raw: unknown) {
 }
 
 function specsFromJson(value: unknown): Array<{ name: string; value: string }> {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((row) => {
-      if (!row || typeof row !== "object") return null;
-      const name = "name" in row ? String(row.name) : "";
-      const val = "value" in row ? String(row.value) : "";
-      if (!name || !val) return null;
-      return { name, value: val };
-    })
-    .filter((row): row is { name: string; value: string } => Boolean(row));
+  return parseSpecificationsDocument(value).rows;
 }
 
 export async function getProductWorkspace(actorUserId: string, id: string) {
@@ -277,6 +269,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
   });
   if (!product) throw new AuthError("Product not found", "NOT_FOUND", 404);
   const variant = defaultVariant(product.variants);
+  const specDoc = parseSpecificationsDocument(product.specifications);
   const activity = await prisma.auditEvent.findMany({
     where: {
       OR: [{ entityId: product.id }, { entityId: variant?.id ?? "__none__" }],
@@ -293,6 +286,11 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
       after: true,
     },
   });
+  const actorIds = [...new Set(activity.map((event) => event.actorUserId).filter((id): id is string => Boolean(id)))];
+  const actors = actorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true, email: true } })
+    : [];
+  const actorName = new Map(actors.map((user) => [user.id, user.name || user.email]));
   return {
     id: product.id,
     name: product.name,
@@ -309,7 +307,9 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
     isNew: product.isNew,
     shortDescription: product.shortDescription,
     description: product.description,
-    specifications: specsFromJson(product.specifications),
+    specifications: specDoc.rows,
+    selling: specDoc.selling,
+    provenance: specDoc.provenance,
     metaTitle: product.metaTitle,
     metaDescription: product.metaDescription,
     sku: variant?.sku ?? "",
@@ -360,6 +360,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
       id: event.id,
       action: event.action,
       at: event.createdAt.toISOString(),
+      actorName: event.actorUserId ? actorName.get(event.actorUserId) ?? null : null,
     })),
   };
 }
@@ -394,7 +395,14 @@ export async function updateProductWorkspace(actorUserId: string, raw: unknown) 
         ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
         ...(input.shortDescription !== undefined ? { shortDescription: input.shortDescription } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.specifications !== undefined ? { specifications: input.specifications } : {}),
+        ...(input.specifications !== undefined
+          ? {
+              specifications: serializeSpecificationsDocument({
+                ...parseSpecificationsDocument(existing.specifications),
+                rows: input.specifications,
+              }),
+            }
+          : {}),
         ...(input.status !== undefined ? { status: input.status, isActive: nextActive } : {}),
         ...(input.isTradeVisible !== undefined ? { isTradeVisible: input.isTradeVisible } : {}),
         ...(input.isFeatured !== undefined ? { isFeatured: input.isFeatured } : {}),
@@ -852,6 +860,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     description: product.description,
     shortDescription: product.shortDescription,
     specifications: specsFromJson(product.specifications),
+    selling: parseSpecificationsDocument(product.specifications).selling,
     gallery: product.media.map((m) => ({
       src: cmsMediaPublicPath(m.mediaId),
       alt: m.altText || product.name,

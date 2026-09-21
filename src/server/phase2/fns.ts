@@ -10,6 +10,7 @@ import * as cms from "@/server/cms/service";
 import * as cmsMedia from "@/server/cms/media";
 import * as catalogue from "@/server/catalogue/service";
 import * as catalogueProducts from "@/server/catalogue/products";
+import * as productContentJson from "@/server/catalogue/product-content-json";
 import * as catalogueImport from "@/server/catalogue/import";
 import * as staffUsers from "@/server/users/service";
 
@@ -587,6 +588,30 @@ export const updateCatalogueProductFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       const result = await catalogueProducts.updateProductWorkspace(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewProductContentJsonFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { productId: string; jsonText: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await productContentJson.previewProductJsonImport(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const applyProductContentJsonFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { productId: string; jsonText: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await productContentJson.applyProductJsonImport(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);
