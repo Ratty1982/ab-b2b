@@ -1,13 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { CMS_IMAGE_FITS, CMS_IMAGE_FIT_LABELS, type CmsSectionTypeKey } from "@/domain/cms";
 import {
+  DEFAULT_FEATURED_BRAND_CARDS,
   DEFAULT_FEATURED_BRANDS_INTRO,
   featuredBrandsIntro,
   featuredBrandsSyncFields,
   hydrateFeaturedBrandCards,
   type FeaturedBrandCard,
 } from "@/domain/featured-brands";
-import { brands } from "@/lib/data";
 import { cmsMediaDisplaySrc, type BrandLogoRef } from "@/lib/cms-media";
 import { mediaContainClass } from "@/lib/media-presentation";
 import { type MediaUploadUsage } from "@/domain/media-usage";
@@ -259,10 +259,14 @@ export function SectionSettings({
   type,
   config,
   onChange,
+  catalogueBrands,
+  catalogueCategories,
 }: {
   type: CmsSectionTypeKey;
   config: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
+  catalogueBrands?: Array<{ slug: string; name: string }>;
+  catalogueCategories?: Array<{ slug: string; name: string }>;
 }) {
   if (type === "HERO") {
     return (
@@ -317,6 +321,28 @@ export function SectionSettings({
               value={str(config, "secondaryCtaHref")}
               onChange={(e) => onChange("secondaryCtaHref", e.target.value)}
               className={inputClass}
+            />
+          </Field>
+          <Field label="Login CTA label">
+            <input
+              value={str(config, "loginCtaLabel", "Trade Login")}
+              onChange={(e) => onChange("loginCtaLabel", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Login CTA URL">
+            <input
+              value={str(config, "loginCtaHref", "/login")}
+              onChange={(e) => onChange("loginCtaHref", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Hero product callout SKU">
+            <input
+              value={str(config, "calloutSku")}
+              onChange={(e) => onChange("calloutSku", e.target.value)}
+              className={inputClass}
+              placeholder="Leave blank to hide the callout"
             />
           </Field>
         </Group>
@@ -412,7 +438,10 @@ export function SectionSettings({
   }
 
   if (type === "FEATURED_BRANDS") {
-    const catalogue = brands.map((b) => ({ slug: b.slug, name: b.name }));
+    const catalogue =
+      catalogueBrands?.length
+        ? catalogueBrands
+        : DEFAULT_FEATURED_BRAND_CARDS.map((card) => ({ slug: card.slug, name: card.heading }));
     const cards = hydrateFeaturedBrandCards(config, catalogue);
     function persistCards(next: FeaturedBrandCard[]) {
       const synced = featuredBrandsSyncFields(next);
@@ -427,6 +456,13 @@ export function SectionSettings({
     return (
       <div className="grid gap-3">
         <Group title="Section">
+          <Field label="Eyebrow">
+            <input
+              value={str(config, "eyebrow", "Our brands")}
+              onChange={(e) => onChange("eyebrow", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
           <Field label="Section heading">
             <input
               value={str(config, "heading")}
@@ -542,6 +578,13 @@ export function SectionSettings({
                 className={inputClass}
               />
             </Field>
+            <Field label="Eyebrow">
+              <input
+                value={str(config, "eyebrow")}
+                onChange={(e) => onChange("eyebrow", e.target.value)}
+                className={inputClass}
+              />
+            </Field>
             <Field label="Supporting text">
               <textarea
                 rows={3}
@@ -564,6 +607,21 @@ export function SectionSettings({
                 className={inputClass}
               />
             </Field>
+            <Field label="Secondary CTA label">
+              <input
+                value={str(config, "secondaryCtaLabel")}
+                onChange={(e) => onChange("secondaryCtaLabel", e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Secondary CTA destination">
+              <input
+                value={str(config, "secondaryCtaHref")}
+                onChange={(e) => onChange("secondaryCtaHref", e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <MediaField config={config} onChange={onChange} />
           </>
         ) : null}
         {type === "BANNER" ? (
@@ -606,55 +664,54 @@ export function SectionSettings({
   }
 
   if (type === "CATEGORY_GRID") {
-    const cats = Array.isArray(config["categories"])
-      ? (config["categories"] as Array<{ name: string; href: string; imageAlt?: string }>)
-      : [];
+    const selected = Array.isArray(config["categorySlugs"]) ? (config["categorySlugs"] as string[]) : [];
+    const options = catalogueCategories?.length ? catalogueCategories : [];
     return (
       <div className="grid gap-3">
+        <Field label="Eyebrow">
+          <input value={str(config, "eyebrow")} onChange={(e) => onChange("eyebrow", e.target.value)} className={inputClass} />
+        </Field>
         <Field label="Heading">
           <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
         </Field>
-        {cats.map((cat, i) => (
-          <div key={i} className="grid gap-2 rounded-md border border-border p-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[12px] font-semibold uppercase tracking-wide text-steel">Category {i + 1}</div>
-              <button
-                type="button"
-                className="text-[12px] font-semibold text-bad"
-                onClick={() => onChange("categories", cats.filter((_, idx) => idx !== i))}
-              >
-                Delete
-              </button>
-            </div>
-            <Field label="Name">
+        <p className="text-[12px] text-steel">
+          Select public catalogue categories. Leave none selected to show the first active root categories.
+        </p>
+        {options.map((category) => {
+          const on = selected.includes(category.slug);
+          return (
+            <label key={category.slug} className="flex items-center gap-2 text-[13px]">
               <input
-                value={cat.name}
-                onChange={(e) => {
-                  const next = cats.map((row, idx) => (idx === i ? { ...row, name: e.target.value } : row));
-                  onChange("categories", next);
-                }}
-                className={inputClass}
+                type="checkbox"
+                checked={on}
+                onChange={() =>
+                  onChange(
+                    "categorySlugs",
+                    on ? selected.filter((slug) => slug !== category.slug) : [...selected, category.slug],
+                  )
+                }
               />
-            </Field>
-            <Field label="Link">
-              <input
-                value={cat.href}
-                onChange={(e) => {
-                  const next = cats.map((row, idx) => (idx === i ? { ...row, href: e.target.value } : row));
-                  onChange("categories", next);
-                }}
-                className={inputClass}
-              />
-            </Field>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="h-9 rounded-md border border-border text-[12px] font-semibold"
-          onClick={() => onChange("categories", [...cats, { name: "Category", href: "/products", imageAlt: "" }])}
-        >
-          Add category
-        </button>
+              {category.name}
+              <span className="text-[11px] text-steel">/{category.slug}</span>
+            </label>
+          );
+        })}
+        <Field label="Category slugs (one per line, controls order)">
+          <textarea
+            rows={5}
+            value={selected.join("\n")}
+            onChange={(e) =>
+              onChange(
+                "categorySlugs",
+                e.target.value
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              )
+            }
+            className={inputClass}
+          />
+        </Field>
         <SelectField label="Spacing" value={str(config, "spacing", "standard")} options={SPACINGS} onChange={(v) => onChange("spacing", v)} />
       </div>
     );
@@ -664,11 +721,27 @@ export function SectionSettings({
     const items = Array.isArray(config["items"])
       ? (config["items"] as Array<{ title: string; body: string; icon?: string }>)
       : [];
+    const types = Array.isArray(config["customerTypes"])
+      ? (config["customerTypes"] as Array<{ name: string; detail: string }>)
+      : [];
     return (
       <div className="grid gap-3">
+        <Field label="Eyebrow">
+          <input value={str(config, "eyebrow")} onChange={(e) => onChange("eyebrow", e.target.value)} className={inputClass} />
+        </Field>
         <Field label="Heading">
           <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
         </Field>
+        <Field label="Supporting copy">
+          <textarea rows={3} value={str(config, "supporting")} onChange={(e) => onChange("supporting", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="CTA label">
+          <input value={str(config, "ctaLabel")} onChange={(e) => onChange("ctaLabel", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="CTA destination">
+          <input value={str(config, "ctaHref")} onChange={(e) => onChange("ctaHref", e.target.value)} className={inputClass} />
+        </Field>
+        <MediaField config={config} onChange={onChange} />
         {items.map((item, i) => (
           <div key={i} className="grid gap-2 rounded-md border border-border p-2">
             <Field label={`Benefit ${i + 1}`}>
@@ -692,15 +765,48 @@ export function SectionSettings({
             />
           </div>
         ))}
+        <Group title="Trade customer types">
+          {types.map((item, i) => (
+            <div key={i} className="grid gap-2 rounded-md border border-border p-2">
+              <input
+                value={item.name}
+                onChange={(e) => {
+                  const next = types.map((row, idx) => (idx === i ? { ...row, name: e.target.value } : row));
+                  onChange("customerTypes", next);
+                }}
+                className={inputClass}
+              />
+              <textarea
+                rows={2}
+                value={item.detail}
+                onChange={(e) => {
+                  const next = types.map((row, idx) => (idx === i ? { ...row, detail: e.target.value } : row));
+                  onChange("customerTypes", next);
+                }}
+                className={inputClass}
+              />
+            </div>
+          ))}
+          <button
+            type="button"
+            className="h-9 rounded-md border border-border text-[12px] font-semibold"
+            onClick={() => onChange("customerTypes", [...types, { name: "Customer type", detail: "" }])}
+          >
+            Add customer type
+          </button>
+        </Group>
         <SelectField label="Spacing" value={str(config, "spacing", "standard")} options={SPACINGS} onChange={(v) => onChange("spacing", v)} />
       </div>
     );
   }
 
-  if (type === "FEATURED_PRODUCTS") {
+  if (type === "FEATURED_PRODUCTS" || type === "POPULAR_PRODUCTS") {
     const skus = Array.isArray(config["productSkus"]) ? (config["productSkus"] as string[]) : [];
     return (
       <div className="grid gap-3">
+        <Field label="Eyebrow">
+          <input value={str(config, "eyebrow")} onChange={(e) => onChange("eyebrow", e.target.value)} className={inputClass} />
+        </Field>
         <Field label="Heading">
           <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
         </Field>
@@ -723,24 +829,161 @@ export function SectionSettings({
             className={inputClass}
           />
         </Field>
-        <SelectField
-          label="Layout"
-          value={str(config, "layout", "grid")}
-          options={["grid", "carousel"]}
-          onChange={(v) => onChange("layout", v)}
-        />
+        {type === "FEATURED_PRODUCTS" ? (
+          <SelectField
+            label="Layout"
+            value={str(config, "layout", "grid")}
+            options={["grid", "carousel"]}
+            onChange={(v) => onChange("layout", v)}
+          />
+        ) : (
+          <p className="text-[12px] text-steel">
+            These are editor-selected popular lines, not a live sales ranking. The section is hidden when no SKUs
+            resolve.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (type === "NEW_PRODUCTS") {
+    return (
+      <div className="grid gap-3">
+        <Field label="Eyebrow">
+          <input value={str(config, "eyebrow")} onChange={(e) => onChange("eyebrow", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Heading">
+          <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="How many lines">
+          <input
+            type="number"
+            min={1}
+            max={12}
+            value={num(config, "limit", 3)}
+            onChange={(e) => onChange("limit", Number(e.target.value) || 3)}
+            className={inputClass}
+          />
+        </Field>
+      </div>
+    );
+  }
+
+  if (type === "RESOURCES" || type === "NEWS") {
+    const items = Array.isArray(config["items"]) ? (config["items"] as Array<Record<string, string>>) : [];
+    return (
+      <div className="grid gap-3">
+        <Field label="Eyebrow">
+          <input value={str(config, "eyebrow")} onChange={(e) => onChange("eyebrow", e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Heading">
+          <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
+        </Field>
+        {items.map((item, i) => (
+          <div key={i} className="grid gap-2 rounded-md border border-border p-2">
+            {type === "RESOURCES" ? (
+              <>
+                <input
+                  value={item.label ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, label: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="Label"
+                />
+                <input
+                  value={item.meta ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, meta: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="Meta"
+                />
+                <input
+                  value={item.href ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, href: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="/resources"
+                />
+              </>
+            ) : (
+              <>
+                <input
+                  value={item.title ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, title: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="Title"
+                />
+                <input
+                  value={item.kind ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, kind: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="Kind"
+                />
+                <input
+                  value={item.date ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, date: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="Date"
+                />
+                <textarea
+                  rows={2}
+                  value={item.summary ?? ""}
+                  onChange={(e) => {
+                    const next = items.map((row, idx) => (idx === i ? { ...row, summary: e.target.value } : row));
+                    onChange("items", next);
+                  }}
+                  className={inputClass}
+                  placeholder="Summary"
+                />
+              </>
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          className="h-9 rounded-md border border-border text-[12px] font-semibold"
+          onClick={() =>
+            onChange(
+              "items",
+              type === "RESOURCES"
+                ? [...items, { label: "Resource", meta: "", href: "/resources" }]
+                : [...items, { kind: "Update", date: "", title: "Notice", summary: "" }],
+            )
+          }
+        >
+          Add item
+        </button>
       </div>
     );
   }
 
   if (type === "BRAND_LOGO_STRIP") {
     const selected = Array.isArray(config["brandSlugs"]) ? (config["brandSlugs"] as string[]) : [];
+    const options =
+      catalogueBrands?.length
+        ? catalogueBrands
+        : DEFAULT_FEATURED_BRAND_CARDS.map((card) => ({ slug: card.slug, name: card.heading }));
     return (
       <div className="grid gap-3">
         <Field label="Heading">
           <input value={str(config, "heading")} onChange={(e) => onChange("heading", e.target.value)} className={inputClass} />
         </Field>
-        {brands.map((b) => {
+        {options.map((b) => {
           const on = selected.includes(b.slug);
           return (
             <label key={b.slug} className="flex items-center gap-2 text-[13px]">
@@ -756,6 +999,7 @@ export function SectionSettings({
       </div>
     );
   }
+
 
   return (
     <div className="grid gap-3">

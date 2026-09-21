@@ -27,6 +27,10 @@ export const SECTION_LIBRARY: Array<{
   { type: "FEATURED_BRANDS", name: "Featured Brands", description: "Brand cards with logos and blurbs" },
   { type: "CATEGORY_GRID", name: "Category Grid", description: "Shop-by-category tiles" },
   { type: "FEATURED_PRODUCTS", name: "Featured Products", description: "Highlight catalogue SKUs by code" },
+  { type: "NEW_PRODUCTS", name: "Recently Added", description: "Latest active catalogue lines" },
+  { type: "POPULAR_PRODUCTS", name: "Popular Trade Lines", description: "CMS-selected featured SKUs — not sales rank" },
+  { type: "RESOURCES", name: "Trade Resources", description: "Documentation and download links" },
+  { type: "NEWS", name: "Latest Updates", description: "Range updates and trade notices" },
   { type: "TEXT_IMAGE", name: "Text + Image", description: "Copy on the left, image on the right" },
   { type: "IMAGE_TEXT", name: "Image + Text", description: "Image on the left, copy on the right" },
   { type: "BENEFITS_GRID", name: "Benefits / Icon Grid", description: "Four reasons to trade with you" },
@@ -45,6 +49,11 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
         supporting: "Supporting copy",
         ctaLabel: "Open a Trade Account",
         ctaHref: "/register",
+        secondaryCtaLabel: "Explore Our Brands",
+        secondaryCtaHref: "/brands",
+        loginCtaLabel: "Trade Login",
+        loginCtaHref: "/login",
+        calloutSku: "",
         alignment: "left",
         contentPosition: "middle",
         variant: "split",
@@ -62,12 +71,16 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
       };
     case "TRADE_CTA":
       return {
+        eyebrow: "Open a trade account",
         headline: "Ready to trade?",
         supporting: "",
         ctaLabel: "Apply",
         ctaHref: "/register",
+        secondaryCtaLabel: "Trade Login",
+        secondaryCtaHref: "/login",
         variant: "dark",
         spacing: "standard",
+        media: { alt: "", fit: "fill", focalX: 50, focalY: 50 },
       };
     case "TEXT_IMAGE":
     case "IMAGE_TEXT":
@@ -86,24 +99,60 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
       return { text: "Announcement", tone: "brand", spacing: "compact" };
     case "BENEFITS_GRID":
       return {
-        heading: "Benefits",
-        items: [
-          { title: "Benefit", body: "Short supporting line", icon: "warehouse" },
-        ],
+        eyebrow: "Why Automotive Brands",
+        heading: "One trade account. Every brand.",
+        supporting: "",
+        ctaLabel: "See how it works",
+        ctaHref: "/why-automotive-brands",
+        items: [{ title: "Benefit", body: "Short supporting line", icon: "warehouse" }],
+        customerTypes: [],
         spacing: "standard",
+        media: { alt: "", fit: "fill", focalX: 50, focalY: 50 },
       };
     case "CATEGORY_GRID":
       return {
+        eyebrow: "Product categories",
         heading: "Categories",
-        categories: [{ name: "Category", href: "/products", imageAlt: "" }],
+        categorySlugs: [],
+        categories: [],
         spacing: "standard",
       };
     case "FEATURED_PRODUCTS":
       return {
+        eyebrow: "Featured ranges",
         heading: "Featured products",
         supporting: "",
         productSkus: [],
         layout: "grid",
+        spacing: "standard",
+      };
+    case "NEW_PRODUCTS":
+      return {
+        eyebrow: "New products",
+        heading: "Recently added lines",
+        limit: 3,
+        spacing: "standard",
+      };
+    case "POPULAR_PRODUCTS":
+      return {
+        eyebrow: "Popular trade lines",
+        heading: "Popular trade lines",
+        supporting: "",
+        productSkus: [],
+        spacing: "standard",
+      };
+    case "RESOURCES":
+      return {
+        eyebrow: "Trade resources",
+        heading: "Documentation your counter needs",
+        items: [{ label: "Trade catalogue", meta: "PDF", href: "/resources" }],
+        spacing: "standard",
+      };
+    case "NEWS":
+      return {
+        eyebrow: "Latest from Automotive Brands",
+        heading: "Range updates and trade notices",
+        items: [],
         spacing: "standard",
       };
     default:

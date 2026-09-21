@@ -8,7 +8,7 @@ import {
 export const DEFAULT_FEATURED_BRANDS_HEADING = "FIVE BRANDS. ONE SUPPLY PARTNER.";
 
 export const DEFAULT_FEATURED_BRANDS_INTRO =
-  "Trusted automotive brands, supplied to the trade from one place. From vehicle care and repair to accessories, power and child safety.";
+  "Trusted automotive brands, supplied to the trade from one place. From vehicle care and repair to accessories, lifestyle products and nursery seating.";
 
 export type FeaturedBrandCard = {
   slug: string;
@@ -40,21 +40,21 @@ export const DEFAULT_FEATURED_BRAND_CARDS: FeaturedBrandCard[] = [
   {
     slug: "street-rhino",
     heading: "Street Rhino",
-    description: "Vehicle accessories, security, lighting and practical solutions for cars, vans and 4x4s.",
+    description: "Vehicle accessories, maintenance, travel and leisure products for cars, vans and caravans.",
     href: "/brands/street-rhino",
     enabled: true,
   },
   {
     slug: "bramley-power",
     heading: "Bramley Power",
-    description: "Reliable batteries, charging and power solutions for automotive and leisure applications.",
+    description: "Practical home, office and lifestyle products designed to make everyday life easier.",
     href: "/brands/bramley-power",
     enabled: true,
   },
   {
     slug: "kidzmotion",
     heading: "KidZmotion",
-    description: "Child car seats, boosters and travel safety products for babies and children.",
+    description: "Comfortable nursing, maternity and nursery seating designed for parents and growing families.",
     href: "/brands/kidzmotion",
     enabled: true,
   },
@@ -249,6 +249,7 @@ export function attachFeaturedBrandLogos(
 export function defaultFeaturedBrandsConfig(): Record<string, unknown> {
   const cards = DEFAULT_FEATURED_BRAND_CARDS.map((card) => ({ ...card }));
   return {
+    eyebrow: "Our brands",
     heading: DEFAULT_FEATURED_BRANDS_HEADING,
     intro: DEFAULT_FEATURED_BRANDS_INTRO,
     supporting: "",

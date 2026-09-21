@@ -11,7 +11,7 @@ import {
   slugifyCatalogue,
   type ProductStatus,
 } from "@/domain/catalogue";
-import { cmsMediaPublicPath } from "@/lib/cms-media";
+import { publicAvailabilityFromQty, type PublicAvailability } from "@/domain/availability";
 import {
   moneyNumber,
   resolveDisplayPrice,
@@ -657,6 +657,7 @@ export type PublicProductCard = {
   imageSrc: string | null;
   rrp: number | null;
   price: DisplayPrice;
+  availability: PublicAvailability | null;
   isNew: boolean;
   isFeatured: boolean;
 };
@@ -670,12 +671,21 @@ function toPublicCard(
     isFeatured: boolean;
     brand: { name: string; slug: string };
     category: { name: string; slug: string; parent: { name: string } | null } | null;
-    variants: Array<{ sku: string; tradePrice: unknown; rrp: unknown; isDefault: boolean; createdAt: Date }>;
+    variants: Array<{
+      sku: string;
+      tradePrice: unknown;
+      rrp: unknown;
+      isDefault: boolean;
+      createdAt: Date;
+      inventory: Array<{ qtyOnHand: number }>;
+    }>;
     media: Array<{ mediaId: string; isPrimary: boolean }>;
   },
   viewer: PriceViewer,
 ): PublicProductCard {
   const variant = defaultVariant(row.variants);
+  const hasInv = Boolean(variant?.inventory.length);
+  const qty = hasInv ? variant!.inventory.reduce((sum, inv) => sum + inv.qtyOnHand, 0) : null;
   return {
     id: row.id,
     sku: variant?.sku ?? "",
@@ -692,6 +702,7 @@ function toPublicCard(
       tradePrice: variant?.tradePrice,
       rrp: variant?.rrp,
     }),
+    availability: publicAvailabilityFromQty(qty),
     isNew: row.isNew,
     isFeatured: row.isFeatured,
   };
@@ -700,7 +711,10 @@ function toPublicCard(
 const publicInclude = {
   brand: { select: { name: true, slug: true } },
   category: { select: { name: true, slug: true, parent: { select: { name: true } } } },
-  variants: { orderBy: [{ isDefault: "desc" as const }, { createdAt: "asc" as const }] },
+  variants: {
+    orderBy: [{ isDefault: "desc" as const }, { createdAt: "asc" as const }],
+    include: { inventory: { select: { qtyOnHand: true } } },
+  },
   media: { orderBy: [{ isPrimary: "desc" as const }, { sortOrder: "asc" as const }], take: 8 },
 } satisfies Prisma.ProductInclude;
 
@@ -828,6 +842,52 @@ export async function listPublicBrands() {
     logoSrc: b.logoMediaId ? cmsMediaPublicPath(b.logoMediaId) : null,
     lines: byBrand.get(b.id) ?? 0,
   }));
+}
+
+export async function listPublicCategories() {
+  return prisma.category.findMany({
+    where: { isActive: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: { slug: true, name: true, description: true, parentId: true },
+  });
+}
+
+export async function getPublicProductsBySkus(userId: string | null, skus: string[]) {
+  const wanted = [...new Set(skus.map((sku) => sku.trim()).filter(Boolean))];
+  if (!wanted.length) return [] as PublicProductCard[];
+  const viewer = await viewerForUserId(userId);
+  const rows = await prisma.product.findMany({
+    where: {
+      ...publicWhere,
+      variants: { some: { sku: { in: wanted, mode: "insensitive" } } },
+    },
+    include: publicInclude,
+  });
+  const cards = rows.map((row) => toPublicCard(row, viewer));
+  const bySku = new Map(cards.map((card) => [card.sku.toUpperCase(), card]));
+  return wanted.map((sku) => bySku.get(sku.toUpperCase())).filter((card): card is PublicProductCard => Boolean(card));
+}
+
+export async function listRecentPublicProducts(userId: string | null, take = 6) {
+  const viewer = await viewerForUserId(userId);
+  const rows = await prisma.product.findMany({
+    where: publicWhere,
+    include: publicInclude,
+    orderBy: [{ isNew: "desc" }, { createdAt: "desc" }],
+    take: Math.min(12, Math.max(1, take)),
+  });
+  return rows.map((row) => toPublicCard(row, viewer));
+}
+
+export async function listPublicProductIndex(userId: string | null, take = 80) {
+  const viewer = await viewerForUserId(userId);
+  const rows = await prisma.product.findMany({
+    where: publicWhere,
+    include: publicInclude,
+    orderBy: [{ isFeatured: "desc" }, { createdAt: "desc" }],
+    take: Math.min(120, Math.max(1, take)),
+  });
+  return rows.map((row) => toPublicCard(row, viewer));
 }
 
 export async function getPublicBrand(userId: string | null, slug: string) {

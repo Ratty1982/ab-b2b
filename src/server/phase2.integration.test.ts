@@ -616,6 +616,39 @@ describe("CMS media library", () => {
   });
 });
 
+describe("canonical public homepage assembly", () => {
+  it("returns one preferred homepage shell with anonymous trade prices hidden", async () => {
+    const { loadPublicHomepage, assembleHomepagePreview } = await import("@/server/cms/assemble-homepage");
+    const live = await loadPublicHomepage(null);
+    expect(live.sections.some((section) => section.type === "HERO")).toBe(true);
+    expect(live.sections.map((section) => section.type)).not.toContain("LEGACY");
+    for (const product of Object.values(live.productsBySku)) {
+      expect(product.price.trade).toBeNull();
+      expect(product.price.source).toBe("hidden");
+    }
+    for (const product of live.recentProducts) {
+      expect(product.price.trade).toBeNull();
+    }
+
+    const preview = await assembleHomepagePreview(null, live.sections);
+    expect(preview.sections.map((section) => section.type)).toEqual(live.sections.map((section) => section.type));
+  });
+
+  it("keeps the same homepage shell when CMS content is missing", async () => {
+    const { assembleHomepagePreview } = await import("@/server/cms/assemble-homepage");
+    const { defaultHomepageSections } = await import("@/server/cms/homepage-seed");
+    const fallback = defaultHomepageSections().map((section, index) => ({
+      id: `default-${index}`,
+      type: section.type,
+      config: section.config,
+      enabled: true,
+    }));
+    const data = await assembleHomepagePreview(null, fallback);
+    expect(data.sections[0]?.type).toBe("HERO");
+    expect(data.sections.some((section) => section.type === "FEATURED_BRANDS")).toBe(true);
+  });
+});
+
 describe("invite token hashing", () => {
   it("never stores raw tokens on UserInvitation", async () => {
     const company = await createCompany(adminId, {

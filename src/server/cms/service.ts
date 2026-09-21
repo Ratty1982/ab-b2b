@@ -466,11 +466,81 @@ export async function restoreCmsVersion(actorUserId: string, slug: string, versi
  * Idempotent homepage CMS bootstrap for production.
  * Creates home page + published seed sections if missing.
  */
+async function ensureCanonicalHomepageSections(
+  prismaClient: typeof prisma,
+  pageId: string,
+) {
+  const page = await prismaClient.cmsPage.findUnique({
+    where: { id: pageId },
+    select: { publishedVersionId: true, draftVersionId: true },
+  });
+  const versionIds = [...new Set([page?.publishedVersionId, page?.draftVersionId].filter(Boolean) as string[])];
+  const defaults = defaultHomepageSections();
+  for (const versionId of versionIds) {
+    const existing = await prismaClient.cmsSection.findMany({
+      where: { versionId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const have = new Set(existing.map((row) => row.type));
+    const isLegacyPublishedShape =
+      have.has("HERO") && have.has("FEATURED_BRANDS") && have.has("TRADE_CTA") && !have.has("NEW_PRODUCTS");
+    if (!isLegacyPublishedShape) continue;
+    const missing = defaults.filter((section) => !have.has(section.type as CmsSectionType));
+    if (!missing.length) continue;
+    const byType = new Map(existing.map((row) => [row.type, row]));
+    const merged: Array<{ id?: string; type: CmsSectionType; config: Prisma.InputJsonValue; enabled: boolean }> = [];
+    for (const section of defaults) {
+      const current = byType.get(section.type as CmsSectionType);
+      if (current) {
+        merged.push({
+          id: current.id,
+          type: current.type,
+          config: current.config as Prisma.InputJsonValue,
+          enabled: current.enabled,
+        });
+        byType.delete(section.type as CmsSectionType);
+      } else if (missing.some((row) => row.type === section.type)) {
+        merged.push({
+          type: section.type as CmsSectionType,
+          config: section.config as Prisma.InputJsonValue,
+          enabled: true,
+        });
+      }
+    }
+    for (const leftover of byType.values()) {
+      merged.push({
+        id: leftover.id,
+        type: leftover.type,
+        config: leftover.config as Prisma.InputJsonValue,
+        enabled: leftover.enabled,
+      });
+    }
+    await prismaClient.$transaction(async (tx) => {
+      for (const [index, row] of merged.entries()) {
+        if (row.id) {
+          await tx.cmsSection.update({ where: { id: row.id }, data: { sortOrder: index } });
+        } else {
+          await tx.cmsSection.create({
+            data: {
+              versionId,
+              type: row.type,
+              config: row.config,
+              enabled: row.enabled,
+              sortOrder: index,
+            },
+          });
+        }
+      }
+    });
+  }
+}
+
 export async function bootstrapHomepageCms(
   prismaClient: typeof prisma = prisma,
 ): Promise<{ created: boolean; pageId: string }> {
   const existing = await prismaClient.cmsPage.findUnique({ where: { slug: "home" } });
   if (existing?.publishedVersionId) {
+    await ensureCanonicalHomepageSections(prismaClient, existing.id);
     return { created: false, pageId: existing.id };
   }
 

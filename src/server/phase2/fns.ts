@@ -323,6 +323,50 @@ export const getPublishedHomepageFn = createServerFn({ method: "GET" }).handler(
   }
 });
 
+export const getPublicHomepageFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await optionalUserId();
+    const { loadPublicHomepage } = await import("@/server/cms/assemble-homepage");
+    const data = await loadPublicHomepage(userId);
+    return { ok: true as const, data };
+  } catch (e) {
+    console.error("[ab:homepage] public homepage RPC failed", e);
+    return toError(e);
+  }
+});
+
+export const previewPublicHomepageFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        sections: Array<{
+          id: string;
+          type: string;
+          config: Record<string, unknown>;
+          enabled: boolean;
+        }>;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      await requireUserId();
+      const userId = await optionalUserId();
+      const { assembleHomepagePreview } = await import("@/server/cms/assemble-homepage");
+      const result = await assembleHomepagePreview(
+        userId,
+        data.sections.map((section) => ({
+          id: section.id,
+          type: section.type as import("@/domain/cms").CmsSectionTypeKey,
+          config: section.config,
+          enabled: section.enabled,
+        })),
+      );
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listCmsMediaFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { q?: string } | undefined)
   .handler(async ({ data }) => {

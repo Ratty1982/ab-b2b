@@ -7,6 +7,10 @@ export const CMS_SECTION_TYPES = [
   "FEATURED_BRANDS",
   "CATEGORY_GRID",
   "FEATURED_PRODUCTS",
+  "NEW_PRODUCTS",
+  "POPULAR_PRODUCTS",
+  "RESOURCES",
+  "NEWS",
   "TEXT_IMAGE",
   "IMAGE_TEXT",
   "BENEFITS_GRID",
@@ -84,6 +88,9 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     ctaHref: z.string().max(300).default("/register"),
     secondaryCtaLabel: z.string().max(80).optional(),
     secondaryCtaHref: z.string().max(300).optional(),
+    loginCtaLabel: z.string().max(80).optional().default("Trade Login"),
+    loginCtaHref: z.string().max(300).optional().default("/login"),
+    calloutSku: z.string().max(80).optional().default(""),
     alignment,
     contentPosition,
     variant,
@@ -97,6 +104,7 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     spacing,
   }),
   FEATURED_BRANDS: z.object({
+    eyebrow: z.string().max(80).optional().default("Our brands"),
     heading: z.string().max(120).default("FIVE BRANDS. ONE SUPPLY PARTNER."),
     intro: z.string().max(800).optional().default(""),
     supporting: z.string().max(400).optional().default(""),
@@ -139,7 +147,9 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
       .default({}),
   }),
   CATEGORY_GRID: z.object({
+    eyebrow: z.string().max(80).optional().default("Product categories"),
     heading: z.string().max(120).default("Shop by category"),
+    categorySlugs: z.array(z.string().max(80)).max(16).default([]),
     categories: z
       .array(
         z.object({
@@ -154,10 +164,55 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     spacing,
   }),
   FEATURED_PRODUCTS: z.object({
+    eyebrow: z.string().max(80).optional().default("Featured ranges"),
     heading: z.string().max(120).default("Featured products"),
     supporting: z.string().max(400).default(""),
     productSkus: z.array(z.string().max(80)).max(24).default([]),
     layout: z.enum(["grid", "carousel"]).default("grid"),
+    spacing,
+  }),
+  NEW_PRODUCTS: z.object({
+    eyebrow: z.string().max(80).optional().default("New products"),
+    heading: z.string().max(120).default("Recently added lines"),
+    limit: z.number().int().min(1).max(12).default(3),
+    spacing,
+  }),
+  POPULAR_PRODUCTS: z.object({
+    eyebrow: z.string().max(80).optional().default("Popular trade lines"),
+    heading: z.string().max(120).default("Popular trade lines"),
+    supporting: z.string().max(400).default(""),
+    productSkus: z.array(z.string().max(80)).max(12).default([]),
+    spacing,
+  }),
+  RESOURCES: z.object({
+    eyebrow: z.string().max(80).optional().default("Trade resources"),
+    heading: z.string().max(160).default("Documentation your counter needs"),
+    items: z
+      .array(
+        z.object({
+          label: z.string().max(120),
+          meta: z.string().max(80).default(""),
+          href: z.string().max(300).default("/resources"),
+        }),
+      )
+      .max(12)
+      .default([]),
+    spacing,
+  }),
+  NEWS: z.object({
+    eyebrow: z.string().max(80).optional().default("Latest from Automotive Brands"),
+    heading: z.string().max(160).default("Range updates and trade notices"),
+    items: z
+      .array(
+        z.object({
+          kind: z.string().max(40).default("Update"),
+          date: z.string().max(40).default(""),
+          title: z.string().max(200),
+          summary: z.string().max(600).default(""),
+        }),
+      )
+      .max(12)
+      .default([]),
     spacing,
   }),
   TEXT_IMAGE: z.object({
@@ -179,7 +234,11 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     spacing,
   }),
   BENEFITS_GRID: z.object({
+    eyebrow: z.string().max(80).optional().default("Why Automotive Brands"),
     heading: z.string().max(120).optional(),
+    supporting: z.string().max(2000).optional().default(""),
+    ctaLabel: z.string().max(80).optional().default(""),
+    ctaHref: z.string().max(300).optional().default("/why-automotive-brands"),
     items: z
       .array(
         z.object({
@@ -190,15 +249,29 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
       )
       .max(8)
       .default([]),
+    customerTypes: z
+      .array(
+        z.object({
+          name: z.string().max(80),
+          detail: z.string().max(200),
+        }),
+      )
+      .max(8)
+      .default([]),
+    media: mediaRef,
     spacing,
   }),
   TRADE_CTA: z.object({
+    eyebrow: z.string().max(80).optional().default("Open a trade account"),
     headline: z.string().max(400),
     supporting: z.string().max(2000).default(""),
     ctaLabel: z.string().max(80).default("Apply for a trade account"),
     ctaHref: z.string().max(300).default("/register"),
+    secondaryCtaLabel: z.string().max(80).optional().default("Trade Login"),
+    secondaryCtaHref: z.string().max(300).optional().default("/login"),
     variant,
     spacing,
+    media: mediaRef,
   }),
   BANNER: z.object({
     text: z.string().max(300),

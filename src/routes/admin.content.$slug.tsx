@@ -25,9 +25,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
+import { PublicHomepage } from "@/components/public/PublicHomepage";
 import { SectionSettings } from "@/components/cms/SectionSettings";
 import { MediaPicker } from "@/components/cms/MediaPicker";
 import type { CmsSectionTypeKey } from "@/domain/cms";
+import type { PublicHomepageData } from "@/domain/homepage";
 import {
   EDITOR_VIEWPORTS,
   SECTION_LIBRARY,
@@ -45,6 +47,7 @@ import { cmsPublicPath } from "@/lib/cms-pages";
 import { cn } from "@/lib/utils";
 import {
   getCmsPageDraftFn,
+  previewPublicHomepageFn,
   publishCmsPageFn,
   restoreCmsVersionFn,
   saveCmsDraftFn,
@@ -159,6 +162,7 @@ function CmsEditor() {
     hasUnpublishedChanges: false,
   });
   const [ogPicker, setOgPicker] = useState(false);
+  const [homepagePreview, setHomepagePreview] = useState<PublicHomepageData | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -200,6 +204,26 @@ function CmsEditor() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (slug !== "home") return;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        const r = await previewPublicHomepageFn({
+          data: {
+            sections: sections.map((s) => ({
+              id: s.id,
+              type: s.type,
+              config: s.config,
+              enabled: s.enabled,
+            })),
+          },
+        });
+        if (r.ok) setHomepagePreview(r.data);
+      })();
+    }, 280);
+    return () => window.clearTimeout(handle);
+  }, [slug, sections]);
 
   const dirty = useMemo(() => snapshotKey(sections, meta) !== savedKey, [sections, meta, savedKey]);
 
@@ -442,6 +466,25 @@ function CmsEditor() {
             >
               {sections.length === 0 ? (
                 <div className="px-6 py-16 text-center text-sm text-steel">No sections yet. Add a section from the left panel.</div>
+              ) : slug === "home" ? (
+                <div className={cn("pointer-events-none", selected && "ring-0")}>
+                  <PublicHomepage
+                    data={{
+                      ...(homepagePreview ?? {
+                        seoTitle: meta.seoTitle,
+                        metaDescription: meta.metaDescription,
+                        ogImageSrc: meta.ogImageSrc,
+                        sections,
+                        brands: [],
+                        categories: [],
+                        productsBySku: {},
+                        recentProducts: [],
+                        cmsError: null,
+                      }),
+                      sections,
+                    }}
+                  />
+                </div>
               ) : (
                 sections.map((s) => (
                   <div key={s.id} className="relative">
@@ -549,7 +592,13 @@ function CmsEditor() {
                 />
                 Enabled on page
               </label>
-              <SectionSettings type={selected.type} config={selected.config} onChange={updateSelectedConfig} />
+              <SectionSettings
+                type={selected.type}
+                config={selected.config}
+                onChange={updateSelectedConfig}
+                catalogueBrands={homepagePreview?.brands}
+                catalogueCategories={homepagePreview?.categories}
+              />
             </div>
           )}
         </aside>
