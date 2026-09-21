@@ -43,12 +43,92 @@ const HEADER_ALIASES: Record<string, ProductCsvHeader> = {
   active: "active",
 };
 
-export function parseCsvRecords(text: string): string[][] {
+export function decodeCsvBytes(bytes: Uint8Array): string {
+  if (bytes.byteLength === 0) return "";
+  const b0 = bytes[0]!;
+  const b1 = bytes[1];
+  const b2 = bytes[2];
+  if (bytes.byteLength >= 3 && b0 === 0xef && b1 === 0xbb && b2 === 0xbf) {
+    return new TextDecoder("utf-8").decode(bytes.subarray(3));
+  }
+  if (bytes.byteLength >= 2 && b0 === 0xff && b1 === 0xfe) {
+    return new TextDecoder("utf-16le").decode(bytes.subarray(2));
+  }
+  if (bytes.byteLength >= 2 && b0 === 0xfe && b1 === 0xff) {
+    return new TextDecoder("utf-16be").decode(bytes.subarray(2));
+  }
+  const sampleLen = Math.min(bytes.byteLength, 400);
+  let zeros = 0;
+  let oddZeros = 0;
+  let evenZeros = 0;
+  for (let i = 0; i < sampleLen; i += 1) {
+    if (bytes[i] !== 0) continue;
+    zeros += 1;
+    if (i % 2 === 0) evenZeros += 1;
+    else oddZeros += 1;
+  }
+  if (zeros >= sampleLen / 4) {
+    if (oddZeros >= evenZeros) return new TextDecoder("utf-16le").decode(bytes);
+    return new TextDecoder("utf-16be").decode(bytes);
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+/** Strip BOM/nulls so Excel Unicode CSVs can be stored in JSON/Postgres. */
+export function ingestCsvText(input: string | Uint8Array): string {
+  const raw = typeof input === "string" ? input : decodeCsvBytes(input);
+  return raw.replace(/^\uFEFF/, "").replace(/\u0000/g, "");
+}
+
+function countUnquoted(src: string, delimiter: string): number {
+  let n = 0;
+  let inQuotes = false;
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i]!;
+    if (ch === '"') {
+      if (inQuotes && src[i + 1] === '"') {
+        i += 1;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === delimiter) n += 1;
+  }
+  return n;
+}
+
+export function detectCsvDelimiter(text: string): "," | ";" | "\t" {
+  const normalized = ingestCsvText(text);
+  const lines = normalized.split(/\r?\n/).filter((line) => line.trim() !== "");
+  if (!lines.length) return ",";
+  const sepMatch = lines[0]!.match(/^sep\s*=\s*(.)/i);
+  if (sepMatch) {
+    const marker = sepMatch[1]!;
+    if (marker === "," || marker === ";" || marker === "\t") return marker;
+  }
+  const start = sepMatch ? 1 : 0;
+  const sample = lines.slice(start, start + 8).join("\n");
+  const scores: Array<{ delimiter: "," | ";" | "\t"; count: number }> = [
+    { delimiter: ",", count: countUnquoted(sample, ",") },
+    { delimiter: ";", count: countUnquoted(sample, ";") },
+    { delimiter: "\t", count: countUnquoted(sample, "\t") },
+  ];
+  scores.sort((a, b) => b.count - a.count);
+  return scores[0]!.count > 0 ? scores[0]!.delimiter : ",";
+}
+
+export function parseCsvRecords(text: string, delimiter = detectCsvDelimiter(text)): string[][] {
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
   let inQuotes = false;
-  const src = text.replace(/^\uFEFF/, "");
+  let src = ingestCsvText(text);
+  const firstLine = src.split(/\r?\n/, 1)[0] ?? "";
+  if (/^sep\s*=/i.test(firstLine.trim())) {
+    const nl = src.indexOf("\n");
+    src = nl === -1 ? "" : src.slice(nl + 1);
+  }
   for (let i = 0; i < src.length; i += 1) {
     const ch = src[i]!;
     if (inQuotes) {
@@ -68,7 +148,7 @@ export function parseCsvRecords(text: string): string[][] {
       inQuotes = true;
       continue;
     }
-    if (ch === ",") {
+    if (ch === delimiter) {
       row.push(field);
       field = "";
       continue;

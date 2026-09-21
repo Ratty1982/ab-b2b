@@ -35,6 +35,14 @@ describe("product import mapping", () => {
     expect(values.trade).toBe(12.5);
     expect(values.name).toBeUndefined();
   });
+
+  it("parses European Excel rows with semicolon delimiters and decimal commas", () => {
+    const csv = "sep=;\nsku;name;trade\nab-1;Pad;12,50\n";
+    const parsed = parseMappedRows(csv, { sku: 0, name: 1, trade: 2 });
+    expect(parsed.rows[0]?.sku).toBe("AB-1");
+    expect(parsed.issues).toEqual([]);
+    expect(coerceImportValues(parsed.rows[0]!.values).trade).toBe(12.5);
+  });
 });
 
 describe("pricing boundary", () => {

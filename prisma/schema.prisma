@@ -745,6 +745,8 @@ model ProductImportJob {
   result            Json?
   errorReport       String?
   sourceHash        String?
+  /// Original file text for remapping; kept off the preview JSON blob
+  sourceCsv         String? @db.Text
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
   appliedAt         DateTime?

@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
+import { decodeCsvBytes, ingestCsvText } from "@/domain/catalogue-csv";
 import { PRODUCT_CSV_IMPORT_TEMPLATE } from "@/domain/product-import";
 import { listProductImportsFn, uploadProductImportFn } from "@/server/phase2/fns";
 import { toast } from "sonner";
@@ -70,9 +71,9 @@ function ProductImports() {
                 e.target.value = "";
                 if (!file) return;
                 void (async () => {
-                  const csv = await file.text();
+                  const csv = ingestCsvText(decodeCsvBytes(new Uint8Array(await file.arrayBuffer())));
                   const r = await uploadProductImportFn({
-                    data: { filename: file.name, csv, mime: file.type },
+                    data: { filename: file.name, csv, mime: file.type || "text/csv" },
                   });
                   if (!r.ok) {
                     toast.error(r.error);

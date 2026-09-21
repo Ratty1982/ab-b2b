@@ -340,6 +340,16 @@ describe("phase 3 product master", () => {
     expect(loaded.tradePrice).toBe(22.5);
     expect(loaded.description).toBe("Must survive a price-only import");
 
+    const csvExcel = `sep=;\nsku;trade\n${sku.toLowerCase()};24,75\n`;
+    const job3 = await uploadProductImport(adminId, { filename: "excel.csv", csv: csvExcel, mime: "text/csv" });
+    const preview3 = await previewImport(adminId, job3.id);
+    expect(preview3.summary?.updateCount).toBeGreaterThanOrEqual(1);
+    const appliedExcel = await confirmImport(adminId, job3.id);
+    expect(appliedExcel.updatedCount).toBeGreaterThanOrEqual(1);
+    const afterExcel = await getProductWorkspace(adminId, saved.id);
+    expect(afterExcel.tradePrice).toBe(24.75);
+    expect(afterExcel.description).toBe("Must survive a price-only import");
+
     const { getPublicProduct } = await import("@/server/catalogue/products");
     await updateProductWorkspaceSafe(saved.id);
     const anon = await getPublicProduct(null, loaded.slug);

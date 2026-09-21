@@ -13,7 +13,7 @@ import {
   type ImportParsedRow,
   type TaxonomyResolution,
 } from "@/domain/product-import";
-import { parseCsvRecords } from "@/domain/catalogue-csv";
+import { ingestCsvText, parseCsvRecords } from "@/domain/catalogue-csv";
 
 const MAX_CSV_BYTES = 1_500_000;
 const MAX_ROWS = 2000;
@@ -59,7 +59,7 @@ async function uniqueSlug(
 
 type JobPreview = {
   headers: string[];
-  csv: string;
+  csv?: string;
   rows: ImportParsedRow[];
   summary: {
     newCount: number;
@@ -83,6 +83,36 @@ function asPreview(value: unknown): JobPreview | null {
   return value as JobPreview;
 }
 
+function jobCsv(job: { sourceCsv?: string | null; preview: unknown }): string {
+  if (job.sourceCsv) return job.sourceCsv;
+  return asPreview(job.preview)?.csv ?? "";
+}
+
+const variantPreviewSelect = {
+  sku: true,
+  productId: true,
+  tradePrice: true,
+  rrp: true,
+  product: { select: { name: true, status: true, brand: { select: { name: true } } } },
+} as const;
+
+async function findVariantsBySkus(skus: string[]) {
+  const unique = [...new Set(skus.map((sku) => sku.trim()).filter(Boolean))];
+  if (!unique.length) return [];
+  const exact = await prisma.productVariant.findMany({
+    where: { sku: { in: unique } },
+    select: variantPreviewSelect,
+  });
+  const found = new Set(exact.map((row) => row.sku.toUpperCase()));
+  const missing = unique.filter((sku) => !found.has(sku.toUpperCase()));
+  if (!missing.length) return exact;
+  const extra = await prisma.productVariant.findMany({
+    where: { OR: missing.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })) },
+    select: variantPreviewSelect,
+  });
+  return [...exact, ...extra];
+}
+
 export async function uploadProductImport(
   actorUserId: string,
   raw: { filename: string; csv: string; mime?: string },
@@ -90,12 +120,13 @@ export async function uploadProductImport(
   await requireSystemPermission(actorUserId, "products.import");
   const { bootstrapCatalogue } = await import("@/server/catalogue/service");
   await bootstrapCatalogue();
-  assertCsvUpload(raw.filename, raw.mime, raw.csv);
-  const table = parseCsvRecords(raw.csv);
+  const csv = ingestCsvText(raw.csv);
+  assertCsvUpload(raw.filename, raw.mime, csv);
+  const table = parseCsvRecords(csv);
   if (!table.length) throw new AuthError("File is empty", "VALIDATION", 400);
   const headers = table[0]!.map((h) => h.trim());
   const mapping = autoMapHeaders(headers);
-  const parsed = parseMappedRows(raw.csv, mapping);
+  const parsed = parseMappedRows(csv, mapping);
   if (parsed.rows.length > MAX_ROWS) {
     throw new AuthError("Import is limited to 2,000 rows", "VALIDATION", 400);
   }
@@ -107,10 +138,10 @@ export async function uploadProductImport(
       status: "UPLOADED",
       rowCount: parsed.rows.length,
       mapping: mapping as Prisma.InputJsonValue,
-      sourceHash: createHash("sha256").update(raw.csv).digest("hex"),
+      sourceHash: createHash("sha256").update(csv).digest("hex"),
+      sourceCsv: csv,
       preview: {
         headers,
-        csv: raw.csv,
         rows: parsed.rows,
         summary: {
           newCount: 0,
@@ -138,8 +169,9 @@ export async function updateImportMapping(
   if (!job) throw new AuthError("Import not found", "NOT_FOUND", 404);
   if (job.status === "APPLIED") throw new AuthError("This import has already been applied", "VALIDATION", 400);
   const preview = asPreview(job.preview);
-  if (!preview) throw new AuthError("Import file is no longer available", "VALIDATION", 400);
-  const parsed = parseMappedRows(preview.csv, raw.mapping);
+  const csv = jobCsv(job);
+  if (!preview || !csv) throw new AuthError("Import file is no longer available", "VALIDATION", 400);
+  const parsed = parseMappedRows(csv, raw.mapping);
   await prisma.productImportJob.update({
     where: { id: job.id },
     data: {
@@ -163,18 +195,9 @@ export async function previewImport(actorUserId: string, id: string) {
   const [brands, categories, skus] = await Promise.all([
     prisma.brand.findMany({ select: { id: true, name: true, slug: true } }),
     prisma.category.findMany({ select: { id: true, name: true, slug: true, parentId: true } }),
-    prisma.productVariant.findMany({
-      where: { sku: { in: preview.rows.map((r) => r.sku) } },
-      select: {
-        sku: true,
-        productId: true,
-        tradePrice: true,
-        rrp: true,
-        product: { select: { name: true, status: true, brand: { select: { name: true } } } },
-      },
-    }),
+    findVariantsBySkus(preview.rows.map((r) => r.sku)),
   ]);
-  const skuMap = new Map(skus.map((s) => [s.sku, s]));
+  const skuMap = new Map(skus.map((s) => [s.sku.toUpperCase(), s]));
   const mapping = job.mapping as ColumnMapping;
   const brandActions = new Map<string, TaxonomyResolution>();
   const categoryActions = new Map<string, TaxonomyResolution>();
@@ -196,7 +219,7 @@ export async function previewImport(actorUserId: string, id: string) {
   for (const row of preview.rows) {
     if (errorLines.has(row.line)) continue;
     const coerced = coerceImportValues(row.values);
-    const existing = skuMap.get(row.sku);
+    const existing = skuMap.get(row.sku.toUpperCase());
     if (!row.present.includes("name") && mapping.name != null && !existing) {
       issues.push({ line: row.line, sku: row.sku, level: "error", message: "Product name is required for new SKUs" });
       errorLines.add(row.line);
@@ -268,7 +291,8 @@ export async function previewImport(actorUserId: string, id: string) {
   }
 
   const next: JobPreview = {
-    ...preview,
+    headers: preview.headers,
+    rows: preview.rows,
     issues,
     changes,
     summary: {
@@ -399,8 +423,8 @@ export async function confirmImport(actorUserId: string, id: string) {
     const present = new Set(row.present);
     try {
       await prisma.$transaction(async (tx) => {
-        const existing = await tx.productVariant.findUnique({
-          where: { sku: values.sku },
+        const existing = await tx.productVariant.findFirst({
+          where: { sku: { equals: values.sku, mode: "insensitive" } },
           include: { product: true },
         });
         let brandId = existing?.product.brandId ?? null;
@@ -585,6 +609,7 @@ export async function confirmImport(actorUserId: string, id: string) {
       appliedAt: new Date(),
       result: { created, updated, skipped, failed, failures } as Prisma.InputJsonValue,
       errorReport,
+      sourceCsv: null,
       preview: {
         ...preview,
         csv: undefined,
@@ -660,10 +685,28 @@ export async function listImportJobs(actorUserId: string) {
   const rows = await prisma.productImportJob.findMany({
     orderBy: { createdAt: "desc" },
     take: 50,
-    include: { uploadedBy: { select: { name: true, email: true } } },
+    select: {
+      id: true,
+      filename: true,
+      uploadedById: true,
+      status: true,
+      rowCount: true,
+      createdCount: true,
+      updatedCount: true,
+      skippedCount: true,
+      errorCount: true,
+      warningCount: true,
+      mapping: true,
+      unknownBrands: true,
+      unknownCategories: true,
+      result: true,
+      createdAt: true,
+      appliedAt: true,
+      uploadedBy: { select: { name: true, email: true } },
+    },
   });
   return rows.map((row) => ({
-    ...serializeJob(row),
+    ...serializeJob({ ...row, preview: null, errorReport: null }),
     uploadedBy: row.uploadedBy.name || row.uploadedBy.email,
   }));
 }

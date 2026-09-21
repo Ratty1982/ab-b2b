@@ -120,8 +120,21 @@ function parseBoolean(raw: string): { ok: true; value: boolean } | { ok: false }
   return { ok: false };
 }
 
-function parseNumber(raw: string): number | null {
-  const n = Number(raw.replace(/£/g, "").replace(/,/g, "").trim());
+export function parseImportNumber(raw: string): number | null {
+  let t = raw.replace(/£/g, "").replace(/\s/g, "").trim();
+  if (!t) return null;
+  if (t.includes(",") && t.includes(".")) {
+    if (t.lastIndexOf(",") > t.lastIndexOf(".")) {
+      t = t.replace(/\./g, "").replace(",", ".");
+    } else {
+      t = t.replace(/,/g, "");
+    }
+  } else if (/^\d+,\d+$/.test(t)) {
+    t = t.replace(",", ".");
+  } else {
+    t = t.replace(/,/g, "");
+  }
+  const n = Number(t);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -200,16 +213,16 @@ export function parseMappedRows(
     }
 
     if (values.trade) {
-      const n = parseNumber(values.trade);
+      const n = parseImportNumber(values.trade);
       if (n == null || n < 0) issues.push({ line, sku, field: "trade", level: "error", message: "Invalid trade price" });
     }
     if (values.rrp) {
-      const n = parseNumber(values.rrp);
+      const n = parseImportNumber(values.rrp);
       if (n == null || n < 0) issues.push({ line, sku, field: "rrp", level: "error", message: "Invalid RRP" });
     }
     for (const field of ["packQty", "caseQty", "minimumOrderQty", "orderIncrement", "weight", "length", "width", "height"] as const) {
       if (!values[field]) continue;
-      const n = parseNumber(values[field]!);
+      const n = parseImportNumber(values[field]!);
       if (n == null || n < 0) {
         issues.push({ line, sku, field, level: "error", message: `Invalid numeric value for ${field}` });
       }
@@ -274,7 +287,7 @@ export function coerceImportValues(values: Partial<Record<ProductImportField, st
   const num = (key: ProductImportField) => {
     const raw = values[key];
     if (!raw) return undefined;
-    return parseNumber(raw) ?? undefined;
+    return parseImportNumber(raw) ?? undefined;
   };
   let status = values.status ? parseStatus(values.status) : undefined;
   const active = bool("active");
