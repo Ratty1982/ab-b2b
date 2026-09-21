@@ -12,3 +12,9 @@ export const PUBLIC_CATALOGUE_POLICY = {
   showAvailabilityLabel: true,
   showExactStockQty: false,
 } as const;
+
+/** Customer quantity policy. Implementation belongs in Phase 6, not the PDP. */
+export const FULL_CASE_ORDERING_POLICY = {
+  fullCaseOnly: true,
+  customerIncrement: "caseQty",
+} as const;

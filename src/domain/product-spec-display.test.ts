@@ -3,7 +3,6 @@ import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import {
   featuresForDisplay,
   formatCatalogueSize,
-  formatPublicOrderingRows,
   formatPublicSpecRows,
   formatSpecLabel,
   formatSpecValue,
@@ -82,27 +81,6 @@ describe("public product content sections", () => {
       ["Safe for tinted windows", "Professional-grade glass cleaner"],
     );
     expect(features).toEqual(["Professional-grade glass cleaner"]);
-  });
-
-  it("shows stored ordering integers and hides nulls without using inventory", () => {
-    expect(
-      formatPublicOrderingRows({
-        packQty: 1,
-        caseQty: 4,
-        minimumOrderQty: 1,
-        orderIncrement: 1,
-      }),
-    ).toEqual([
-      { label: "Pack Quantity", value: "1" },
-      { label: "Case Quantity", value: "4" },
-      { label: "Minimum Order", value: "1" },
-      { label: "Order Increment", value: "1" },
-    ]);
-    expect(formatPublicOrderingRows({ packQty: null, caseQty: null, minimumOrderQty: null, orderIncrement: null })).toEqual([]);
-    expect(formatPublicOrderingRows({ packQty: 0, caseQty: 0 })).toEqual([]);
-    const qtyOnHand = 47;
-    expect(formatPublicOrderingRows({ caseQty: null })).not.toEqual([{ label: "Case Quantity", value: String(qtyOnHand) }]);
-    expect(formatPublicOrderingRows({ caseQty: 4, packQty: null })).toEqual([{ label: "Case Quantity", value: "4" }]);
   });
 });
 

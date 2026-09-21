@@ -13,6 +13,7 @@ import {
 } from "@/domain/catalogue";
 import { parseSpecificationsDocument, serializeSpecificationsDocument } from "@/domain/product-specifications";
 import { publicAvailabilityFromQty, type PublicAvailability } from "@/domain/availability";
+import { publicOrderingFromVariant } from "@/domain/case-ordering";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   moneyNumber,
@@ -866,10 +867,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
       alt: m.altText || product.name,
     })),
     sku: variant?.sku ?? "",
-    packQty: variant?.packQty ?? null,
-    caseQty: variant?.caseQty ?? null,
-    minimumOrderQty: variant?.minOrderQty ?? null,
-    orderIncrement: variant?.orderIncrement ?? null,
+    ...publicOrderingFromVariant(variant),
     related: related.map((row) => toPublicCard(row, viewer)),
   };
 }

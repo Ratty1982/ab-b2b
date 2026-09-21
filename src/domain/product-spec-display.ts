@@ -100,30 +100,3 @@ export function parseDirections(text: string): { kind: "steps"; steps: string[] 
 export function hasPublicText(value: string | null | undefined): boolean {
   return Boolean(value && value.trim());
 }
-
-export type PublicOrderingQuantities = {
-  packQty?: number | null | undefined;
-  caseQty?: number | null | undefined;
-  minimumOrderQty?: number | null | undefined;
-  orderIncrement?: number | null | undefined;
-};
-
-export const PUBLIC_ORDERING_LABELS = {
-  packQty: "Pack Quantity",
-  caseQty: "Case Quantity",
-  minimumOrderQty: "Minimum Order",
-  orderIncrement: "Order Increment",
-} as const;
-
-/** Present stored pack/MOQ numbers. Never derived from inventory. Omit null/0. */
-export function formatPublicOrderingRows(
-  qty: PublicOrderingQuantities,
-): Array<{ label: string; value: string }> {
-  const rows: Array<{ label: string; value: string }> = [];
-  (Object.keys(PUBLIC_ORDERING_LABELS) as Array<keyof typeof PUBLIC_ORDERING_LABELS>).forEach((key) => {
-    const value = qty[key];
-    if (value == null || !Number.isInteger(value) || value < 1) return;
-    rows.push({ label: PUBLIC_ORDERING_LABELS[key], value: String(value) });
-  });
-  return rows;
-}

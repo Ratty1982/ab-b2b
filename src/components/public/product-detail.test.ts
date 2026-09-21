@@ -78,8 +78,8 @@ function detail(partial: Partial<PublicProductDetail> = {}): PublicProductDetail
     gallery: [{ src: "/media/gc5000.jpg", alt: "Window & Glass Cleaner 5 Litre" }],
     related: [card({ id: "p2", sku: "GC500", slug: "gc500", name: "Window & Glass Cleaner 500ml" })],
     packQty: 1,
-    caseQty: 4,
-    minimumOrderQty: 1,
+    caseQty: 2,
+    minimumOrderQty: 2,
     orderIncrement: 1,
     ...partial,
   };
@@ -257,28 +257,34 @@ describe("public product detail sections", () => {
     expect(markup).not.toContain("alert(1)");
   });
 
-  it("renders stored ordering rows and hides null pack fields", () => {
+  it("renders case-based Ordering Information and hides internal increment/pack fields", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
-    expect(markup).toContain("Pack Quantity");
+    expect(markup).toContain("Ordering information");
     expect(markup).toContain("Case Quantity");
-    expect(markup).toContain("Minimum Order");
-    expect(markup).toContain("Order Increment");
+    expect(markup).toContain("Order In Multiples Of");
+    expect(markup).toContain(">2<");
+    expect(markup).not.toContain("Pack Quantity");
+    expect(markup).not.toContain("Minimum Order");
+    expect(markup).not.toContain("Order Increment");
     expect(markup).not.toContain("packQty");
     expect(markup).not.toContain("caseQty");
-    expect(markup).not.toContain("minimumOrderQty");
     expect(markup).not.toContain("orderIncrement");
+    expect(markup).not.toMatch(/order individually|sold individually/i);
     const hidden = html(
       createElement(ProductDetailView, {
         data: detail({ packQty: null, caseQty: null, minimumOrderQty: null, orderIncrement: null }),
       }),
     );
-    expect(hidden).not.toContain("Pack Quantity");
     expect(hidden).not.toContain("Case Quantity");
-    expect(hidden).not.toContain("Minimum Order");
-    expect(hidden).not.toContain("Order Increment");
-    const noCase = html(createElement(ProductDetailView, { data: detail({ caseQty: null }) }));
-    expect(noCase).toContain("Pack Quantity");
+    expect(hidden).not.toContain("Order In Multiples Of");
+    const noCase = html(
+      createElement(ProductDetailView, {
+        data: detail({ caseQty: null, packQty: 1, minimumOrderQty: 1, orderIncrement: 1 }),
+      }),
+    );
     expect(noCase).not.toContain("Case Quantity");
+    expect(noCase).not.toContain("Order In Multiples Of");
+    expect(noCase).not.toContain("Pack Quantity");
   });
 
   it("places How to use beside Specifications on desktop and stacks on smaller viewports", () => {

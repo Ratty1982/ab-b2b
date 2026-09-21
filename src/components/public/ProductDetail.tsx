@@ -5,9 +5,9 @@ import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
 import { ProductCard } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
+import { formatPublicCaseOrderingRows } from "@/domain/case-ordering";
 import {
   featuresForDisplay,
-  formatPublicOrderingRows,
   formatPublicSpecRows,
   hasPublicText,
   parseDirections,
@@ -43,12 +43,7 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
   const features = featuresForDisplay(benefits, selling.features.filter(Boolean));
   const applications = selling.applications.filter(Boolean);
   const specs = formatPublicSpecRows(data.specifications);
-  const ordering = formatPublicOrderingRows({
-    packQty: data.packQty,
-    caseQty: data.caseQty,
-    minimumOrderQty: data.minimumOrderQty,
-    orderIncrement: data.orderIncrement,
-  });
+  const ordering = formatPublicCaseOrderingRows(data.caseQty);
   const showDescription = hasPublicText(data.description);
   const showDirections = hasPublicText(selling.directions);
   const showWarnings = hasPublicText(selling.warnings);
@@ -301,14 +296,14 @@ export function ProductSpecifications({
       {productRows.length ? (
         <div className="mt-4">
           {orderingRows.length ? (
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Product</h3>
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Product details</h3>
           ) : null}
           <SpecTable rows={productRows} />
         </div>
       ) : null}
       {orderingRows.length ? (
         <div className="mt-6" data-product-section="ordering">
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Ordering</h3>
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Ordering information</h3>
           <SpecTable rows={orderingRows} />
         </div>
       ) : null}
