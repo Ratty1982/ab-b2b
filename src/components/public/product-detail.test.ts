@@ -77,6 +77,10 @@ function detail(partial: Partial<PublicProductDetail> = {}): PublicProductDetail
     },
     gallery: [{ src: "/media/gc5000.jpg", alt: "Window & Glass Cleaner 5 Litre" }],
     related: [card({ id: "p2", sku: "GC500", slug: "gc500", name: "Window & Glass Cleaner 500ml" })],
+    packQty: 1,
+    caseQty: 4,
+    minimumOrderQty: 1,
+    orderIncrement: 1,
     ...partial,
   };
 }
@@ -142,7 +146,7 @@ describe("public product detail sections", () => {
   it("renders additional specifications with human labels, Yes/No, and standardised size", () => {
     const markup = html(
       createElement(ProductSpecifications, {
-        rows: [
+        productRows: [
           { label: "Size", value: "5 Litre" },
           { label: "Residue Free", value: "Yes" },
           { label: "Fast Evaporating", value: "No" },
@@ -158,7 +162,7 @@ describe("public product detail sections", () => {
     expect(markup).toContain("No");
     expect(markup).not.toContain("residueFree");
     expect(markup).not.toContain("fastEvaporating");
-    expect(ProductSpecifications({ rows: [] })).toBeNull();
+    expect(ProductSpecifications({ productRows: [], orderingRows: [] })).toBeNull();
   });
 
   it("keeps anonymous stock quantity hidden and availability labels correct", () => {
@@ -167,8 +171,19 @@ describe("public product detail sections", () => {
     expect(publicAvailabilityFromQty(0)).toBe("out");
     const markup = html(createElement(ProductDetailView, { data: detail() }));
     expect(markup).toContain(PUBLIC_AVAILABILITY_LABEL.in);
-    expect(markup).not.toMatch(/qty|on hand|21 units/i);
+    expect(markup).toContain('data-product-availability="in"');
+    expect(markup).not.toMatch(/on hand|21 units|qtyOnHand/i);
     expect(Object.values(PUBLIC_AVAILABILITY_LABEL).join(" ")).not.toMatch(/\d/);
+    const missing = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          card: card({ availability: null }),
+          related: [card({ id: "p2", sku: "GC500", slug: "gc500", name: "Window & Glass Cleaner 500ml", availability: null })],
+        }),
+      }),
+    );
+    expect(missing).not.toContain(PUBLIC_AVAILABILITY_LABEL.in);
+    expect(missing).not.toContain("data-product-availability");
   });
 
   it("uses contain for live product images and keeps missing images on a dark stage", () => {
@@ -176,7 +191,10 @@ describe("public product detail sections", () => {
     expect(PRODUCT_IMAGE_FIT_CLASS).not.toContain("object-cover");
     expect(PRODUCT_IMAGE_LIVE_SURFACE_CLASS).toContain("product-studio");
     expect(PRODUCT_IMAGE_MISSING_SURFACE_CLASS).toContain("bg-surface");
-    expect(PRODUCT_IMAGE_DETAIL_STAGE_CLASS).not.toContain("product-studio");
+    expect(PRODUCT_IMAGE_DETAIL_STAGE_CLASS).toContain("lg:h-[520px]");
+    expect(PRODUCT_IMAGE_DETAIL_STAGE_CLASS).not.toContain("aspect-[4/5]");
+    expect(PRODUCT_IMAGE_DETAIL_STAGE_CLASS).not.toContain("min-h-[28rem]");
+    expect(PRODUCT_IMAGE_DETAIL_STAGE_CLASS).not.toContain("max-h-[36rem]");
     const live = html(createElement(ProductDetailView, { data: detail() }));
     expect(live).toContain("data-product-image-surface=\"live\"");
     expect(live).toContain("object-contain");
@@ -213,6 +231,10 @@ describe("public product detail sections", () => {
           specifications: [],
           selling: { keyBenefits: [], features: [], applications: [], directions: null, warnings: null },
           related: [],
+          packQty: null,
+          caseQty: null,
+          minimumOrderQty: null,
+          orderIncrement: null,
         }),
       }),
     );
@@ -233,5 +255,59 @@ describe("public product detail sections", () => {
     expect(markup).toContain("Safe");
     expect(markup).not.toContain("<script");
     expect(markup).not.toContain("alert(1)");
+  });
+
+  it("renders stored ordering rows and hides null pack fields", () => {
+    const markup = html(createElement(ProductDetailView, { data: detail() }));
+    expect(markup).toContain("Pack Quantity");
+    expect(markup).toContain("Case Quantity");
+    expect(markup).toContain("Minimum Order");
+    expect(markup).toContain("Order Increment");
+    expect(markup).not.toContain("packQty");
+    expect(markup).not.toContain("caseQty");
+    expect(markup).not.toContain("minimumOrderQty");
+    expect(markup).not.toContain("orderIncrement");
+    const hidden = html(
+      createElement(ProductDetailView, {
+        data: detail({ packQty: null, caseQty: null, minimumOrderQty: null, orderIncrement: null }),
+      }),
+    );
+    expect(hidden).not.toContain("Pack Quantity");
+    expect(hidden).not.toContain("Case Quantity");
+    expect(hidden).not.toContain("Minimum Order");
+    expect(hidden).not.toContain("Order Increment");
+    const noCase = html(createElement(ProductDetailView, { data: detail({ caseQty: null }) }));
+    expect(noCase).toContain("Pack Quantity");
+    expect(noCase).not.toContain("Case Quantity");
+  });
+
+  it("places How to use beside Specifications on desktop and stacks on smaller viewports", () => {
+    const markup = html(createElement(ProductDetailView, { data: detail() }));
+    expect(markup).toContain('data-product-lower="split"');
+    expect(markup).toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Specifications"));
+    expect(markup.indexOf("Specifications")).toBeLessThan(markup.indexOf("Related products"));
+    const specsOnly = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          selling: { ...(detail().selling!), directions: null, warnings: null },
+        }),
+      }),
+    );
+    expect(specsOnly).toContain('data-product-lower="specs"');
+    expect(specsOnly).toContain("max-w-3xl");
+    expect(specsOnly).not.toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+  });
+
+  it("keeps benefits, features, applications and related products in the current layout", () => {
+    const markup = html(createElement(ProductDetailView, { data: detail() }));
+    expect(markup).toContain("Key benefits");
+    expect(markup).toContain("Leaves glass crystal clear and streak free");
+    expect(markup).toContain("Features");
+    expect(markup).toContain("Professional-grade glass cleaner");
+    expect(markup).toContain("Suitable for");
+    expect(markup).toContain("Vehicle Windscreens");
+    expect(markup).toContain("Related products");
+    expect(markup).toContain("overflow-x-hidden");
   });
 });

@@ -86,7 +86,7 @@ export const productContentJsonV1Schema = z
         baseTradePrice: moneyField(),
         vatRate: z.union([z.number(), z.string(), z.null()]).optional(),
         packQty: intField(),
-        caseQty: z.union([z.number(), z.string(), z.null()]).optional(),
+        caseQty: intField(),
         minimumOrderQty: intField(),
         orderIncrement: intField(),
       })
@@ -272,6 +272,12 @@ function asNumber(value: unknown): number | null {
 function asInt(value: unknown): number | null {
   const n = asNumber(value);
   if (n == null || !Number.isInteger(n)) return null;
+  return n;
+}
+
+function asPositiveInt(value: unknown): number | null {
+  const n = asInt(value);
+  if (n == null || n < 1) return null;
   return n;
 }
 
@@ -673,7 +679,7 @@ export function previewProductContentJson(
   } else skipped.push("commercial.vatRate");
 
   if (isProvidedMergeValue(commercial?.["packQty"])) {
-    const packQty = asInt(commercial!["packQty"]);
+    const packQty = asPositiveInt(commercial!["packQty"]);
     if (packQty == null) issues.push({ level: "error", code: "INVALID_PACK_QTY", message: "commercial.packQty is not a valid pack quantity." });
     else addChange("commercial", "packQty", "Pack qty", display(snapshot.packQty), display(packQty), () => {
       patch.packQty = packQty;
@@ -681,7 +687,7 @@ export function previewProductContentJson(
   } else skipped.push("commercial.packQty");
 
   if (isProvidedMergeValue(commercial?.["caseQty"])) {
-    const caseQty = asInt(commercial!["caseQty"]);
+    const caseQty = asPositiveInt(commercial!["caseQty"]);
     if (caseQty == null) issues.push({ level: "error", code: "INVALID_PACK_QTY", message: "commercial.caseQty is not a valid case quantity." });
     else addChange("commercial", "caseQty", "Case qty", display(snapshot.caseQty), display(caseQty), () => {
       patch.caseQty = caseQty;
@@ -689,7 +695,7 @@ export function previewProductContentJson(
   } else skipped.push("commercial.caseQty");
 
   if (isProvidedMergeValue(commercial?.["minimumOrderQty"])) {
-    const minOrderQty = asInt(commercial!["minimumOrderQty"]);
+    const minOrderQty = asPositiveInt(commercial!["minimumOrderQty"]);
     if (minOrderQty == null) issues.push({ level: "error", code: "INVALID_PACK_QTY", message: "commercial.minimumOrderQty is invalid." });
     else addChange("commercial", "minOrderQty", "Minimum order qty", display(snapshot.minOrderQty), display(minOrderQty), () => {
       patch.minOrderQty = minOrderQty;
@@ -697,7 +703,7 @@ export function previewProductContentJson(
   } else skipped.push("commercial.minimumOrderQty");
 
   if (isProvidedMergeValue(commercial?.["orderIncrement"])) {
-    const orderIncrement = asInt(commercial!["orderIncrement"]);
+    const orderIncrement = asPositiveInt(commercial!["orderIncrement"]);
     if (orderIncrement == null) issues.push({ level: "error", code: "INVALID_PACK_QTY", message: "commercial.orderIncrement is invalid." });
     else addChange("commercial", "orderIncrement", "Order increment", display(snapshot.orderIncrement), display(orderIncrement), () => {
       patch.orderIncrement = orderIncrement;

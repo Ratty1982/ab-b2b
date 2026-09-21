@@ -16,8 +16,9 @@ export const PRODUCT_IMAGE_MISSING_SURFACE_CLASS = "bg-surface";
 export const PRODUCT_IMAGE_CARD_STAGE_CLASS =
   "relative flex aspect-[5/4] w-full items-center justify-center overflow-hidden rounded-md p-3";
 
+/** Desktop PDP stage ~500–520px tall so the hero is not dictated by a tall aspect box. */
 export const PRODUCT_IMAGE_DETAIL_STAGE_CLASS =
-  "relative flex aspect-[4/5] min-h-[22rem] w-full max-h-[36rem] items-center justify-center overflow-hidden rounded-lg p-4 lg:min-h-[28rem]";
+  "relative flex h-[20rem] w-full items-center justify-center overflow-hidden rounded-lg p-4 sm:h-[26rem] lg:h-[520px]";
 
 /** Compact list thumbnail: 80px square, never full-width. */
 export const PRODUCT_IMAGE_THUMB_STAGE_CLASS =

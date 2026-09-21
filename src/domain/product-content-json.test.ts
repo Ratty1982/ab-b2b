@@ -174,6 +174,50 @@ describe("product content JSON v1 contract", () => {
     expect(bad.issues.some((i) => i.code === "INVALID_VAT")).toBe(true);
   });
 
+  it("maps commercial pack fields to existing variant columns", () => {
+    const preview = previewProductContentJson(
+      snapshot(),
+      lookup(),
+      exampleJson({
+        commercial: { packQty: 2, caseQty: 8, minimumOrderQty: 2, orderIncrement: 2 },
+      }),
+    );
+    expect(preview.patch.packQty).toBe(2);
+    expect(preview.patch.caseQty).toBe(8);
+    expect(preview.patch.minOrderQty).toBe(2);
+    expect(preview.patch.orderIncrement).toBe(2);
+  });
+
+  it("preserves existing pack fields when commercial values are omitted or null", () => {
+    const omitted = previewProductContentJson(snapshot(), lookup(), exampleJson());
+    expect(omitted.patch.packQty).toBeUndefined();
+    expect(omitted.patch.caseQty).toBeUndefined();
+    expect(omitted.patch.minOrderQty).toBeUndefined();
+    expect(omitted.patch.orderIncrement).toBeUndefined();
+    const existing = snapshot();
+    existing.packQty = 3;
+    existing.caseQty = 12;
+    existing.minOrderQty = 3;
+    existing.orderIncrement = 3;
+    const nulled = previewProductContentJson(
+      existing,
+      lookup(),
+      exampleJson({
+        commercial: { packQty: null, caseQty: null, minimumOrderQty: null, orderIncrement: null },
+      }),
+    );
+    expect(nulled.patch.packQty).toBeUndefined();
+    expect(nulled.patch.caseQty).toBeUndefined();
+    expect(nulled.patch.minOrderQty).toBeUndefined();
+    expect(nulled.patch.orderIncrement).toBeUndefined();
+    expect(nulled.skipped).toEqual(expect.arrayContaining([
+      "commercial.packQty",
+      "commercial.caseQty",
+      "commercial.minimumOrderQty",
+      "commercial.orderIncrement",
+    ]));
+  });
+
   it("merges SEO and reports an unknown related SKU without storing relationships", () => {
     const preview = previewProductContentJson(
       snapshot(),

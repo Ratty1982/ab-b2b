@@ -7,10 +7,12 @@ import { ProductCard } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
 import {
   featuresForDisplay,
+  formatPublicOrderingRows,
   formatPublicSpecRows,
   hasPublicText,
   parseDirections,
 } from "@/domain/product-spec-display";
+import { cn } from "@/lib/utils";
 import type { PublicProductCard } from "@/server/catalogue/products";
 import type { ProductSellingContent } from "@/domain/product-specifications";
 
@@ -23,6 +25,10 @@ export type PublicProductDetail = {
   selling?: ProductSellingContent | null;
   gallery: Array<{ src: string; alt: string }>;
   related: PublicProductCard[];
+  packQty?: number | null;
+  caseQty?: number | null;
+  minimumOrderQty?: number | null;
+  orderIncrement?: number | null;
 };
 
 export function ProductDetailView({ data }: { data: PublicProductDetail }) {
@@ -37,9 +43,17 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
   const features = featuresForDisplay(benefits, selling.features.filter(Boolean));
   const applications = selling.applications.filter(Boolean);
   const specs = formatPublicSpecRows(data.specifications);
+  const ordering = formatPublicOrderingRows({
+    packQty: data.packQty,
+    caseQty: data.caseQty,
+    minimumOrderQty: data.minimumOrderQty,
+    orderIncrement: data.orderIncrement,
+  });
   const showDescription = hasPublicText(data.description);
   const showDirections = hasPublicText(selling.directions);
   const showWarnings = hasPublicText(selling.warnings);
+  const showLeft = showDirections || showWarnings;
+  const showRight = specs.length > 0 || ordering.length > 0;
 
   return (
     <div
@@ -61,9 +75,24 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
           </>
         )}
         {applications.length ? <ProductApplications items={applications} /> : null}
-        {showDirections ? <ProductDirections text={selling.directions!} /> : null}
-        {specs.length ? <ProductSpecifications rows={specs} /> : null}
-        {showWarnings ? <ProductWarnings text={selling.warnings!} /> : null}
+        {showLeft || showRight ? (
+          <div
+            data-product-lower={showLeft && showRight ? "split" : showLeft ? "directions" : "specs"}
+            className={cn(
+              "grid items-start gap-8",
+              showLeft && showRight && "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]",
+              !showLeft && showRight && "max-w-3xl",
+            )}
+          >
+            {showLeft ? (
+              <div className="space-y-6">
+                {showDirections ? <ProductDirections text={selling.directions!} /> : null}
+                {showWarnings ? <ProductWarnings text={selling.warnings!} /> : null}
+              </div>
+            ) : null}
+            {showRight ? <ProductSpecifications productRows={specs} orderingRows={ordering} /> : null}
+          </div>
+        ) : null}
       </div>
       {data.related.length ? (
         <section data-product-section="related" className="mt-12 border-t border-border/70 pt-10">
@@ -90,10 +119,12 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
           {product.name}
         </h1>
         <p className="num mt-2 text-[13px] text-steel">{data.sku}</p>
+        {product.availability ? (
+          <div className="mt-3" data-product-availability={product.availability}>
+            <AvailabilityBadge availability={product.availability} />
+          </div>
+        ) : null}
         <div className="mt-4">
-          <AvailabilityBadge availability={product.availability} />
-        </div>
-        <div className="mt-5">
           <TradePrice trade={product.price.trade} rrp={product.price.rrp} size="lg" />
         </div>
         {hasPublicText(data.shortDescription) ? (
@@ -215,7 +246,7 @@ export function ProductDirections({ text }: { text: string }) {
   if (!hasPublicText(text)) return null;
   const parsed = parseDirections(text);
   return (
-    <section data-product-section="directions" className="max-w-3xl rounded-lg border border-border bg-surface/30 p-5">
+    <section data-product-section="directions" className="rounded-lg border border-border bg-surface/30 p-5">
       <h2 className="font-display text-xl font-semibold uppercase tracking-tight">How to use</h2>
       {parsed.kind === "steps" ? (
         <ol className="mt-3 grid gap-2 text-[14px] leading-relaxed">
@@ -236,26 +267,51 @@ export function ProductDirections({ text }: { text: string }) {
 export function ProductWarnings({ text }: { text: string }) {
   if (!hasPublicText(text)) return null;
   return (
-    <section data-product-section="warnings" className="max-w-3xl rounded-lg border border-warn/35 bg-warn/5 p-5">
+    <section data-product-section="warnings" className="rounded-lg border border-warn/35 bg-warn/5 p-5">
       <h2 className="font-display text-lg font-semibold uppercase tracking-tight">Important information</h2>
       <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed">{text}</p>
     </section>
   );
 }
 
-export function ProductSpecifications({ rows }: { rows: Array<{ label: string; value: string }> }) {
-  if (!rows.length) return null;
+function SpecTable({ rows }: { rows: Array<{ label: string; value: string }> }) {
   return (
-    <section data-product-section="specifications" className="max-w-3xl">
+    <dl className="divide-y divide-border/80 border-y border-border/80">
+      {rows.map((row) => (
+        <div key={row.label} className="grid grid-cols-1 gap-1 py-2.5 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-4">
+          <dt className="text-[12px] font-semibold uppercase tracking-wide text-steel">{row.label}</dt>
+          <dd className="num text-[14px]">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function ProductSpecifications({
+  productRows = [],
+  orderingRows = [],
+}: {
+  productRows?: Array<{ label: string; value: string }>;
+  orderingRows?: Array<{ label: string; value: string }>;
+}) {
+  if (!productRows.length && !orderingRows.length) return null;
+  return (
+    <section data-product-section="specifications">
       <h2 className="font-display text-xl font-semibold uppercase tracking-tight">Specifications</h2>
-      <dl className="mt-4 divide-y divide-border/80 border-y border-border/80">
-        {rows.map((row) => (
-          <div key={row.label} className="grid grid-cols-1 gap-1 py-2.5 sm:grid-cols-[12rem_minmax(0,1fr)] sm:gap-6">
-            <dt className="text-[12px] font-semibold uppercase tracking-wide text-steel">{row.label}</dt>
-            <dd className="text-[14px]">{row.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {productRows.length ? (
+        <div className="mt-4">
+          {orderingRows.length ? (
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Product</h3>
+          ) : null}
+          <SpecTable rows={productRows} />
+        </div>
+      ) : null}
+      {orderingRows.length ? (
+        <div className="mt-6" data-product-section="ordering">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-steel">Ordering</h3>
+          <SpecTable rows={orderingRows} />
+        </div>
+      ) : null}
     </section>
   );
 }

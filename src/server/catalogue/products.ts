@@ -866,8 +866,10 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
       alt: m.altText || product.name,
     })),
     sku: variant?.sku ?? "",
-    packQty: variant?.packQty ?? 1,
+    packQty: variant?.packQty ?? null,
     caseQty: variant?.caseQty ?? null,
+    minimumOrderQty: variant?.minOrderQty ?? null,
+    orderIncrement: variant?.orderIncrement ?? null,
     related: related.map((row) => toPublicCard(row, viewer)),
   };
 }

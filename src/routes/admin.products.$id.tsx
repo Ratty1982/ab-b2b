@@ -459,10 +459,22 @@ function CommercialForm({
           <option value="zero">Zero</option>
         </select>
       </Field>
-      <Field label="Pack qty" htmlFor="ws-pack"><input id="ws-pack" value={draft.packQty} onChange={(e) => onChange("packQty", e.target.value)} className={inputClass} /></Field>
-      <Field label="Case qty" htmlFor="ws-case"><input id="ws-case" value={draft.caseQty} onChange={(e) => onChange("caseQty", e.target.value)} className={inputClass} /></Field>
-      <Field label="Minimum order qty" htmlFor="ws-moq"><input id="ws-moq" value={draft.minimumOrderQty} onChange={(e) => onChange("minimumOrderQty", e.target.value)} className={inputClass} /></Field>
-      <Field label="Order increment" htmlFor="ws-inc"><input id="ws-inc" value={draft.orderIncrement} onChange={(e) => onChange("orderIncrement", e.target.value)} className={inputClass} /></Field>
+      <div className="sm:col-span-2 mt-2 border-t border-border/70 pt-4">
+        <h3 className="text-[12px] font-semibold uppercase tracking-[0.14em] text-steel">Ordering Information</h3>
+        <p className="mt-1 text-[12px] text-steel">Pack and case sizes are sale units, not warehouse stock. Leave case quantity blank when unknown.</p>
+      </div>
+      <Field label="Pack Quantity" htmlFor="ws-pack">
+        <input id="ws-pack" type="number" min={1} step={1} inputMode="numeric" value={draft.packQty} onChange={(e) => onChange("packQty", e.target.value)} className={inputClass} />
+      </Field>
+      <Field label="Case Quantity" htmlFor="ws-case">
+        <input id="ws-case" type="number" min={1} step={1} inputMode="numeric" value={draft.caseQty} onChange={(e) => onChange("caseQty", e.target.value)} className={inputClass} />
+      </Field>
+      <Field label="Minimum Order Quantity" htmlFor="ws-moq">
+        <input id="ws-moq" type="number" min={1} step={1} inputMode="numeric" value={draft.minimumOrderQty} onChange={(e) => onChange("minimumOrderQty", e.target.value)} className={inputClass} />
+      </Field>
+      <Field label="Order Increment" htmlFor="ws-inc">
+        <input id="ws-inc" type="number" min={1} step={1} inputMode="numeric" value={draft.orderIncrement} onChange={(e) => onChange("orderIncrement", e.target.value)} className={inputClass} />
+      </Field>
       <Field label="Unit" htmlFor="ws-unit"><input id="ws-unit" value={draft.unit} onChange={(e) => onChange("unit", e.target.value)} className={inputClass} /></Field>
       <Field label="Weight (kg)" htmlFor="ws-w"><input id="ws-w" value={draft.weightKg} onChange={(e) => onChange("weightKg", e.target.value)} className={inputClass} /></Field>
       <Field label="Length (mm)" htmlFor="ws-l"><input id="ws-l" value={draft.lengthMm} onChange={(e) => onChange("lengthMm", e.target.value)} className={inputClass} /></Field>

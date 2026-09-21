@@ -3,6 +3,7 @@ import {
   categoryCreateSchema,
   categoryDeleteSchema,
   productDraftSchema,
+  productWorkspaceSchema,
   shouldSeedDefaultCatalogue,
   slugifyCatalogue,
 } from "@/domain/catalogue";
@@ -94,5 +95,16 @@ describe("catalogue domain", () => {
     const parsed = parseProductCsv("foo,bar\n1,2\n");
     expect(parsed.rows).toHaveLength(0);
     expect(parsed.errors[0]?.message).toMatch(/sku/i);
+  });
+
+  it("validates commercial ordering fields as positive integers", () => {
+    const id = "clxxxxxxxxxxxxxxxxxxxxxxxxx";
+    expect(productWorkspaceSchema.safeParse({ id, packQty: 1, caseQty: 4, minimumOrderQty: 1, orderIncrement: 1 }).success).toBe(true);
+    expect(productWorkspaceSchema.safeParse({ id, packQty: 0 }).success).toBe(false);
+    expect(productWorkspaceSchema.safeParse({ id, packQty: 1.5 }).success).toBe(false);
+    expect(productWorkspaceSchema.safeParse({ id, minimumOrderQty: 0 }).success).toBe(false);
+    expect(productWorkspaceSchema.safeParse({ id, orderIncrement: -1 }).success).toBe(false);
+    expect(productWorkspaceSchema.safeParse({ id, caseQty: null }).success).toBe(true);
+    expect(productWorkspaceSchema.safeParse({ id, caseQty: 0 }).success).toBe(false);
   });
 });
