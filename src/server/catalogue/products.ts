@@ -20,11 +20,12 @@ import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   moneyNumber,
   resolveDisplayPrice,
-  viewerFromAccess,
+  toDisplayPrice,
+  canViewTrade,
   type DisplayPrice,
   type PriceViewer,
 } from "@/server/pricing/trade-price";
-import { loadAccessProfile } from "@/server/rbac/access";
+import { loadPricingActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -686,14 +687,43 @@ export async function exportCatalogueWorkbook(actorUserId: string, query: Catalo
 }
 
 export async function viewerForUserId(userId: string | null): Promise<PriceViewer> {
-  if (!userId) return { kind: "anonymous" };
-  const profile = await loadAccessProfile(userId);
-  if (!profile) return { kind: "anonymous" };
-  return viewerFromAccess({
-    signedIn: true,
-    actorType: profile.actorType,
-    permissions: profile.permissions,
+  const actor = await loadPricingActor(userId);
+  return actor.viewer;
+}
+
+async function displayPricesForProductRows(
+  userId: string | null,
+  rows: Array<{ variants: Array<{ id: string; sku: string; tradePrice: unknown; rrp: unknown; vatCode: string; isDefault: boolean; createdAt: Date }> }>,
+): Promise<{ viewer: PriceViewer; byVariantId: Map<string, DisplayPrice> }> {
+  const actor = await loadPricingActor(userId);
+  const byVariantId = new Map<string, DisplayPrice>();
+  if (!canViewTrade(actor.viewer)) {
+    return { viewer: actor.viewer, byVariantId };
+  }
+  const variants = rows
+    .map((row) => defaultVariant(row.variants))
+    .filter((v): v is NonNullable<typeof v> => Boolean(v));
+  const resolved = await resolveVariantTradePrices({
+    companyId: actor.companyId,
+    variants: variants.map((v) => ({
+      id: v.id,
+      sku: v.sku,
+      tradePrice: v.tradePrice,
+      vatCode: v.vatCode,
+    })),
+    quantity: 1,
   });
+  for (const variant of variants) {
+    byVariantId.set(
+      variant.id,
+      toDisplayPrice({
+        viewer: actor.viewer,
+        rrp: variant.rrp,
+        resolution: resolved.get(variant.id) ?? null,
+      }),
+    );
+  }
+  return { viewer: actor.viewer, byVariantId };
 }
 
 const publicWhere: Prisma.ProductWhereInput = {
@@ -729,9 +759,11 @@ function toPublicCard(
     brand: { name: string; slug: string };
     category: { name: string; slug: string; parent: { name: string } | null } | null;
     variants: Array<{
+      id: string;
       sku: string;
       tradePrice: unknown;
       rrp: unknown;
+      vatCode: string;
       isDefault: boolean;
       createdAt: Date;
       inventory: Array<{ qtyOnHand: number }>;
@@ -739,6 +771,7 @@ function toPublicCard(
     media: Array<{ mediaId: string; isPrimary: boolean; altText?: string | null }>;
   },
   viewer: PriceViewer,
+  resolvedPrice?: DisplayPrice,
 ): PublicProductCard {
   const variant = defaultVariant(row.variants);
   const hasInv = Boolean(variant?.inventory.length);
@@ -755,11 +788,13 @@ function toPublicCard(
     categorySlug: row.category?.slug ?? null,
     imageSrc: primary?.mediaId ? cmsMediaPublicPath(primary.mediaId) : null,
     rrp: moneyNumber(variant?.rrp),
-    price: resolveDisplayPrice({
-      viewer,
-      tradePrice: variant?.tradePrice,
-      rrp: variant?.rrp,
-    }),
+    price:
+      resolvedPrice ??
+      resolveDisplayPrice({
+        viewer,
+        tradePrice: variant?.tradePrice,
+        rrp: variant?.rrp,
+      }),
     availability: publicAvailabilityFromQty(qty),
     isNew: row.isNew,
     isFeatured: row.isFeatured,
@@ -821,7 +856,6 @@ export async function listPublicProducts(input: {
   categorySlug?: string | undefined;
   page?: number | undefined;
 }) {
-  const viewer = await viewerForUserId(input.userId);
   const page = Math.max(1, input.page ?? 1);
   const pageSize = 24;
   const [requestedCategory, nav] = await Promise.all([
@@ -860,8 +894,12 @@ export async function listPublicProducts(input: {
       take: pageSize,
     }),
   ]);
+  const { viewer, byVariantId } = await displayPricesForProductRows(input.userId, rows);
   return {
-    items: rows.map((row) => toPublicCard(row, viewer)),
+    items: rows.map((row) => {
+      const variant = defaultVariant(row.variants);
+      return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+    }),
     total,
     page,
     pageSize,
@@ -872,7 +910,6 @@ export async function listPublicProducts(input: {
 }
 
 export async function getPublicProduct(userId: string | null, slugOrSku: string) {
-  const viewer = await viewerForUserId(userId);
   const needle = slugOrSku.trim();
   const product =
     (await prisma.product.findFirst({
@@ -894,8 +931,9 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     }),
     loadPublicCatalogueNav(),
   ]);
+  const priced = await displayPricesForProductRows(userId, [product, ...related]);
   return {
-    card: toPublicCard(product, viewer),
+    card: toPublicCard(product, priced.viewer, variant ? priced.byVariantId.get(variant.id) : undefined),
     description: product.description,
     shortDescription: product.shortDescription,
     specifications: specsFromJson(product.specifications),
@@ -909,7 +947,10 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     mpn: variant?.mpn ?? null,
     unit: variant?.unit ?? "EA",
     ...publicOrderingFromVariant(variant),
-    related: related.map((row) => toPublicCard(row, viewer)),
+    related: related.map((row) => {
+      const rel = defaultVariant(row.variants);
+      return toPublicCard(row, priced.viewer, rel ? priced.byVariantId.get(rel.id) : undefined);
+    }),
     nav: { brands: nav.brands, categories: nav.categories },
   };
 }
@@ -946,7 +987,6 @@ export async function listPublicCategories() {
 export async function getPublicProductsBySkus(userId: string | null, skus: string[]) {
   const wanted = [...new Set(skus.map((sku) => sku.trim()).filter(Boolean))];
   if (!wanted.length) return [] as PublicProductCard[];
-  const viewer = await viewerForUserId(userId);
   const rows = await prisma.product.findMany({
     where: {
       ...publicWhere,
@@ -954,31 +994,41 @@ export async function getPublicProductsBySkus(userId: string | null, skus: strin
     },
     include: publicInclude,
   });
-  const cards = rows.map((row) => toPublicCard(row, viewer));
+  const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  const cards = rows.map((row) => {
+    const variant = defaultVariant(row.variants);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+  });
   const bySku = new Map(cards.map((card) => [card.sku.toUpperCase(), card]));
   return wanted.map((sku) => bySku.get(sku.toUpperCase())).filter((card): card is PublicProductCard => Boolean(card));
 }
 
 export async function listRecentPublicProducts(userId: string | null, take = 6) {
-  const viewer = await viewerForUserId(userId);
   const rows = await prisma.product.findMany({
     where: publicWhere,
     include: publicInclude,
     orderBy: [{ isNew: "desc" }, { createdAt: "desc" }],
     take: Math.min(12, Math.max(1, take)),
   });
-  return rows.map((row) => toPublicCard(row, viewer));
+  const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  return rows.map((row) => {
+    const variant = defaultVariant(row.variants);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+  });
 }
 
 export async function listPublicProductIndex(userId: string | null, take = 80) {
-  const viewer = await viewerForUserId(userId);
   const rows = await prisma.product.findMany({
     where: publicWhere,
     include: publicInclude,
     orderBy: [{ isFeatured: "desc" }, { createdAt: "desc" }],
     take: Math.min(120, Math.max(1, take)),
   });
-  return rows.map((row) => toPublicCard(row, viewer));
+  const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  return rows.map((row) => {
+    const variant = defaultVariant(row.variants);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+  });
 }
 
 export async function getPublicBrand(

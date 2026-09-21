@@ -1,11 +1,14 @@
 /**
- * Phase 3 pricing boundary.
- *
- * Catalogue stores a base trade price on ProductVariant.tradePrice (kept in
- * sync with QuantityBreak minQty=1). CustomerPrice / PriceList / QuantityBreak
- * / Promotion engines belong to Phase 4 — call this module instead of reading
- * `product.tradePrice` in UI.
+ * Public display adapter over the Phase 4 trade-price engine.
+ * Authoritative resolution lives in `@/domain/trade-price-resolution`.
+ * Never read ProductVariant.tradePrice in UI for a logged-in customer price.
  */
+
+import { moneyToNumber, parseMoney } from "@/domain/money";
+import {
+  PUBLIC_PRICE_SOURCE,
+  type TradePriceResolution,
+} from "@/domain/trade-price-resolution";
 
 export type PriceViewer =
   | { kind: "anonymous" }
@@ -17,7 +20,7 @@ export type DisplayPrice = {
   rrp: number | null;
   /** Null for anonymous visitors and anyone without pricing.view / products.view. */
   trade: number | null;
-  source: "hidden" | "base_catalogue";
+  source: "hidden" | "base_catalogue" | "price_list" | "customer" | "quantity_break" | "promotion";
 };
 
 export function moneyNumber(value: unknown): number | null {
@@ -27,10 +30,32 @@ export function moneyNumber(value: unknown): number | null {
     const n = (value as { toNumber: () => number }).toNumber();
     return Number.isFinite(n) ? n : null;
   }
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  const parsed = parseMoney(String(value));
+  return parsed ? moneyToNumber(parsed) : null;
 }
 
+export function canViewTrade(viewer: PriceViewer): boolean {
+  return viewer.kind !== "anonymous" && viewer.canViewPricing;
+}
+
+export function toDisplayPrice(input: {
+  viewer: PriceViewer;
+  rrp: unknown;
+  resolution: TradePriceResolution | null;
+}): DisplayPrice {
+  const rrp = moneyNumber(input.rrp);
+  if (!canViewTrade(input.viewer) || !input.resolution || input.resolution.source === "NONE") {
+    return { currency: "GBP", rrp, trade: null, source: "hidden" };
+  }
+  return {
+    currency: "GBP",
+    rrp,
+    trade: Number(input.resolution.unitPriceExVat),
+    source: PUBLIC_PRICE_SOURCE[input.resolution.source],
+  };
+}
+
+/** Base-catalogue-only adapter used by unit tests and non-company callers. */
 export function resolveDisplayPrice(input: {
   viewer: PriceViewer;
   tradePrice: unknown;
@@ -38,9 +63,7 @@ export function resolveDisplayPrice(input: {
 }): DisplayPrice {
   const rrp = moneyNumber(input.rrp);
   const trade = moneyNumber(input.tradePrice);
-  const canSeeTrade =
-    input.viewer.kind !== "anonymous" && input.viewer.canViewPricing;
-  if (!canSeeTrade) {
+  if (!canViewTrade(input.viewer)) {
     return { currency: "GBP", rrp, trade: null, source: "hidden" };
   }
   return { currency: "GBP", rrp, trade, source: "base_catalogue" };
