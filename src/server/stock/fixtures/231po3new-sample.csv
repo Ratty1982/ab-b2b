@@ -1,0 +1,13 @@
+SKU,Description,Avail
+GC100,Valid high,100
+GC021,Threshold in,21
+GC020,Threshold low,20
+GC001,Single unit,1
+GC000,Zero,0
+GCNEG,Negative,-4
+GCBLK,Blank,
+GCNON,Non numeric,n/a
+  GCWS  ,Whitespace sku,8
+UNKNOWNX,Unknown sku,12
+DUP,First,5
+DUP,Second,9

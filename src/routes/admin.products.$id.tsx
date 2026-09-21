@@ -25,6 +25,8 @@ import { EditableStringList } from "@/components/catalogue/EditableStringList";
 import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
+import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
+import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -585,36 +587,54 @@ function InventoryPanel({ product }: { product: Workspace }) {
   if (!product.inventory.length) {
     return (
       <div className="max-w-xl rounded-lg border border-dashed border-border p-6">
-        <p className="font-semibold">No local stock recorded</p>
-        <p className="mt-2 text-[13px] text-steel">Physical stock, allocations and sellable quantity will be supplied by Autopart. Automotive Brands does not invent warehouse figures here.</p>
+        <p className="font-semibold">No Autopart stock recorded</p>
+        <p className="mt-2 text-[13px] text-steel">
+          Sellable quantity comes from Autopart 231PO3NEW Avail, matched on SKU. Nothing is invented here until a successful sync.
+        </p>
       </div>
     );
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
-            <th className="px-3 py-2">SKU</th>
-            <th className="px-3 py-2">Warehouse</th>
-            <th className="px-3 py-2 text-right">On hand</th>
-            <th className="px-3 py-2 text-right">Reserved</th>
-            <th className="px-3 py-2">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {product.inventory.map((row) => (
-            <tr key={`${row.variantSku}-${row.warehouseCode}`} className="border-b border-border/60">
-              <td className="num px-3 py-2">{row.variantSku}</td>
-              <td className="px-3 py-2">{row.warehouse}</td>
-              <td className="num px-3 py-2 text-right">{row.qtyOnHand}</td>
-              <td className="num px-3 py-2 text-right">{row.qtyReserved}</td>
-              <td className="px-3 py-2">{row.status}</td>
+    <div className="space-y-3">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
+              <th className="px-3 py-2">SKU</th>
+              <th className="px-3 py-2">Source</th>
+              <th className="px-3 py-2 text-right">Available</th>
+              <th className="px-3 py-2">Customer status</th>
+              <th className="px-3 py-2">Last sync</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="px-3 py-2 text-[12px] text-steel">Local snapshot only — Autopart remains the stock authority.</p>
+          </thead>
+          <tbody>
+            {product.inventory.map((row) => (
+              <tr key={`${row.variantSku}-${row.warehouseCode}`} className="border-b border-border/60">
+                <td className="num px-3 py-2">{row.variantSku}</td>
+                <td className="px-3 py-2">
+                  {row.source === "231PO3NEW" ? "Autopart 231PO3NEW" : row.warehouse}
+                  {row.stale ? <span className="ml-2 text-[10px] font-semibold uppercase text-warn">Stale</span> : null}
+                </td>
+                <td className="num px-3 py-2 text-right">{row.sellableQty ?? row.qtyOnHand ?? "—"}</td>
+                <td className="px-3 py-2">
+                  <InternalStockDisplay qty={null} availability={row.customerAvailability} stale={row.stale} className="justify-start" />
+                  {row.customerAvailability ? (
+                    <span className="sr-only">{PUBLIC_AVAILABILITY_LABEL[row.customerAvailability]}</span>
+                  ) : null}
+                </td>
+                <td className="px-3 py-2 text-steel">
+                  {row.externalSyncedAt
+                    ? new Date(row.externalSyncedAt).toLocaleString("en-GB", { timeZone: "UTC" }) + " UTC"
+                    : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[12px] text-steel">
+        Autopart stock is the exact Avail figure. Customers see only IN STOCK / LOW STOCK / OUT OF STOCK. Case quantity does not change this number.
+      </p>
     </div>
   );
 }

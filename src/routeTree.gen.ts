@@ -59,8 +59,10 @@ import { Route as AdminPricingIdRouteImport } from './routes/admin.pricing.$id'
 import { Route as AdminProductsIndexRouteImport } from './routes/admin.products.index'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
+import { Route as AdminProductsStockRouteImport } from './routes/admin.products.stock'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
+import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
 import { Route as ProductsCategorySlugRouteImport } from './routes/products.category.$slug'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
@@ -321,6 +323,11 @@ const AdminProductsImportsRoute = AdminProductsImportsRouteImport.update({
   path: '/imports',
   getParentRoute: () => AdminProductsRoute,
 } as any)
+const AdminProductsStockRoute = AdminProductsStockRouteImport.update({
+  id: '/stock',
+  path: '/stock',
+  getParentRoute: () => AdminProductsRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -329,6 +336,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 const ApiCmsMediaIdRoute = ApiCmsMediaIdRouteImport.update({
   id: '/api/cms-media/$id',
   path: '/api/cms-media/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInternalStockSyncRoute = ApiInternalStockSyncRouteImport.update({
+  id: '/api/internal/stock-sync',
+  path: '/api/internal/stock-sync',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProductsCategorySlugRoute = ProductsCategorySlugRouteImport.update({
@@ -424,8 +436,10 @@ export interface FileRoutesByFullPath {
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
+  '/admin/products/stock': typeof AdminProductsStockRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
+  '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
@@ -479,8 +493,10 @@ export interface FileRoutesByTo {
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/stock': typeof AdminProductsStockRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
+  '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
@@ -543,8 +559,10 @@ export interface FileRoutesById {
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
+  '/admin/products/stock': typeof AdminProductsStockRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
+  '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
@@ -608,8 +626,10 @@ export interface FileRouteTypes {
     | '/admin/pricing/$id'
     | '/admin/products/$id'
     | '/admin/products/imports'
+    | '/admin/products/stock'
     | '/api/auth/$'
     | '/api/cms-media/$id'
+    | '/api/internal/stock-sync'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
@@ -663,8 +683,10 @@ export interface FileRouteTypes {
     | '/admin/customers/$id'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/stock'
     | '/api/auth/$'
     | '/api/cms-media/$id'
+    | '/api/internal/stock-sync'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
@@ -726,8 +748,10 @@ export interface FileRouteTypes {
     | '/admin/pricing/$id'
     | '/admin/products/$id'
     | '/admin/products/imports'
+    | '/admin/products/stock'
     | '/api/auth/$'
     | '/api/cms-media/$id'
+    | '/api/internal/stock-sync'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
@@ -766,6 +790,7 @@ export interface RootRouteChildren {
   ProductsIndexRoute: typeof ProductsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCmsMediaIdRoute: typeof ApiCmsMediaIdRoute
+  ApiInternalStockSyncRoute: typeof ApiInternalStockSyncRoute
   ProductsCategorySlugRoute: typeof ProductsCategorySlugRoute
 }
 
@@ -1121,6 +1146,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsImportsRouteImport
       parentRoute: typeof AdminProductsRoute
     }
+    '/admin/products/stock': {
+      id: '/admin/products/stock'
+      path: '/stock'
+      fullPath: '/admin/products/stock'
+      preLoaderRoute: typeof AdminProductsStockRouteImport
+      parentRoute: typeof AdminProductsRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -1133,6 +1165,13 @@ declare module '@tanstack/react-router' {
       path: '/api/cms-media/$id'
       fullPath: '/api/cms-media/$id'
       preLoaderRoute: typeof ApiCmsMediaIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/internal/stock-sync': {
+      id: '/api/internal/stock-sync'
+      path: '/api/internal/stock-sync'
+      fullPath: '/api/internal/stock-sync'
+      preLoaderRoute: typeof ApiInternalStockSyncRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/products/category/$slug': {
@@ -1258,12 +1297,14 @@ const AdminProductsImportsRouteWithChildren =
 interface AdminProductsRouteChildren {
   AdminProductsIdRoute: typeof AdminProductsIdRoute
   AdminProductsImportsRoute: typeof AdminProductsImportsRouteWithChildren
+  AdminProductsStockRoute: typeof AdminProductsStockRoute
   AdminProductsIndexRoute: typeof AdminProductsIndexRoute
 }
 
 const AdminProductsRouteChildren: AdminProductsRouteChildren = {
   AdminProductsIdRoute: AdminProductsIdRoute,
   AdminProductsImportsRoute: AdminProductsImportsRouteWithChildren,
+  AdminProductsStockRoute: AdminProductsStockRoute,
   AdminProductsIndexRoute: AdminProductsIndexRoute,
 }
 
@@ -1382,6 +1423,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsIndexRoute: ProductsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCmsMediaIdRoute: ApiCmsMediaIdRoute,
+  ApiInternalStockSyncRoute: ApiInternalStockSyncRoute,
   ProductsCategorySlugRoute: ProductsCategorySlugRoute,
 }
 export const routeTree = rootRouteImport

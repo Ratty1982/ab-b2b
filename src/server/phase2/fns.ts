@@ -14,6 +14,7 @@ import * as productContentJson from "@/server/catalogue/product-content-json";
 import * as catalogueImport from "@/server/catalogue/import";
 import * as staffUsers from "@/server/users/service";
 import * as pricing from "@/server/pricing/service";
+import * as stock from "@/server/stock/service";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -1135,6 +1136,55 @@ export const listCommercialAuditFn = createServerFn({ method: "GET" })
     try {
       const userId = await requireUserId();
       return { ok: true as const, data: await pricing.listCommercialAudit(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const stockOperationsOverviewFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await stock.stockOperationsOverview(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const listStockSyncRunsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await stock.listStockSyncRuns(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getStockSyncRunFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await stock.getStockSyncRun(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listUnmatchedStockSkusFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await stock.listUnmatchedStockSkus(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const runManualStockSyncFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { dryRun?: boolean; csv?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await stock.runManualStockSync(userId, { dryRun: Boolean(data?.dryRun), ...(data?.csv ? { csv: data.csv } : {}) } ) };
     } catch (e) {
       return toError(e);
     }

@@ -14,8 +14,11 @@ import {
 import { parseSpecificationsDocument, serializeSpecificationsDocument } from "@/domain/product-specifications";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
 import { sanitizeSpecRows, sellingFromDraft } from "@/domain/product-content-editor";
-import { publicAvailabilityFromQty, type PublicAvailability } from "@/domain/availability";
+import { type PublicAvailability } from "@/domain/availability";
 import { publicOrderingFromVariant } from "@/domain/case-ordering";
+import { AUTOPART_FEED_SOURCE, customerAvailabilityForStock } from "@/domain/stock";
+import { stockFreshness } from "@/server/stock/service";
+import { hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   moneyNumber,
@@ -53,6 +56,7 @@ export type CatalogueListItem = {
   rrp: number | null;
   stockQty: number | null;
   stockLabel: string;
+  availability: PublicAvailability | null;
   imageSrc: string | null;
   updatedAt: string;
   isTradeVisible: boolean;
@@ -78,7 +82,10 @@ function defaultVariant<T extends { isDefault: boolean; createdAt: Date }>(varia
 }
 
 export async function listCataloguePage(actorUserId: string, raw: CatalogueListQuery) {
-  await requireSystemPermission(actorUserId, "products.view");
+  const profile = await requireSystemPermission(actorUserId, "products.view");
+  const canSeeQty =
+    profile.actorType !== "TRADE" &&
+    (hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access"));
   const { bootstrapCatalogue } = await import("@/server/catalogue/service");
   await bootstrapCatalogue();
   const page = Math.max(1, Number(raw.page) || 1);
@@ -149,7 +156,7 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
         variants: {
           orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
           include: {
-            inventory: { select: { qtyOnHand: true } },
+            inventory: { select: { qtyOnHand: true, qtyReserved: true } },
           },
         },
         media: {
@@ -163,12 +170,16 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
     }),
   ]);
 
+  const freshness = await stockFreshness();
   const items: CatalogueListItem[] = rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    const stockQty = variant
-      ? variant.inventory.reduce((sum, inv) => sum + inv.qtyOnHand, 0)
+    const sellable = variant
+      ? variant.inventory.reduce((sum, inv) => sum + Math.max(0, inv.qtyOnHand - (inv.qtyReserved ?? 0)), 0)
       : null;
     const hasInv = Boolean(variant?.inventory.length);
+    const availability = hasInv
+      ? customerAvailabilityForStock({ sellableQty: sellable ?? 0, stale: freshness.stale })
+      : null;
     const parentName = row.category?.parent?.name;
     return {
       id: row.id,
@@ -182,8 +193,19 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       status: row.status,
       trade: moneyNumber(variant?.tradePrice),
       rrp: moneyNumber(variant?.rrp),
-      stockQty: hasInv ? stockQty : null,
-      stockLabel: hasInv ? String(stockQty) : "Autopart",
+      stockQty: canSeeQty && hasInv ? sellable : null,
+      stockLabel: hasInv
+        ? availability === "in"
+          ? "In Stock"
+          : availability === "low"
+            ? "Low Stock"
+            : availability === "out"
+              ? "Out of Stock"
+              : freshness.stale
+                ? "Stale"
+                : "Unknown"
+        : "Not synced",
+      availability,
       imageSrc: row.media[0]?.mediaId ? cmsMediaPublicPath(row.media[0].mediaId) : null,
       updatedAt: row.updatedAt.toISOString(),
       isTradeVisible: row.isTradeVisible,
@@ -256,7 +278,10 @@ function specsFromJson(value: unknown): Array<{ name: string; value: string }> {
 }
 
 export async function getProductWorkspace(actorUserId: string, id: string) {
-  await requireSystemPermission(actorUserId, "products.view");
+  const profile = await requireSystemPermission(actorUserId, "products.view");
+  const canSeeQty =
+    profile.actorType !== "TRADE" &&
+    (hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access"));
   const product = await prisma.product.findUnique({
     where: { id },
     include: {
@@ -295,6 +320,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
     ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true, email: true } })
     : [];
   const actorName = new Map(actors.map((user) => [user.id, user.name || user.email]));
+  const freshness = await stockFreshness();
   return {
     id: product.id,
     name: product.name,
@@ -350,15 +376,23 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
       sortOrder: m.sortOrder,
     })),
     inventory: product.variants.flatMap((v) =>
-      v.inventory.map((inv) => ({
-        variantSku: v.sku,
-        warehouse: inv.warehouse.name,
-        warehouseCode: inv.warehouse.code,
-        qtyOnHand: inv.qtyOnHand,
-        qtyReserved: inv.qtyReserved,
-        status: inv.status,
-        externalSyncedAt: inv.externalSyncedAt?.toISOString() ?? null,
-      })),
+      v.inventory.map((inv) => {
+        const sellable = Math.max(0, inv.qtyOnHand - inv.qtyReserved);
+        return {
+          variantSku: v.sku,
+          warehouse: inv.warehouse.name,
+          warehouseCode: inv.warehouse.code,
+          qtyOnHand: canSeeQty ? inv.qtyOnHand : null,
+          qtyReserved: canSeeQty ? inv.qtyReserved : null,
+          sellableQty: canSeeQty ? sellable : null,
+          sourceAvailRaw: canSeeQty ? inv.sourceAvailRaw : null,
+          customerAvailability: customerAvailabilityForStock({ sellableQty: sellable, stale: freshness.stale }),
+          stale: freshness.stale,
+          status: inv.status,
+          source: inv.warehouse.code === "AUTOPART" ? AUTOPART_FEED_SOURCE : inv.warehouse.name,
+          externalSyncedAt: inv.externalSyncedAt?.toISOString() ?? null,
+        };
+      }),
     ),
     activity: activity.map((event) => ({
       id: event.id,
@@ -766,16 +800,19 @@ function toPublicCard(
       vatCode: string;
       isDefault: boolean;
       createdAt: Date;
-      inventory: Array<{ qtyOnHand: number }>;
+      inventory: Array<{ qtyOnHand: number; qtyReserved?: number }>;
     }>;
     media: Array<{ mediaId: string; isPrimary: boolean; altText?: string | null }>;
   },
   viewer: PriceViewer,
   resolvedPrice?: DisplayPrice,
+  stale = false,
 ): PublicProductCard {
   const variant = defaultVariant(row.variants);
   const hasInv = Boolean(variant?.inventory.length);
-  const qty = hasInv ? variant!.inventory.reduce((sum, inv) => sum + inv.qtyOnHand, 0) : null;
+  const qty = hasInv
+    ? variant!.inventory.reduce((sum, inv) => sum + Math.max(0, inv.qtyOnHand - (inv.qtyReserved ?? 0)), 0)
+    : null;
   const primary = row.media[0];
   return {
     id: row.id,
@@ -795,7 +832,7 @@ function toPublicCard(
         tradePrice: variant?.tradePrice,
         rrp: variant?.rrp,
       }),
-    availability: publicAvailabilityFromQty(qty),
+    availability: hasInv ? customerAvailabilityForStock({ sellableQty: qty ?? 0, stale }) : null,
     isNew: row.isNew,
     isFeatured: row.isFeatured,
   };
@@ -806,7 +843,7 @@ const publicInclude = {
   category: { select: { name: true, slug: true, parent: { select: { name: true } } } },
   variants: {
     orderBy: [{ isDefault: "desc" as const }, { createdAt: "asc" as const }],
-    include: { inventory: { select: { qtyOnHand: true } } },
+    include: { inventory: { select: { qtyOnHand: true, qtyReserved: true } } },
   },
   media: { orderBy: [{ isPrimary: "desc" as const }, { sortOrder: "asc" as const }], take: 8 },
 } satisfies Prisma.ProductInclude;
@@ -894,11 +931,14 @@ export async function listPublicProducts(input: {
       take: pageSize,
     }),
   ]);
-  const { viewer, byVariantId } = await displayPricesForProductRows(input.userId, rows);
+  const [{ viewer, byVariantId }, freshness] = await Promise.all([
+    displayPricesForProductRows(input.userId, rows),
+    stockFreshness(),
+  ]);
   return {
     items: rows.map((row) => {
       const variant = defaultVariant(row.variants);
-      return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+      return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale);
     }),
     total,
     page,
@@ -932,8 +972,9 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     loadPublicCatalogueNav(),
   ]);
   const priced = await displayPricesForProductRows(userId, [product, ...related]);
+  const freshness = await stockFreshness();
   return {
-    card: toPublicCard(product, priced.viewer, variant ? priced.byVariantId.get(variant.id) : undefined),
+    card: toPublicCard(product, priced.viewer, variant ? priced.byVariantId.get(variant.id) : undefined, freshness.stale),
     description: product.description,
     shortDescription: product.shortDescription,
     specifications: specsFromJson(product.specifications),
@@ -949,7 +990,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     ...publicOrderingFromVariant(variant),
     related: related.map((row) => {
       const rel = defaultVariant(row.variants);
-      return toPublicCard(row, priced.viewer, rel ? priced.byVariantId.get(rel.id) : undefined);
+      return toPublicCard(row, priced.viewer, rel ? priced.byVariantId.get(rel.id) : undefined, freshness.stale);
     }),
     nav: { brands: nav.brands, categories: nav.categories },
   };
@@ -995,9 +1036,10 @@ export async function getPublicProductsBySkus(userId: string | null, skus: strin
     include: publicInclude,
   });
   const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  const freshness = await stockFreshness();
   const cards = rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale);
   });
   const bySku = new Map(cards.map((card) => [card.sku.toUpperCase(), card]));
   return wanted.map((sku) => bySku.get(sku.toUpperCase())).filter((card): card is PublicProductCard => Boolean(card));
@@ -1011,9 +1053,10 @@ export async function listRecentPublicProducts(userId: string | null, take = 6) 
     take: Math.min(12, Math.max(1, take)),
   });
   const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  const freshness = await stockFreshness();
   return rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale);
   });
 }
 
@@ -1025,9 +1068,10 @@ export async function listPublicProductIndex(userId: string | null, take = 80) {
     take: Math.min(120, Math.max(1, take)),
   });
   const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  const freshness = await stockFreshness();
   return rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale);
   });
 }
 

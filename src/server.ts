@@ -44,8 +44,18 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+let schedulerStarted = false;
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    if (!schedulerStarted) {
+      schedulerStarted = true;
+      void import("./server/stock/scheduler")
+        .then((mod) => mod.startStockScheduler())
+        .catch((error) => {
+          console.error("[ab:stock-sync:schedule]", error instanceof Error ? error.message : error);
+        });
+    }
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

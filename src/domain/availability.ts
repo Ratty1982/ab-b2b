@@ -18,3 +18,22 @@ export const PUBLIC_AVAILABILITY_LABEL: Record<PublicAvailability, string> = {
   low: "Low Stock",
   out: "Out of Stock",
 };
+
+export type StockAvailabilityFacts = {
+  /** Authoritative sellable quantity (never negative). */
+  sellableQty: number | null;
+  /** True when the last successful Autopart sync exceeded the stale threshold. */
+  stale: boolean;
+  /** True when Avail was missing/non-numeric for this SKU (do not invent stock). */
+  unknown: boolean;
+};
+
+/**
+ * Public mapping from central stock facts. Stale positive stock is not shown as IN/LOW STOCK.
+ */
+export function publicAvailabilityFromStock(facts: StockAvailabilityFacts): PublicAvailability | null {
+  if (facts.unknown) return null;
+  if (facts.sellableQty == null) return null;
+  if (facts.stale && facts.sellableQty > 0) return null;
+  return publicAvailabilityFromQty(facts.sellableQty);
+}

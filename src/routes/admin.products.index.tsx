@@ -13,6 +13,7 @@ import {
   listCatalogueWorkspaceFn,
 } from "@/server/phase2/fns";
 import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
+import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
@@ -49,6 +50,8 @@ type ProductRow = {
   trade: number | null;
   rrp: number | null;
   stockLabel: string;
+  stockQty: number | null;
+  availability: "in" | "low" | "out" | null;
   imageSrc: string | null;
   updatedAt: string;
 };
@@ -324,7 +327,9 @@ function AdminProducts() {
                     <td className="px-3 py-2"><StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge></td>
                     <td className="num px-3 py-2 text-right">{p.trade != null ? gbp(p.trade) : "—"}</td>
                     <td className="num px-3 py-2 text-right text-steel">{p.rrp != null ? gbp(p.rrp) : "—"}</td>
-                    <td className="num px-3 py-2 text-right text-steel">{p.stockLabel}</td>
+                    <td className="px-3 py-2 text-right">
+                      <InternalStockDisplay qty={p.stockQty} availability={p.availability} />
+                    </td>
                     <td className="num px-3 py-2 text-steel">{new Date(p.updatedAt).toLocaleDateString("en-GB")}</td>
                     <td className="px-3 py-2 text-right">
                       <Link

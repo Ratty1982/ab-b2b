@@ -59,6 +59,10 @@ async function main() {
     const catalogue = await bootstrapCatalogue(prisma);
     console.log("[ab:bootstrap] Catalogue taxonomy", catalogue);
 
+    const { ensureAutopartWarehouse } = await import("../../src/server/stock/service");
+    const warehouse = await ensureAutopartWarehouse();
+    console.log("[ab:bootstrap] Autopart warehouse", { id: warehouse.id, code: warehouse.code });
+
     console.log("[ab:bootstrap] Done.");
   } finally {
     await prisma.$disconnect();
