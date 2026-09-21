@@ -355,6 +355,11 @@ describe("phase 3 product master", () => {
     const anon = await getPublicProduct(null, loaded.slug);
     expect(anon?.card.price.trade).toBeNull();
     expect(anon?.card.price.rrp).not.toBeNull();
+    expect(anon?.nav.brands.length).toBeGreaterThan(0);
+    expect(anon?.nav.categories.length).toBeGreaterThan(0);
+    expect(anon?.nav.brands.some((b) => typeof b.slug === "string" && b.name.length > 0)).toBe(true);
+    expect(anon?.nav.categories.some((c) => typeof c.slug === "string" && Array.isArray(c.children))).toBe(true);
+    expect(anon?.unit).toBeTruthy();
   });
 
   it("downloads an Excel template with category dropdowns and accepts that workbook as an import", async () => {

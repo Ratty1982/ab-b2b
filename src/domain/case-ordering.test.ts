@@ -6,6 +6,7 @@ import {
   FULL_CASE_ORDERING,
   isValidCustomerOrderQuantity,
   minimumCustomerOrderQuantity,
+  PRODUCT_ORDER_PANEL_PLAN,
   publicOrderingFromVariant,
   publicTradeOrderingCopy,
 } from "@/domain/case-ordering";
@@ -95,5 +96,22 @@ describe("commercial admin fields", () => {
     expect(src).toContain('label="Unit"');
     expect(src.match(/function CommercialForm/g)?.length).toBe(1);
     expect(src).not.toContain("Ordering Information");
+  });
+});
+
+describe("Phase 6 ProductOrderPanel plan", () => {
+  it("documents unit vs case totals without implementing basket UI", () => {
+    expect(PRODUCT_ORDER_PANEL_PLAN.component).toBe("ProductOrderPanel");
+    expect(PRODUCT_ORDER_PANEL_PLAN.mount).toBe("product-hero-after-short-description");
+    expect(PRODUCT_ORDER_PANEL_PLAN.headlinePrice).toBe("unit-trade-price");
+    expect(PRODUCT_ORDER_PANEL_PLAN.quantityRule).toBe("FULL_CASE_ONLY");
+    expect(PRODUCT_ORDER_PANEL_PLAN.serverMustValidate).toBe(true);
+    const hero = readFileSync(path.join(process.cwd(), "src/components/public/ProductDetail.tsx"), "utf8");
+    expect(hero).toContain("ProductOrderPanel");
+    expect(hero).not.toMatch(/Coming Soon/);
+    const docs = readFileSync(path.join(process.cwd(), "docs/phase-6-product-order-panel.md"), "utf8");
+    expect(docs).toContain("£8.70");
+    expect(docs).toContain("£17.40");
+    expect(docs).toContain("requestedQuantity % caseQty === 0");
   });
 });

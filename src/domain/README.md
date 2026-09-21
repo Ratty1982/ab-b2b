@@ -22,7 +22,9 @@ When basket/checkout is implemented:
 - `requestedQuantity % caseQty === 0`
 - server, basket, checkout, and API must all enforce the same rule
 
-See `src/domain/case-ordering.ts`. Do not implement basket controls yet.
+See `src/domain/case-ordering.ts` and `docs/phase-6-product-order-panel.md`.
+Do not implement basket controls yet. The product hero shows the **unit**
+trade price; Phase 6 `ProductOrderPanel` will compute the case/order total.
 
 
 ## Intended contents (later phases)

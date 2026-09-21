@@ -78,12 +78,15 @@ export function TradePrice({
   className,
   /** Use plain text when rendered inside another link (avoids nested <a> hydration failures). */
   ctaMode = "link",
+  /** Sale-unit qualifier (e.g. "each") for product hero unit-price copy. Listing cards omit this. */
+  unitQualifier,
 }: {
   trade: number | null;
   rrp: number | null;
   size?: "sm" | "md" | "lg";
   className?: string;
   ctaMode?: "link" | "text";
+  unitQualifier?: string | null;
 }) {
   const { signedIn } = useSession();
 
@@ -133,7 +136,9 @@ export function TradePrice({
       >
         {gbp(trade)}
       </div>
-      <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-steel">Your price · ex VAT</div>
+      <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-steel">
+        {unitQualifier ? `Your price · ${unitQualifier} · ex VAT` : "Your price · ex VAT"}
+      </div>
       {rrp != null ? <div className="num mt-1 text-[11px] text-steel">RRP {gbp(rrp)}</div> : null}
     </div>
   );

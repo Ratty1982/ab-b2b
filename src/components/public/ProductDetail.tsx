@@ -6,6 +6,7 @@ import { ProductImage } from "@/components/public/ProductImage";
 import { ProductCard } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
+import { publicUnitPriceQualifier } from "@/domain/public-price-unit";
 import {
   featuresForDisplay,
   hasPublicText,
@@ -31,6 +32,8 @@ export type PublicProductDetail = {
   orderIncrement?: number | null;
   ean?: string | null;
   mpn?: string | null;
+  /** ProductVariant.unit — drives YOUR PRICE · EACH (or other qualifier) · EX VAT. */
+  unit?: string | null;
 };
 
 export function ProductDetailView({ data }: { data: PublicProductDetail }) {
@@ -57,10 +60,7 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
   const showRight = details.length > 0 || ordering != null;
 
   return (
-    <div
-      data-product-detail="page"
-      className="mx-auto max-w-[1400px] overflow-x-hidden px-4 py-6 sm:px-6 lg:px-10"
-    >
+    <div data-product-detail="page" className="overflow-x-hidden">
       <ProductDetailHero data={data} />
       <div data-product-detail="content" className="mt-10 space-y-10 border-t border-border/70 pt-10">
         {showDescription ? <ProductDescription html={data.description!} /> : null}
@@ -130,14 +130,23 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
             <AvailabilityBadge availability={product.availability} />
           </div>
         ) : null}
-        <div className="mt-4">
-          <TradePrice trade={product.price.trade} rrp={product.price.rrp} size="lg" />
+        <div className="mt-4" data-product-unit-price>
+          <TradePrice
+            trade={product.price.trade}
+            rrp={product.price.rrp}
+            size="lg"
+            unitQualifier={publicUnitPriceQualifier(data.unit)}
+          />
         </div>
         {hasPublicText(data.shortDescription) ? (
           <p data-product-short-description className="mt-5 max-w-xl text-[15px] leading-relaxed text-steel">
             {data.shortDescription}
           </p>
         ) : null}
+        {/*
+          Phase 6 mounts ProductOrderPanel here — after short description, still in the
+          hero summary column. Do not render a placeholder, empty box, or fake basket controls.
+        */}
       </div>
     </div>
   );

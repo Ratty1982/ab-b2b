@@ -98,3 +98,27 @@ export function publicTradeOrderingCopy(
     subtitle: `Sold in multiples of ${increment}`,
   };
 }
+
+/**
+ * Phase 6 ProductOrderPanel — documentation-only plan.
+ * Do not render these controls until the ordering engine exists.
+ *
+ * Example: unitTradePrice £8.70, caseQty 2, VAT 20%
+ *   hero: £8.70 YOUR PRICE · EACH · EX VAT
+ *   panel: 1 case · 2 units → £17.40 ex VAT / £20.88 inc VAT
+ */
+export const PRODUCT_ORDER_PANEL_PLAN = {
+  component: "ProductOrderPanel",
+  mount: "product-hero-after-short-description",
+  headlinePrice: "unit-trade-price",
+  quantityRule: "FULL_CASE_ONLY",
+  incrementField: "caseQty",
+  serverMustValidate: true,
+  ui: {
+    heading: "TRADE ORDERING",
+    caseCopyWhenQty2: "CASE OF 2",
+    soldIn: "Sold in full cases",
+    quantityStepper: true,
+    addToBasket: true,
+  },
+} as const;

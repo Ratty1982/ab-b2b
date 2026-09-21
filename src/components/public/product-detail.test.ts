@@ -82,6 +82,7 @@ function detail(partial: Partial<PublicProductDetail> = {}): PublicProductDetail
     caseQty: 2,
     minimumOrderQty: 2,
     orderIncrement: 1,
+    unit: "EA",
     ...partial,
   };
 }
@@ -349,5 +350,33 @@ describe("public product detail sections", () => {
     expect(markup).toContain("Vehicle Windscreens");
     expect(markup).toContain("Related products");
     expect(markup).toContain("overflow-x-hidden");
+  });
+});
+
+describe("product hero commerce presentation", () => {
+  it("does not render Add to Basket, quantity steppers, or Coming Soon placeholders", () => {
+    const markup = html(createElement(ProductDetailView, { data: detail() }));
+    expect(markup).not.toMatch(/Add to Basket/i);
+    expect(markup).not.toMatch(/Coming Soon/i);
+    expect(markup).not.toMatch(/type="number"/);
+    expect(markup).not.toMatch(/aria-label="Decrease quantity"/);
+    expect(markup).not.toMatch(/aria-label="Increase quantity"/);
+    expect(markup).toContain("data-product-unit-price");
+  });
+
+  it("keeps headline trade as the unit price even when caseQty is 2", () => {
+    const withTrade = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          card: card({
+            price: { currency: "GBP", trade: 8.7, rrp: 17.99, source: "account" },
+          }),
+          caseQty: 2,
+        }),
+      }),
+    );
+    expect(withTrade).toContain("RRP £17.99");
+    expect(withTrade).not.toContain("£17.40");
+    expect(withTrade).not.toContain("£20.88");
   });
 });

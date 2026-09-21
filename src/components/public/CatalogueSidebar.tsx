@@ -64,15 +64,16 @@ export function CatalogueSidebar({
 
 function AllBrandsLink({ context }: { context: CatalogueContext }) {
   const className = cn("block rounded-sm px-1 py-0.5 hover:text-primary", !context.brandSlug && "font-semibold text-primary");
+  const current = !context.brandSlug ? ("true" as const) : undefined;
   if (context.categorySlug && !context.brandRoute) {
     return (
-      <Link to="/products/category/$slug" params={{ slug: context.categorySlug }} search={context.q ? { q: context.q } : {}} className={className}>
+      <Link to="/products/category/$slug" params={{ slug: context.categorySlug }} search={context.q ? { q: context.q } : {}} className={className} aria-current={current}>
         All Brands
       </Link>
     );
   }
   return (
-    <Link to="/products" search={context.q ? { q: context.q } : {}} className={className}>
+    <Link to="/products" search={context.q ? { q: context.q } : {}} className={className} aria-current={current}>
       All Brands
     </Link>
   );
@@ -87,6 +88,7 @@ function BrandLink({
 }) {
   const active = context.brandSlug === brand.slug;
   const className = cn("block rounded-sm px-1 py-0.5 hover:text-primary", active && "font-semibold text-primary");
+  const current = active ? ("page" as const) : undefined;
   const q = context.q ? { q: context.q } : {};
   if (context.brandRoute) {
     return (
@@ -95,6 +97,7 @@ function BrandLink({
         params={{ slug: brand.slug }}
         search={{ ...q, ...(context.categorySlug ? { category: context.categorySlug } : {}) }}
         className={className}
+        aria-current={current}
       >
         {brand.name}
       </Link>
@@ -107,13 +110,14 @@ function BrandLink({
         params={{ slug: context.categorySlug }}
         search={{ ...q, brand: brand.slug }}
         className={className}
+        aria-current={current}
       >
         {brand.name}
       </Link>
     );
   }
   return (
-    <Link to="/products" search={{ ...q, brand: brand.slug }} className={className}>
+    <Link to="/products" search={{ ...q, brand: brand.slug }} className={className} aria-current={current}>
       {brand.name}
     </Link>
   );
@@ -124,10 +128,11 @@ function AllProductsLink({ context }: { context: CatalogueContext }) {
     "block rounded-sm px-1 py-0.5 hover:text-primary",
     !context.categorySlug && "font-semibold text-primary",
   );
+  const current = !context.categorySlug ? ("true" as const) : undefined;
   const q = context.q ? { q: context.q } : {};
   if (context.brandRoute && context.brandSlug) {
     return (
-      <Link to="/brands/$slug" params={{ slug: context.brandSlug }} search={q} className={className}>
+      <Link to="/brands/$slug" params={{ slug: context.brandSlug }} search={q} className={className} aria-current={current}>
         All Products
       </Link>
     );
@@ -137,6 +142,7 @@ function AllProductsLink({ context }: { context: CatalogueContext }) {
       to="/products"
       search={{ ...q, ...(context.brandSlug ? { brand: context.brandSlug } : {}) }}
       className={className}
+      aria-current={current}
     >
       All Products
     </Link>

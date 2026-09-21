@@ -776,23 +776,15 @@ const publicInclude = {
   media: { orderBy: [{ isPrimary: "desc" as const }, { sortOrder: "asc" as const }], take: 8 },
 } satisfies Prisma.ProductInclude;
 
-export async function listPublicProducts(input: {
-  userId: string | null;
-  q?: string | undefined;
-  brandSlug?: string | undefined;
-  categorySlug?: string | undefined;
-  page?: number | undefined;
-}) {
-  const viewer = await viewerForUserId(input.userId);
-  const page = Math.max(1, input.page ?? 1);
-  const pageSize = 24;
-  const [requestedCategory, categoryRows, brands, categoryCounts] = await Promise.all([
-    input.categorySlug
-      ? prisma.category.findUnique({
-          where: { slug: input.categorySlug },
-          select: { id: true, slug: true, name: true, isActive: true },
-        })
-      : Promise.resolve(null),
+export type PublicCatalogueNav = {
+  brands: Array<{ slug: string; name: string }>;
+  categories: import("@/domain/public-catalogue-nav").PublicCategoryNavNode[];
+  categoryRows: import("@/domain/public-catalogue-nav").PublicCategoryRow[];
+};
+
+/** Single nav assembly for listing + product detail — no per-section fetches. */
+export async function loadPublicCatalogueNav(): Promise<PublicCatalogueNav> {
+  const [categoryRows, brands, categoryCounts] = await Promise.all([
     prisma.category.findMany({
       where: { isActive: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -809,9 +801,41 @@ export async function listPublicProducts(input: {
       _count: { _all: true },
     }),
   ]);
-  const { categoryIdsForFilter, nestPublicCategories } = await import("@/domain/public-catalogue-nav");
+  const { nestPublicCategories } = await import("@/domain/public-catalogue-nav");
+  const countsById = new Map(
+    categoryCounts
+      .filter((row) => row.categoryId)
+      .map((row) => [row.categoryId as string, row._count._all]),
+  );
+  return {
+    brands,
+    categories: nestPublicCategories(categoryRows, countsById),
+    categoryRows,
+  };
+}
+
+export async function listPublicProducts(input: {
+  userId: string | null;
+  q?: string | undefined;
+  brandSlug?: string | undefined;
+  categorySlug?: string | undefined;
+  page?: number | undefined;
+}) {
+  const viewer = await viewerForUserId(input.userId);
+  const page = Math.max(1, input.page ?? 1);
+  const pageSize = 24;
+  const [requestedCategory, nav] = await Promise.all([
+    input.categorySlug
+      ? prisma.category.findUnique({
+          where: { slug: input.categorySlug },
+          select: { id: true, slug: true, name: true, isActive: true },
+        })
+      : Promise.resolve(null),
+    loadPublicCatalogueNav(),
+  ]);
+  const { categoryIdsForFilter } = await import("@/domain/public-catalogue-nav");
   const activeCategory = requestedCategory?.isActive ? requestedCategory : null;
-  const categoryIds = activeCategory ? categoryIdsForFilter(categoryRows, activeCategory.id) : undefined;
+  const categoryIds = activeCategory ? categoryIdsForFilter(nav.categoryRows, activeCategory.id) : undefined;
 
   const where: Prisma.ProductWhereInput = {
     ...publicWhere,
@@ -836,18 +860,13 @@ export async function listPublicProducts(input: {
       take: pageSize,
     }),
   ]);
-  const countsById = new Map(
-    categoryCounts
-      .filter((row) => row.categoryId)
-      .map((row) => [row.categoryId as string, row._count._all]),
-  );
   return {
     items: rows.map((row) => toPublicCard(row, viewer)),
     total,
     page,
     pageSize,
-    brands,
-    categories: nestPublicCategories(categoryRows, countsById),
+    brands: nav.brands,
+    categories: nav.categories,
     category: activeCategory ? { slug: activeCategory.slug, name: activeCategory.name } : null,
   };
 }
@@ -866,12 +885,15 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     }));
   if (!product) return null;
   const variant = defaultVariant(product.variants);
-  const related = await prisma.product.findMany({
-    where: { ...publicWhere, brandId: product.brandId, id: { not: product.id } },
-    include: publicInclude,
-    take: 4,
-    orderBy: { name: "asc" },
-  });
+  const [related, nav] = await Promise.all([
+    prisma.product.findMany({
+      where: { ...publicWhere, brandId: product.brandId, id: { not: product.id } },
+      include: publicInclude,
+      take: 4,
+      orderBy: { name: "asc" },
+    }),
+    loadPublicCatalogueNav(),
+  ]);
   return {
     card: toPublicCard(product, viewer),
     description: product.description,
@@ -885,8 +907,10 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     sku: variant?.sku ?? "",
     ean: variant?.barcode ?? null,
     mpn: variant?.mpn ?? null,
+    unit: variant?.unit ?? "EA",
     ...publicOrderingFromVariant(variant),
     related: related.map((row) => toPublicCard(row, viewer)),
+    nav: { brands: nav.brands, categories: nav.categories },
   };
 }
 

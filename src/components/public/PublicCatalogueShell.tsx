@@ -9,6 +9,12 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { cn } from "@/lib/utils";
 import { Link } from "@tanstack/react-router";
 
+/** Shared listing + product-detail column template. Do not invent a second width system. */
+export const CATALOGUE_SHELL_GRID_CLASS =
+  "mx-auto grid max-w-[1400px] gap-8 px-4 py-8 lg:grid-cols-[220px_minmax(0,1fr)] sm:px-6 lg:px-10";
+
+export const CATALOGUE_SIDEBAR_ASIDE_CLASS = "hidden lg:block lg:sticky lg:top-24 lg:self-start";
+
 export type PublicCatalogueData = {
   items: PublicProductCard[];
   total: number;
@@ -19,6 +25,76 @@ export type PublicCatalogueData = {
   category: { slug: string; name: string } | null;
   error?: string | null;
 };
+
+export function CatalogueMobileNav({
+  brands,
+  categories,
+  context,
+}: {
+  brands: Array<{ slug: string; name: string }>;
+  categories: PublicCategoryNavNode[];
+  context: CatalogueContext;
+}) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-10 items-center gap-2 rounded-md border border-border px-3 text-[12px] font-semibold uppercase lg:hidden"
+          aria-label="Filters and categories"
+          data-catalogue-mobile-nav="trigger"
+        >
+          <SlidersHorizontal className="size-4" aria-hidden />
+          Filters / Categories
+        </button>
+      </SheetTrigger>
+      <SheetContent side="left" className="overflow-y-auto bg-ink text-foreground">
+        <SheetHeader>
+          <SheetTitle className="font-display uppercase">Filters / Categories</SheetTitle>
+        </SheetHeader>
+        <div className="mt-6">
+          <CatalogueSidebar brands={brands} categories={categories} context={context} />
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/**
+ * Shared public catalogue chrome: desktop sidebar + the same mobile sheet.
+ * Listing pages add search/results above/inside this; product detail reuses it
+ * so PDP never grows a second navigation tree.
+ */
+export function PublicCatalogueLayout({
+  brands,
+  categories,
+  context,
+  breadcrumbs,
+  children,
+}: {
+  brands: Array<{ slug: string; name: string }>;
+  categories: PublicCategoryNavNode[];
+  context: CatalogueContext;
+  breadcrumbs?: Array<{ label: string; to?: string | undefined }>;
+  children: ReactNode;
+}) {
+  return (
+    <PublicLayout>
+      <div className={CATALOGUE_SHELL_GRID_CLASS} data-catalogue-shell="layout">
+        <aside className={CATALOGUE_SIDEBAR_ASIDE_CLASS} data-catalogue-sidebar="desktop">
+          <CatalogueSidebar brands={brands} categories={categories} context={context} />
+        </aside>
+        <div className="min-w-0">
+          <div className="mb-4 lg:hidden">
+            <CatalogueMobileNav brands={brands} categories={categories} context={context} />
+          </div>
+          {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
+          {children}
+        </div>
+      </div>
+    </PublicLayout>
+  );
+}
 
 export function PublicCatalogueShell({
   data,
@@ -59,26 +135,7 @@ export function PublicCatalogueShell({
               {intro ? <p className="mt-2 max-w-2xl text-sm text-steel">{intro}</p> : null}
             </div>
             <div className="flex items-center gap-2">
-              <Sheet>
-                <SheetTrigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex h-10 items-center gap-2 rounded-md border border-border px-3 text-[12px] font-semibold uppercase lg:hidden"
-                    aria-label="Filters and categories"
-                  >
-                    <SlidersHorizontal className="size-4" aria-hidden />
-                    Filters / Categories
-                  </button>
-                </SheetTrigger>
-                <SheetContent side="left" className="overflow-y-auto bg-ink text-foreground">
-                  <SheetHeader>
-                    <SheetTitle className="font-display uppercase">Filters / Categories</SheetTitle>
-                  </SheetHeader>
-                  <div className="mt-6">
-                    <CatalogueSidebar brands={data.brands} categories={data.categories} context={context} />
-                  </div>
-                </SheetContent>
-              </Sheet>
+              <CatalogueMobileNav brands={data.brands} categories={data.categories} context={context} />
               <div className="flex items-center gap-1 rounded-md border border-border p-1" role="group" aria-label="Catalogue layout">
                 <button
                   type="button"
@@ -126,11 +183,11 @@ export function PublicCatalogueShell({
           {data.error ? <p className="mt-4 text-sm text-bad">{data.error}</p> : null}
         </div>
       </div>
-      <div className="mx-auto grid max-w-[1400px] gap-8 px-4 py-8 lg:grid-cols-[220px_minmax(0,1fr)] sm:px-6 lg:px-10">
-        <aside className="hidden lg:block">
+      <div className={CATALOGUE_SHELL_GRID_CLASS} data-catalogue-shell="listing">
+        <aside className={CATALOGUE_SIDEBAR_ASIDE_CLASS} data-catalogue-sidebar="desktop">
           <CatalogueSidebar brands={data.brands} categories={data.categories} context={context} />
         </aside>
-        <div>
+        <div className="min-w-0">
           {data.items.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-surface/30 p-8">
               <p className="font-display text-lg font-semibold uppercase">{emptyMessage}</p>

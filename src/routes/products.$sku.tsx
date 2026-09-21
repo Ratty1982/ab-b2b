@@ -1,5 +1,5 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
+import { PublicCatalogueLayout } from "@/components/public/PublicCatalogueShell";
 import { ProductDetailView } from "@/components/public/ProductDetail";
 import { getPublicProductFn } from "@/server/phase2/fns";
 
@@ -27,17 +27,20 @@ export const Route = createFileRoute("/products/$sku")({
 function ProductPage() {
   const data = Route.useLoaderData();
   return (
-    <PublicLayout>
-      <div className="mx-auto max-w-[1400px] px-4 pt-6 sm:px-6 lg:px-10">
-        <Breadcrumbs
-          items={[
-            { label: "Home", to: "/" },
-            { label: "Products", to: "/products" },
-            { label: data.card.name },
-          ]}
-        />
-      </div>
+    <PublicCatalogueLayout
+      brands={data.nav.brands}
+      categories={data.nav.categories}
+      context={{
+        brandSlug: data.card.brandSlug,
+        categorySlug: data.card.categorySlug,
+      }}
+      breadcrumbs={[
+        { label: "Home", to: "/" },
+        { label: "Products", to: "/products" },
+        { label: data.card.name },
+      ]}
+    >
       <ProductDetailView data={data} />
-    </PublicLayout>
+    </PublicCatalogueLayout>
   );
 }
