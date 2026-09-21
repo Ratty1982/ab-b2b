@@ -29,15 +29,90 @@ type Workspace = Awaited<
   Extract<Awaited<ReturnType<typeof getCatalogueProductFn>>, { ok: true }>["data"]
 >;
 
+type ProductDraft = {
+  sku: string;
+  name: string;
+  brandId: string;
+  categoryId: string;
+  status: Workspace["status"];
+  ean: string;
+  mpn: string;
+  externalRef: string;
+  isTradeVisible: boolean;
+  isFeatured: boolean;
+  isNew: boolean;
+  shortDescription: string;
+  description: string;
+  specifications: Array<{ name: string; value: string }>;
+  tradePrice: string;
+  rrp: string;
+  vat: "standard" | "zero";
+  packQty: string;
+  caseQty: string;
+  minimumOrderQty: string;
+  orderIncrement: string;
+  unit: string;
+  weightKg: string;
+  lengthMm: string;
+  widthMm: string;
+  heightMm: string;
+  slug: string;
+  metaTitle: string;
+  metaDescription: string;
+};
+
+function draftFromProduct(product: Workspace): ProductDraft {
+  return {
+    sku: product.sku,
+    name: product.name,
+    brandId: product.brandId,
+    categoryId: product.categoryId ?? "",
+    status: product.status,
+    ean: product.ean ?? "",
+    mpn: product.mpn ?? "",
+    externalRef: product.externalRef ?? "",
+    isTradeVisible: product.isTradeVisible,
+    isFeatured: product.isFeatured,
+    isNew: product.isNew,
+    shortDescription: product.shortDescription ?? "",
+    description: product.description ?? "",
+    specifications: product.specifications.length ? product.specifications : [{ name: "", value: "" }],
+    tradePrice: String(product.tradePrice ?? ""),
+    rrp: String(product.rrp ?? ""),
+    vat: product.vat === "zero" ? "zero" : "standard",
+    packQty: String(product.packQty),
+    caseQty: String(product.caseQty ?? ""),
+    minimumOrderQty: String(product.minimumOrderQty),
+    orderIncrement: String(product.orderIncrement),
+    unit: product.unit,
+    weightKg: String(product.weightKg ?? ""),
+    lengthMm: String(product.lengthMm ?? ""),
+    widthMm: String(product.widthMm ?? ""),
+    heightMm: String(product.heightMm ?? ""),
+    slug: product.slug,
+    metaTitle: product.metaTitle ?? "",
+    metaDescription: product.metaDescription ?? "",
+  };
+}
+
+function optionalNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  return Number(trimmed);
+}
+
 function ProductWorkspace() {
   const { id } = Route.useParams();
   const [tab, setTab] = useState<Tab>("Overview");
   const [product, setProduct] = useState<Workspace | null>(null);
+  const [draft, setDraft] = useState<ProductDraft | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
   const [categories, setCategories] = useState<Array<{ id: string; name: string; depth: number }>>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { keepDraft?: boolean }) => {
     const [p, b, c] = await Promise.all([
       getCatalogueProductFn({ data: { id } }),
       listCatalogueBrandsFn(),
@@ -46,17 +121,76 @@ function ProductWorkspace() {
     if (!p.ok) {
       setError(p.error);
       setProduct(null);
+      if (!opts?.keepDraft) setDraft(null);
       return;
     }
     setError(null);
     setProduct(p.data);
+    if (!opts?.keepDraft) {
+      setDraft(draftFromProduct(p.data));
+      setDirty(false);
+    }
     if (b.ok) setBrands(b.data);
     if (c.ok) setCategories(c.data);
   }, [id]);
 
   useEffect(() => {
+    setTab("Overview");
+    setDirty(false);
+    setDraft(null);
     void load();
   }, [load]);
+
+  function updateDraft<K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) {
+    setDraft((current) => (current ? { ...current, [key]: value } : current));
+    setDirty(true);
+  }
+
+  async function saveAll() {
+    if (!product || !draft) return;
+    setSaving(true);
+    const r = await updateCatalogueProductFn({
+      data: {
+        id: product.id,
+        sku: draft.sku,
+        name: draft.name,
+        brandId: draft.brandId,
+        categoryId: draft.categoryId || null,
+        status: draft.status,
+        ean: draft.ean,
+        mpn: draft.mpn,
+        externalRef: draft.externalRef,
+        isTradeVisible: draft.isTradeVisible,
+        isFeatured: draft.isFeatured,
+        isNew: draft.isNew,
+        shortDescription: draft.shortDescription,
+        description: draft.description,
+        specifications: draft.specifications.filter((row) => row.name && row.value),
+        tradePrice: optionalNumber(draft.tradePrice),
+        rrp: optionalNumber(draft.rrp),
+        vat: draft.vat,
+        packQty: Number(draft.packQty),
+        caseQty: optionalNumber(draft.caseQty),
+        minimumOrderQty: Number(draft.minimumOrderQty),
+        orderIncrement: Number(draft.orderIncrement),
+        unit: draft.unit,
+        weightKg: optionalNumber(draft.weightKg),
+        lengthMm: optionalNumber(draft.lengthMm),
+        widthMm: optionalNumber(draft.widthMm),
+        heightMm: optionalNumber(draft.heightMm),
+        slug: draft.slug,
+        metaTitle: draft.metaTitle,
+        metaDescription: draft.metaDescription,
+      },
+    });
+    setSaving(false);
+    if (!r.ok) {
+      toast.error(r.error);
+      return;
+    }
+    toast.success("Product saved");
+    await load();
+  }
 
   if (error) {
     return (
@@ -66,22 +200,31 @@ function ProductWorkspace() {
       </div>
     );
   }
-  if (!product) return <p className="p-6 text-[13px] text-steel">Loading product…</p>;
+  if (!product || !draft) return <p className="p-6 text-[13px] text-steel">Loading product…</p>;
 
   const tabs: Tab[] = ["Overview", "Content", "Images", "Commercial", "Inventory", "Variants", "SEO", "Activity"];
+  const refreshMedia = () => load({ keepDraft: true });
 
   return (
     <div>
       <PanelHeader
-        title={product.name}
-        sub={`${product.sku} · ${product.brandName}`}
+        title={draft.name || product.name}
+        sub={`${draft.sku || product.sku} · ${product.brandName}${dirty ? " · unsaved changes" : ""}`}
         crumbs={[
           { label: "Products", to: "/admin/products" },
-          { label: product.name },
+          { label: draft.name || product.name },
         ]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge tone={product.status === "ACTIVE" ? "good" : "warn"}>{product.status}</StatusBadge>
+            <StatusBadge tone={draft.status === "ACTIVE" ? "good" : "warn"}>{draft.status}</StatusBadge>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void saveAll()}
+              className="h-10 rounded-md bg-primary px-5 text-[12px] font-bold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
             <Link
               to="/admin/products"
               className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
@@ -107,129 +250,118 @@ function ProductWorkspace() {
         ))}
       </div>
       <div className="p-4 sm:p-6">
-        {tab === "Overview" ? <OverviewForm product={product} brands={brands} categories={categories} onSaved={load} /> : null}
-        {tab === "Content" ? <ContentForm product={product} onSaved={load} /> : null}
-        {tab === "Images" ? <ImagesForm product={product} onSaved={load} /> : null}
-        {tab === "Commercial" ? <CommercialForm product={product} onSaved={load} /> : null}
-        {tab === "Inventory" ? <InventoryPanel product={product} /> : null}
-        {tab === "Variants" ? <VariantsForm product={product} onSaved={load} /> : null}
-        {tab === "SEO" ? <SeoForm product={product} onSaved={load} /> : null}
-        {tab === "Activity" ? <ActivityPanel product={product} /> : null}
+        <div hidden={tab !== "Overview"}>
+          <OverviewForm draft={draft} brands={brands} categories={categories} onChange={updateDraft} />
+        </div>
+        <div hidden={tab !== "Content"}>
+          <ContentForm draft={draft} onChange={updateDraft} onSpecsChange={(specifications) => updateDraft("specifications", specifications)} />
+        </div>
+        <div hidden={tab !== "Images"}>
+          <ImagesForm product={product} onSaved={refreshMedia} />
+        </div>
+        <div hidden={tab !== "Commercial"}>
+          <CommercialForm draft={draft} onChange={updateDraft} />
+        </div>
+        <div hidden={tab !== "Inventory"}>
+          <InventoryPanel product={product} />
+        </div>
+        <div hidden={tab !== "Variants"}>
+          <VariantsForm product={product} onSaved={refreshMedia} />
+        </div>
+        <div hidden={tab !== "SEO"}>
+          <SeoForm draft={draft} onChange={updateDraft} />
+        </div>
+        <div hidden={tab !== "Activity"}>
+          <ActivityPanel product={product} />
+        </div>
+        {tab !== "Images" && tab !== "Variants" && tab !== "Inventory" && tab !== "Activity" ? (
+          <p className="mt-6 max-w-2xl text-[12px] text-steel">Switch tabs freely. Save in the header writes overview, content, commercial and SEO together.</p>
+        ) : null}
       </div>
     </div>
   );
 }
 
-async function patch(product: Workspace, data: Record<string, unknown>, onSaved: () => Promise<void>) {
-  const r = await updateCatalogueProductFn({ data: { id: product.id, ...data } });
-  if (!r.ok) {
-    toast.error(r.error);
-    return;
-  }
-  toast.success("Saved");
-  await onSaved();
-}
-
 function OverviewForm({
-  product,
+  draft,
   brands,
   categories,
-  onSaved,
+  onChange,
 }: {
-  product: Workspace;
+  draft: ProductDraft;
   brands: Array<{ id: string; name: string }>;
   categories: Array<{ id: string; name: string; depth: number }>;
-  onSaved: () => Promise<void>;
+  onChange: <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => void;
 }) {
-  const [sku, setSku] = useState(product.sku);
-  const [name, setName] = useState(product.name);
-  const [brandId, setBrandId] = useState(product.brandId);
-  const [categoryId, setCategoryId] = useState(product.categoryId ?? "");
-  const [status, setStatus] = useState(product.status);
-  const [ean, setEan] = useState(product.ean ?? "");
-  const [mpn, setMpn] = useState(product.mpn ?? "");
-  const [externalRef, setExternalRef] = useState(product.externalRef ?? "");
-  useEffect(() => {
-    setSku(product.sku);
-    setName(product.name);
-    setBrandId(product.brandId);
-    setCategoryId(product.categoryId ?? "");
-    setStatus(product.status);
-    setEan(product.ean ?? "");
-    setMpn(product.mpn ?? "");
-    setExternalRef(product.externalRef ?? "");
-  }, [product]);
   return (
-    <form className="grid max-w-2xl gap-4" onSubmit={(e) => { e.preventDefault(); void patch(product, { sku, name, brandId, categoryId: categoryId || null, status, ean, mpn, externalRef }, onSaved); }}>
-      <Field label="SKU" htmlFor="ws-sku"><input id="ws-sku" value={sku} onChange={(e) => setSku(e.target.value)} className={inputClass} /></Field>
-      <Field label="Name" htmlFor="ws-name"><input id="ws-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} /></Field>
+    <div className="grid max-w-2xl gap-4">
+      <Field label="SKU" htmlFor="ws-sku"><input id="ws-sku" value={draft.sku} onChange={(e) => onChange("sku", e.target.value)} className={inputClass} /></Field>
+      <Field label="Name" htmlFor="ws-name"><input id="ws-name" value={draft.name} onChange={(e) => onChange("name", e.target.value)} className={inputClass} /></Field>
       <Field label="Brand" htmlFor="ws-brand">
-        <select id="ws-brand" value={brandId} onChange={(e) => setBrandId(e.target.value)} className={inputClass}>
+        <select id="ws-brand" value={draft.brandId} onChange={(e) => onChange("brandId", e.target.value)} className={inputClass}>
           {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </Field>
       <Field label="Category" htmlFor="ws-cat">
-        <select id="ws-cat" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputClass}>
+        <select id="ws-cat" value={draft.categoryId} onChange={(e) => onChange("categoryId", e.target.value)} className={inputClass}>
           {categories.map((c) => <option key={c.id} value={c.id}>{"— ".repeat(c.depth)}{c.name}</option>)}
         </select>
       </Field>
       <Field label="Status" htmlFor="ws-status">
-        <select id="ws-status" value={status} onChange={(e) => setStatus(e.target.value as Workspace["status"])} className={inputClass}>
+        <select id="ws-status" value={draft.status} onChange={(e) => onChange("status", e.target.value as Workspace["status"])} className={inputClass}>
           <option value="DRAFT">Draft</option>
           <option value="ACTIVE">Active</option>
           <option value="INACTIVE">Inactive</option>
           <option value="DISCONTINUED">Discontinued</option>
         </select>
       </Field>
-      <Field label="EAN / barcode" htmlFor="ws-ean"><input id="ws-ean" value={ean} onChange={(e) => setEan(e.target.value)} className={inputClass} /></Field>
-      <Field label="MPN" htmlFor="ws-mpn"><input id="ws-mpn" value={mpn} onChange={(e) => setMpn(e.target.value)} className={inputClass} /></Field>
-      <Field label="Autopart / external ref" htmlFor="ws-ext"><input id="ws-ext" value={externalRef} onChange={(e) => setExternalRef(e.target.value)} className={inputClass} /></Field>
+      <Field label="EAN / barcode" htmlFor="ws-ean"><input id="ws-ean" value={draft.ean} onChange={(e) => onChange("ean", e.target.value)} className={inputClass} /></Field>
+      <Field label="MPN" htmlFor="ws-mpn"><input id="ws-mpn" value={draft.mpn} onChange={(e) => onChange("mpn", e.target.value)} className={inputClass} /></Field>
+      <Field label="Autopart / external ref" htmlFor="ws-ext"><input id="ws-ext" value={draft.externalRef} onChange={(e) => onChange("externalRef", e.target.value)} className={inputClass} /></Field>
       <label className="flex items-center gap-2 text-[13px]">
-        <input type="checkbox" checked={product.isTradeVisible} onChange={(e) => void patch(product, { isTradeVisible: e.target.checked }, onSaved)} />
+        <input type="checkbox" checked={draft.isTradeVisible} onChange={(e) => onChange("isTradeVisible", e.target.checked)} />
         Visible to trade customers
       </label>
       <label className="flex items-center gap-2 text-[13px]">
-        <input type="checkbox" checked={product.isFeatured} onChange={(e) => void patch(product, { isFeatured: e.target.checked }, onSaved)} />
+        <input type="checkbox" checked={draft.isFeatured} onChange={(e) => onChange("isFeatured", e.target.checked)} />
         Featured
       </label>
       <label className="flex items-center gap-2 text-[13px]">
-        <input type="checkbox" checked={product.isNew} onChange={(e) => void patch(product, { isNew: e.target.checked }, onSaved)} />
+        <input type="checkbox" checked={draft.isNew} onChange={(e) => onChange("isNew", e.target.checked)} />
         New product
       </label>
-      <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save overview</button>
-    </form>
+    </div>
   );
 }
 
-function ContentForm({ product, onSaved }: { product: Workspace; onSaved: () => Promise<void> }) {
-  const [shortDescription, setShort] = useState(product.shortDescription ?? "");
-  const [description, setDescription] = useState(product.description ?? "");
-  const [specs, setSpecs] = useState(product.specifications);
-  useEffect(() => {
-    setShort(product.shortDescription ?? "");
-    setDescription(product.description ?? "");
-    setSpecs(product.specifications);
-  }, [product]);
+function ContentForm({
+  draft,
+  onChange,
+  onSpecsChange,
+}: {
+  draft: ProductDraft;
+  onChange: <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => void;
+  onSpecsChange: (rows: Array<{ name: string; value: string }>) => void;
+}) {
   return (
-    <form className="grid max-w-3xl gap-4" onSubmit={(e) => { e.preventDefault(); void patch(product, { shortDescription, description, specifications: specs.filter((s) => s.name && s.value) }, onSaved); }}>
+    <div className="grid max-w-3xl gap-4">
       <Field label="Short description" htmlFor="ws-short">
-        <textarea id="ws-short" value={shortDescription} onChange={(e) => setShort(e.target.value)} className={`${inputClass} min-h-20`} />
+        <textarea id="ws-short" value={draft.shortDescription} onChange={(e) => onChange("shortDescription", e.target.value)} className={`${inputClass} min-h-20`} />
       </Field>
       <Field label="Description" htmlFor="ws-desc">
-        <textarea id="ws-desc" value={description} onChange={(e) => setDescription(e.target.value)} className={`${inputClass} min-h-40`} />
+        <textarea id="ws-desc" value={draft.description} onChange={(e) => onChange("description", e.target.value)} className={`${inputClass} min-h-40`} />
       </Field>
       <div>
         <p className="mb-2 text-[12px] font-semibold uppercase text-steel">Specifications</p>
-        {specs.map((row, i) => (
+        {draft.specifications.map((row, i) => (
           <div key={i} className="mb-2 grid grid-cols-2 gap-2">
-            <input value={row.name} placeholder="Name" className={inputClass} onChange={(e) => setSpecs(specs.map((s, idx) => idx === i ? { ...s, name: e.target.value } : s))} />
-            <input value={row.value} placeholder="Value" className={inputClass} onChange={(e) => setSpecs(specs.map((s, idx) => idx === i ? { ...s, value: e.target.value } : s))} />
+            <input value={row.name} placeholder="Name" className={inputClass} onChange={(e) => onSpecsChange(draft.specifications.map((s, idx) => idx === i ? { ...s, name: e.target.value } : s))} />
+            <input value={row.value} placeholder="Value" className={inputClass} onChange={(e) => onSpecsChange(draft.specifications.map((s, idx) => idx === i ? { ...s, value: e.target.value } : s))} />
           </div>
         ))}
-        <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => setSpecs([...specs, { name: "", value: "" }])}>Add specification</button>
+        <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => onSpecsChange([...draft.specifications, { name: "", value: "" }])}>Add specification</button>
       </div>
-      <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save content</button>
-    </form>
+    </div>
   );
 }
 
@@ -237,7 +369,7 @@ function ImagesForm({ product, onSaved }: { product: Workspace; onSaved: () => P
   const [picker, setPicker] = useState(false);
   return (
     <div className="max-w-3xl">
-      <p className="mb-4 text-[13px] text-steel">Uses the Website media library. Removing an image here does not delete the file.</p>
+      <p className="mb-4 text-[13px] text-steel">Uses the Website media library. Removing an image here does not delete the file. Image changes apply immediately and do not discard edits on other tabs.</p>
       <div className="grid gap-3 sm:grid-cols-3">
         {product.media.map((m, index) => (
           <div key={m.id} className="rounded-lg border border-border p-2">
@@ -276,71 +408,34 @@ function ImagesForm({ product, onSaved }: { product: Workspace; onSaved: () => P
   );
 }
 
-function CommercialForm({ product, onSaved }: { product: Workspace; onSaved: () => Promise<void> }) {
-  const [tradePrice, setTrade] = useState(String(product.tradePrice ?? ""));
-  const [rrp, setRrp] = useState(String(product.rrp ?? ""));
-  const [vat, setVat] = useState(product.vat);
-  const [packQty, setPack] = useState(String(product.packQty));
-  const [caseQty, setCase] = useState(String(product.caseQty ?? ""));
-  const [minimumOrderQty, setMoq] = useState(String(product.minimumOrderQty));
-  const [orderIncrement, setInc] = useState(String(product.orderIncrement));
-  const [unit, setUnit] = useState(product.unit);
-  const [weightKg, setW] = useState(String(product.weightKg ?? ""));
-  const [lengthMm, setL] = useState(String(product.lengthMm ?? ""));
-  const [widthMm, setWd] = useState(String(product.widthMm ?? ""));
-  const [heightMm, setH] = useState(String(product.heightMm ?? ""));
-  useEffect(() => {
-    setTrade(String(product.tradePrice ?? ""));
-    setRrp(String(product.rrp ?? ""));
-    setVat(product.vat);
-    setPack(String(product.packQty));
-    setCase(String(product.caseQty ?? ""));
-    setMoq(String(product.minimumOrderQty));
-    setInc(String(product.orderIncrement));
-    setUnit(product.unit);
-    setW(String(product.weightKg ?? ""));
-    setL(String(product.lengthMm ?? ""));
-    setWd(String(product.widthMm ?? ""));
-    setH(String(product.heightMm ?? ""));
-  }, [product]);
+function CommercialForm({
+  draft,
+  onChange,
+}: {
+  draft: ProductDraft;
+  onChange: <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => void;
+}) {
   return (
-    <form className="grid max-w-2xl gap-4 sm:grid-cols-2" onSubmit={(e) => {
-      e.preventDefault();
-      void patch(product, {
-        tradePrice: tradePrice === "" ? null : Number(tradePrice),
-        rrp: rrp === "" ? null : Number(rrp),
-        vat,
-        packQty: Number(packQty),
-        caseQty: caseQty === "" ? null : Number(caseQty),
-        minimumOrderQty: Number(minimumOrderQty),
-        orderIncrement: Number(orderIncrement),
-        unit,
-        weightKg: weightKg === "" ? null : Number(weightKg),
-        lengthMm: lengthMm === "" ? null : Number(lengthMm),
-        widthMm: widthMm === "" ? null : Number(widthMm),
-        heightMm: heightMm === "" ? null : Number(heightMm),
-      }, onSaved);
-    }}>
+    <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
       <p className="sm:col-span-2 text-[13px] text-steel">Base catalogue commercial data only. Customer price lists and promotions are Phase 4.</p>
-      <Field label="Base trade price" htmlFor="ws-trade"><input id="ws-trade" value={tradePrice} onChange={(e) => setTrade(e.target.value)} className={inputClass} /></Field>
-      <Field label="RRP" htmlFor="ws-rrp"><input id="ws-rrp" value={rrp} onChange={(e) => setRrp(e.target.value)} className={inputClass} /></Field>
+      <Field label="Base trade price" htmlFor="ws-trade"><input id="ws-trade" value={draft.tradePrice} onChange={(e) => onChange("tradePrice", e.target.value)} className={inputClass} /></Field>
+      <Field label="RRP" htmlFor="ws-rrp"><input id="ws-rrp" value={draft.rrp} onChange={(e) => onChange("rrp", e.target.value)} className={inputClass} /></Field>
       <Field label="VAT" htmlFor="ws-vat">
-        <select id="ws-vat" value={vat} onChange={(e) => setVat(e.target.value as "standard" | "zero")} className={inputClass}>
+        <select id="ws-vat" value={draft.vat} onChange={(e) => onChange("vat", e.target.value as "standard" | "zero")} className={inputClass}>
           <option value="standard">Standard</option>
           <option value="zero">Zero</option>
         </select>
       </Field>
-      <Field label="Pack qty" htmlFor="ws-pack"><input id="ws-pack" value={packQty} onChange={(e) => setPack(e.target.value)} className={inputClass} /></Field>
-      <Field label="Case qty" htmlFor="ws-case"><input id="ws-case" value={caseQty} onChange={(e) => setCase(e.target.value)} className={inputClass} /></Field>
-      <Field label="Minimum order qty" htmlFor="ws-moq"><input id="ws-moq" value={minimumOrderQty} onChange={(e) => setMoq(e.target.value)} className={inputClass} /></Field>
-      <Field label="Order increment" htmlFor="ws-inc"><input id="ws-inc" value={orderIncrement} onChange={(e) => setInc(e.target.value)} className={inputClass} /></Field>
-      <Field label="Unit" htmlFor="ws-unit"><input id="ws-unit" value={unit} onChange={(e) => setUnit(e.target.value)} className={inputClass} /></Field>
-      <Field label="Weight (kg)" htmlFor="ws-w"><input id="ws-w" value={weightKg} onChange={(e) => setW(e.target.value)} className={inputClass} /></Field>
-      <Field label="Length (mm)" htmlFor="ws-l"><input id="ws-l" value={lengthMm} onChange={(e) => setL(e.target.value)} className={inputClass} /></Field>
-      <Field label="Width (mm)" htmlFor="ws-wd"><input id="ws-wd" value={widthMm} onChange={(e) => setWd(e.target.value)} className={inputClass} /></Field>
-      <Field label="Height (mm)" htmlFor="ws-h"><input id="ws-h" value={heightMm} onChange={(e) => setH(e.target.value)} className={inputClass} /></Field>
-      <button type="submit" className="sm:col-span-2 h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save commercial</button>
-    </form>
+      <Field label="Pack qty" htmlFor="ws-pack"><input id="ws-pack" value={draft.packQty} onChange={(e) => onChange("packQty", e.target.value)} className={inputClass} /></Field>
+      <Field label="Case qty" htmlFor="ws-case"><input id="ws-case" value={draft.caseQty} onChange={(e) => onChange("caseQty", e.target.value)} className={inputClass} /></Field>
+      <Field label="Minimum order qty" htmlFor="ws-moq"><input id="ws-moq" value={draft.minimumOrderQty} onChange={(e) => onChange("minimumOrderQty", e.target.value)} className={inputClass} /></Field>
+      <Field label="Order increment" htmlFor="ws-inc"><input id="ws-inc" value={draft.orderIncrement} onChange={(e) => onChange("orderIncrement", e.target.value)} className={inputClass} /></Field>
+      <Field label="Unit" htmlFor="ws-unit"><input id="ws-unit" value={draft.unit} onChange={(e) => onChange("unit", e.target.value)} className={inputClass} /></Field>
+      <Field label="Weight (kg)" htmlFor="ws-w"><input id="ws-w" value={draft.weightKg} onChange={(e) => onChange("weightKg", e.target.value)} className={inputClass} /></Field>
+      <Field label="Length (mm)" htmlFor="ws-l"><input id="ws-l" value={draft.lengthMm} onChange={(e) => onChange("lengthMm", e.target.value)} className={inputClass} /></Field>
+      <Field label="Width (mm)" htmlFor="ws-wd"><input id="ws-wd" value={draft.widthMm} onChange={(e) => onChange("widthMm", e.target.value)} className={inputClass} /></Field>
+      <Field label="Height (mm)" htmlFor="ws-h"><input id="ws-h" value={draft.heightMm} onChange={(e) => onChange("heightMm", e.target.value)} className={inputClass} /></Field>
+    </div>
   );
 }
 
@@ -387,7 +482,7 @@ function VariantsForm({ product, onSaved }: { product: Workspace; onSaved: () =>
   const [name, setName] = useState("");
   return (
     <div className="max-w-2xl space-y-6">
-      <p className="text-[13px] text-steel">Simple products use one default SKU. Extra variants are for pack size, colour or fitment later — not a full configurator.</p>
+      <p className="text-[13px] text-steel">Simple products use one default SKU. Extra variants are for pack size, colour or fitment later — not a full configurator. Adding a variant does not discard edits on other tabs.</p>
       <ul className="divide-y divide-border rounded-lg border border-border">
         {product.variants.map((v) => (
           <li key={v.id} className="flex items-center justify-between px-3 py-2 text-[13px]">
@@ -417,23 +512,20 @@ function VariantsForm({ product, onSaved }: { product: Workspace; onSaved: () =>
   );
 }
 
-function SeoForm({ product, onSaved }: { product: Workspace; onSaved: () => Promise<void> }) {
-  const [slug, setSlug] = useState(product.slug);
-  const [metaTitle, setTitle] = useState(product.metaTitle ?? "");
-  const [metaDescription, setDesc] = useState(product.metaDescription ?? "");
-  useEffect(() => {
-    setSlug(product.slug);
-    setTitle(product.metaTitle ?? "");
-    setDesc(product.metaDescription ?? "");
-  }, [product]);
+function SeoForm({
+  draft,
+  onChange,
+}: {
+  draft: ProductDraft;
+  onChange: <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => void;
+}) {
   return (
-    <form className="grid max-w-2xl gap-4" onSubmit={(e) => { e.preventDefault(); void patch(product, { slug, metaTitle, metaDescription }, onSaved); }}>
-      <Field label="Slug" htmlFor="ws-slug"><input id="ws-slug" value={slug} onChange={(e) => setSlug(e.target.value)} className={inputClass} /></Field>
-      <p className="text-[12px] text-steel">Public URL: /products/{slug}</p>
-      <Field label="Meta title" htmlFor="ws-mt"><input id="ws-mt" value={metaTitle} onChange={(e) => setTitle(e.target.value)} className={inputClass} /></Field>
-      <Field label="Meta description" htmlFor="ws-md"><textarea id="ws-md" value={metaDescription} onChange={(e) => setDesc(e.target.value)} className={`${inputClass} min-h-24`} /></Field>
-      <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">Save SEO</button>
-    </form>
+    <div className="grid max-w-2xl gap-4">
+      <Field label="Slug" htmlFor="ws-slug"><input id="ws-slug" value={draft.slug} onChange={(e) => onChange("slug", e.target.value)} className={inputClass} /></Field>
+      <p className="text-[12px] text-steel">Public URL: /products/{draft.slug}</p>
+      <Field label="Meta title" htmlFor="ws-mt"><input id="ws-mt" value={draft.metaTitle} onChange={(e) => onChange("metaTitle", e.target.value)} className={inputClass} /></Field>
+      <Field label="Meta description" htmlFor="ws-md"><textarea id="ws-md" value={draft.metaDescription} onChange={(e) => onChange("metaDescription", e.target.value)} className={`${inputClass} min-h-24`} /></Field>
+    </div>
   );
 }
 
