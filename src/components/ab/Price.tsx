@@ -4,6 +4,67 @@ import { gbp } from "@/lib/data";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
+/** RRP is public catalogue information. Never used to infer trade. */
+export function CatalogueRrp({
+  rrp,
+  className,
+}: {
+  rrp: number | null;
+  className?: string;
+}) {
+  if (rrp == null) {
+    return <span className={cn("text-[12px] text-steel", className)}>—</span>;
+  }
+  return <span className={cn("num text-sm font-semibold text-steel", className)}>{gbp(rrp)}</span>;
+}
+
+/**
+ * Account price column. Trade is only shown when the payload already includes it
+ * (anonymous viewers receive trade: null from the server).
+ */
+export function CatalogueYourPrice({
+  trade,
+  ctaMode = "text",
+  className,
+}: {
+  trade: number | null;
+  ctaMode?: "link" | "text";
+  className?: string;
+}) {
+  const { signedIn } = useSession();
+  const ctaClass = "inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary";
+
+  if (!signedIn) {
+    return (
+      <div className={cn("min-w-0", className)}>
+        {ctaMode === "link" ? (
+          <Link to="/login" className={cn(ctaClass, "hover:underline")}>
+            <Lock className="size-3" aria-hidden />
+            Sign in to view your price
+          </Link>
+        ) : (
+          <span className={ctaClass}>
+            <Lock className="size-3" aria-hidden />
+            Sign in to view your price
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (trade == null) {
+    return <div className={cn("text-[11px] text-steel", className)}>Account pricing is not available on this login</div>;
+  }
+
+  return (
+    <div className={cn("min-w-0", className)}>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-steel">Your price</div>
+      <div className="num font-display text-lg font-semibold leading-none">{gbp(trade)}</div>
+      <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-steel">ex VAT</div>
+    </div>
+  );
+}
+
 /**
  * Trade pricing is account-specific, so it is never rendered to a visitor
  * who is not signed in. Public visitors see RRP plus a route into the

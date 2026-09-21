@@ -379,7 +379,7 @@ function NewAndPopular({
                     params={{ sku: product.slug || product.sku }}
                     className="grid grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 bg-ink p-3 transition-colors hover:bg-surface"
                   >
-                    <ProductImage src={product.imageSrc} alt="" layout="list" />
+                    <ProductImage src={product.imageSrc} alt="" layout="thumb" className="size-16" />
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] font-semibold">{product.name}</span>
                       <span className="num block text-[11px] text-steel">

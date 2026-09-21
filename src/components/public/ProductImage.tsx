@@ -3,38 +3,60 @@ import { cn } from "@/lib/utils";
 
 export const PRODUCT_IMAGE_LOGO_SRC = "/brand/ab-logo.jpg";
 export const PRODUCT_IMAGE_PLACEHOLDER_LABEL = "Image coming soon";
-export const PRODUCT_IMAGE_STAGE_CLASS =
-  "relative flex items-center justify-center overflow-hidden bg-surface p-3";
 export const PRODUCT_IMAGE_FIT_CLASS =
   "max-h-[85%] max-w-[85%] object-contain object-center transition-transform duration-200 group-hover:scale-[1.03] group-focus-visible:scale-[1.03]";
+
+/** Full catalogue card / PDP stage — never used by list rows. */
+export const PRODUCT_IMAGE_CARD_STAGE_CLASS =
+  "relative flex aspect-[5/4] w-full items-center justify-center overflow-hidden rounded-md bg-surface p-3";
+
+export const PRODUCT_IMAGE_DETAIL_STAGE_CLASS =
+  "relative flex aspect-[5/4] w-full items-center justify-center overflow-hidden rounded-lg bg-surface p-3";
+
+/** Compact list thumbnail: 80px square, never full-width. */
+export const PRODUCT_IMAGE_THUMB_STAGE_CLASS =
+  "relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface p-1";
+
+export const PRODUCT_IMAGE_STAGE_CLASS = PRODUCT_IMAGE_CARD_STAGE_CLASS;
+
+export type ProductImageLayout = "card" | "thumb" | "list" | "detail";
+
+export function productImageStageClass(layout: ProductImageLayout = "card") {
+  if (layout === "thumb" || layout === "list") return PRODUCT_IMAGE_THUMB_STAGE_CLASS;
+  if (layout === "detail") return PRODUCT_IMAGE_DETAIL_STAGE_CLASS;
+  return PRODUCT_IMAGE_CARD_STAGE_CLASS;
+}
 
 export function ProductImage({
   src,
   alt,
   layout = "card",
+  className,
 }: {
   src?: string | null;
   alt: string;
-  layout?: "card" | "list" | "detail";
+  layout?: ProductImageLayout;
+  className?: string;
 }) {
-  const stage = cn(
-    PRODUCT_IMAGE_STAGE_CLASS,
-    layout === "list" && "aspect-square w-24 shrink-0 rounded-md p-1.5",
-    layout === "card" && "aspect-[5/4] w-full rounded-md",
-    layout === "detail" && "aspect-[5/4] w-full rounded-lg",
-  );
+  const compact = layout === "thumb" || layout === "list";
+  const stage = cn(productImageStageClass(layout), className);
   if (!src) {
     return (
-      <div className={stage} aria-hidden="true">
-        <div className="flex flex-col items-center gap-2 px-3 text-center">
+      <div className={stage} data-product-image-stage={compact ? "thumb" : layout} aria-hidden="true">
+        <div className={cn("flex flex-col items-center text-center", compact ? "gap-0.5 px-0.5" : "gap-2 px-3")}>
           <img
             src={PRODUCT_IMAGE_LOGO_SRC}
             alt=""
-            width={32}
-            height={32}
-            className="size-8 rounded-sm object-contain opacity-40"
+            width={compact ? 20 : 32}
+            height={compact ? 20 : 32}
+            className={cn("rounded-sm object-contain opacity-40", compact ? "size-5" : "size-8")}
           />
-          <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-steel/70">
+          <span
+            className={cn(
+              "font-semibold uppercase tracking-[0.14em] text-steel/70",
+              compact ? "text-[7px] leading-tight" : "text-[9px] tracking-[0.18em]",
+            )}
+          >
             {PRODUCT_IMAGE_PLACEHOLDER_LABEL}
           </span>
         </div>
@@ -42,7 +64,7 @@ export function ProductImage({
     );
   }
   return (
-    <div className={stage}>
+    <div className={stage} data-product-image-stage={compact ? "thumb" : layout}>
       <img src={src} alt={alt} className={PRODUCT_IMAGE_FIT_CLASS} />
     </div>
   );

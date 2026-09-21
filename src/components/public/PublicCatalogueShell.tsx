@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { LayoutGrid, Rows3, Search, SlidersHorizontal } from "lucide-react";
 import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { CatalogueSidebar, catalogueSearch, type CatalogueContext } from "@/components/public/CatalogueSidebar";
-import { ProductResultGrid } from "@/components/public/ProductCard";
+import { ProductResults } from "@/components/public/ProductCard";
 import type { PublicCategoryNavNode } from "@/domain/public-catalogue-nav";
 import type { PublicProductCard } from "@/server/catalogue/products";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -137,7 +137,7 @@ export function PublicCatalogueShell({
               <p className="mt-2 text-sm text-steel">Use Brands or Categories to continue browsing the live catalogue.</p>
             </div>
           ) : (
-            <ProductResultGrid items={data.items} layout={view} />
+            <ProductResults items={data.items} layout={view} />
           )}
           {pageCount > 1 ? (
             <ol className="mt-8 flex flex-wrap gap-2">
