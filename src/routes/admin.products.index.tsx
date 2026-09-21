@@ -17,6 +17,13 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
 
+function bytesFromBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 export const Route = createFileRoute("/admin/products/")({
   head: () => ({
     meta: [
@@ -134,11 +141,11 @@ function AdminProducts() {
       toast.error(r.error);
       return;
     }
-    const blob = new Blob([r.data], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([Uint8Array.from(bytesFromBase64(r.data.base64)) as BlobPart], { type: r.data.mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `automotive-brands-products-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = r.data.filename;
     a.click();
     URL.revokeObjectURL(url);
     toast.success(filtered ? "Filtered catalogue exported" : "Full catalogue exported");

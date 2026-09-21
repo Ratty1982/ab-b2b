@@ -79,7 +79,12 @@ function listFormula(column: number, count: number): string | null {
   return `${IMPORT_LISTS_SHEET}!$${letter}$2:$${letter}$${count + 1}`;
 }
 
-function applyListValidation(sheet: ExcelJS.Worksheet, field: (typeof PRODUCT_IMPORT_FIELDS)[number], formula: string | null) {
+function applyListValidation(
+  sheet: ExcelJS.Worksheet,
+  field: (typeof PRODUCT_IMPORT_FIELDS)[number],
+  formula: string | null,
+  lastDataRow: number,
+) {
   if (!formula) return;
   const index = PRODUCT_IMPORT_FIELDS.indexOf(field);
   if (index < 0) return;
@@ -87,7 +92,7 @@ function applyListValidation(sheet: ExcelJS.Worksheet, field: (typeof PRODUCT_IM
   const target = sheet as ExcelJS.Worksheet & {
     dataValidations: { add: (range: string, spec: Record<string, unknown>) => void };
   };
-  target.dataValidations.add(`${letter}2:${letter}${DATA_ROWS + 1}`, {
+  target.dataValidations.add(`${letter}2:${letter}${lastDataRow}`, {
     type: "list",
     allowBlank: true,
     formulae: [formula],
@@ -98,7 +103,39 @@ function applyListValidation(sheet: ExcelJS.Worksheet, field: (typeof PRODUCT_IM
   });
 }
 
-export async function buildProductImportWorkbook(lists: ImportWorkbookLists): Promise<Uint8Array> {
+export type ImportWorkbookRow = Partial<Record<(typeof PRODUCT_IMPORT_FIELDS)[number], string | number | boolean | null>>;
+
+function defaultSampleRow(lists: ImportWorkbookLists): ImportWorkbookRow {
+  return {
+    sku: "PM-4410",
+    name: "Ceramic Brake Disc Kit 310mm",
+    brand: lists.brands[0] ?? "Power Maxed",
+    category: lists.categories[0] ?? "Braking",
+    subcategory: lists.subcategories[0] ?? "Brake Discs",
+    description: "Example row — replace with your catalogue",
+    trade: 46.8,
+    rrp: 61.2,
+    vat: "standard",
+    packQty: 2,
+    caseQty: 8,
+    status: "ACTIVE",
+    active: "true",
+    tradeVisible: "true",
+    featured: "false",
+    newProduct: "false",
+  };
+}
+
+function cellValue(value: string | number | boolean | null | undefined): string | number {
+  if (value == null) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return value;
+}
+
+export async function buildProductImportWorkbook(
+  lists: ImportWorkbookLists,
+  productRows?: ImportWorkbookRow[],
+): Promise<Uint8Array> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Automotive Brands";
   const products = workbook.addWorksheet(IMPORT_TEMPLATE_SHEET, {
@@ -113,42 +150,11 @@ export async function buildProductImportWorkbook(lists: ImportWorkbookLists): Pr
     products.getColumn(index + 1).width = Math.max(14, field.length + 4);
   });
 
-  const sample = {
-    sku: "PM-4410",
-    externalRef: "",
-    ean: "",
-    mpn: "",
-    name: "Ceramic Brake Disc Kit 310mm",
-    brand: lists.brands[0] ?? "Power Maxed",
-    category: lists.categories[0] ?? "Braking",
-    subcategory: lists.subcategories[0] ?? "Brake Discs",
-    shortDescription: "",
-    description: "Example row — replace with your catalogue",
-    trade: 46.8,
-    rrp: 61.2,
-    vat: "standard",
-    packQty: 2,
-    caseQty: 8,
-    minimumOrderQty: "",
-    orderIncrement: "",
-    unit: "",
-    weight: "",
-    length: "",
-    width: "",
-    height: "",
-    status: "ACTIVE",
-    active: "true",
-    tradeVisible: "true",
-    featured: "false",
-    newProduct: "false",
-    slug: "",
-    metaTitle: "",
-    metaDescription: "",
-    primaryImage: "",
-  } satisfies Record<(typeof PRODUCT_IMPORT_FIELDS)[number], string | number>;
-
-  PRODUCT_IMPORT_FIELDS.forEach((field, index) => {
-    products.getCell(2, index + 1).value = sample[field];
+  const rows = productRows?.length ? productRows : [defaultSampleRow(lists)];
+  rows.forEach((row, rowIndex) => {
+    PRODUCT_IMPORT_FIELDS.forEach((field, index) => {
+      products.getCell(rowIndex + 2, index + 1).value = cellValue(row[field]);
+    });
   });
 
   const categories = uniqueNames(lists.categories);
@@ -163,15 +169,16 @@ export async function buildProductImportWorkbook(lists: ImportWorkbookLists): Pr
   listSheet.columns.forEach((col) => {
     col.width = 28;
   });
-  listSheet.state = "veryHidden";
+  listSheet.state = "hidden";
 
-  applyListValidation(products, "category", listFormula(1, categories.length));
-  applyListValidation(products, "subcategory", listFormula(2, subcategories.length));
-  applyListValidation(products, "brand", listFormula(3, brands.length));
-  applyListValidation(products, "status", listFormula(4, PRODUCT_STATUSES.length));
-  applyListValidation(products, "vat", listFormula(5, 2));
+  const lastDataRow = Math.max(DATA_ROWS, rows.length) + 1;
+  applyListValidation(products, "category", listFormula(1, categories.length), lastDataRow);
+  applyListValidation(products, "subcategory", listFormula(2, subcategories.length), lastDataRow);
+  applyListValidation(products, "brand", listFormula(3, brands.length), lastDataRow);
+  applyListValidation(products, "status", listFormula(4, PRODUCT_STATUSES.length), lastDataRow);
+  applyListValidation(products, "vat", listFormula(5, 2), lastDataRow);
   for (const field of ["active", "tradeVisible", "featured", "newProduct"] as const) {
-    applyListValidation(products, field, listFormula(6, 2));
+    applyListValidation(products, field, listFormula(6, 2), lastDataRow);
   }
 
   const buffer = await workbook.xlsx.writeBuffer();

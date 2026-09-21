@@ -538,7 +538,7 @@ export const exportCatalogueProductsFn = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
-      const result = await catalogueProducts.exportCatalogueCsv(userId, (data ?? {}) as catalogueProducts.CatalogueListQuery);
+      const result = await catalogueProducts.exportCatalogueWorkbook(userId, (data ?? {}) as catalogueProducts.CatalogueListQuery);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);

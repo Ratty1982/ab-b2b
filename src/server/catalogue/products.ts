@@ -65,6 +65,7 @@ export type CatalogueListQuery = {
   sort?: "name" | "sku" | "updated" | "brand";
   page?: number;
   pageSize?: number;
+  exportLimit?: boolean;
 };
 
 function defaultVariant<T extends { isDefault: boolean; createdAt: Date }>(variants: T[]): T | undefined {
@@ -76,7 +77,9 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
   const { bootstrapCatalogue } = await import("@/server/catalogue/service");
   await bootstrapCatalogue();
   const page = Math.max(1, Number(raw.page) || 1);
-  const pageSize = Math.min(100, Math.max(10, Number(raw.pageSize) || 25));
+  const pageSize = raw.exportLimit
+    ? Math.min(5000, Math.max(1, Number(raw.pageSize) || 5000))
+    : Math.min(100, Math.max(10, Number(raw.pageSize) || 25));
   const q = raw.q?.trim();
   const categoryIds = raw.categoryId
     ? [
@@ -573,10 +576,8 @@ const zProductMediaId = {
   },
 };
 
-export async function exportCatalogueCsv(actorUserId: string, query: CatalogueListQuery) {
-  await requireAnySystemPermission(actorUserId, ["products.export", "products.edit", "products.view"]);
-  const page = await listCataloguePage(actorUserId, { ...query, page: 1, pageSize: 5000 });
-  const { serializeImportCsv } = await import("@/domain/product-import");
+async function catalogueExportRows(actorUserId: string, query: CatalogueListQuery) {
+  const page = await listCataloguePage(actorUserId, { ...query, page: 1, pageSize: 5000, exportLimit: true });
   const ids = page.items.map((p) => p.id);
   const full = await prisma.product.findMany({
     where: { id: { in: ids } },
@@ -588,45 +589,75 @@ export async function exportCatalogueCsv(actorUserId: string, query: CatalogueLi
     },
   });
   const byId = new Map(full.map((p) => [p.id, p]));
-  return serializeImportCsv(
-    page.items.map((item) => {
-      const row = byId.get(item.id);
-      const variant = row ? defaultVariant(row.variants) : undefined;
-      return {
-        sku: item.sku,
-        externalRef: variant?.externalRef ?? "",
-        ean: variant?.barcode ?? "",
-        mpn: variant?.mpn ?? "",
-        name: item.name,
-        brand: item.brand,
-        category: row?.category?.parent?.name ?? row?.category?.name ?? "",
-        subcategory: row?.category?.parent ? row.category.name : "",
-        shortDescription: row?.shortDescription ?? "",
-        description: row?.description ?? "",
-        trade: item.trade ?? "",
-        rrp: item.rrp ?? "",
-        vat: variant?.vatCode === "ZERO_RATED" ? "zero" : "standard",
-        packQty: variant?.packQty ?? 1,
-        caseQty: variant?.caseQty ?? "",
-        minimumOrderQty: variant?.minOrderQty ?? 1,
-        orderIncrement: variant?.orderIncrement ?? 1,
-        unit: variant?.unit ?? "EA",
-        weight: variant?.weightKg != null ? String(variant.weightKg) : "",
-        length: variant?.lengthMm != null ? String(variant.lengthMm) : "",
-        width: variant?.widthMm != null ? String(variant.widthMm) : "",
-        height: variant?.heightMm != null ? String(variant.heightMm) : "",
-        status: item.status,
-        active: item.status === "ACTIVE",
-        tradeVisible: item.isTradeVisible,
-        featured: item.isFeatured,
-        newProduct: row?.isNew ?? false,
-        slug: item.slug,
-        metaTitle: row?.metaTitle ?? "",
-        metaDescription: row?.metaDescription ?? "",
-        primaryImage: row?.media[0]?.mediaId ?? "",
-      };
+  return page.items.map((item) => {
+    const row = byId.get(item.id);
+    const variant = row ? defaultVariant(row.variants) : undefined;
+    return {
+      sku: item.sku,
+      externalRef: variant?.externalRef ?? "",
+      ean: variant?.barcode ?? "",
+      mpn: variant?.mpn ?? "",
+      name: item.name,
+      brand: item.brand,
+      category: row?.category?.parent?.name ?? row?.category?.name ?? "",
+      subcategory: row?.category?.parent ? row.category.name : "",
+      shortDescription: row?.shortDescription ?? "",
+      description: row?.description ?? "",
+      trade: item.trade ?? "",
+      rrp: item.rrp ?? "",
+      vat: variant?.vatCode === "ZERO_RATED" ? "zero" : "standard",
+      packQty: variant?.packQty ?? 1,
+      caseQty: variant?.caseQty ?? "",
+      minimumOrderQty: variant?.minOrderQty ?? 1,
+      orderIncrement: variant?.orderIncrement ?? 1,
+      unit: variant?.unit ?? "EA",
+      weight: variant?.weightKg != null ? String(variant.weightKg) : "",
+      length: variant?.lengthMm != null ? String(variant.lengthMm) : "",
+      width: variant?.widthMm != null ? String(variant.widthMm) : "",
+      height: variant?.heightMm != null ? String(variant.heightMm) : "",
+      status: item.status,
+      active: item.status === "ACTIVE",
+      tradeVisible: item.isTradeVisible,
+      featured: item.isFeatured,
+      newProduct: row?.isNew ?? false,
+      slug: item.slug,
+      metaTitle: row?.metaTitle ?? "",
+      metaDescription: row?.metaDescription ?? "",
+      primaryImage: row?.media[0]?.mediaId ?? "",
+    };
+  });
+}
+
+export async function exportCatalogueCsv(actorUserId: string, query: CatalogueListQuery) {
+  await requireAnySystemPermission(actorUserId, ["products.export", "products.edit", "products.view"]);
+  const { serializeImportCsv } = await import("@/domain/product-import");
+  return serializeImportCsv(await catalogueExportRows(actorUserId, query));
+}
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+export async function exportCatalogueWorkbook(actorUserId: string, query: CatalogueListQuery) {
+  await requireAnySystemPermission(actorUserId, ["products.export", "products.edit", "products.view"]);
+  const { buildProductImportWorkbook, splitTaxonomyLists } = await import("@/domain/product-import-workbook");
+  const [rows, categories, brands] = await Promise.all([
+    catalogueExportRows(actorUserId, query),
+    prisma.category.findMany({
+      select: { name: true, parentId: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     }),
-  );
+    prisma.brand.findMany({
+      select: { name: true },
+      where: { isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    }),
+  ]);
+  const bytes = await buildProductImportWorkbook(splitTaxonomyLists({ categories, brands }), rows);
+  const day = new Date().toISOString().slice(0, 10);
+  return {
+    filename: `automotive-brands-products-${day}.xlsx`,
+    mime: XLSX_MIME,
+    base64: Buffer.from(bytes).toString("base64"),
+  };
 }
 
 export async function viewerForUserId(userId: string | null): Promise<PriceViewer> {

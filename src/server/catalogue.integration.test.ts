@@ -374,6 +374,16 @@ describe("phase 3 product master", () => {
     expect(previewed.headers).toContain("subcategory");
   });
 
+  it("exports the catalogue as an Excel workbook with category dropdowns", async () => {
+    const { exportCatalogueWorkbook } = await import("@/server/catalogue/products");
+    const { workbookToCsv } = await import("@/domain/product-import-workbook");
+    const file = await exportCatalogueWorkbook(adminId, { page: 1, pageSize: 5000 });
+    expect(file.filename.endsWith(".xlsx")).toBe(true);
+    const csv = await workbookToCsv(new Uint8Array(Buffer.from(file.base64, "base64")));
+    expect(csv.toLowerCase()).toContain("sku");
+    expect(csv.toLowerCase()).toContain("category");
+  });
+
   it("excludes inactive products from the public catalogue", async () => {
     const { saveProduct } = await import("@/server/catalogue/service");
     const { listPublicProducts, updateProductWorkspace } = await import("@/server/catalogue/products");

@@ -41,4 +41,29 @@ describe("product import Excel template", () => {
     expect(parsed.rows[0]?.values.subcategory).toBe("Brake Discs");
     expect(parsed.rows[0]?.values.brand).toBe("Power Maxed");
   });
+
+  it("writes exported catalogue rows with the same category dropdown", async () => {
+    const lists = splitTaxonomyLists({
+      categories: [
+        { name: "Braking", parentId: null },
+        { name: "Brake Discs", parentId: "p1" },
+      ],
+      brands: [{ name: "Power Maxed" }],
+    });
+    const buffer = await buildProductImportWorkbook(lists, [
+      { sku: "PM-1", name: "Pad", brand: "Power Maxed", category: "Braking", subcategory: "Brake Discs" },
+    ]);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(buffer) as unknown as ArrayBuffer);
+    const products = workbook.getWorksheet(IMPORT_TEMPLATE_SHEET) as
+      | (ExcelJS.Worksheet & {
+          dataValidations: { model: Record<string, { formulae?: string[]; type?: string }> };
+        })
+      | undefined;
+    expect(products?.getCell(2, 1).value).toBe("PM-1");
+    expect(products?.getCell(2, 7).value).toBe("Braking");
+    expect(products?.dataValidations.model["G2"]?.type).toBe("list");
+    const csv = await workbookToCsv(buffer);
+    expect(csv).toContain("PM-1");
+  });
 });
