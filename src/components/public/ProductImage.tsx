@@ -17,7 +17,7 @@ export const PRODUCT_IMAGE_CARD_STAGE_CLASS =
   "relative flex aspect-[5/4] w-full items-center justify-center overflow-hidden rounded-md p-3";
 
 export const PRODUCT_IMAGE_DETAIL_STAGE_CLASS =
-  "relative flex aspect-[5/4] w-full items-center justify-center overflow-hidden rounded-lg p-3";
+  "relative flex aspect-[4/5] min-h-[22rem] w-full max-h-[36rem] items-center justify-center overflow-hidden rounded-lg p-4 lg:min-h-[28rem]";
 
 /** Compact list thumbnail: 80px square, never full-width. */
 export const PRODUCT_IMAGE_THUMB_STAGE_CLASS =
