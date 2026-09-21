@@ -21,5 +21,7 @@ push_remote() {
   fi
 }
 
-push_remote origin 1
+# GitHub (Ratty1982/ab-b2b) is authoritative for delivery. Origin may be a
+# Cursor temporary remote — still push it, but GitHub is required.
 push_remote github 0
+push_remote origin 1
