@@ -22,9 +22,16 @@ When basket/checkout is implemented:
 - `requestedQuantity % caseQty === 0`
 - server, basket, checkout, and API must all enforce the same rule
 
-See `src/domain/case-ordering.ts` and `docs/phase-6-product-order-panel.md`.
-Do not implement basket controls yet. The product hero shows the **unit**
-trade price; Phase 6 `ProductOrderPanel` will compute the case/order total.
+Trade customers order **full cases only**. `ProductVariant.caseQty` is the
+customer order multiple when populated. `packQty` is the sale-unit contents
+and is not interchangeable with case quantity. Stored `orderIncrement` is
+internal and must not be used as the public increment when `caseQty` exists.
+
+See `docs/trade-price-resolution.md` for the Phase 4A commercial price engine.
+See `src/domain/case-ordering.ts` and `docs/phase-6-product-order-panel.md` for
+quantity rules. Do not implement basket controls yet. The product hero shows
+the **unit** trade price; Phase 6 `ProductOrderPanel` will compute the case/order
+total.
 
 
 ## Intended contents (later phases)
