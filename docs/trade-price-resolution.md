@@ -128,3 +128,6 @@ Customer-facing `DisplayPrice.source`:
 | `PROMOTION` | `promotion` |
 
 `sourceLabel` / explanation stay off the public catalogue payload.
+
+Staff management of lists, overrides, breaks, and promotions is documented in
+`docs/pricing-staff-workflows.md`. That UI does not recalculate the contract above.

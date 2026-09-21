@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
+import { ConfirmAction } from "@/components/pricing/ConfirmAction";
+import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
+import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
 import { ROUTES } from "@/lib/app-nav";
 import {
@@ -21,7 +24,6 @@ import {
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { gbp } from "@/lib/data";
 
 export const Route = createFileRoute("/admin/customers/$id")({
   head: () => ({
@@ -344,7 +346,12 @@ function CustomerWorkspace() {
               }
             }}
           />
-          <CustomerPricesEditor companyId={company.id} canEdit={permissions.canEditPricing} />
+          <CustomerPricesEditor
+            companyId={company.id}
+            canEdit={permissions.canEditPricing}
+            assignedPriceListName={company.priceList ? `${company.priceList.code} — ${company.priceList.name}` : null}
+          />
+          <CommercialAuditList companyId={company.id} />
           </div>
         ) : null}
 
@@ -869,25 +876,41 @@ function InviteDrawer({
   );
 }
 
-function CustomerPricesEditor({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+function CustomerPricesEditor({
+  companyId,
+  canEdit,
+  assignedPriceListName,
+}: {
+  companyId: string;
+  canEdit: boolean;
+  assignedPriceListName: string | null;
+}) {
   const [rows, setRows] = useState<Array<{
     id: string;
     sku: string;
     productName: string;
+    brand: string;
     variantId: string;
+    baseTradePriceDisplay: string | null;
+    priceListPriceDisplay: string | null;
     unitPrice: number | null;
+    unitPriceDisplay: string | null;
     startsAt: string | null;
     endsAt: string | null;
+    status: string;
   }>>([]);
   const [q, setQ] = useState("");
-  const [hits, setHits] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [hits, setHits] = useState<Array<{ id: string; sku: string; name: string; brand: string }>>([]);
+  const [selected, setSelected] = useState<{ id: string; sku: string; name: string } | null>(null);
   const [price, setPrice] = useState("");
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [removeId, setRemoveId] = useState<string | null>(null);
 
   async function reload() {
     const result = await listCustomerPricesFn({ data: { companyId } });
-    if (result.ok) setRows(result.data);
+    if (result.ok) setRows(result.data.items);
   }
   useEffect(() => {
     void reload();
@@ -896,18 +919,22 @@ function CustomerPricesEditor({ companyId, canEdit }: { companyId: string; canEd
   return (
     <section>
       <h3 className="font-display text-lg font-semibold uppercase">Customer-specific prices</h3>
-      <p className="mt-1 max-w-2xl text-[13px] text-steel">Negotiated unit prices for this company only. They never leak to other accounts.</p>
+      <p className="mt-1 max-w-2xl text-[13px] text-steel">
+        Assigned price list: {assignedPriceListName ?? "None"}. {rows.length} negotiated product price{rows.length === 1 ? "" : "s"}.
+        Promotions are catalogue-scoped, not company-specific.
+      </p>
       {canEdit ? (
         <form
           className="mt-4 grid max-w-3xl gap-2 sm:grid-cols-2"
           onSubmit={(e) => {
             e.preventDefault();
-            const hit = hits[0];
-            if (!hit) return;
+            const variantId = selected?.id ?? hits[0]?.id;
+            if (!variantId) return;
             void upsertCustomerPriceFn({
               data: {
+                id: editingId ?? undefined,
                 companyId,
-                variantId: hit.id,
+                variantId,
                 unitPrice: Number(price),
                 startsAt: startsAt ? new Date(startsAt).toISOString() : null,
                 endsAt: endsAt ? new Date(endsAt).toISOString() : null,
@@ -918,54 +945,132 @@ function CustomerPricesEditor({ companyId, canEdit }: { companyId: string; canEd
                 toast.success("Customer price saved");
                 setQ("");
                 setHits([]);
+                setSelected(null);
                 setPrice("");
+                setStartsAt("");
+                setEndsAt("");
+                setEditingId(null);
                 void reload();
               }
             });
           }}
         >
-          <Field label="SKU / product">
+          <Field label="SKU / product / brand">
             <input
               value={q}
               onChange={(e) => {
                 setQ(e.target.value);
+                setSelected(null);
                 void searchPricingVariantsFn({ data: { q: e.target.value } }).then((r) => r.ok && setHits(r.data));
               }}
               className={inputClass}
+              placeholder="GC5000 or Power Maxed"
             />
           </Field>
-          <Field label="Unit price ex VAT">
+          <Field label="Customer price ex VAT">
             <input value={price} onChange={(e) => setPrice(e.target.value)} className={inputClass} />
           </Field>
-          <Field label="Starts">
-            <input type="date" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} className={inputClass} />
+          <Field label="Valid from (optional)">
+            <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} className={inputClass} />
           </Field>
-          <Field label="Ends">
-            <input type="date" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className={inputClass} />
+          <Field label="Valid until (optional)">
+            <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className={inputClass} />
           </Field>
+          {hits.length ? (
+            <ul className="sm:col-span-2 max-h-32 overflow-auto rounded-md border border-border text-[13px]">
+              {hits.map((hit) => (
+                <li key={hit.id}>
+                  <button
+                    type="button"
+                    className={cn("w-full px-3 py-1.5 text-left", selected?.id === hit.id && "bg-surface")}
+                    onClick={() => {
+                      setSelected(hit);
+                      setQ(`${hit.sku} — ${hit.name}`);
+                    }}
+                  >
+                    {hit.sku} — {hit.name} ({hit.brand})
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <button type="submit" className="sm:col-span-2 h-10 rounded-md border border-border text-[12px] font-semibold">
-            Save override {hits[0] ? `(${hits[0].sku})` : ""}
+            {editingId ? "Update customer price" : "Add customer price"} {selected ? `(${selected.sku})` : ""}
           </button>
         </form>
       ) : null}
-      <ul className="mt-4 max-w-3xl divide-y divide-border rounded-lg border border-border">
-        {rows.map((row) => (
-          <li key={row.id} className="flex items-center justify-between px-3 py-2 text-[13px]">
-            <span>
-              <span className="num text-primary">{row.sku}</span> {row.productName} · {row.unitPrice != null ? gbp(row.unitPrice) : "—"}
-            </span>
-            {canEdit ? (
-              <button
-                type="button"
-                className="text-[12px] font-semibold text-primary"
-                onClick={() => void deleteCustomerPriceFn({ data: { id: row.id } }).then(() => reload())}
-              >
-                Remove
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+      {rows.length === 0 ? (
+        <p className="mt-4 text-[13px] text-steel">No customer-specific prices.{canEdit ? " Add a negotiated product price above." : ""}</p>
+      ) : (
+        <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[820px] text-[13px]">
+            <thead>
+              <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
+                <th className="px-3 py-2">SKU</th>
+                <th className="px-3 py-2">Product</th>
+                <th className="px-3 py-2 text-right">Base trade</th>
+                <th className="px-3 py-2 text-right">Price list</th>
+                <th className="px-3 py-2 text-right">Customer price</th>
+                <th className="px-3 py-2">Valid from</th>
+                <th className="px-3 py-2">Valid until</th>
+                <th className="px-3 py-2">Status</th>
+                {canEdit ? <th className="px-3 py-2" /> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={row.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
+                  <td className="num px-3 py-2 text-primary">{row.sku}</td>
+                  <td className="px-3 py-2">{row.productName}</td>
+                  <td className="num px-3 py-2 text-right">{row.baseTradePriceDisplay ?? "—"}</td>
+                  <td className="num px-3 py-2 text-right">{row.priceListPriceDisplay ?? "—"}</td>
+                  <td className="num px-3 py-2 text-right">{row.unitPriceDisplay ?? "—"}</td>
+                  <td className="num px-3 py-2">{row.startsAt ? row.startsAt.slice(0, 10) : "—"}</td>
+                  <td className="num px-3 py-2">{row.endsAt ? row.endsAt.slice(0, 10) : "—"}</td>
+                  <td className="px-3 py-2"><ValidityBadge status={row.status} /></td>
+                  {canEdit ? (
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        className="mr-3 text-[12px] font-semibold text-primary"
+                        onClick={() => {
+                          setEditingId(row.id);
+                          setSelected({ id: row.variantId, sku: row.sku, name: row.productName });
+                          setQ(`${row.sku} — ${row.productName}`);
+                          setPrice(row.unitPrice != null ? String(row.unitPrice) : "");
+                          setStartsAt(row.startsAt ? row.startsAt.slice(0, 16) : "");
+                          setEndsAt(row.endsAt ? row.endsAt.slice(0, 16) : "");
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => setRemoveId(row.id)}>
+                        Remove
+                      </button>
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <ConfirmAction
+        open={Boolean(removeId)}
+        title="Remove customer-specific price?"
+        description="This company will fall back to its assigned price list or base trade price for that product."
+        confirmLabel="Remove"
+        onOpenChange={(open) => {
+          if (!open) setRemoveId(null);
+        }}
+        onConfirm={() => {
+          if (!removeId) return;
+          void deleteCustomerPriceFn({ data: { id: removeId } }).then((r) => {
+            if (!r.ok) toast.error(r.error);
+            else void reload();
+          });
+        }}
+      />
     </section>
   );
 }

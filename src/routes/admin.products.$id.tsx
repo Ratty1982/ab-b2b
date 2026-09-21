@@ -23,9 +23,10 @@ import {
 import { ImportProductJsonButton } from "@/components/catalogue/ImportProductJsonDrawer";
 import { EditableStringList } from "@/components/catalogue/EditableStringList";
 import { catalogueActivityLabel } from "@/domain/product-content-json";
+import { ConfirmAction } from "@/components/pricing/ConfirmAction";
+import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { gbp } from "@/lib/data";
 
 export const Route = createFileRoute("/admin/products/$id")({
   head: () => ({ meta: [{ title: "Product workspace — Automotive Brands Admin" }] }),
@@ -295,6 +296,7 @@ function ProductWorkspace() {
             <div className="mt-10 space-y-10 border-t border-border/70 pt-8">
               <QuantityBreaksPanel variantId={product.defaultVariantId} />
               <PriceAsCustomerPanel variantId={product.defaultVariantId} sku={product.sku} />
+              <CommercialAuditList variantId={product.defaultVariantId} />
             </div>
           ) : null}
         </div>
@@ -688,23 +690,38 @@ function ActivityPanel({ product }: { product: Workspace }) {
 }
 
 function QuantityBreaksPanel({ variantId }: { variantId: string }) {
-  const [rows, setRows] = useState<Array<{ id: string; minQty: number; unitPrice: number | null; isBaseMirror: boolean }>>([]);
-  const [minQty, setMinQty] = useState("10");
+  const [caseQty, setCaseQty] = useState<number | null>(null);
+  const [rows, setRows] = useState<Array<{
+    id: string;
+    minQty: number;
+    unitPrice: number | null;
+    unitPriceDisplay: string | null;
+    isBaseMirror: boolean;
+    caseNote: string | null;
+  }>>([]);
+  const [minQty, setMinQty] = useState("12");
   const [unitPrice, setUnitPrice] = useState("");
+  const [removeId, setRemoveId] = useState<string | null>(null);
 
   async function reload() {
     const result = await listQuantityBreaksFn({ data: { variantId } });
-    if (result.ok) setRows(result.data);
+    if (result.ok) {
+      setRows(result.data.items);
+      setCaseQty(result.data.caseQty);
+    }
   }
   useEffect(() => {
     void reload();
   }, [variantId]);
 
+  const volume = rows.filter((row) => !row.isBaseMirror);
+
   return (
     <section>
       <h3 className="font-display text-lg font-semibold uppercase">Quantity breaks</h3>
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
-        Fixed unit prices at a quantity threshold. minQty=1 mirrors base trade and is not a volume break. Case multiples are enforced in Phase 6.
+        Fixed unit prices at a quantity threshold. The minQty=1 catalogue mirror is not a customer volume discount.
+        Case quantity {caseQty ?? "not set"}. Phase 6 enforces full-case ordering; this editor does not change stored thresholds.
       </p>
       <form
         className="mt-4 grid max-w-xl gap-2 sm:grid-cols-[8rem_8rem_auto]"
@@ -712,26 +729,50 @@ function QuantityBreaksPanel({ variantId }: { variantId: string }) {
           e.preventDefault();
           void upsertQuantityBreakFn({ data: { variantId, minQty: Number(minQty), unitPrice: Number(unitPrice) } }).then((r) => {
             if (!r.ok) toast.error(r.error);
-            else void reload();
+            else {
+              setUnitPrice("");
+              void reload();
+            }
           });
         }}
       >
         <Field label="Min qty"><input value={minQty} onChange={(e) => setMinQty(e.target.value)} className={inputClass} /></Field>
         <Field label="Unit price"><input value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className={inputClass} /></Field>
-        <button type="submit" className="mt-6 h-10 rounded-md border border-border px-3 text-[12px] font-semibold">Save break</button>
+        <button type="submit" className="mt-6 h-10 rounded-md border border-border px-3 text-[12px] font-semibold">Add break</button>
       </form>
-      <ul className="mt-3 max-w-xl divide-y divide-border rounded-lg border border-border">
-        {rows.map((row) => (
-          <li key={row.id} className="flex items-center justify-between px-3 py-2 text-[13px]">
-            <span>{row.isBaseMirror ? "Base mirror (1)" : `${row.minQty}+`} · {row.unitPrice != null ? gbp(row.unitPrice) : "—"}</span>
-            {!row.isBaseMirror ? (
-              <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => void deleteQuantityBreakFn({ data: { id: row.id } }).then(() => reload())}>
-                Remove
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+      {volume.length === 0 ? (
+        <p className="mt-3 text-[13px] text-steel">No quantity breaks.</p>
+      ) : (
+        <ul className="mt-3 max-w-xl divide-y divide-border rounded-lg border border-border">
+          {volume.map((row) => (
+            <li key={row.id} className="px-3 py-2 text-[13px]">
+              <div className="flex items-center justify-between">
+                <span>{row.minQty}+ units · {row.unitPriceDisplay ?? "—"}</span>
+                <button type="button" className="text-[12px] font-semibold text-primary" onClick={() => setRemoveId(row.id)}>
+                  Remove
+                </button>
+              </div>
+              {row.caseNote ? <p className="mt-1 text-[11px] text-steel">{row.caseNote}</p> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+      <ConfirmAction
+        open={Boolean(removeId)}
+        title="Remove quantity break?"
+        description="The stored threshold will be deleted. Case multiples are not rewritten."
+        confirmLabel="Remove"
+        onOpenChange={(open) => {
+          if (!open) setRemoveId(null);
+        }}
+        onConfirm={() => {
+          if (!removeId) return;
+          void deleteQuantityBreakFn({ data: { id: removeId } }).then((r) => {
+            if (!r.ok) toast.error(r.error);
+            else void reload();
+          });
+        }}
+      />
     </section>
   );
 }
@@ -742,8 +783,12 @@ function PriceAsCustomerPanel({ variantId, sku }: { variantId: string; sku: stri
   const [companyId, setCompanyId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [result, setResult] = useState<{
+    winningRule: string;
+    orderableNote: string | null;
     resolved: {
       unitPriceExVatDisplay: string;
+      vatPercent: number;
+      unitPriceIncVat: string;
       source: string;
       explanation: {
         baseTradePrice: string | null;
@@ -757,11 +802,21 @@ function PriceAsCustomerPanel({ variantId, sku }: { variantId: string; sku: stri
     };
   } | null>(null);
 
+  function runPreview(nextQty = quantity) {
+    if (!companyId) return;
+    void previewTradePriceAsCustomerFn({
+      data: { variantId, companyId, quantity: Number(nextQty) || 1 },
+    }).then((r) => {
+      if (!r.ok) toast.error(r.error);
+      else setResult(r.data);
+    });
+  }
+
   return (
     <section>
       <h3 className="font-display text-lg font-semibold uppercase">Price as customer</h3>
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
-        Diagnostic only for {sku}. Previewing does not write prices. Ordinary trade users cannot inspect another company.
+        Diagnostic only for {sku}. Prices come from the Phase 4A resolver. Quantity can be changed because volume breaks depend on it.
       </p>
       <div className="mt-4 grid max-w-xl gap-2">
         <Field label="Search customer">
@@ -778,7 +833,14 @@ function PriceAsCustomerPanel({ variantId, sku }: { variantId: string; sku: stri
           />
         </Field>
         <Field label="Company">
-          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)} className={inputClass}>
+          <select
+            value={companyId}
+            onChange={(e) => {
+              setCompanyId(e.target.value);
+              setResult(null);
+            }}
+            className={inputClass}
+          >
             <option value="">Select</option>
             {companies.map((c) => (
               <option key={c.id} value={c.id}>
@@ -788,33 +850,37 @@ function PriceAsCustomerPanel({ variantId, sku }: { variantId: string; sku: stri
           </select>
         </Field>
         <Field label="Quantity">
-          <input value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputClass} />
+          <input
+            value={quantity}
+            onChange={(e) => {
+              setQuantity(e.target.value);
+            }}
+            className={inputClass}
+          />
         </Field>
         <button
           type="button"
           className="h-10 rounded-md bg-primary text-[12px] font-bold uppercase text-primary-foreground"
-          onClick={() => {
-            if (!companyId) return;
-            void previewTradePriceAsCustomerFn({
-              data: { variantId, companyId, quantity: Number(quantity) || 1 },
-            }).then((r) => {
-              if (!r.ok) toast.error(r.error);
-              else setResult(r.data);
-            });
-          }}
+          onClick={() => runPreview()}
         >
           Resolve
         </button>
       </div>
       {result ? (
-        <dl className="mt-4 max-w-xl divide-y divide-border border-y border-border text-[13px]">
-          <div className="flex justify-between py-2"><dt>Base trade</dt><dd className="num">{result.resolved.explanation.baseTradePrice ?? "—"}</dd></div>
-          <div className="flex justify-between py-2"><dt>Price list {result.resolved.explanation.priceListName ? `(${result.resolved.explanation.priceListName})` : ""}</dt><dd className="num">{result.resolved.explanation.priceListPrice ?? "—"}</dd></div>
-          <div className="flex justify-between py-2"><dt>Customer override</dt><dd className="num">{result.resolved.explanation.customerOverride ?? "—"}</dd></div>
-          <div className="flex justify-between py-2"><dt>Quantity break</dt><dd className="num">{result.resolved.explanation.quantityBreak ?? "Not applicable"}</dd></div>
-          <div className="flex justify-between py-2"><dt>Promotion</dt><dd>{result.resolved.explanation.promotion ?? "None"}</dd></div>
-          <div className="flex justify-between py-2 font-semibold"><dt>Resolved ({result.resolved.source})</dt><dd className="num">£{result.resolved.unitPriceExVatDisplay} ex VAT</dd></div>
-        </dl>
+        <div className="mt-4 max-w-xl">
+          <p className="font-display text-2xl font-semibold">£{result.resolved.unitPriceExVatDisplay} ex VAT</p>
+          <p className="text-[12px] text-steel">Winning rule: {result.winningRule}</p>
+          {result.orderableNote ? <p className="mt-2 text-[12px] text-steel">{result.orderableNote}</p> : null}
+          <dl className="mt-4 divide-y divide-border border-y border-border text-[13px]">
+            <div className="flex justify-between py-2"><dt>Base Trade Price</dt><dd className="num">{result.resolved.explanation.baseTradePrice ?? "—"}</dd></div>
+            <div className="flex justify-between py-2"><dt>Price List{result.resolved.explanation.priceListName ? ` (${result.resolved.explanation.priceListName})` : ""}</dt><dd className="num">{result.resolved.explanation.priceListPrice ?? "Not applicable"}</dd></div>
+            <div className="flex justify-between py-2"><dt>Customer Override</dt><dd className="num">{result.resolved.explanation.customerOverride ?? "Not applicable"}</dd></div>
+            <div className="flex justify-between py-2"><dt>Quantity Break</dt><dd className="num">{result.resolved.explanation.quantityBreak ?? "Not applicable"}</dd></div>
+            <div className="flex justify-between py-2"><dt>Promotion</dt><dd>{result.resolved.explanation.promotion ?? "None"}</dd></div>
+            <div className="flex justify-between py-2"><dt>VAT</dt><dd className="num">{result.resolved.vatPercent}%</dd></div>
+            <div className="flex justify-between py-2 font-semibold"><dt>Final resolved price</dt><dd className="num">£{result.resolved.unitPriceExVatDisplay} ex VAT</dd></div>
+          </dl>
+        </div>
       ) : null}
     </section>
   );
