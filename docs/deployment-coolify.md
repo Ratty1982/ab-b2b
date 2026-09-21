@@ -107,3 +107,13 @@ The runner image only includes Prisma CLI + `@prisma/client`, not the full Vite/
 If export still fails: free disk on the Coolify host (`docker system df` / `docker builder prune`) and raise the application build timeout (the compile itself is several minutes because `bun install` is slow on first pull).
 - Invitations are created with `emailDeferred: true` until an email provider is configured — do not expect outbound mail.
 
+## Phase 5 Autopart stock
+
+- Additive migration `20260921220000_phase5_autopart_stock`. Does **not** reset inventory.
+- Deploy does **not** import 231PO3NEW. After deploy: set `AUTOPART_STOCK_*` (never `VITE_*`), dry-run in Admin → Autopart Stock, then live sync, then schedule Coolify HTTP:
+
+`POST https://<app>/api/internal/stock-sync` every 15 minutes (UTC) with header `x-autopart-cron-secret` matching `AUTOPART_STOCK_CRON_SECRET`.
+
+See [docs/autopart-stock-sync.md](autopart-stock-sync.md).
+
+

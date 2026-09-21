@@ -13,9 +13,11 @@ This repository started as a Lovable UX prototype and is being converted into a 
 | Trade applications | Public submit + admin approve/reject (idempotent) |
 | CMS homepage | Canonical `PublicHomepage` (preferred LegacyHome design) fed by Website → Homepage + catalogue data. SSR and client navigation both use `getPublicHomepageFn`. |
 | Product catalogue | Product workspace, brands, categories, staged CSV import, public/trade catalogue from Postgres |
-| Autopart / orders / customer pricing engine / basket | Deferred |
+| Trade pricing | Phase 4A/4B — separate from stock |
+| Autopart stock / availability | Phase 5 — 231PO3NEW `Avail` |
+| Orders / basket | Deferred |
 
-Admin **Products**, **Brands**, **Categories** and **Imports** are the product master. SKU is the import identity. Public `/products` and `/brands` only list **Active** and **trade-visible** products; anonymous visitors never receive base trade prices. **Users, roles & permissions** lists real internal users (no dummy staff) and can add, manage, and reset passwords (shown once to share; email sending is not configured). **Website → Homepage** is a visual CMS editor that previews the same `PublicHomepage` component used on `/`. Featured Brands stores homepage marketing copy separately from catalogue brand records. Live `/` always renders that canonical homepage through a server function (never Prisma in the browser, and never a silent switch to a second design).
+Admin **Products**, **Brands**, **Categories**, **Imports**, and **Autopart Stock** are the product master. Stock sync is documented in [docs/autopart-stock-sync.md](docs/autopart-stock-sync.md). SKU is the import identity. Public `/products` and `/brands` only list **Active** and **trade-visible** products; anonymous visitors never receive base trade prices. **Users, roles & permissions** lists real internal users (no dummy staff) and can add, manage, and reset passwords (shown once to share; email sending is not configured). **Website → Homepage** is a visual CMS editor that previews the same `PublicHomepage` component used on `/`. Featured Brands stores homepage marketing copy separately from catalogue brand records. Live `/` always renders that canonical homepage through a server function (never Prisma in the browser, and never a silent switch to a second design).
 
 CSV import is staged: upload → validate/map → preview → confirm. Empty cells do **not** clear existing fields. Unmapped columns are never written.
 
