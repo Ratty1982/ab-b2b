@@ -27,6 +27,7 @@ export const ROUTES = {
   adminApplications: "/admin/applications",
   adminApplication: (id: string) => `/admin/applications/${id}` as const,
   adminPricing: "/admin/pricing",
+  adminPriceList: (id: string) => `/admin/pricing/${id}` as const,
   adminRoles: "/admin/roles",
   adminContent: "/admin/content",
   adminCmsPage: (slug: string) => `/admin/content/${slug}` as const,

@@ -870,11 +870,11 @@ export const upsertPriceListFn = createServerFn({ method: "POST" })
   });
 
 export const listPriceListItemsFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { priceListId: string })
+  .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
-      return { ok: true as const, data: await pricing.listPriceListItems(userId, data.priceListId) };
+      return { ok: true as const, data: await pricing.listPriceListItems(userId, data) };
     } catch (e) {
       return toError(e);
     }
@@ -1009,4 +1009,135 @@ export const previewTradePriceAsCustomerFn = createServerFn({ method: "POST" })
       return toError(e);
     }
   });
+
+export const pricingOverviewFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await pricing.pricingOverview(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getPriceListFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.getPriceList(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const addPriceListItemsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.addPriceListItems(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const bulkUpdatePriceListItemsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.bulkUpdatePriceListItems(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPriceListCompaniesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { priceListId: string; q?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.listPriceListCompanies(userId, data.priceListId, data.q) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchPricingCompaniesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.searchCompaniesForPricing(userId, data.q) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const assignCompanyPriceListFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.assignCompanyToPriceList(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportPriceListCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { priceListId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.exportPriceListCsv(userId, data.priceListId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewPriceListCsvFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.previewPriceListCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const applyPriceListCsvFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.applyPriceListCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewPromotionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.previewPromotion(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCommercialAuditFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { priceListId?: string; companyId?: string; variantId?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await pricing.listCommercialAudit(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

@@ -54,6 +54,8 @@ import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$sl
 import { Route as AdminContentMediaRouteImport } from './routes/admin.content.media'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.index'
+import { Route as AdminPricingIdRouteImport } from './routes/admin.pricing.$id'
 import { Route as AdminProductsIndexRouteImport } from './routes/admin.products.index'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
@@ -294,6 +296,16 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminPricingIndexRoute = AdminPricingIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminPricingRoute,
+} as any)
+const AdminPricingIdRoute = AdminPricingIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AdminPricingRoute,
+} as any)
 const AdminProductsIndexRoute = AdminProductsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -384,7 +396,7 @@ export interface FileRoutesByFullPath {
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
-  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/pricing': typeof AdminPricingRouteWithChildren
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -409,6 +421,7 @@ export interface FileRoutesByFullPath {
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -420,6 +433,7 @@ export interface FileRoutesByFullPath {
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
+  '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
@@ -440,7 +454,6 @@ export interface FileRoutesByTo {
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
-  '/admin/pricing': typeof AdminPricingRoute
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/brands/$slug': typeof BrandsSlugRoute
@@ -464,6 +477,7 @@ export interface FileRoutesByTo {
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
@@ -474,6 +488,7 @@ export interface FileRoutesByTo {
   '/admin/applications': typeof AdminApplicationsIndexRoute
   '/admin/content': typeof AdminContentIndexRoute
   '/admin/customers': typeof AdminCustomersIndexRoute
+  '/admin/pricing': typeof AdminPricingIndexRoute
   '/admin/products': typeof AdminProductsIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
@@ -500,7 +515,7 @@ export interface FileRoutesById {
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
-  '/admin/pricing': typeof AdminPricingRoute
+  '/admin/pricing': typeof AdminPricingRouteWithChildren
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -525,6 +540,7 @@ export interface FileRoutesById {
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -536,6 +552,7 @@ export interface FileRoutesById {
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
+  '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
@@ -588,6 +605,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug'
     | '/admin/content/media'
     | '/admin/customers/$id'
+    | '/admin/pricing/$id'
     | '/admin/products/$id'
     | '/admin/products/imports'
     | '/api/auth/$'
@@ -599,6 +617,7 @@ export interface FileRouteTypes {
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
+    | '/admin/pricing/'
     | '/admin/products/'
     | '/sales/customers/'
     | '/sales/quotes/'
@@ -619,7 +638,6 @@ export interface FileRouteTypes {
     | '/why-automotive-brands'
     | '/admin/brands'
     | '/admin/categories'
-    | '/admin/pricing'
     | '/admin/roles'
     | '/admin/settings'
     | '/brands/$slug'
@@ -643,6 +661,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug'
     | '/admin/content/media'
     | '/admin/customers/$id'
+    | '/admin/pricing/$id'
     | '/admin/products/$id'
     | '/api/auth/$'
     | '/api/cms-media/$id'
@@ -653,6 +672,7 @@ export interface FileRouteTypes {
     | '/admin/applications'
     | '/admin/content'
     | '/admin/customers'
+    | '/admin/pricing'
     | '/admin/products'
     | '/sales/customers'
     | '/sales/quotes'
@@ -703,6 +723,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug'
     | '/admin/content/media'
     | '/admin/customers/$id'
+    | '/admin/pricing/$id'
     | '/admin/products/$id'
     | '/admin/products/imports'
     | '/api/auth/$'
@@ -714,6 +735,7 @@ export interface FileRouteTypes {
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
+    | '/admin/pricing/'
     | '/admin/products/'
     | '/sales/customers/'
     | '/sales/quotes/'
@@ -1064,6 +1086,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/pricing/': {
+      id: '/admin/pricing/'
+      path: '/'
+      fullPath: '/admin/pricing/'
+      preLoaderRoute: typeof AdminPricingIndexRouteImport
+      parentRoute: typeof AdminPricingRoute
+    }
+    '/admin/pricing/$id': {
+      id: '/admin/pricing/$id'
+      path: '/$id'
+      fullPath: '/admin/pricing/$id'
+      preLoaderRoute: typeof AdminPricingIdRouteImport
+      parentRoute: typeof AdminPricingRoute
+    }
     '/admin/products/': {
       id: '/admin/products/'
       path: '/'
@@ -1192,6 +1228,20 @@ const AdminContentRouteWithChildren = AdminContentRoute._addFileChildren(
   AdminContentRouteChildren,
 )
 
+interface AdminPricingRouteChildren {
+  AdminPricingIdRoute: typeof AdminPricingIdRoute
+  AdminPricingIndexRoute: typeof AdminPricingIndexRoute
+}
+
+const AdminPricingRouteChildren: AdminPricingRouteChildren = {
+  AdminPricingIdRoute: AdminPricingIdRoute,
+  AdminPricingIndexRoute: AdminPricingIndexRoute,
+}
+
+const AdminPricingRouteWithChildren = AdminPricingRoute._addFileChildren(
+  AdminPricingRouteChildren,
+)
+
 interface AdminProductsImportsRouteChildren {
   AdminProductsImportsIdRoute: typeof AdminProductsImportsIdRoute
   AdminProductsImportsIndexRoute: typeof AdminProductsImportsIndexRoute
@@ -1225,7 +1275,7 @@ interface AdminRouteChildren {
   AdminBrandsRoute: typeof AdminBrandsRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminContentRoute: typeof AdminContentRouteWithChildren
-  AdminPricingRoute: typeof AdminPricingRoute
+  AdminPricingRoute: typeof AdminPricingRouteWithChildren
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
   AdminRolesRoute: typeof AdminRolesRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
@@ -1239,7 +1289,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminBrandsRoute: AdminBrandsRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminContentRoute: AdminContentRouteWithChildren,
-  AdminPricingRoute: AdminPricingRoute,
+  AdminPricingRoute: AdminPricingRouteWithChildren,
   AdminProductsRoute: AdminProductsRouteWithChildren,
   AdminRolesRoute: AdminRolesRoute,
   AdminSettingsRoute: AdminSettingsRoute,
