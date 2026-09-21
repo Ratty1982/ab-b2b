@@ -26,6 +26,7 @@
   --color-ink: var(--ink);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-product-stage: var(--product-stage);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -71,6 +72,8 @@
   --foreground: oklch(0.985 0 0);
   --surface: oklch(0.203 0.021 263);
   --surface-2: oklch(0.243 0.024 263);
+  /* Light studio plate for product cutouts (~#F3F4F6, slightly warm grey) */
+  --product-stage: oklch(0.961 0.004 95);
 
   --card: oklch(0.203 0.021 263);
   --card-foreground: oklch(0.985 0 0);
@@ -180,4 +183,15 @@
 
 @utility num {
   font-variant-numeric: tabular-nums;
+}
+
+/* Subtle studio wash for live product photography / transparent cutouts. */
+@utility product-studio {
+  background-color: var(--color-product-stage);
+  background-image: linear-gradient(
+    180deg,
+    oklch(0.975 0.004 95) 0%,
+    oklch(0.961 0.004 95) 48%,
+    oklch(0.942 0.006 95) 100%
+  );
 }
