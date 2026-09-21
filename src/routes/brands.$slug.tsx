@@ -1,12 +1,20 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
-import { TradePrice } from "@/components/ab/Price";
-import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
+import { createFileRoute, notFound } from "@tanstack/react-router";
+import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
 import { getPublicBrandFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/brands/$slug")({
-  loader: async ({ params }) => {
-    const result = await getPublicBrandFn({ data: { slug: params.slug } });
+  validateSearch: (search: Record<string, unknown>): { q?: string; page?: number; category?: string } => {
+    const out: { q?: string; page?: number; category?: string } = {};
+    if (typeof search["q"] === "string") out.q = search["q"];
+    if (typeof search["category"] === "string") out.category = search["category"];
+    if (typeof search["page"] === "string" || typeof search["page"] === "number") out.page = Number(search["page"]);
+    return out;
+  },
+  loader: async ({ params, location }) => {
+    const search = location.search as { q?: string; page?: number; category?: string };
+    const result = await getPublicBrandFn({
+      data: { slug: params.slug, q: search.q, page: search.page, categorySlug: search.category },
+    });
     if (!result.ok || !result.data) throw notFound();
     return result.data;
   },
@@ -21,30 +29,23 @@ export const Route = createFileRoute("/brands/$slug")({
 
 function BrandPage() {
   const brand = Route.useLoaderData();
+  const search = Route.useSearch();
   return (
-    <PublicLayout>
-      <section className="border-b border-border/60 bg-surface/30">
-        <div className="mx-auto max-w-[1400px] px-4 py-10 sm:px-6 lg:px-10">
-          <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Brands", to: "/brands" }, { label: brand.name }]} />
-          <h1 className="mt-6 font-display text-4xl font-semibold uppercase">{brand.name}</h1>
-          <p className="mt-3 max-w-xl text-sm text-steel">{brand.description}</p>
-          <Link to="/products" search={{ brand: brand.slug }} className="mt-6 inline-flex h-11 items-center rounded-md bg-primary px-5 text-sm font-bold text-primary-foreground">
-            Shop {brand.name}
-          </Link>
-        </div>
-      </section>
-      <section className="mx-auto max-w-[1400px] px-4 py-12 sm:px-6 lg:px-10">
-        <h2 className="font-display text-2xl font-semibold uppercase">Products</h2>
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {brand.products.map((p) => (
-            <Link key={p.id} to="/products/$sku" params={{ sku: p.slug }} className="rounded-lg border border-border p-3">
-              <CatalogueMedia src={p.imageSrc} alt="" className="aspect-[4/3] w-full rounded" />
-              <div className="mt-2 font-medium">{p.name}</div>
-              <TradePrice trade={p.price.trade} rrp={p.price.rrp} size="sm" ctaMode="text" />
-            </Link>
-          ))}
-        </div>
-      </section>
-    </PublicLayout>
+    <PublicCatalogueShell
+      data={{ ...brand.catalogue, error: null }}
+      heading={
+        search.category && brand.catalogue.category
+          ? `${brand.name} · ${brand.catalogue.category.name}`
+          : brand.name
+      }
+      intro={brand.description ?? brand.tagline ?? undefined}
+      breadcrumbs={[
+        { label: "Home", to: "/" },
+        { label: "Brands", to: "/brands" },
+        { label: brand.name },
+      ]}
+      context={{ brandSlug: brand.slug, q: search.q, brandRoute: true, categorySlug: search.category }}
+      searchAction={`/brands/${brand.slug}`}
+    />
   );
 }

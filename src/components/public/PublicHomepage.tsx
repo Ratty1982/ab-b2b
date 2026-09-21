@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight, ClipboardList, Download, Headphones, Truck, Warehouse } from "lucide-react";
 import { AvailabilityBadge, availabilityClass } from "@/components/ab/AvailabilityBadge";
 import { TradePrice } from "@/components/ab/Price";
-import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
+import { ProductImage } from "@/components/public/ProductImage";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { featuredBrandsIntro } from "@/domain/featured-brands";
@@ -74,7 +74,7 @@ function RangeCard({ product }: { product: HomepageProduct }) {
       params={{ sku: product.slug || product.sku }}
       className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40 transition-colors hover:border-primary/60"
     >
-      <CatalogueMedia src={product.imageSrc} alt={product.name} className="aspect-square w-full" />
+      <ProductImage src={product.imageSrc} alt={product.name} layout="card" />
       <div className="flex flex-1 flex-col p-4">
         <div className="text-[11px] text-cyan">{product.brand}</div>
         <div className="text-sm font-semibold leading-snug">{product.name}</div>
@@ -379,7 +379,7 @@ function NewAndPopular({
                     params={{ sku: product.slug || product.sku }}
                     className="grid grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 bg-ink p-3 transition-colors hover:bg-surface"
                   >
-                    <CatalogueMedia src={product.imageSrc} alt="" className="size-16 rounded-sm" />
+                    <ProductImage src={product.imageSrc} alt="" layout="list" />
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] font-semibold">{product.name}</span>
                       <span className="num block text-[11px] text-steel">

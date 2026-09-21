@@ -2,7 +2,8 @@ import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { useState } from "react";
 import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
 import { TradePrice } from "@/components/ab/Price";
-import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
+import { ProductImage } from "@/components/public/ProductImage";
+import { ProductCard } from "@/components/public/ProductCard";
 import { getPublicProductFn } from "@/server/phase2/fns";
 import { gbp } from "@/lib/data";
 
@@ -40,19 +41,15 @@ function ProductPage() {
         <div className="mt-6 grid gap-8 lg:grid-cols-12">
           <div className="lg:col-span-5">
             {images[active]?.src ? (
-              <CatalogueMedia
-                src={images[active]!.src}
-                alt={images[active]!.alt}
-                className="aspect-[4/3] w-full rounded-lg border border-border"
-              />
+              <ProductImage src={images[active]!.src} alt={images[active]!.alt || p.name} layout="detail" />
             ) : (
-              <div className="aspect-[4/3] rounded-lg border border-border bg-white" />
+              <ProductImage src={null} alt="" layout="detail" />
             )}
             {images.length > 1 ? (
               <div className="mt-3 grid grid-cols-4 gap-2">
                 {images.map((img, i) => (
-                  <button key={img.src + i} type="button" onClick={() => setActive(i)} className="block w-full">
-                    <CatalogueMedia src={img.src} alt="" className="aspect-[4/3] w-full rounded-md border border-border" />
+                  <button key={img.src + i} type="button" onClick={() => setActive(i)} className="block w-full" aria-label={`Show image ${i + 1}`}>
+                    <ProductImage src={img.src} alt="" layout="card" />
                   </button>
                 ))}
               </div>
@@ -84,10 +81,7 @@ function ProductPage() {
             <h2 className="font-display text-xl font-semibold uppercase">Related</h2>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {data.related.map((r) => (
-                <Link key={r.id} to="/products/$sku" params={{ sku: r.slug }} className="rounded-lg border border-border p-3">
-                  <div className="font-medium">{r.name}</div>
-                  <div className="num text-[12px] text-steel">{r.sku}</div>
-                </Link>
+                <ProductCard key={r.id} product={r} />
               ))}
             </div>
           </section>

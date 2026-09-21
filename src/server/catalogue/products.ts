@@ -711,13 +711,14 @@ function toPublicCard(
       createdAt: Date;
       inventory: Array<{ qtyOnHand: number }>;
     }>;
-    media: Array<{ mediaId: string; isPrimary: boolean }>;
+    media: Array<{ mediaId: string; isPrimary: boolean; altText?: string | null }>;
   },
   viewer: PriceViewer,
 ): PublicProductCard {
   const variant = defaultVariant(row.variants);
   const hasInv = Boolean(variant?.inventory.length);
   const qty = hasInv ? variant!.inventory.reduce((sum, inv) => sum + inv.qtyOnHand, 0) : null;
+  const primary = row.media[0];
   return {
     id: row.id,
     sku: variant?.sku ?? "",
@@ -727,7 +728,7 @@ function toPublicCard(
     brandSlug: row.brand.slug,
     category: row.category?.parent?.name ?? row.category?.name ?? "",
     categorySlug: row.category?.slug ?? null,
-    imageSrc: row.media[0]?.mediaId ? cmsMediaPublicPath(row.media[0].mediaId) : null,
+    imageSrc: primary?.mediaId ? cmsMediaPublicPath(primary.mediaId) : null,
     rrp: moneyNumber(variant?.rrp),
     price: resolveDisplayPrice({
       viewer,
@@ -752,28 +753,40 @@ const publicInclude = {
 
 export async function listPublicProducts(input: {
   userId: string | null;
-  q?: string;
-  brandSlug?: string;
-  categorySlug?: string;
-  page?: number;
+  q?: string | undefined;
+  brandSlug?: string | undefined;
+  categorySlug?: string | undefined;
+  page?: number | undefined;
 }) {
   const viewer = await viewerForUserId(input.userId);
   const page = Math.max(1, input.page ?? 1);
   const pageSize = 24;
-  const category = input.categorySlug
-    ? await prisma.category.findUnique({
-        where: { slug: input.categorySlug },
-        select: { id: true, slug: true, name: true, isActive: true, parentId: true },
-      })
-    : null;
-  const categoryIds = category
-    ? [
-        category.id,
-        ...(
-          await prisma.category.findMany({ where: { parentId: category.id }, select: { id: true } })
-        ).map((c) => c.id),
-      ]
-    : undefined;
+  const [requestedCategory, categoryRows, brands, categoryCounts] = await Promise.all([
+    input.categorySlug
+      ? prisma.category.findUnique({
+          where: { slug: input.categorySlug },
+          select: { id: true, slug: true, name: true, isActive: true },
+        })
+      : Promise.resolve(null),
+    prisma.category.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, slug: true, name: true, parentId: true, sortOrder: true },
+    }),
+    prisma.brand.findMany({
+      where: { isActive: true, products: { some: publicWhere } },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { slug: true, name: true },
+    }),
+    prisma.product.groupBy({
+      by: ["categoryId"],
+      where: { ...publicWhere, categoryId: { not: null } },
+      _count: { _all: true },
+    }),
+  ]);
+  const { categoryIdsForFilter, nestPublicCategories } = await import("@/domain/public-catalogue-nav");
+  const activeCategory = requestedCategory?.isActive ? requestedCategory : null;
+  const categoryIds = activeCategory ? categoryIdsForFilter(categoryRows, activeCategory.id) : undefined;
 
   const where: Prisma.ProductWhereInput = {
     ...publicWhere,
@@ -788,7 +801,7 @@ export async function listPublicProducts(input: {
         }
       : {}),
   };
-  const [total, rows, brands, categories] = await Promise.all([
+  const [total, rows] = await Promise.all([
     prisma.product.count({ where }),
     prisma.product.findMany({
       where,
@@ -797,25 +810,20 @@ export async function listPublicProducts(input: {
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
-    prisma.brand.findMany({
-      where: { isActive: true, products: { some: publicWhere } },
-      orderBy: { sortOrder: "asc" },
-      select: { slug: true, name: true },
-    }),
-    prisma.category.findMany({
-      where: { isActive: true, parentId: null },
-      orderBy: { sortOrder: "asc" },
-      select: { slug: true, name: true },
-    }),
   ]);
+  const countsById = new Map(
+    categoryCounts
+      .filter((row) => row.categoryId)
+      .map((row) => [row.categoryId as string, row._count._all]),
+  );
   return {
     items: rows.map((row) => toPublicCard(row, viewer)),
     total,
     page,
     pageSize,
     brands,
-    categories,
-    category: category && category.isActive ? { slug: category.slug, name: category.name } : null,
+    categories: nestPublicCategories(categoryRows, countsById),
+    category: activeCategory ? { slug: activeCategory.slug, name: activeCategory.name } : null,
   };
 }
 
@@ -922,16 +930,27 @@ export async function listPublicProductIndex(userId: string | null, take = 80) {
   return rows.map((row) => toPublicCard(row, viewer));
 }
 
-export async function getPublicBrand(userId: string | null, slug: string) {
+export async function getPublicBrand(
+  userId: string | null,
+  slug: string,
+  extras?: { q?: string | undefined; categorySlug?: string | undefined; page?: number | undefined },
+) {
   const brand = await prisma.brand.findFirst({ where: { slug, isActive: true } });
   if (!brand) return null;
-  const list = await listPublicProducts({ userId, brandSlug: slug, page: 1 });
+  const catalogue = await listPublicProducts({
+    userId,
+    brandSlug: slug,
+    q: extras?.q,
+    categorySlug: extras?.categorySlug,
+    page: extras?.page,
+  });
   return {
     slug: brand.slug,
     name: brand.name,
     tagline: brand.tagline,
     description: brand.description,
     logoSrc: brand.logoMediaId ? cmsMediaPublicPath(brand.logoMediaId) : null,
-    products: list.items,
+    products: catalogue.items,
+    catalogue,
   };
 }

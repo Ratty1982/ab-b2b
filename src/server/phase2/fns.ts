@@ -762,11 +762,15 @@ export const listPublicBrandsFn = createServerFn({ method: "GET" }).handler(asyn
 });
 
 export const getPublicBrandFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { slug: string })
+  .inputValidator((data: unknown) => data as { slug: string; q?: string; page?: number; categorySlug?: string })
   .handler(async ({ data }) => {
     try {
       const userId = await optionalUserId();
-      const result = await catalogueProducts.getPublicBrand(userId, data.slug);
+      const result = await catalogueProducts.getPublicBrand(userId, data.slug, {
+        q: data.q,
+        page: data.page,
+        categorySlug: data.categorySlug,
+      });
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);

@@ -154,7 +154,7 @@ export function PageHeader({
   );
 }
 
-export function Breadcrumbs({ items }: { items: { label: string; to?: string }[] }) {
+export function Breadcrumbs({ items }: { items: { label: string; to?: string | undefined }[] }) {
   return (
     <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-[12px] text-steel">
       {items.map((item, i) => (

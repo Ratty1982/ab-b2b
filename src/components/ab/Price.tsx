@@ -28,7 +28,7 @@ export function TradePrice({
 
   if (!signedIn || trade == null) {
     const ctaClass =
-      "mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary";
+      "mt-1 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary";
     return (
       <div className={cn("min-w-0", className)}>
         <div
@@ -39,19 +39,18 @@ export function TradePrice({
             size === "lg" && "text-2xl",
           )}
         >
-          {rrp != null ? gbp(rrp) : "Price on request"}{" "}
-          {rrp != null ? <span className="text-[11px] font-normal">RRP</span> : null}
+          {rrp != null ? <>RRP {gbp(rrp)}</> : "Price on request"}
         </div>
         {!signedIn ? (
           ctaMode === "link" ? (
             <Link to="/login" className={cn(ctaClass, "hover:underline")}>
               <Lock className="size-3" aria-hidden />
-              Trade customer? Sign in to view your price
+              Sign in to view your price
             </Link>
           ) : (
             <span className={ctaClass}>
               <Lock className="size-3" aria-hidden />
-              Trade customer? Sign in to view your price
+              Sign in to view your price
             </span>
           )
         ) : (
@@ -65,16 +64,16 @@ export function TradePrice({
     <div className={cn("min-w-0", className)}>
       <div
         className={cn(
-          "num font-display font-semibold",
-          size === "sm" && "text-base",
-          size === "md" && "text-xl",
-          size === "lg" && "text-3xl",
+          "num font-display font-semibold leading-none",
+          size === "sm" && "text-xl",
+          size === "md" && "text-2xl",
+          size === "lg" && "text-4xl",
         )}
       >
         {gbp(trade)}
-        <span className="ml-1.5 text-[11px] font-normal text-steel">your price · ex VAT</span>
       </div>
-      {rrp != null ? <div className="num text-[11px] text-steel">RRP {gbp(rrp)}</div> : null}
+      <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-steel">Your price · ex VAT</div>
+      {rrp != null ? <div className="num mt-1 text-[11px] text-steel">RRP {gbp(rrp)}</div> : null}
     </div>
   );
 }

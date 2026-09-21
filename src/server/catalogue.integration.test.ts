@@ -484,6 +484,159 @@ describe("phase 3 product master", () => {
   });
 });
 
+describe("public catalogue navigation and cards", () => {
+  it("lists every active category from the database, nested, excluding inactive", async () => {
+    const { listPublicProducts } = await import("@/server/catalogue/products");
+    const stamp = Date.now();
+    const parent = await createCategory(adminId, {
+      name: `Pub parent ${stamp}`,
+      isActive: true,
+      sortOrder: 500,
+    });
+    const child = await createCategory(adminId, {
+      name: `Pub child ${stamp}`,
+      parentId: parent.id,
+      isActive: true,
+      sortOrder: 1,
+    });
+    const inactive = await createCategory(adminId, {
+      name: `Pub inactive ${stamp}`,
+      isActive: false,
+      sortOrder: 501,
+    });
+
+    const { flattenCategorySlugs } = await import("@/domain/public-catalogue-nav");
+    const pub = await listPublicProducts({ userId: null });
+    const slugs = flattenCategorySlugs(pub.categories);
+    expect(slugs).toContain(parent.slug);
+    expect(slugs).toContain(child.slug);
+    expect(slugs).not.toContain(inactive.slug);
+
+    const dbActive = await prisma.category.findMany({
+      where: { isActive: true },
+      select: { slug: true, parentId: true },
+    });
+    for (const row of dbActive) {
+      expect(slugs).toContain(row.slug);
+    }
+
+    const parentNode = pub.categories.find((n) => n.slug === parent.slug);
+    expect(parentNode?.children.some((c) => c.slug === child.slug)).toBe(true);
+
+    const empty = await listPublicProducts({ userId: null, categorySlug: parent.slug });
+    expect(empty.category?.slug).toBe(parent.slug);
+    expect(empty.items).toHaveLength(0);
+    expect(empty.categories.length).toBe(pub.categories.length);
+  });
+
+  it("keeps brand navigation database-driven and hides anonymous trade plus stock qty", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { listPublicProducts } = await import("@/server/catalogue/products");
+    const sku = `PUBNAV-${Date.now()}`;
+    const trade = 77.77;
+    const rrp = 88.88;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Public nav fixture",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade,
+      rrp,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await updateProductWorkspaceSafe(saved.id);
+
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: saved.id } });
+    const warehouse = await prisma.warehouse.upsert({
+      where: { code: "PUB-TEST" },
+      create: { code: "PUB-TEST", name: "Public test warehouse" },
+      update: {},
+    });
+    await prisma.inventory.upsert({
+      where: { variantId_warehouseId: { variantId: variant.id, warehouseId: warehouse.id } },
+      create: { variantId: variant.id, warehouseId: warehouse.id, qtyOnHand: 42 },
+      update: { qtyOnHand: 42 },
+    });
+
+    const anon = await listPublicProducts({ userId: null, q: sku });
+    expect(anon.brands.some((b) => b.slug === "power-maxed")).toBe(true);
+    const dbBrands = await prisma.brand.findMany({
+      where: { isActive: true, products: { some: { status: "ACTIVE", isActive: true, isTradeVisible: true } } },
+      select: { slug: true },
+    });
+    expect(anon.brands.map((b) => b.slug).sort()).toEqual(dbBrands.map((b) => b.slug).sort());
+
+    expect(anon.items).toHaveLength(1);
+    const card = anon.items[0]!;
+    expect(card.price.trade).toBeNull();
+    expect(card.price.rrp).toBe(rrp);
+    expect(JSON.stringify(card)).not.toContain(String(trade));
+    expect(card).not.toHaveProperty("stockQty");
+    expect(card).not.toHaveProperty("qtyOnHand");
+    expect(card.availability).toBe("in");
+    expect(["In Stock", "Low Stock", "Out of Stock"]).toContain(
+      card.availability === "in" ? "In Stock" : card.availability === "low" ? "Low Stock" : "Out of Stock",
+    );
+    expect(card.imageSrc).toBeNull();
+
+    const signedIn = await listPublicProducts({ userId: adminId, q: sku });
+    expect(signedIn.items[0]?.price.trade).toBe(trade);
+    expect(signedIn.items[0]?.price.rrp).toBe(rrp);
+    expect(signedIn.items[0]).not.toHaveProperty("qtyOnHand");
+
+    const gridAndListShare = {
+      sku: card.sku,
+      name: card.name,
+      brand: card.brand,
+      imageSrc: card.imageSrc,
+      price: card.price,
+      availability: card.availability,
+    };
+    expect(gridAndListShare.sku).toBe(sku);
+    expect(gridAndListShare.availability).toBe("in");
+  });
+
+  it("includes grandchild products when filtering by a parent category", async () => {
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { listPublicProducts } = await import("@/server/catalogue/products");
+    const stamp = Date.now();
+    const parent = await createCategory(adminId, {
+      name: `Deep parent ${stamp}`,
+      isActive: true,
+      sortOrder: 600,
+    });
+    const child = await createCategory(adminId, {
+      name: `Deep child ${stamp}`,
+      parentId: parent.id,
+      isActive: true,
+      sortOrder: 1,
+    });
+    const grand = await createCategory(adminId, {
+      name: `Deep grand ${stamp}`,
+      parentId: child.id,
+      isActive: true,
+      sortOrder: 1,
+    });
+    const sku = `DEEP-${stamp}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Deep nested product",
+      brand: "Steel Seal",
+      category: "Braking",
+      trade: 5,
+      rrp: 9,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await prisma.product.update({ where: { id: saved.id }, data: { categoryId: grand.id } });
+    await updateProductWorkspaceSafe(saved.id);
+    const pub = await listPublicProducts({ userId: null, categorySlug: parent.slug, q: sku });
+    expect(pub.category?.slug).toBe(parent.slug);
+    expect(pub.items.some((p) => p.sku === sku)).toBe(true);
+  });
+});
+
 async function updateProductWorkspaceSafe(id: string) {
   const { updateProductWorkspace } = await import("@/server/catalogue/products");
   await updateProductWorkspace(adminId, { id, status: "ACTIVE", isTradeVisible: true });
