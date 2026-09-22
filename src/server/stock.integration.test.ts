@@ -297,4 +297,97 @@ describe("Phase 5 Autopart inventory integration", () => {
     const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(inv.qtyOnHand).toBe(15);
   });
+
+  it("imports a native 231PO3NEW Avail feed from email dry-run without consuming or mutating", async () => {
+    const { importFromImap } = await import("@/server/stock/poll");
+    const { buildNative231Po3New } = await import("@/server/stock/fixtures/native-231po3new");
+    const { getImapSettings, saveImapSettings } = await import("@/server/stock/service");
+    const sku = `ST5E-${Date.now()}`;
+    await saveProduct(adminId, {
+      sku,
+      name: "Email fixture",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await applyStockFeed({
+      text: csv([`${sku},seed,12`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { sku } });
+    const native = buildNative231Po3New([
+      { sku, description: "EMAIL ROW", stk: "99.0000", avail: "7.0000", pick: "1.0000", physical: "99.0000" },
+    ]);
+    const email = {
+      uid: `uid-${sku}`,
+      messageId: `<mid-${sku}@example.invalid>`,
+      from: "reports@example.com",
+      subject: "231PO3NEW",
+      receivedAt: new Date(),
+      attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
+    };
+    const dry = await importFromImap({
+      dryRun: true,
+      trigger: "manual",
+      actorUserId: adminId,
+      emails: [email],
+    });
+    expect(dry.status === "SUCCESS" || dry.status === "PARTIAL").toBe(true);
+    expect(dry.updated).toBe(0);
+    const afterDry = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(afterDry.qtyOnHand).toBe(12);
+    const dryReceipt = await prisma.stockEmailReceipt.findFirst({ where: { emailUid: email.uid } });
+    expect(dryReceipt?.consumed).not.toBe(true);
+
+    const live = await importFromImap({
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+      emails: [email],
+    });
+    expect(live.status === "SUCCESS" || live.status === "PARTIAL").toBe(true);
+    const afterLive = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(afterLive.qtyOnHand).toBe(7);
+
+    const again = await importFromImap({
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+      emails: [email],
+    });
+    expect(again.rowsRead).toBe(0);
+
+    const noMail = await importFromImap({
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+      emails: [],
+    });
+    expect(noMail.rowsRead).toBe(0);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(7);
+
+    const nativeFail = await applyStockFeed({
+      text: "AUTOPART SYSTEM (231PO3NEW)\nthis is not a stock report",
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(nativeFail.status).toBe("FAILED");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(7);
+
+    await expect(saveImapSettings(adminId, { imapPort: 0 })).rejects.toBeInstanceOf(AuthError);
+
+    await saveImapSettings(adminId, { imapHost: "imap.example.invalid", imapUsername: "ops", imapPassword: "hidden-pass" });
+    const pub = await getImapSettings(adminId);
+    expect(pub).not.toHaveProperty("imapPassword");
+    expect(JSON.stringify(pub)).not.toContain("hidden-pass");
+    expect(pub.hasImapPassword).toBe(true);
+
+    await expect(getImapSettings(tradeUserId)).rejects.toBeInstanceOf(AuthError);
+  });
 });
