@@ -63,3 +63,37 @@ export function isStockStale(lastSuccessAt: Date | null, now: Date, staleHours: 
   if (!Number.isFinite(staleHours) || staleHours <= 0) return false;
   return now.getTime() - lastSuccessAt.getTime() > staleHours * 60 * 60 * 1000;
 }
+
+export const NOT_IN_AB_CATALOGUE_REASON = "Not in AB catalogue";
+
+/** Unmatched/non-catalogued Autopart SKUs are expected and never PARTIAL on their own. */
+export function stockSyncOutcome(input: {
+  rowsRead: number;
+  invalid: number;
+  duplicates: number;
+}): "SUCCESS" | "PARTIAL" | "FAILED" {
+  if (input.rowsRead === 0) return "FAILED";
+  if (input.invalid + input.duplicates > 0) return "PARTIAL";
+  return "SUCCESS";
+}
+
+export function catalogueMatchSummary(input: {
+  matched: number;
+  unmatched: number;
+  invalid: number;
+  duplicates?: number;
+}): string {
+  const parts = [
+    `Matched AB SKUs: ${input.matched}`,
+    `Not in AB catalogue: ${input.unmatched}`,
+    `Invalid: ${input.invalid}`,
+  ];
+  if (input.duplicates) parts.push(`Duplicates: ${input.duplicates}`);
+  return parts.join(". ");
+}
+
+export function stockAttentionSummary(invalid: number, duplicates: number): string | null {
+  const n = invalid + duplicates;
+  if (!n) return null;
+  return `${n} row(s) need attention`;
+}

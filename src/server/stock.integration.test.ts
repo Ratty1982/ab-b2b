@@ -7,7 +7,9 @@ import { getProductWorkspace, getPublicProduct, listPublicProducts } from "@/ser
 import { AuthError } from "@/server/rbac/guards";
 import {
   applyStockFeed,
+  getStockSyncRun,
   getVariantStock,
+  listUnmatchedStockSkus,
   pollImapNow,
   runManualStockSync,
   runScheduledStockSync,
@@ -135,6 +137,10 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(live.status).toBe("PARTIAL");
     expect(live.unmatched).toBeGreaterThanOrEqual(1);
     expect(live.duplicates).toBeGreaterThanOrEqual(2);
+    expect(live.errorSummary).toMatch(/need attention/);
+    const issues = await prisma.stockSyncIssue.findMany({ where: { runId: live.runId } });
+    expect(issues.some((row) => row.kind === "UNMATCHED")).toBe(false);
+    expect(issues.some((row) => row.kind === "DUPLICATE")).toBe(true);
 
     const variantHi = await prisma.productVariant.findUniqueOrThrow({ where: { sku: skus.hi } });
     const inventoryHi = await prisma.inventory.findFirst({ where: { variantId: variantHi.id } });
@@ -251,6 +257,7 @@ describe("Phase 5 Autopart inventory integration", () => {
       actorUserId: adminId,
     });
     expect(invalidRow.invalid).toBe(1);
+    expect(invalidRow.status).toBe("PARTIAL");
     const afterInvalid = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(afterInvalid.qtyOnHand).toBe(8);
   });
@@ -424,4 +431,121 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(manual.dryRun).toBe(true);
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(11);
   });
+
+  it("treats valid Autopart SKUs missing from AB as not-in-catalogue SUCCESS, not invalid", async () => {
+    const stamp = Date.now();
+    const matchedSku = `ST5K-${stamp}`;
+    const absentSku = `ABSENT-${stamp}`;
+    await saveProduct(adminId, {
+      sku: matchedSku,
+      name: "Matched fixture",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const first = await applyStockFeed({
+      text: csv([`${matchedSku},keep,42`, `${absentSku},master only,17`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(first.status).toBe("SUCCESS");
+    expect(first.matched).toBe(1);
+    expect(first.updated).toBe(1);
+    expect(first.unmatched).toBe(1);
+    expect(first.invalid).toBe(0);
+    expect(first.errorSummary).toBeNull();
+    expect(first.summary).toContain("Not in AB catalogue: 1");
+    const detail = await getStockSyncRun(adminId, first.runId);
+    expect(detail.issues).toHaveLength(0);
+    expect(await prisma.productVariant.findUnique({ where: { sku: absentSku } })).toBeNull();
+    expect(await prisma.inventory.count({ where: { variant: { sku: absentSku } } })).toBe(0);
+
+    const listed = await listUnmatchedStockSkus(adminId, { q: absentSku });
+    expect(listed.total).toBe(1);
+    expect(listed.items[0]?.sku).toBe(absentSku);
+    expect(listed.items[0]?.avail).toBe("17");
+    const firstSeen = listed.items[0]?.firstSeenAt;
+
+    const again = await applyStockFeed({
+      text: csv([`${matchedSku},keep,42`, `${absentSku},master only,19`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(again.status).toBe("SUCCESS");
+    expect(await prisma.stockFeedUnmatched.count({ where: { sku: absentSku } })).toBe(1);
+    const afterUpsert = await prisma.stockFeedUnmatched.findUniqueOrThrow({ where: { sku: absentSku } });
+    expect(afterUpsert.lastAvailRaw).toBe("19");
+    expect(afterUpsert.occurrenceCount).toBe(2);
+    expect(afterUpsert.firstSeenAt.toISOString()).toBe(firstSeen);
+
+    await saveProduct(adminId, {
+      sku: absentSku,
+      name: "Later catalogued",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const rematch = await applyStockFeed({
+      text: csv([`${matchedSku},keep,42`, `${absentSku},now in AB,19`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(rematch.status).toBe("SUCCESS");
+    expect(rematch.matched).toBe(2);
+    expect(rematch.unmatched).toBe(0);
+    const laterVariant = await prisma.productVariant.findUniqueOrThrow({ where: { sku: absentSku } });
+    const laterInv = await prisma.inventory.findFirstOrThrow({ where: { variantId: laterVariant.id } });
+    expect(laterInv.qtyOnHand).toBe(19);
+    expect(await prisma.stockFeedUnmatched.findUnique({ where: { sku: absentSku } })).toBeNull();
+
+    const pub = await listPublicProducts({ userId: null, q: absentSku });
+    const card = pub.items.find((item) => item.sku === absentSku);
+    expect(card).not.toHaveProperty("qtyOnHand");
+    expect(JSON.stringify(card)).not.toMatch(/qtyOnHand|stockQty/);
+  });
+
+  it("can SUCCESS with 10,000+ unmatched valid Autopart rows and no AB product creation", async () => {
+    const stamp = Date.now().toString(36);
+    const known = `ST5B-${stamp}`;
+    await saveProduct(adminId, {
+      sku: known,
+      name: "Bulk match",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const rows = [`${known},known,8`];
+    for (let i = 0; i < 10000; i += 1) {
+      rows.push(`U${stamp}${i.toString(36)},bulk,${(i % 50) + 1}`);
+    }
+    const live = await applyStockFeed({
+      text: csv(rows),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(live.status).toBe("SUCCESS");
+    expect(live.matched).toBe(1);
+    expect(live.unmatched).toBe(10000);
+    expect(live.invalid).toBe(0);
+    expect(live.errorSummary).toBeNull();
+    expect(await prisma.productVariant.count({ where: { sku: { startsWith: `U${stamp}` } } })).toBe(0);
+    expect(await prisma.inventory.count({ where: { variant: { sku: { startsWith: `U${stamp}` } } } })).toBe(0);
+    const unmatchedCount = await prisma.stockFeedUnmatched.count({ where: { sku: { startsWith: `U${stamp}` } } });
+    expect(unmatchedCount).toBe(10000);
+    const issues = await prisma.stockSyncIssue.count({ where: { runId: live.runId, kind: "UNMATCHED" } });
+    expect(issues).toBe(0);
+  }, 120_000);
 });

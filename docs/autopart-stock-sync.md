@@ -63,9 +63,12 @@ Case quantity does **not** round Avail. Avail 11 with caseQty 2 stores 11.
 Match key = `trim(SKU)` compared to `ProductVariant.sku` case-insensitively.
 
 - No fuzzy matching, titles, or auto-create
-- Unknown SKU → `UNMATCHED`
-- Ambiguous catalogue SKUs → `CONFLICT` (no update)
+- SKU present in AB → update `Inventory.qtyOnHand` from Avail
+- SKU absent from AB → **not in catalogue** (skip; never create Product/ProductVariant/Inventory). This is expected: 231PO3NEW is Autopart’s master file and AB sells a subset. It is **not** invalid and does **not** make the run PARTIAL.
+- Ambiguous catalogue SKUs → `CONFLICT` (no update; PARTIAL)
 - Whitespace around SKU is trimmed; the identifier is not rewritten
+
+Unmatched SKUs are not permanently ignored. If the product is added later with `ProductVariant.sku` equal to the Autopart SKU, the next import matches Avail automatically.
 
 `ProductVariant.externalRef` is not the 231PO3NEW match key.
 
@@ -112,17 +115,21 @@ PostgreSQL row `StockSyncMutex` id `autopart-231po3new`. Overlapping live/dry/cr
 
 ## Atomicity
 
-The importer never zeros the catalogue first. A missing header, empty file, or oversized file marks the run **FAILED** and leaves previous `qtyOnHand` intact. Per-row problems produce **PARTIAL** when any valid row applied (or would apply on dry-run).
+The importer never zeros the catalogue first. A missing header, empty file, or oversized file marks the run **FAILED** and leaves previous `qtyOnHand` intact.
+
+**SUCCESS** when every parsed row is either matched (Avail applied or unchanged) or a valid Autopart SKU that AB does not sell.
+
+**PARTIAL** is reserved for genuine processing problems: invalid Avail, missing SKU, unparseable row, duplicate/conflict SKUs, or a failed Inventory write. Thousands of non-catalogued Autopart SKUs are not a problem.
 
 ## Sync history
 
 `StockSyncRun`: source, status (`RUNNING` / `SUCCESS` / `PARTIAL` / `FAILED`), timestamps, rows read, matched, updated, unchanged, unmatched, invalid, duplicates, error summary.
 
-`StockSyncIssue` caps at 400 diagnostic rows per run.
+`StockSyncIssue` caps at 400 diagnostic rows per run. Invalid Rows lists malformed/conflict/duplicate rows only — never valid non-catalogued Autopart SKUs.
 
 ## Unmatched SKUs
 
-`StockFeedUnmatched` (live syncs only). Admin table: Autopart SKU, description, Avail, reason, last seen, occurrence count.
+`StockFeedUnmatched` is a **current-state upsert** (SKU primary key: latest Avail, firstSeenAt, lastSeenAt, lastRunId, occurrenceCount). Live syncs batch-upsert; they do not insert a historical row per four-a-day import. Admin → Unmatched Autopart SKUs is searchable and paginated. Summary copy uses **Not in AB catalogue**, not “need attention”.
 
 ## Public availability
 

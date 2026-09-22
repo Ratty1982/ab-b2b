@@ -1170,14 +1170,16 @@ export const getStockSyncRunFn = createServerFn({ method: "GET" })
     }
   });
 
-export const listUnmatchedStockSkusFn = createServerFn({ method: "GET" }).handler(async () => {
-  try {
-    const userId = await requireUserId();
-    return { ok: true as const, data: await stock.listUnmatchedStockSkus(userId) };
-  } catch (e) {
-    return toError(e);
-  }
-});
+export const listUnmatchedStockSkusFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string; page?: number; pageSize?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await stock.listUnmatchedStockSkus(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
 
 export const runManualStockSyncFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { dryRun?: boolean; csv?: string })

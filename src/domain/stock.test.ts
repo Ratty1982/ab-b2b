@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  catalogueMatchSummary,
   customerAvailabilityForStock,
   getSellableQuantity,
   internalStatusFromSellable,
   isStockStale,
   sellableQuantityFromAvail,
   skuMatchKey,
+  stockAttentionSummary,
+  stockSyncOutcome,
 } from "@/domain/stock";
 
 describe("authoritative stock vs public availability", () => {
@@ -44,5 +47,18 @@ describe("authoritative stock vs public availability", () => {
     expect(isStockStale(new Date("2026-09-20T00:00:00.000Z"), now, 36)).toBe(true);
     expect(isStockStale(new Date("2026-09-21T12:00:00.000Z"), now, 36)).toBe(false);
     expect(isStockStale(null, now, 36)).toBe(false);
+  });
+
+  it("treats valid Autopart SKUs absent from AB as SUCCESS, not PARTIAL", () => {
+    expect(stockSyncOutcome({ rowsRead: 12732, invalid: 0, duplicates: 0 })).toBe("SUCCESS");
+    expect(stockSyncOutcome({ rowsRead: 13200, invalid: 0, duplicates: 0 })).toBe("SUCCESS");
+    expect(stockSyncOutcome({ rowsRead: 500, invalid: 1, duplicates: 0 })).toBe("PARTIAL");
+    expect(stockSyncOutcome({ rowsRead: 10, invalid: 0, duplicates: 2 })).toBe("PARTIAL");
+    expect(stockSyncOutcome({ rowsRead: 0, invalid: 0, duplicates: 0 })).toBe("FAILED");
+    expect(stockAttentionSummary(0, 0)).toBeNull();
+    expect(stockAttentionSummary(1, 0)).toBe("1 row(s) need attention");
+    expect(catalogueMatchSummary({ matched: 468, unmatched: 12732, invalid: 0 })).toBe(
+      "Matched AB SKUs: 468. Not in AB catalogue: 12732. Invalid: 0",
+    );
   });
 });

@@ -1,4 +1,5 @@
 import type { StockIssueKind, StockStatus, StockSyncStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
@@ -7,11 +8,15 @@ import {
   AUTOPART_FEED_SOURCE,
   AUTOPART_WAREHOUSE_CODE,
   AUTOPART_WAREHOUSE_NAME,
+  catalogueMatchSummary,
   customerAvailabilityForStock,
   internalStatusFromSellable,
   isStockStale,
+  NOT_IN_AB_CATALOGUE_REASON,
   sellableQuantityFromAvail,
   skuMatchKey,
+  stockAttentionSummary,
+  stockSyncOutcome,
   type VariantStock,
 } from "@/domain/stock";
 import { classifyStockRows, parseAutopart231Po3New } from "@/domain/stock-parse";
@@ -24,6 +29,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 
 const ISSUE_CAP = 400;
 const UPSERT_CHUNK = 200;
+const UNMATCHED_UPSERT_CHUNK = 500;
 
 export async function ensureAutopartWarehouse() {
   return prisma.warehouse.upsert({
@@ -146,6 +152,8 @@ export async function applyStockFeed(input: {
     let unmatched = 0;
     let invalid = 0;
     let duplicates = 0;
+    const unmatchedFeed: Array<{ sku: string; description: string | null; availRaw: string | null }> = [];
+    const matchedFeedSkus: string[] = [];
 
     for (const row of classified) {
       if (row.kind === "missing_sku" || row.kind === "invalid") {
@@ -175,13 +183,10 @@ export async function applyStockFeed(input: {
       const hits = bySku.get(row.row.matchKey) ?? [];
       if (hits.length === 0) {
         unmatched += 1;
-        issues.push({
-          kind: "UNMATCHED",
+        unmatchedFeed.push({
           sku: row.row.sku,
           description: row.row.description,
           availRaw: row.row.availRaw,
-          message: "SKU does not exist in the catalogue",
-          line: row.row.line,
         });
         continue;
       }
@@ -198,6 +203,7 @@ export async function applyStockFeed(input: {
         continue;
       }
       matched += 1;
+      matchedFeedSkus.push(row.row.sku, hits[0]!.sku);
       toApply.push({
         variantId: hits[0]!.id,
         sku: hits[0]!.sku,
@@ -254,37 +260,20 @@ export async function applyStockFeed(input: {
         );
       }
 
-      const unmatchedRows = issues.filter((issue) => issue.kind === "UNMATCHED" && issue.sku);
-      for (const issue of unmatchedRows) {
-        const sku = issue.sku!;
-        await prisma.stockFeedUnmatched.upsert({
-          where: { sku },
-          create: {
-            sku,
-            description: issue.description,
-            lastAvailRaw: issue.availRaw,
-            lastSeenAt: now,
-            lastRunId: run.id,
-            occurrenceCount: 1,
-            reason: issue.message,
-          },
-          update: {
-            description: issue.description,
-            lastAvailRaw: issue.availRaw,
-            lastSeenAt: now,
-            lastRunId: run.id,
-            occurrenceCount: { increment: 1 },
-            reason: issue.message,
-          },
-        });
+      await upsertUnmatchedCurrentState(unmatchedFeed, run.id, now);
+      const matchedKeys = [...new Set(matchedFeedSkus.filter(Boolean))];
+      if (matchedKeys.length) {
+        await prisma.stockFeedUnmatched.deleteMany({ where: { sku: { in: matchedKeys } } });
       }
     }
 
-    const problemRows = invalid + unmatched + duplicates;
-    const status: StockSyncStatus =
-      problemRows === 0 ? "SUCCESS" : toApply.length > 0 || input.dryRun ? "PARTIAL" : "FAILED";
-    // If every data row is a problem and nothing would apply, still PARTIAL when we parsed rows (not a wipe).
-    const finalStatus: StockSyncStatus = parsed.rows.length === 0 ? "FAILED" : status === "FAILED" && parsed.rows.length ? "PARTIAL" : status;
+    const finalStatus = stockSyncOutcome({
+      rowsRead: parsed.rows.length,
+      invalid,
+      duplicates,
+    }) as StockSyncStatus;
+    const errorSummary = stockAttentionSummary(invalid, duplicates);
+    const summary = catalogueMatchSummary({ matched, unmatched, invalid, duplicates });
 
     await prisma.stockSyncIssue.createMany({
       data: issues.slice(0, ISSUE_CAP).map((issue) => ({
@@ -308,7 +297,7 @@ export async function applyStockFeed(input: {
       invalid,
       duplicates,
       durationMs: Date.now() - started,
-      errorSummary: problemRows ? `${problemRows} row(s) need attention` : null,
+      errorSummary,
     });
 
     console.info("[ab:stock-sync]", {
@@ -323,6 +312,7 @@ export async function applyStockFeed(input: {
       invalid,
       duplicates,
       status: finalStatus,
+      summary,
     });
 
     if (!input.dryRun && input.trigger === "manual") {
@@ -348,7 +338,8 @@ export async function applyStockFeed(input: {
       unmatched,
       invalid,
       duplicates,
-      errorSummary: problemRows ? `${problemRows} row(s) need attention` : null,
+      summary,
+      errorSummary,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stock sync failed";
@@ -366,6 +357,41 @@ export async function applyStockFeed(input: {
     throw error;
   } finally {
     await releaseStockSyncLock(lockHolder);
+  }
+}
+
+async function upsertUnmatchedCurrentState(
+  rows: Array<{ sku: string; description: string | null; availRaw: string | null }>,
+  runId: string,
+  now: Date,
+) {
+  const unique = new Map<string, { sku: string; description: string | null; availRaw: string | null }>();
+  for (const row of rows) {
+    if (!row.sku) continue;
+    unique.set(row.sku, row);
+  }
+  const list = [...unique.values()];
+  if (!list.length) return;
+  const reason = NOT_IN_AB_CATALOGUE_REASON;
+  for (let i = 0; i < list.length; i += UNMATCHED_UPSERT_CHUNK) {
+    const chunk = list.slice(i, i + UNMATCHED_UPSERT_CHUNK);
+    const values = Prisma.join(
+      chunk.map(
+        (row) =>
+          Prisma.sql`(${row.sku}, ${row.description}, ${row.availRaw}, ${now}, ${now}, ${runId}, 1, ${reason})`,
+      ),
+    );
+    await prisma.$executeRaw`
+      INSERT INTO "StockFeedUnmatched" ("sku", "description", "lastAvailRaw", "firstSeenAt", "lastSeenAt", "lastRunId", "occurrenceCount", "reason")
+      VALUES ${values}
+      ON CONFLICT ("sku") DO UPDATE SET
+        "description" = EXCLUDED."description",
+        "lastAvailRaw" = EXCLUDED."lastAvailRaw",
+        "lastSeenAt" = EXCLUDED."lastSeenAt",
+        "lastRunId" = EXCLUDED."lastRunId",
+        "occurrenceCount" = "StockFeedUnmatched"."occurrenceCount" + 1,
+        "reason" = EXCLUDED."reason"
+    `;
   }
 }
 
@@ -541,25 +567,54 @@ export async function getStockSyncRun(actorUserId: string, id: string) {
   const row = await prisma.stockSyncRun.findUnique({ where: { id } });
   if (!row) throw new AuthError("Sync run not found", "NOT_FOUND", 404);
   const issues = await prisma.stockSyncIssue.findMany({
-    where: { runId: id },
+    where: { runId: id, kind: { not: "UNMATCHED" } },
     orderBy: { createdAt: "asc" },
     take: ISSUE_CAP,
   });
   return { ...serializeRun(row), issues };
 }
 
-export async function listUnmatchedStockSkus(actorUserId: string) {
+export async function listUnmatchedStockSkus(
+  actorUserId: string,
+  input?: { q?: string; page?: number; pageSize?: number },
+) {
   await requireInternalStockView(actorUserId);
-  const rows = await prisma.stockFeedUnmatched.findMany({ orderBy: { lastSeenAt: "desc" }, take: 500 });
-  return rows.map((row) => ({
-    sku: row.sku,
-    description: row.description,
-    avail: row.lastAvailRaw,
-    reason: row.reason,
-    lastSeenAt: row.lastSeenAt.toISOString(),
-    lastRunId: row.lastRunId,
-    occurrenceCount: row.occurrenceCount,
-  }));
+  const q = input?.q?.trim() ?? "";
+  const pageSize = Math.min(100, Math.max(10, input?.pageSize ?? 50));
+  const page = Math.max(1, input?.page ?? 1);
+  const where = q
+    ? {
+        OR: [
+          { sku: { contains: q, mode: "insensitive" as const } },
+          { description: { contains: q, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+  const [total, rows] = await Promise.all([
+    prisma.stockFeedUnmatched.count({ where }),
+    prisma.stockFeedUnmatched.findMany({
+      where,
+      orderBy: { lastSeenAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+  return {
+    total,
+    page,
+    pageSize,
+    q,
+    items: rows.map((row) => ({
+      sku: row.sku,
+      description: row.description,
+      avail: row.lastAvailRaw,
+      reason: row.reason,
+      firstSeenAt: row.firstSeenAt.toISOString(),
+      lastSeenAt: row.lastSeenAt.toISOString(),
+      lastRunId: row.lastRunId,
+      occurrenceCount: row.occurrenceCount,
+    })),
+  };
 }
 
 export async function stockOperationsOverview(actorUserId: string) {
@@ -629,6 +684,12 @@ function serializeRun(row: {
     duplicates: row.duplicates,
     errorSummary: row.errorSummary,
     durationMs: row.durationMs,
+    summary: catalogueMatchSummary({
+      matched: row.matched,
+      unmatched: row.unmatched,
+      invalid: row.invalid,
+      duplicates: row.duplicates,
+    }),
   };
 }
 

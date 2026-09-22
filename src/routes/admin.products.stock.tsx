@@ -25,7 +25,8 @@ export const Route = createFileRoute("/admin/products/stock")({
 
 type Overview = Extract<Awaited<ReturnType<typeof stockOperationsOverviewFn>>, { ok: true }>["data"];
 type RunRow = Extract<Awaited<ReturnType<typeof listStockSyncRunsFn>>, { ok: true }>["data"][number];
-type UnmatchedRow = Extract<Awaited<ReturnType<typeof listUnmatchedStockSkusFn>>, { ok: true }>["data"][number];
+type UnmatchedList = Extract<Awaited<ReturnType<typeof listUnmatchedStockSkusFn>>, { ok: true }>["data"];
+type UnmatchedRow = UnmatchedList["items"][number];
 type RunDetail = Extract<Awaited<ReturnType<typeof getStockSyncRunFn>>, { ok: true }>["data"];
 
 function statusTone(status: string): Tone {
@@ -51,8 +52,10 @@ type SyncResult = {
   wouldUpdate?: number;
   updated?: number;
   unmatched?: number;
+  unchanged?: number;
   invalid?: number;
   duplicates?: number;
+  summary?: string | null;
   errorSummary?: string | null;
   emailsExamined?: number;
   attachmentFilename?: string;
@@ -68,14 +71,19 @@ function buttonClass(primary = false) {
 }
 
 function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
-  const counts = [
-    `${data.rowsRead ?? 0} read`,
-    `${data.matched ?? 0} matched`,
-    data.dryRun ? `${data.wouldUpdate ?? 0} would update` : `${data.updated ?? 0} updated`,
-    `${data.unmatched ?? 0} unmatched`,
-    `${data.invalid ?? 0} invalid`,
-    `${data.duplicates ?? 0} duplicates`,
-  ].join(" · ");
+  const counts =
+    data.summary ??
+    [
+      `Rows read: ${data.rowsRead ?? 0}`,
+      `AB products matched: ${data.matched ?? 0}`,
+      data.dryRun ? `Would update: ${data.wouldUpdate ?? 0}` : `Updated: ${data.updated ?? 0}`,
+      `Unchanged: ${data.unchanged ?? 0}`,
+      `Not in AB catalogue: ${data.unmatched ?? 0}`,
+      `Invalid: ${data.invalid ?? 0}`,
+      data.duplicates ? `Duplicates: ${data.duplicates}` : null,
+    ]
+      .filter(Boolean)
+      .join(". ");
   const extra = [
     data.attachmentFilename ? `Attachment ${data.attachmentFilename}` : null,
     data.emailsExamined != null ? `${data.emailsExamined} email(s) examined` : null,
@@ -93,7 +101,7 @@ function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
   if (data.status === "PARTIAL") {
     return { tone: "warn", title: `${kind}: ${data.status}`, detail: `${counts}. ${extra}`.trim() };
   }
-  return { tone: "good", title: `${kind}: ${data.status ?? "done"}`, detail: `${counts}. ${extra}`.trim() };
+  return { tone: "good", title: `${kind}: ${data.status ?? "done"}`, detail: `${counts}${extra ? `. ${extra}` : ""}`.trim() };
 }
 
 function AutopartStockOps() {
@@ -107,6 +115,9 @@ function AutopartStockOps() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
+  const [unmatchedTotal, setUnmatchedTotal] = useState(0);
+  const [unmatchedPage, setUnmatchedPage] = useState(1);
+  const [unmatchedQuery, setUnmatchedQuery] = useState("");
   const [selected, setSelected] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -127,7 +138,7 @@ function AutopartStockOps() {
     const [ov, history, unmatchedRows] = await Promise.all([
       stockOperationsOverviewFn(),
       listStockSyncRunsFn(),
-      listUnmatchedStockSkusFn(),
+      listUnmatchedStockSkusFn({ data: { q: unmatchedQuery, page: unmatchedPage, pageSize: 50 } }),
     ]);
     if (ov.ok) {
       setError(null);
@@ -147,8 +158,12 @@ function AutopartStockOps() {
       }
     } else setError(ov.error);
     if (history.ok) setRuns(history.data);
-    if (unmatchedRows.ok) setUnmatched(unmatchedRows.data);
-  }, []);
+    if (unmatchedRows.ok) {
+      setUnmatched(unmatchedRows.data.items);
+      setUnmatchedTotal(unmatchedRows.data.total);
+      setUnmatchedPage(unmatchedRows.data.page);
+    }
+  }, [unmatchedPage, unmatchedQuery]);
 
   useEffect(() => {
     void load();
@@ -180,7 +195,8 @@ function AutopartStockOps() {
       const detail = await getStockSyncRunFn({ data: { id: r.data.runId } });
       if (detail.ok) {
         setSelected(detail.data);
-        setTab("issues");
+        const actionable = (r.data.invalid ?? 0) + (r.data.duplicates ?? 0);
+        setTab(actionable ? "issues" : "history");
       }
     }
     return noticeFromSync(kind, r.data);
@@ -420,7 +436,24 @@ function AutopartStockOps() {
       </div>
 
       {tab === "history" ? (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+        <div className="mt-4 space-y-3">
+          {selected ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatusCard label="Status" value={selected.status} />
+              <StatusCard label="Rows read" value={String(selected.rowsRead)} />
+              <StatusCard label="AB products matched" value={String(selected.matched)} />
+              <StatusCard label="Updated" value={String(selected.updated)} />
+              <StatusCard label="Unchanged" value={String(selected.unchanged)} />
+              <StatusCard label="Not in AB catalogue" value={String(selected.unmatched)} />
+              <StatusCard label="Invalid" value={String(selected.invalid)} />
+              <StatusCard label="Duplicates" value={String(selected.duplicates)} />
+            </div>
+          ) : null}
+          <p className="text-[12px] text-steel">
+            231PO3NEW is Autopart’s master file. SKUs that Automotive Brands does not sell are skipped as
+            not in catalogue — they are not invalid and do not make a run PARTIAL.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[960px] text-[13px]">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
@@ -432,7 +465,7 @@ function AutopartStockOps() {
                 <th className="px-3 py-2 text-right">Matched</th>
                 <th className="px-3 py-2 text-right">Updated</th>
                 <th className="px-3 py-2 text-right">Unchanged</th>
-                <th className="px-3 py-2 text-right">Unmatched</th>
+                <th className="px-3 py-2 text-right">Not in AB catalogue</th>
                 <th className="px-3 py-2 text-right">Invalid</th>
               </tr>
             </thead>
@@ -452,7 +485,7 @@ function AutopartStockOps() {
                       void getStockSyncRunFn({ data: { id: run.id } }).then((r) => {
                         if (r.ok) {
                           setSelected(r.data);
-                          setTab("issues");
+                          setTab(r.data.issues.length ? "issues" : "history");
                         }
                       });
                     }}
@@ -474,27 +507,67 @@ function AutopartStockOps() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {tab === "unmatched" ? (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+        <div className="mt-4 space-y-3">
+          <p className="text-[13px] text-steel">
+            {unmatchedTotal.toLocaleString("en-GB")} Autopart SKU(s) not in the AB catalogue. This is expected
+            for the master 231PO3NEW file. Rows are current-state diagnostics only — they are not import errors
+            and products are never auto-created. Add the SKU in AB and the next import will match Avail automatically.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={unmatchedQuery}
+              onChange={(e) => {
+                setUnmatchedQuery(e.target.value);
+                setUnmatchedPage(1);
+              }}
+              className={inputClass}
+              placeholder="Search Autopart SKU or description"
+              aria-label="Search unmatched Autopart SKUs"
+            />
+            <p className="text-[12px] text-steel">
+              Page {unmatchedPage} of {Math.max(1, Math.ceil(unmatchedTotal / 50))}
+            </p>
+            <button
+              type="button"
+              className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase disabled:opacity-40"
+              disabled={unmatchedPage <= 1}
+              onClick={() => setUnmatchedPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase disabled:opacity-40"
+              disabled={unmatchedPage >= Math.ceil(unmatchedTotal / 50)}
+              onClick={() => setUnmatchedPage((p) => p + 1)}
+            >
+              Next
+            </button>
+          </div>
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[800px] text-[13px]">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
                 <th className="px-3 py-2">Autopart SKU</th>
                 <th className="px-3 py-2">Description</th>
-                <th className="px-3 py-2">Avail</th>
-                <th className="px-3 py-2">Reason</th>
+                <th className="px-3 py-2">Latest Avail</th>
+                <th className="px-3 py-2">First seen</th>
                 <th className="px-3 py-2">Last seen</th>
-                <th className="px-3 py-2 text-right">Occurrences</th>
+                <th className="px-3 py-2 text-right">Times seen</th>
               </tr>
             </thead>
             <tbody>
               {unmatched.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-steel">
-                    No unmatched SKUs from live syncs.
+                    {unmatchedTotal === 0
+                      ? "No unmatched Autopart SKUs from live syncs."
+                      : "No SKUs match this search."}
                   </td>
                 </tr>
               ) : (
@@ -503,7 +576,7 @@ function AutopartStockOps() {
                     <td className="num px-3 py-2">{row.sku}</td>
                     <td className="px-3 py-2">{row.description ?? "—"}</td>
                     <td className="num px-3 py-2">{row.avail ?? "—"}</td>
-                    <td className="px-3 py-2 text-steel">{row.reason}</td>
+                    <td className="px-3 py-2">{formatUtc(row.firstSeenAt)}</td>
                     <td className="px-3 py-2">{formatUtc(row.lastSeenAt)}</td>
                     <td className="num px-3 py-2 text-right">{row.occurrenceCount}</td>
                   </tr>
@@ -511,9 +584,7 @@ function AutopartStockOps() {
               )}
             </tbody>
           </table>
-          <p className="px-3 py-2 text-[12px] text-steel">
-            Unmatched rows are never turned into products. Create the catalogue SKU first, then sync again.
-          </p>
+        </div>
         </div>
       ) : null}
 
@@ -525,7 +596,10 @@ function AutopartStockOps() {
               {selected.errorSummary ? ` · ${selected.errorSummary}` : ""}
             </p>
           ) : (
-            <p className="text-[13px] text-steel">Select a sync run from history to inspect invalid, duplicate, and unmatched rows.</p>
+            <p className="text-[13px] text-steel">
+              Select a sync run from history to inspect genuine invalid, duplicate, or conflict rows. Valid
+              Autopart SKUs that AB does not sell are listed under Unmatched Autopart SKUs, not here.
+            </p>
           )}
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[800px] text-[13px]">

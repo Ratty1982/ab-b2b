@@ -852,10 +852,13 @@ model StockFeedUnmatched {
   sku              String   @id
   description      String?
   lastAvailRaw     String?
+  firstSeenAt      DateTime
   lastSeenAt       DateTime
   lastRunId        String
   occurrenceCount  Int      @default(1)
   reason           String
+
+  @@index([lastSeenAt])
 }
 
 /// Single-row mutex so Autopart imports cannot overlap (Prisma-safe; not Redis).

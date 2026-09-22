@@ -63,7 +63,8 @@ Coolify UTC heartbeats are allowed. They do **not** import stock every 15 minute
 
 - Overlapping runs: `pg_try_advisory_lock`; second caller is rejected.
 - Bad/empty/missing-Avail file: `FAILED`, previous `qtyOnHand` retained.
-- Per-row invalid/unmatched/duplicate: reported; other SKUs still apply (`PARTIAL` if any row failed).
+- Per-row invalid Avail / duplicate / conflict: other SKUs still apply; run is **PARTIAL**.
+- Valid Autopart SKUs not sold in AB: skip as not in catalogue; run stays **SUCCESS** if there are no genuine issues.
 - Manual **Sync Autopart stock**, **Poll now (dry run / live)**, and **Dry run** in admin; upload file without IMAP.
 
 ## Phase 5A correction — EMAIL / IMAP is the production source
