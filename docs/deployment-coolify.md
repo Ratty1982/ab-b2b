@@ -100,11 +100,21 @@ mark the deploy unhealthy.
 - No new required environment variables. Object storage vars remain unused.
 - After deploy: open **Admin → Website → Homepage**, select the Hero, **Choose image**, upload or pick from the library, save draft, then publish. Public pages load images from `/api/cms-media/:id`.
 
-## Image size / Coolify “exporting layers”
+## Image size / Coolify exit 255 during export or unpack
 
-The runner image only includes Prisma CLI + `@prisma/client`, not the full Vite/Radix `node_modules` tree. A previous Coolify deploy compiled successfully then failed at `#28 exporting layers` (exit 255) because that layer was too large for the helper container.
+Coolify’s helper container has killed `docker exec … bash /artifacts/build.sh` with **exit 255** after the Vite compile succeeded:
 
-If export still fails: free disk on the Coolify host (`docker system df` / `docker builder prune`) and raise the application build timeout (the compile itself is several minutes because `bun install` is slow on first pull).
+- historically during `#28 exporting layers` (image too large)
+- 22 Sep 2026 during `#31 unpacking` after a **~240 second** wall clock (07:52:06 → 07:56:06)
+
+That 22 Sep job imported GitHub SHA `4ddc5ff` (Phase 5). Phase 5A IMAP lives on later commits on `production/phase-1-auth-rbac`. Redeploy **latest** after this image slim.
+
+The Docker **deps** stage now runs `bun install --frozen-lockfile --production --ignore-scripts` so Playwright/eslint/vitest are not downloaded. `vite`, `nitro`, and `@vitejs/plugin-react` are production dependencies so the image can still compile. The runner still does **not** copy the full app `node_modules`; it has Prisma + sharp + `imapflow` + `mailparser` (ssr-external IMAP client).
+
+**Coolify setting (required on the host):** raise the application **Docker build timeout** to at least **15 minutes**. A 4-minute cap will keep killing first-pull builds even when the Dockerfile is healthy.
+
+If unpack still fails: on the Coolify server run `docker system df` / `docker builder prune` to free disk, then redeploy.
+
 - Invitations are created with `emailDeferred: true` until an email provider is configured — do not expect outbound mail.
 
 ## Phase 5 / 5A Autopart stock

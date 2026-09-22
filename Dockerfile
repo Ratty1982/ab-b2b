@@ -1,16 +1,22 @@
 # Multi-stage production image for Coolify / Docker (Node runtime).
 # Bun installs/builds; Node runs Nitro after migrate + bootstrap.
 #
-# The runner must NOT receive the full production node_modules tree
-# (Vite, Radix, Playwright, etc.). Coolify failed at "exporting layers"
-# with that payload. Runtime only needs Prisma CLI + generated client:
+# Coolify's helper has previously killed `docker exec` with exit 255 after
+# ~240s (during "exporting layers" / unpack). Keep the install tree small:
+# skip Playwright/eslint/vitest (`--production`) and skip postinstall scripts
+# in the build install (Prisma generate + sharp native happen elsewhere).
+#
+# The runner must NOT receive the full Vite/Radix/Playwright tree.
+# Runtime: Prisma CLI + generated client + sharp + IMAP acquisition libs.
 # Nitro already bundled the application into .output.
 
 FROM oven/bun:1.2-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml ./
 COPY prisma ./prisma
-RUN bun install --frozen-lockfile
+ENV NODE_ENV=production
+# vite, nitro, and @vitejs/plugin-react live in dependencies so this still builds.
+RUN bun install --frozen-lockfile --production --ignore-scripts
 
 FROM oven/bun:1.2-alpine AS build
 WORKDIR /app
@@ -27,14 +33,15 @@ RUN bun build ./prisma/bootstrap/run-production.ts \
   --target node \
   --external @prisma/client
 
-# Minimal runtime Prisma CLI — aligned with bun.lock resolved Prisma 6.19.3.
+# Minimal runtime packages — aligned with bun.lock resolved Prisma 6.19.3.
 # Do not `bunx prisma generate` here: bunx may download another CLI and the
 # WASM parser has panicked on Coolify (inline.rs index out of bounds).
+# imapflow/mailparser are ssr.external and must exist at runtime for IMAP poll.
 FROM oven/bun:1.2-alpine AS runtime-deps
 WORKDIR /app
 COPY bunfig.toml ./
 COPY prisma ./prisma
-RUN bun add prisma@6.19.3 @prisma/client@6.19.3 sharp@0.35.4
+RUN bun add prisma@6.19.3 @prisma/client@6.19.3 sharp@0.35.4 imapflow@2.0.5 mailparser@3.9.28
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -62,7 +69,9 @@ RUN chmod +x ./scripts/docker-entrypoint.sh \
   && test -f ./node_modules/prisma/build/prisma_schema_build_bg.wasm \
   && test -e ./node_modules/.bin/prisma \
   && test -d ./node_modules/@prisma/client \
-  && test -d ./node_modules/.prisma/client
+  && test -d ./node_modules/.prisma/client \
+  && test -d ./node_modules/imapflow \
+  && test -d ./node_modules/mailparser
 
 EXPOSE 3000
 
