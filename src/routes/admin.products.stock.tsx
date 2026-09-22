@@ -40,6 +40,62 @@ function formatUtc(value: string | null | undefined) {
   return `${new Date(value).toLocaleString("en-GB", { timeZone: "UTC" })} UTC`;
 }
 
+type ActionNotice = { tone: "good" | "warn" | "bad"; title: string; detail: string };
+
+type SyncResult = {
+  runId?: string | null;
+  status?: string;
+  dryRun?: boolean;
+  rowsRead?: number;
+  matched?: number;
+  wouldUpdate?: number;
+  updated?: number;
+  unmatched?: number;
+  invalid?: number;
+  duplicates?: number;
+  errorSummary?: string | null;
+  emailsExamined?: number;
+  attachmentFilename?: string;
+};
+
+function buttonClass(primary = false) {
+  return cn(
+    "h-10 rounded-md px-4 text-[12px] font-semibold uppercase tracking-wide disabled:cursor-wait disabled:opacity-50",
+    primary
+      ? "bg-primary text-primary-foreground"
+      : "border border-border bg-surface/40 text-foreground hover:bg-surface",
+  );
+}
+
+function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
+  const counts = [
+    `${data.rowsRead ?? 0} read`,
+    `${data.matched ?? 0} matched`,
+    data.dryRun ? `${data.wouldUpdate ?? 0} would update` : `${data.updated ?? 0} updated`,
+    `${data.unmatched ?? 0} unmatched`,
+    `${data.invalid ?? 0} invalid`,
+    `${data.duplicates ?? 0} duplicates`,
+  ].join(" · ");
+  const extra = [
+    data.attachmentFilename ? `Attachment ${data.attachmentFilename}` : null,
+    data.emailsExamined != null ? `${data.emailsExamined} email(s) examined` : null,
+    data.errorSummary,
+  ]
+    .filter(Boolean)
+    .join(". ");
+  if (data.status === "FAILED" || (data.runId == null && !(data.rowsRead ?? 0))) {
+    return {
+      tone: "warn",
+      title: `${kind}: no stock was changed`,
+      detail: extra || "No 231PO3NEW feed was acquired. Configure IMAP, test the connection, or upload a file.",
+    };
+  }
+  if (data.status === "PARTIAL") {
+    return { tone: "warn", title: `${kind}: ${data.status}`, detail: `${counts}. ${extra}`.trim() };
+  }
+  return { tone: "good", title: `${kind}: ${data.status ?? "done"}`, detail: `${counts}. ${extra}`.trim() };
+}
+
 function AutopartStockOps() {
   const session = useSession();
   const canSync =
@@ -53,7 +109,8 @@ function AutopartStockOps() {
   const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
   const [selected, setSelected] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ActionNotice | null>(null);
   const [tab, setTab] = useState<"history" | "unmatched" | "issues">("history");
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState("993");
@@ -99,30 +156,53 @@ function AutopartStockOps() {
     void load();
   }, [load]);
 
-  async function runSync(dryRun: boolean, csv?: string) {
-    setBusy(true);
+  async function runAction(label: string, work: () => Promise<ActionNotice>) {
+    if (busy) return;
+    setBusy(label);
+    setNotice({ tone: "warn", title: `${label} in progress`, detail: "Connecting to the server. This can take a few seconds." });
     try {
-      const r = await runManualStockSyncFn({ data: { dryRun, csv } });
-      if (!r.ok) {
-        toast.error(r.error);
-        return;
-      }
-      toast.success(dryRun ? `Dry run ${r.data.status}` : `Sync ${r.data.status}`);
-      await load();
-      if (r.data.runId) {
-        const detail = await getStockSyncRunFn({ data: { id: r.data.runId } });
-        if (detail.ok) {
-          setSelected(detail.data);
-          setTab("issues");
-        }
-      }
+      const next = await work();
+      setNotice(next);
+      if (next.tone === "bad") toast.error(next.detail || next.title);
+      else if (next.tone === "warn") toast.message(next.title);
+      else toast.success(next.title);
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : "The request failed";
+      setNotice({ tone: "bad", title: `${label} failed`, detail });
+      toast.error(detail);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
+  }
+
+  async function applySyncResult(kind: string, r: { ok: true; data: SyncResult } | { ok: false; error: string }) {
+    if (!r.ok) return { tone: "bad" as const, title: `${kind} failed`, detail: r.error };
+    await load();
+    if (r.data.runId) {
+      const detail = await getStockSyncRunFn({ data: { id: r.data.runId } });
+      if (detail.ok) {
+        setSelected(detail.data);
+        setTab("issues");
+      }
+    }
+    return noticeFromSync(kind, r.data);
+  }
+
+  async function runSync(dryRun: boolean, csv?: string) {
+    const kind = csv ? "Upload" : dryRun ? "Dry run" : "Live sync";
+    await runAction(kind, async () =>
+      applySyncResult(kind, await runManualStockSyncFn({ data: { dryRun, ...(csv ? { csv } : {}) } })),
+    );
+  }
+
+  async function runPoll(dryRun: boolean) {
+    const kind = dryRun ? "Poll dry run" : "Poll live";
+    await runAction(kind, async () => applySyncResult(kind, await pollImapNowFn({ data: { dryRun } })));
   }
 
   const failed = overview?.lastAttempt?.status === "FAILED";
   const stale = overview?.freshness.stale;
+  const working = Boolean(busy);
 
   return (
     <div>
@@ -135,7 +215,7 @@ function AutopartStockOps() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".csv,text/csv,text/plain"
+                accept=".csv,.txt,text/csv,text/plain"
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -144,70 +224,43 @@ function AutopartStockOps() {
                   void file.text().then((csv) => runSync(false, csv));
                 }}
               />
-              <button
-                type="button"
-                disabled={busy}
-                className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
-                onClick={() => void runSync(true)}
-              >
-                Dry run
+              <button type="button" disabled={working} className={buttonClass()} onClick={() => void runSync(true)}>
+                {busy === "Dry run" ? "Working…" : "Dry run"}
               </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
-                onClick={() => {
-                  setBusy(true);
-                  void pollImapNowFn({ data: { dryRun: true } })
-                    .then((r) => {
-                      if (!r.ok) toast.error(r.error);
-                      else toast.success(r.data.errorSummary ? `Poll dry run: ${r.data.errorSummary}` : `Poll dry run ${r.data.status}`);
-                      return load();
-                    })
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Poll now (dry run)
+              <button type="button" disabled={working} className={buttonClass()} onClick={() => void runPoll(true)}>
+                {busy === "Poll dry run" ? "Working…" : "Poll now (dry run)"}
               </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
-                onClick={() => {
-                  setBusy(true);
-                  void pollImapNowFn({ data: { dryRun: false } })
-                    .then((r) => {
-                      if (!r.ok) toast.error(r.error);
-                      else toast.success(`Poll live ${r.data.status}`);
-                      return load();
-                    })
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Poll now (live)
+              <button type="button" disabled={working} className={buttonClass()} onClick={() => void runPoll(false)}>
+                {busy === "Poll live" ? "Working…" : "Poll now (live)"}
               </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
-                onClick={() => fileRef.current?.click()}
-              >
-                Upload 231PO3NEW
+              <button type="button" disabled={working} className={buttonClass()} onClick={() => fileRef.current?.click()}>
+                {busy === "Upload" ? "Working…" : "Upload 231PO3NEW"}
               </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="h-10 rounded-md bg-primary px-4 text-[12px] font-semibold uppercase text-primary-foreground"
-                onClick={() => void runSync(false)}
-              >
-                Sync Autopart stock
+              <button type="button" disabled={working} className={buttonClass(true)} onClick={() => void runSync(false)}>
+                {busy === "Live sync" ? "Working…" : "Sync Autopart stock"}
               </button>
             </div>
           ) : null
         }
       />
 
-      {error ? <div className="mb-4 rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm">{error}</div> : null}
+      <div className="space-y-4 px-4 py-4 sm:px-6">
+      {notice ? (
+        <div
+          role="status"
+          className={cn(
+            "rounded-md border px-4 py-3 text-sm",
+            notice.tone === "bad" && "border-bad/40 bg-bad/10",
+            notice.tone === "warn" && "border-warn/50 bg-warn/10",
+            notice.tone === "good" && "border-good/40 bg-good/10",
+          )}
+        >
+          <p className="font-semibold">{notice.title}</p>
+          <p className="mt-1 text-steel">{notice.detail}</p>
+        </div>
+      ) : null}
+
+      {error ? <div className="rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm">{error}</div> : null}
 
       {failed || stale ? (
         <div className="mb-4 rounded-md border border-warn/50 bg-warn/10 px-4 py-3 text-sm">
@@ -248,32 +301,27 @@ function AutopartStockOps() {
         onSubmit={(e) => {
           e.preventDefault();
           if (!canSync) return;
-          setBusy(true);
-          void saveImapSettingsFn({
-            data: {
-              enabled,
-              inboundEmailAddress: inbound,
-              imapHost,
-              imapPort: Number(imapPort) || 993,
-              imapSecure,
-              imapUsername: imapUser,
-              ...(imapPassword.trim() ? { imapPassword: imapPassword.trim() } : {}),
-              mailbox,
-              allowedSenderEmails: allowed,
-              attachmentFilenamePattern: pattern,
-              pollIntervalMinutes: Number(pollMinutes) || 15,
-            },
-          })
-            .then((r) => {
-              if (!r.ok) {
-                toast.error(r.error);
-                return;
-              }
-              toast.success("IMAP settings saved");
-              setImapPassword("");
-              return load();
-            })
-            .finally(() => setBusy(false));
+          void runAction("Save IMAP", async () => {
+            const r = await saveImapSettingsFn({
+              data: {
+                enabled,
+                inboundEmailAddress: inbound,
+                imapHost,
+                imapPort: Number(imapPort) || 993,
+                imapSecure,
+                imapUsername: imapUser,
+                ...(imapPassword.trim() ? { imapPassword: imapPassword.trim() } : {}),
+                mailbox,
+                allowedSenderEmails: allowed,
+                attachmentFilenamePattern: pattern,
+                pollIntervalMinutes: Number(pollMinutes) || 15,
+              },
+            });
+            if (!r.ok) return { tone: "bad" as const, title: "IMAP settings not saved", detail: r.error };
+            setImapPassword("");
+            await load();
+            return { tone: "good" as const, title: "IMAP settings saved", detail: "Password is write-only and was not returned." };
+          });
         }}
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -282,22 +330,20 @@ function AutopartStockOps() {
             <div className="flex gap-2">
               <button
                 type="button"
-                disabled={busy}
-                className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase"
+                disabled={working}
+                className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase disabled:opacity-50"
                 onClick={() => {
-                  setBusy(true);
-                  void testImapConnectionFn()
-                    .then((r) => {
-                      if (!r.ok) toast.error(r.error);
-                      else toast.success(r.data.message);
-                    })
-                    .finally(() => setBusy(false));
+                  void runAction("Test connection", async () => {
+                    const r = await testImapConnectionFn();
+                    if (!r.ok) return { tone: "bad" as const, title: "IMAP connection failed", detail: r.error };
+                    return { tone: "good" as const, title: "IMAP connection successful", detail: r.data.message };
+                  });
                 }}
               >
-                Test connection
+                {busy === "Test connection" ? "Working…" : "Test connection"}
               </button>
-              <button type="submit" disabled={busy} className="h-9 rounded-md bg-primary px-3 text-[11px] font-semibold uppercase text-primary-foreground">
-                Save IMAP
+              <button type="submit" disabled={working} className="h-9 rounded-md bg-primary px-3 text-[11px] font-semibold uppercase text-primary-foreground disabled:opacity-50">
+                {busy === "Save IMAP" ? "Working…" : "Save IMAP"}
               </button>
             </div>
           ) : null}
@@ -523,6 +569,7 @@ function AutopartStockOps() {
           Back to catalogue
         </Link>
       </p>
+      </div>
     </div>
   );
 }
