@@ -261,7 +261,8 @@ function AutopartStockOps() {
     await runAction(kind, async () => applySyncResult(kind, await pollImapNowFn({ data: { dryRun } })));
   }
 
-  const failed = overview?.lastAttempt?.status === "FAILED";
+  const waitingForEmail = overview?.scheduler?.currentWindow.status === "WAITING_EMAIL";
+  const failed = overview?.lastAttempt?.status === "FAILED" && !waitingForEmail;
   const stale = overview?.freshness.stale;
   const working = Boolean(busy);
 
@@ -323,6 +324,15 @@ function AutopartStockOps() {
 
       {error ? <div className="rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm">{error}</div> : null}
 
+      {waitingForEmail ? (
+        <div className="mb-4 rounded-md border border-border bg-surface/40 px-4 py-3 text-sm">
+          <p>
+            {overview?.scheduler?.currentWindow.label} window — waiting for 231PO3NEW. Existing stock is
+            unchanged. The next scheduler tick will import the report when it arrives.
+          </p>
+        </div>
+      ) : null}
+
       {failed || stale ? (
         <div className="mb-4 rounded-md border border-warn/50 bg-warn/10 px-4 py-3 text-sm">
           {failed ? (
@@ -341,21 +351,30 @@ function AutopartStockOps() {
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <StatusCard label="Configuration" value={overview?.config.configured ? "Configured" : "Not configured"} />
-        <StatusCard label="Source type" value={overview?.config.sourceType ?? "none"} />
+        <StatusCard label="Scheduler" value={overview?.scheduler?.enabled ? "Automatic" : "Disabled"} />
         <StatusCard
           label="Schedule"
           value={overview?.config.scheduleLabel ?? "09:00 · 12:00 · 15:00 · 18:00"}
         />
         <StatusCard label="Timezone" value={overview?.config.scheduleTimezone ?? "Europe/London"} />
+        <StatusCard label="Current window" value={overview?.scheduler?.currentWindow.display ?? "—"} />
+        <StatusCard label="Next sync" value={overview?.scheduler?.nextSync.label ?? "—"} />
+        <StatusCard label="Last scheduler check" value={formatUtc(overview?.scheduler?.lastTickAt)} />
         <StatusCard label="Last success" value={formatUtc(overview?.freshness.lastSuccessAt)} />
         <StatusCard label="Last attempt" value={formatUtc(overview?.lastAttempt?.startedAt)} />
-        <StatusCard label="Current status" value={overview?.running ? "RUNNING" : (overview?.lastAttempt?.status ?? "—")} />
-        <StatusCard label="Stale after" value={`${overview?.freshness.staleHours ?? 36} hours`} />
         <StatusCard
-          label="In-process scheduler"
-          value={overview?.config.schedulerEnabled ? "Enabled (avoid with Coolify cron)" : "Coolify HTTP cron"}
+          label="Current status"
+          value={
+            overview?.scheduler?.currentWindow.status === "WAITING_EMAIL"
+              ? "Waiting for 231PO3NEW"
+              : overview?.running
+                ? "RUNNING"
+                : (overview?.lastAttempt?.status ?? "—")
+          }
         />
+        <StatusCard label="Stale after" value={`${overview?.freshness.staleHours ?? 36} hours`} />
+        <StatusCard label="Source type" value={overview?.config.sourceType ?? "none"} />
+        <StatusCard label="Configuration" value={overview?.config.configured ? "Configured" : "Not configured"} />
       </div>
 
       <form
@@ -410,10 +429,10 @@ function AutopartStockOps() {
           ) : null}
         </div>
         <p className="text-[12px] text-steel">
-          Production receives 231PO3NEW from the mailbox at 09:00, 12:00, 15:00 and 18:00 Europe/London
-          (same Autopart operating windows as AlphaOps). Coolify should POST /api/internal/stock-sync;
-          the server only imports inside those windows, including during BST. Manual Poll now still works
-          at any time. Password is write-only
+          Production receives 231PO3NEW from the mailbox automatically at 09:00, 12:00, 15:00 and 18:00
+          Europe/London. The application scheduler ticks once a minute and only imports when a window is
+          due and not yet complete. Coolify cron is not required. Manual Poll now still works at any time.
+          Password is write-only
           {overview?.imap?.hasImapPassword ? " (saved)" : ""}
           {overview?.imap?.passwordFromEnv ? " — supplied by environment" : ""}. Leave the in-process scheduler off.
         </p>

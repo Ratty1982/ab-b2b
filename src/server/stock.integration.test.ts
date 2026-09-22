@@ -15,7 +15,7 @@ import {
   runManualStockSync,
   runScheduledStockSync,
 } from "@/server/stock/service";
-import { isWithinScheduledStockWindow } from "@/domain/stock-schedule";
+import { dueStockWindow, isDueStockWindow } from "@/domain/stock-schedule";
 import { releaseStockSyncLock, tryAcquireStockSyncLock } from "@/server/stock/lock";
 import { getSellableQuantity } from "@/domain/stock";
 import { parseAutopart231Po3New } from "@/domain/stock-parse";
@@ -402,7 +402,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     await expect(getImapSettings(tradeUserId)).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("scheduled sync skips outside Europe/London windows without mutating stock", async () => {
+  it("scheduled sync catch-up keeps 09:00 due at 10:07 without mutating stock when no email exists", async () => {
     const sku = `ST5W-${Date.now().toString(36).slice(-7)}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -421,11 +421,14 @@ describe("Phase 5 Autopart inventory integration", () => {
       trigger: "manual",
       actorUserId: adminId,
     });
-    const outside = new Date("2026-01-15T10:07:00.000Z");
-    expect(isWithinScheduledStockWindow(outside)).toBe(false);
-    const skipped = await runScheduledStockSync({ dryRun: false, now: outside });
-    expect(skipped.skipped).toBe(true);
-    expect(skipped.rowsRead).toBe(0);
+    const beforeNine = new Date("2026-01-15T08:59:00.000Z");
+    expect(isDueStockWindow(beforeNine, 9)).toBe(false);
+    expect(dueStockWindow(beforeNine).hour).toBe(18);
+
+    const midMorning = new Date("2026-01-15T10:07:00.000Z");
+    expect(dueStockWindow(midMorning).hour).toBe(9);
+    const waiting = await runScheduledStockSync({ dryRun: false, now: midMorning, emails: [] });
+    expect(waiting.status).toBe("WAITING_FOR_EMAIL");
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(11);
 
     const manual = await pollImapNow(adminId, true);
@@ -693,5 +696,200 @@ describe("Phase 5 Autopart inventory integration", () => {
       ]),
     ).rejects.toThrow();
     expect(await prisma.stockSyncChange.count({ where: { skuSnapshot: `FAIL-${stamp}` } })).toBe(0);
+  });
+
+  it("runs a due 09:00 window once, catch-up at 09:02, and does not repeat after restart", async () => {
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-10T09:00" } });
+    const sku = `SCH9-${Date.now().toString(36).slice(-6)}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Scheduled 09",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const { buildNative231Po3New } = await import("@/server/stock/fixtures/native-231po3new");
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    const native = buildNative231Po3New([
+      { sku: variant.sku, description: "SCHED", stk: "40.0000", avail: "36.0000", pick: "1.0000", physical: "40.0000" },
+    ]);
+    const email = {
+      uid: `uid-${sku}`,
+      messageId: `<${sku}@example.invalid>`,
+      from: "reports@example.com",
+      subject: "231PO3NEW",
+      receivedAt: new Date("2026-02-10T09:01:00.000Z"),
+      attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
+    };
+    const atNine = new Date("2026-02-10T09:00:00.000Z");
+    const first = await runScheduledStockSync({ dryRun: false, trigger: "schedule", now: atNine, emails: [email] });
+    expect(first.status).toBe("SUCCESS");
+    expect(first.windowKey).toBe("2026-02-10T09:00");
+    expect(first.windowStatus).toBe("COMPLETE");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(36);
+    expect(await prisma.stockSyncChange.count({ where: { runId: first.runId! } })).toBe(1);
+
+    const at902 = await runScheduledStockSync({
+      dryRun: false,
+      trigger: "schedule",
+      now: new Date("2026-02-10T09:02:00.000Z"),
+      emails: [email],
+    });
+    expect(at902.status).toBe("SKIPPED");
+    expect(at902.windowStatus).toBe("COMPLETE");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(36);
+  });
+
+  it("waits for a late 12:00 email then completes that window once", async () => {
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-11T12:00" } });
+    const sku = `SCH12-${Date.now().toString(36).slice(-6)}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Scheduled 12",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await applyStockFeed({
+      text: csv([`${variant.sku},seed,5`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    const { buildNative231Po3New } = await import("@/server/stock/fixtures/native-231po3new");
+    const native = buildNative231Po3New([
+      { sku: variant.sku, description: "LATE", stk: "20.0000", avail: "8.0000", pick: "1.0000", physical: "20.0000" },
+    ]);
+    const noon = new Date("2026-02-11T12:00:00.000Z");
+    const scheduledRunsBefore = await prisma.stockSyncRun.count({ where: { trigger: "schedule" } });
+    const waiting = await runScheduledStockSync({ dryRun: false, trigger: "schedule", now: noon, emails: [] });
+    expect(waiting.status).toBe("WAITING_FOR_EMAIL");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(5);
+    expect(await prisma.stockSyncRun.count({ where: { trigger: "schedule" } })).toBe(scheduledRunsBefore);
+
+    const email = {
+      uid: `uid-${sku}`,
+      messageId: `<${sku}@example.invalid>`,
+      from: "reports@example.com",
+      subject: "231PO3NEW",
+      receivedAt: new Date("2026-02-11T12:07:00.000Z"),
+      attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
+    };
+    const late = await runScheduledStockSync({
+      dryRun: false,
+      trigger: "schedule",
+      now: new Date("2026-02-11T12:07:00.000Z"),
+      emails: [email],
+    });
+    expect(late.status).toBe("SUCCESS");
+    expect(late.windowStatus).toBe("COMPLETE");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(8);
+
+    const again = await runScheduledStockSync({
+      dryRun: false,
+      trigger: "schedule",
+      now: new Date("2026-02-11T12:20:00.000Z"),
+      emails: [email],
+    });
+    expect(again.status).toBe("SKIPPED");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(8);
+  });
+
+  it("allows only one of two concurrent scheduled workers to import a window", async () => {
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-12T15:00" } });
+    const sku = `SCHD-${Date.now().toString(36).slice(-6)}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Dual worker",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    const { buildNative231Po3New } = await import("@/server/stock/fixtures/native-231po3new");
+    const native = buildNative231Po3New([
+      { sku: variant.sku, description: "DUAL", stk: "10.0000", avail: "21.0000", pick: "1.0000", physical: "10.0000" },
+    ]);
+    const email = {
+      uid: `uid-${sku}`,
+      messageId: `<${sku}@example.invalid>`,
+      from: "reports@example.com",
+      subject: "231PO3NEW",
+      receivedAt: new Date("2026-02-12T15:00:00.000Z"),
+      attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
+    };
+    const now = new Date("2026-02-12T15:00:00.000Z");
+    const [a, b] = await Promise.all([
+      runScheduledStockSync({ dryRun: false, trigger: "schedule", now, emails: [email] }),
+      runScheduledStockSync({ dryRun: false, trigger: "schedule", now, emails: [email] }),
+    ]);
+    const statuses = [a.status, b.status];
+    expect(statuses).toContain("SUCCESS");
+    expect(statuses.some((status) => status === "SKIPPED" || status === "WAITING_FOR_EMAIL" || status === "SUCCESS")).toBe(true);
+    const successCount = [a, b].filter((row) => row.status === "SUCCESS").length;
+    expect(successCount).toBe(1);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(21);
+  });
+
+  it("retains inventory when scheduled IMAP/parser work fails and does not emit a waiting-for-email failure", async () => {
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: { in: ["2026-02-13T18:00", "2026-02-14T09:00"] } } });
+    const sku = `SCHF-${Date.now().toString(36).slice(-6)}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Fail retain",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await applyStockFeed({
+      text: csv([`${variant.sku},seed,14`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    const missingImap = await runScheduledStockSync({
+      dryRun: false,
+      trigger: "schedule",
+      now: new Date("2026-02-13T18:00:00.000Z"),
+    });
+    expect(missingImap.status).toBe("FAILED");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(14);
+
+    const bad = {
+      uid: `uid-bad-${sku}`,
+      messageId: `<bad-${sku}@example.invalid>`,
+      from: "reports@example.com",
+      subject: "231PO3NEW",
+      receivedAt: new Date("2026-02-14T09:00:00.000Z"),
+      attachments: [
+        {
+          filename: "231PO3NEW.txt",
+          content: Buffer.from("AUTOPART SYSTEM STOCK USAGES / REORDER INFORMATION (231PO3NEW)\nthis is not a stock report"),
+        },
+      ],
+    };
+    const parsed = await runScheduledStockSync({
+      dryRun: false,
+      trigger: "schedule",
+      now: new Date("2026-02-14T09:00:00.000Z"),
+      emails: [bad],
+    });
+    expect(parsed.status).toBe("FAILED");
+    expect(parsed.errorSummary ?? "").toMatch(/231PO3NEW was detected|Avail column could not be parsed/i);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(14);
   });
 });

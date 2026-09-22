@@ -12,25 +12,30 @@ AlphaOps was inspected in `Ratty1982/alphaops` (`backend/src/autopart-stock-emai
 
 ```
 IMAP mailbox
-→ Coolify POST /api/internal/stock-sync
-→ Europe/London window gate (09:00 / 12:00 / 15:00 / 18:00)
+→ in-application scheduler (minute tick)
+→ Europe/London due window (09:00 / 12:00 / 15:00 / 18:00, catch-up until the next window)
+→ PostgreSQL StockSyncMutex
 → allowed-sender check
 → 231PO3NEW attachment filter
 → content must positively detect 231PO3NEW
-→ existing Phase 5 parse / match / apply
+→ existing Phase 5 parse / match / apply (including StockSyncChange)
 ```
 
-**Production stock schedule** (mirrors AlphaOps Autopart operating windows):
+**Automotive Brands runs its own stock scheduler.** No Coolify cron is required for normal operation.
 
-**09:00 · 12:00 · 15:00 · 18:00 Europe/London, every day.**
+**Production stock schedule** (business local times, every day):
+
+**09:00 · 12:00 · 15:00 · 18:00 Europe/London**
 
 The server uses `Intl` civil time in `Europe/London`, so BST/GMT shifts are handled. Do **not** hard-code 09:00 UTC.
 
-Coolify cannot be trusted to express London DST by itself. Configure Coolify to POST the endpoint on a UTC heartbeat (for example every 15 minutes). The app **skips** the request unless it falls inside a London window, and it will not import twice in the same window. That is **not** a 15-minute stock import.
+A window stays due until the next one starts (09:00 until 12:00, …, 18:00 until the next day’s 09:00). Restarts catch up that open window only — they do not replay older days. Successful processing marks the window complete in `StockScheduleWindow`.
 
-**One production scheduler:** Coolify HTTP cron. Do **not** also set `AUTOPART_STOCK_ENABLE_SCHEDULER=true`. If that flag is on, the in-process loop only ticks once a minute and still uses the same London window gate.
+If the mailbox has no new 231PO3NEW yet, the scheduler waits (no FAILED run every minute, stock unchanged). The next tick imports when the email arrives.
 
-Manual **Poll now** / upload ignore the windows.
+`POST /api/internal/stock-sync` remains an **optional** diagnostic/recovery endpoint (`AUTOPART_STOCK_CRON_SECRET`). It is not required in production.
+
+Manual **Poll now** / upload ignore the windows and still use the DB lock. UID + Message-ID receipts prevent re-import of a consumed email.
 
 | Setting | Purpose |
 | --- | --- |
@@ -38,9 +43,9 @@ Manual **Poll now** / upload ignore the windows.
 | `AUTOPART_STOCK_IMAP_HOST` / `PORT` / `SECURE` / `USER` / `PASSWORD` / `MAILBOX` | IMAP connection (password also write-only in admin, AES-GCM with `AUTH_SECRET`; env password wins) |
 | `AUTOPART_STOCK_IMAP_ALLOWED_SENDERS` | Optional allowed From addresses |
 | `AUTOPART_STOCK_IMAP_FILENAME_PATTERN` | Default `231PO3NEW*.txt` |
-| `AUTOPART_STOCK_CRON_SECRET` | Protects `POST /api/internal/stock-sync` |
+| `AUTOPART_STOCK_CRON_SECRET` | Optional protection for `POST /api/internal/stock-sync` |
 | `AUTOPART_STOCK_STALE_HOURS` | Default `36` (last **live Inventory** success, not last IMAP poll) |
-| `AUTOPART_STOCK_ENABLE_SCHEDULER` | Leave `false` when Coolify cron is used |
+| `AUTOPART_STOCK_ENABLE_SCHEDULER` | Default **on** in production. Set `false` to disable the in-app scheduler |
 
 Admin → Autopart Stock: configure IMAP, **Test connection**, **Poll now (dry run)** then **Poll now (live)**. Password is never returned in DTOs.
 
@@ -104,14 +109,18 @@ Dry run still records a `StockSyncRun` with `mode=dry-run` and issues. It does n
 
 ## Automatic schedule and timezone
 
-- Preferred: Coolify scheduled **POST** to `/api/internal/stock-sync` with header `x-autopart-cron-secret` or `Authorization: Bearer …`.
-- Imports run at **09:00, 12:00, 15:00, 18:00 Europe/London** only (window gate on the server).
-- Optional in-process 60-second tick when `AUTOPART_STOCK_ENABLE_SCHEDULER=true` — same gate; leave off when Coolify is used.
-- `GET /api/internal/stock-sync` returns configuration status without secrets and without running a sync.
+Automotive Brands runs an **in-application** minute tick (`src/server/stock/scheduler.ts`) while the Nitro server is up. The tick does not import every minute — it asks whether a London window is due and incomplete.
+
+- Windows: **09:00, 12:00, 15:00, 18:00 Europe/London** every day (BST/GMT via `Intl`).
+- Catch-up: a window remains eligible until the next window starts (18:00 until next 09:00).
+- Persistence: `StockScheduleWindow` keyed by `YYYY-MM-DDTHH:00` London. Restarts do not re-run COMPLETE windows.
+- Waiting for email is not FAILED. Genuine IMAP/parser/inventory failures are FAILED and retry after 10 minutes.
+- `GET/POST /api/internal/stock-sync` is optional (secret required on POST).
+- Disable with `AUTOPART_STOCK_ENABLE_SCHEDULER=false` if needed.
 
 ## Locking
 
-PostgreSQL row `StockSyncMutex` id `autopart-231po3new`. Overlapping live/dry/cron/manual runs are rejected (`409`). A holder older than 45 minutes is treated as crashed.
+PostgreSQL row `StockSyncMutex` id `autopart-231po3new`. Overlapping live/dry/cron/manual/scheduled runs are rejected (`409`). A holder older than 45 minutes is treated as crashed.
 
 ## Atomicity
 
@@ -172,7 +181,7 @@ Trade `actorType` cannot administer stock even if a trade role lists `inventory.
 
 Audit: manual live sync, sync failed. Not one event per SKU.
 
-Logs: `[ab:stock-sync]` with run id, source, duration, counts. No credentials.
+Logs: `[ab:stock-sync]` with `event` (`AUTOPART_SCHEDULER_STARTED`, `AUTOPART_WINDOW_DUE`, `AUTOPART_WAITING_FOR_EMAIL`, `AUTOPART_SCHEDULED_SYNC_STARTED`, `AUTOPART_SCHEDULED_SYNC_COMPLETED`, `AUTOPART_SCHEDULED_SYNC_FAILED`). Idle ticks are silent. No credentials.
 
 ## Phase 6 stock contract
 
@@ -195,7 +204,7 @@ Phase 6 must check `requestedQty <= getSellableQuantity(stock)` **and** full-cas
 5. Compare sample SKUs with Autopart.
 6. **Poll now (live)** once — first authorised Inventory write.
 7. Verify catalogue/PDP/internal Inventory.
-8. Enable Coolify `POST /api/internal/stock-sync`. Imports occur at 09:00 / 12:00 / 15:00 / 18:00 Europe/London.
+8. Leave the in-application scheduler enabled (production default). No Coolify Scheduled Task is required. Optional: `POST /api/internal/stock-sync` for recovery only.
 
 Do **not** run the first live production sync from this agent session.
 

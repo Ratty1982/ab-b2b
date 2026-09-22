@@ -196,9 +196,16 @@ export async function importFromImap(input: {
   await getOrCreateImapSettings();
   const discovered = await discoverEmailFeed(input.emails ? { emails: input.emails } : undefined);
   if (!discovered.found) {
+    const feedStatus =
+      discovered.reason === "IMAP is not configured"
+        ? ("not_configured" as const)
+        : discovered.reason.startsWith("IMAP unavailable")
+          ? ("imap_error" as const)
+          : ("empty" as const);
     return {
       runId: null as string | null,
-      status: "SUCCESS" as const,
+      status: (feedStatus === "empty" ? "WAITING_FOR_EMAIL" : "FAILED") as "WAITING_FOR_EMAIL" | "FAILED",
+      feedStatus,
       dryRun: input.dryRun,
       source: `${AUTOPART_FEED_SOURCE}:imap`,
       rowsRead: 0,
@@ -247,7 +254,12 @@ export async function importFromImap(input: {
     });
   }
 
-  return { ...result, emailsExamined: discovered.emailsExamined, attachmentFilename: discovered.selection.filename };
+  return {
+    ...result,
+    feedStatus: "imported" as const,
+    emailsExamined: discovered.emailsExamined,
+    attachmentFilename: discovered.selection.filename,
+  };
 }
 
 export async function imapStatusForOverview() {

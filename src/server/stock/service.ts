@@ -23,11 +23,12 @@ import {
   type VariantStock,
 } from "@/domain/stock";
 import { classifyStockRows, parseAutopart231Po3New } from "@/domain/stock-parse";
-import { evaluateScheduledStockWindow, scheduledWindowKey } from "@/domain/stock-schedule";
+import { dueStockWindow, shouldThrottleFailedAttempt, nextSyncDisplay } from "@/domain/stock-schedule";
 import { autopartConfigured, loadAutopartStockConfig, publicAutopartStatus } from "@/server/stock/config";
 import { fetchAutopartFeed } from "@/server/stock/fetch";
 import { releaseStockSyncLock, tryAcquireStockSyncLock } from "@/server/stock/lock";
 import type { PublicAvailability } from "@/domain/availability";
+import type { InboundStockEmail } from "@/server/stock/imap";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 
 const ISSUE_CAP = 400;
@@ -498,6 +499,7 @@ export async function runConfiguredStockSync(input: {
   dryRun: boolean;
   trigger: "manual" | "schedule" | "api";
   actorUserId?: string | null;
+  emails?: InboundStockEmail[];
 }) {
   const config = loadAutopartStockConfig();
   const { loadImapRuntimeConfig } = await import("@/server/stock/settings");
@@ -509,6 +511,7 @@ export async function runConfiguredStockSync(input: {
       dryRun: input.dryRun,
       trigger: input.trigger,
       ...(input.actorUserId !== undefined ? { actorUserId: input.actorUserId } : {}),
+      ...(input.emails ? { emails: input.emails } : {}),
     });
   }
   const feed = await fetchAutopartFeed();
@@ -537,64 +540,150 @@ export async function runScheduledStockSync(input: {
   dryRun: boolean;
   trigger?: "schedule" | "api";
   now?: Date;
+  emails?: InboundStockEmail[];
 }) {
   const now = input.now ?? new Date();
-  const window = evaluateScheduledStockWindow(now);
-  if (!window.active) {
-    return {
-      skipped: true as const,
-      status: "SKIPPED" as const,
-      dryRun: input.dryRun,
-      runId: null as string | null,
-      rowsRead: 0,
-      matched: 0,
-      wouldUpdate: 0,
-      updated: 0,
-      unchanged: 0,
-      unmatched: 0,
-      invalid: 0,
-      duplicates: 0,
-      errorSummary: window.reason,
-      windowKey: null as string | null,
-    };
-  }
-  if (!input.dryRun && (await scheduledWindowAlreadyImported(window.key, now))) {
-    return {
-      skipped: true as const,
-      status: "SKIPPED" as const,
-      dryRun: false,
-      runId: null as string | null,
-      rowsRead: 0,
-      matched: 0,
-      wouldUpdate: 0,
-      updated: 0,
-      unchanged: 0,
-      unmatched: 0,
-      invalid: 0,
-      duplicates: 0,
-      errorSummary: `Already imported ${window.key} Europe/London`,
-      windowKey: window.key,
-    };
-  }
-  const result = await runConfiguredStockSync({
-    dryRun: input.dryRun,
-    trigger: input.trigger ?? "api",
+  const due = dueStockWindow(now);
+  await prisma.stockScheduleState.upsert({
+    where: { id: "singleton" },
+    create: { id: "singleton", lastTickAt: now, lastDueKey: due.key },
+    update: { lastTickAt: now, lastDueKey: due.key },
   });
-  return { skipped: false as const, windowKey: window.key, ...result };
+
+  const empty = {
+    skipped: true as const,
+    dryRun: input.dryRun,
+    runId: null as string | null,
+    rowsRead: 0,
+    matched: 0,
+    wouldUpdate: 0,
+    updated: 0,
+    unchanged: 0,
+    unmatched: 0,
+    invalid: 0,
+    duplicates: 0,
+    windowKey: due.key,
+    windowHour: due.hour,
+  };
+
+  let windowRow = await prisma.stockScheduleWindow.findUnique({ where: { key: due.key } });
+  if (windowRow?.status === "COMPLETE") {
+    return { ...empty, status: "SKIPPED" as const, windowStatus: "COMPLETE" as const, errorSummary: `Already imported ${due.key} Europe/London` };
+  }
+  if (
+    windowRow?.status === "FAILED" &&
+    shouldThrottleFailedAttempt(windowRow.lastAttemptAt, now)
+  ) {
+    return {
+      ...empty,
+      status: "FAILED" as const,
+      windowStatus: "FAILED" as const,
+      errorSummary: windowRow.lastError,
+    };
+  }
+
+  const previousStatus = windowRow?.status ?? null;
+
+  try {
+    windowRow = await prisma.stockScheduleWindow.upsert({
+      where: { key: due.key },
+      create: {
+        key: due.key,
+        businessDate: due.businessDate,
+        hour: due.hour,
+        status: "OPEN",
+        lastAttemptAt: now,
+      },
+      update: { lastAttemptAt: now },
+    });
+    if (!previousStatus || previousStatus === "OPEN") {
+      logStockEvent("AUTOPART_WINDOW_DUE", { windowKey: due.key, hour: due.hour });
+    }
+
+    const result = await runConfiguredStockSync({
+      dryRun: input.dryRun,
+      trigger: input.trigger ?? "schedule",
+      ...(input.emails ? { emails: input.emails } : {}),
+    });
+
+    const feedStatus = "feedStatus" in result ? result.feedStatus : "imported";
+    if (feedStatus === "empty" || result.status === "WAITING_FOR_EMAIL") {
+      if (previousStatus !== "WAITING_EMAIL") {
+        logStockEvent("AUTOPART_WAITING_FOR_EMAIL", { windowKey: due.key });
+      }
+      await prisma.stockScheduleWindow.updateMany({
+        where: { key: due.key, status: { not: "COMPLETE" } },
+        data: { status: "WAITING_EMAIL", lastError: result.errorSummary ?? "Waiting for 231PO3NEW", lastAttemptAt: now },
+      });
+      return {
+        ...empty,
+        skipped: true as const,
+        status: "WAITING_FOR_EMAIL" as const,
+        windowStatus: "WAITING_EMAIL" as const,
+        errorSummary: result.errorSummary ?? "Waiting for 231PO3NEW",
+      };
+    }
+
+    logStockEvent("AUTOPART_SCHEDULED_SYNC_STARTED", { windowKey: due.key });
+
+    if (feedStatus === "imap_error" || feedStatus === "not_configured" || result.status === "FAILED") {
+      const message = result.errorSummary ?? "Scheduled Autopart sync failed";
+      logStockEvent("AUTOPART_SCHEDULED_SYNC_FAILED", { windowKey: due.key, error: message });
+      await prisma.stockScheduleWindow.updateMany({
+        where: { key: due.key, status: { not: "COMPLETE" } },
+        data: {
+          status: "FAILED",
+          lastError: message,
+          lastAttemptAt: now,
+          lastRunId: "runId" in result ? result.runId : null,
+        },
+      });
+      return {
+        skipped: false as const,
+        windowKey: due.key,
+        windowHour: due.hour,
+        windowStatus: "FAILED" as const,
+        ...result,
+        status: "FAILED" as const,
+        errorSummary: message,
+      };
+    }
+
+    if (!input.dryRun && (result.status === "SUCCESS" || result.status === "PARTIAL")) {
+      await prisma.stockScheduleWindow.update({
+        where: { key: due.key },
+        data: {
+          status: "COMPLETE",
+          completedAt: now,
+          lastError: null,
+          lastAttemptAt: now,
+          lastRunId: result.runId,
+        },
+      });
+      logStockEvent("AUTOPART_SCHEDULED_SYNC_COMPLETED", {
+        windowKey: due.key,
+        runId: result.runId,
+        status: result.status,
+      });
+      return { skipped: false as const, windowKey: due.key, windowHour: due.hour, windowStatus: "COMPLETE" as const, ...result };
+    }
+
+    return { skipped: false as const, windowKey: due.key, windowHour: due.hour, windowStatus: windowRow.status, ...result };
+  } catch (error) {
+    if (error instanceof AuthError && error.code === "CONFLICT") {
+      return {
+        ...empty,
+        status: "SKIPPED" as const,
+        windowStatus: previousStatus ?? "OPEN",
+        errorSummary: "A stock sync is already running",
+      };
+    }
+    throw error;
+  }
 }
 
-async function scheduledWindowAlreadyImported(key: string, now: Date): Promise<boolean> {
-  const recent = await prisma.stockSyncRun.findMany({
-    where: {
-      trigger: { in: ["api", "schedule"] },
-      mode: "live",
-      status: { in: ["SUCCESS", "PARTIAL", "RUNNING"] },
-      startedAt: { gte: new Date(now.getTime() - 4 * 60 * 60 * 1000) },
-    },
-    select: { startedAt: true },
-    take: 20,
-  });
-  return recent.some((row) => scheduledWindowKey(row.startedAt) === key);
+function logStockEvent(event: string, extra: Record<string, unknown> = {}) {
+  console.info("[ab:stock-sync]", { event, ...extra });
 }
 
 function timingSafeEqualString(provided: string, expected: string): boolean {
@@ -762,6 +851,23 @@ export async function stockOperationsOverview(actorUserId: string) {
   const { toPublicImapSettings } = await import("@/server/stock/settings");
   const imap = await toPublicImapSettings();
   const base = publicAutopartStatus();
+  const now = new Date();
+  const due = dueStockWindow(now);
+  const [scheduleState, dueWindow] = await Promise.all([
+    prisma.stockScheduleState.findUnique({ where: { id: "singleton" } }),
+    prisma.stockScheduleWindow.findUnique({ where: { key: due.key } }),
+  ]);
+  const dueComplete = dueWindow?.status === "COMPLETE";
+  const next = nextSyncDisplay(now, dueComplete);
+  const windowStatus = dueWindow?.status ?? "PENDING";
+  const currentWindowLabel =
+    windowStatus === "WAITING_EMAIL"
+      ? `${due.label} · Waiting for 231PO3NEW`
+      : windowStatus === "COMPLETE"
+        ? `${due.label} · Complete`
+        : windowStatus === "FAILED"
+          ? `${due.label} · Failed`
+          : `${due.label} · ${windowStatus === "OPEN" ? "Due" : "Pending"}`;
   return {
     config: {
       ...base,
@@ -777,6 +883,23 @@ export async function stockOperationsOverview(actorUserId: string) {
     lastAttempt: lastAttempt ? serializeRun(lastAttempt) : null,
     lastSuccess: lastSuccess ? serializeRun(lastSuccess) : null,
     running: Boolean(running),
+    scheduler: {
+      enabled: base.schedulerEnabled,
+      mode: base.schedulerEnabled ? "automatic" : "disabled",
+      lastTickAt: scheduleState?.lastTickAt?.toISOString() ?? null,
+      startedAt: scheduleState?.startedAt?.toISOString() ?? null,
+      currentWindow: {
+        key: due.key,
+        hour: due.hour,
+        label: due.label,
+        status: windowStatus,
+        display: currentWindowLabel,
+        lastError: dueWindow?.lastError ?? null,
+        lastAttemptAt: dueWindow?.lastAttemptAt?.toISOString() ?? null,
+      },
+      nextSync: next,
+      lastScheduledAttemptAt: dueWindow?.lastAttemptAt?.toISOString() ?? null,
+    },
   };
 }
 

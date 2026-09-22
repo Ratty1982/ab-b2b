@@ -894,6 +894,31 @@ model StockSyncMutex {
   lockedAt DateTime?
 }
 
+/// In-application Autopart scheduler health (tick timestamps; not secrets).
+model StockScheduleState {
+  id         String    @id @default("singleton")
+  startedAt  DateTime?
+  lastTickAt DateTime?
+  lastDueKey String?
+}
+
+/// One row per Autopart business window (Europe/London date + 09/12/15/18).
+model StockScheduleWindow {
+  key           String    @id
+  businessDate  String
+  hour          Int
+  status        String
+  lastAttemptAt DateTime?
+  completedAt   DateTime?
+  lastRunId     String?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([businessDate])
+  @@index([status])
+}
+
 /// Operational IMAP settings. Password is write-only (encrypted or env-backed).
 model AutopartImapSettings {
   id                         String    @id @default("singleton")

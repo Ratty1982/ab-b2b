@@ -46,9 +46,18 @@ export function loadAutopartStockConfig(): AutopartStockConfig {
     filePath: env("AUTOPART_STOCK_FILE_PATH"),
     staleHours: envInt("AUTOPART_STOCK_STALE_HOURS", 36),
     cronSecretSet: Boolean(env("AUTOPART_STOCK_CRON_SECRET")),
-    schedulerEnabled: env("AUTOPART_STOCK_ENABLE_SCHEDULER") === "true",
+    schedulerEnabled: isStockSchedulerEnabled(),
     maxBytes: envInt("AUTOPART_STOCK_MAX_BYTES", 15_000_000),
   };
+}
+
+/** Production default is on. Set AUTOPART_STOCK_ENABLE_SCHEDULER=false to disable. */
+export function isStockSchedulerEnabled(): boolean {
+  const raw = env("AUTOPART_STOCK_ENABLE_SCHEDULER")?.toLowerCase();
+  if (raw === "false" || raw === "0" || raw === "off") return false;
+  if (raw === "true" || raw === "1" || raw === "on") return true;
+  if (process.env["VITEST"]) return false;
+  return true;
 }
 
 export function autopartConfigured(config = loadAutopartStockConfig()): boolean {

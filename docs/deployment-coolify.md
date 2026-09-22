@@ -119,16 +119,12 @@ If unpack still fails: on the Coolify server run `docker system df` / `docker bu
 
 ## Phase 5 / 5A Autopart stock
 
-- Additive migrations `20260921220000_phase5_autopart_stock` and `20260922080000_phase5a_autopart_imap`. Do **not** reset inventory.
-- **Production source is EMAIL / IMAP.** Deploy does **not** import 231PO3NEW.
-- After deploy: set `AUTOPART_STOCK_SOURCE=email` and IMAP env (`AUTOPART_STOCK_IMAP_*`, never `VITE_*`), **Test connection**, **Poll now (dry run)** in Admin → Autopart Stock, then an authorised live sync, then schedule Coolify HTTP:
+- Additive migrations including `20260922140000_stock_in_app_scheduler`. Do **not** reset inventory.
+- **Production source is EMAIL / IMAP.** Deploy does **not** import 231PO3NEW by itself until a London window is due (or staff poll live).
+- After deploy: set IMAP env (`AUTOPART_STOCK_IMAP_*`, never `VITE_*`). The **in-application scheduler is on by default**. No Coolify Scheduled Task is required.
+- Optional recovery: `POST https://<app>/api/internal/stock-sync` with `x-autopart-cron-secret` matching `AUTOPART_STOCK_CRON_SECRET`.
+- Set `AUTOPART_STOCK_ENABLE_SCHEDULER=false` only if you must stop automatic imports.
 
-`POST https://<app>/api/internal/stock-sync` with header `x-autopart-cron-secret` matching `AUTOPART_STOCK_CRON_SECRET`.
-
-Stock **imports** at **09:00, 12:00, 15:00, 18:00 Europe/London**. If Coolify cron is UTC-only, ping every 15 minutes UTC; the app ignores ticks outside those windows and will not import twice in the same window.
-
-Do **not** also set `AUTOPART_STOCK_ENABLE_SCHEDULER=true`.
-
-See [docs/autopart-stock-sync.md](autopart-stock-sync.md).
+Stock **imports** at **09:00, 12:00, 15:00, 18:00 Europe/London**. See [docs/autopart-stock-sync.md](autopart-stock-sync.md).
 
 

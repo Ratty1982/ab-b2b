@@ -51,13 +51,11 @@ configured source (EMAIL / IMAP in production; FTP / HTTP / file diagnostic) or 
 
 ## Scheduling
 
-No in-app cron framework. Automatic sync:
+In-application minute tick while the Nitro server runs (`startStockScheduler` from `src/server.ts`). Enabled by default unless `AUTOPART_STOCK_ENABLE_SCHEDULER=false`.
 
-- `POST /api/internal/stock-sync` with `AUTOPART_STOCK_CRON_SECRET` (Coolify scheduled HTTP).
-- Server gate: **09:00 / 12:00 / 15:00 / 18:00 Europe/London** every day (BST/GMT via `Intl`).
-- Optional `AUTOPART_STOCK_ENABLE_SCHEDULER=true` in-process 60-second tick using the same gate. Leave it off when Coolify is the scheduler.
+Windows: **09:00 / 12:00 / 15:00 / 18:00 Europe/London** every day (BST/GMT via `Intl`). A due window stays open until the next window. `StockScheduleWindow` records COMPLETE / WAITING_EMAIL / FAILED.
 
-Coolify UTC heartbeats are allowed. They do **not** import stock every 15 minutes.
+`POST /api/internal/stock-sync` is optional recovery, not the production scheduler. No Coolify cron.
 
 ## Error / recovery
 
@@ -73,11 +71,11 @@ Inspected AlphaOps (`Ratty1982/alphaops`, `backend/src/autopart-stock-email/`). 
 
 AB reimplements the mailbox path independently. After attachment extraction, the existing Phase 5 parse / match / apply / stale / public-availability pipeline is reused.
 
-**One poll path:** Coolify `POST /api/internal/stock-sync` performs IMAP acquisition **only** at 09:00 / 12:00 / 15:00 / 18:00 Europe/London. Do not also enable `AUTOPART_STOCK_ENABLE_SCHEDULER`.
+**One poll path:** the in-application scheduler performs IMAP acquisition at 09:00 / 12:00 / 15:00 / 18:00 Europe/London. Coolify HTTP cron is not required.
 
 **Duplicate SKU policy unchanged:** AB still skips every duplicate instance. Current AlphaOps keeps highest Avail. Do not change AB until live feed data is reviewed.
 
-First activation: Test connection → poll dry-run → review Avail → authorised live sync. This agent session does not run the first live production sync.
+First activation: Test connection → poll dry-run → review Avail → authorised live sync (or wait for the next automatic window). This agent session does not run a live production sync.
 - Stale: last successful run older than `AUTOPART_STOCK_STALE_HOURS` (default 36). Internal: stale banner + exact qty. Customers: do not show IN/LOW STOCK for stale positive quantities (availability omitted). Zero/negative still OUT OF STOCK.
 
 ## Implemented design (after build)
