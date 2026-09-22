@@ -1,28 +1,46 @@
-# Autopart stock sync (Phase 5)
+# Autopart stock sync (Phase 5 / 5A)
 
 Automotive Brands treats **231PO3NEW `Avail`** as the authoritative sellable quantity.
 
-This is **not** physical stock minus LOCENQ. LOCENQ is not used.
+This is **not** physical stock minus LOCENQ. LOCENQ is not used. `Stk`, `Pick Qty`, and `Physical Stk` are never sellable.
 
-AlphaOps was not inspectable from this environment (no AlphaOps repository on the connected GitHub account). Acquisition is therefore configured independently: FTP, HTTP, local file, or staff upload.
+**Production source is EMAIL / IMAP**, matching the current AlphaOps mailbox architecture (reimplemented independently with `imapflow` + `mailparser`). FTP/HTTP/file remain diagnostic adapters only.
 
-## Source
+AlphaOps was inspected in `Ratty1982/alphaops` (`backend/src/autopart-stock-email/`). AB does not import AlphaOps packages.
+
+## Production source — EMAIL / IMAP
+
+```
+IMAP mailbox
+→ Coolify POST /api/internal/stock-sync (every 15 minutes, UTC)
+→ allowed-sender check
+→ 231PO3NEW attachment filter
+→ content must positively detect 231PO3NEW
+→ existing Phase 5 parse / match / apply
+```
+
+**One production polling path:** Coolify HTTP cron calling the existing stock-sync endpoint, which now polls IMAP when email is configured. Do **not** also set `AUTOPART_STOCK_ENABLE_SCHEDULER=true`.
 
 | Setting | Purpose |
 | --- | --- |
-| `AUTOPART_STOCK_SOURCE` | `ftp`, `http`, `file`, or `none` |
-| `AUTOPART_STOCK_FTP_*` | Host, port, user, password, remote path (default `231PO3NEW`) |
-| `AUTOPART_STOCK_HTTP_URL` / `AUTOPART_STOCK_HTTP_TOKEN` | HTTPS download + optional Bearer token |
-| `AUTOPART_STOCK_FILE_PATH` | Server-side file for staging |
+| `AUTOPART_STOCK_SOURCE` | Production: `email`. Diagnostic: `ftp` / `http` / `file` |
+| `AUTOPART_STOCK_IMAP_HOST` / `PORT` / `SECURE` / `USER` / `PASSWORD` / `MAILBOX` | IMAP connection (password also write-only in admin, AES-GCM with `AUTH_SECRET`; env password wins) |
+| `AUTOPART_STOCK_IMAP_ALLOWED_SENDERS` | Optional allowed From addresses |
+| `AUTOPART_STOCK_IMAP_FILENAME_PATTERN` | Default `231PO3NEW*.txt` |
 | `AUTOPART_STOCK_CRON_SECRET` | Protects `POST /api/internal/stock-sync` |
-| `AUTOPART_STOCK_STALE_HOURS` | Default `36` |
+| `AUTOPART_STOCK_STALE_HOURS` | Default `36` (last **live Inventory** success, not last IMAP poll) |
 | `AUTOPART_STOCK_SCHEDULE_MINUTES` | Default `15` |
-| `AUTOPART_STOCK_ENABLE_SCHEDULER` | `true` starts an in-process UTC interval (optional; Coolify HTTP cron is preferred) |
-| `AUTOPART_STOCK_MAX_BYTES` | Default 15 MB |
+| `AUTOPART_STOCK_ENABLE_SCHEDULER` | Leave `false` when Coolify cron is used |
 
-Secrets stay in server env. Never `VITE_*`. The admin status screen shows **Configured / Not configured** and source **type** only.
+Admin → Autopart Stock: configure IMAP, **Test connection**, **Poll now (dry run)** then **Poll now (live)**. Password is never returned in DTOs.
 
-Required columns: an identifiable SKU/code header and **Avail**. If Avail is missing or renamed, the feed is **FAILED** and previous stock is kept.
+Dedupe: `Message-ID|UID` (UID required). Message-ID alone is not unique. Dry-run does **not** consume the message. Live success marks the receipt consumed. Default: leave mail in INBOX (no delete). Archive-after-success is optional and off by default.
+
+## 231PO3NEW format
+
+Printed Autopart report (fixed-width), not a simple CSV. Positive detection requires title `(231PO3NEW)` or a header with **Part Number + Stk + Avail + Pick Qty**. Filename is not enough.
+
+Native parser reads **Avail** only. Manual CSV/TSV upload still uses the Phase 5 delimited parser.
 
 ## Avail rule
 
@@ -44,6 +62,8 @@ Match key = `trim(SKU)` compared to `ProductVariant.sku` case-insensitively.
 ## Duplicate SKU policy
 
 Duplicate SKUs in one feed are **conflicts**. Every instance is skipped (not last-wins). Other SKUs still apply.
+
+**Difference from current AlphaOps:** AlphaOps keeps the highest Avail when the same SKU appears twice. AB does **not** adopt that in this phase. Revisit if live 231PO3NEW files contain duplicates.
 
 ## Missing SKU / feed-row policy
 
@@ -146,17 +166,21 @@ Phase 6 must check `requestedQty <= getSellableQuantity(stock)` **and** full-cas
 
 ## First production activation
 
-1. Deploy code (migrate adds history tables; **does not** overwrite stock).
-2. Set source env vars. Confirm admin status = Configured.
-3. Dry run. Review matched / unmatched / invalid.
-4. Authorised **Sync Autopart stock**.
-5. Spot-check product Inventory tabs and public PDP badges.
-6. Enable Coolify POST cron (or in-process scheduler).
+1. Deploy this email-acquisition correction (does **not** import stock).
+2. Configure IMAP in Autopart Stock and/or Coolify env. Prefer env for the password.
+3. **Test connection**.
+4. **Poll now (dry run)** — inspect attachment name, 231PO3NEW detection, Avail, match/unmatched counts. Message is not consumed.
+5. Compare sample SKUs with Autopart.
+6. **Poll now (live)** once — first authorised Inventory write.
+7. Verify catalogue/PDP/internal Inventory.
+8. Enable Coolify `POST /api/internal/stock-sync` every 15 minutes UTC.
+
+Do **not** run the first live production sync from this agent session.
 
 ## Operational recovery
 
 - Re-run dry run or live sync from admin.
-- Upload a file if FTP is down.
+- Upload a file if IMAP is unavailable.
 - Failed/stale banners are on the Autopart Stock screen.
 - If a feed is bad, do not zero SKUs manually unless operations intend that.
 

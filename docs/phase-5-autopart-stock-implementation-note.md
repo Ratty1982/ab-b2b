@@ -16,15 +16,11 @@ Audit of the Automotive Brands repository on `production/phase-1-auth-rbac`
 
 ## Current AlphaOps Autopart implementation
 
-**Not inspectable from this environment.**
-
-Connected remotes are Automotive Brands only (`Ratty1982/ab-b2b`). Public GitHub for `Ratty1982` lists `ab-b2b` and `planet`. `github.com/Ratty1982/alphaops` returns 404. There is no AlphaOps clone, package, or credential in this workspace.
-
-Therefore this phase does **not** copy AlphaOps code, APIs, Redis, or LOCENQ.
+Inspected in `Ratty1982/alphaops` (`backend/src/autopart-stock-email/`) during Phase 5A. Production acquisition is IMAP mailbox polling (`imapflow` / `mailparser`), not FTP. AB does **not** import AlphaOps packages. Authoritative quantity is **231PO3NEW Avail** only. LOCENQ is unused.
 
 Reusable architecture (from AB itself + this brief, not from AlphaOps source):
 
-1. Treat `231PO3NEW` as an untrusted delimited file.
+1. Treat `231PO3NEW` as an untrusted mailbox attachment (native printed report; CSV uploads remain supported).
 2. Authoritative sellable quantity = **`Avail` column**, matched on **SKU**.
 3. Stage → validate → apply; never zero the catalogue first.
 4. PostgreSQL advisory lock instead of Redis.
@@ -44,9 +40,9 @@ Additive models: `StockSyncRun`, `StockSyncIssue`, `StockFeedUnmatched`; `Invent
 ## Proposed integration
 
 ```
-configured source (FTP / HTTP / file) or staff upload
-  → parse 231PO3NEW (quoted CSV/TSV)
-  → require SKU + Avail headers
+configured source (EMAIL / IMAP in production; FTP / HTTP / file diagnostic) or staff upload
+  → parse 231PO3NEW (native fixed-width, or CSV for uploads)
+  → require positive 231PO3NEW detection + Avail
   → stage rows (trim SKU, parse Avail)
   → match ProductVariant.sku (trim, case-insensitive map; no fuzzy, no create)
   → dry-run or apply Inventory on warehouse AUTOPART
@@ -67,7 +63,19 @@ Default cadence: every **15 minutes, UTC**. Not UK local time.
 - Overlapping runs: `pg_try_advisory_lock`; second caller is rejected.
 - Bad/empty/missing-Avail file: `FAILED`, previous `qtyOnHand` retained.
 - Per-row invalid/unmatched/duplicate: reported; other SKUs still apply (`PARTIAL` if any row failed).
-- Manual **Sync Autopart stock** and **Dry run** in admin; upload file without FTP.
+- Manual **Sync Autopart stock**, **Poll now (dry run / live)**, and **Dry run** in admin; upload file without IMAP.
+
+## Phase 5A correction — EMAIL / IMAP is the production source
+
+Inspected AlphaOps (`Ratty1982/alphaops`, `backend/src/autopart-stock-email/`). Production 231PO3NEW is acquired from IMAP (`imapflow` + `mailparser`), not FTP/HTTP.
+
+AB reimplements the mailbox path independently. After attachment extraction, the existing Phase 5 parse / match / apply / stale / public-availability pipeline is reused.
+
+**One poll path:** Coolify `POST /api/internal/stock-sync` (15 minutes UTC) performs the IMAP poll. Do not also enable `AUTOPART_STOCK_ENABLE_SCHEDULER`.
+
+**Duplicate SKU policy unchanged:** AB still skips every duplicate instance. Current AlphaOps keeps highest Avail. Do not change AB until live feed data is reviewed.
+
+First activation: Test connection → poll dry-run → review Avail → authorised live sync. This agent session does not run the first live production sync.
 - Stale: last successful run older than `AUTOPART_STOCK_STALE_HOURS` (default 36). Internal: stale banner + exact qty. Customers: do not show IN/LOW STOCK for stale positive quantities (availability omitted). Zero/negative still OUT OF STOCK.
 
 ## Implemented design (after build)
