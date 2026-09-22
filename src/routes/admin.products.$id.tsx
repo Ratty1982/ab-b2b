@@ -35,7 +35,7 @@ type Tab = "Overview" | "Content" | "Images" | "Commercial" | "Inventory" | "Var
 export const Route = createFileRoute("/admin/products/$id")({
   head: () => ({ meta: [{ title: "Product workspace — Automotive Brands Admin" }] }),
   validateSearch: (search: Record<string, unknown>): { tab?: Tab } => {
-    const tab = search.tab;
+    const tab = search["tab"];
     if (
       tab === "Overview" ||
       tab === "Content" ||
