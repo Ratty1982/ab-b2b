@@ -125,6 +125,10 @@ The importer never zeros the catalogue first. A missing header, empty file, or o
 
 `StockSyncRun`: source, status (`RUNNING` / `SUCCESS` / `PARTIAL` / `FAILED`), timestamps, rows read, matched, updated, unchanged, unmatched, invalid, duplicates, error summary.
 
+`StockSyncChange` stores **live** old → new Avail for matched AB SKUs when the sellable quantity actually changes. Unchanged SKUs and non-catalogued Autopart SKUs are not written. Dry-run returns `wouldChanges` on the result and does not persist history. Inventory upserts and change rows share the same Prisma transaction chunk.
+
+Admin → Autopart Stock → Sync history: click a run for detail (Changed / Matched / Not in AB catalogue / Invalid). The **Updated** count opens Changed when it is greater than zero. SKU/product links go to the existing product workspace Inventory tab.
+
 `StockSyncIssue` caps at 400 diagnostic rows per run. Invalid Rows lists malformed/conflict/duplicate rows only — never valid non-catalogued Autopart SKUs.
 
 ## Unmatched SKUs

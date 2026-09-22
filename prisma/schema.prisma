@@ -714,7 +714,8 @@ model ProductVariant {
   quantityBreaks QuantityBreak[]
   basketItems    BasketItem[]
   orderItems     OrderItem[]
-  quoteItems     QuoteItem[]
+  quoteItems       QuoteItem[]
+  stockSyncChanges StockSyncChange[]
 
   @@index([productId])
   @@index([barcode])
@@ -826,10 +827,35 @@ model StockSyncRun {
   durationMs     Int?
   createdAt      DateTime        @default(now())
 
-  issues StockSyncIssue[]
+  issues  StockSyncIssue[]
+  changes StockSyncChange[]
 
   @@index([startedAt])
   @@index([status, startedAt])
+}
+
+/// Live Autopart quantity change (old → new). Unchanged SKUs and unmatched
+/// Autopart SKUs are not stored here. Dry-run never writes this table.
+model StockSyncChange {
+  id                   String   @id @default(cuid())
+  runId                String
+  variantId            String?
+  productId            String?
+  skuSnapshot          String
+  productNameSnapshot  String
+  variantLabelSnapshot String?
+  previousQty          Int
+  newQty               Int
+  previousAvailability String
+  newAvailability      String
+  createdAt            DateTime @default(now())
+
+  run     StockSyncRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  variant ProductVariant?  @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([runId])
+  @@index([variantId])
+  @@index([createdAt])
 }
 
 model StockSyncIssue {

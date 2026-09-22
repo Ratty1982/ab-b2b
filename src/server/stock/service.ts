@@ -10,13 +10,16 @@ import {
   AUTOPART_WAREHOUSE_NAME,
   catalogueMatchSummary,
   customerAvailabilityForStock,
+  describeStockQtyChange,
   internalStatusFromSellable,
   isStockStale,
   NOT_IN_AB_CATALOGUE_REASON,
   sellableQuantityFromAvail,
   skuMatchKey,
   stockAttentionSummary,
+  stockAvailabilityTransitionLabel,
   stockSyncOutcome,
+  summariseStockQtyChanges,
   type VariantStock,
 } from "@/domain/stock";
 import { classifyStockRows, parseAutopart231Po3New } from "@/domain/stock-parse";
@@ -30,6 +33,8 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 const ISSUE_CAP = 400;
 const UPSERT_CHUNK = 200;
 const UNMATCHED_UPSERT_CHUNK = 500;
+const CHANGE_LIST_DEFAULT = 50;
+const WOULD_CHANGE_CAP = 80;
 
 export async function ensureAutopartWarehouse() {
   return prisma.warehouse.upsert({
@@ -74,7 +79,14 @@ export async function stockFreshness(now = new Date()) {
   };
 }
 
-type VariantRow = { id: string; sku: string };
+type VariantRow = {
+  id: string;
+  sku: string;
+  name: string | null;
+  isDefault: boolean;
+  productId: string;
+  productName: string;
+};
 
 function variantMap(rows: VariantRow[]) {
   const map = new Map<string, VariantRow[]>();
@@ -133,11 +145,30 @@ export async function applyStockFeed(input: {
     }
 
     const classified = classifyStockRows(parsed.rows);
-    const variants = await prisma.productVariant.findMany({ select: { id: true, sku: true } });
-    const bySku = variantMap(variants);
+    const variants = await prisma.productVariant.findMany({
+      select: { id: true, sku: true, name: true, isDefault: true, productId: true, product: { select: { name: true } } },
+    });
+    const bySku = variantMap(
+      variants.map((row) => ({
+        id: row.id,
+        sku: row.sku,
+        name: row.name,
+        isDefault: row.isDefault,
+        productId: row.productId,
+        productName: row.product.name,
+      })),
+    );
     const warehouse = await ensureAutopartWarehouse();
 
-    type ApplyRow = { variantId: string; sku: string; avail: number; raw: string };
+    type ApplyRow = {
+      variantId: string;
+      productId: string;
+      sku: string;
+      productName: string;
+      variantLabel: string | null;
+      avail: number;
+      raw: string;
+    };
     const toApply: ApplyRow[] = [];
     const issues: Array<{
       kind: StockIssueKind;
@@ -204,9 +235,13 @@ export async function applyStockFeed(input: {
       }
       matched += 1;
       matchedFeedSkus.push(row.row.sku, hits[0]!.sku);
+      const hit = hits[0]!;
       toApply.push({
-        variantId: hits[0]!.id,
-        sku: hits[0]!.sku,
+        variantId: hit.id,
+        productId: hit.productId,
+        sku: hit.sku,
+        productName: hit.productName,
+        variantLabel: !hit.isDefault && hit.name ? hit.name : null,
         avail: row.avail,
         raw: row.row.availRaw,
       });
@@ -220,22 +255,34 @@ export async function applyStockFeed(input: {
     let updated = 0;
     let unchanged = 0;
     const now = new Date();
-    const writes = toApply.filter((row) => {
+    type ChangeDraft = ApplyRow & { previousQty: number; newQty: number; previousAvailability: string; newAvailability: string };
+    const changeDrafts: ChangeDraft[] = [];
+    for (const row of toApply) {
       const sellable = sellableQuantityFromAvail(row.avail);
-      const prev = existingQty.get(row.variantId);
-      if (prev === sellable) {
+      const prev = existingQty.has(row.variantId) ? existingQty.get(row.variantId)! : 0;
+      const described = describeStockQtyChange(prev, sellable);
+      if (!described) {
         unchanged += 1;
-        return !input.dryRun;
+        continue;
       }
       updated += 1;
-      return !input.dryRun;
-    });
+      changeDrafts.push({
+        ...row,
+        previousQty: described.previousQty,
+        newQty: described.newQty,
+        previousAvailability: described.previousAvailability,
+        newAvailability: described.newAvailability,
+      });
+    }
+    const writes = input.dryRun ? [] : toApply;
 
     if (!input.dryRun) {
+      const changeByVariant = new Map(changeDrafts.map((row) => [row.variantId, row]));
       for (let i = 0; i < writes.length; i += UPSERT_CHUNK) {
         const chunk = writes.slice(i, i + UPSERT_CHUNK);
-        await prisma.$transaction(
-          chunk.map((row) => {
+        const changedChunk = chunk.map((row) => changeByVariant.get(row.variantId)).filter(Boolean) as ChangeDraft[];
+        await prisma.$transaction([
+          ...chunk.map((row) => {
             const sellable = sellableQuantityFromAvail(row.avail);
             const status = internalStatusFromSellable(sellable) as StockStatus;
             return prisma.inventory.upsert({
@@ -257,7 +304,25 @@ export async function applyStockFeed(input: {
               },
             });
           }),
-        );
+          ...(changedChunk.length
+            ? [
+                prisma.stockSyncChange.createMany({
+                  data: changedChunk.map((row) => ({
+                    runId: run.id,
+                    variantId: row.variantId,
+                    productId: row.productId,
+                    skuSnapshot: row.sku,
+                    productNameSnapshot: row.productName,
+                    variantLabelSnapshot: row.variantLabel,
+                    previousQty: row.previousQty,
+                    newQty: row.newQty,
+                    previousAvailability: row.previousAvailability,
+                    newAvailability: row.newAvailability,
+                  })),
+                }),
+              ]
+            : []),
+        ]);
       }
 
       await upsertUnmatchedCurrentState(unmatchedFeed, run.id, now);
@@ -340,6 +405,7 @@ export async function applyStockFeed(input: {
       duplicates,
       summary,
       errorSummary,
+      wouldChanges: changeDrafts.slice(0, WOULD_CHANGE_CAP).map(serializeWouldChange),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stock sync failed";
@@ -566,30 +632,95 @@ export async function getStockSyncRun(actorUserId: string, id: string) {
   await requireInternalStockView(actorUserId);
   const row = await prisma.stockSyncRun.findUnique({ where: { id } });
   if (!row) throw new AuthError("Sync run not found", "NOT_FOUND", 404);
-  const issues = await prisma.stockSyncIssue.findMany({
-    where: { runId: id, kind: { not: "UNMATCHED" } },
-    orderBy: { createdAt: "asc" },
-    take: ISSUE_CAP,
-  });
-  return { ...serializeRun(row), issues };
+  const [issues, changeRows] = await Promise.all([
+    prisma.stockSyncIssue.findMany({
+      where: { runId: id, kind: { not: "UNMATCHED" } },
+      orderBy: { createdAt: "asc" },
+      take: ISSUE_CAP,
+    }),
+    prisma.stockSyncChange.findMany({
+      where: { runId: id },
+      select: {
+        previousQty: true,
+        newQty: true,
+        previousAvailability: true,
+        newAvailability: true,
+      },
+    }),
+  ]);
+  const changeStats = summariseStockQtyChanges(
+    changeRows.map((item) => ({
+      previousQty: item.previousQty,
+      newQty: item.newQty,
+      previousAvailability: item.previousAvailability as "in" | "low" | "out",
+      newAvailability: item.newAvailability as "in" | "low" | "out",
+    })),
+  );
+  const changes = await listStockSyncChanges(actorUserId, { runId: id, page: 1, pageSize: CHANGE_LIST_DEFAULT });
+  return {
+    ...serializeRun(row),
+    issues,
+    changeStats: { total: changeRows.length, ...changeStats },
+    changes,
+  };
+}
+
+export async function listStockSyncChanges(
+  actorUserId: string,
+  input: { runId: string; q?: string; page?: number; pageSize?: number },
+) {
+  await requireInternalStockView(actorUserId);
+  const q = input.q?.trim() ?? "";
+  const pageSize = Math.min(100, Math.max(10, input.pageSize ?? CHANGE_LIST_DEFAULT));
+  const page = Math.max(1, input.page ?? 1);
+  const where = {
+    runId: input.runId,
+    ...(q
+      ? {
+          OR: [
+            { skuSnapshot: { contains: q, mode: "insensitive" as const } },
+            { productNameSnapshot: { contains: q, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+  const [total, rows] = await Promise.all([
+    prisma.stockSyncChange.count({ where }),
+    prisma.stockSyncChange.findMany({
+      where,
+      orderBy: [{ createdAt: "asc" }, { skuSnapshot: "asc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+  return {
+    total,
+    page,
+    pageSize,
+    q,
+    items: rows.map(serializeChangeRow),
+  };
 }
 
 export async function listUnmatchedStockSkus(
   actorUserId: string,
-  input?: { q?: string; page?: number; pageSize?: number },
+  input?: { q?: string; page?: number; pageSize?: number; lastRunId?: string },
 ) {
   await requireInternalStockView(actorUserId);
   const q = input?.q?.trim() ?? "";
   const pageSize = Math.min(100, Math.max(10, input?.pageSize ?? 50));
   const page = Math.max(1, input?.page ?? 1);
-  const where = q
-    ? {
-        OR: [
-          { sku: { contains: q, mode: "insensitive" as const } },
-          { description: { contains: q, mode: "insensitive" as const } },
-        ],
-      }
-    : {};
+  const where = {
+    ...(input?.lastRunId ? { lastRunId: input.lastRunId } : {}),
+    ...(q
+      ? {
+          OR: [
+            { sku: { contains: q, mode: "insensitive" as const } },
+            { description: { contains: q, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
   const [total, rows] = await Promise.all([
     prisma.stockFeedUnmatched.count({ where }),
     prisma.stockFeedUnmatched.findMany({
@@ -646,6 +777,86 @@ export async function stockOperationsOverview(actorUserId: string) {
     lastAttempt: lastAttempt ? serializeRun(lastAttempt) : null,
     lastSuccess: lastSuccess ? serializeRun(lastSuccess) : null,
     running: Boolean(running),
+  };
+}
+
+function serializeWouldChange(row: {
+  sku: string;
+  productName: string;
+  variantLabel: string | null;
+  productId: string;
+  previousQty: number;
+  newQty: number;
+  previousAvailability: string;
+  newAvailability: string;
+}) {
+  return serializeChangeView({
+    skuSnapshot: row.sku,
+    productNameSnapshot: row.productName,
+    variantLabelSnapshot: row.variantLabel,
+    productId: row.productId,
+    previousQty: row.previousQty,
+    newQty: row.newQty,
+    previousAvailability: row.previousAvailability,
+    newAvailability: row.newAvailability,
+    createdAt: null,
+    id: null,
+  });
+}
+
+function serializeChangeRow(row: {
+  id: string;
+  productId: string | null;
+  skuSnapshot: string;
+  productNameSnapshot: string;
+  variantLabelSnapshot: string | null;
+  previousQty: number;
+  newQty: number;
+  previousAvailability: string;
+  newAvailability: string;
+  createdAt: Date;
+}) {
+  return serializeChangeView({
+    id: row.id,
+    productId: row.productId,
+    skuSnapshot: row.skuSnapshot,
+    productNameSnapshot: row.productNameSnapshot,
+    variantLabelSnapshot: row.variantLabelSnapshot,
+    previousQty: row.previousQty,
+    newQty: row.newQty,
+    previousAvailability: row.previousAvailability,
+    newAvailability: row.newAvailability,
+    createdAt: row.createdAt.toISOString(),
+  });
+}
+
+function serializeChangeView(row: {
+  id: string | null;
+  productId: string | null;
+  skuSnapshot: string;
+  productNameSnapshot: string;
+  variantLabelSnapshot: string | null;
+  previousQty: number;
+  newQty: number;
+  previousAvailability: string;
+  newAvailability: string;
+  createdAt: string | null;
+}) {
+  const previousAvailability = row.previousAvailability as "in" | "low" | "out";
+  const newAvailability = row.newAvailability as "in" | "low" | "out";
+  return {
+    id: row.id,
+    productId: row.productId,
+    sku: row.skuSnapshot,
+    productName: row.productNameSnapshot,
+    variantLabel: row.variantLabelSnapshot,
+    previousQty: row.previousQty,
+    newQty: row.newQty,
+    quantityChange: row.newQty - row.previousQty,
+    previousAvailability,
+    newAvailability,
+    availabilityChange: stockAvailabilityTransitionLabel(previousAvailability, newAvailability),
+    createdAt: row.createdAt,
   };
 }
 

@@ -97,3 +97,58 @@ export function stockAttentionSummary(invalid: number, duplicates: number): stri
   if (!n) return null;
   return `${n} row(s) need attention`;
 }
+
+/** Customer band from sellable qty at sync time (not stale-aware). Uses central thresholds. */
+export function stockAvailabilityBand(qty: number): PublicAvailability {
+  return publicAvailabilityFromQty(qty) ?? "out";
+}
+
+export function stockAvailabilityBandLabel(band: PublicAvailability): string {
+  if (band === "in") return "IN STOCK";
+  if (band === "low") return "LOW STOCK";
+  return "OUT OF STOCK";
+}
+
+export function stockAvailabilityTransitionLabel(previous: PublicAvailability, next: PublicAvailability): string {
+  const from = stockAvailabilityBandLabel(previous);
+  const to = stockAvailabilityBandLabel(next);
+  return from === to ? from : `${from} → ${to}`;
+}
+
+export type StockQtyChange = {
+  previousQty: number;
+  newQty: number;
+  delta: number;
+  previousAvailability: PublicAvailability;
+  newAvailability: PublicAvailability;
+};
+
+/** Null when authoritative sellable quantity did not change (no history row). */
+export function describeStockQtyChange(previousQty: number, newQty: number): StockQtyChange | null {
+  if (previousQty === newQty) return null;
+  return {
+    previousQty,
+    newQty,
+    delta: newQty - previousQty,
+    previousAvailability: stockAvailabilityBand(previousQty),
+    newAvailability: stockAvailabilityBand(newQty),
+  };
+}
+
+export function summariseStockQtyChanges(
+  rows: Array<Pick<StockQtyChange, "previousQty" | "newQty" | "previousAvailability" | "newAvailability">>,
+) {
+  let increased = 0;
+  let decreased = 0;
+  let becameInStock = 0;
+  let becameLowStock = 0;
+  let becameOutOfStock = 0;
+  for (const row of rows) {
+    if (row.newQty > row.previousQty) increased += 1;
+    else if (row.newQty < row.previousQty) decreased += 1;
+    if (row.previousAvailability !== "in" && row.newAvailability === "in") becameInStock += 1;
+    if (row.previousAvailability !== "low" && row.newAvailability === "low") becameLowStock += 1;
+    if (row.previousAvailability !== "out" && row.newAvailability === "out") becameOutOfStock += 1;
+  }
+  return { increased, decreased, becameInStock, becameLowStock, becameOutOfStock };
+}

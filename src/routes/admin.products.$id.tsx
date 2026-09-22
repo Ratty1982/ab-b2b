@@ -30,12 +30,28 @@ import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+type Tab = "Overview" | "Content" | "Images" | "Commercial" | "Inventory" | "Variants" | "SEO" | "Activity";
+
 export const Route = createFileRoute("/admin/products/$id")({
   head: () => ({ meta: [{ title: "Product workspace — Automotive Brands Admin" }] }),
+  validateSearch: (search: Record<string, unknown>): { tab?: Tab } => {
+    const tab = search.tab;
+    if (
+      tab === "Overview" ||
+      tab === "Content" ||
+      tab === "Images" ||
+      tab === "Commercial" ||
+      tab === "Inventory" ||
+      tab === "Variants" ||
+      tab === "SEO" ||
+      tab === "Activity"
+    ) {
+      return { tab };
+    }
+    return {};
+  },
   component: ProductWorkspace,
 });
-
-type Tab = "Overview" | "Content" | "Images" | "Commercial" | "Inventory" | "Variants" | "SEO" | "Activity";
 
 type Workspace = Awaited<
   Extract<Awaited<ReturnType<typeof getCatalogueProductFn>>, { ok: true }>["data"]
@@ -125,7 +141,8 @@ function optionalNumber(value: string): number | null {
 
 function ProductWorkspace() {
   const { id } = Route.useParams();
-  const [tab, setTab] = useState<Tab>("Overview");
+  const search = Route.useSearch();
+  const [tab, setTab] = useState<Tab>(search.tab ?? "Overview");
   const [product, setProduct] = useState<Workspace | null>(null);
   const [draft, setDraft] = useState<ProductDraft | null>(null);
   const [dirty, setDirty] = useState(false);

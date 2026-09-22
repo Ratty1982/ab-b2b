@@ -9,6 +9,7 @@ import {
   applyStockFeed,
   getStockSyncRun,
   getVariantStock,
+  listStockSyncChanges,
   listUnmatchedStockSkus,
   pollImapNow,
   runManualStockSync,
@@ -459,6 +460,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(first.invalid).toBe(0);
     expect(first.errorSummary).toBeNull();
     expect(first.summary).toContain("Not in AB catalogue: 1");
+    expect(await prisma.stockSyncChange.count({ where: { runId: first.runId, skuSnapshot: absentSku } })).toBe(0);
     const detail = await getStockSyncRun(adminId, first.runId);
     expect(detail.issues).toHaveLength(0);
     expect(await prisma.productVariant.findUnique({ where: { sku: absentSku } })).toBeNull();
@@ -547,5 +549,149 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(unmatchedCount).toBe(10000);
     const issues = await prisma.stockSyncIssue.count({ where: { runId: live.runId, kind: "UNMATCHED" } });
     expect(issues).toBe(0);
+    expect(await prisma.stockSyncChange.count({ where: { runId: live.runId } })).toBe(1);
   }, 120_000);
+
+  it("persists live old→new quantity history and availability bands without writing unchanged or dry-run rows", async () => {
+    const stamp = Date.now();
+    const make = async (sku: string, name: string) => {
+      const product = await saveProduct(adminId, {
+        sku,
+        name,
+        brand: "Power Maxed",
+        category: "Braking",
+        trade: 4,
+        rrp: 8,
+        packQty: 1,
+        caseQty: 1,
+      });
+      return product;
+    };
+    const skus = {
+      same: `CH36-${stamp}`,
+      up: `CH8-${stamp}`,
+      low: `CH20-${stamp}`,
+      out: `CH5-${stamp}`,
+      fromZero: `CH0-${stamp}`,
+      trim: `CH35-${stamp}`,
+    };
+    const productUp = await make(skus.up, "Power Maxed Window & Glass Cleaner 5 Litre");
+    await make(skus.same, "Unchanged band");
+    await make(skus.low, "Drop to low");
+    await make(skus.out, "Drop to out");
+    await make(skus.fromZero, "From empty");
+    await make(skus.trim, "Stay in stock");
+
+    await applyStockFeed({
+      text: csv([
+        `${skus.same},a,36`,
+        `${skus.up},b,8`,
+        `${skus.low},c,36`,
+        `${skus.out},d,5`,
+        `${skus.fromZero},e,0`,
+        `${skus.trim},f,36`,
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+
+    const dry = await applyStockFeed({
+      text: csv([`${skus.up},b,36`]),
+      dryRun: true,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(dry.status).toBe("SUCCESS");
+    expect(dry.updated).toBe(0);
+    expect(dry.wouldUpdate).toBe(1);
+    expect(dry.wouldChanges?.[0]).toMatchObject({ previousQty: 8, newQty: 36, quantityChange: 28, availabilityChange: "LOW STOCK → IN STOCK" });
+    expect(await prisma.stockSyncChange.count({ where: { runId: dry.runId } })).toBe(0);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variant: { sku: skus.up } } })).qtyOnHand).toBe(8);
+
+    const live = await applyStockFeed({
+      text: csv([
+        `${skus.same},a,36`,
+        `${skus.up},b,36`,
+        `${skus.low},c,20`,
+        `${skus.out},d,0`,
+        `${skus.fromZero},e,50`,
+        `${skus.trim},f,35`,
+        `GHOST-${stamp},nope,9`,
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(live.status).toBe("SUCCESS");
+    expect(live.updated).toBe(5);
+    expect(live.unchanged).toBe(1);
+    expect(live.unmatched).toBe(1);
+
+    const changes = await listStockSyncChanges(adminId, { runId: live.runId, pageSize: 50 });
+    expect(changes.total).toBe(5);
+    expect(changes.items.some((row) => row.sku === skus.same)).toBe(false);
+    const bySku = Object.fromEntries(changes.items.map((row) => [row.sku, row]));
+    expect(bySku[skus.up]).toMatchObject({
+      previousQty: 8,
+      newQty: 36,
+      quantityChange: 28,
+      availabilityChange: "LOW STOCK → IN STOCK",
+      productName: "Power Maxed Window & Glass Cleaner 5 Litre",
+      productId: productUp.id,
+    });
+    expect(bySku[skus.low]).toMatchObject({ previousQty: 36, newQty: 20, availabilityChange: "IN STOCK → LOW STOCK" });
+    expect(bySku[skus.out]).toMatchObject({ previousQty: 5, newQty: 0, availabilityChange: "LOW STOCK → OUT OF STOCK" });
+    expect(bySku[skus.fromZero]).toMatchObject({ previousQty: 0, newQty: 50, availabilityChange: "OUT OF STOCK → IN STOCK" });
+    expect(bySku[skus.trim]).toMatchObject({ previousQty: 36, newQty: 35, availabilityChange: "IN STOCK" });
+    expect(changes.items.some((row) => row.sku === `GHOST-${stamp}`)).toBe(false);
+
+    const detail = await getStockSyncRun(adminId, live.runId);
+    expect(detail.changeStats).toMatchObject({
+      total: 5,
+      increased: 2,
+      decreased: 3,
+      becameInStock: 2,
+      becameLowStock: 1,
+      becameOutOfStock: 1,
+    });
+
+    const pub = await listPublicProducts({ userId: null, q: skus.up });
+    const card = pub.items.find((item) => item.sku === skus.up);
+    expect(JSON.stringify(card)).not.toMatch(/previousQty|newQty|quantityChange|qtyOnHand|stockQty/);
+
+    await expect(getStockSyncRun(tradeUserId, live.runId)).rejects.toBeInstanceOf(AuthError);
+    await expect(listStockSyncChanges(tradeUserId, { runId: live.runId })).rejects.toBeInstanceOf(AuthError);
+
+    const warehouse = await prisma.warehouse.findFirstOrThrow({ where: { code: "AUTOPART" } });
+    await expect(
+      prisma.$transaction([
+        prisma.inventory.upsert({
+          where: { variantId_warehouseId: { variantId: "missing-variant", warehouseId: warehouse.id } },
+          create: {
+            variantId: "missing-variant",
+            warehouseId: warehouse.id,
+            qtyOnHand: 50,
+            qtyReserved: 0,
+            status: "IN_STOCK",
+          },
+          update: { qtyOnHand: 50 },
+        }),
+        prisma.stockSyncChange.createMany({
+          data: [
+            {
+              runId: live.runId,
+              skuSnapshot: `FAIL-${stamp}`,
+              productNameSnapshot: "must not persist",
+              previousQty: 36,
+              newQty: 50,
+              previousAvailability: "in",
+              newAvailability: "in",
+            },
+          ],
+        }),
+      ]),
+    ).rejects.toThrow();
+    expect(await prisma.stockSyncChange.count({ where: { skuSnapshot: `FAIL-${stamp}` } })).toBe(0);
+  });
 });

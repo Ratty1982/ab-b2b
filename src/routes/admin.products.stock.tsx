@@ -6,6 +6,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import {
   getStockSyncRunFn,
+  listStockSyncChangesFn,
   listStockSyncRunsFn,
   listUnmatchedStockSkusFn,
   pollImapNowFn,
@@ -17,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/session";
+import { summariseStockQtyChanges } from "@/domain/stock";
 
 export const Route = createFileRoute("/admin/products/stock")({
   head: () => ({ meta: [{ title: "Autopart stock — Automotive Brands Admin" }] }),
@@ -28,6 +30,8 @@ type RunRow = Extract<Awaited<ReturnType<typeof listStockSyncRunsFn>>, { ok: tru
 type UnmatchedList = Extract<Awaited<ReturnType<typeof listUnmatchedStockSkusFn>>, { ok: true }>["data"];
 type UnmatchedRow = UnmatchedList["items"][number];
 type RunDetail = Extract<Awaited<ReturnType<typeof getStockSyncRunFn>>, { ok: true }>["data"];
+type RunPane = "changed" | "matched" | "unmatched" | "invalid";
+type ChangeItem = RunDetail["changes"]["items"][number];
 
 function statusTone(status: string): Tone {
   if (status === "SUCCESS") return "good";
@@ -59,6 +63,7 @@ type SyncResult = {
   errorSummary?: string | null;
   emailsExamined?: number;
   attachmentFilename?: string;
+  wouldChanges?: ChangeItem[];
 };
 
 function buttonClass(primary = false) {
@@ -87,6 +92,7 @@ function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
   const extra = [
     data.attachmentFilename ? `Attachment ${data.attachmentFilename}` : null,
     data.emailsExamined != null ? `${data.emailsExamined} email(s) examined` : null,
+    data.dryRun && (data.wouldUpdate ?? 0) > 0 ? `${data.wouldUpdate} SKU(s) would change (not written)` : null,
     data.errorSummary,
   ]
     .filter(Boolean)
@@ -123,6 +129,11 @@ function AutopartStockOps() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
   const [tab, setTab] = useState<"history" | "unmatched" | "issues">("history");
+  const [runPane, setRunPane] = useState<RunPane>("changed");
+  const [changeQuery, setChangeQuery] = useState("");
+  const [runUnmatched, setRunUnmatched] = useState<UnmatchedRow[]>([]);
+  const [runUnmatchedTotal, setRunUnmatchedTotal] = useState(0);
+  const [runUnmatchedPage, setRunUnmatchedPage] = useState(1);
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState("993");
   const [imapSecure, setImapSecure] = useState(true);
@@ -188,16 +199,52 @@ function AutopartStockOps() {
     }
   }
 
+  async function openRun(id: string, pane?: RunPane, overlay?: { wouldChanges?: ChangeItem[] }) {
+    const detail = await getStockSyncRunFn({ data: { id } });
+    if (!detail.ok) return;
+    let next = detail.data;
+    if (overlay?.wouldChanges?.length && next.mode === "dry-run") {
+      const items = overlay.wouldChanges;
+      next = {
+        ...next,
+        changes: { total: items.length, page: 1, pageSize: items.length, q: "", items },
+        changeStats: { total: items.length, ...summariseStockQtyChanges(items) },
+      };
+    }
+    setSelected(next);
+    const nextPane: RunPane =
+      pane ??
+      (next.updated > 0 || (next.mode === "dry-run" && next.changes.total > 0)
+        ? "changed"
+        : next.issues.length
+          ? "invalid"
+          : "matched");
+    setRunPane(nextPane);
+    setChangeQuery("");
+    setTab("history");
+    if (nextPane === "unmatched") {
+      const extra = await listUnmatchedStockSkusFn({ data: { lastRunId: id, page: 1, pageSize: 50 } });
+      if (extra.ok) {
+        setRunUnmatched(extra.data.items);
+        setRunUnmatchedTotal(extra.data.total);
+        setRunUnmatchedPage(extra.data.page);
+      }
+    }
+  }
+
   async function applySyncResult(kind: string, r: { ok: true; data: SyncResult } | { ok: false; error: string }) {
     if (!r.ok) return { tone: "bad" as const, title: `${kind} failed`, detail: r.error };
     await load();
     if (r.data.runId) {
-      const detail = await getStockSyncRunFn({ data: { id: r.data.runId } });
-      if (detail.ok) {
-        setSelected(detail.data);
-        const actionable = (r.data.invalid ?? 0) + (r.data.duplicates ?? 0);
-        setTab(actionable ? "issues" : "history");
-      }
+      await openRun(
+        r.data.runId,
+        (r.data.updated ?? 0) > 0 || (r.data.dryRun && (r.data.wouldUpdate ?? 0) > 0)
+          ? "changed"
+          : (r.data.invalid ?? 0) + (r.data.duplicates ?? 0) > 0
+            ? "invalid"
+            : "matched",
+        r.data.wouldChanges ? { wouldChanges: r.data.wouldChanges } : undefined,
+      );
     }
     return noticeFromSync(kind, r.data);
   }
@@ -437,21 +484,9 @@ function AutopartStockOps() {
 
       {tab === "history" ? (
         <div className="mt-4 space-y-3">
-          {selected ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <StatusCard label="Status" value={selected.status} />
-              <StatusCard label="Rows read" value={String(selected.rowsRead)} />
-              <StatusCard label="AB products matched" value={String(selected.matched)} />
-              <StatusCard label="Updated" value={String(selected.updated)} />
-              <StatusCard label="Unchanged" value={String(selected.unchanged)} />
-              <StatusCard label="Not in AB catalogue" value={String(selected.unmatched)} />
-              <StatusCard label="Invalid" value={String(selected.invalid)} />
-              <StatusCard label="Duplicates" value={String(selected.duplicates)} />
-            </div>
-          ) : null}
           <p className="text-[12px] text-steel">
             231PO3NEW is Autopart’s master file. SKUs that Automotive Brands does not sell are skipped as
-            not in catalogue — they are not invalid and do not make a run PARTIAL.
+            not in catalogue — they are not invalid and do not make a run PARTIAL. Exact Avail is internal only.
           </p>
           <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[960px] text-[13px]">
@@ -480,14 +515,12 @@ function AutopartStockOps() {
                 runs.map((run) => (
                   <tr
                     key={run.id}
-                    className="cursor-pointer border-b border-border/60 hover:bg-surface/40"
+                    className={cn(
+                      "cursor-pointer border-b border-border/60 hover:bg-surface/40",
+                      selected?.id === run.id && "bg-surface/50",
+                    )}
                     onClick={() => {
-                      void getStockSyncRunFn({ data: { id: run.id } }).then((r) => {
-                        if (r.ok) {
-                          setSelected(r.data);
-                          setTab(r.data.issues.length ? "issues" : "history");
-                        }
-                      });
+                      void openRun(run.id);
                     }}
                   >
                     <td className="px-3 py-2">
@@ -496,18 +529,73 @@ function AutopartStockOps() {
                     <td className="px-3 py-2">{run.mode}</td>
                     <td className="px-3 py-2">{formatUtc(run.startedAt)}</td>
                     <td className="px-3 py-2 text-steel">{run.source}</td>
-                    <td className="num px-3 py-2 text-right">{run.rowsRead}</td>
-                    <td className="num px-3 py-2 text-right">{run.matched}</td>
-                    <td className="num px-3 py-2 text-right">{run.updated}</td>
-                    <td className="num px-3 py-2 text-right">{run.unchanged}</td>
-                    <td className="num px-3 py-2 text-right">{run.unmatched}</td>
-                    <td className="num px-3 py-2 text-right">{run.invalid}</td>
+                    <td className="num px-3 py-2 text-right">{run.rowsRead.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{run.matched.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">
+                      {run.updated > 0 ? (
+                        <button
+                          type="button"
+                          className="font-semibold text-primary underline-offset-2 hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void openRun(run.id, "changed");
+                          }}
+                        >
+                          {run.updated.toLocaleString("en-GB")}
+                        </button>
+                      ) : (
+                        run.updated
+                      )}
+                    </td>
+                    <td className="num px-3 py-2 text-right">{run.unchanged.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{run.unmatched.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{run.invalid.toLocaleString("en-GB")}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
           </div>
+          {selected ? <RunDetailPanel
+            selected={selected}
+            runPane={runPane}
+            changeQuery={changeQuery}
+            runUnmatched={runUnmatched}
+            runUnmatchedTotal={runUnmatchedTotal}
+            runUnmatchedPage={runUnmatchedPage}
+            onPane={async (pane) => {
+              setRunPane(pane);
+              if (pane === "unmatched") {
+                const extra = await listUnmatchedStockSkusFn({ data: { lastRunId: selected.id, page: 1, pageSize: 50 } });
+                if (extra.ok) {
+                  setRunUnmatched(extra.data.items);
+                  setRunUnmatchedTotal(extra.data.total);
+                  setRunUnmatchedPage(extra.data.page);
+                }
+              }
+            }}
+            onSearchChanges={async (q) => {
+              setChangeQuery(q);
+              const next = await listStockSyncChangesFn({ data: { runId: selected.id, q, page: 1, pageSize: 50 } });
+              if (next.ok) setSelected({ ...selected, changes: next.data });
+            }}
+            onPageChanges={async (page) => {
+              const next = await listStockSyncChangesFn({
+                data: { runId: selected.id, q: changeQuery, page, pageSize: 50 },
+              });
+              if (next.ok) setSelected({ ...selected, changes: next.data });
+            }}
+            onPageUnmatched={async (page) => {
+              const extra = await listUnmatchedStockSkusFn({
+                data: { lastRunId: selected.id, page, pageSize: 50 },
+              });
+              if (extra.ok) {
+                setRunUnmatched(extra.data.items);
+                setRunUnmatchedTotal(extra.data.total);
+                setRunUnmatchedPage(extra.data.page);
+              }
+            }}
+          /> : null}
         </div>
       ) : null}
 
@@ -651,6 +739,288 @@ function StatusCard({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border border-border bg-surface/40 px-4 py-3">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-steel">{label}</p>
       <p className="mt-1 text-[15px] font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function formatDelta(value: number) {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function RunDetailPanel({
+  selected,
+  runPane,
+  changeQuery,
+  runUnmatched,
+  runUnmatchedTotal,
+  runUnmatchedPage,
+  onPane,
+  onSearchChanges,
+  onPageChanges,
+  onPageUnmatched,
+}: {
+  selected: RunDetail;
+  runPane: RunPane;
+  changeQuery: string;
+  runUnmatched: UnmatchedRow[];
+  runUnmatchedTotal: number;
+  runUnmatchedPage: number;
+  onPane: (pane: RunPane) => void;
+  onSearchChanges: (q: string) => void;
+  onPageChanges: (page: number) => void;
+  onPageUnmatched: (page: number) => void;
+}) {
+  const stats = selected.changeStats;
+  const changed = selected.changes;
+  const dry = selected.mode === "dry-run";
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-surface/20 p-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatusCard label="Status" value={selected.status} />
+        <StatusCard label="Rows read" value={selected.rowsRead.toLocaleString("en-GB")} />
+        <StatusCard label="Matched" value={selected.matched.toLocaleString("en-GB")} />
+        <StatusCard label={dry ? "Would change" : "Updated"} value={(dry ? changed.total : selected.updated).toLocaleString("en-GB")} />
+        <StatusCard label="Unchanged" value={selected.unchanged.toLocaleString("en-GB")} />
+        <StatusCard label="Not in AB catalogue" value={selected.unmatched.toLocaleString("en-GB")} />
+        <StatusCard label="Invalid" value={selected.invalid.toLocaleString("en-GB")} />
+        <StatusCard label="Duplicates" value={selected.duplicates.toLocaleString("en-GB")} />
+      </div>
+      {stats.total > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <StatusCard label="Stock increased" value={String(stats.increased)} />
+          <StatusCard label="Stock decreased" value={String(stats.decreased)} />
+          <StatusCard label="Became In Stock" value={String(stats.becameInStock)} />
+          <StatusCard label="Became Low Stock" value={String(stats.becameLowStock)} />
+          <StatusCard label="Became Out of Stock" value={String(stats.becameOutOfStock)} />
+        </div>
+      ) : null}
+      {dry ? (
+        <p className="text-[12px] text-steel">
+          Dry run does not write live stock history. Quantity transitions below are WOULD CHANGE only.
+        </p>
+      ) : null}
+      <div className="flex flex-wrap gap-2 border-b border-border">
+        {(
+          [
+            ["changed", dry ? `Would change (${changed.total})` : `Changed (${selected.updated})`],
+            ["matched", `Matched (${selected.matched})`],
+            ["unmatched", `Not in AB catalogue (${selected.unmatched})`],
+            ["invalid", `Invalid (${selected.invalid + selected.duplicates})`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={cn(
+              "h-9 px-3 text-[11px] font-semibold uppercase",
+              runPane === id ? "border-b-2 border-primary" : "text-steel",
+            )}
+            onClick={() => onPane(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {runPane === "changed" || runPane === "matched" ? (
+        <div className="space-y-3">
+          {runPane === "matched" ? (
+            <p className="text-[12px] text-steel">
+              {selected.matched.toLocaleString("en-GB")} AB SKU(s) matched. {selected.unchanged.toLocaleString("en-GB")}{" "}
+              unchanged (same Avail — not stored in change history). {selected.updated.toLocaleString("en-GB")} quantity
+              change(s) listed below.
+            </p>
+          ) : null}
+          <input
+            value={changeQuery}
+            onChange={(e) => onSearchChanges(e.target.value)}
+            className={inputClass}
+            placeholder="Search SKU or product"
+            aria-label="Search stock changes"
+          />
+          <ChangedTable items={changed.items} dry={dry} />
+          <div className="flex items-center gap-2 text-[12px] text-steel">
+            <span>
+              Page {changed.page} of {Math.max(1, Math.ceil(changed.total / changed.pageSize))}
+            </span>
+            <button
+              type="button"
+              className="h-8 rounded-md border border-border px-2 disabled:opacity-40"
+              disabled={changed.page <= 1}
+              onClick={() => onPageChanges(changed.page - 1)}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="h-8 rounded-md border border-border px-2 disabled:opacity-40"
+              disabled={changed.page * changed.pageSize >= changed.total}
+              onClick={() => onPageChanges(changed.page + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {runPane === "unmatched" ? (
+        <div className="space-y-2">
+          <p className="text-[12px] text-steel">
+            Valid Autopart SKUs not sold in AB. These are not import errors and have no stock-change history.
+            {selected.unmatched ? ` This run skipped ${selected.unmatched.toLocaleString("en-GB")}.` : ""}
+            {runUnmatchedTotal === 0
+              ? " Current unmatched diagnostics for this run are empty (list is current-state, not a full archive)."
+              : ""}
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[640px] text-[13px]">
+              <thead>
+                <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
+                  <th className="px-3 py-2">Autopart SKU</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Latest Avail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runUnmatched.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-8 text-center text-steel">
+                      No current unmatched rows tagged to this run.
+                    </td>
+                  </tr>
+                ) : (
+                  runUnmatched.map((row) => (
+                    <tr key={row.sku} className="border-b border-border/60">
+                      <td className="num px-3 py-2">{row.sku}</td>
+                      <td className="px-3 py-2">{row.description ?? "—"}</td>
+                      <td className="num px-3 py-2">{row.avail ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-2 text-[12px] text-steel">
+            <span>Page {runUnmatchedPage}</span>
+            <button type="button" className="h-8 rounded-md border border-border px-2 disabled:opacity-40" disabled={runUnmatchedPage <= 1} onClick={() => onPageUnmatched(runUnmatchedPage - 1)}>
+              Previous
+            </button>
+            <button type="button" className="h-8 rounded-md border border-border px-2 disabled:opacity-40" disabled={runUnmatchedPage * 50 >= runUnmatchedTotal} onClick={() => onPageUnmatched(runUnmatchedPage + 1)}>
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {runPane === "invalid" ? (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[800px] text-[13px]">
+            <thead>
+              <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
+                <th className="px-3 py-2">Kind</th>
+                <th className="px-3 py-2">Line</th>
+                <th className="px-3 py-2">SKU</th>
+                <th className="px-3 py-2">Avail</th>
+                <th className="px-3 py-2">Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!selected.issues.length ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-8 text-center text-steel">
+                    No invalid, duplicate, or conflict rows for this run.
+                  </td>
+                </tr>
+              ) : (
+                selected.issues.map((issue) => (
+                  <tr key={issue.id} className="border-b border-border/60">
+                    <td className="px-3 py-2">{issue.kind}</td>
+                    <td className="num px-3 py-2">{issue.line ?? "—"}</td>
+                    <td className="num px-3 py-2">{issue.sku ?? "—"}</td>
+                    <td className="num px-3 py-2">{issue.availRaw ?? "—"}</td>
+                    <td className="px-3 py-2 text-steel">{issue.message}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChangedTable({ items, dry }: { items: ChangeItem[]; dry: boolean }) {
+  if (!items.length) {
+    return (
+      <p className="px-1 py-6 text-center text-[13px] text-steel">
+        {dry ? "No projected quantity changes for this dry run." : "No quantity changes in this run."}
+      </p>
+    );
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-[880px] text-[13px]">
+        <thead>
+          <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
+            <th className="px-3 py-2">SKU</th>
+            <th className="px-3 py-2">Product</th>
+            <th className="px-3 py-2 text-right">Previous</th>
+            <th className="px-3 py-2 text-right">New</th>
+            <th className="px-3 py-2 text-right">{dry ? "Would change" : "Change"}</th>
+            <th className="px-3 py-2">Availability change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((row, index) => (
+            <tr key={row.id ?? `${row.sku}-${index}`} className="border-b border-border/60">
+              <td className="num px-3 py-2">
+                {row.productId ? (
+                  <Link
+                    to="/admin/products/$id"
+                    params={{ id: row.productId }}
+                    search={{ tab: "Inventory" }}
+                    className="text-primary hover:underline"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {row.sku}
+                  </Link>
+                ) : (
+                  row.sku
+                )}
+              </td>
+              <td className="px-3 py-2">
+                {row.productId ? (
+                  <Link
+                    to="/admin/products/$id"
+                    params={{ id: row.productId }}
+                    search={{ tab: "Inventory" }}
+                    className="hover:underline"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {row.productName}
+                    {row.variantLabel ? <span className="block text-[11px] text-steel">{row.variantLabel}</span> : null}
+                  </Link>
+                ) : (
+                  row.productName
+                )}
+              </td>
+              <td className="num px-3 py-2 text-right">{row.previousQty}</td>
+              <td className="num px-3 py-2 text-right">{row.newQty}</td>
+              <td
+                className={cn(
+                  "num px-3 py-2 text-right font-semibold",
+                  row.quantityChange > 0 && "text-good",
+                  row.quantityChange < 0 && "text-bad",
+                )}
+              >
+                {formatDelta(row.quantityChange)}
+              </td>
+              <td className="px-3 py-2 text-steel">{row.availabilityChange}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

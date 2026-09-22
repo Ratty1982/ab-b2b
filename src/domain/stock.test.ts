@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   catalogueMatchSummary,
   customerAvailabilityForStock,
+  describeStockQtyChange,
   getSellableQuantity,
   internalStatusFromSellable,
   isStockStale,
   sellableQuantityFromAvail,
   skuMatchKey,
   stockAttentionSummary,
+  stockAvailabilityTransitionLabel,
   stockSyncOutcome,
+  summariseStockQtyChanges,
 } from "@/domain/stock";
 
 describe("authoritative stock vs public availability", () => {
@@ -60,5 +63,36 @@ describe("authoritative stock vs public availability", () => {
     expect(catalogueMatchSummary({ matched: 468, unmatched: 12732, invalid: 0 })).toBe(
       "Matched AB SKUs: 468. Not in AB catalogue: 12732. Invalid: 0",
     );
+  });
+
+  it("records availability transitions from central Avail bands and skips unchanged qty", () => {
+    expect(describeStockQtyChange(36, 36)).toBeNull();
+    expect(describeStockQtyChange(8, 36)).toMatchObject({
+      previousQty: 8,
+      newQty: 36,
+      delta: 28,
+      previousAvailability: "low",
+      newAvailability: "in",
+    });
+    expect(stockAvailabilityTransitionLabel("low", "in")).toBe("LOW STOCK → IN STOCK");
+    expect(describeStockQtyChange(36, 20)?.newAvailability).toBe("low");
+    expect(describeStockQtyChange(5, 0)?.newAvailability).toBe("out");
+    expect(describeStockQtyChange(0, 50)?.newAvailability).toBe("in");
+    const sameBand = describeStockQtyChange(36, 35);
+    expect(sameBand).toMatchObject({ previousQty: 36, newQty: 35, previousAvailability: "in", newAvailability: "in" });
+    expect(stockAvailabilityTransitionLabel("in", "in")).toBe("IN STOCK");
+    expect(
+      summariseStockQtyChanges([
+        describeStockQtyChange(8, 36)!,
+        describeStockQtyChange(36, 20)!,
+        describeStockQtyChange(5, 0)!,
+      ]),
+    ).toEqual({
+      increased: 1,
+      decreased: 2,
+      becameInStock: 1,
+      becameLowStock: 1,
+      becameOutOfStock: 1,
+    });
   });
 });

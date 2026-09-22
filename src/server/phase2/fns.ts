@@ -1170,8 +1170,19 @@ export const getStockSyncRunFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listStockSyncChangesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { runId: string; q?: string; page?: number; pageSize?: number })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await stock.listStockSyncChanges(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listUnmatchedStockSkusFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { q?: string; page?: number; pageSize?: number } | undefined)
+  .inputValidator((data: unknown) => data as { q?: string; page?: number; pageSize?: number; lastRunId?: string } | undefined)
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
