@@ -12,14 +12,25 @@ AlphaOps was inspected in `Ratty1982/alphaops` (`backend/src/autopart-stock-emai
 
 ```
 IMAP mailbox
-→ Coolify POST /api/internal/stock-sync (every 15 minutes, UTC)
+→ Coolify POST /api/internal/stock-sync
+→ Europe/London window gate (09:00 / 12:00 / 15:00 / 18:00)
 → allowed-sender check
 → 231PO3NEW attachment filter
 → content must positively detect 231PO3NEW
 → existing Phase 5 parse / match / apply
 ```
 
-**One production polling path:** Coolify HTTP cron calling the existing stock-sync endpoint, which now polls IMAP when email is configured. Do **not** also set `AUTOPART_STOCK_ENABLE_SCHEDULER=true`.
+**Production stock schedule** (mirrors AlphaOps Autopart operating windows):
+
+**09:00 · 12:00 · 15:00 · 18:00 Europe/London, every day.**
+
+The server uses `Intl` civil time in `Europe/London`, so BST/GMT shifts are handled. Do **not** hard-code 09:00 UTC.
+
+Coolify cannot be trusted to express London DST by itself. Configure Coolify to POST the endpoint on a UTC heartbeat (for example every 15 minutes). The app **skips** the request unless it falls inside a London window, and it will not import twice in the same window. That is **not** a 15-minute stock import.
+
+**One production scheduler:** Coolify HTTP cron. Do **not** also set `AUTOPART_STOCK_ENABLE_SCHEDULER=true`. If that flag is on, the in-process loop only ticks once a minute and still uses the same London window gate.
+
+Manual **Poll now** / upload ignore the windows.
 
 | Setting | Purpose |
 | --- | --- |
@@ -29,7 +40,6 @@ IMAP mailbox
 | `AUTOPART_STOCK_IMAP_FILENAME_PATTERN` | Default `231PO3NEW*.txt` |
 | `AUTOPART_STOCK_CRON_SECRET` | Protects `POST /api/internal/stock-sync` |
 | `AUTOPART_STOCK_STALE_HOURS` | Default `36` (last **live Inventory** success, not last IMAP poll) |
-| `AUTOPART_STOCK_SCHEDULE_MINUTES` | Default `15` |
 | `AUTOPART_STOCK_ENABLE_SCHEDULER` | Leave `false` when Coolify cron is used |
 
 Admin → Autopart Stock: configure IMAP, **Test connection**, **Poll now (dry run)** then **Poll now (live)**. Password is never returned in DTOs.
@@ -91,8 +101,9 @@ Dry run still records a `StockSyncRun` with `mode=dry-run` and issues. It does n
 
 ## Automatic schedule and timezone
 
-- Preferred: Coolify scheduled **POST** to `/api/internal/stock-sync` with header `x-autopart-cron-secret` or `Authorization: Bearer …` every **15 minutes, UTC**.
-- Optional in-process interval when `AUTOPART_STOCK_ENABLE_SCHEDULER=true` (UTC, not UK local time).
+- Preferred: Coolify scheduled **POST** to `/api/internal/stock-sync` with header `x-autopart-cron-secret` or `Authorization: Bearer …`.
+- Imports run at **09:00, 12:00, 15:00, 18:00 Europe/London** only (window gate on the server).
+- Optional in-process 60-second tick when `AUTOPART_STOCK_ENABLE_SCHEDULER=true` — same gate; leave off when Coolify is used.
 - `GET /api/internal/stock-sync` returns configuration status without secrets and without running a sync.
 
 ## Locking
@@ -173,7 +184,7 @@ Phase 6 must check `requestedQty <= getSellableQuantity(stock)` **and** full-cas
 5. Compare sample SKUs with Autopart.
 6. **Poll now (live)** once — first authorised Inventory write.
 7. Verify catalogue/PDP/internal Inventory.
-8. Enable Coolify `POST /api/internal/stock-sync` every 15 minutes UTC.
+8. Enable Coolify `POST /api/internal/stock-sync`. Imports occur at 09:00 / 12:00 / 15:00 / 18:00 Europe/London.
 
 Do **not** run the first live production sync from this agent session.
 

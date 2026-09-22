@@ -123,7 +123,9 @@ If unpack still fails: on the Coolify server run `docker system df` / `docker bu
 - **Production source is EMAIL / IMAP.** Deploy does **not** import 231PO3NEW.
 - After deploy: set `AUTOPART_STOCK_SOURCE=email` and IMAP env (`AUTOPART_STOCK_IMAP_*`, never `VITE_*`), **Test connection**, **Poll now (dry run)** in Admin → Autopart Stock, then an authorised live sync, then schedule Coolify HTTP:
 
-`POST https://<app>/api/internal/stock-sync` every 15 minutes (UTC) with header `x-autopart-cron-secret` matching `AUTOPART_STOCK_CRON_SECRET`.
+`POST https://<app>/api/internal/stock-sync` with header `x-autopart-cron-secret` matching `AUTOPART_STOCK_CRON_SECRET`.
+
+Stock **imports** at **09:00, 12:00, 15:00, 18:00 Europe/London**. If Coolify cron is UTC-only, ping every 15 minutes UTC; the app ignores ticks outside those windows and will not import twice in the same window.
 
 Do **not** also set `AUTOPART_STOCK_ENABLE_SCHEDULER=true`.
 

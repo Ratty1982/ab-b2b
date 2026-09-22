@@ -8,8 +8,11 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   applyStockFeed,
   getVariantStock,
+  pollImapNow,
   runManualStockSync,
+  runScheduledStockSync,
 } from "@/server/stock/service";
+import { isWithinScheduledStockWindow } from "@/domain/stock-schedule";
 import { releaseStockSyncLock, tryAcquireStockSyncLock } from "@/server/stock/lock";
 import { getSellableQuantity } from "@/domain/stock";
 import { parseAutopart231Po3New } from "@/domain/stock-parse";
@@ -389,5 +392,36 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(pub.hasImapPassword).toBe(true);
 
     await expect(getImapSettings(tradeUserId)).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("scheduled sync skips outside Europe/London windows without mutating stock", async () => {
+    const sku = `ST5W-${Date.now().toString(36).slice(-7)}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Window skip",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await applyStockFeed({
+      text: csv([`${variant.sku},seed,11`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    const outside = new Date("2026-01-15T10:07:00.000Z");
+    expect(isWithinScheduledStockWindow(outside)).toBe(false);
+    const skipped = await runScheduledStockSync({ dryRun: false, now: outside });
+    expect(skipped.skipped).toBe(true);
+    expect(skipped.rowsRead).toBe(0);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(11);
+
+    const manual = await pollImapNow(adminId, true);
+    expect(manual.dryRun).toBe(true);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(11);
   });
 });

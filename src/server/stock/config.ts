@@ -1,3 +1,5 @@
+import { publicStockSchedule } from "@/domain/stock-schedule";
+
 export type AutopartStockConfig = {
   source: "none" | "ftp" | "http" | "file" | "email";
   ftpHost: string | null;
@@ -9,7 +11,6 @@ export type AutopartStockConfig = {
   httpTokenSet: boolean;
   filePath: string | null;
   staleHours: number;
-  scheduleMinutes: number;
   cronSecretSet: boolean;
   schedulerEnabled: boolean;
   maxBytes: number;
@@ -44,7 +45,6 @@ export function loadAutopartStockConfig(): AutopartStockConfig {
     httpTokenSet: Boolean(env("AUTOPART_STOCK_HTTP_TOKEN")),
     filePath: env("AUTOPART_STOCK_FILE_PATH"),
     staleHours: envInt("AUTOPART_STOCK_STALE_HOURS", 36),
-    scheduleMinutes: envInt("AUTOPART_STOCK_SCHEDULE_MINUTES", 15),
     cronSecretSet: Boolean(env("AUTOPART_STOCK_CRON_SECRET")),
     schedulerEnabled: env("AUTOPART_STOCK_ENABLE_SCHEDULER") === "true",
     maxBytes: envInt("AUTOPART_STOCK_MAX_BYTES", 15_000_000),
@@ -61,11 +61,13 @@ export function autopartConfigured(config = loadAutopartStockConfig()): boolean 
 
 export function publicAutopartStatus() {
   const config = loadAutopartStockConfig();
+  const schedule = publicStockSchedule();
   return {
     configured: autopartConfigured(config),
     sourceType: config.source,
-    scheduleMinutes: config.scheduleMinutes,
-    scheduleTimezone: "UTC",
+    scheduleTimezone: schedule.timezone,
+    scheduleHours: schedule.hours,
+    scheduleLabel: schedule.label,
     staleHours: config.staleHours,
     schedulerEnabled: config.schedulerEnabled,
     cronEndpointConfigured: config.cronSecretSet,

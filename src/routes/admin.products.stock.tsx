@@ -83,7 +83,7 @@ function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
   ]
     .filter(Boolean)
     .join(". ");
-  if (data.status === "FAILED" || (data.runId == null && !(data.rowsRead ?? 0))) {
+  if (data.status === "SKIPPED" || data.status === "FAILED" || (data.runId == null && !(data.rowsRead ?? 0))) {
     return {
       tone: "warn",
       title: `${kind}: no stock was changed`,
@@ -121,7 +121,6 @@ function AutopartStockOps() {
   const [mailbox, setMailbox] = useState("INBOX");
   const [allowed, setAllowed] = useState("");
   const [pattern, setPattern] = useState("231PO3NEW*.txt");
-  const [pollMinutes, setPollMinutes] = useState("15");
   const [enabled, setEnabled] = useState(false);
 
   const load = useCallback(async () => {
@@ -144,7 +143,6 @@ function AutopartStockOps() {
         setMailbox(imap.mailbox ?? "INBOX");
         setAllowed((imap.allowedSenderEmails ?? []).join("\n"));
         setPattern(imap.attachmentFilenamePattern ?? "231PO3NEW*.txt");
-        setPollMinutes(String(imap.pollIntervalMinutes ?? 15));
         setImapPassword("");
       }
     } else setError(ov.error);
@@ -284,8 +282,9 @@ function AutopartStockOps() {
         <StatusCard label="Source type" value={overview?.config.sourceType ?? "none"} />
         <StatusCard
           label="Schedule"
-          value={`${overview?.config.scheduleMinutes ?? 15} min · ${overview?.config.scheduleTimezone ?? "UTC"}`}
+          value={overview?.config.scheduleLabel ?? "09:00 · 12:00 · 15:00 · 18:00"}
         />
+        <StatusCard label="Timezone" value={overview?.config.scheduleTimezone ?? "Europe/London"} />
         <StatusCard label="Last success" value={formatUtc(overview?.freshness.lastSuccessAt)} />
         <StatusCard label="Last attempt" value={formatUtc(overview?.lastAttempt?.startedAt)} />
         <StatusCard label="Current status" value={overview?.running ? "RUNNING" : (overview?.lastAttempt?.status ?? "—")} />
@@ -314,7 +313,6 @@ function AutopartStockOps() {
                 mailbox,
                 allowedSenderEmails: allowed,
                 attachmentFilenamePattern: pattern,
-                pollIntervalMinutes: Number(pollMinutes) || 15,
               },
             });
             if (!r.ok) return { tone: "bad" as const, title: "IMAP settings not saved", detail: r.error };
@@ -349,9 +347,12 @@ function AutopartStockOps() {
           ) : null}
         </div>
         <p className="text-[12px] text-steel">
-          Production receives 231PO3NEW from the mailbox. Password is write-only
+          Production receives 231PO3NEW from the mailbox at 09:00, 12:00, 15:00 and 18:00 Europe/London
+          (same Autopart operating windows as AlphaOps). Coolify should POST /api/internal/stock-sync;
+          the server only imports inside those windows, including during BST. Manual Poll now still works
+          at any time. Password is write-only
           {overview?.imap?.hasImapPassword ? " (saved)" : ""}
-          {overview?.imap?.passwordFromEnv ? " — supplied by environment" : ""}. Coolify should POST /api/internal/stock-sync every 15 minutes UTC; do not also enable the in-process scheduler.
+          {overview?.imap?.passwordFromEnv ? " — supplied by environment" : ""}. Leave the in-process scheduler off.
         </p>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="flex items-center gap-2 text-[13px]">
@@ -385,9 +386,6 @@ function AutopartStockOps() {
           </Field>
           <Field label="Attachment pattern" htmlFor="imap-pat">
             <input id="imap-pat" value={pattern} onChange={(e) => setPattern(e.target.value)} className={inputClass} />
-          </Field>
-          <Field label="Poll interval (minutes)" htmlFor="imap-int">
-            <input id="imap-int" value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value)} className={inputClass} />
           </Field>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

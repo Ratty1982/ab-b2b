@@ -1,21 +1,21 @@
 import { loadAutopartStockConfig } from "@/server/stock/config";
-import { runConfiguredStockSync } from "@/server/stock/service";
+import { runScheduledStockSync } from "@/server/stock/service";
 
 let started = false;
 let timer: ReturnType<typeof setInterval> | null = null;
 
+/** Tick only. Imports still require a Europe/London stock window. Leave disabled when Coolify cron is used. */
 export function startStockScheduler(): void {
   const config = loadAutopartStockConfig();
   if (!config.schedulerEnabled) return;
   if (started) return;
   started = true;
-  const ms = Math.max(60_000, config.scheduleMinutes * 60_000);
   const tick = () => {
-    void runConfiguredStockSync({ dryRun: false, trigger: "schedule" }).catch((error) => {
+    void runScheduledStockSync({ dryRun: false, trigger: "schedule" }).catch((error) => {
       console.error("[ab:stock-sync:schedule]", error instanceof Error ? error.message : error);
     });
   };
-  timer = setInterval(tick, ms);
+  timer = setInterval(tick, 60_000);
   if (typeof timer.unref === "function") timer.unref();
 }
 

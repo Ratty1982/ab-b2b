@@ -5,7 +5,6 @@ export const AUTOPART_WAREHOUSE_NAME = "Autopart";
 export const AUTOPART_FEED_SOURCE = "231PO3NEW";
 export const STOCK_SYNC_MUTEX_ID = "autopart-231po3new";
 export const DEFAULT_STALE_HOURS = 36;
-export const DEFAULT_SCHEDULE_MINUTES = 15;
 
 export type InternalStockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 

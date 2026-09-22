@@ -71,7 +71,7 @@ export async function toPublicImapSettings(): Promise<ImapPublicSettings> {
     mailbox: env("AUTOPART_STOCK_IMAP_MAILBOX") ?? row.mailbox ?? "INBOX",
     allowedSenderEmails: parseAllowedSenders(env("AUTOPART_STOCK_IMAP_ALLOWED_SENDERS") ?? row.allowedSenderEmails),
     attachmentFilenamePattern: env("AUTOPART_STOCK_IMAP_FILENAME_PATTERN") ?? row.attachmentFilenamePattern ?? DEFAULT_STOCK_FILENAME_PATTERN,
-    pollIntervalMinutes: Number(env("AUTOPART_STOCK_SCHEDULE_MINUTES") ?? row.pollIntervalMinutes) || 15,
+    pollIntervalMinutes: row.pollIntervalMinutes,
     lookbackDays: row.lookbackDays,
     maxMessages: row.maxMessages,
     autoArchiveProcessedEmails: row.autoArchiveProcessedEmails,

@@ -15,6 +15,7 @@ import {
   type VariantStock,
 } from "@/domain/stock";
 import { classifyStockRows, parseAutopart231Po3New } from "@/domain/stock-parse";
+import { evaluateScheduledStockWindow, scheduledWindowKey } from "@/domain/stock-schedule";
 import { autopartConfigured, loadAutopartStockConfig, publicAutopartStatus } from "@/server/stock/config";
 import { fetchAutopartFeed } from "@/server/stock/fetch";
 import { releaseStockSyncLock, tryAcquireStockSyncLock } from "@/server/stock/lock";
@@ -429,7 +430,7 @@ export async function runConfiguredStockSync(input: {
   });
 }
 
-export async function runCronStockSync(secret: string | null, dryRun = false) {
+export async function runCronStockSync(secret: string | null, dryRun = false, now = new Date()) {
   const expected = process.env["AUTOPART_STOCK_CRON_SECRET"]?.trim();
   if (!expected) {
     throw new AuthError("AUTOPART_STOCK_CRON_SECRET is not configured", "CONFIG", 503);
@@ -437,7 +438,71 @@ export async function runCronStockSync(secret: string | null, dryRun = false) {
   if (!secret || !timingSafeEqualString(secret, expected)) {
     throw new AuthError("Unauthorised", "UNAUTHENTICATED", 401);
   }
-  return runConfiguredStockSync({ dryRun, trigger: "api" });
+  return runScheduledStockSync({ dryRun, trigger: "api", now });
+}
+
+export async function runScheduledStockSync(input: {
+  dryRun: boolean;
+  trigger?: "schedule" | "api";
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const window = evaluateScheduledStockWindow(now);
+  if (!window.active) {
+    return {
+      skipped: true as const,
+      status: "SKIPPED" as const,
+      dryRun: input.dryRun,
+      runId: null as string | null,
+      rowsRead: 0,
+      matched: 0,
+      wouldUpdate: 0,
+      updated: 0,
+      unchanged: 0,
+      unmatched: 0,
+      invalid: 0,
+      duplicates: 0,
+      errorSummary: window.reason,
+      windowKey: null as string | null,
+    };
+  }
+  if (!input.dryRun && (await scheduledWindowAlreadyImported(window.key, now))) {
+    return {
+      skipped: true as const,
+      status: "SKIPPED" as const,
+      dryRun: false,
+      runId: null as string | null,
+      rowsRead: 0,
+      matched: 0,
+      wouldUpdate: 0,
+      updated: 0,
+      unchanged: 0,
+      unmatched: 0,
+      invalid: 0,
+      duplicates: 0,
+      errorSummary: `Already imported ${window.key} Europe/London`,
+      windowKey: window.key,
+    };
+  }
+  const result = await runConfiguredStockSync({
+    dryRun: input.dryRun,
+    trigger: input.trigger ?? "api",
+  });
+  return { skipped: false as const, windowKey: window.key, ...result };
+}
+
+async function scheduledWindowAlreadyImported(key: string, now: Date): Promise<boolean> {
+  const recent = await prisma.stockSyncRun.findMany({
+    where: {
+      trigger: { in: ["api", "schedule"] },
+      mode: "live",
+      status: { in: ["SUCCESS", "PARTIAL", "RUNNING"] },
+      startedAt: { gte: new Date(now.getTime() - 4 * 60 * 60 * 1000) },
+    },
+    select: { startedAt: true },
+    take: 20,
+  });
+  return recent.some((row) => scheduledWindowKey(row.startedAt) === key);
 }
 
 function timingSafeEqualString(provided: string, expected: string): boolean {

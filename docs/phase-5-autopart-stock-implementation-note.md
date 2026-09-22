@@ -53,10 +53,11 @@ configured source (EMAIL / IMAP in production; FTP / HTTP / file diagnostic) or 
 
 No in-app cron framework. Automatic sync:
 
-- `POST /api/internal/stock-sync` with `AUTOPART_STOCK_CRON_SECRET` (Coolify scheduled HTTP, **UTC**).
-- Optional `AUTOPART_STOCK_ENABLE_SCHEDULER=true` in-process interval (`AUTOPART_STOCK_SCHEDULE_MINUTES`, default 15).
+- `POST /api/internal/stock-sync` with `AUTOPART_STOCK_CRON_SECRET` (Coolify scheduled HTTP).
+- Server gate: **09:00 / 12:00 / 15:00 / 18:00 Europe/London** every day (BST/GMT via `Intl`).
+- Optional `AUTOPART_STOCK_ENABLE_SCHEDULER=true` in-process 60-second tick using the same gate. Leave it off when Coolify is the scheduler.
 
-Default cadence: every **15 minutes, UTC**. Not UK local time.
+Coolify UTC heartbeats are allowed. They do **not** import stock every 15 minutes.
 
 ## Error / recovery
 
@@ -71,7 +72,7 @@ Inspected AlphaOps (`Ratty1982/alphaops`, `backend/src/autopart-stock-email/`). 
 
 AB reimplements the mailbox path independently. After attachment extraction, the existing Phase 5 parse / match / apply / stale / public-availability pipeline is reused.
 
-**One poll path:** Coolify `POST /api/internal/stock-sync` (15 minutes UTC) performs the IMAP poll. Do not also enable `AUTOPART_STOCK_ENABLE_SCHEDULER`.
+**One poll path:** Coolify `POST /api/internal/stock-sync` performs IMAP acquisition **only** at 09:00 / 12:00 / 15:00 / 18:00 Europe/London. Do not also enable `AUTOPART_STOCK_ENABLE_SCHEDULER`.
 
 **Duplicate SKU policy unchanged:** AB still skips every duplicate instance. Current AlphaOps keeps highest Avail. Do not change AB until live feed data is reviewed.
 
@@ -85,4 +86,4 @@ First activation: Test connection → poll dry-run → review Avail → authoris
 - Duplicate SKUs: all instances skipped. Missing-from-feed: retain previous qty (completeness not proven).
 - Public catalogue/PDP/related products use `customerAvailabilityForStock` once per request (`stockFreshness`).
 - Phase 6 contract: `getVariantStock` / `getSellableQuantity` — no basket.
-- First activation: deploy ≠ sync. Dry run → live sync → then enable Coolify `POST /api/internal/stock-sync` every 15 minutes UTC.
+- First activation: deploy ≠ sync. Dry run → live sync → then enable Coolify `POST /api/internal/stock-sync` (London windows).
