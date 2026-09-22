@@ -194,7 +194,7 @@ export async function importFromImap(input: {
   emails?: InboundStockEmail[];
 }) {
   await getOrCreateImapSettings();
-  const discovered = await discoverEmailFeed({ emails: input.emails });
+  const discovered = await discoverEmailFeed(input.emails ? { emails: input.emails } : undefined);
   if (!discovered.found) {
     return {
       runId: null as string | null,

@@ -265,12 +265,13 @@ function AutopartStockOps() {
             },
           })
             .then((r) => {
-              if (!r.ok) toast.error(r.error);
-              else {
-                toast.success("IMAP settings saved");
-                setImapPassword("");
-                return load();
+              if (!r.ok) {
+                toast.error(r.error);
+                return;
               }
+              toast.success("IMAP settings saved");
+              setImapPassword("");
+              return load();
             })
             .finally(() => setBusy(false));
         }}
