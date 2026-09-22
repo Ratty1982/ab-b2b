@@ -406,6 +406,18 @@ export async function runConfiguredStockSync(input: {
   trigger: "manual" | "schedule" | "api";
   actorUserId?: string | null;
 }) {
+  const config = loadAutopartStockConfig();
+  const { loadImapRuntimeConfig } = await import("@/server/stock/settings");
+  const imap = await loadImapRuntimeConfig();
+  const useEmail = config.source === "email" || (config.source !== "ftp" && config.source !== "http" && config.source !== "file" && Boolean(imap));
+  if (useEmail) {
+    const { importFromImap } = await import("@/server/stock/poll");
+    return importFromImap({
+      dryRun: input.dryRun,
+      trigger: input.trigger,
+      ...(input.actorUserId !== undefined ? { actorUserId: input.actorUserId } : {}),
+    });
+  }
   const feed = await fetchAutopartFeed();
   return applyStockFeed({
     text: feed.text,
@@ -496,8 +508,16 @@ export async function stockOperationsOverview(actorUserId: string) {
     prisma.stockSyncRun.findFirst({ where: { status: "RUNNING" } }),
   ]);
   const freshness = await stockFreshness();
+  const { toPublicImapSettings } = await import("@/server/stock/settings");
+  const imap = await toPublicImapSettings();
+  const base = publicAutopartStatus();
   return {
-    config: publicAutopartStatus(),
+    config: {
+      ...base,
+      configured: imap.configured || base.configured,
+      sourceType: imap.configured || loadAutopartStockConfig().source === "email" ? "email" : base.sourceType,
+    },
+    imap,
     freshness: {
       stale: freshness.stale,
       lastSuccessAt: freshness.lastSuccessAt?.toISOString() ?? null,
@@ -609,3 +629,25 @@ export async function getInternalVariantStock(actorUserId: string, variantId: st
 }
 
 export { autopartConfigured, publicAutopartStatus, loadAutopartStockConfig };
+
+export async function getImapSettings(actorUserId: string) {
+  const { getImapSettingsForActor } = await import("@/server/stock/settings");
+  return getImapSettingsForActor(actorUserId);
+}
+
+export async function saveImapSettings(actorUserId: string, input: Record<string, unknown>) {
+  const { updateImapSettings } = await import("@/server/stock/settings");
+  return updateImapSettings(actorUserId, input);
+}
+
+export async function testImapConnectionAction(actorUserId: string) {
+  await requireStockSync(actorUserId);
+  const { testImapConnectionForOps } = await import("@/server/stock/poll");
+  return testImapConnectionForOps();
+}
+
+export async function pollImapNow(actorUserId: string, dryRun: boolean) {
+  await requireStockSync(actorUserId);
+  const { importFromImap } = await import("@/server/stock/poll");
+  return importFromImap({ dryRun, trigger: "manual", actorUserId });
+}

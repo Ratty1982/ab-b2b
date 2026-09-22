@@ -865,6 +865,52 @@ model StockSyncMutex {
   lockedAt DateTime?
 }
 
+/// Operational IMAP settings. Password is write-only (encrypted or env-backed).
+model AutopartImapSettings {
+  id                         String    @id @default("singleton")
+  enabled                    Boolean   @default(false)
+  inboundEmailAddress        String    @default("")
+  imapHost                   String?
+  imapPort                   Int       @default(993)
+  imapSecure                 Boolean   @default(true)
+  imapUsername               String?
+  imapPasswordEncrypted      String?
+  mailbox                    String    @default("INBOX")
+  allowedSenderEmails        String    @default("")
+  attachmentFilenamePattern  String    @default("231PO3NEW*.txt")
+  pollIntervalMinutes        Int       @default(15)
+  lookbackDays               Int       @default(14)
+  maxMessages                Int       @default(100)
+  autoArchiveProcessedEmails Boolean   @default(false)
+  lastPollAt                 DateTime?
+  lastPollError              String?
+  lastEmailFrom              String?
+  lastEmailSubject           String?
+  lastEmailUid               String?
+  lastAttachmentFilename     String?
+  lastEmailReceivedAt        DateTime?
+  updatedAt                  DateTime  @updatedAt
+}
+
+/// Processed IMAP receipts. Identity is UID + Message-ID, never Message-ID alone.
+model StockEmailReceipt {
+  id              String   @id @default(cuid())
+  receiptKey      String   @unique
+  emailUid        String
+  emailMessageId  String?
+  fromAddress     String
+  subject         String
+  receivedAt      DateTime
+  attachmentFilename String?
+  consumed        Boolean  @default(false)
+  runId           String?
+  createdAt       DateTime @default(now())
+
+  @@index([emailUid])
+  @@index([emailMessageId])
+  @@index([consumed])
+}
+
 // ─── Pricing ─────────────────────────────────────────────────────────────────
 
 model PriceList {

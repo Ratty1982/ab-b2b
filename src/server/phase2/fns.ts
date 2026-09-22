@@ -1190,4 +1190,44 @@ export const runManualStockSyncFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getImapSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await stock.getImapSettings(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const saveImapSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await stock.saveImapSettings(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const testImapConnectionFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await stock.testImapConnectionAction(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const pollImapNowFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { dryRun?: boolean })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await stock.pollImapNow(userId, Boolean(data?.dryRun)) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

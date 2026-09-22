@@ -3,12 +3,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
+import { Field, inputClass } from "@/components/ab/Drawer";
 import {
   getStockSyncRunFn,
   listStockSyncRunsFn,
   listUnmatchedStockSkusFn,
+  pollImapNowFn,
   runManualStockSyncFn,
+  saveImapSettingsFn,
   stockOperationsOverviewFn,
+  testImapConnectionFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -51,6 +55,17 @@ function AutopartStockOps() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"history" | "unmatched" | "issues">("history");
+  const [imapHost, setImapHost] = useState("");
+  const [imapPort, setImapPort] = useState("993");
+  const [imapSecure, setImapSecure] = useState(true);
+  const [imapUser, setImapUser] = useState("");
+  const [imapPassword, setImapPassword] = useState("");
+  const [inbound, setInbound] = useState("");
+  const [mailbox, setMailbox] = useState("INBOX");
+  const [allowed, setAllowed] = useState("");
+  const [pattern, setPattern] = useState("231PO3NEW*.txt");
+  const [pollMinutes, setPollMinutes] = useState("15");
+  const [enabled, setEnabled] = useState(false);
 
   const load = useCallback(async () => {
     const [ov, history, unmatchedRows] = await Promise.all([
@@ -58,11 +73,24 @@ function AutopartStockOps() {
       listStockSyncRunsFn(),
       listUnmatchedStockSkusFn(),
     ]);
-    if (!ov.ok) setError(ov.error);
-    else {
+    if (ov.ok) {
       setError(null);
       setOverview(ov.data);
-    }
+      const imap = ov.data.imap;
+      if (imap) {
+        setEnabled(imap.enabled);
+        setImapHost(imap.imapHost ?? "");
+        setImapPort(String(imap.imapPort ?? 993));
+        setImapSecure(imap.imapSecure);
+        setImapUser(imap.imapUsername ?? "");
+        setInbound(imap.inboundEmailAddress ?? "");
+        setMailbox(imap.mailbox ?? "INBOX");
+        setAllowed((imap.allowedSenderEmails ?? []).join("\n"));
+        setPattern(imap.attachmentFilenamePattern ?? "231PO3NEW*.txt");
+        setPollMinutes(String(imap.pollIntervalMinutes ?? 15));
+        setImapPassword("");
+      }
+    } else setError(ov.error);
     if (history.ok) setRuns(history.data);
     if (unmatchedRows.ok) setUnmatched(unmatchedRows.data);
   }, []);
@@ -128,6 +156,40 @@ function AutopartStockOps() {
                 type="button"
                 disabled={busy}
                 className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
+                onClick={() => {
+                  setBusy(true);
+                  void pollImapNowFn({ data: { dryRun: true } })
+                    .then((r) => {
+                      if (!r.ok) toast.error(r.error);
+                      else toast.success(r.data.errorSummary ? `Poll dry run: ${r.data.errorSummary}` : `Poll dry run ${r.data.status}`);
+                      return load();
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Poll now (dry run)
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
+                onClick={() => {
+                  setBusy(true);
+                  void pollImapNowFn({ data: { dryRun: false } })
+                    .then((r) => {
+                      if (!r.ok) toast.error(r.error);
+                      else toast.success(`Poll live ${r.data.status}`);
+                      return load();
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Poll now (live)
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
                 onClick={() => fileRef.current?.click()}
               >
                 Upload 231PO3NEW
@@ -177,9 +239,124 @@ function AutopartStockOps() {
         <StatusCard label="Stale after" value={`${overview?.freshness.staleHours ?? 36} hours`} />
         <StatusCard
           label="In-process scheduler"
-          value={overview?.config.schedulerEnabled ? "Enabled" : "Coolify HTTP cron"}
+          value={overview?.config.schedulerEnabled ? "Enabled (avoid with Coolify cron)" : "Coolify HTTP cron"}
         />
       </div>
+
+      <form
+        className="mt-6 space-y-3 rounded-lg border border-border bg-surface/30 p-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!canSync) return;
+          setBusy(true);
+          void saveImapSettingsFn({
+            data: {
+              enabled,
+              inboundEmailAddress: inbound,
+              imapHost,
+              imapPort: Number(imapPort) || 993,
+              imapSecure,
+              imapUsername: imapUser,
+              ...(imapPassword.trim() ? { imapPassword: imapPassword.trim() } : {}),
+              mailbox,
+              allowedSenderEmails: allowed,
+              attachmentFilenamePattern: pattern,
+              pollIntervalMinutes: Number(pollMinutes) || 15,
+            },
+          })
+            .then((r) => {
+              if (!r.ok) toast.error(r.error);
+              else {
+                toast.success("IMAP settings saved");
+                setImapPassword("");
+                return load();
+              }
+            })
+            .finally(() => setBusy(false));
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-[13px] font-semibold uppercase tracking-wide">Email / IMAP (production source)</h2>
+          {canSync ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase"
+                onClick={() => {
+                  setBusy(true);
+                  void testImapConnectionFn()
+                    .then((r) => {
+                      if (!r.ok) toast.error(r.error);
+                      else toast.success(r.data.message);
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Test connection
+              </button>
+              <button type="submit" disabled={busy} className="h-9 rounded-md bg-primary px-3 text-[11px] font-semibold uppercase text-primary-foreground">
+                Save IMAP
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <p className="text-[12px] text-steel">
+          Production receives 231PO3NEW from the mailbox. Password is write-only
+          {overview?.imap?.hasImapPassword ? " (saved)" : ""}
+          {overview?.imap?.passwordFromEnv ? " — supplied by environment" : ""}. Coolify should POST /api/internal/stock-sync every 15 minutes UTC; do not also enable the in-process scheduler.
+        </p>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="flex items-center gap-2 text-[13px]">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            Polling enabled
+          </label>
+          <Field label="Inbound mailbox/address" htmlFor="imap-inbound">
+            <input id="imap-inbound" value={inbound} onChange={(e) => setInbound(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="IMAP host" htmlFor="imap-host">
+            <input id="imap-host" value={imapHost} onChange={(e) => setImapHost(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="IMAP port" htmlFor="imap-port">
+            <input id="imap-port" value={imapPort} onChange={(e) => setImapPort(e.target.value)} className={inputClass} />
+          </Field>
+          <label className="flex items-center gap-2 text-[13px]">
+            <input type="checkbox" checked={imapSecure} onChange={(e) => setImapSecure(e.target.checked)} />
+            Secure / TLS
+          </label>
+          <Field label="IMAP username" htmlFor="imap-user">
+            <input id="imap-user" value={imapUser} onChange={(e) => setImapUser(e.target.value)} className={inputClass} autoComplete="off" />
+          </Field>
+          <Field label="Password (write-only)" htmlFor="imap-pass">
+            <input id="imap-pass" type="password" value={imapPassword} onChange={(e) => setImapPassword(e.target.value)} className={inputClass} placeholder={overview?.imap?.hasImapPassword ? "••••••••" : ""} autoComplete="new-password" />
+          </Field>
+          <Field label="Mailbox" htmlFor="imap-box">
+            <input id="imap-box" value={mailbox} onChange={(e) => setMailbox(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="Allowed senders" htmlFor="imap-from">
+            <textarea id="imap-from" value={allowed} onChange={(e) => setAllowed(e.target.value)} className={inputClass} rows={2} placeholder="one address per line" />
+          </Field>
+          <Field label="Attachment pattern" htmlFor="imap-pat">
+            <input id="imap-pat" value={pattern} onChange={(e) => setPattern(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="Poll interval (minutes)" htmlFor="imap-int">
+            <input id="imap-int" value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value)} className={inputClass} />
+          </Field>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <StatusCard label="Last poll" value={formatUtc(overview?.imap?.lastPollAt)} />
+          <StatusCard label="Last poll error" value={overview?.imap?.lastPollError || "—"} />
+          <StatusCard
+            label="Last email"
+            value={
+              overview?.imap?.lastEmailFrom
+                ? `${overview.imap.lastEmailFrom}${overview.imap.lastEmailSubject ? ` · ${overview.imap.lastEmailSubject}` : ""}`
+                : overview?.imap?.lastEmailSubject || "—"
+            }
+          />
+          <StatusCard label="Last attachment" value={overview?.imap?.lastAttachmentFilename || "—"} />
+        </div>
+      </form>
 
       <div className="mt-6 flex gap-2 border-b border-border">
         {(["history", "unmatched", "issues"] as const).map((id) => (

@@ -52,6 +52,6 @@ export default defineConfig({
     viteReact(),
   ],
   ssr: {
-    external: ["@prisma/client", ".prisma/client", "sharp"],
+    external: ["@prisma/client", ".prisma/client", "sharp", "imapflow", "mailparser", "basic-ftp"],
   },
 });

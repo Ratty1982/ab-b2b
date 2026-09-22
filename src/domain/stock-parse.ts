@@ -1,5 +1,23 @@
 import { detectCsvDelimiter, parseCsvRecords } from "@/domain/catalogue-csv";
 import { normalizeStockSku, skuMatchKey } from "@/domain/stock";
+import { is231Po3NewReport, parseNative231Po3New } from "@/domain/stock-parse-native";
+import {
+  MAX_STOCK_FEED_BYTES,
+  parseAvailCell,
+  type ParsedAvail,
+  type StagedStockRow,
+  type StockParseFailure,
+  type StockParseSuccess,
+} from "@/domain/stock-parse-types";
+
+export {
+  MAX_STOCK_FEED_BYTES,
+  parseAvailCell,
+  type ParsedAvail,
+  type StagedStockRow,
+  type StockParseFailure,
+  type StockParseSuccess,
+};
 
 export const STOCK_SKU_HEADERS = [
   "sku",
@@ -19,50 +37,14 @@ export const STOCK_AVAIL_HEADERS = ["avail", "available", "availableqty", "qtyav
 
 export const STOCK_DESC_HEADERS = ["description", "desc", "name", "product", "title"];
 
-export const MAX_STOCK_FEED_BYTES = 15_000_000;
-
-export type ParsedAvail =
-  | { ok: true; value: number; raw: string }
-  | { ok: false; raw: string; reason: string };
-
-export type StagedStockRow = {
-  line: number;
-  sku: string;
-  matchKey: string;
-  description: string | null;
-  availRaw: string;
-  avail: ParsedAvail;
-};
-
-export type StockParseFailure = {
-  code: "EMPTY" | "TOO_LARGE" | "MISSING_SKU_HEADER" | "MISSING_AVAIL_HEADER";
-  message: string;
-};
-
-export type StockParseSuccess = {
-  delimiter: string;
-  skuHeader: string;
-  availHeader: string;
-  rows: StagedStockRow[];
-};
-
 export function headerKey(value: string): string {
   return value.trim().toLowerCase().replace(/[\s._-]+/g, "");
 }
 
-export function parseAvailCell(raw: string): ParsedAvail {
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: false, raw, reason: "blank Avail" };
-  const cleaned = trimmed.replace(/,/g, "");
-  if (!/^-?\d+(\.0+)?$/.test(cleaned)) {
-    return { ok: false, raw, reason: "non-numeric or non-integer Avail" };
-  }
-  const value = Number(cleaned);
-  if (!Number.isFinite(value)) return { ok: false, raw, reason: "non-numeric Avail" };
-  return { ok: true, value, raw: trimmed };
-}
-
 export function parseAutopart231Po3New(text: string, byteLength?: number): StockParseSuccess | StockParseFailure {
+  if (is231Po3NewReport(text)) {
+    return parseNative231Po3New(text, byteLength);
+  }
   if (byteLength != null && byteLength > MAX_STOCK_FEED_BYTES) {
     return { code: "TOO_LARGE", message: `Feed exceeds ${MAX_STOCK_FEED_BYTES} bytes` };
   }

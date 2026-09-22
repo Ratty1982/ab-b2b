@@ -1,5 +1,5 @@
 export type AutopartStockConfig = {
-  source: "none" | "ftp" | "http" | "file";
+  source: "none" | "ftp" | "http" | "file" | "email";
   ftpHost: string | null;
   ftpPort: number;
   ftpUser: string | null;
@@ -28,9 +28,11 @@ function envInt(name: string, fallback: number): number {
 }
 
 export function loadAutopartStockConfig(): AutopartStockConfig {
-  const sourceRaw = (env("AUTOPART_STOCK_SOURCE") ?? "none").toLowerCase();
+  const sourceRaw = (env("AUTOPART_STOCK_SOURCE") ?? "").toLowerCase();
   const source: AutopartStockConfig["source"] =
-    sourceRaw === "ftp" || sourceRaw === "http" || sourceRaw === "file" ? sourceRaw : "none";
+    sourceRaw === "ftp" || sourceRaw === "http" || sourceRaw === "file" || sourceRaw === "email" || sourceRaw === "none"
+      ? (sourceRaw as AutopartStockConfig["source"])
+      : "email";
   return {
     source,
     ftpHost: env("AUTOPART_STOCK_FTP_HOST"),
@@ -53,6 +55,7 @@ export function autopartConfigured(config = loadAutopartStockConfig()): boolean 
   if (config.source === "http") return Boolean(config.httpUrl);
   if (config.source === "file") return Boolean(config.filePath);
   if (config.source === "ftp") return Boolean(config.ftpHost && config.ftpUser && config.ftpPasswordSet);
+  if (config.source === "email") return Boolean(env("AUTOPART_STOCK_IMAP_HOST") && env("AUTOPART_STOCK_IMAP_USER") && env("AUTOPART_STOCK_IMAP_PASSWORD"));
   return false;
 }
 
