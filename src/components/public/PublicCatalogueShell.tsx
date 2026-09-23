@@ -8,6 +8,7 @@ import type { PublicProductCard } from "@/server/catalogue/products";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Link } from "@tanstack/react-router";
+import type { ClientSession } from "@/server/auth/session";
 
 /** Shared listing + product-detail column template. Do not invent a second width system. */
 export const CATALOGUE_SHELL_GRID_CLASS =
@@ -71,15 +72,17 @@ export function PublicCatalogueLayout({
   context,
   breadcrumbs,
   children,
+  requestSession,
 }: {
   brands: Array<{ slug: string; name: string }>;
   categories: PublicCategoryNavNode[];
   context: CatalogueContext;
   breadcrumbs?: Array<{ label: string; to?: string | undefined }>;
   children: ReactNode;
+  requestSession?: ClientSession;
 }) {
   return (
-    <PublicLayout>
+    <PublicLayout {...(requestSession ? { requestSession } : {})}>
       <div className={CATALOGUE_SHELL_GRID_CLASS} data-catalogue-shell="layout">
         <aside className={CATALOGUE_SIDEBAR_ASIDE_CLASS} data-catalogue-sidebar="desktop">
           <CatalogueSidebar brands={brands} categories={categories} context={context} />
@@ -104,6 +107,7 @@ export function PublicCatalogueShell({
   context,
   searchAction,
   leading,
+  requestSession,
 }: {
   data: PublicCatalogueData;
   heading: string;
@@ -112,6 +116,7 @@ export function PublicCatalogueShell({
   context: CatalogueContext;
   searchAction: string;
   leading?: ReactNode;
+  requestSession?: ClientSession;
 }) {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [query, setQuery] = useState(context.q ?? "");
@@ -121,7 +126,7 @@ export function PublicCatalogueShell({
     : "No products match these filters.";
 
   return (
-    <PublicLayout>
+    <PublicLayout {...(requestSession ? { requestSession } : {})}>
       <div className="border-b border-border/60">
         <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-10">
           <Breadcrumbs items={breadcrumbs} />

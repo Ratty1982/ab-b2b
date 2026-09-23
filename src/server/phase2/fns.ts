@@ -4,6 +4,7 @@ import { auth } from "@/infra/auth";
 import { formatZodError } from "@/domain/cms";
 import type { HomepageJson } from "@/domain/homepage";
 import { AuthError } from "@/server/rbac/guards";
+import { resolveOptionalRequestUserId } from "@/server/auth/request-session";
 import * as companies from "@/server/companies/service";
 import * as applications from "@/server/applications/service";
 import * as cms from "@/server/cms/service";
@@ -27,9 +28,7 @@ async function requireUserId(): Promise<string> {
 }
 
 async function optionalUserId(): Promise<string | null> {
-  const headers = getRequestHeaders();
-  const session = await auth.api.getSession({ headers });
-  return session?.user?.id ?? null;
+  return resolveOptionalRequestUserId();
 }
 
 function toError(error: unknown): { ok: false; error: string; code?: string } {

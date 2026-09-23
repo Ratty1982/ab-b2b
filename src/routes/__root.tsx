@@ -12,7 +12,6 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportClientError } from "../lib/error-reporting";
 import { Toaster } from "@/components/ui/sonner";
-import { guestSession } from "@/lib/session";
 import { getClientSession, type ClientSession } from "@/server/auth/session";
 
 function NotFoundComponent() {
@@ -90,12 +89,11 @@ export const Route = createRootRouteWithContext<RootRouterContext>()({
     "Cache-Control": "private, no-store",
   }),
   beforeLoad: async (): Promise<{ session: ClientSession }> => {
-    try {
-      const session = await getClientSession();
-      return { session };
-    } catch {
-      return { session: guestSession };
-    }
+    // Same createServerFn + getRequestHeaders path as product pricing.
+    // Do not swallow failures into a silent guest — that caused YOUR PRICE
+    // (loader cookies worked) while the public header stayed anonymous.
+    const session = await getClientSession();
+    return { session };
   },
   head: () => ({
     meta: [

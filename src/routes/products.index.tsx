@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
+import { getClientSession } from "@/server/auth/session";
 import { listPublicCatalogueFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/products/")({
@@ -12,18 +13,37 @@ export const Route = createFileRoute("/products/")({
   },
   loader: async ({ location }) => {
     const search = location.search as { brand?: string; q?: string; page?: number };
-    const result = await listPublicCatalogueFn({
-      data: { brandSlug: search.brand, q: search.q, page: search.page },
-    });
+    const [requestSession, result] = await Promise.all([
+      getClientSession(),
+      listPublicCatalogueFn({
+        data: { brandSlug: search.brand, q: search.q, page: search.page },
+      }),
+    ]);
     if (!result.ok) {
-      return { items: [], total: 0, brands: [], categories: [], category: null, page: 1, pageSize: 24, error: result.error };
+      return {
+        items: [],
+        total: 0,
+        brands: [],
+        categories: [],
+        category: null,
+        page: 1,
+        pageSize: 24,
+        error: result.error,
+        requestSession,
+      };
     }
-    return { ...result.data, error: null };
+    return { ...result.data, error: null, requestSession };
   },
+  headers: () => ({
+    "Cache-Control": "private, no-store",
+  }),
   head: () => ({
     meta: [
       { title: "Trade Product Catalogue — Automotive Brands" },
-      { name: "description", content: "Browse the Automotive Brands catalogue. Trade customers sign in to see account pricing." },
+      {
+        name: "description",
+        content: "Browse the Automotive Brands catalogue. Trade customers sign in to see account pricing.",
+      },
     ],
   }),
   component: Catalogue,
@@ -40,6 +60,7 @@ function Catalogue() {
       breadcrumbs={[{ label: "Home", to: "/" }, { label: "Products" }]}
       context={{ brandSlug: search.brand, q: search.q }}
       searchAction="/products"
+      requestSession={data.requestSession}
     />
   );
 }

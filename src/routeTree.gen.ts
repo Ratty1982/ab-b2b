@@ -31,6 +31,7 @@ import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as AdminRolesRouteImport } from './routes/admin.roles'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
+import { Route as ApiBuildRouteImport } from './routes/api/build'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
@@ -183,6 +184,11 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
   getParentRoute: () => AdminRoute,
+} as any)
+const ApiBuildRoute = ApiBuildRouteImport.update({
+  id: '/api/build',
+  path: '/api/build',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
   id: '/brands/',
@@ -418,6 +424,7 @@ export interface FileRoutesByFullPath {
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -477,6 +484,7 @@ export interface FileRoutesByTo {
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -543,6 +551,7 @@ export interface FileRoutesById {
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
@@ -611,6 +620,7 @@ export interface FileRouteTypes {
     | '/admin/products'
     | '/admin/roles'
     | '/admin/settings'
+    | '/api/build'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -670,6 +680,7 @@ export interface FileRouteTypes {
     | '/admin/categories'
     | '/admin/roles'
     | '/admin/settings'
+    | '/api/build'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -735,6 +746,7 @@ export interface FileRouteTypes {
     | '/admin/products'
     | '/admin/roles'
     | '/admin/settings'
+    | '/api/build'
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
@@ -795,6 +807,7 @@ export interface RootRouteChildren {
   SalesRoute: typeof SalesRouteWithChildren
   TradeSolutionsRoute: typeof TradeSolutionsRoute
   WhyAutomotiveBrandsRoute: typeof WhyAutomotiveBrandsRoute
+  ApiBuildRoute: typeof ApiBuildRoute
   BrandsSlugRoute: typeof BrandsSlugRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
   QuoteIdRoute: typeof QuoteIdRoute
@@ -961,6 +974,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AdminSettingsRouteImport
       parentRoute: typeof AdminRoute
+    }
+    '/api/build': {
+      id: '/api/build'
+      path: '/api/build'
+      fullPath: '/api/build'
+      preLoaderRoute: typeof ApiBuildRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/brands/': {
       id: '/brands/'
@@ -1437,6 +1457,7 @@ const rootRouteChildren: RootRouteChildren = {
   SalesRoute: SalesRouteWithChildren,
   TradeSolutionsRoute: TradeSolutionsRoute,
   WhyAutomotiveBrandsRoute: WhyAutomotiveBrandsRoute,
+  ApiBuildRoute: ApiBuildRoute,
   BrandsSlugRoute: BrandsSlugRoute,
   ProductsSkuRoute: ProductsSkuRoute,
   QuoteIdRoute: QuoteIdRoute,

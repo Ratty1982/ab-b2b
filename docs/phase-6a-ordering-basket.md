@@ -88,27 +88,40 @@ Lines are **not** silently deleted.
 ## Public session consistency (Phase 6A fix)
 
 One Better Auth session drives **pricing, public header, Trade Ordering, basket,
-and portal**. The root route `beforeLoad` calls `getClientSession()` and sets
-`Cache-Control: private, no-store` so authenticated chrome is never reused from
-an anonymous cache.
+and portal**.
 
-- Anonymous: Trade Login + Open a Trade Account; no Basket; no Add to Basket;
-  no YOUR PRICE.
-- Authenticated trade: My Account + Basket (+ badge) + Log out; YOUR PRICE from
-  Phase 4; ordering controls when the product is orderable.
-- Authenticated but product not orderable: header stays logged-in; PDP shows the
-  product-level reason (e.g. insufficient full case) — not anonymous CTAs.
+### Root cause of the production regression after 6d37871
+
+- Product pricing called `optionalUserId()` / `getRequestHeaders()` inside the
+  product loader `createServerFn` — cookies worked → YOUR PRICE.
+- Public chrome read root router context from `beforeLoad` → `getClientSession`,
+  but failures were swallowed to guest, and catalogue pages did not pass the
+  loader-resolved session into the shell. UI unit tests only mocked
+  `useSession`, so they could not fail for the real split.
+- Header also treated “not TRADE” the same as anonymous for login CTAs.
+
+### Fix
+
+- Shared `resolveRequestClientSession` / `resolveOptionalRequestUserId`
+  (same request headers as pricing).
+- PDP/catalogue loaders call `getClientSession()` **alongside** product data and
+  wrap the public shell in `RequestSessionProvider`.
+- Header: any `signedIn` user sees account chrome (not Trade Login). Basket
+  still requires TRADE + company + `orders.view`.
+- `/api/build` returns deploy SHA (`SOURCE_COMMIT` / `GIT_SHA`) for Coolify checks.
+- `Cache-Control: private, no-store` on root + catalogue/PDP routes.
 
 ### Manual production check (Wayne)
 
+0. Hit `/api/build` and confirm `sha` matches the GitHub commit you deployed.
 1. Log out.
 2. Open PMML500SC40 (or another case-ordered SKU).
 3. Confirm anonymous header (Trade Login / Open a Trade Account).
-4. Confirm no Add to Basket.
+4. Confirm no Add to Basket / RRP path.
 5. Log in with a valid trade customer.
-6. Return to the same PDP.
+6. Return to the same PDP (hard refresh once).
 7. Confirm Trade Login / Open Account are gone.
-8. Confirm Basket appears.
+8. Confirm Basket appears (needs `orders.view`).
 9. Confirm My Account appears.
 10. Confirm YOUR PRICE.
 11. Confirm case quantity controls (when stock allows a full case).

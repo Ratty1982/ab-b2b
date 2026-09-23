@@ -24,6 +24,10 @@ import type { PublicProductCard } from "@/server/catalogue/products";
 
 vi.mock("@/lib/session", () => ({
   useSession: () => ({ signedIn: false, loading: false, refresh: async () => undefined }),
+  guestSession: { signedIn: false },
+  canViewBasketSession: () => false,
+  isTradeCustomerSession: () => false,
+  RequestSessionProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("@tanstack/react-router", () => ({

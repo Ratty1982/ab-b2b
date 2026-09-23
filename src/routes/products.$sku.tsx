@@ -1,29 +1,34 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { PublicCatalogueLayout } from "@/components/public/PublicCatalogueShell";
 import { ProductDetailView } from "@/components/public/ProductDetail";
+import { getClientSession } from "@/server/auth/session";
 import { getProductOrderingPanelFn, getPublicProductFn } from "@/server/phase2/fns";
 import type { ProductOrderingPanelView } from "@/components/public/ProductTradeOrdering";
+import { isTradeCustomerSession } from "@/lib/session-guards";
 
 export const Route = createFileRoute("/products/$sku")({
-  loader: async ({ params, context }) => {
-    const result = await getPublicProductFn({ data: { slug: params.sku } });
+  loader: async ({ params }) => {
+    // Resolve session with the SAME createServerFn / cookie path as pricing.
+    // Do not rely solely on root beforeLoad for public chrome.
+    const [requestSession, result] = await Promise.all([
+      getClientSession(),
+      getPublicProductFn({ data: { slug: params.sku } }),
+    ]);
     if (!result.ok || !result.data) throw notFound();
 
     let orderingPanel: ProductOrderingPanelView | null = null;
-    const session = context.session;
-    const trade =
-      session?.signedIn &&
-      session.user.actorType === "TRADE" &&
-      Boolean(result.data.variantId);
-    if (trade && result.data.variantId) {
+    if (isTradeCustomerSession(requestSession) && result.data.variantId) {
       const panel = await getProductOrderingPanelFn({
         data: { variantId: result.data.variantId },
       });
       if (panel.ok) orderingPanel = panel.data;
     }
 
-    return { ...result.data, orderingPanel };
+    return { ...result.data, orderingPanel, requestSession };
   },
+  headers: () => ({
+    "Cache-Control": "private, no-store",
+  }),
   head: ({ loaderData }) => {
     if (!loaderData) {
       return { meta: [{ title: "Product unavailable — Automotive Brands" }, { name: "robots", content: "noindex" }] };
@@ -54,6 +59,7 @@ function ProductPage() {
         { label: "Products", to: "/products" },
         { label: data.card.name },
       ]}
+      requestSession={data.requestSession}
     >
       <ProductDetailView data={data} />
     </PublicCatalogueLayout>

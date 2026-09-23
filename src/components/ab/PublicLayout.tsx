@@ -4,9 +4,8 @@ import { Menu, Search, X } from "lucide-react";
 import { Logo } from "./Logo";
 import { BasketNavBadge } from "./BasketNavBadge";
 import { cn } from "@/lib/utils";
-import { useSession } from "@/lib/session";
-import { ROUTES } from "@/lib/app-nav";
-import { signOutCurrent } from "@/server/auth/session";
+import { canViewBasketSession, RequestSessionProvider, useSession } from "@/lib/session";
+import { resolvePostLoginPath, signOutCurrent, type ClientSession } from "@/server/auth/session";
 
 const nav = [
   { label: "Products", to: "/products" },
@@ -23,7 +22,17 @@ export function PublicHeader() {
   const [signingOut, setSigningOut] = useState(false);
   const session = useSession();
   const router = useRouter();
-  const tradeSignedIn = Boolean(session.signedIn && session.user?.actorType === "TRADE");
+  // Authentication and orderability are separate. Any signed-in user must not
+  // see Trade Login — even if they cannot order yet.
+  const signedIn = session.signedIn;
+  const showBasket = canViewBasketSession(session);
+  const accountTo = session.signedIn ? resolvePostLoginPath(session) : "/login";
+  const accountLabel =
+    session.signedIn && session.user.actorType === "TRADE"
+      ? "My Account"
+      : session.signedIn
+        ? "Account"
+        : null;
 
   async function onSignOut() {
     if (signingOut) return;
@@ -65,14 +74,14 @@ export function PublicHeader() {
               <Search className="size-3.5 shrink-0" aria-hidden />
               <span className="truncate">Search product, SKU or brand…</span>
             </Link>
-            {tradeSignedIn ? <BasketNavBadge className="hidden sm:inline-flex" /> : null}
-            {tradeSignedIn ? (
+            {showBasket ? <BasketNavBadge className="hidden sm:inline-flex" /> : null}
+            {signedIn && accountLabel ? (
               <Link
-                to={ROUTES.portal}
+                to={accountTo}
                 data-public-header="account"
                 className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
               >
-                My Account
+                {accountLabel}
               </Link>
             ) : (
               <Link
@@ -83,7 +92,7 @@ export function PublicHeader() {
                 Trade Login
               </Link>
             )}
-            {!tradeSignedIn ? (
+            {!signedIn ? (
               <Link
                 to="/register"
                 data-public-header="open-account"
@@ -128,19 +137,23 @@ export function PublicHeader() {
                 {item.label}
               </Link>
             ))}
-            {tradeSignedIn ? (
+            {signedIn ? (
               <>
-                <div className="px-3 py-2 sm:hidden">
-                  <BasketNavBadge className="w-full justify-center" />
-                </div>
-                <Link
-                  to={ROUTES.portal}
-                  onClick={() => setOpen(false)}
-                  data-public-header="mobile-account"
-                  className="rounded-md px-3 py-2 text-sm font-semibold"
-                >
-                  My Account
-                </Link>
+                {showBasket ? (
+                  <div className="px-3 py-2 sm:hidden">
+                    <BasketNavBadge className="w-full justify-center" />
+                  </div>
+                ) : null}
+                {accountLabel ? (
+                  <Link
+                    to={accountTo}
+                    onClick={() => setOpen(false)}
+                    data-public-header="mobile-account"
+                    className="rounded-md px-3 py-2 text-sm font-semibold"
+                  >
+                    {accountLabel}
+                  </Link>
+                ) : null}
                 <button
                   type="button"
                   data-public-header="mobile-logout"
@@ -199,17 +212,22 @@ export function PublicFooter() {
 export function PublicLayout({
   children,
   kinetic = false,
+  requestSession,
 }: {
   children: React.ReactNode;
   kinetic?: boolean;
+  /** Loader-resolved session from the same request cookies as pricing. */
+  requestSession?: ClientSession;
 }) {
-  return (
+  const body = (
     <div className="flex min-h-screen flex-col bg-ink text-foreground">
       <PublicHeader />
       <main className={cn("flex-1", kinetic && "kinetic")}>{children}</main>
       <PublicFooter />
     </div>
   );
+  if (!requestSession) return body;
+  return <RequestSessionProvider session={requestSession}>{body}</RequestSessionProvider>;
 }
 
 export function PageHeader({

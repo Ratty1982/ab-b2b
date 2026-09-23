@@ -1,42 +1,62 @@
 /**
  * Client session helpers.
  * Authoritative auth is server-side (HttpOnly cookies + RBAC guards).
- * This module exposes the same server session for public chrome and portal UI.
  *
- * Session is loaded once per navigation in the root route `beforeLoad`
- * (see `__root.tsx`) so SSR and hydration share one actor — no guest flash.
+ * Prefer:
+ * 1. Loader-provided request session (same createServerFn / cookie path as pricing)
+ * 2. Root route beforeLoad session
+ *
+ * Never invent a second cookie or localStorage auth state.
  */
-import { useCallback } from "react";
+import { createContext, useCallback, useContext, type ReactNode } from "react";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 
 import type { ClientSession } from "@/server/auth/session";
 
 export type { ClientSession } from "@/server/auth/session";
+export { canViewBasketSession, isTradeCustomerSession } from "@/lib/session-guards";
 
 export const guestSession: ClientSession = { signedIn: false };
 
 const rootRouteApi = getRouteApi("__root__");
 
+const RequestSessionOverrideContext = createContext<ClientSession | null>(null);
+
+/**
+ * Catalogue / PDP loaders resolve the session with the same request cookies as
+ * pricing, then wrap the public shell in this provider so header/ordering cannot
+ * disagree with YOUR PRICE for the same request.
+ */
+export function RequestSessionProvider({
+  session,
+  children,
+}: {
+  session: ClientSession;
+  children: ReactNode;
+}) {
+  return (
+    <RequestSessionOverrideContext.Provider value={session}>{children}</RequestSessionOverrideContext.Provider>
+  );
+}
+
 /**
  * Subscribe to the server session for UI (prices, chrome, ordering).
  * Route protection must use beforeLoad + server guards — not this hook alone.
- *
- * Reads the root route context session produced by `getClientSession` on the
- * server. After login/logout call `refresh()` (router.invalidate) so chrome
- * updates without a second auth cookie or client-only parser.
  */
 export function useSession(): ClientSession & {
   loading: boolean;
   refresh: () => Promise<void>;
 } {
   const router = useRouter();
-  const { session } = rootRouteApi.useRouteContext();
+  const override = useContext(RequestSessionOverrideContext);
+  const rootCtx = rootRouteApi.useRouteContext();
+  const session = override ?? rootCtx.session ?? guestSession;
 
   const refresh = useCallback(async () => {
     await router.invalidate();
   }, [router]);
 
-  return { ...(session ?? guestSession), loading: false, refresh };
+  return { ...session, loading: false, refresh };
 }
 
 /** @deprecated Prototype localStorage sign-in removed — use signInWithPassword server fn */

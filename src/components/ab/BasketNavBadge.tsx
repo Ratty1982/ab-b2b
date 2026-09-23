@@ -3,20 +3,17 @@ import { Link } from "@tanstack/react-router";
 import { ShoppingCart } from "lucide-react";
 import { getBasketSummaryFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
-import { useSession } from "@/lib/session";
+import { useSession, canViewBasketSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 /** Compact basket link with line count for the portal chrome. */
 export function BasketNavBadge({ className }: { className?: string }) {
   const session = useSession();
   const [lineCount, setLineCount] = useState(0);
+  const show = canViewBasketSession(session);
 
   useEffect(() => {
-    if (!session.signedIn || session.user?.actorType !== "TRADE") {
-      setLineCount(0);
-      return;
-    }
-    if (!session.user.navPermissions?.includes("orders.view")) {
+    if (!show) {
       setLineCount(0);
       return;
     }
@@ -36,14 +33,9 @@ export function BasketNavBadge({ className }: { className?: string }) {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
-  }, [
-    session.signedIn,
-    session.signedIn ? session.user?.actorType : null,
-    session.signedIn ? session.user?.navPermissions?.join(",") : "",
-  ]);
+  }, [show, session.signedIn ? session.user.id : null]);
 
-  if (!session.signedIn || session.user?.actorType !== "TRADE") return null;
-  if (!session.user.navPermissions?.includes("orders.view")) return null;
+  if (!show) return null;
 
   return (
     <Link

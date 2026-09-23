@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
+import { getClientSession } from "@/server/auth/session";
 import { getPublicBrandFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/brands/$slug")({
@@ -12,12 +13,18 @@ export const Route = createFileRoute("/brands/$slug")({
   },
   loader: async ({ params, location }) => {
     const search = location.search as { q?: string; page?: number; category?: string };
-    const result = await getPublicBrandFn({
-      data: { slug: params.slug, q: search.q, page: search.page, categorySlug: search.category },
-    });
+    const [requestSession, result] = await Promise.all([
+      getClientSession(),
+      getPublicBrandFn({
+        data: { slug: params.slug, q: search.q, page: search.page, categorySlug: search.category },
+      }),
+    ]);
     if (!result.ok || !result.data) throw notFound();
-    return result.data;
+    return { ...result.data, requestSession };
   },
+  headers: () => ({
+    "Cache-Control": "private, no-store",
+  }),
   head: ({ loaderData }) => ({
     meta: [
       { title: `${loaderData?.name ?? "Brand"} — Automotive Brands` },
@@ -46,6 +53,7 @@ function BrandPage() {
       ]}
       context={{ brandSlug: brand.slug, q: search.q, brandRoute: true, categorySlug: search.category }}
       searchAction={`/brands/${brand.slug}`}
+      requestSession={brand.requestSession}
     />
   );
 }

@@ -5,7 +5,21 @@ import { ProductDetailView, type PublicProductDetail } from "@/components/public
 import type { PublicProductCard } from "@/server/catalogue/products";
 
 vi.mock("@/lib/session", () => ({
-  useSession: () => ({ signedIn: true, loading: false, refresh: async () => undefined }),
+  useSession: () => ({
+    signedIn: true,
+    loading: false,
+    refresh: async () => undefined,
+    user: {
+      id: "u1",
+      actorType: "TRADE",
+      companyId: "c1",
+      navPermissions: ["orders.view", "orders.create"],
+    },
+  }),
+  guestSession: { signedIn: false },
+  canViewBasketSession: () => true,
+  isTradeCustomerSession: () => true,
+  RequestSessionProvider: ({ children }: { children: unknown }) => children,
 }));
 
 vi.mock("@tanstack/react-router", () => ({

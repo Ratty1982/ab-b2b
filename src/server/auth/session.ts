@@ -4,113 +4,27 @@ import { z } from "zod";
 
 import { auth } from "@/infra/auth";
 import { recordAuditEvent } from "@/server/audit/record";
-import { loadAccessProfile } from "@/server/rbac/access";
-import { getActiveActingContext } from "@/server/acting-context";
-import type { PermissionKey } from "@/domain/permissions";
-import type { TradeAccessKey } from "@/domain/permissions";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/redirects";
+import {
+  clientMetaFromRequestHeaders,
+  resolveRequestClientSession,
+  type ClientSession,
+  type SafeSession,
+  type SafeSessionUser,
+} from "@/server/auth/request-session";
 
 export { resolvePostLoginPath, safeReturnPath };
-
-/** Safe session payload for the client — no hashes, tokens, or full permission dumps by default */
-export interface SafeSessionUser {
-  id: string;
-  email: string;
-  name: string;
-  actorType: "INTERNAL" | "TRADE";
-  systemRoles: string[];
-  /** Primary display role label for AppShell */
-  displayRole: string;
-  companyId: string | null;
-  companyName: string | null;
-  accountNumber: string | null;
-  tradeRole: TradeAccessKey | null;
-  /** Permission keys needed for navigation gating (not a security boundary) */
-  navPermissions: PermissionKey[];
-  actingFor: {
-    companyId: string;
-    companyName: string;
-    accountNumber: string | null;
-  } | null;
-}
-
-export interface SafeSession {
-  signedIn: true;
-  user: SafeSessionUser;
-}
-
-export type ClientSession = SafeSession | { signedIn: false };
-
-function clientMeta(headers: Headers) {
-  return {
-    ipAddress:
-      headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null,
-    userAgent: headers.get("user-agent"),
-  };
-}
-
-function pickDisplayRole(
-  profile: NonNullable<Awaited<ReturnType<typeof loadAccessProfile>>>,
-): string {
-  if (profile.systemRoles.includes("SUPER_ADMIN")) return "Super Admin";
-  if (profile.systemRoles.includes("MANAGEMENT")) return "Management";
-  if (profile.systemRoles.includes("SALES_MANAGER")) return "Sales Manager";
-  if (profile.systemRoles.includes("SALES_REPRESENTATIVE")) return "Sales Representative";
-  if (profile.systemRoles.includes("CUSTOMER_SERVICE")) return "Customer Service";
-  if (profile.systemRoles.includes("ACCOUNTS")) return "Accounts";
-  if (profile.systemRoles.includes("MARKETING")) return "Marketing";
-
-  const membership =
-    profile.companyMemberships.find((m) => m.isDefault) ?? profile.companyMemberships[0];
-  if (membership) {
-    const roleLabel = membership.role.replaceAll("_", " ");
-    return `${roleLabel} · ${membership.companyName}`;
-  }
-  return "User";
-}
-
-async function buildSafeSession(userId: string): Promise<SafeSession | null> {
-  const profile = await loadAccessProfile(userId);
-  if (!profile) return null;
-
-  const membership =
-    profile.companyMemberships.find((m) => m.isDefault) ?? profile.companyMemberships[0];
-
-  const acting = await getActiveActingContext(userId);
-
-  return {
-    signedIn: true,
-    user: {
-      id: profile.userId,
-      email: profile.email,
-      name: profile.name ?? profile.email,
-      actorType: profile.actorType,
-      systemRoles: profile.systemRoles,
-      displayRole: pickDisplayRole(profile),
-      companyId: membership?.companyId ?? null,
-      companyName: membership?.companyName ?? null,
-      accountNumber: membership?.accountNumber ?? null,
-      tradeRole: membership?.role ?? null,
-      navPermissions: [...profile.permissions],
-      actingFor: acting
-        ? {
-            companyId: acting.onBehalfOfCompany.id,
-            companyName: acting.onBehalfOfCompany.name,
-            accountNumber: acting.onBehalfOfCompany.accountNumber,
-          }
-        : null,
-    },
-  };
-}
+export type { ClientSession, SafeSession, SafeSessionUser };
+export {
+  buildSafeSession,
+  guestClientSession,
+  resolveOptionalRequestUserId,
+  resolveRequestClientSession,
+  sessionDiagnostics,
+} from "@/server/auth/request-session";
 
 export const getClientSession = createServerFn({ method: "GET" }).handler(
-  async (): Promise<ClientSession> => {
-    const headers = getRequestHeaders();
-    const session = await auth.api.getSession({ headers });
-    if (!session?.user?.id) return { signedIn: false };
-    const safe = await buildSafeSession(session.user.id);
-    return safe ?? { signedIn: false };
-  },
+  async (): Promise<ClientSession> => resolveRequestClientSession(),
 );
 
 const loginSchema = z.object({
@@ -122,7 +36,7 @@ export const signInWithPassword = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => loginSchema.parse(data))
   .handler(async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
     const headers = getRequestHeaders();
-    const meta = clientMeta(headers);
+    const meta = clientMetaFromRequestHeaders(headers);
 
     try {
       const result = await auth.api.signInEmail({
@@ -160,7 +74,7 @@ export const signInWithPassword = createServerFn({ method: "POST" })
 
 export const signOutCurrent = createServerFn({ method: "POST" }).handler(async () => {
   const headers = getRequestHeaders();
-  const meta = clientMeta(headers);
+  const meta = clientMetaFromRequestHeaders(headers);
   const session = await auth.api.getSession({ headers });
   const userId = session?.user?.id ?? null;
 

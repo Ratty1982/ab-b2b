@@ -8,6 +8,7 @@ import {
   previewProductOrderQuantityFn,
 } from "@/server/phase2/fns";
 import { useSession } from "@/lib/session";
+import { isTradeCustomerSession } from "@/lib/session-guards";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
@@ -67,8 +68,7 @@ function ProductTradeOrderingCard({
   initialPanel?: ProductOrderingPanelView | null;
 }) {
   const session = useSession();
-  const tradeActor =
-    session.signedIn && session.user?.actorType === "TRADE" ? session.user : null;
+  const tradeActor = isTradeCustomerSession(session) && session.signedIn ? session.user : null;
   const [panel, setPanel] = useState<ProductOrderingPanelView | null>(
     tradeActor ? (initialPanel ?? null) : null,
   );
