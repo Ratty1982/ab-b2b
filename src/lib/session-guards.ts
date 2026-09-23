@@ -9,17 +9,22 @@ export function isTradeCustomerSession(session: ClientSession): session is Signe
   return session.user.actorType === "TRADE" && Boolean(session.user.companyId);
 }
 
+function adminTradeTestOrderingEnabled(session: SignedInSession): boolean {
+  if (session.user.actorType !== "INTERNAL") return false;
+  const mode = session.user.tradeTestPricingMode;
+  if (mode === "BASE_TRADE") return true;
+  return mode === "PRICE_LIST" && Boolean(session.user.tradeTestPriceListId);
+}
+
 /**
  * Legitimate ordering context for basket chrome / PDP controls.
  * - TRADE + CompanyUser membership, or
- * - INTERNAL with a persisted Trade Test Level (PriceList).
+ * - INTERNAL with Trade Test mode BASE_TRADE or PRICE_LIST.
  */
 export function hasOrderingCompanyContext(session: ClientSession): boolean {
   if (!session.signedIn) return false;
   if (isTradeCustomerSession(session)) return true;
-  return (
-    session.user.actorType === "INTERNAL" && Boolean(session.user.tradeTestPriceListId)
-  );
+  return adminTradeTestOrderingEnabled(session);
 }
 
 export function canViewBasketSession(session: ClientSession): boolean {
@@ -31,7 +36,7 @@ export function canMutateBasketSession(session: ClientSession): boolean {
   if (isTradeCustomerSession(session)) {
     return session.user.navPermissions.includes("orders.create");
   }
-  if (session.user.actorType === "INTERNAL" && session.user.tradeTestPriceListId) {
+  if (adminTradeTestOrderingEnabled(session)) {
     return (
       session.user.navPermissions.includes("admin.access") ||
       session.user.navPermissions.includes("pricing.view") ||

@@ -18,13 +18,19 @@ vi.mock("@/lib/session", () => ({
     Boolean(
       session.signedIn &&
         ((session.user?.actorType === "TRADE" && session.user.companyId) ||
-          (session.user?.actorType === "INTERNAL" && session.user.tradeTestPriceListId)),
+          (session.user?.actorType === "INTERNAL" &&
+            (session.user.tradeTestPricingMode === "BASE_TRADE" ||
+              (session.user.tradeTestPricingMode === "PRICE_LIST" &&
+                session.user.tradeTestPriceListId)))),
     ),
   hasOrderingCompanyContext: (session: ClientSession) =>
     Boolean(
       session.signedIn &&
         ((session.user?.actorType === "TRADE" && session.user.companyId) ||
-          (session.user?.actorType === "INTERNAL" && session.user.tradeTestPriceListId)),
+          (session.user?.actorType === "INTERNAL" &&
+            (session.user.tradeTestPricingMode === "BASE_TRADE" ||
+              (session.user.tradeTestPricingMode === "PRICE_LIST" &&
+                session.user.tradeTestPriceListId)))),
     ),
   isTradeCustomerSession: (session: ClientSession) =>
     Boolean(session.signedIn && session.user?.actorType === "TRADE" && session.user.companyId),
@@ -85,6 +91,7 @@ const tradeSession: ClientSession = {
     tradeRole: "TRADE_BUYER",
     navPermissions: ["orders.view", "orders.create", "pricing.view", "products.view"],
     actingFor: null,
+      tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
   },
@@ -203,6 +210,7 @@ describe("public trade session chrome", () => {
         tradeRole: null,
         navPermissions: ["admin.access", "products.edit", "pricing.edit", "cms.view"],
         actingFor: null,
+      tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
       },
@@ -234,6 +242,7 @@ describe("public trade session chrome", () => {
         tradeRole: null,
         navPermissions: [...ALL_PERMISSIONS],
         actingFor: null,
+        tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-a",
         tradeTestPriceListName: "Trade Level A",
       },
@@ -294,6 +303,7 @@ describe("public trade session chrome", () => {
         tradeRole: null,
         navPermissions: [...ALL_PERMISSIONS],
         actingFor: null,
+        tradeTestPricingMode: "NONE",
         tradeTestPriceListId: null,
         tradeTestPriceListName: null,
       },
@@ -304,6 +314,7 @@ describe("public trade session chrome", () => {
       signedIn: true,
       user: {
         ...adminNoCtx.user,
+        tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-a",
         tradeTestPriceListName: "Trade A",
       },
@@ -435,6 +446,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
       tradeRole: null,
       navPermissions: [...ALL_PERMISSIONS],
       actingFor: null,
+      tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
     },
@@ -498,6 +510,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
       signedIn: true,
       user: {
         ...adminNoCompany.user,
+        tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-a",
         tradeTestPriceListName: "Trade Level A",
       },

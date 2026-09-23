@@ -1328,7 +1328,13 @@ export const getMyTradeTestLevelFn = createServerFn({ method: "GET" }).handler(a
 });
 
 export const setMyTradeTestLevelFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data as { priceListId: string | null })
+  .inputValidator(
+    (data: unknown) =>
+      data as
+        | { mode: "NONE" }
+        | { mode: "BASE_TRADE" }
+        | { mode: "PRICE_LIST"; priceListId: string },
+  )
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();

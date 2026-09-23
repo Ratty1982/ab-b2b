@@ -23,6 +23,15 @@ enum ActorType {
   TRADE
 }
 
+/// INTERNAL admin public-catalogue trade test pricing context.
+/// NONE = ordering disabled; BASE_TRADE = ProductVariant.tradePrice;
+/// PRICE_LIST = selected PriceList (tradeTestPriceListId).
+enum TradeTestPricingMode {
+  NONE
+  BASE_TRADE
+  PRICE_LIST
+}
+
 enum CompanyStatus {
   PROSPECT
   /// Product language: Pending (trade application / onboarding)
@@ -257,8 +266,10 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  /// INTERNAL only: PriceList used as the admin public-catalogue trade test level.
+  /// INTERNAL only: admin public-catalogue trade test pricing mode.
   /// Never used for TRADE customers. Never invents a Company.
+  tradeTestPricingMode TradeTestPricingMode @default(NONE)
+  /// Required when tradeTestPricingMode = PRICE_LIST; otherwise null.
   tradeTestPriceListId String?
   tradeTestPriceList   PriceList? @relation("UserTradeTestPriceList", fields: [tradeTestPriceListId], references: [id], onDelete: SetNull)
 

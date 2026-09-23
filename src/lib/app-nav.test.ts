@@ -29,6 +29,7 @@ function user(partial: Partial<SafeSessionUser> & Pick<SafeSessionUser, "actorTy
     accountNumber: null,
     tradeRole: null,
     actingFor: null,
+      tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
     ...partial,

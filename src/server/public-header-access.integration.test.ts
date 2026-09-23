@@ -101,7 +101,10 @@ describe("public header route protection", () => {
   });
 
   it("internal admin without trade test level cannot enter trade portal", async () => {
-    await prisma.user.update({ where: { id: adminId }, data: { tradeTestPriceListId: null } });
+    await prisma.user.update({
+      where: { id: adminId },
+      data: { tradeTestPricingMode: "NONE", tradeTestPriceListId: null },
+    });
     await expect(requireTradePortalAccess(adminId)).rejects.toBeInstanceOf(AuthError);
     try {
       await requireTradePortalAccess(adminId);
@@ -118,14 +121,33 @@ describe("public header route protection", () => {
     });
     await prisma.user.update({
       where: { id: adminId },
-      data: { tradeTestPriceListId: list.id },
+      data: { tradeTestPricingMode: "PRICE_LIST", tradeTestPriceListId: list.id },
     });
     try {
       const allowed = await requireTradePortalAccess(adminId);
       expect(allowed.userId).toBe(adminId);
       expect(allowed.actorType).toBe("INTERNAL");
     } finally {
-      await prisma.user.update({ where: { id: adminId }, data: { tradeTestPriceListId: null } });
+      await prisma.user.update({
+        where: { id: adminId },
+        data: { tradeTestPricingMode: "NONE", tradeTestPriceListId: null },
+      });
+    }
+  });
+
+  it("internal admin with BASE_TRADE mode may enter trade portal", async () => {
+    await prisma.user.update({
+      where: { id: adminId },
+      data: { tradeTestPricingMode: "BASE_TRADE", tradeTestPriceListId: null },
+    });
+    try {
+      const allowed = await requireTradePortalAccess(adminId);
+      expect(allowed.actorType).toBe("INTERNAL");
+    } finally {
+      await prisma.user.update({
+        where: { id: adminId },
+        data: { tradeTestPricingMode: "NONE", tradeTestPriceListId: null },
+      });
     }
   });
 });

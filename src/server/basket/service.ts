@@ -130,8 +130,14 @@ type BasketContext = {
   kind: "company" | "admin_test";
   companyId: string | null;
   companyName: string;
-  /** PriceList for admin test mode; company lists come via companyId. */
+  /**
+   * Admin PRICE_LIST mode: selected PriceList id.
+   * Admin BASE_TRADE mode: null (resolver uses ProductVariant.tradePrice).
+   * Company baskets: null (list comes via companyId).
+   */
   priceListId: string | null;
+  /** True for INTERNAL BASE_TRADE / PRICE_LIST admin test contexts. */
+  adminTestActive: boolean;
   canMutate: boolean;
   canView: boolean;
   userId: string;
@@ -162,6 +168,7 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
       companyId: company.id,
       companyName: company.name,
       priceListId: null,
+      adminTestActive: false,
       canMutate: hasPermission(profile, "orders.create"),
       canView: true,
       userId,
@@ -169,16 +176,6 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
   }
 
   if (profile.actorType === "INTERNAL") {
-    if (!actor.adminTestPriceListId) {
-      throw new AuthError(ADMIN_NO_TEST_LEVEL, "BASKET_NO_TEST_LEVEL", 403);
-    }
-    const list = await prisma.priceList.findUnique({
-      where: { id: actor.adminTestPriceListId },
-      select: { id: true, name: true, code: true },
-    });
-    if (!list) {
-      throw new AuthError(ADMIN_NO_TEST_LEVEL, "BASKET_NO_TEST_LEVEL", 403);
-    }
     const canMutate =
       hasPermission(profile, "admin.access") ||
       hasPermission(profile, "orders.create") ||
@@ -191,15 +188,41 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
         403,
       );
     }
-    return {
-      kind: "admin_test",
-      companyId: null,
-      companyName: `${ADMIN_TEST_BASKET_LABEL} · ${list.name}`,
-      priceListId: list.id,
-      canMutate: true,
-      canView: true,
-      userId,
-    };
+
+    if (actor.adminTestPricingMode === "BASE_TRADE") {
+      return {
+        kind: "admin_test",
+        companyId: null,
+        companyName: `${ADMIN_TEST_BASKET_LABEL} · Default Trade Price`,
+        priceListId: null,
+        adminTestActive: true,
+        canMutate: true,
+        canView: true,
+        userId,
+      };
+    }
+
+    if (actor.adminTestPricingMode === "PRICE_LIST" && actor.adminTestPriceListId) {
+      const list = await prisma.priceList.findUnique({
+        where: { id: actor.adminTestPriceListId },
+        select: { id: true, name: true, code: true },
+      });
+      if (!list) {
+        throw new AuthError(ADMIN_NO_TEST_LEVEL, "BASKET_NO_TEST_LEVEL", 403);
+      }
+      return {
+        kind: "admin_test",
+        companyId: null,
+        companyName: `${ADMIN_TEST_BASKET_LABEL} · ${list.name}`,
+        priceListId: list.id,
+        adminTestActive: true,
+        canMutate: true,
+        canView: true,
+        userId,
+      };
+    }
+
+    throw new AuthError(ADMIN_NO_TEST_LEVEL, "BASKET_NO_TEST_LEVEL", 403);
   }
 
   throw new AuthError("Trade basket requires a trade customer account", "BASKET_FORBIDDEN", 403);
@@ -254,6 +277,7 @@ function pricingInputFromContext(ctx: BasketContext) {
   return {
     companyId: ctx.companyId,
     priceListId: ctx.kind === "admin_test" ? ctx.priceListId : null,
+    adminTestActive: ctx.adminTestActive,
   };
 }
 
@@ -337,6 +361,7 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     const resolved = await resolveVariantTradePrices({
       companyId: pricing.companyId,
       priceListId: pricing.priceListId,
+      adminTestActive: pricing.adminTestActive,
       quantity: qty,
       variants: group.map((item) => ({
         id: item.variant.id,
@@ -535,6 +560,7 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
   const priced = await resolveVariantTradePrices({
     companyId: pricing.companyId,
     priceListId: pricing.priceListId,
+    adminTestActive: pricing.adminTestActive,
     quantity: nextQty,
     variants: [
       {
@@ -606,6 +632,7 @@ export async function updateBasketItem(userId: string, raw: unknown): Promise<Pu
   const priced = await resolveVariantTradePrices({
     companyId: pricing.companyId,
     priceListId: pricing.priceListId,
+    adminTestActive: pricing.adminTestActive,
     quantity: input.quantity,
     variants: [
       {
@@ -745,6 +772,7 @@ export async function getProductOrderingPanel(
   const priced = await resolveVariantTradePrices({
     companyId: pricing.companyId,
     priceListId: pricing.priceListId,
+    adminTestActive: pricing.adminTestActive,
     quantity,
     variants: [
       {
@@ -834,6 +862,7 @@ export async function previewProductOrderQuantity(
   const priced = await resolveVariantTradePrices({
     companyId: pricing.companyId,
     priceListId: pricing.priceListId,
+    adminTestActive: pricing.adminTestActive,
     quantity: input.quantity,
     variants: [
       {

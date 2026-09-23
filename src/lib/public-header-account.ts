@@ -39,9 +39,12 @@ export function publicHeaderAccountLinks(session: ClientSession): PublicHeaderAc
   const ctx = navCtxFromUser(user);
   const links: PublicHeaderAccountLink[] = [];
 
-  // Acting-for-customer is reserved for a later feature.
-  // Admin Trade Test Level enables isolated test basket + Trade Portal.
-  if (user.actorType === "INTERNAL" && user.tradeTestPriceListId) {
+  // Admin Trade Test Level (BASE_TRADE or PRICE_LIST) enables isolated test basket + Trade Portal.
+  if (
+    user.actorType === "INTERNAL" &&
+    (user.tradeTestPricingMode === "BASE_TRADE" ||
+      (user.tradeTestPricingMode === "PRICE_LIST" && user.tradeTestPriceListId))
+  ) {
     links.push({ key: "trade-portal", label: "Trade Portal", to: ROUTES.portal });
   }
 

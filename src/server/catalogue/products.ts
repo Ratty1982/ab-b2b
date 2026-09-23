@@ -28,7 +28,7 @@ import {
   type DisplayPrice,
   type PriceViewer,
 } from "@/server/pricing/trade-price";
-import { loadPricingActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
+import { loadPricingActor, pricingArgsFromActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -737,9 +737,11 @@ async function displayPricesForProductRows(
   const variants = rows
     .map((row) => defaultVariant(row.variants))
     .filter((v): v is NonNullable<typeof v> => Boolean(v));
+  const pricing = pricingArgsFromActor(actor);
   const resolved = await resolveVariantTradePrices({
-    companyId: actor.companyId,
-    priceListId: actor.adminTestPriceListId,
+    companyId: pricing.companyId,
+    priceListId: pricing.priceListId,
+    adminTestActive: pricing.adminTestActive,
     variants: variants.map((v) => ({
       id: v.id,
       sku: v.sku,

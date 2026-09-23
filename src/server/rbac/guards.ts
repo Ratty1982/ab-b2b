@@ -107,9 +107,12 @@ export async function requireTradePortalAccess(
     const { prisma } = await import("@/infra/database/client");
     const user = await prisma.user.findUnique({
       where: { id: profile.userId },
-      select: { tradeTestPriceListId: true },
+      select: { tradeTestPricingMode: true, tradeTestPriceListId: true },
     });
-    if (user?.tradeTestPriceListId) {
+    if (
+      user?.tradeTestPricingMode === "BASE_TRADE" ||
+      (user?.tradeTestPricingMode === "PRICE_LIST" && user.tradeTestPriceListId)
+    ) {
       return profile;
     }
   }

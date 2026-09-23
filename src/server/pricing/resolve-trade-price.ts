@@ -2,25 +2,46 @@ import { prisma } from "@/infra/database/client";
 import { loadAccessProfile } from "@/server/rbac/access";
 import { viewerFromAccess, type PriceViewer } from "@/server/pricing/trade-price";
 import { inValidityWindow, resolveTradePriceFromFacts, type PriceResolutionFacts } from "@/domain/trade-price-resolution";
+import type { TradeTestMode } from "@/server/admin-trade-test/service";
 
 export type PricingActor = {
   viewer: PriceViewer;
   /** Real trade company (membership). Null for anonymous, internal base, and admin test. */
   companyId: string | null;
   /**
-   * INTERNAL admin Trade Test Level — a real PriceList id from the user's
-   * persisted setting. Never accepted from the browser on price/basket calls.
+   * INTERNAL admin Trade Test pricing mode from the user's persisted setting.
+   * Never accepted from the browser on price/basket calls.
+   * Null when the actor is not INTERNAL.
    */
+  adminTestPricingMode: TradeTestMode | null;
+  /** Set only when adminTestPricingMode === PRICE_LIST. */
   adminTestPriceListId: string | null;
 };
 
+export function adminTestOrderingEnabled(actor: PricingActor): boolean {
+  return (
+    actor.adminTestPricingMode === "BASE_TRADE" ||
+    (actor.adminTestPricingMode === "PRICE_LIST" && Boolean(actor.adminTestPriceListId))
+  );
+}
+
 export async function loadPricingActor(userId: string | null): Promise<PricingActor> {
   if (!userId) {
-    return { viewer: { kind: "anonymous" }, companyId: null, adminTestPriceListId: null };
+    return {
+      viewer: { kind: "anonymous" },
+      companyId: null,
+      adminTestPricingMode: null,
+      adminTestPriceListId: null,
+    };
   }
   const profile = await loadAccessProfile(userId);
   if (!profile) {
-    return { viewer: { kind: "anonymous" }, companyId: null, adminTestPriceListId: null };
+    return {
+      viewer: { kind: "anonymous" },
+      companyId: null,
+      adminTestPricingMode: null,
+      adminTestPriceListId: null,
+    };
   }
   const viewer = viewerFromAccess({
     signedIn: true,
@@ -31,12 +52,15 @@ export async function loadPricingActor(userId: string | null): Promise<PricingAc
   if (profile.actorType === "INTERNAL") {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { tradeTestPriceListId: true },
+      select: { tradeTestPricingMode: true, tradeTestPriceListId: true },
     });
+    const mode = (user?.tradeTestPricingMode ?? "NONE") as TradeTestMode;
+    const listId = mode === "PRICE_LIST" ? (user?.tradeTestPriceListId ?? null) : null;
     return {
       viewer,
       companyId: null,
-      adminTestPriceListId: user?.tradeTestPriceListId ?? null,
+      adminTestPricingMode: mode,
+      adminTestPriceListId: listId,
     };
   }
 
@@ -45,6 +69,7 @@ export async function loadPricingActor(userId: string | null): Promise<PricingAc
   return {
     viewer,
     companyId: membership?.companyId ?? null,
+    adminTestPricingMode: null,
     adminTestPriceListId: null,
   };
 }
@@ -72,14 +97,21 @@ export type VariantPriceInput = {
 /**
  * One company lookup + one item/break/customer/promotion query set for the whole page.
  *
- * Admin test mode: pass `priceListId` without `companyId`. That loads PriceListItem
- * rows only — never CustomerPrice (which is company-scoped).
+ * Admin test modes (no company):
+ * - BASE_TRADE: no PriceListItem — Phase 4 falls back to ProductVariant.tradePrice
+ * - PRICE_LIST: PriceListItem for the selected list, then base fallback
+ * Never loads CustomerPrice (company-scoped).
  */
 export async function loadTradePriceFactsForVariants(input: {
   variants: VariantPriceInput[];
   companyId: string | null;
-  /** Explicit PriceList for admin trade-test context (no company). */
+  /** Explicit PriceList for admin PRICE_LIST test context (no company). */
   priceListId?: string | null;
+  /**
+   * When true (admin BASE_TRADE or PRICE_LIST), inject synthetic STANDARD tax
+   * so VAT does not inherit a real customer exemption.
+   */
+  adminTestActive?: boolean;
   quantity?: number;
   at?: Date;
 }): Promise<Map<string, PriceResolutionFacts>> {
@@ -175,6 +207,24 @@ export async function loadTradePriceFactsForVariants(input: {
   for (const variant of variants) {
     const list = listByVariant.get(variant.id);
     const customer = customerByVariant.get(variant.id);
+    const adminSyntheticCompany =
+      !company && input.adminTestActive
+        ? adminTestList
+          ? {
+              id: `admin-test:${adminTestList.id}`,
+              taxStatus: "STANDARD",
+              priceListId: adminTestList.id,
+              priceListName: adminTestList.name,
+            }
+          : {
+              // BASE_TRADE — no list; Phase 4 uses ProductVariant.tradePrice.
+              id: "admin-test:base-trade",
+              taxStatus: "STANDARD",
+              priceListId: null as string | null,
+              priceListName: "Default Trade Price",
+            }
+        : null;
+
     out.set(variant.id, {
       variantId: variant.id,
       sku: variant.sku,
@@ -189,15 +239,7 @@ export async function loadTradePriceFactsForVariants(input: {
             priceListId: company.priceListId,
             priceListName: company.priceList?.name ?? null,
           }
-        : adminTestList
-          ? {
-              // Synthetic STANDARD tax — never inherits a real customer's exemption.
-              id: `admin-test:${adminTestList.id}`,
-              taxStatus: "STANDARD",
-              priceListId: adminTestList.id,
-              priceListName: adminTestList.name,
-            }
-          : null,
+        : adminSyntheticCompany,
       customerPrice: customer
         ? {
             id: customer.id,
@@ -229,6 +271,7 @@ export async function resolveVariantTradePrices(input: {
   variants: VariantPriceInput[];
   companyId: string | null;
   priceListId?: string | null;
+  adminTestActive?: boolean;
   quantity?: number;
   at?: Date;
 }) {
@@ -242,9 +285,11 @@ export async function resolveVariantTradePrices(input: {
 export function pricingArgsFromActor(actor: PricingActor): {
   companyId: string | null;
   priceListId: string | null;
+  adminTestActive: boolean;
 } {
   return {
     companyId: actor.companyId,
-    priceListId: actor.adminTestPriceListId,
+    priceListId: actor.adminTestPricingMode === "PRICE_LIST" ? actor.adminTestPriceListId : null,
+    adminTestActive: adminTestOrderingEnabled(actor),
   };
 }

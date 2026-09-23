@@ -37,7 +37,9 @@ export interface SafeSessionUser {
     companyName: string;
     accountNumber: string | null;
   } | null;
-  /** INTERNAL only — selected Admin Trade Test Level (PriceList). */
+  /** INTERNAL only — Admin Trade Test pricing mode. */
+  tradeTestPricingMode: "NONE" | "BASE_TRADE" | "PRICE_LIST";
+  /** INTERNAL only — PriceList id when mode is PRICE_LIST. */
   tradeTestPriceListId: string | null;
   tradeTestPriceListName: string | null;
 }
@@ -85,11 +87,20 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
       ? await prisma.user.findUnique({
           where: { id: userId },
           select: {
+            tradeTestPricingMode: true,
             tradeTestPriceListId: true,
             tradeTestPriceList: { select: { name: true } },
           },
         })
       : null;
+
+  const tradeTestMode = tradeTest?.tradeTestPricingMode ?? "NONE";
+  const tradeTestListName =
+    tradeTestMode === "BASE_TRADE"
+      ? "Default Trade Price"
+      : tradeTestMode === "PRICE_LIST"
+        ? (tradeTest?.tradeTestPriceList?.name ?? null)
+        : null;
 
   return {
     signedIn: true,
@@ -112,8 +123,10 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
             accountNumber: acting.onBehalfOfCompany.accountNumber,
           }
         : null,
-      tradeTestPriceListId: tradeTest?.tradeTestPriceListId ?? null,
-      tradeTestPriceListName: tradeTest?.tradeTestPriceList?.name ?? null,
+      tradeTestPricingMode: tradeTestMode,
+      tradeTestPriceListId:
+        tradeTestMode === "PRICE_LIST" ? (tradeTest?.tradeTestPriceListId ?? null) : null,
+      tradeTestPriceListName: tradeTestListName,
     },
   };
 }

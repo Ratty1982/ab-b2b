@@ -307,7 +307,10 @@ describe("Phase 6A basket ordering", () => {
     });
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
     await seedStock(variant.id, 20);
-    await prisma.user.update({ where: { id: adminId }, data: { tradeTestPriceListId: null } });
+    await prisma.user.update({
+      where: { id: adminId },
+      data: { tradeTestPricingMode: "NONE", tradeTestPriceListId: null },
+    });
 
     const panel = await getProductOrderingPanel(adminId, { variantId: variant.id });
     expect(panel.orderable).toBe(false);
@@ -350,7 +353,7 @@ describe("Phase 6A basket ordering", () => {
 
     await prisma.user.update({
       where: { id: adminId },
-      data: { tradeTestPriceListId: list.id },
+      data: { tradeTestPricingMode: "PRICE_LIST", tradeTestPriceListId: list.id },
     });
     // Isolate from prior admin-test basket rows for this shared SUPER_ADMIN user.
     await prisma.basketItem.deleteMany({

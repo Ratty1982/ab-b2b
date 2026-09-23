@@ -23,11 +23,19 @@ export const Route = createFileRoute("/admin/settings")({
 });
 
 type TradeTestState = {
+  mode: "NONE" | "BASE_TRADE" | "PRICE_LIST";
   priceListId: string | null;
   priceListCode: string | null;
   priceListName: string | null;
+  label: string | null;
   options: Array<{ id: string; code: string; name: string; isDefault: boolean }>;
 };
+
+function tradeTestSelectValue(state: TradeTestState | null): string {
+  if (!state || state.mode === "NONE") return "none";
+  if (state.mode === "BASE_TRADE") return "base_trade";
+  return state.priceListId ?? "none";
+}
 
 function TradeTestingPanel() {
   const [state, setState] = useState<TradeTestState | null>(null);
@@ -49,9 +57,16 @@ function TradeTestingPanel() {
     };
   }, []);
 
-  async function onChange(priceListId: string | null) {
+  async function onChange(raw: string) {
+    const payload =
+      raw === "none"
+        ? ({ mode: "NONE" } as const)
+        : raw === "base_trade"
+          ? ({ mode: "BASE_TRADE" } as const)
+          : ({ mode: "PRICE_LIST", priceListId: raw } as const);
+
     setSaving(true);
-    const result = await setMyTradeTestLevelFn({ data: { priceListId } });
+    const result = await setMyTradeTestLevelFn({ data: payload });
     setSaving(false);
     if (!result.ok) {
       toast.error(result.error);
@@ -59,9 +74,11 @@ function TradeTestingPanel() {
     }
     setState(result.data);
     toast.success(
-      result.data.priceListName
-        ? `Trade test level set to ${result.data.priceListName}`
-        : "Trade test level cleared",
+      result.data.mode === "NONE"
+        ? "Trade test level cleared"
+        : result.data.mode === "BASE_TRADE"
+          ? "Trade test level set to Default Trade Price"
+          : `Trade test level set to ${result.data.priceListName ?? "price list"}`,
     );
   }
 
@@ -73,8 +90,10 @@ function TradeTestingPanel() {
       <div>
         <h2 className="font-display text-lg font-semibold uppercase">Trade testing</h2>
         <p className="mt-1 max-w-2xl text-[13px] text-steel">
-          Select a PriceList to browse the public catalogue and exercise Phase 6A ordering as an
-          admin. This is not customer impersonation — no real company or CustomerPrice is used.
+          Choose Default Trade Price (catalogue import / ProductVariant.tradePrice) or a named
+          PriceList to browse the public catalogue and exercise Phase 6A ordering. This is not
+          customer impersonation — no real company or CustomerPrice is used. Separate from
+          &quot;Default price group for new accounts&quot; below.
         </p>
       </div>
 
@@ -89,25 +108,29 @@ function TradeTestingPanel() {
           <select
             className={inputClass}
             disabled={!state || saving}
-            value={state?.priceListId ?? ""}
+            value={tradeTestSelectValue(state)}
             onChange={(e) => {
-              const value = e.target.value;
-              void onChange(value ? value : null);
+              void onChange(e.target.value);
             }}
           >
-            <option value="">No test level</option>
+            <option value="none">No test level</option>
+            <option value="base_trade">Default Trade Price</option>
             {(state?.options ?? []).map((opt) => (
               <option key={opt.id} value={opt.id}>
                 {opt.name}
-                {opt.isDefault ? " (default)" : ""} · {opt.code}
+                {opt.isDefault ? " (default list)" : ""} · {opt.code}
               </option>
             ))}
           </select>
         </Field>
         <div className="text-[13px] text-steel">
-          {state?.priceListName ? (
-            <p data-trade-test-status="active">
-              Status: Testing public catalogue using <strong>{state.priceListName}</strong>
+          {state?.mode === "BASE_TRADE" ? (
+            <p data-trade-test-status="base-trade">
+              Status: Testing public catalogue using <strong>Default Trade Price</strong>.
+            </p>
+          ) : state?.mode === "PRICE_LIST" && state.priceListName ? (
+            <p data-trade-test-status="price-list">
+              Status: Testing public catalogue using <strong>{state.priceListName}</strong>.
             </p>
           ) : (
             <p data-trade-test-status="inactive">

@@ -5,7 +5,7 @@ import { saveProduct } from "@/server/catalogue/service";
 import { AuthError } from "@/server/rbac/guards";
 import { getMyTradeTestLevel, setMyTradeTestLevel } from "@/server/admin-trade-test/service";
 import { loadPricingActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
-import { addToBasket, getProductOrderingPanel } from "@/server/basket/service";
+import { addToBasket, getBasket, getProductOrderingPanel } from "@/server/basket/service";
 import { upsertQuantityBreak } from "@/server/pricing/service";
 
 const prisma = new PrismaClient();
@@ -141,7 +141,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.user.updateMany({
     where: { id: { in: [adminId, tradeId] } },
-    data: { tradeTestPriceListId: null },
+    data: { tradeTestPricingMode: "NONE", tradeTestPriceListId: null },
   });
   await prisma.basketItem.deleteMany({
     where: { basket: { userId: adminId, companyId: null } },
@@ -156,20 +156,76 @@ afterAll(async () => {
 });
 
 describe("Admin Trade Test Level", () => {
-  it("trade customer cannot set tradeTestPriceListId", async () => {
-    await expect(setMyTradeTestLevel(tradeId, { priceListId: listA })).rejects.toBeInstanceOf(AuthError);
+  it("trade customer cannot set trade test pricing mode", async () => {
+    await expect(setMyTradeTestLevel(tradeId, { mode: "BASE_TRADE" })).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      setMyTradeTestLevel(tradeId, { mode: "PRICE_LIST", priceListId: listA }),
+    ).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("admin can select PriceList A then B and pricing changes", async () => {
-    await setMyTradeTestLevel(adminId, { priceListId: listA });
-    let actor = await loadPricingActor(adminId);
-    expect(actor.adminTestPriceListId).toBe(listA);
+  it("ADMIN + NONE disables ordering", async () => {
+    await setMyTradeTestLevel(adminId, { mode: "NONE" });
+    const view = await getMyTradeTestLevel(adminId);
+    expect(view.mode).toBe("NONE");
+    const actor = await loadPricingActor(adminId);
+    expect(actor.adminTestPricingMode).toBe("NONE");
+    expect(actor.adminTestPriceListId).toBeNull();
+    const panel = await getProductOrderingPanel(adminId, { variantId });
+    expect(panel.orderable).toBe(false);
+    expect(panel.reason).toMatch(/trade test level/i);
+    expect(panel.reason).not.toMatch(/Sign in/i);
+  });
+
+  it("ADMIN + BASE_TRADE uses ProductVariant.tradePrice and enables ordering", async () => {
+    await setMyTradeTestLevel(adminId, { mode: "BASE_TRADE" });
+    const view = await getMyTradeTestLevel(adminId);
+    expect(view.mode).toBe("BASE_TRADE");
+    expect(view.label).toBe("Default Trade Price");
+    expect(view.priceListId).toBeNull();
+
+    const actor = await loadPricingActor(adminId);
+    expect(actor.adminTestPricingMode).toBe("BASE_TRADE");
     expect(actor.companyId).toBeNull();
+    expect(actor.adminTestPriceListId).toBeNull();
+
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId } });
+    const priced = await resolveVariantTradePrices({
+      companyId: null,
+      priceListId: null,
+      adminTestActive: true,
+      quantity: 12,
+      variants: [
+        {
+          id: variant.id,
+          sku: variant.sku,
+          tradePrice: variant.tradePrice,
+          vatCode: variant.vatCode,
+        },
+      ],
+    });
+    expect(priced.get(variantId)?.unitPriceExVatDisplay).toBe("40.00");
+    expect(priced.get(variantId)?.source).toBe("BASE");
+    expect(priced.get(variantId)?.explanation.customerOverride).toBeNull();
+    expect(priced.get(variantId)?.vatPercent).toBe(20);
+
+    const panel = await getProductOrderingPanel(adminId, { variantId });
+    expect(panel.orderable).toBe(true);
+    expect(panel.caseQty).toBe(12);
+    expect(panel.quantity).toBe(12);
+    expect(panel.unitPriceExVatDisplay).toBe("40.00");
+  });
+
+  it("ADMIN + PRICE_LIST A then B changes pricing; switches to BASE_TRADE re-resolve", async () => {
+    await setMyTradeTestLevel(adminId, { mode: "PRICE_LIST", priceListId: listA });
+    let actor = await loadPricingActor(adminId);
+    expect(actor.adminTestPricingMode).toBe("PRICE_LIST");
+    expect(actor.adminTestPriceListId).toBe(listA);
 
     const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId } });
     let priced = await resolveVariantTradePrices({
       companyId: null,
       priceListId: actor.adminTestPriceListId,
+      adminTestActive: true,
       quantity: 12,
       variants: [
         {
@@ -182,13 +238,13 @@ describe("Admin Trade Test Level", () => {
     });
     expect(priced.get(variantId)?.unitPriceExVatDisplay).toBe("30.00");
     expect(priced.get(variantId)?.source).toBe("PRICE_LIST");
-    expect(priced.get(variantId)?.vatPercent).toBe(20);
 
-    await setMyTradeTestLevel(adminId, { priceListId: listB });
+    await setMyTradeTestLevel(adminId, { mode: "PRICE_LIST", priceListId: listB });
     actor = await loadPricingActor(adminId);
     priced = await resolveVariantTradePrices({
       companyId: null,
       priceListId: actor.adminTestPriceListId,
+      adminTestActive: true,
       quantity: 12,
       variants: [
         {
@@ -200,14 +256,54 @@ describe("Admin Trade Test Level", () => {
       ],
     });
     expect(priced.get(variantId)?.unitPriceExVatDisplay).toBe("25.00");
+
+    await setMyTradeTestLevel(adminId, { mode: "BASE_TRADE" });
+    actor = await loadPricingActor(adminId);
+    expect(actor.adminTestPricingMode).toBe("BASE_TRADE");
+    priced = await resolveVariantTradePrices({
+      companyId: null,
+      priceListId: null,
+      adminTestActive: true,
+      quantity: 12,
+      variants: [
+        {
+          id: variant.id,
+          sku: variant.sku,
+          tradePrice: variant.tradePrice,
+          vatCode: variant.vatCode,
+        },
+      ],
+    });
+    expect(priced.get(variantId)?.unitPriceExVatDisplay).toBe("40.00");
+    expect(priced.get(variantId)?.source).toBe("BASE");
   });
 
-  it("admin test context never receives CustomerPrice from a real company", async () => {
-    await setMyTradeTestLevel(adminId, { priceListId: listA });
+  it("BASE_TRADE and PRICE_LIST never receive CustomerPrice from a real company", async () => {
     const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId } });
-    const priced = await resolveVariantTradePrices({
+
+    await setMyTradeTestLevel(adminId, { mode: "BASE_TRADE" });
+    let priced = await resolveVariantTradePrices({
+      companyId: null,
+      priceListId: null,
+      adminTestActive: true,
+      quantity: 1,
+      variants: [
+        {
+          id: variant.id,
+          sku: variant.sku,
+          tradePrice: variant.tradePrice,
+          vatCode: variant.vatCode,
+        },
+      ],
+    });
+    expect(priced.get(variantId)?.unitPriceExVatDisplay).toBe("40.00");
+    expect(priced.get(variantId)?.explanation.customerOverride).toBeNull();
+
+    await setMyTradeTestLevel(adminId, { mode: "PRICE_LIST", priceListId: listA });
+    priced = await resolveVariantTradePrices({
       companyId: null,
       priceListId: listA,
+      adminTestActive: true,
       quantity: 1,
       variants: [
         {
@@ -222,12 +318,14 @@ describe("Admin Trade Test Level", () => {
     expect(priced.get(variantId)?.explanation.customerOverride).toBeNull();
   });
 
-  it("quantity breaks still apply in admin test context", async () => {
-    await setMyTradeTestLevel(adminId, { priceListId: listB });
+  it("quantity breaks still apply in BASE_TRADE and PRICE_LIST contexts", async () => {
     const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId } });
-    const at24 = await resolveVariantTradePrices({
+
+    await setMyTradeTestLevel(adminId, { mode: "BASE_TRADE" });
+    const at24Base = await resolveVariantTradePrices({
       companyId: null,
-      priceListId: listB,
+      priceListId: null,
+      adminTestActive: true,
       quantity: 24,
       variants: [
         {
@@ -238,41 +336,59 @@ describe("Admin Trade Test Level", () => {
         },
       ],
     });
-    expect(at24.get(variantId)?.source).toBe("QUANTITY_BREAK");
-    expect(at24.get(variantId)?.unitPriceExVatDisplay).toBe("22.00");
+    expect(at24Base.get(variantId)?.source).toBe("QUANTITY_BREAK");
+    expect(at24Base.get(variantId)?.unitPriceExVatDisplay).toBe("22.00");
+
+    await setMyTradeTestLevel(adminId, { mode: "PRICE_LIST", priceListId: listB });
+    const at24List = await resolveVariantTradePrices({
+      companyId: null,
+      priceListId: listB,
+      adminTestActive: true,
+      quantity: 24,
+      variants: [
+        {
+          id: variant.id,
+          sku: variant.sku,
+          tradePrice: variant.tradePrice,
+          vatCode: variant.vatCode,
+        },
+      ],
+    });
+    expect(at24List.get(variantId)?.source).toBe("QUANTITY_BREAK");
+    expect(at24List.get(variantId)?.unitPriceExVatDisplay).toBe("22.00");
   });
 
-  it("admin with level A can add a full case to isolated basket; clearing level disables ordering", async () => {
-    await setMyTradeTestLevel(adminId, { priceListId: listA });
+  it("admin BASE_TRADE basket is isolated and re-prices when switching to PRICE_LIST", async () => {
+    await setMyTradeTestLevel(adminId, { mode: "BASE_TRADE" });
     await prisma.basketItem.deleteMany({
       where: { basket: { userId: adminId, companyId: null } },
     });
     await prisma.basket.deleteMany({ where: { userId: adminId, companyId: null } });
-    const panel = await getProductOrderingPanel(adminId, { variantId });
-    expect(panel.orderable).toBe(true);
-    expect(panel.caseQty).toBe(12);
-    expect(panel.quantity).toBe(12);
-    expect(panel.unitPriceExVatDisplay).toBe("30.00");
 
+    const beforeInv = await prisma.inventory.findFirstOrThrow({ where: { variantId } });
     const basket = await addToBasket(adminId, { variantId, quantity: 12 });
     expect(basket.adminTest).toBe(true);
     expect(basket.companyId).toBeNull();
     expect(basket.lines[0]!.quantity).toBe(12);
+    expect(basket.lines[0]!.unitPriceExVatDisplay).toBe("40.00");
 
-    await setMyTradeTestLevel(adminId, { priceListId: null });
-    const view = await getMyTradeTestLevel(adminId);
-    expect(view.priceListId).toBeNull();
-    const blocked = await getProductOrderingPanel(adminId, { variantId });
-    expect(blocked.orderable).toBe(false);
-    expect(blocked.reason).toMatch(/trade test level/i);
+    const afterInv = await prisma.inventory.findFirstOrThrow({ where: { variantId } });
+    expect(afterInv.qtyOnHand).toBe(beforeInv.qtyOnHand);
+    expect(afterInv.qtyReserved).toBe(beforeInv.qtyReserved);
+    expect(await prisma.order.count({ where: { companyId } })).toBe(0);
+
+    await setMyTradeTestLevel(adminId, { mode: "PRICE_LIST", priceListId: listA });
+    const repriced = await getBasket(adminId);
+    expect(repriced.lines[0]!.unitPriceExVatDisplay).toBe("30.00");
+    expect(repriced.adminTest).toBe(true);
   });
 
-  it("audit records trade test level changes", async () => {
-    await setMyTradeTestLevel(adminId, { priceListId: listA });
+  it("audit records trade test mode changes", async () => {
+    await setMyTradeTestLevel(adminId, { mode: "BASE_TRADE" });
     const event = await prisma.auditEvent.findFirst({
       where: {
         actorUserId: adminId,
-        action: "user.trade_test_price_list.updated",
+        action: "user.trade_test_pricing_mode.updated",
       },
       orderBy: { createdAt: "desc" },
     });
