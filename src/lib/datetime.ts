@@ -92,7 +92,7 @@ export function formatDateTime(
 ): string | null {
   if (isCalendarDateOnly(value)) return formatDate(value);
   const datePart = formatDate(value);
-  const timePart = formatTime(value, { seconds: options.seconds });
+  const timePart = formatTime(value, options.seconds ? { seconds: true } : {});
   if (!datePart || !timePart) return datePart;
   const zone = options.timeZoneName ? formatTimeZoneName(value) : null;
   return zone ? `${datePart}, ${timePart} ${zone}` : `${datePart}, ${timePart}`;

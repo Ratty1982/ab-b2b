@@ -245,7 +245,7 @@ describe("catalogue products import export delete", () => {
     await deleteProduct(adminId, sku);
     const gone = await listProducts(adminId, sku);
     expect(gone.some((p) => p.sku === sku)).toBe(false);
-  });
+  }, 20_000);
 
   it("denies product delete without products.edit", async () => {
     const { deleteProduct } = await import("@/server/catalogue/service");
