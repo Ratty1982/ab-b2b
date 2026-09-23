@@ -158,17 +158,50 @@ describe("public trade session chrome", () => {
     expect(markup).not.toContain("Log out");
   });
 
-  it("authenticated trade header hides login CTAs and shows Basket + My Account", () => {
+  it("authenticated trade header hides login CTAs and shows Basket + My Account → /portal", () => {
     sessionState.current = tradeSession;
     const markup = html(createElement(PublicHeader));
     expect(markup).not.toContain("Trade Login");
     expect(markup).not.toContain("Open a Trade Account");
     expect(markup).toContain("My Account");
+    expect(markup).toContain('data-public-header="my-account"');
+    expect(markup).toContain('href="/portal"');
+    expect(markup).not.toContain('data-public-header="admin"');
+    expect(markup).not.toContain(">Account<");
     expect(markup).toContain("Basket");
     expect(markup).toContain('data-public-header="basket"');
     expect(markup).toContain("Log out");
     // Desktop Basket must not be viewport-hidden (was hidden sm:inline-flex).
     expect(markup).not.toMatch(/data-public-header="basket"[^>]*hidden sm:/);
+  });
+
+  it("authenticated internal admin header shows Admin → /admin, not Account or My Account", () => {
+    sessionState.current = {
+      signedIn: true,
+      user: {
+        id: "u-admin",
+        email: "admin@example.com",
+        name: "Admin User",
+        actorType: "INTERNAL",
+        systemRoles: ["SUPER_ADMIN"],
+        displayRole: "Super Admin",
+        companyId: null,
+        companyName: null,
+        accountNumber: null,
+        tradeRole: null,
+        navPermissions: ["admin.access", "products.edit", "pricing.edit", "cms.view"],
+        actingFor: null,
+      },
+    };
+    const markup = html(createElement(PublicHeader));
+    expect(markup).toContain("Admin");
+    expect(markup).toContain('data-public-header="admin"');
+    expect(markup).toContain('href="/admin"');
+    expect(markup).not.toContain("My Account");
+    expect(markup).not.toContain(">Account<");
+    expect(markup).not.toContain("Trade Login");
+    expect(markup).not.toContain("Basket");
+    expect(markup).toContain("Log out");
   });
 
   it("signed-in trade without orders.view still shows Basket chrome (server enforces mutate)", () => {

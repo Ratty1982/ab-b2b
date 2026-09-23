@@ -1,8 +1,10 @@
 import type { ClientSession } from "@/server/auth/session";
 
-export function isTradeCustomerSession(
-  session: ClientSession,
-): session is Extract<ClientSession, { signedIn: true }> {
+type SignedInSession = Extract<ClientSession, { signedIn: true }>;
+
+export function isTradeCustomerSession(session: ClientSession): session is SignedInSession & {
+  user: SignedInSession["user"] & { actorType: "TRADE"; companyId: string };
+} {
   if (!session.signedIn) return false;
   return session.user.actorType === "TRADE" && Boolean(session.user.companyId);
 }

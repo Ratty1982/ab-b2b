@@ -5,7 +5,8 @@ import { Logo } from "./Logo";
 import { BasketNavBadge } from "./BasketNavBadge";
 import { cn } from "@/lib/utils";
 import { canViewBasketSession, RequestSessionProvider, useSession } from "@/lib/session";
-import { resolvePostLoginPath, signOutCurrent, type ClientSession } from "@/server/auth/session";
+import { publicHeaderAccountLinks } from "@/lib/public-header-account";
+import { signOutCurrent, type ClientSession } from "@/server/auth/session";
 
 const nav = [
   { label: "Products", to: "/products" },
@@ -26,13 +27,7 @@ export function PublicHeader() {
   // see Trade Login — even if they cannot order yet.
   const signedIn = session.signedIn;
   const showBasket = canViewBasketSession(session);
-  const accountTo = session.signedIn ? resolvePostLoginPath(session) : "/login";
-  const accountLabel =
-    session.signedIn && session.user.actorType === "TRADE"
-      ? "My Account"
-      : session.signedIn
-        ? "Account"
-        : null;
+  const accountLinks = publicHeaderAccountLinks(session);
 
   async function onSignOut() {
     if (signingOut) return;
@@ -80,14 +75,17 @@ export function PublicHeader() {
                 className="inline-flex h-9"
               />
             ) : null}
-            {signedIn && accountLabel ? (
-              <Link
-                to={accountTo}
-                data-public-header="account"
-                className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
-              >
-                {accountLabel}
-              </Link>
+            {signedIn ? (
+              accountLinks.map((link) => (
+                <Link
+                  key={link.key}
+                  to={link.to}
+                  data-public-header={link.key}
+                  className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
+                >
+                  {link.label}
+                </Link>
+              ))
             ) : (
               <Link
                 to="/login"
@@ -149,16 +147,17 @@ export function PublicHeader() {
                     <BasketNavBadge className="w-full justify-center" />
                   </div>
                 ) : null}
-                {accountLabel ? (
+                {accountLinks.map((link) => (
                   <Link
-                    to={accountTo}
+                    key={`mobile-${link.key}`}
+                    to={link.to}
                     onClick={() => setOpen(false)}
-                    data-public-header="mobile-account"
+                    data-public-header={`mobile-${link.key}`}
                     className="rounded-md px-3 py-2 text-sm font-semibold"
                   >
-                    {accountLabel}
+                    {link.label}
                   </Link>
-                ) : null}
+                ))}
                 <button
                   type="button"
                   data-public-header="mobile-logout"
