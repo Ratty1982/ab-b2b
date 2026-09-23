@@ -1345,4 +1345,44 @@ export const setMyTradeTestLevelFn = createServerFn({ method: "POST" })
     }
   });
 
+export const setCompanyAutopartCustomerCodeFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string; code: string | null })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { setCompanyAutopartCustomerCode } = await import("@/server/companies/autopart-account");
+      return { ok: true as const, data: await setCompanyAutopartCustomerCode(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const verifyCompanyAutopartCustomerCodeFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { verifyCompanyAutopartCustomerCode } = await import(
+        "@/server/companies/autopart-account"
+      );
+      return { ok: true as const, data: await verifyCompanyAutopartCustomerCode(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const clearCompanyAutopartCustomerCodeFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { clearCompanyAutopartCustomerCode } = await import(
+        "@/server/companies/autopart-account"
+      );
+      return { ok: true as const, data: await clearCompanyAutopartCustomerCode(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

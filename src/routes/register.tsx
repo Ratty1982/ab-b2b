@@ -48,6 +48,8 @@ function Register() {
     estimatedSpend: "",
     notes: "",
     websiteConfirm: "",
+    hasExistingAccount: "no" as "yes" | "no",
+    claimedAutopartCustomerCode: "",
   });
 
   if (submitted) {
@@ -137,6 +139,10 @@ function Register() {
                   estimatedSpend: form.estimatedSpend || null,
                   brandsInterest,
                   notes: form.notes || null,
+                  claimedAutopartCustomerCode:
+                    form.hasExistingAccount === "yes"
+                      ? form.claimedAutopartCustomerCode || null
+                      : null,
                   websiteConfirm: form.websiteConfirm,
                 },
               });
@@ -296,6 +302,59 @@ function Register() {
                 />
               </Field>
             </div>
+          </section>
+
+          <section className="grid gap-4">
+            <h2 className="font-display text-xl uppercase">Existing trade account</h2>
+            <fieldset>
+              <legend className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-steel">
+                Do you already have an Automotive Brands trade account?
+              </legend>
+              <div className="flex flex-wrap gap-4 text-[13px]">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="hasExistingAccount"
+                    checked={form.hasExistingAccount === "no"}
+                    onChange={() =>
+                      setForm({
+                        ...form,
+                        hasExistingAccount: "no",
+                        claimedAutopartCustomerCode: "",
+                      })
+                    }
+                  />
+                  No
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="hasExistingAccount"
+                    checked={form.hasExistingAccount === "yes"}
+                    onChange={() => setForm({ ...form, hasExistingAccount: "yes" })}
+                  />
+                  Yes
+                </label>
+              </div>
+            </fieldset>
+            {form.hasExistingAccount === "yes" ? (
+              <Field label="Autopart / existing customer account number">
+                <input
+                  className={inputClass}
+                  value={form.claimedAutopartCustomerCode}
+                  onChange={(e) =>
+                    setForm({ ...form, claimedAutopartCustomerCode: e.target.value })
+                  }
+                  placeholder="Leave blank if unsure"
+                  autoComplete="off"
+                />
+                <p className="mt-1 text-[12px] text-steel">
+                  If you already have an account with us, enter your account number if known.
+                  Leave this blank if you are unsure. Providing a number does not grant access —
+                  our team verifies accounts during review.
+                </p>
+              </Field>
+            ) : null}
           </section>
 
           <section className="grid gap-4">

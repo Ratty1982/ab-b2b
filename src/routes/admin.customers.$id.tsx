@@ -11,6 +11,7 @@ import { ROUTES } from "@/lib/app-nav";
 import {
   createAddressFn,
   createContactFn,
+  clearCompanyAutopartCustomerCodeFn,
   deleteCustomerPriceFn,
   getCompanyWorkspaceFn,
   inviteCompanyUserFn,
@@ -19,8 +20,10 @@ import {
   listPriceListsFn,
   listSalesRepsFn,
   searchPricingVariantsFn,
+  setCompanyAutopartCustomerCodeFn,
   updateCompanyFn,
   upsertCustomerPriceFn,
+  verifyCompanyAutopartCustomerCodeFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
@@ -193,6 +196,14 @@ function CustomerWorkspace() {
                   }
                 />
                 <Row label="Tax status" value={company.taxStatus} />
+                <Row
+                  label="Autopart account"
+                  value={
+                    company.autopartAccount?.code
+                      ? `${company.autopartAccount.code}${company.autopartAccount.verified ? " (verified)" : " (unverified)"}`
+                      : null
+                  }
+                />
               </dl>
               <p className="mt-4 text-[12px] text-steel">
                 Created <InstantText value={company.createdAt} variant="audit" /> · Updated{" "}
@@ -347,6 +358,12 @@ function CustomerWorkspace() {
                 await reload();
               }
             }}
+          />
+          <AutopartAccountEditor
+            companyId={company.id}
+            canEdit={permissions.canEdit}
+            account={company.autopartAccount ?? { code: null, verified: false, verifiedAt: null, verifiedBy: null }}
+            onChanged={reload}
           />
           <CustomerPricesEditor
             companyId={company.id}
@@ -670,6 +687,137 @@ function CommercialEditor({
   );
 }
 
+function AutopartAccountEditor({
+  companyId,
+  canEdit,
+  account,
+  onChanged,
+}: {
+  companyId: string;
+  canEdit: boolean;
+  account: {
+    code: string | null;
+    verified: boolean;
+    verifiedAt: string | null;
+    verifiedBy: { id: string; name: string; email: string } | null;
+  };
+  onChanged: () => Promise<void>;
+}) {
+  const [code, setCode] = useState(account.code ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setCode(account.code ?? "");
+  }, [account.code]);
+
+  return (
+    <section className="max-w-xl space-y-4 rounded-lg border border-border bg-surface/30 p-4 sm:p-5">
+      <div>
+        <h3 className="font-display text-lg font-semibold uppercase">Autopart account</h3>
+        <p className="mt-1 text-[13px] text-steel">
+          Verified Autopart customer/account code for future order handoff. This is an ERP
+          reference only — never a login or automatic account link from registration claims.
+        </p>
+      </div>
+      <Field label="Account code">
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          className={inputClass}
+          disabled={!canEdit || saving}
+          placeholder="e.g. ABC001"
+          autoComplete="off"
+        />
+      </Field>
+      <dl className="grid gap-2 text-[13px]">
+        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+          <dt className="text-steel">Status</dt>
+          <dd>{account.verified ? "Verified" : account.code ? "Unverified" : "Not linked"}</dd>
+        </div>
+        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+          <dt className="text-steel">Verified</dt>
+          <dd>
+            {account.verifiedAt ? (
+              <InstantText value={account.verifiedAt} variant="audit" />
+            ) : (
+              "—"
+            )}
+          </dd>
+        </div>
+        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+          <dt className="text-steel">Verified by</dt>
+          <dd>{account.verifiedBy?.name ?? "—"}</dd>
+        </div>
+      </dl>
+      {canEdit ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={saving}
+            className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+            onClick={() => {
+              setSaving(true);
+              void setCompanyAutopartCustomerCodeFn({
+                data: { companyId, code: code.trim() ? code : null },
+              }).then(async (r) => {
+                setSaving(false);
+                if (!r.ok) toast.error(r.error);
+                else {
+                  toast.success(
+                    r.data.code
+                      ? "Autopart account code saved (unverified until you verify)"
+                      : "Autopart account cleared",
+                  );
+                  await onChanged();
+                }
+              });
+            }}
+          >
+            Save code
+          </button>
+          <button
+            type="button"
+            disabled={saving || !account.code}
+            className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold disabled:opacity-50"
+            onClick={() => {
+              setSaving(true);
+              void verifyCompanyAutopartCustomerCodeFn({ data: { companyId } }).then(async (r) => {
+                setSaving(false);
+                if (!r.ok) toast.error(r.error);
+                else {
+                  toast.success("Autopart account verified");
+                  await onChanged();
+                }
+              });
+            }}
+          >
+            Verify
+          </button>
+          <button
+            type="button"
+            disabled={saving || !account.code}
+            className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold text-bad disabled:opacity-50"
+            onClick={() => {
+              setSaving(true);
+              void clearCompanyAutopartCustomerCodeFn({ data: { companyId } }).then(async (r) => {
+                setSaving(false);
+                if (!r.ok) toast.error(r.error);
+                else {
+                  toast.success("Autopart account cleared");
+                  setCode("");
+                  await onChanged();
+                }
+              });
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ContactDrawer({
   companyId,
   onClose,
@@ -895,6 +1043,7 @@ function CustomerPricesEditor({
     variantId: string;
     baseTradePriceDisplay: string | null;
     priceListPriceDisplay: string | null;
+    normalPriceDisplay: string | null;
     unitPrice: number | null;
     unitPriceDisplay: string | null;
     startsAt: string | null;
@@ -1010,8 +1159,7 @@ function CustomerPricesEditor({
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
                 <th className="px-3 py-2">SKU</th>
                 <th className="px-3 py-2">Product</th>
-                <th className="px-3 py-2 text-right">Base trade</th>
-                <th className="px-3 py-2 text-right">Price list</th>
+                <th className="px-3 py-2 text-right">Normal price</th>
                 <th className="px-3 py-2 text-right">Customer price</th>
                 <th className="px-3 py-2">Valid from</th>
                 <th className="px-3 py-2">Valid until</th>
@@ -1024,8 +1172,7 @@ function CustomerPricesEditor({
                 <tr key={row.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
                   <td className="num px-3 py-2 text-primary">{row.sku}</td>
                   <td className="px-3 py-2">{row.productName}</td>
-                  <td className="num px-3 py-2 text-right">{row.baseTradePriceDisplay ?? "—"}</td>
-                  <td className="num px-3 py-2 text-right">{row.priceListPriceDisplay ?? "—"}</td>
+                  <td className="num px-3 py-2 text-right">{row.normalPriceDisplay ?? "—"}</td>
                   <td className="num px-3 py-2 text-right">{row.unitPriceDisplay ?? "—"}</td>
                   <td className="num px-3 py-2">{formatOrDash(formatDate(row.startsAt))}</td>
                   <td className="num px-3 py-2">{formatOrDash(formatDate(row.endsAt))}</td>

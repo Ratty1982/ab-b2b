@@ -8,6 +8,7 @@ import {
   tradeApplicationSubmitSchema,
 } from "@/domain/trade-application";
 import { emptyToNull } from "@/domain/company";
+import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
 
 function nextApplicationReference(): string {
   const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
@@ -64,6 +65,7 @@ export async function submitTradeApplication(raw: unknown, meta?: { ip?: string 
       estimatedSpend: emptyToNull(input.estimatedSpend),
       brandsInterest: input.brandsInterest,
       notes: emptyToNull(input.notes),
+      claimedAutopartCustomerCode: normalizeAutopartCustomerCode(input.claimedAutopartCustomerCode),
     },
   });
 
@@ -71,7 +73,11 @@ export async function submitTradeApplication(raw: unknown, meta?: { ip?: string 
     action: "application.submitted",
     entityType: "TradeApplication",
     entityId: app.id,
-    metadata: { reference: app.reference, ip: meta?.ip ?? null },
+    metadata: {
+      reference: app.reference,
+      ip: meta?.ip ?? null,
+      claimedAutopartCustomerCode: Boolean(app.claimedAutopartCustomerCode),
+    },
   });
 
   return { id: app.id, reference: app.reference, duplicate: false as const };

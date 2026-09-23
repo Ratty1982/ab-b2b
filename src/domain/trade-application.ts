@@ -38,6 +38,11 @@ export const tradeApplicationSubmitSchema = z.object({
   estimatedSpend: z.string().trim().max(120).optional().nullable(),
   brandsInterest: z.array(z.string().trim().max(80)).max(20).default([]),
   notes: z.string().trim().max(4000).optional().nullable(),
+  /**
+   * Applicant-claimed Autopart / existing account number.
+   * Evidence for staff review only — never auto-links a Company ERP account.
+   */
+  claimedAutopartCustomerCode: z.string().trim().max(80).optional().nullable(),
   /** Honeypot — must be empty */
   websiteConfirm: z.string().max(0).optional(),
 });

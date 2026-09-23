@@ -55,6 +55,7 @@ function ApplicationsPage() {
     tradingAddress?: unknown;
     brandsInterest?: unknown;
     notes?: string | null;
+    claimedAutopartCustomerCode?: string | null;
     companyId?: string | null;
   } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -185,11 +186,24 @@ function ApplicationsPage() {
                     tradingAddress: detail.tradingAddress,
                     brandsInterest: detail.brandsInterest,
                     notes: detail.notes,
+                    claimedAutopartCustomerCode: detail.claimedAutopartCustomerCode,
                   },
                   null,
                   2,
                 )}
               </pre>
+              {detail.claimedAutopartCustomerCode ? (
+                <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-[13px]">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-steel">
+                    Claimed existing Autopart account
+                  </div>
+                  <div className="num mt-1 font-semibold">{detail.claimedAutopartCustomerCode}</div>
+                  <p className="mt-1 text-[12px] text-steel">
+                    Claimed only — not a verified Company ERP link. Confirm and set on the company
+                    Commercial tab after approval.
+                  </p>
+                </div>
+              ) : null}
               {detail.companyId ? (
                 <Link
                   to="/admin/customers/$id"

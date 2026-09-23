@@ -40,6 +40,9 @@ function companySelect() {
     currency: true,
     priceListId: true,
     externalRef: true,
+    autopartCustomerCode: true,
+    autopartCustomerCodeVerifiedAt: true,
+    autopartCustomerCodeVerifiedById: true,
     website: true,
     phone: true,
     primaryEmail: true,
@@ -47,6 +50,9 @@ function companySelect() {
     createdAt: true,
     updatedAt: true,
     priceList: { select: { id: true, code: true, name: true } },
+    autopartCustomerCodeVerifiedBy: {
+      select: { id: true, name: true, email: true },
+    },
     assignments: {
       where: { isPrimary: true },
       take: 1,
@@ -155,6 +161,9 @@ function serializeCompany(row: {
   currency: string;
   priceListId: string | null;
   externalRef: string | null;
+  autopartCustomerCode: string | null;
+  autopartCustomerCodeVerifiedAt: Date | null;
+  autopartCustomerCodeVerifiedBy?: { id: string; name: string | null; email: string } | null;
   website: string | null;
   phone: string | null;
   primaryEmail: string | null;
@@ -180,6 +189,7 @@ function serializeCompany(row: {
         : typeof row.creditLimit.toNumber === "function"
           ? row.creditLimit.toNumber()
           : Number(row.creditLimit);
+  const autopartVerified = Boolean(row.autopartCustomerCode && row.autopartCustomerCodeVerifiedAt);
   return {
     id: row.id,
     accountNumber: row.accountNumber,
@@ -195,6 +205,20 @@ function serializeCompany(row: {
     priceListId: row.priceListId,
     priceList: row.priceList ?? null,
     externalRef: row.externalRef,
+    autopartAccount: {
+      code: row.autopartCustomerCode,
+      verified: autopartVerified,
+      verifiedAt: row.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+      verifiedBy: row.autopartCustomerCodeVerifiedBy
+        ? {
+            id: row.autopartCustomerCodeVerifiedBy.id,
+            name:
+              row.autopartCustomerCodeVerifiedBy.name ??
+              row.autopartCustomerCodeVerifiedBy.email,
+            email: row.autopartCustomerCodeVerifiedBy.email,
+          }
+        : null,
+    },
     website: row.website,
     phone: row.phone,
     primaryEmail: row.primaryEmail,
