@@ -80,6 +80,24 @@ export function roundGbpDisplay(value: Money): Money {
   return roundMoney(value, 2);
 }
 
+/**
+ * Trade ordering unit-price label from an authoritative 4dp amount.
+ * Keeps at least 2dp; shows up to 4dp when commercially meaningful so
+ * "£3.69 × 12" does not appear to disagree with a 4dp line total.
+ */
+export function formatTradeOrderingUnitPrice(unitPriceExVat4dp: string | null | undefined): string | null {
+  if (unitPriceExVat4dp == null || unitPriceExVat4dp === "") return null;
+  const money = parseMoney(unitPriceExVat4dp);
+  if (!money) return null;
+  const full = moneyToString(money, 4);
+  const [whole, frac = "0000"] = full.split(".");
+  const digits = frac.padEnd(4, "0").slice(0, 4);
+  let keep = 2;
+  if (digits[3] !== "0") keep = 4;
+  else if (digits[2] !== "0") keep = 3;
+  return `${whole}.${digits.slice(0, keep)}`;
+}
+
 export function addMoney(a: Money, b: Money): Money {
   return { minor: a.minor + b.minor };
 }

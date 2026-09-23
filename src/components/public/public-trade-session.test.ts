@@ -107,8 +107,9 @@ const orderablePanel = {
   quantity: 12,
   caseCount: 1,
   caseCountLabel: "1 case",
+  unitPriceExVat: "3.6875",
   unitPriceExVatDisplay: "3.69",
-  lineNetDisplay: "44.28",
+  lineNetDisplay: "44.25",
   canIncrement: true,
   canDecrement: false,
   canAdd: true,
@@ -378,13 +379,15 @@ describe("public trade session chrome", () => {
         initialPanel: orderablePanel,
       }),
     );
-    expect(markup).toContain("Case of 12");
-    expect(markup).toContain("£3.69 each ex VAT");
-    expect(markup).toContain("£44.28 ex VAT");
+    expect(markup).toContain("Case of 12 · Sold in multiples of 12");
+    expect(markup).toContain("£3.6875 each ex VAT");
+    expect(markup).toContain("£44.25");
+    expect(markup).toMatch(/Total[\s\S]*ex VAT/i);
     expect(markup).toMatch(/Add to basket/i);
     expect(markup).toContain('aria-label="Increase quantity"');
     expect(markup).toContain('data-ordering-placement="hero"');
     expect(markup).not.toContain("Trade Login");
+    expect(markup).not.toContain("View basket");
   });
 
   it("authenticated but not-orderable product keeps trade chrome messaging, not anonymous CTAs", () => {
@@ -462,6 +465,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
     quantity: 1,
     caseCount: 1,
     caseCountLabel: "1 unit",
+    unitPriceExVat: "2.1900",
     unitPriceExVatDisplay: "2.19",
     lineNetDisplay: "2.19",
     canIncrement: true,
@@ -556,12 +560,12 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
     );
     expect(markup).toContain("£2.19");
     expect(markup).toContain("Your price · each · ex VAT");
-    expect(markup).toContain("Single unit");
-    expect(markup).toContain("Sold individually");
+    expect(markup).toContain("Single unit · Sold individually");
     expect(markup).toContain('aria-label="Increase quantity"');
     expect(markup).toMatch(/Add to basket/i);
     expect(markup).not.toMatch(/Sign in/i);
     expect(markup).toContain("1 unit");
+    expect(markup).not.toContain("View basket");
   });
 });
 
@@ -581,15 +585,17 @@ describe("authenticated orderable PDP render condition", () => {
 
     expect(markup).toContain('data-ordering-placement="hero"');
     expect(markup).toContain("Trade ordering");
-    expect(markup).toContain("Case of 12");
-    expect(markup).toContain("Sold in multiples of 12");
+    expect(markup).toContain("Case of 12 · Sold in multiples of 12");
     expect(markup).toContain('aria-label="Decrease quantity"');
     expect(markup).toContain('aria-label="Increase quantity"');
     expect(markup).toMatch(/Add to basket/i);
     expect(markup).toContain("1 case");
     expect(markup).toContain("12 units");
-    expect(markup).toContain("£44.28 ex VAT");
-    expect(markup).toContain("View basket");
+    expect(markup).toContain("£3.6875 each ex VAT");
+    expect(markup).toContain("£44.25");
+    expect(markup).toMatch(/Total[\s\S]*ex VAT/i);
+    // Basket navigation lives in the header, not duplicated on every PDP card.
+    expect(markup).not.toContain(">View basket<");
 
     // Primary controls sit under short description, before lower content.
     expect(markup.indexOf("data-product-short-description")).toBeLessThan(

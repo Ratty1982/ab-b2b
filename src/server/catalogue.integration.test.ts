@@ -233,10 +233,18 @@ describe("catalogue products import export delete", () => {
     const csv = await exportProductsCsv(adminId);
     expect(csv).toContain(sku);
 
-    const roundTrip = await importProducts(
-      adminId,
-      csv.replace("Import disc kit", "Import disc kit updated"),
-    );
+    // Re-import only the created SKU row. Full-catalogue exports can exceed the
+    // 2,000-row import cap once the seeded catalogue grows past that size.
+    const lines = csv.split(/\r?\n/).filter((line) => line.length > 0);
+    const header = lines[0]!;
+    const skuLine = lines.find((line, index) => index > 0 && line.includes(sku));
+    expect(skuLine).toBeTruthy();
+    const singleSkuCsv = [
+      header,
+      skuLine!.replace("Import disc kit", "Import disc kit updated"),
+    ].join("\n");
+
+    const roundTrip = await importProducts(adminId, singleSkuCsv);
     expect(roundTrip.updated + roundTrip.created).toBeGreaterThan(0);
 
     const after = await listProducts(adminId, sku);

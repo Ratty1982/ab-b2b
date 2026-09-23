@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Minus, Plus } from "lucide-react";
+import { Check, Minus, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   addToBasketFn,
@@ -16,6 +16,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import { formatCaseCountLabel } from "@/domain/ordering";
+import { formatTradeOrderingUnitPrice } from "@/domain/money";
 import { BASKET_UPDATED_EVENT } from "@/lib/basket-events";
 
 export type ProductOrderingPanelView = {
@@ -28,6 +29,7 @@ export type ProductOrderingPanelView = {
   quantity: number | null;
   caseCount: number | null;
   caseCountLabel: string | null;
+  unitPriceExVat?: string | null;
   unitPriceExVatDisplay: string | null;
   lineNetDisplay: string | null;
   canIncrement: boolean;
@@ -100,6 +102,7 @@ function ProductTradeOrderingCard({
     mayOrder ? (initialPanel?.quantity ?? null) : null,
   );
   const [busy, setBusy] = useState(false);
+  const [justAdded, setJustAdded] = useState(false);
 
   useEffect(() => {
     if (!variantId || !mayOrder) {
@@ -122,6 +125,12 @@ function ProductTradeOrderingCard({
       cancelled = true;
     };
   }, [variantId, actorId, mayOrder, initialPanel]);
+
+  useEffect(() => {
+    if (!justAdded) return;
+    const t = window.setTimeout(() => setJustAdded(false), 1800);
+    return () => window.clearTimeout(t);
+  }, [justAdded]);
 
   const interactive = Boolean(variantId && mayOrder && panel);
 
@@ -150,6 +159,7 @@ function ProductTradeOrderingCard({
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(BASKET_UPDATED_EVENT));
     }
+    setJustAdded(true);
     toast.success(`Added to basket · ${quantity} × ${productName ?? "product"}`, {
       action: {
         label: "View basket",
@@ -173,6 +183,15 @@ function ProductTradeOrderingCard({
     (tradeCustomer || orderingContext
       ? "This product is not configured for online case ordering"
       : null);
+  const caseLine =
+    copy || panel?.caseTitle
+      ? subtitle
+        ? `${title} · ${subtitle}`
+        : title
+      : null;
+
+  const unitLabel =
+    formatTradeOrderingUnitPrice(panel?.unitPriceExVat) ?? panel?.unitPriceExVatDisplay;
 
   const showAnonSignIn = !signedIn;
   const showAuthenticatedBlocked =
@@ -194,19 +213,37 @@ function ProductTradeOrderingCard({
     (showAwaitingContext ||
       (blockedReason != null && /trade test level/i.test(blockedReason)));
 
+  const orderSummary =
+    cases && activeQty != null
+      ? panel?.caseQty === 1
+        ? `${activeQty === 1 ? "1 unit" : `${activeQty} units`}`
+        : `${cases} · ${activeQty} units`
+      : null;
+
   return (
     <section
       data-product-section="ordering"
       data-ordering-placement="hero"
       data-ordering-actor={signedIn ? (tradeCustomer ? "trade" : "internal") : "anonymous"}
-      className="mt-6 rounded-lg border border-border bg-surface/40 p-5"
+      className="mt-5 rounded-lg border border-border bg-surface/40 px-4 py-3.5 sm:px-5 sm:py-4"
     >
-      <h2 className="font-display text-lg font-semibold uppercase tracking-tight">Trade ordering</h2>
-      <p className="mt-3 font-display text-2xl font-semibold uppercase tracking-tight">{title}</p>
-      {subtitle ? <p className="mt-1 text-[13px] text-steel">{subtitle}</p> : null}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-tight sm:text-[15px]">
+          Trade ordering
+        </h2>
+        {unitLabel && showControls && panel && !panel.insufficientFullCase && panel.orderable ? (
+          <p className="num text-[13px] font-semibold uppercase tracking-wide text-steel sm:text-[14px]">
+            £{unitLabel} each ex VAT
+          </p>
+        ) : null}
+      </div>
+
+      {caseLine && (showControls || showAnonSignIn || showTestLevelPrompt || orderingContext) ? (
+        <p className="mt-1.5 text-[13px] text-steel">{caseLine}</p>
+      ) : null}
 
       {showAnonSignIn ? (
-        <p className="mt-4 text-[13px] text-steel" role="status">
+        <p className="mt-3 text-[13px] text-steel" role="status">
           <Link to="/login" className="font-semibold text-primary hover:underline">
             Sign in
           </Link>{" "}
@@ -215,7 +252,7 @@ function ProductTradeOrderingCard({
       ) : null}
 
       {showTestLevelPrompt ? (
-        <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="needs-test-level">
+        <p className="mt-3 text-[13px] text-steel" role="status" data-ordering-status="needs-test-level">
           Select a trade test level in{" "}
           <Link to="/admin/settings" className="font-semibold text-primary hover:underline">
             Admin → Settings
@@ -225,83 +262,101 @@ function ProductTradeOrderingCard({
       ) : null}
 
       {signedIn && !copy && !panel?.caseQty && orderingContext ? (
-        <p className="mt-4 text-[13px] text-steel" role="status">
+        <p className="mt-3 text-[13px] text-steel" role="status">
           This product is not available for online ordering
         </p>
       ) : null}
 
       {showControls && panel?.insufficientFullCase ? (
-        <p className="mt-4 text-[13px] font-medium text-warn" role="status">
+        <p className="mt-3 text-[13px] font-medium text-warn" role="status">
           Insufficient stock for a full case
         </p>
       ) : null}
 
       {showControls && panel && !panel.insufficientFullCase && panel.orderable ? (
-        <div className="mt-5 space-y-4">
-          {panel.unitPriceExVatDisplay ? (
-            <p className="num text-[14px] font-semibold">£{panel.unitPriceExVatDisplay} each ex VAT</p>
-          ) : null}
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-steel">Quantity</p>
-            <div className="mt-2 flex items-center gap-3">
-              <button
-                type="button"
-                className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40"
-                aria-label="Decrease quantity"
-                disabled={busy || !panel.canDecrement || activeQty == null}
-                onClick={() => {
-                  if (activeQty == null || panel.caseQty == null) return;
-                  void applyQuantity(activeQty - panel.caseQty);
-                }}
-              >
-                <Minus className="size-4" aria-hidden />
-              </button>
-              <span className="num min-w-12 text-center text-lg font-semibold" aria-live="polite">
-                {activeQty}
-              </span>
-              <button
-                type="button"
-                className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40"
-                aria-label="Increase quantity"
-                disabled={busy || !panel.canIncrement || activeQty == null}
-                onClick={() => {
-                  if (activeQty == null || panel.caseQty == null) return;
-                  void applyQuantity(activeQty + panel.caseQty);
-                }}
-              >
-                <Plus className="size-4" aria-hidden />
-              </button>
+        <div className="mt-3 space-y-3">
+          {/* Desktop: quantity / order / total in one row; mobile stacks */}
+          <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-end sm:gap-6">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Quantity</p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
+                  aria-label="Decrease quantity"
+                  disabled={busy || !panel.canDecrement || activeQty == null}
+                  onClick={() => {
+                    if (activeQty == null || panel.caseQty == null) return;
+                    void applyQuantity(activeQty - panel.caseQty);
+                  }}
+                >
+                  <Minus className="size-4" aria-hidden />
+                </button>
+                <span className="num min-w-10 text-center text-base font-semibold tabular-nums" aria-live="polite">
+                  {activeQty}
+                </span>
+                <button
+                  type="button"
+                  className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
+                  aria-label="Increase quantity"
+                  disabled={busy || !panel.canIncrement || activeQty == null}
+                  onClick={() => {
+                    if (activeQty == null || panel.caseQty == null) return;
+                    void applyQuantity(activeQty + panel.caseQty);
+                  }}
+                >
+                  <Plus className="size-4" aria-hidden />
+                </button>
+              </div>
+            </div>
+
+            <div className="sm:pb-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Order</p>
+              {orderSummary ? (
+                <p className="mt-1.5 text-[13px] text-steel" aria-live="polite">
+                  {orderSummary}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="sm:text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Total</p>
+              {panel.lineNetDisplay ? (
+                <p className="num mt-1 text-lg font-semibold leading-tight sm:text-xl">
+                  £{panel.lineNetDisplay}{" "}
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                    ex VAT
+                  </span>
+                </p>
+              ) : null}
             </div>
           </div>
-          {cases && activeQty != null ? (
-            <p className="text-[13px] text-steel">
-              {cases} · {activeQty} units
-            </p>
-          ) : null}
-          {panel.lineNetDisplay ? (
-            <p className="num text-xl font-semibold">£{panel.lineNetDisplay} ex VAT</p>
-          ) : null}
+
           <button
             type="button"
             className={cn(
-              "h-12 w-full rounded-md bg-primary text-[13px] font-bold uppercase tracking-wide text-primary-foreground",
-              (!panel.canAdd || busy) && "opacity-50",
+              "flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary text-[13px] font-bold uppercase tracking-wide text-primary-foreground sm:h-10",
+              (!panel.canAdd || busy) && !justAdded && "opacity-50",
+              justAdded && "bg-good text-ink",
             )}
             disabled={!panel.canAdd || busy}
             onClick={() => void onAdd()}
+            data-ordering-action={justAdded ? "added" : "add"}
           >
-            Add to basket
+            {justAdded ? (
+              <>
+                <Check className="size-4" aria-hidden />
+                Added to basket
+              </>
+            ) : (
+              "Add to basket"
+            )}
           </button>
-          <p className="text-[12px] text-steel">
-            <Link to={ROUTES.portalBasket} className="font-semibold text-primary hover:underline">
-              View basket
-            </Link>
-          </p>
         </div>
       ) : null}
 
       {showAuthenticatedBlocked && !showTestLevelPrompt ? (
-        <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="blocked">
+        <p className="mt-3 text-[13px] text-steel" role="status" data-ordering-status="blocked">
           {panel!.reason}
         </p>
       ) : null}

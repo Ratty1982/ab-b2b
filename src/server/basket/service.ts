@@ -118,6 +118,8 @@ export type ProductOrderingPanel = {
   quantity: number | null;
   caseCount: number | null;
   caseCountLabel: string | null;
+  /** Authoritative 4dp unit price ex VAT (do not multiply the 2dp display). */
+  unitPriceExVat: string | null;
   unitPriceExVatDisplay: string | null;
   lineNetDisplay: string | null;
   canIncrement: boolean;
@@ -690,6 +692,7 @@ export async function getProductOrderingPanel(
     quantity: null,
     caseCount: null,
     caseCountLabel: null,
+    unitPriceExVat: null,
     unitPriceExVatDisplay: null,
     lineNetDisplay: null,
     canIncrement: false,
@@ -758,6 +761,7 @@ export async function getProductOrderingPanel(
       quantity: rules.minimumOrderQty,
       caseCount: rules.minimumOrderQty / rules.caseQty,
       caseCountLabel: formatCaseCountLabel(rules.minimumOrderQty / rules.caseQty),
+      unitPriceExVat: null,
       unitPriceExVatDisplay: null,
       lineNetDisplay: null,
       canIncrement: false,
@@ -805,6 +809,7 @@ export async function getProductOrderingPanel(
     quantity,
     caseCount: quantity / rules.caseQty,
     caseCountLabel: formatCaseCountLabel(quantity / rules.caseQty),
+    unitPriceExVat: money.unitEx,
     unitPriceExVatDisplay: money.unitExDisplay,
     lineNetDisplay: money.lineNetDisplay,
     canIncrement: canIncrementQuantity({
@@ -879,6 +884,7 @@ export async function previewProductOrderQuantity(
     quantity: input.quantity,
     caseCount: validated.caseCount,
     caseCountLabel: formatCaseCountLabel(validated.caseCount),
+    unitPriceExVat: money.unitEx,
     unitPriceExVatDisplay: money.unitExDisplay,
     lineNetDisplay: money.lineNetDisplay,
     canIncrement: canIncrementQuantity({
