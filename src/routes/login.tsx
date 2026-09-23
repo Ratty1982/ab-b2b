@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { z } from "zod";
 import { PublicLayout } from "@/components/ab/PublicLayout";
@@ -39,6 +39,7 @@ export const Route = createFileRoute("/login")({
 
 function Login() {
   const navigate = Route.useNavigate();
+  const router = useRouter();
   const { returnTo } = Route.useSearch();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -91,6 +92,8 @@ function Login() {
                 setError("Invalid email or password");
                 return;
               }
+              // Re-run root beforeLoad so public chrome and portal share the new session.
+              await router.invalidate();
               const dest = safeReturnPath(returnTo, resolvePostLoginPath(session));
               await navigate({ href: dest });
             })();

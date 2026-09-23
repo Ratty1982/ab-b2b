@@ -85,6 +85,43 @@ On every basket load, lines are assessed:
 
 Lines are **not** silently deleted.
 
+## Public session consistency (Phase 6A fix)
+
+One Better Auth session drives **pricing, public header, Trade Ordering, basket,
+and portal**. The root route `beforeLoad` calls `getClientSession()` and sets
+`Cache-Control: private, no-store` so authenticated chrome is never reused from
+an anonymous cache.
+
+- Anonymous: Trade Login + Open a Trade Account; no Basket; no Add to Basket;
+  no YOUR PRICE.
+- Authenticated trade: My Account + Basket (+ badge) + Log out; YOUR PRICE from
+  Phase 4; ordering controls when the product is orderable.
+- Authenticated but product not orderable: header stays logged-in; PDP shows the
+  product-level reason (e.g. insufficient full case) — not anonymous CTAs.
+
+### Manual production check (Wayne)
+
+1. Log out.
+2. Open PMML500SC40 (or another case-ordered SKU).
+3. Confirm anonymous header (Trade Login / Open a Trade Account).
+4. Confirm no Add to Basket.
+5. Log in with a valid trade customer.
+6. Return to the same PDP.
+7. Confirm Trade Login / Open Account are gone.
+8. Confirm Basket appears.
+9. Confirm My Account appears.
+10. Confirm YOUR PRICE.
+11. Confirm case quantity controls (when stock allows a full case).
+12. Confirm Add to Basket.
+13. Add one case.
+14. Confirm basket badge changes.
+15. Open Basket (`/portal/basket`).
+16. Refresh Basket.
+17. Confirm line persists.
+18. Return to public catalogue — still authenticated.
+19. Logout.
+20. Confirm anonymous header returns.
+
 ## Phase 6B boundary
 
 Not in 6A:

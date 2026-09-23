@@ -264,7 +264,7 @@ describe("phase 3 product master", () => {
     const sku = `P3-${Date.now()}`;
     const created = await createProduct(adminId, {
       sku,
-      name: "Phase 3 sealant",
+      name: `Phase 3 sealant ${sku}`,
       brandId: brands[0]!.id,
       categoryId: cats[0]!.id,
     });
@@ -283,9 +283,9 @@ describe("phase 3 product master", () => {
       }),
     ).rejects.toBeInstanceOf(AuthError);
 
-    await updateProductWorkspace(adminId, { id: created.id, name: "Phase 3 sealant updated" });
+    await updateProductWorkspace(adminId, { id: created.id, name: `Phase 3 sealant updated ${sku}` });
     const loaded = await getProductWorkspace(adminId, created.id);
-    expect(loaded.name).toBe("Phase 3 sealant updated");
+    expect(loaded.name).toBe(`Phase 3 sealant updated ${sku}`);
     expect(loaded.description).toBe("Keep this copy");
     expect(loaded.tradePrice).toBe(9.5);
   });

@@ -12,6 +12,8 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportClientError } from "../lib/error-reporting";
 import { Toaster } from "@/components/ui/sonner";
+import { guestSession } from "@/lib/session";
+import { getClientSession, type ClientSession } from "@/server/auth/session";
 
 function NotFoundComponent() {
   return (
@@ -73,7 +75,28 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+export type RootRouterContext = {
+  queryClient: QueryClient;
+  /** Authoritative Better Auth session for SSR + client chrome (one actor). */
+  session: ClientSession;
+};
+
+export const Route = createRootRouteWithContext<RootRouterContext>()({
+  /**
+   * Session-bearing shell must never be served from an anonymous shared cache.
+   * Customer pricing, basket count, and account chrome are request-specific.
+   */
+  headers: () => ({
+    "Cache-Control": "private, no-store",
+  }),
+  beforeLoad: async (): Promise<{ session: ClientSession }> => {
+    try {
+      const session = await getClientSession();
+      return { session };
+    } catch {
+      return { session: guestSession };
+    }
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },

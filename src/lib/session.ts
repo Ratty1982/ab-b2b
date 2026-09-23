@@ -1,50 +1,42 @@
 /**
  * Client session helpers.
  * Authoritative auth is server-side (HttpOnly cookies + RBAC guards).
- * This module only exposes a safe client view for UI chrome.
+ * This module exposes the same server session for public chrome and portal UI.
+ *
+ * Session is loaded once per navigation in the root route `beforeLoad`
+ * (see `__root.tsx`) so SSR and hydration share one actor — no guest flash.
  */
-import { useEffect, useState } from "react";
-import { useRouter } from "@tanstack/react-router";
+import { useCallback } from "react";
+import { getRouteApi, useRouter } from "@tanstack/react-router";
 
-import { getClientSession, type ClientSession } from "@/server/auth/session";
+import type { ClientSession } from "@/server/auth/session";
 
 export type { ClientSession } from "@/server/auth/session";
 
 export const guestSession: ClientSession = { signedIn: false };
 
+const rootRouteApi = getRouteApi("__root__");
+
 /**
- * Subscribe to the server session for UI (prices, chrome).
+ * Subscribe to the server session for UI (prices, chrome, ordering).
  * Route protection must use beforeLoad + server guards — not this hook alone.
+ *
+ * Reads the root route context session produced by `getClientSession` on the
+ * server. After login/logout call `refresh()` (router.invalidate) so chrome
+ * updates without a second auth cookie or client-only parser.
  */
 export function useSession(): ClientSession & {
   loading: boolean;
   refresh: () => Promise<void>;
 } {
-  const [session, setSession] = useState<ClientSession>(guestSession);
-  const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const { session } = rootRouteApi.useRouteContext();
 
-  const refresh = async () => {
-    try {
-      const next = await getClientSession();
-      setSession(next);
-    } catch {
-      setSession(guestSession);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void refresh();
-    // Re-check when the router navigates (e.g. after login)
-    const unsub = router.subscribe("onResolved", () => {
-      void refresh();
-    });
-    return unsub;
+  const refresh = useCallback(async () => {
+    await router.invalidate();
   }, [router]);
 
-  return { ...session, loading, refresh };
+  return { ...(session ?? guestSession), loading: false, refresh };
 }
 
 /** @deprecated Prototype localStorage sign-in removed — use signInWithPassword server fn */

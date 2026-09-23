@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import { formatCaseCountLabel } from "@/domain/ordering";
 
-type Panel = {
+export type ProductOrderingPanelView = {
   orderable: boolean;
   reason: string | null;
   caseQty: number | null;
@@ -35,10 +35,13 @@ export function ProductTradeOrdering({
   caseQty,
   variantId,
   productName,
+  initialPanel,
 }: {
   caseQty: number | null | undefined;
   variantId?: string | null;
   productName?: string;
+  /** SSR panel from the product loader when the actor is already known. */
+  initialPanel?: ProductOrderingPanelView | null;
 }) {
   const copy = publicTradeOrderingCopy(caseQty);
   if (!copy) return null;
@@ -47,6 +50,7 @@ export function ProductTradeOrdering({
       copy={copy}
       {...(variantId != null ? { variantId } : {})}
       {...(productName != null ? { productName } : {})}
+      {...(initialPanel != null ? { initialPanel } : {})}
     />
   );
 }
@@ -55,21 +59,33 @@ function ProductTradeOrderingCard({
   copy,
   variantId,
   productName,
+  initialPanel,
 }: {
   copy: { title: string; subtitle: string };
   variantId?: string | null;
   productName?: string;
+  initialPanel?: ProductOrderingPanelView | null;
 }) {
   const session = useSession();
   const tradeActor =
     session.signedIn && session.user?.actorType === "TRADE" ? session.user : null;
-  const [panel, setPanel] = useState<Panel | null>(null);
-  const [quantity, setQuantity] = useState<number | null>(null);
+  const [panel, setPanel] = useState<ProductOrderingPanelView | null>(
+    tradeActor ? (initialPanel ?? null) : null,
+  );
+  const [quantity, setQuantity] = useState<number | null>(
+    tradeActor ? (initialPanel?.quantity ?? null) : null,
+  );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!variantId || !tradeActor) {
       setPanel(null);
+      setQuantity(null);
+      return;
+    }
+    if (initialPanel) {
+      setPanel(initialPanel);
+      setQuantity(initialPanel.quantity);
       return;
     }
     let cancelled = false;
@@ -81,9 +97,9 @@ function ProductTradeOrderingCard({
     return () => {
       cancelled = true;
     };
-  }, [variantId, tradeActor?.id]);
+  }, [variantId, tradeActor?.id, initialPanel]);
 
-  const interactive = Boolean(variantId && panel);
+  const interactive = Boolean(variantId && tradeActor && panel);
 
   async function applyQuantity(next: number) {
     if (!variantId || !panel) return;
@@ -131,6 +147,15 @@ function ProductTradeOrderingCard({
         {panel?.caseTitle ?? copy.title}
       </p>
       <p className="mt-1 text-[13px] text-steel">{panel?.caseSubtitle ?? copy.subtitle}</p>
+
+      {!tradeActor ? (
+        <p className="mt-4 text-[13px] text-steel" role="status">
+          <Link to="/login" className="font-semibold text-primary hover:underline">
+            Sign in
+          </Link>{" "}
+          with a trade account to order online.
+        </p>
+      ) : null}
 
       {showControls && panel?.insufficientFullCase ? (
         <p className="mt-4 text-[13px] font-medium text-warn" role="status">

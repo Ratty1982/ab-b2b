@@ -11,6 +11,7 @@ vi.mock("@/lib/session", () => ({
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: ReactNode; to: string }) =>
     createElement("a", { href: typeof to === "string" ? to : "/" }, children),
+  useRouter: () => ({ invalidate: async () => undefined }),
 }));
 
 function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {

@@ -1,13 +1,28 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { PublicCatalogueLayout } from "@/components/public/PublicCatalogueShell";
 import { ProductDetailView } from "@/components/public/ProductDetail";
-import { getPublicProductFn } from "@/server/phase2/fns";
+import { getProductOrderingPanelFn, getPublicProductFn } from "@/server/phase2/fns";
+import type { ProductOrderingPanelView } from "@/components/public/ProductTradeOrdering";
 
 export const Route = createFileRoute("/products/$sku")({
-  loader: async ({ params }) => {
+  loader: async ({ params, context }) => {
     const result = await getPublicProductFn({ data: { slug: params.sku } });
     if (!result.ok || !result.data) throw notFound();
-    return result.data;
+
+    let orderingPanel: ProductOrderingPanelView | null = null;
+    const session = context.session;
+    const trade =
+      session?.signedIn &&
+      session.user.actorType === "TRADE" &&
+      Boolean(result.data.variantId);
+    if (trade && result.data.variantId) {
+      const panel = await getProductOrderingPanelFn({
+        data: { variantId: result.data.variantId },
+      });
+      if (panel.ok) orderingPanel = panel.data;
+    }
+
+    return { ...result.data, orderingPanel };
   },
   head: ({ loaderData }) => {
     if (!loaderData) {

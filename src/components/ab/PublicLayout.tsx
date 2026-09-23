@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { Menu, Search, X } from "lucide-react";
 import { Logo } from "./Logo";
@@ -6,6 +6,7 @@ import { BasketNavBadge } from "./BasketNavBadge";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/session";
 import { ROUTES } from "@/lib/app-nav";
+import { signOutCurrent } from "@/server/auth/session";
 
 const nav = [
   { label: "Products", to: "/products" },
@@ -19,11 +20,26 @@ const nav = [
 
 export function PublicHeader() {
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const session = useSession();
+  const router = useRouter();
   const tradeSignedIn = Boolean(session.signedIn && session.user?.actorType === "TRADE");
 
+  async function onSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    setOpen(false);
+    try {
+      await signOutCurrent();
+      await router.invalidate();
+      window.location.assign("/");
+    } catch {
+      setSigningOut(false);
+    }
+  }
+
   return (
-    <header className="sticky top-0 z-40 border-b border-border/70 bg-ink/90 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-border/70 bg-ink/90 backdrop-blur" data-public-header="shell">
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-10">
         <div className="grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
           <div className="flex min-w-0 items-center gap-8">
@@ -41,7 +57,7 @@ export function PublicHeader() {
               ))}
             </nav>
           </div>
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex shrink-0 items-center gap-2.5" data-public-header="actions">
             <Link
               to="/products"
               className="hidden h-9 w-56 items-center gap-2 rounded-md border border-border bg-surface px-3 text-[13px] text-steel transition-colors hover:border-steel lg:flex"
@@ -53,13 +69,15 @@ export function PublicHeader() {
             {tradeSignedIn ? (
               <Link
                 to={ROUTES.portal}
+                data-public-header="account"
                 className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
               >
-                Account
+                My Account
               </Link>
             ) : (
               <Link
                 to="/login"
+                data-public-header="trade-login"
                 className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
               >
                 Trade Login
@@ -68,11 +86,22 @@ export function PublicHeader() {
             {!tradeSignedIn ? (
               <Link
                 to="/register"
+                data-public-header="open-account"
                 className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
               >
                 Open a Trade Account
               </Link>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                data-public-header="logout"
+                disabled={signingOut}
+                onClick={() => void onSignOut()}
+                className="hidden h-9 items-center rounded-md px-3 text-[13px] font-semibold text-steel transition-colors hover:text-foreground sm:inline-flex"
+              >
+                Log out
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
@@ -86,7 +115,7 @@ export function PublicHeader() {
         </div>
       </div>
       {open ? (
-        <div className="border-t border-border/70 bg-ink xl:hidden">
+        <div className="border-t border-border/70 bg-ink xl:hidden" data-public-header="mobile-menu">
           <nav className="mx-auto grid max-w-[1400px] gap-1 px-4 py-3 sm:px-6">
             {nav.map((item) => (
               <Link
@@ -99,13 +128,49 @@ export function PublicHeader() {
                 {item.label}
               </Link>
             ))}
-            <Link
-              to="/login"
-              onClick={() => setOpen(false)}
-              className="rounded-md px-3 py-2 text-sm font-semibold sm:hidden"
-            >
-              Trade Login
-            </Link>
+            {tradeSignedIn ? (
+              <>
+                <div className="px-3 py-2 sm:hidden">
+                  <BasketNavBadge className="w-full justify-center" />
+                </div>
+                <Link
+                  to={ROUTES.portal}
+                  onClick={() => setOpen(false)}
+                  data-public-header="mobile-account"
+                  className="rounded-md px-3 py-2 text-sm font-semibold"
+                >
+                  My Account
+                </Link>
+                <button
+                  type="button"
+                  data-public-header="mobile-logout"
+                  disabled={signingOut}
+                  onClick={() => void onSignOut()}
+                  className="rounded-md px-3 py-2 text-left text-sm font-semibold text-steel"
+                >
+                  Log out
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/login"
+                  onClick={() => setOpen(false)}
+                  data-public-header="mobile-trade-login"
+                  className="rounded-md px-3 py-2 text-sm font-semibold sm:hidden"
+                >
+                  Trade Login
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setOpen(false)}
+                  data-public-header="mobile-open-account"
+                  className="rounded-md px-3 py-2 text-sm font-semibold text-primary sm:hidden"
+                >
+                  Open a Trade Account
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       ) : null}

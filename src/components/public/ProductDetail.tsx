@@ -6,7 +6,10 @@ import { ProductImage } from "@/components/public/ProductImage";
 import { ProductCard } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
 import { publicUnitPriceQualifier } from "@/domain/public-price-unit";
-import { ProductTradeOrdering } from "@/components/public/ProductTradeOrdering";
+import {
+  ProductTradeOrdering,
+  type ProductOrderingPanelView,
+} from "@/components/public/ProductTradeOrdering";
 import {
   featuresForDisplay,
   hasPublicText,
@@ -35,6 +38,8 @@ export type PublicProductDetail = {
   mpn?: string | null;
   /** ProductVariant.unit — drives YOUR PRICE · EACH (or other qualifier) · EX VAT. */
   unit?: string | null;
+  /** SSR trade ordering panel when the root session is an order-capable trade actor. */
+  orderingPanel?: ProductOrderingPanelView | null;
 };
 
 export function ProductDetailView({ data }: { data: PublicProductDetail }) {
@@ -96,6 +101,7 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
                     caseQty={data.caseQty}
                     {...(data.variantId != null ? { variantId: data.variantId } : {})}
                     productName={data.card.name}
+                    {...(data.orderingPanel != null ? { initialPanel: data.orderingPanel } : {})}
                   />
                 ) : null}
               </div>
