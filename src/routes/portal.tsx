@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/ab/AppShell";
+import { BasketNavBadge } from "@/components/ab/BasketNavBadge";
 import { ensurePortalAccess } from "@/server/auth/route-guards";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/session";
 import { shellModelFromSession, shellUserFromSession } from "@/lib/nav-permissions";
@@ -37,6 +38,9 @@ function PortalLayout() {
       areaLabel={model.areaLabel}
       user={shellUserFromSession(user)}
     >
+      <div className="flex justify-end border-b border-border/60 px-4 py-2 sm:px-6">
+        <BasketNavBadge />
+      </div>
       <Outlet />
     </AppShell>
   );

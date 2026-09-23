@@ -9,10 +9,10 @@ import {
   ProductDirections,
   ProductFeatures,
   ProductDetails,
-  ProductTradeOrdering,
   ProductWarnings,
   type PublicProductDetail,
 } from "@/components/public/ProductDetail";
+import { ProductTradeOrdering } from "@/components/public/ProductTradeOrdering";
 import {
   PRODUCT_IMAGE_DETAIL_STAGE_CLASS,
   PRODUCT_IMAGE_FIT_CLASS,
@@ -160,7 +160,7 @@ describe("public product detail sections", () => {
     expect(markup).toContain("Glass Cleaner");
     expect(markup).not.toContain(">5L<");
     expect(ProductDetails({ rows: [] })).toBeNull();
-    expect(ProductTradeOrdering({ card: null })).toBeNull();
+    expect(ProductTradeOrdering({ caseQty: null })).toBeNull();
   });
 
   it("keeps anonymous stock quantity hidden and availability labels correct", () => {
@@ -367,14 +367,15 @@ describe("public product detail sections", () => {
 });
 
 describe("product hero commerce presentation", () => {
-  it("does not render Add to Basket, quantity steppers, or Coming Soon placeholders", () => {
+  it("does not render Add to Basket controls for anonymous visitors", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
-    expect(markup).not.toMatch(/Add to Basket/i);
+    expect(markup).not.toMatch(/Add to basket/i);
     expect(markup).not.toMatch(/Coming Soon/i);
     expect(markup).not.toMatch(/type="number"/);
     expect(markup).not.toMatch(/aria-label="Decrease quantity"/);
     expect(markup).not.toMatch(/aria-label="Increase quantity"/);
     expect(markup).toContain("data-product-unit-price");
+    expect(markup).toContain("Trade ordering");
   });
 
   it("keeps headline trade as the unit price even when caseQty is 2", () => {

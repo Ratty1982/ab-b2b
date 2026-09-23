@@ -2,7 +2,10 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { Menu, Search, X } from "lucide-react";
 import { Logo } from "./Logo";
+import { BasketNavBadge } from "./BasketNavBadge";
 import { cn } from "@/lib/utils";
+import { useSession } from "@/lib/session";
+import { ROUTES } from "@/lib/app-nav";
 
 const nav = [
   { label: "Products", to: "/products" },
@@ -16,6 +19,8 @@ const nav = [
 
 export function PublicHeader() {
   const [open, setOpen] = useState(false);
+  const session = useSession();
+  const tradeSignedIn = session.signedIn && session.user.actorType === "TRADE";
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-ink/90 backdrop-blur">
@@ -44,18 +49,30 @@ export function PublicHeader() {
               <Search className="size-3.5 shrink-0" aria-hidden />
               <span className="truncate">Search product, SKU or brand…</span>
             </Link>
-            <Link
-              to="/login"
-              className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
-            >
-              Trade Login
-            </Link>
-            <Link
-              to="/register"
-              className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
-            >
-              Open a Trade Account
-            </Link>
+            {tradeSignedIn ? <BasketNavBadge className="hidden sm:inline-flex" /> : null}
+            {tradeSignedIn ? (
+              <Link
+                to={ROUTES.portal}
+                className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
+              >
+                Account
+              </Link>
+            ) : (
+              <Link
+                to="/login"
+                className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
+              >
+                Trade Login
+              </Link>
+            )}
+            {!tradeSignedIn ? (
+              <Link
+                to="/register"
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
+              >
+                Open a Trade Account
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}

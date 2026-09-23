@@ -1,0 +1,767 @@
+import { z } from "zod";
+import { prisma } from "@/infra/database/client";
+import { AuthError, requireAuthenticatedUser, requireCompanyPermission } from "@/server/rbac/guards";
+import { hasPermission } from "@/server/rbac/access";
+import { loadPricingActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
+import { loadStockByVariantIds } from "@/server/stock/service";
+import { cmsMediaPublicPath } from "@/lib/cms-media";
+import {
+  addMoney,
+  moneyToString,
+  mulQty,
+  parseMoney,
+  roundGbpDisplay,
+  applyVatInc,
+  moneyZero,
+} from "@/domain/money";
+import {
+  assessBasketLineQuantity,
+  basketLineIssueMessage,
+  canDecrementQuantity,
+  canIncrementQuantity,
+  caseCountForQuantity,
+  formatCaseCountLabel,
+  getOrderingRules,
+  isOrderableByStockPolicy,
+  maxOrderableQuantity,
+  validateOrderQuantity,
+  type BasketLineIssue,
+} from "@/domain/ordering";
+import { publicTradeOrderingCopy } from "@/domain/case-ordering";
+import type { PublicAvailability } from "@/domain/availability";
+import type { TradePriceResolution } from "@/domain/trade-price-resolution";
+
+const variantIdSchema = z.object({
+  variantId: z.string().cuid(),
+  quantity: z.number().int().positive().max(100_000),
+});
+
+const itemIdSchema = z.object({
+  itemId: z.string().cuid(),
+  quantity: z.number().int().positive().max(100_000),
+});
+
+const removeSchema = z.object({
+  itemId: z.string().cuid(),
+});
+
+export type BasketMoney = {
+  net: string;
+  vat: string;
+  gross: string;
+  netDisplay: string;
+  vatDisplay: string;
+  grossDisplay: string;
+};
+
+export type PublicBasketLine = {
+  id: string;
+  variantId: string;
+  productId: string;
+  productSlug: string;
+  sku: string;
+  name: string;
+  imageSrc: string | null;
+  quantity: number;
+  caseQty: number | null;
+  caseCount: number | null;
+  caseCountLabel: string | null;
+  caseTitle: string | null;
+  unitPriceExVat: string | null;
+  unitPriceExVatDisplay: string | null;
+  lineNet: string | null;
+  lineNetDisplay: string | null;
+  lineVat: string | null;
+  lineGross: string | null;
+  availability: PublicAvailability | null;
+  issue: BasketLineIssue;
+  issueMessage: string | null;
+  canIncrement: boolean;
+  canDecrement: boolean;
+  priceSource: TradePriceResolution["source"] | null;
+};
+
+export type PublicBasket = {
+  id: string;
+  companyId: string;
+  companyName: string;
+  status: "OPEN";
+  lineCount: number;
+  unitCount: number;
+  lines: PublicBasketLine[];
+  totals: BasketMoney;
+  currency: "GBP";
+  hasBlockingIssues: boolean;
+};
+
+export type BasketSummary = {
+  basketId: string | null;
+  companyId: string | null;
+  lineCount: number;
+  unitCount: number;
+};
+
+export type ProductOrderingPanel = {
+  orderable: boolean;
+  reason: string | null;
+  caseQty: number | null;
+  caseTitle: string | null;
+  caseSubtitle: string | null;
+  minimumQuantity: number | null;
+  quantity: number | null;
+  caseCount: number | null;
+  caseCountLabel: string | null;
+  unitPriceExVatDisplay: string | null;
+  lineNetDisplay: string | null;
+  canIncrement: boolean;
+  canDecrement: boolean;
+  canAdd: boolean;
+  insufficientFullCase: boolean;
+};
+
+async function resolveTradeCompany(userId: string): Promise<{
+  companyId: string;
+  companyName: string;
+  taxStatus: string;
+  canMutate: boolean;
+  canView: boolean;
+}> {
+  const profile = await requireAuthenticatedUser(userId);
+  if (profile.actorType !== "TRADE") {
+    throw new AuthError("Trade basket requires a trade customer account", "BASKET_FORBIDDEN", 403);
+  }
+  const actor = await loadPricingActor(userId);
+  if (!actor.companyId) {
+    throw new AuthError("No company context for basket", "BASKET_NO_COMPANY", 403);
+  }
+  const company = await prisma.company.findUnique({
+    where: { id: actor.companyId },
+    select: { id: true, name: true, status: true, taxStatus: true },
+  });
+  if (!company || company.status !== "ACTIVE") {
+    throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
+  }
+  await requireCompanyPermission(userId, company.id, "orders.view");
+  const canMutate = hasPermission(profile, "orders.create");
+  return {
+    companyId: company.id,
+    companyName: company.name,
+    taxStatus: company.taxStatus,
+    canMutate,
+    canView: true,
+  };
+}
+
+async function requireMutableCompany(userId: string) {
+  const ctx = await resolveTradeCompany(userId);
+  if (!ctx.canMutate) {
+    throw new AuthError("You do not have permission to modify the basket", "BASKET_READ_ONLY", 403);
+  }
+  return ctx;
+}
+
+async function getOrCreateOpenBasket(companyId: string, userId: string) {
+  const existing = await prisma.basket.findFirst({
+    where: { companyId, status: "OPEN" },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (existing) return existing;
+  return prisma.basket.create({
+    data: { companyId, userId, status: "OPEN" },
+  });
+}
+
+async function loadOwnedBasket(userId: string, basketId: string) {
+  const ctx = await resolveTradeCompany(userId);
+  const basket = await prisma.basket.findFirst({
+    where: { id: basketId, companyId: ctx.companyId, status: "OPEN" },
+  });
+  if (!basket) {
+    throw new AuthError("Basket not found", "BASKET_NOT_FOUND", 404);
+  }
+  return { basket, ctx };
+}
+
+function moneyBundle(net: ReturnType<typeof moneyZero>, vat: ReturnType<typeof moneyZero>, gross: ReturnType<typeof moneyZero>): BasketMoney {
+  return {
+    net: moneyToString(net, 4),
+    vat: moneyToString(vat, 4),
+    gross: moneyToString(gross, 4),
+    netDisplay: moneyToString(net, 2),
+    vatDisplay: moneyToString(vat, 2),
+    grossDisplay: moneyToString(gross, 2),
+  };
+}
+
+function lineTotalsFromResolution(resolution: TradePriceResolution | null, quantity: number) {
+  if (!resolution || resolution.source === "NONE" || !resolution.unitPriceExVat) {
+    return {
+      unitEx: null as string | null,
+      unitExDisplay: null as string | null,
+      lineNet: null as string | null,
+      lineNetDisplay: null as string | null,
+      lineVat: null as string | null,
+      lineGross: null as string | null,
+      hasPrice: false,
+      source: null as TradePriceResolution["source"] | null,
+    };
+  }
+  const unitEx = parseMoney(resolution.unitPriceExVat)!;
+  const vatRate = parseMoney(resolution.vatRate)!;
+  const lineNet = roundGbpDisplay(mulQty(unitEx, quantity));
+  const lineGross = applyVatInc(lineNet, vatRate);
+  const lineVat = roundGbpDisplay({
+    minor: lineGross.minor - lineNet.minor,
+  });
+  return {
+    unitEx: moneyToString(unitEx, 4),
+    unitExDisplay: moneyToString(roundGbpDisplay(unitEx), 2),
+    lineNet: moneyToString(lineNet, 4),
+    lineNetDisplay: moneyToString(lineNet, 2),
+    lineVat: moneyToString(lineVat, 4),
+    lineGross: moneyToString(lineGross, 4),
+    hasPrice: true,
+    source: resolution.source,
+  };
+}
+
+async function hydrateBasket(basketId: string, companyId: string, companyName: string): Promise<PublicBasket> {
+  const items = await prisma.basketItem.findMany({
+    where: { basketId },
+    orderBy: { createdAt: "asc" },
+    include: {
+      variant: {
+        include: {
+          product: {
+            include: {
+              media: {
+                orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+                take: 1,
+                select: { mediaId: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const variantIds = items.map((item) => item.variantId);
+  const stockMap = await loadStockByVariantIds(variantIds);
+
+  const qtyGroups = new Map<number, typeof items>();
+  for (const item of items) {
+    const list = qtyGroups.get(item.qty) ?? [];
+    list.push(item);
+    qtyGroups.set(item.qty, list);
+  }
+
+  const priceByVariant = new Map<string, TradePriceResolution>();
+  for (const [qty, group] of qtyGroups) {
+    const resolved = await resolveVariantTradePrices({
+      companyId,
+      quantity: qty,
+      variants: group.map((item) => ({
+        id: item.variant.id,
+        sku: item.variant.sku,
+        tradePrice: item.variant.tradePrice,
+        vatCode: item.variant.vatCode,
+      })),
+    });
+    for (const [id, price] of resolved) priceByVariant.set(id, price);
+  }
+
+  let totalNet = moneyZero();
+  let totalVat = moneyZero();
+  let totalGross = moneyZero();
+  let hasBlockingIssues = false;
+  const lines: PublicBasketLine[] = [];
+
+  for (const item of items) {
+    const variant = item.variant;
+    const product = variant.product;
+    const stock = stockMap.get(variant.id);
+    const sellableQty = stock?.sellableQty ?? 0;
+    const stale = stock?.stale ?? true;
+    const availability = stock?.availability ?? null;
+    const resolution = priceByVariant.get(variant.id) ?? null;
+    const money = lineTotalsFromResolution(resolution, item.qty);
+    const issue = assessBasketLineQuantity({
+      quantity: item.qty,
+      caseQty: variant.caseQty,
+      minimumOrderQty: variant.minOrderQty,
+      sellableQty,
+      productActive: product.status === "ACTIVE" && product.isActive,
+      tradeVisible: product.isTradeVisible,
+      orderableByStockPolicy: stock ? isOrderableByStockPolicy({ sellableQty, stale, availability }) : false,
+      hasTradePrice: money.hasPrice,
+    });
+    if (issue !== "VALID") hasBlockingIssues = true;
+    const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
+    const caseQty = rules.orderable ? rules.caseQty : null;
+    const cases = caseQty != null ? caseCountForQuantity(item.qty, caseQty) : null;
+    const copy = publicTradeOrderingCopy(caseQty);
+    if (money.hasPrice && issue === "VALID") {
+      totalNet = addMoney(totalNet, parseMoney(money.lineNet!)!);
+      totalVat = addMoney(totalVat, parseMoney(money.lineVat!)!);
+      totalGross = addMoney(totalGross, parseMoney(money.lineGross!)!);
+    }
+    const imageId = product.media[0]?.mediaId ?? null;
+    lines.push({
+      id: item.id,
+      variantId: variant.id,
+      productId: product.id,
+      productSlug: product.slug,
+      sku: variant.sku,
+      name: product.name,
+      imageSrc: imageId ? cmsMediaPublicPath(imageId) : null,
+      quantity: item.qty,
+      caseQty,
+      caseCount: cases,
+      caseCountLabel: cases != null ? formatCaseCountLabel(cases) : null,
+      caseTitle: copy?.title ?? null,
+      unitPriceExVat: money.unitEx,
+      unitPriceExVatDisplay: money.unitExDisplay,
+      lineNet: money.lineNet,
+      lineNetDisplay: money.lineNetDisplay,
+      lineVat: money.lineVat,
+      lineGross: money.lineGross,
+      availability,
+      issue,
+      issueMessage: basketLineIssueMessage(issue),
+      canIncrement:
+        issue === "VALID" &&
+        canIncrementQuantity({
+          currentQuantity: item.qty,
+          caseQty: variant.caseQty,
+          minimumOrderQty: variant.minOrderQty,
+          sellableQty,
+        }),
+      canDecrement:
+        issue === "VALID" &&
+        canDecrementQuantity({
+          currentQuantity: item.qty,
+          caseQty: variant.caseQty,
+          minimumOrderQty: variant.minOrderQty,
+        }),
+      priceSource: money.source,
+    });
+  }
+
+  return {
+    id: basketId,
+    companyId,
+    companyName,
+    status: "OPEN",
+    lineCount: lines.length,
+    unitCount: lines.reduce((sum, line) => sum + line.quantity, 0),
+    lines,
+    totals: moneyBundle(totalNet, totalVat, totalGross),
+    currency: "GBP",
+    hasBlockingIssues,
+  };
+}
+
+export async function getBasketSummary(userId: string): Promise<BasketSummary> {
+  try {
+    const ctx = await resolveTradeCompany(userId);
+    const basket = await prisma.basket.findFirst({
+      where: { companyId: ctx.companyId, status: "OPEN" },
+      include: { items: { select: { qty: true } } },
+    });
+    if (!basket) {
+      return { basketId: null, companyId: ctx.companyId, lineCount: 0, unitCount: 0 };
+    }
+    return {
+      basketId: basket.id,
+      companyId: ctx.companyId,
+      lineCount: basket.items.length,
+      unitCount: basket.items.reduce((sum, item) => sum + item.qty, 0),
+    };
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return { basketId: null, companyId: null, lineCount: 0, unitCount: 0 };
+    }
+    throw error;
+  }
+}
+
+export async function getBasket(userId: string): Promise<PublicBasket> {
+  const ctx = await resolveTradeCompany(userId);
+  const basket = await getOrCreateOpenBasket(ctx.companyId, userId);
+  return hydrateBasket(basket.id, ctx.companyId, ctx.companyName);
+}
+
+async function loadOrderableVariant(variantId: string) {
+  const variant = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    include: {
+      product: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          status: true,
+          isActive: true,
+          isTradeVisible: true,
+        },
+      },
+    },
+  });
+  if (!variant) {
+    throw new AuthError("Product not found", "PRODUCT_NOT_FOUND", 404);
+  }
+  return variant;
+}
+
+export async function addToBasket(userId: string, raw: unknown): Promise<PublicBasket> {
+  const input = variantIdSchema.parse(raw);
+  const ctx = await requireMutableCompany(userId);
+  const variant = await loadOrderableVariant(input.variantId);
+  if (variant.product.status !== "ACTIVE" || !variant.product.isActive || !variant.product.isTradeVisible) {
+    throw new AuthError("This product is not available for ordering", "PRODUCT_UNAVAILABLE", 400);
+  }
+
+  const stockMap = await loadStockByVariantIds([variant.id]);
+  const stock = stockMap.get(variant.id);
+  const sellableQty = stock?.sellableQty ?? 0;
+  const orderableByStockPolicy = stock
+    ? isOrderableByStockPolicy({
+        sellableQty,
+        stale: stock.stale,
+        availability: stock.availability,
+      })
+    : false;
+
+  const basket = await getOrCreateOpenBasket(ctx.companyId, userId);
+  const existing = await prisma.basketItem.findUnique({
+    where: { basketId_variantId: { basketId: basket.id, variantId: variant.id } },
+  });
+  const nextQty = (existing?.qty ?? 0) + input.quantity;
+
+  const validated = validateOrderQuantity({
+    requestedQuantity: nextQty,
+    caseQty: variant.caseQty,
+    minimumOrderQty: variant.minOrderQty,
+    sellableQty,
+    orderableByStockPolicy,
+  });
+  if (!validated.ok) {
+    throw new AuthError(validated.message, validated.code, 400);
+  }
+
+  const priced = await resolveVariantTradePrices({
+    companyId: ctx.companyId,
+    quantity: nextQty,
+    variants: [
+      {
+        id: variant.id,
+        sku: variant.sku,
+        tradePrice: variant.tradePrice,
+        vatCode: variant.vatCode,
+      },
+    ],
+  });
+  const resolution = priced.get(variant.id);
+  if (!resolution || resolution.source === "NONE") {
+    throw new AuthError("Trade price unavailable for this product", "PRICE_UNAVAILABLE", 400);
+  }
+
+  if (existing) {
+    await prisma.basketItem.update({
+      where: { id: existing.id },
+      data: { qty: nextQty },
+    });
+  } else {
+    await prisma.basketItem.create({
+      data: {
+        basketId: basket.id,
+        variantId: variant.id,
+        qty: nextQty,
+      },
+    });
+  }
+
+  return hydrateBasket(basket.id, ctx.companyId, ctx.companyName);
+}
+
+export async function updateBasketItem(userId: string, raw: unknown): Promise<PublicBasket> {
+  const input = itemIdSchema.parse(raw);
+  const ctx = await requireMutableCompany(userId);
+  const item = await prisma.basketItem.findFirst({
+    where: { id: input.itemId, basket: { companyId: ctx.companyId, status: "OPEN" } },
+    include: { variant: true, basket: true },
+  });
+  if (!item) {
+    throw new AuthError("Basket item not found", "BASKET_ITEM_NOT_FOUND", 404);
+  }
+
+  const stockMap = await loadStockByVariantIds([item.variantId]);
+  const stock = stockMap.get(item.variantId);
+  const sellableQty = stock?.sellableQty ?? 0;
+  const validated = validateOrderQuantity({
+    requestedQuantity: input.quantity,
+    caseQty: item.variant.caseQty,
+    minimumOrderQty: item.variant.minOrderQty,
+    sellableQty,
+    orderableByStockPolicy: stock
+      ? isOrderableByStockPolicy({
+          sellableQty,
+          stale: stock.stale,
+          availability: stock.availability,
+        })
+      : false,
+  });
+  if (!validated.ok) {
+    throw new AuthError(validated.message, validated.code, 400);
+  }
+
+  const priced = await resolveVariantTradePrices({
+    companyId: ctx.companyId,
+    quantity: input.quantity,
+    variants: [
+      {
+        id: item.variant.id,
+        sku: item.variant.sku,
+        tradePrice: item.variant.tradePrice,
+        vatCode: item.variant.vatCode,
+      },
+    ],
+  });
+  if (!priced.get(item.variant.id) || priced.get(item.variant.id)!.source === "NONE") {
+    throw new AuthError("Trade price unavailable for this product", "PRICE_UNAVAILABLE", 400);
+  }
+
+  await prisma.basketItem.update({
+    where: { id: item.id },
+    data: { qty: input.quantity },
+  });
+
+  return hydrateBasket(item.basketId, ctx.companyId, ctx.companyName);
+}
+
+export async function removeBasketItem(userId: string, raw: unknown): Promise<PublicBasket> {
+  const input = removeSchema.parse(raw);
+  const ctx = await requireMutableCompany(userId);
+  const item = await prisma.basketItem.findFirst({
+    where: { id: input.itemId, basket: { companyId: ctx.companyId, status: "OPEN" } },
+  });
+  if (!item) {
+    throw new AuthError("Basket item not found", "BASKET_ITEM_NOT_FOUND", 404);
+  }
+  await prisma.basketItem.delete({ where: { id: item.id } });
+  return hydrateBasket(item.basketId, ctx.companyId, ctx.companyName);
+}
+
+/** Preview ordering controls for a PDP. Never returns exact sellable qty. */
+export async function getProductOrderingPanel(
+  userId: string | null,
+  raw: unknown,
+): Promise<ProductOrderingPanel> {
+  const { variantId } = z.object({ variantId: z.string().cuid() }).parse(raw);
+  const empty: ProductOrderingPanel = {
+    orderable: false,
+    reason: "Sign in with a trade account to order",
+    caseQty: null,
+    caseTitle: null,
+    caseSubtitle: null,
+    minimumQuantity: null,
+    quantity: null,
+    caseCount: null,
+    caseCountLabel: null,
+    unitPriceExVatDisplay: null,
+    lineNetDisplay: null,
+    canIncrement: false,
+    canDecrement: false,
+    canAdd: false,
+    insufficientFullCase: false,
+  };
+  if (!userId) return empty;
+
+  let ctx: Awaited<ReturnType<typeof resolveTradeCompany>>;
+  try {
+    ctx = await resolveTradeCompany(userId);
+  } catch {
+    return empty;
+  }
+  if (!ctx.canMutate) {
+    return { ...empty, reason: "Your account can view prices but cannot place orders" };
+  }
+
+  const variant = await loadOrderableVariant(variantId);
+  const copy = publicTradeOrderingCopy(variant.caseQty);
+  const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
+  if (!rules.orderable || !copy) {
+    return {
+      ...empty,
+      reason: "This product is not available for online ordering",
+    };
+  }
+  if (variant.product.status !== "ACTIVE" || !variant.product.isActive || !variant.product.isTradeVisible) {
+    return { ...empty, reason: "This product is not available for ordering", caseTitle: copy.title, caseSubtitle: copy.subtitle };
+  }
+
+  const stockMap = await loadStockByVariantIds([variant.id]);
+  const stock = stockMap.get(variant.id);
+  const sellableQty = stock?.sellableQty ?? 0;
+  const orderableByStockPolicy = stock
+    ? isOrderableByStockPolicy({
+        sellableQty,
+        stale: stock.stale,
+        availability: stock.availability,
+      })
+    : false;
+  const maxQty = maxOrderableQuantity({
+    caseQty: rules.caseQty,
+    minimumOrderQty: rules.minimumOrderQty,
+    sellableQty,
+  });
+  if (!orderableByStockPolicy || maxQty == null) {
+    return {
+      orderable: false,
+      reason: "Insufficient stock for a full case",
+      caseQty: rules.caseQty,
+      caseTitle: copy.title,
+      caseSubtitle: copy.subtitle,
+      minimumQuantity: rules.minimumOrderQty,
+      quantity: rules.minimumOrderQty,
+      caseCount: rules.minimumOrderQty / rules.caseQty,
+      caseCountLabel: formatCaseCountLabel(rules.minimumOrderQty / rules.caseQty),
+      unitPriceExVatDisplay: null,
+      lineNetDisplay: null,
+      canIncrement: false,
+      canDecrement: false,
+      canAdd: false,
+      insufficientFullCase: true,
+    };
+  }
+
+  const quantity = rules.minimumOrderQty;
+  const priced = await resolveVariantTradePrices({
+    companyId: ctx.companyId,
+    quantity,
+    variants: [
+      {
+        id: variant.id,
+        sku: variant.sku,
+        tradePrice: variant.tradePrice,
+        vatCode: variant.vatCode,
+      },
+    ],
+  });
+  const resolution = priced.get(variant.id);
+  const money = lineTotalsFromResolution(resolution ?? null, quantity);
+  if (!money.hasPrice) {
+    return {
+      ...empty,
+      reason: "Trade price unavailable",
+      caseQty: rules.caseQty,
+      caseTitle: copy.title,
+      caseSubtitle: copy.subtitle,
+    };
+  }
+
+  return {
+    orderable: true,
+    reason: null,
+    caseQty: rules.caseQty,
+    caseTitle: copy.title,
+    caseSubtitle: copy.subtitle,
+    minimumQuantity: rules.minimumOrderQty,
+    quantity,
+    caseCount: quantity / rules.caseQty,
+    caseCountLabel: formatCaseCountLabel(quantity / rules.caseQty),
+    unitPriceExVatDisplay: money.unitExDisplay,
+    lineNetDisplay: money.lineNetDisplay,
+    canIncrement: canIncrementQuantity({
+      currentQuantity: quantity,
+      caseQty: rules.caseQty,
+      minimumOrderQty: rules.minimumOrderQty,
+      sellableQty,
+    }),
+    canDecrement: false,
+    canAdd: true,
+    insufficientFullCase: false,
+  };
+}
+
+/** Preview a candidate quantity on the PDP without mutating the basket. */
+export async function previewProductOrderQuantity(
+  userId: string,
+  raw: unknown,
+): Promise<ProductOrderingPanel> {
+  const input = variantIdSchema.parse(raw);
+  const panel = await getProductOrderingPanel(userId, { variantId: input.variantId });
+  if (!panel.orderable || panel.caseQty == null || panel.minimumQuantity == null) return panel;
+
+  const ctx = await requireMutableCompany(userId);
+  const variant = await loadOrderableVariant(input.variantId);
+  const stockMap = await loadStockByVariantIds([variant.id]);
+  const stock = stockMap.get(variant.id);
+  const sellableQty = stock?.sellableQty ?? 0;
+  const validated = validateOrderQuantity({
+    requestedQuantity: input.quantity,
+    caseQty: variant.caseQty,
+    minimumOrderQty: variant.minOrderQty,
+    sellableQty,
+    orderableByStockPolicy: stock
+      ? isOrderableByStockPolicy({
+          sellableQty,
+          stale: stock.stale,
+          availability: stock.availability,
+        })
+      : false,
+  });
+  if (!validated.ok) {
+    return {
+      ...panel,
+      orderable: false,
+      reason: validated.message,
+      canAdd: false,
+      canIncrement: false,
+      canDecrement: false,
+      insufficientFullCase: validated.code === "INSUFFICIENT_FULL_CASE",
+    };
+  }
+
+  const priced = await resolveVariantTradePrices({
+    companyId: ctx.companyId,
+    quantity: input.quantity,
+    variants: [
+      {
+        id: variant.id,
+        sku: variant.sku,
+        tradePrice: variant.tradePrice,
+        vatCode: variant.vatCode,
+      },
+    ],
+  });
+  const money = lineTotalsFromResolution(priced.get(variant.id) ?? null, input.quantity);
+  return {
+    ...panel,
+    quantity: input.quantity,
+    caseCount: validated.caseCount,
+    caseCountLabel: formatCaseCountLabel(validated.caseCount),
+    unitPriceExVatDisplay: money.unitExDisplay,
+    lineNetDisplay: money.lineNetDisplay,
+    canIncrement: canIncrementQuantity({
+      currentQuantity: input.quantity,
+      caseQty: variant.caseQty,
+      minimumOrderQty: variant.minOrderQty,
+      sellableQty,
+    }),
+    canDecrement: canDecrementQuantity({
+      currentQuantity: input.quantity,
+      caseQty: variant.caseQty,
+      minimumOrderQty: variant.minOrderQty,
+    }),
+    canAdd: money.hasPrice,
+    insufficientFullCase: false,
+    reason: null,
+    orderable: true,
+  };
+}
+
+export async function assertBasketOwnedByCompany(userId: string, basketId: string) {
+  return loadOwnedBasket(userId, basketId);
+}

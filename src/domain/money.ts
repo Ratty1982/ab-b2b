@@ -108,8 +108,9 @@ export function mulRatio(value: Money, numerator: bigint, denominator: bigint): 
   return { minor: sign * up };
 }
 
-export function moneyToNumber(value: Money): number {
-  return Number(moneyToString(value));
+export function mulQty(value: Money, quantity: number): Money {
+  if (!Number.isInteger(quantity) || quantity < 0) return moneyZero();
+  return { minor: value.minor * BigInt(quantity) };
 }
 
 export function vatRateForCodes(input: {

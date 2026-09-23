@@ -5,8 +5,8 @@ import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
 import { ProductCard } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
-import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import { publicUnitPriceQualifier } from "@/domain/public-price-unit";
+import { ProductTradeOrdering } from "@/components/public/ProductTradeOrdering";
 import {
   featuresForDisplay,
   hasPublicText,
@@ -20,6 +20,7 @@ import type { ProductSellingContent } from "@/domain/product-specifications";
 export type PublicProductDetail = {
   card: PublicProductCard;
   sku: string;
+  variantId?: string | null;
   shortDescription: string | null;
   description: string | null;
   specifications: Array<{ name: string; value: string }>;
@@ -52,11 +53,12 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
     ean: data.ean,
     mpn: data.mpn,
   });
-  const ordering = publicTradeOrderingCopy(data.caseQty);
+  const ordering = data.caseQty;
   const showDescription = hasPublicText(data.description);
   const showDirections = hasPublicText(selling.directions);
   const showWarnings = hasPublicText(selling.warnings);
-  const showLeft = showDirections || showWarnings || ordering != null;
+  const showOrdering = ordering != null && ordering >= 1;
+  const showLeft = showDirections || showWarnings || showOrdering;
   const showRight = details.length > 0;
 
   return (
@@ -89,7 +91,13 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
               <div className="space-y-6">
                 {showDirections ? <ProductDirections text={selling.directions!} /> : null}
                 {showWarnings ? <ProductWarnings text={selling.warnings!} /> : null}
-                <ProductTradeOrdering card={ordering} />
+                {showOrdering ? (
+                  <ProductTradeOrdering
+                    caseQty={data.caseQty}
+                    variantId={data.variantId}
+                    productName={data.card.name}
+                  />
+                ) : null}
               </div>
             ) : null}
             {showRight ? (
@@ -144,8 +152,8 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
           </p>
         ) : null}
         {/*
-          Phase 6 mounts ProductOrderPanel here — after short description, still in the
-          hero summary column. Do not render a placeholder, empty box, or fake basket controls.
+          Phase 6A Add to Basket lives on the Trade Ordering card under How to use.
+          Do not mount a second order panel in the hero.
         */}
       </div>
     </div>
@@ -310,21 +318,6 @@ export function ProductDetails({ rows }: { rows: Array<{ label: string; value: s
       <div className="mt-4">
         <SpecTable rows={rows} />
       </div>
-    </section>
-  );
-}
-
-export function ProductTradeOrdering({
-  card,
-}: {
-  card: { title: string; subtitle: string } | null;
-}) {
-  if (!card) return null;
-  return (
-    <section data-product-section="ordering" className="rounded-lg border border-border bg-surface/40 p-5">
-      <h2 className="font-display text-lg font-semibold uppercase tracking-tight">Trade ordering</h2>
-      <p className="mt-3 font-display text-2xl font-semibold uppercase tracking-tight">{card.title}</p>
-      <p className="mt-1 text-[13px] text-steel">{card.subtitle}</p>
     </section>
   );
 }

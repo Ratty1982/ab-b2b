@@ -15,6 +15,7 @@ import * as catalogueImport from "@/server/catalogue/import";
 import * as staffUsers from "@/server/users/service";
 import * as pricing from "@/server/pricing/service";
 import * as stock from "@/server/stock/service";
+import * as basket from "@/server/basket/service";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -1238,6 +1239,80 @@ export const pollImapNowFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       return { ok: true as const, data: await stock.pollImapNow(userId, Boolean(data?.dryRun)) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getBasketFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await basket.getBasket(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getBasketSummaryFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await optionalUserId();
+    if (!userId) return { ok: true as const, data: { basketId: null, companyId: null, lineCount: 0, unitCount: 0 } };
+    return { ok: true as const, data: await basket.getBasketSummary(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const addToBasketFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { variantId: string; quantity: number })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await basket.addToBasket(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateBasketItemFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { itemId: string; quantity: number })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await basket.updateBasketItem(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const removeBasketItemFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { itemId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await basket.removeBasketItem(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getProductOrderingPanelFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { variantId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await optionalUserId();
+      return { ok: true as const, data: await basket.getProductOrderingPanel(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewProductOrderQuantityFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { variantId: string; quantity: number })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await basket.previewProductOrderQuantity(userId, data) };
     } catch (e) {
       return toError(e);
     }

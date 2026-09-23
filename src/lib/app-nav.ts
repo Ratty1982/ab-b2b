@@ -47,6 +47,7 @@ export const ROUTES = {
   crmManager: "/crm/manager",
 
   portal: "/portal",
+  portalBasket: "/portal/basket",
   portalQuickOrder: "/portal/quick-order",
   portalOrders: "/portal/orders",
   portalQuotes: "/portal/quotes",
@@ -107,7 +108,8 @@ export type NavIconName =
   | "store"
   | "heart"
   | "life-buoy"
-  | "download";
+  | "download"
+  | "shopping-cart";
 
 export type NavSurface = "backoffice" | "portal";
 
@@ -464,6 +466,14 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         label: "Shop",
         icon: "store",
         to: ROUTES.products,
+        implemented: true,
+      },
+      {
+        id: "portal-basket",
+        label: "Basket",
+        icon: "shopping-cart",
+        to: ROUTES.portalBasket,
+        permission: "orders.view",
         implemented: true,
       },
       {

@@ -60,6 +60,8 @@ Do not format with the server or browser default timezone. Coolify containers ty
 
 Authenticated back-office navigation is a **stable product contract** defined in `src/lib/app-nav.ts`. See [docs/navigation.md](docs/navigation.md). Do not reorganise, rename, remove or relocate existing nav items as part of unrelated feature work.
 
+Phase 6A trade basket: [docs/phase-6a-ordering-basket.md](docs/phase-6a-ordering-basket.md).
+
 Coolify production deploy (migrate + RBAC bootstrap + optional first admin):
 [docs/deployment-coolify.md](docs/deployment-coolify.md).
 

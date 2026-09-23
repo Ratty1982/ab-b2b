@@ -984,6 +984,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
       alt: m.altText || product.name,
     })),
     sku: variant?.sku ?? "",
+    variantId: variant?.id ?? null,
     ean: variant?.barcode ?? null,
     mpn: variant?.mpn ?? null,
     unit: variant?.unit ?? "EA",

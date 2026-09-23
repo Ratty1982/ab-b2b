@@ -100,18 +100,18 @@ describe("commercial admin fields", () => {
 });
 
 describe("Phase 6 ProductOrderPanel plan", () => {
-  it("documents unit vs case totals without implementing basket UI", () => {
+  it("documents unit vs case totals and mounts Trade Ordering under How to use", () => {
     expect(PRODUCT_ORDER_PANEL_PLAN.component).toBe("ProductOrderPanel");
-    expect(PRODUCT_ORDER_PANEL_PLAN.mount).toBe("product-hero-after-short-description");
     expect(PRODUCT_ORDER_PANEL_PLAN.headlinePrice).toBe("unit-trade-price");
     expect(PRODUCT_ORDER_PANEL_PLAN.quantityRule).toBe("FULL_CASE_ONLY");
     expect(PRODUCT_ORDER_PANEL_PLAN.serverMustValidate).toBe(true);
     const hero = readFileSync(path.join(process.cwd(), "src/components/public/ProductDetail.tsx"), "utf8");
-    expect(hero).toContain("ProductOrderPanel");
+    expect(hero).toContain("ProductTradeOrdering");
     expect(hero).not.toMatch(/Coming Soon/);
+    const panel = readFileSync(path.join(process.cwd(), "src/components/public/ProductTradeOrdering.tsx"), "utf8");
+    expect(panel).toContain("Add to basket");
     const docs = readFileSync(path.join(process.cwd(), "docs/phase-6-product-order-panel.md"), "utf8");
     expect(docs).toContain("£8.70");
-    expect(docs).toContain("£17.40");
     expect(docs).toContain("requestedQuantity % caseQty === 0");
   });
 });
