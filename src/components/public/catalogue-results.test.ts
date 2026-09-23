@@ -4,6 +4,7 @@ import {
   CATALOGUE_GRID_KIND,
   CATALOGUE_LIST_KIND,
   PRODUCT_LIST_ROW_CLASS,
+  PRODUCT_LIST_ROW_ORDER_CLASS,
   catalogueResultsKind,
   productRowHasQuantity,
 } from "@/components/public/ProductCard";
@@ -36,6 +37,7 @@ describe("catalogue grid vs list presentation", () => {
     expect(PRODUCT_IMAGE_FIT_CLASS).not.toContain("object-cover");
     expect(PRODUCT_LIST_ROW_CLASS).toContain("grid-cols-[80px_minmax(0,1fr)]");
     expect(PRODUCT_LIST_ROW_CLASS).not.toContain("aspect-[5/4]");
+    expect(PRODUCT_LIST_ROW_ORDER_CLASS).toContain("minmax(11rem,14rem)");
   });
 
   it("keeps category, brand and search when only the results view changes", () => {

@@ -389,3 +389,189 @@ describe("Phase 6A basket ordering", () => {
     expect(customerBasket.id).not.toBe(basket.id);
   });
 });
+
+describe("catalogue list batch ordering panels", () => {
+  it("batch-resolves panels without per-row N+1 and respects case/MOQ/stock/price", async () => {
+    const { getCatalogueOrderingPanels } = await import("@/server/basket/service");
+    const { listPublicProducts } = await import("@/server/catalogue/products");
+    const stamp = Date.now();
+
+    const case12 = await saveProduct(adminId, {
+      sku: `LQ12-${stamp}`,
+      name: "List Quick Case 12",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3.6875,
+      rrp: 7.99,
+      packQty: 1,
+      caseQty: 12,
+      description: "list-order",
+      active: true,
+    });
+    const single = await saveProduct(adminId, {
+      sku: `LQ1-${stamp}`,
+      name: "List Quick Single",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 2.19,
+      rrp: 4.99,
+      packQty: 1,
+      caseQty: 1,
+      description: "list-order",
+      active: true,
+    });
+    const moq = await saveProduct(adminId, {
+      sku: `LQMOQ-${stamp}`,
+      name: "List Quick MOQ",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 5,
+      rrp: 9,
+      packQty: 1,
+      caseQty: 6,
+      description: "list-order",
+      active: true,
+    });
+    const oos = await saveProduct(adminId, {
+      sku: `LQOOS-${stamp}`,
+      name: "List Quick OOS",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 1,
+      rrp: 2,
+      packQty: 1,
+      caseQty: 12,
+      description: "list-order",
+      active: true,
+    });
+    const shortCase = await saveProduct(adminId, {
+      sku: `LQSC-${stamp}`,
+      name: "List Quick Short Case",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 1.5,
+      rrp: 3,
+      packQty: 1,
+      caseQty: 12,
+      description: "list-order",
+      active: true,
+    });
+
+    const v12 = await prisma.productVariant.findFirstOrThrow({ where: { productId: case12.id } });
+    const v1 = await prisma.productVariant.findFirstOrThrow({ where: { productId: single.id } });
+    const vMoq = await prisma.productVariant.findFirstOrThrow({ where: { productId: moq.id } });
+    const vOos = await prisma.productVariant.findFirstOrThrow({ where: { productId: oos.id } });
+    const vShort = await prisma.productVariant.findFirstOrThrow({ where: { productId: shortCase.id } });
+
+    await prisma.productVariant.update({
+      where: { id: vMoq.id },
+      data: { minOrderQty: 10 },
+    });
+
+    await seedStock(v12.id, 120);
+    await seedStock(v1.id, 40);
+    await seedStock(vMoq.id, 60);
+    await seedStock(vOos.id, 0);
+    await seedStock(vShort.id, 7);
+
+    const company = await prisma.company.create({ data: { name: `LQ ${stamp}`, status: "ACTIVE" } });
+    const buyerId = await ensureTradeBuyer(`lq-${stamp}@example.invalid`, company.id);
+
+    const panels = await getCatalogueOrderingPanels(buyerId, [
+      {
+        id: v12.id,
+        sku: v12.sku,
+        tradePrice: v12.tradePrice,
+        vatCode: v12.vatCode,
+        caseQty: v12.caseQty,
+        minOrderQty: v12.minOrderQty,
+        product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+      },
+      {
+        id: v1.id,
+        sku: v1.sku,
+        tradePrice: v1.tradePrice,
+        vatCode: v1.vatCode,
+        caseQty: v1.caseQty,
+        minOrderQty: v1.minOrderQty,
+        product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+      },
+      {
+        id: vMoq.id,
+        sku: vMoq.sku,
+        tradePrice: vMoq.tradePrice,
+        vatCode: vMoq.vatCode,
+        caseQty: 6,
+        minOrderQty: 10,
+        product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+      },
+      {
+        id: vOos.id,
+        sku: vOos.sku,
+        tradePrice: vOos.tradePrice,
+        vatCode: vOos.vatCode,
+        caseQty: vOos.caseQty,
+        minOrderQty: vOos.minOrderQty,
+        product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+      },
+      {
+        id: vShort.id,
+        sku: vShort.sku,
+        tradePrice: vShort.tradePrice,
+        vatCode: vShort.vatCode,
+        caseQty: vShort.caseQty,
+        minOrderQty: vShort.minOrderQty,
+        product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+      },
+    ]);
+
+    expect(panels.get(v12.id)?.orderable).toBe(true);
+    expect(panels.get(v12.id)?.quantity).toBe(12);
+    expect(panels.get(v12.id)?.unitPriceExVat).toBe("3.6875");
+    expect(panels.get(v12.id)?.lineNetDisplay).toBe("44.25");
+
+    expect(panels.get(v1.id)?.orderable).toBe(true);
+    expect(panels.get(v1.id)?.quantity).toBe(1);
+
+    expect(panels.get(vMoq.id)?.orderable).toBe(true);
+    expect(panels.get(vMoq.id)?.quantity).toBe(12);
+
+    expect(panels.get(vOos.id)?.orderable).toBe(false);
+    expect(panels.get(vOos.id)?.insufficientFullCase).toBe(true);
+    expect(JSON.stringify(panels.get(vOos.id))).not.toMatch(/\b0 available\b|\bAvail\b/);
+
+    expect(panels.get(vShort.id)?.orderable).toBe(false);
+    expect(panels.get(vShort.id)?.insufficientFullCase).toBe(true);
+    expect(JSON.stringify(panels.get(vShort.id))).not.toContain("7");
+
+    const anonPanels = await getCatalogueOrderingPanels(null, [
+      {
+        id: v12.id,
+        sku: v12.sku,
+        tradePrice: v12.tradePrice,
+        vatCode: v12.vatCode,
+        caseQty: v12.caseQty,
+        minOrderQty: v12.minOrderQty,
+        product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+      },
+    ]);
+    expect(anonPanels.size).toBe(0);
+
+    const listed = await listPublicProducts({ userId: buyerId, q: `LQ12-${stamp}` });
+    const row = listed.items.find((i) => i.sku === `LQ12-${stamp}`);
+    expect(row?.ordering?.orderable).toBe(true);
+    expect(row?.ordering?.quantity).toBe(12);
+    expect(row?.variantId).toBe(v12.id);
+
+    const anonList = await listPublicProducts({ userId: null, q: `LQ12-${stamp}` });
+    expect(anonList.items.find((i) => i.sku === `LQ12-${stamp}`)?.ordering).toBeNull();
+
+    // Add from the same engine the list uses.
+    const basket = await addToBasket(buyerId, { variantId: v12.id, quantity: 12 });
+    expect(basket.lineCount).toBe(1);
+    expect(basket.lines[0]!.quantity).toBe(12);
+    const merged = await addToBasket(buyerId, { variantId: v12.id, quantity: 12 });
+    expect(merged.lineCount).toBe(1);
+    expect(merged.lines[0]!.quantity).toBe(24);
+  }, 30_000);
+});

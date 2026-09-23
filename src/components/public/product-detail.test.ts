@@ -52,6 +52,8 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     availability: "in",
     isNew: false,
     isFeatured: false,
+    variantId: null,
+    ordering: null,
     ...partial,
   };
 }

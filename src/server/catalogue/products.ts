@@ -784,6 +784,13 @@ export type PublicProductCard = {
   availability: PublicAvailability | null;
   isNew: boolean;
   isFeatured: boolean;
+  /** Default variant id for list quick-order / PDP deep links. */
+  variantId: string | null;
+  /**
+   * Batch-resolved Phase 6A ordering panel for list quick-order.
+   * Null when the viewer has no ordering context (anonymous / no test level).
+   */
+  ordering: import("@/server/basket/service").ProductOrderingPanel | null;
 };
 
 function toPublicCard(
@@ -791,6 +798,9 @@ function toPublicCard(
     id: string;
     slug: string;
     name: string;
+    status?: string;
+    isActive?: boolean;
+    isTradeVisible?: boolean;
     isNew: boolean;
     isFeatured: boolean;
     brand: { name: string; slug: string };
@@ -801,6 +811,8 @@ function toPublicCard(
       tradePrice: unknown;
       rrp: unknown;
       vatCode: string;
+      caseQty?: number | null;
+      minOrderQty?: number | null;
       isDefault: boolean;
       createdAt: Date;
       inventory: Array<{ qtyOnHand: number; qtyReserved?: number }>;
@@ -810,6 +822,7 @@ function toPublicCard(
   viewer: PriceViewer,
   resolvedPrice?: DisplayPrice,
   stale = false,
+  ordering: import("@/server/basket/service").ProductOrderingPanel | null = null,
 ): PublicProductCard {
   const variant = defaultVariant(row.variants);
   const hasInv = Boolean(variant?.inventory.length);
@@ -838,6 +851,8 @@ function toPublicCard(
     availability: hasInv ? customerAvailabilityForStock({ sellableQty: qty ?? 0, stale }) : null,
     isNew: row.isNew,
     isFeatured: row.isFeatured,
+    variantId: variant?.id ?? null,
+    ordering,
   };
 }
 
@@ -938,10 +953,40 @@ export async function listPublicProducts(input: {
     displayPricesForProductRows(input.userId, rows),
     stockFreshness(),
   ]);
+
+  const orderingInputs = rows
+    .map((row) => {
+      const variant = defaultVariant(row.variants);
+      if (!variant) return null;
+      return {
+        id: variant.id,
+        sku: variant.sku,
+        tradePrice: variant.tradePrice,
+        vatCode: variant.vatCode,
+        caseQty: variant.caseQty,
+        minOrderQty: variant.minOrderQty,
+        product: {
+          status: row.status,
+          isActive: row.isActive,
+          isTradeVisible: row.isTradeVisible,
+        },
+      };
+    })
+    .filter((v): v is NonNullable<typeof v> => Boolean(v));
+
+  const { getCatalogueOrderingPanels } = await import("@/server/basket/service");
+  const orderingByVariantId = await getCatalogueOrderingPanels(input.userId, orderingInputs);
+
   return {
     items: rows.map((row) => {
       const variant = defaultVariant(row.variants);
-      return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale);
+      return toPublicCard(
+        row,
+        viewer,
+        variant ? byVariantId.get(variant.id) : undefined,
+        freshness.stale,
+        variant ? (orderingByVariantId.get(variant.id) ?? null) : null,
+      );
     }),
     total,
     page,

@@ -132,6 +132,8 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     availability: "in",
     isNew: false,
     isFeatured: false,
+    variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+    ordering: null,
     ...partial,
   };
 }
@@ -537,6 +539,8 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
             availability: "in",
             isNew: false,
             isFeatured: false,
+            variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+            ordering: null,
           },
           sku: "PMPC1",
           variantId: "clxxxxxxxxxxxxxxxxxxxxxx",

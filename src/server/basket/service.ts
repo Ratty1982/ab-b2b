@@ -908,3 +908,202 @@ export async function previewProductOrderQuantity(
 export async function assertBasketOwnedByCompany(userId: string, basketId: string) {
   return loadOwnedBasket(userId, basketId);
 }
+
+const emptyOrderingPanel = (reason: string | null = null): ProductOrderingPanel => ({
+  orderable: false,
+  reason,
+  caseQty: null,
+  caseTitle: null,
+  caseSubtitle: null,
+  minimumQuantity: null,
+  quantity: null,
+  caseCount: null,
+  caseCountLabel: null,
+  unitPriceExVat: null,
+  unitPriceExVatDisplay: null,
+  lineNetDisplay: null,
+  canIncrement: false,
+  canDecrement: false,
+  canAdd: false,
+  insufficientFullCase: false,
+});
+
+export type CatalogueOrderingVariantInput = {
+  id: string;
+  sku: string;
+  tradePrice: unknown;
+  vatCode: string;
+  caseQty: number | null;
+  minOrderQty: number | null;
+  product: {
+    status: string;
+    isActive: boolean;
+    isTradeVisible: boolean;
+  };
+};
+
+/**
+ * Batch ordering panels for a catalogue page of variants.
+ * One basket-context resolve, one stock batch, one price batch — no per-row DB round trips.
+ */
+export async function getCatalogueOrderingPanels(
+  userId: string | null,
+  variants: CatalogueOrderingVariantInput[],
+): Promise<Map<string, ProductOrderingPanel>> {
+  const out = new Map<string, ProductOrderingPanel>();
+  if (!userId || variants.length === 0) return out;
+
+  let ctx: BasketContext;
+  try {
+    ctx = await resolveBasketContext(userId);
+  } catch (error) {
+    // No ordering chrome when the actor has no legitimate basket context.
+    return out;
+  }
+  if (!ctx.canMutate) {
+    const blocked = emptyOrderingPanel("Your account can view prices but cannot place orders");
+    for (const variant of variants) out.set(variant.id, blocked);
+    return out;
+  }
+
+  const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
+  const pricing = pricingInputFromContext(ctx);
+
+  // First pass: classify orderable candidates and collect MOQ quantities for pricing.
+  type Candidate = {
+    variant: CatalogueOrderingVariantInput;
+    caseQty: number;
+    minimumOrderQty: number;
+    copy: { title: string; subtitle: string };
+    sellableQty: number;
+    quantity: number;
+  };
+  const candidates: Candidate[] = [];
+
+  for (const variant of variants) {
+    const copy = publicTradeOrderingCopy(variant.caseQty);
+    const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
+    if (!rules.orderable || !copy) {
+      out.set(
+        variant.id,
+        emptyOrderingPanel("This product is not available for online ordering"),
+      );
+      continue;
+    }
+    if (variant.product.status !== "ACTIVE" || !variant.product.isActive || !variant.product.isTradeVisible) {
+      out.set(variant.id, {
+        ...emptyOrderingPanel("This product is not available for ordering"),
+        caseTitle: copy.title,
+        caseSubtitle: copy.subtitle,
+        caseQty: rules.caseQty,
+      });
+      continue;
+    }
+
+    const stock = stockMap.get(variant.id);
+    const sellableQty = stock?.sellableQty ?? 0;
+    const orderableByStockPolicy = stock
+      ? isOrderableByStockPolicy({
+          sellableQty,
+          stale: stock.stale,
+          availability: stock.availability,
+        })
+      : false;
+    const maxQty = maxOrderableQuantity({
+      caseQty: rules.caseQty,
+      minimumOrderQty: rules.minimumOrderQty,
+      sellableQty,
+    });
+    if (!orderableByStockPolicy || maxQty == null) {
+      out.set(variant.id, {
+        orderable: false,
+        reason: "Insufficient stock for a full case",
+        caseQty: rules.caseQty,
+        caseTitle: copy.title,
+        caseSubtitle: copy.subtitle,
+        minimumQuantity: rules.minimumOrderQty,
+        quantity: rules.minimumOrderQty,
+        caseCount: rules.minimumOrderQty / rules.caseQty,
+        caseCountLabel: formatCaseCountLabel(rules.minimumOrderQty / rules.caseQty),
+        unitPriceExVat: null,
+        unitPriceExVatDisplay: null,
+        lineNetDisplay: null,
+        canIncrement: false,
+        canDecrement: false,
+        canAdd: false,
+        insufficientFullCase: true,
+      });
+      continue;
+    }
+
+    candidates.push({
+      variant,
+      caseQty: rules.caseQty,
+      minimumOrderQty: rules.minimumOrderQty,
+      copy,
+      sellableQty,
+      quantity: rules.minimumOrderQty,
+    });
+  }
+
+  // Group candidates by MOQ quantity so QuantityBreak re-resolution stays correct
+  // without one pricing call per row. Most catalogue pages share a small set of MOQs.
+  const byQty = new Map<number, Candidate[]>();
+  for (const candidate of candidates) {
+    const list = byQty.get(candidate.quantity) ?? [];
+    list.push(candidate);
+    byQty.set(candidate.quantity, list);
+  }
+
+  for (const [quantity, group] of byQty) {
+    const priced = await resolveVariantTradePrices({
+      companyId: pricing.companyId,
+      priceListId: pricing.priceListId,
+      adminTestActive: pricing.adminTestActive,
+      quantity,
+      variants: group.map((c) => ({
+        id: c.variant.id,
+        sku: c.variant.sku,
+        tradePrice: c.variant.tradePrice,
+        vatCode: c.variant.vatCode,
+      })),
+    });
+    for (const candidate of group) {
+      const money = lineTotalsFromResolution(priced.get(candidate.variant.id) ?? null, quantity);
+      if (!money.hasPrice) {
+        out.set(candidate.variant.id, {
+          ...emptyOrderingPanel("Trade price unavailable"),
+          caseQty: candidate.caseQty,
+          caseTitle: candidate.copy.title,
+          caseSubtitle: candidate.copy.subtitle,
+        });
+        continue;
+      }
+      out.set(candidate.variant.id, {
+        orderable: true,
+        reason: null,
+        caseQty: candidate.caseQty,
+        caseTitle: candidate.copy.title,
+        caseSubtitle: candidate.copy.subtitle,
+        minimumQuantity: candidate.minimumOrderQty,
+        quantity,
+        caseCount: quantity / candidate.caseQty,
+        caseCountLabel: formatCaseCountLabel(quantity / candidate.caseQty),
+        unitPriceExVat: money.unitEx,
+        unitPriceExVatDisplay: money.unitExDisplay,
+        lineNetDisplay: money.lineNetDisplay,
+        canIncrement: canIncrementQuantity({
+          currentQuantity: quantity,
+          caseQty: candidate.caseQty,
+          minimumOrderQty: candidate.minimumOrderQty,
+          sellableQty: candidate.sellableQty,
+        }),
+        canDecrement: false,
+        canAdd: true,
+        insufficientFullCase: false,
+      });
+    }
+  }
+
+  return out;
+}
