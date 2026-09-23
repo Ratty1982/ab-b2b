@@ -482,6 +482,17 @@ export async function listCustomerPrices(actorUserId: string, companyId: string)
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade users cannot access internal pricing administration", "FORBIDDEN", 403);
   }
+  const hasSalesScope =
+    hasPermission(profile, "sales.view_own_accounts") ||
+    hasPermission(profile, "sales.view_team_accounts");
+  if (
+    hasSalesScope &&
+    !hasPermission(profile, "admin.access") &&
+    !hasPermission(profile, "sales.view_all_accounts")
+  ) {
+    const ok = await canAccessCompanyAsSales(profile, companyId);
+    if (!ok) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
+  }
   const company = await prisma.company.findUnique({
     where: { id: companyId },
     select: { priceListId: true, priceList: { select: { name: true, code: true } } },
@@ -514,6 +525,9 @@ export async function listCustomerPrices(actorUserId: string, companyId: string)
     count: rows.length,
     items: rows.map((row) => {
       const list = listByVariant.get(row.variantId);
+      const normalSource = list ? list.unitPrice : row.variant.tradePrice;
+      const normalPrice = moneyNumber(normalSource);
+      const normalPriceDisplay = formatGbpFromUnknown(normalSource);
       return {
         id: row.id,
         variantId: row.variantId,
@@ -524,6 +538,9 @@ export async function listCustomerPrices(actorUserId: string, companyId: string)
         baseTradePriceDisplay: formatGbpFromUnknown(row.variant.tradePrice),
         priceListPrice: list ? moneyNumber(list.unitPrice) : null,
         priceListPriceDisplay: list ? formatGbpFromUnknown(list.unitPrice) : null,
+        /** What this company would pay without the CustomerPrice override. */
+        normalPrice,
+        normalPriceDisplay,
         unitPrice: moneyNumber(row.unitPrice),
         unitPriceDisplay: formatGbpFromUnknown(row.unitPrice),
         startsAt: iso(row.startsAt),
@@ -535,8 +552,19 @@ export async function listCustomerPrices(actorUserId: string, companyId: string)
 }
 
 export async function upsertCustomerPrice(actorUserId: string, raw: unknown) {
-  await requireInternalPricing(actorUserId, "pricing.edit");
+  const profile = await requireInternalPricing(actorUserId, "pricing.edit");
   const input = customerPriceWriteSchema.parse(raw);
+  const hasSalesScope =
+    hasPermission(profile, "sales.view_own_accounts") ||
+    hasPermission(profile, "sales.view_team_accounts");
+  if (
+    hasSalesScope &&
+    !hasPermission(profile, "admin.access") &&
+    !hasPermission(profile, "sales.view_all_accounts")
+  ) {
+    const ok = await canAccessCompanyAsSales(profile, input.companyId);
+    if (!ok) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
+  }
   const startsAt = input.startsAt ? new Date(input.startsAt) : null;
   const endsAt = input.endsAt ? new Date(input.endsAt) : null;
   const before = await prisma.customerPrice.findUnique({
@@ -576,9 +604,20 @@ export async function upsertCustomerPrice(actorUserId: string, raw: unknown) {
 }
 
 export async function deleteCustomerPrice(actorUserId: string, id: string) {
-  await requireInternalPricing(actorUserId, "pricing.edit");
+  const profile = await requireInternalPricing(actorUserId, "pricing.edit");
   const before = await prisma.customerPrice.findUnique({ where: { id } });
   if (!before) throw new AuthError("Customer price not found", "NOT_FOUND", 404);
+  const hasSalesScope =
+    hasPermission(profile, "sales.view_own_accounts") ||
+    hasPermission(profile, "sales.view_team_accounts");
+  if (
+    hasSalesScope &&
+    !hasPermission(profile, "admin.access") &&
+    !hasPermission(profile, "sales.view_all_accounts")
+  ) {
+    const ok = await canAccessCompanyAsSales(profile, before.companyId);
+    if (!ok) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
+  }
   await prisma.customerPrice.delete({ where: { id } });
   await recordAuditEvent({
     action: "pricing.customer_price.removed",

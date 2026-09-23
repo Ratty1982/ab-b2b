@@ -42,13 +42,17 @@ the actor also has `companies.edit`. A company has one list.
 
 Customer workspace → Commercial.
 
-Shows assigned list and negotiated price count. Table: SKU, product, base, list,
-customer price, valid from/until, status (Scheduled / Active / Expired) using the same
-`inValidityWindow` rule as the resolver.
+Shows assigned list and negotiated price count. Table: SKU, product,
+**normal price** (assigned PriceListItem else base trade — what the company
+would pay without the override), **customer price**, valid from/until, status
+(Scheduled / Active / Expired) using the same `inValidityWindow` rule as the
+resolver.
 
 Start and end are independently optional.
 
 Overrides never appear on another company’s price-list export.
+
+See also `docs/phase-6a5-commercial-accounts.md` for Autopart account linking.
 
 ## Quantity breaks
 
