@@ -739,6 +739,7 @@ async function displayPricesForProductRows(
     .filter((v): v is NonNullable<typeof v> => Boolean(v));
   const resolved = await resolveVariantTradePrices({
     companyId: actor.companyId,
+    priceListId: actor.adminTestPriceListId,
     variants: variants.map((v) => ({
       id: v.id,
       sku: v.sku,

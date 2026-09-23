@@ -29,6 +29,8 @@ function user(partial: Partial<SafeSessionUser> & Pick<SafeSessionUser, "actorTy
     accountNumber: null,
     tradeRole: null,
     actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
     ...partial,
   };
 }

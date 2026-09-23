@@ -3,7 +3,6 @@ import { prisma } from "@/infra/database/client";
 import {
   AuthError,
   requireAuthenticatedUser,
-  requireCompanyAccess,
   requireCompanyPermission,
 } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
@@ -88,8 +87,11 @@ export type PublicBasketLine = {
 
 export type PublicBasket = {
   id: string;
-  companyId: string;
+  /** Null for admin trade-test baskets. */
+  companyId: string | null;
   companyName: string;
+  /** True when this is an INTERNAL admin isolated test basket. */
+  adminTest: boolean;
   status: "OPEN";
   lineCount: number;
   unitCount: number;
@@ -124,13 +126,22 @@ export type ProductOrderingPanel = {
   insufficientFullCase: boolean;
 };
 
-async function resolveTradeCompany(userId: string): Promise<{
-  companyId: string;
+type BasketContext = {
+  kind: "company" | "admin_test";
+  companyId: string | null;
   companyName: string;
-  taxStatus: string;
+  /** PriceList for admin test mode; company lists come via companyId. */
+  priceListId: string | null;
   canMutate: boolean;
   canView: boolean;
-}> {
+  userId: string;
+};
+
+const ADMIN_TEST_BASKET_LABEL = "Admin trade test";
+const ADMIN_NO_TEST_LEVEL =
+  "Select a trade test level in Admin to enable ordering.";
+
+async function resolveBasketContext(userId: string): Promise<BasketContext> {
   const profile = await requireAuthenticatedUser(userId);
   const actor = await loadPricingActor(userId);
 
@@ -140,91 +151,110 @@ async function resolveTradeCompany(userId: string): Promise<{
     }
     const company = await prisma.company.findUnique({
       where: { id: actor.companyId },
-      select: { id: true, name: true, status: true, taxStatus: true },
+      select: { id: true, name: true, status: true },
     });
     if (!company || company.status !== "ACTIVE") {
       throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
     }
     await requireCompanyPermission(userId, company.id, "orders.view");
-    const canMutate = hasPermission(profile, "orders.create");
     return {
+      kind: "company",
       companyId: company.id,
       companyName: company.name,
-      taxStatus: company.taxStatus,
-      canMutate,
+      priceListId: null,
+      canMutate: hasPermission(profile, "orders.create"),
       canView: true,
+      userId,
     };
   }
 
-  // INTERNAL: only order when an active acting-for-customer context exists.
-  // Never invent a company from membership lists or client input.
   if (profile.actorType === "INTERNAL") {
-    if (!actor.companyId) {
-      throw new AuthError(
-        "Select a trade customer to place an order",
-        "BASKET_NO_COMPANY",
-        403,
-      );
+    if (!actor.adminTestPriceListId) {
+      throw new AuthError(ADMIN_NO_TEST_LEVEL, "BASKET_NO_TEST_LEVEL", 403);
     }
-    const canAct =
-      hasPermission(profile, "impersonation.order_for_customer") ||
-      hasPermission(profile, "orders.place_for_customer");
-    if (!canAct) {
+    const list = await prisma.priceList.findUnique({
+      where: { id: actor.adminTestPriceListId },
+      select: { id: true, name: true, code: true },
+    });
+    if (!list) {
+      throw new AuthError(ADMIN_NO_TEST_LEVEL, "BASKET_NO_TEST_LEVEL", 403);
+    }
+    const canMutate =
+      hasPermission(profile, "admin.access") ||
+      hasPermission(profile, "orders.create") ||
+      hasPermission(profile, "orders.place_for_customer") ||
+      hasPermission(profile, "pricing.view");
+    if (!canMutate) {
       throw new AuthError(
-        "You do not have permission to place orders for customers",
+        "You do not have permission to use the admin test basket",
         "BASKET_FORBIDDEN",
         403,
       );
     }
-    // loadPricingActor already scoped companyId to the active ActingContext.
-    await requireCompanyAccess(userId, actor.companyId);
-    const company = await prisma.company.findUnique({
-      where: { id: actor.companyId },
-      select: { id: true, name: true, status: true, taxStatus: true },
-    });
-    if (!company || company.status !== "ACTIVE") {
-      throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
-    }
     return {
-      companyId: company.id,
-      companyName: company.name,
-      taxStatus: company.taxStatus,
-      canMutate: canAct,
+      kind: "admin_test",
+      companyId: null,
+      companyName: `${ADMIN_TEST_BASKET_LABEL} · ${list.name}`,
+      priceListId: list.id,
+      canMutate: true,
       canView: true,
+      userId,
     };
   }
 
   throw new AuthError("Trade basket requires a trade customer account", "BASKET_FORBIDDEN", 403);
 }
 
-async function requireMutableCompany(userId: string) {
-  const ctx = await resolveTradeCompany(userId);
+async function requireMutableBasketContext(userId: string) {
+  const ctx = await resolveBasketContext(userId);
   if (!ctx.canMutate) {
     throw new AuthError("You do not have permission to modify the basket", "BASKET_READ_ONLY", 403);
   }
   return ctx;
 }
 
-async function getOrCreateOpenBasket(companyId: string, userId: string) {
+async function getOrCreateOpenBasket(ctx: BasketContext) {
+  if (ctx.kind === "company" && ctx.companyId) {
+    const existing = await prisma.basket.findFirst({
+      where: { companyId: ctx.companyId, status: "OPEN" },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (existing) return existing;
+    return prisma.basket.create({
+      data: { companyId: ctx.companyId, userId: ctx.userId, status: "OPEN" },
+    });
+  }
+
+  // Admin test basket: owned by the admin user, never attached to a company.
   const existing = await prisma.basket.findFirst({
-    where: { companyId, status: "OPEN" },
+    where: { userId: ctx.userId, companyId: null, status: "OPEN" },
     orderBy: { updatedAt: "desc" },
   });
   if (existing) return existing;
   return prisma.basket.create({
-    data: { companyId, userId, status: "OPEN" },
+    data: { companyId: null, userId: ctx.userId, status: "OPEN" },
   });
 }
 
 async function loadOwnedBasket(userId: string, basketId: string) {
-  const ctx = await resolveTradeCompany(userId);
+  const ctx = await resolveBasketContext(userId);
   const basket = await prisma.basket.findFirst({
-    where: { id: basketId, companyId: ctx.companyId, status: "OPEN" },
+    where:
+      ctx.kind === "company"
+        ? { id: basketId, companyId: ctx.companyId, status: "OPEN" }
+        : { id: basketId, userId: ctx.userId, companyId: null, status: "OPEN" },
   });
   if (!basket) {
     throw new AuthError("Basket not found", "BASKET_NOT_FOUND", 404);
   }
   return { basket, ctx };
+}
+
+function pricingInputFromContext(ctx: BasketContext) {
+  return {
+    companyId: ctx.companyId,
+    priceListId: ctx.kind === "admin_test" ? ctx.priceListId : null,
+  };
 }
 
 function moneyBundle(net: ReturnType<typeof moneyZero>, vat: ReturnType<typeof moneyZero>, gross: ReturnType<typeof moneyZero>): BasketMoney {
@@ -270,7 +300,7 @@ function lineTotalsFromResolution(resolution: TradePriceResolution | null, quant
   };
 }
 
-async function hydrateBasket(basketId: string, companyId: string, companyName: string): Promise<PublicBasket> {
+async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<PublicBasket> {
   const items = await prisma.basketItem.findMany({
     where: { basketId },
     orderBy: { createdAt: "asc" },
@@ -302,9 +332,11 @@ async function hydrateBasket(basketId: string, companyId: string, companyName: s
   }
 
   const priceByVariant = new Map<string, TradePriceResolution>();
+  const pricing = pricingInputFromContext(ctx);
   for (const [qty, group] of qtyGroups) {
     const resolved = await resolveVariantTradePrices({
-      companyId,
+      companyId: pricing.companyId,
+      priceListId: pricing.priceListId,
       quantity: qty,
       variants: group.map((item) => ({
         id: item.variant.id,
@@ -395,8 +427,9 @@ async function hydrateBasket(basketId: string, companyId: string, companyName: s
 
   return {
     id: basketId,
-    companyId,
-    companyName,
+    companyId: ctx.companyId,
+    companyName: ctx.companyName,
+    adminTest: ctx.kind === "admin_test",
     status: "OPEN",
     lineCount: lines.length,
     unitCount: lines.reduce((sum, line) => sum + line.quantity, 0),
@@ -409,9 +442,12 @@ async function hydrateBasket(basketId: string, companyId: string, companyName: s
 
 export async function getBasketSummary(userId: string): Promise<BasketSummary> {
   try {
-    const ctx = await resolveTradeCompany(userId);
+    const ctx = await resolveBasketContext(userId);
     const basket = await prisma.basket.findFirst({
-      where: { companyId: ctx.companyId, status: "OPEN" },
+      where:
+        ctx.kind === "company"
+          ? { companyId: ctx.companyId, status: "OPEN" }
+          : { userId: ctx.userId, companyId: null, status: "OPEN" },
       include: { items: { select: { qty: true } } },
     });
     if (!basket) {
@@ -432,9 +468,9 @@ export async function getBasketSummary(userId: string): Promise<BasketSummary> {
 }
 
 export async function getBasket(userId: string): Promise<PublicBasket> {
-  const ctx = await resolveTradeCompany(userId);
-  const basket = await getOrCreateOpenBasket(ctx.companyId, userId);
-  return hydrateBasket(basket.id, ctx.companyId, ctx.companyName);
+  const ctx = await resolveBasketContext(userId);
+  const basket = await getOrCreateOpenBasket(ctx);
+  return hydrateBasket(basket.id, ctx);
 }
 
 async function loadOrderableVariant(variantId: string) {
@@ -461,7 +497,7 @@ async function loadOrderableVariant(variantId: string) {
 
 export async function addToBasket(userId: string, raw: unknown): Promise<PublicBasket> {
   const input = variantIdSchema.parse(raw);
-  const ctx = await requireMutableCompany(userId);
+  const ctx = await requireMutableBasketContext(userId);
   const variant = await loadOrderableVariant(input.variantId);
   if (variant.product.status !== "ACTIVE" || !variant.product.isActive || !variant.product.isTradeVisible) {
     throw new AuthError("This product is not available for ordering", "PRODUCT_UNAVAILABLE", 400);
@@ -478,7 +514,7 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
       })
     : false;
 
-  const basket = await getOrCreateOpenBasket(ctx.companyId, userId);
+  const basket = await getOrCreateOpenBasket(ctx);
   const existing = await prisma.basketItem.findUnique({
     where: { basketId_variantId: { basketId: basket.id, variantId: variant.id } },
   });
@@ -495,8 +531,10 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
     throw new AuthError(validated.message, validated.code, 400);
   }
 
+  const pricing = pricingInputFromContext(ctx);
   const priced = await resolveVariantTradePrices({
-    companyId: ctx.companyId,
+    companyId: pricing.companyId,
+    priceListId: pricing.priceListId,
     quantity: nextQty,
     variants: [
       {
@@ -527,14 +565,17 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
     });
   }
 
-  return hydrateBasket(basket.id, ctx.companyId, ctx.companyName);
+  return hydrateBasket(basket.id, ctx);
 }
 
 export async function updateBasketItem(userId: string, raw: unknown): Promise<PublicBasket> {
   const input = itemIdSchema.parse(raw);
-  const ctx = await requireMutableCompany(userId);
+  const ctx = await requireMutableBasketContext(userId);
   const item = await prisma.basketItem.findFirst({
-    where: { id: input.itemId, basket: { companyId: ctx.companyId, status: "OPEN" } },
+    where:
+      ctx.kind === "company"
+        ? { id: input.itemId, basket: { companyId: ctx.companyId, status: "OPEN" } }
+        : { id: input.itemId, basket: { userId: ctx.userId, companyId: null, status: "OPEN" } },
     include: { variant: true, basket: true },
   });
   if (!item) {
@@ -561,8 +602,10 @@ export async function updateBasketItem(userId: string, raw: unknown): Promise<Pu
     throw new AuthError(validated.message, validated.code, 400);
   }
 
+  const pricing = pricingInputFromContext(ctx);
   const priced = await resolveVariantTradePrices({
-    companyId: ctx.companyId,
+    companyId: pricing.companyId,
+    priceListId: pricing.priceListId,
     quantity: input.quantity,
     variants: [
       {
@@ -582,24 +625,27 @@ export async function updateBasketItem(userId: string, raw: unknown): Promise<Pu
     data: { qty: input.quantity },
   });
 
-  return hydrateBasket(item.basketId, ctx.companyId, ctx.companyName);
+  return hydrateBasket(item.basketId, ctx);
 }
 
 export async function removeBasketItem(userId: string, raw: unknown): Promise<PublicBasket> {
   const input = removeSchema.parse(raw);
-  const ctx = await requireMutableCompany(userId);
+  const ctx = await requireMutableBasketContext(userId);
   const item = await prisma.basketItem.findFirst({
-    where: { id: input.itemId, basket: { companyId: ctx.companyId, status: "OPEN" } },
+    where:
+      ctx.kind === "company"
+        ? { id: input.itemId, basket: { companyId: ctx.companyId, status: "OPEN" } }
+        : { id: input.itemId, basket: { userId: ctx.userId, companyId: null, status: "OPEN" } },
   });
   if (!item) {
     throw new AuthError("Basket item not found", "BASKET_ITEM_NOT_FOUND", 404);
   }
   await prisma.basketItem.delete({ where: { id: item.id } });
-  return hydrateBasket(item.basketId, ctx.companyId, ctx.companyName);
+  return hydrateBasket(item.basketId, ctx);
 }
 
 const ANON_ORDER_REASON = "Sign in with a trade account to order";
-const INTERNAL_NO_COMPANY_REASON = "Select a trade customer to place an order";
+const ADMIN_NO_TEST_LEVEL_REASON = ADMIN_NO_TEST_LEVEL;
 
 /** Preview ordering controls for a PDP. Never returns exact sellable qty. */
 export async function getProductOrderingPanel(
@@ -626,21 +672,21 @@ export async function getProductOrderingPanel(
   };
   if (!userId) return empty;
 
-  let ctx: Awaited<ReturnType<typeof resolveTradeCompany>>;
+  let ctx: BasketContext;
   try {
-    ctx = await resolveTradeCompany(userId);
+    ctx = await resolveBasketContext(userId);
   } catch (error) {
     // Authenticated actors must never be told to "Sign in".
     if (error instanceof AuthError) {
-      if (error.code === "BASKET_NO_COMPANY") {
-        return { ...empty, reason: error.message || INTERNAL_NO_COMPANY_REASON };
+      if (error.code === "BASKET_NO_TEST_LEVEL" || error.code === "BASKET_NO_COMPANY") {
+        return { ...empty, reason: error.message || ADMIN_NO_TEST_LEVEL_REASON };
       }
       return {
         ...empty,
-        reason: error.message || "Customer account required for ordering",
+        reason: error.message || ADMIN_NO_TEST_LEVEL_REASON,
       };
     }
-    return { ...empty, reason: INTERNAL_NO_COMPANY_REASON };
+    return { ...empty, reason: ADMIN_NO_TEST_LEVEL_REASON };
   }
   if (!ctx.canMutate) {
     return { ...empty, reason: "Your account can view prices but cannot place orders" };
@@ -695,8 +741,10 @@ export async function getProductOrderingPanel(
   }
 
   const quantity = rules.minimumOrderQty;
+  const pricing = pricingInputFromContext(ctx);
   const priced = await resolveVariantTradePrices({
-    companyId: ctx.companyId,
+    companyId: pricing.companyId,
+    priceListId: pricing.priceListId,
     quantity,
     variants: [
       {
@@ -752,7 +800,7 @@ export async function previewProductOrderQuantity(
   const panel = await getProductOrderingPanel(userId, { variantId: input.variantId });
   if (!panel.orderable || panel.caseQty == null || panel.minimumQuantity == null) return panel;
 
-  const ctx = await requireMutableCompany(userId);
+  const ctx = await requireMutableBasketContext(userId);
   const variant = await loadOrderableVariant(input.variantId);
   const stockMap = await loadStockByVariantIds([variant.id]);
   const stock = stockMap.get(variant.id);
@@ -782,8 +830,10 @@ export async function previewProductOrderQuantity(
     };
   }
 
+  const pricing = pricingInputFromContext(ctx);
   const priced = await resolveVariantTradePrices({
-    companyId: ctx.companyId,
+    companyId: pricing.companyId,
+    priceListId: pricing.priceListId,
     quantity: input.quantity,
     variants: [
       {

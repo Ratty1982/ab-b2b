@@ -257,6 +257,11 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  /// INTERNAL only: PriceList used as the admin public-catalogue trade test level.
+  /// Never used for TRADE customers. Never invents a Company.
+  tradeTestPriceListId String?
+  tradeTestPriceList   PriceList? @relation("UserTradeTestPriceList", fields: [tradeTestPriceListId], references: [id], onDelete: SetNull)
+
   companyUsers       CompanyUser[]
   userRoles          UserRole[]
   salesRep           SalesRep?
@@ -273,8 +278,10 @@ model User {
   accounts           AuthAccount[]
   actingContexts     ActingContext[]   @relation("ActingActor")
   productImports     ProductImportJob[]
+  testBaskets        Basket[]          @relation("AdminTestBasketOwner")
 
   @@index([actorType, status])
+  @@index([tradeTestPriceListId])
 }
 
 /// Better Auth–compatible session table shape (wired in Phase 1)
@@ -976,8 +983,9 @@ model PriceList {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  items     PriceListItem[]
-  companies Company[]
+  items          PriceListItem[]
+  companies      Company[]
+  tradeTestUsers User[]          @relation("UserTradeTestPriceList")
 }
 
 model PriceListItem {
@@ -1041,16 +1049,20 @@ model Promotion {
 
 model Basket {
   id        String       @id @default(cuid())
-  companyId String
+  /// Company-owned trade baskets. Null for INTERNAL admin trade-test baskets.
+  companyId String?
+  /// Creator / owner. Required for admin test baskets (companyId null).
   userId    String?
   status    BasketStatus @default(OPEN)
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?        @relation("AdminTestBasketOwner", fields: [userId], references: [id], onDelete: Cascade)
   items   BasketItem[]
 
   @@index([companyId, status])
+  @@index([userId, status])
 }
 
 model BasketItem {

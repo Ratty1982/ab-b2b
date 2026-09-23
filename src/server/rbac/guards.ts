@@ -95,7 +95,7 @@ export async function requireCompanyPermission(
   return profile;
 }
 
-/** Portal shell: trade membership, or INTERNAL with active acting-for-customer context. */
+/** Portal shell: trade membership, or INTERNAL with an Admin Trade Test Level. */
 export async function requireTradePortalAccess(
   userId: string | undefined | null,
 ): Promise<LoadedAccessProfile> {
@@ -104,13 +104,12 @@ export async function requireTradePortalAccess(
     return profile;
   }
   if (profile.actorType === "INTERNAL") {
-    const { getActiveActingContext } = await import("@/server/acting-context");
-    const { hasPermission } = await import("@/server/rbac/access");
-    const acting = await getActiveActingContext(profile.userId);
-    const canAct =
-      hasPermission(profile, "impersonation.order_for_customer") ||
-      hasPermission(profile, "orders.place_for_customer");
-    if (acting && canAct) {
+    const { prisma } = await import("@/infra/database/client");
+    const user = await prisma.user.findUnique({
+      where: { id: profile.userId },
+      select: { tradeTestPriceListId: true },
+    });
+    if (user?.tradeTestPriceListId) {
       return profile;
     }
   }

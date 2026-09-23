@@ -21,6 +21,8 @@ function tradeSession(partial: Partial<Extract<ClientSession, { signedIn: true }
       tradeRole: "TRADE_BUYER",
       navPermissions: [...TRADE_ROLE_PERMISSIONS.TRADE_BUYER],
       actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
       ...partial,
     },
   };
@@ -42,6 +44,8 @@ function adminSession(): ClientSession {
       tradeRole: null,
       navPermissions: [...ALL_PERMISSIONS],
       actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
     },
   };
 }
@@ -62,6 +66,8 @@ function salesSession(): ClientSession {
       tradeRole: null,
       navPermissions: [...SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE],
       actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
     },
   };
 }
@@ -85,7 +91,7 @@ describe("publicHeaderAccountLinks", () => {
     expect(links.every((l) => l.to !== ROUTES.portal)).toBe(true);
   });
 
-  it("admin with acting-for-customer gets Trade Portal + Admin", () => {
+  it("admin with trade test level gets Trade Portal + Admin", () => {
     const session: ClientSession = {
       signedIn: true,
       user: {
@@ -100,11 +106,9 @@ describe("publicHeaderAccountLinks", () => {
         accountNumber: null,
         tradeRole: null,
         navPermissions: [...ALL_PERMISSIONS],
-        actingFor: {
-          companyId: "co-act",
-          companyName: "Acting Co",
-          accountNumber: "AB-9",
-        },
+        actingFor: null,
+        tradeTestPriceListId: "pl-test",
+        tradeTestPriceListName: "Trade Level A",
       },
     };
     expect(publicHeaderAccountLinks(session)).toEqual([

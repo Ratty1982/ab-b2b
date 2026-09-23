@@ -187,6 +187,13 @@ function ProductTradeOrderingCard({
     !panel &&
     !showAnonSignIn;
 
+  const blockedReason = panel?.reason ?? null;
+  const showTestLevelPrompt =
+    signedIn &&
+    !orderingContext &&
+    (showAwaitingContext ||
+      (blockedReason != null && /trade test level/i.test(blockedReason)));
+
   return (
     <section
       data-product-section="ordering"
@@ -207,9 +214,13 @@ function ProductTradeOrderingCard({
         </p>
       ) : null}
 
-      {showAwaitingContext ? (
-        <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="needs-customer">
-          Select a trade customer to place an order.
+      {showTestLevelPrompt ? (
+        <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="needs-test-level">
+          Select a trade test level in{" "}
+          <Link to="/admin/settings" className="font-semibold text-primary hover:underline">
+            Admin → Settings
+          </Link>{" "}
+          to enable ordering.
         </p>
       ) : null}
 
@@ -289,7 +300,7 @@ function ProductTradeOrderingCard({
         </div>
       ) : null}
 
-      {showAuthenticatedBlocked ? (
+      {showAuthenticatedBlocked && !showTestLevelPrompt ? (
         <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="blocked">
           {panel!.reason}
         </p>

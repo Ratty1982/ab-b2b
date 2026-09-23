@@ -291,7 +291,7 @@ describe("Phase 6A basket ordering", () => {
     await expect(addToBasket(buyerId, { variantId: variant.id, quantity: 1 })).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("admin without acting context is not told to Sign in and cannot invent a basket", async () => {
+  it("admin without trade test level is not told to Sign in and cannot invent a basket", async () => {
     const sku = `B6ADM-${Date.now()}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -307,43 +307,56 @@ describe("Phase 6A basket ordering", () => {
     });
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
     await seedStock(variant.id, 20);
+    await prisma.user.update({ where: { id: adminId }, data: { tradeTestPriceListId: null } });
 
     const panel = await getProductOrderingPanel(adminId, { variantId: variant.id });
     expect(panel.orderable).toBe(false);
-    expect(panel.reason).toMatch(/Select a trade customer/i);
+    expect(panel.reason).toMatch(/trade test level/i);
     expect(panel.reason).not.toMatch(/Sign in/i);
+    expect(panel.reason).not.toMatch(/Select a trade customer/i);
     await expect(addToBasket(adminId, { variantId: variant.id, quantity: 1 })).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("admin with acting context orders into that company's basket", async () => {
-    const { startActingContext } = await import("@/server/acting-context");
-    const { loadAccessProfile } = await import("@/server/rbac/access");
-    const sku = `B6ACT-${Date.now()}`;
+  it("admin with trade test PriceList orders into an isolated test basket", async () => {
+    const sku = `B6TEST-${Date.now()}`;
+    const list = await prisma.priceList.create({
+      data: { code: `TTL-${sku}`, name: "Admin Test Level A", currency: "GBP" },
+    });
     const product = await saveProduct(adminId, {
       sku,
-      name: "Acting cloth",
+      name: "Test cloth",
       brand: "Power Maxed",
       category: "Braking",
-      trade: 2.19,
-      rrp: 4.99,
+      trade: 5,
+      rrp: 9,
       packQty: 1,
       caseQty: 1,
-      description: "acting",
+      description: "test-level",
       active: true,
     });
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await prisma.priceListItem.create({
+      data: { priceListId: list.id, variantId: variant.id, unitPrice: 2.19 },
+    });
     await seedStock(variant.id, 20);
+
+    // Real company CustomerPrice must NOT leak into admin test pricing.
     const company = await prisma.company.create({
-      data: { name: `Acting Co ${sku}`, status: "ACTIVE" },
+      data: { name: `Leak Co ${sku}`, status: "ACTIVE" },
+    });
+    await prisma.customerPrice.create({
+      data: { companyId: company.id, variantId: variant.id, unitPrice: 0.99 },
     });
 
-    const profile = await loadAccessProfile(adminId);
-    expect(profile).not.toBeNull();
-    await startActingContext({
-      profile: profile!,
-      onBehalfOfCompanyId: company.id,
-      reason: "Phase 6A admin ordering test",
+    await prisma.user.update({
+      where: { id: adminId },
+      data: { tradeTestPriceListId: list.id },
     });
+    // Isolate from prior admin-test basket rows for this shared SUPER_ADMIN user.
+    await prisma.basketItem.deleteMany({
+      where: { basket: { userId: adminId, companyId: null } },
+    });
+    await prisma.basket.deleteMany({ where: { userId: adminId, companyId: null } });
 
     const panel = await getProductOrderingPanel(adminId, { variantId: variant.id });
     expect(panel.orderable).toBe(true);
@@ -352,9 +365,24 @@ describe("Phase 6A basket ordering", () => {
     expect(panel.unitPriceExVatDisplay).toBe("2.19");
     expect(panel.reason).toBeNull();
 
+    const beforeInv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     const basket = await addToBasket(adminId, { variantId: variant.id, quantity: 1 });
-    expect(basket.companyId).toBe(company.id);
+    expect(basket.companyId).toBeNull();
+    expect(basket.adminTest).toBe(true);
     expect(basket.lineCount).toBe(1);
+    expect(basket.lines[0]!.unitPriceExVatDisplay).toBe("2.19");
     expect(basket.lines[0]!.quantity).toBe(1);
+
+    const afterInv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(afterInv.qtyOnHand).toBe(beforeInv.qtyOnHand);
+    expect(afterInv.qtyReserved).toBe(beforeInv.qtyReserved);
+    expect(await prisma.order.count({ where: { companyId: company.id } })).toBe(0);
+
+    // Customer cannot see the admin test basket via their company path.
+    const buyerId = await ensureTradeBuyer(`buyer-test-${sku}@example.invalid`, company.id);
+    const customerBasket = await getBasket(buyerId);
+    expect(customerBasket.companyId).toBe(company.id);
+    expect(customerBasket.lineCount).toBe(0);
+    expect(customerBasket.id).not.toBe(basket.id);
   });
 });

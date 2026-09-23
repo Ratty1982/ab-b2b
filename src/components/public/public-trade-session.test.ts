@@ -18,13 +18,13 @@ vi.mock("@/lib/session", () => ({
     Boolean(
       session.signedIn &&
         ((session.user?.actorType === "TRADE" && session.user.companyId) ||
-          (session.user?.actorType === "INTERNAL" && session.user.actingFor?.companyId)),
+          (session.user?.actorType === "INTERNAL" && session.user.tradeTestPriceListId)),
     ),
   hasOrderingCompanyContext: (session: ClientSession) =>
     Boolean(
       session.signedIn &&
         ((session.user?.actorType === "TRADE" && session.user.companyId) ||
-          (session.user?.actorType === "INTERNAL" && session.user.actingFor?.companyId)),
+          (session.user?.actorType === "INTERNAL" && session.user.tradeTestPriceListId)),
     ),
   isTradeCustomerSession: (session: ClientSession) =>
     Boolean(session.signedIn && session.user?.actorType === "TRADE" && session.user.companyId),
@@ -85,6 +85,8 @@ const tradeSession: ClientSession = {
     tradeRole: "TRADE_BUYER",
     navPermissions: ["orders.view", "orders.create", "pricing.view", "products.view"],
     actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
   },
 };
 
@@ -201,6 +203,8 @@ describe("public trade session chrome", () => {
         tradeRole: null,
         navPermissions: ["admin.access", "products.edit", "pricing.edit", "cms.view"],
         actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
       },
     };
     const markup = html(createElement(PublicHeader));
@@ -214,7 +218,7 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Log out");
   });
 
-  it("admin with acting context shows Basket + Trade Portal + Admin", () => {
+  it("admin with trade test level shows Basket + Trade Portal + Admin", () => {
     sessionState.current = {
       signedIn: true,
       user: {
@@ -229,11 +233,9 @@ describe("public trade session chrome", () => {
         accountNumber: null,
         tradeRole: null,
         navPermissions: [...ALL_PERMISSIONS],
-        actingFor: {
-          companyId: "co-act",
-          companyName: "Acting Factors",
-          accountNumber: "AB-22",
-        },
+        actingFor: null,
+        tradeTestPriceListId: "pl-a",
+        tradeTestPriceListName: "Trade Level A",
       },
     };
     const markup = html(createElement(PublicHeader));
@@ -260,7 +262,7 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Basket");
   });
 
-  it("trade customer session guards require TRADE + company for basket chrome; acting INTERNAL also qualifies", () => {
+  it("trade customer session guards require TRADE + company; INTERNAL needs trade test level", () => {
     expect(isTradeCustomerSession(tradeSession)).toBe(true);
     expect(canViewBasketSession(tradeSession)).toBe(true);
     expect(hasOrderingCompanyContext(tradeSession)).toBe(true);
@@ -292,19 +294,22 @@ describe("public trade session chrome", () => {
         tradeRole: null,
         navPermissions: [...ALL_PERMISSIONS],
         actingFor: null,
+        tradeTestPriceListId: null,
+        tradeTestPriceListName: null,
       },
     };
     expect(hasOrderingCompanyContext(adminNoCtx)).toBe(false);
     expect(canViewBasketSession(adminNoCtx)).toBe(false);
-    const adminActing: ClientSession = {
+    const adminTest: ClientSession = {
       signedIn: true,
       user: {
         ...adminNoCtx.user,
-        actingFor: { companyId: "co1", companyName: "Co", accountNumber: null },
+        tradeTestPriceListId: "pl-a",
+        tradeTestPriceListName: "Trade A",
       },
     };
-    expect(hasOrderingCompanyContext(adminActing)).toBe(true);
-    expect(canViewBasketSession(adminActing)).toBe(true);
+    expect(hasOrderingCompanyContext(adminTest)).toBe(true);
+    expect(canViewBasketSession(adminTest)).toBe(true);
   });
 
   it("anonymous PDP price does not show YOUR PRICE amount even when trade leaks into props", () => {
@@ -430,6 +435,8 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
       tradeRole: null,
       navPermissions: [...ALL_PERMISSIONS],
       actingFor: null,
+      tradeTestPriceListId: null,
+      tradeTestPriceListName: null,
     },
   };
 
@@ -451,7 +458,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
     insufficientFullCase: false,
   } as const;
 
-  it("admin without company context is NOT told to Sign in", () => {
+  it("admin without trade test level is NOT told to Sign in or select a customer", () => {
     sessionState.current = adminNoCompany;
     const markup = html(
       createElement(ProductTradeOrdering, {
@@ -460,7 +467,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
         productName: "Polishing Cloth 40cm × 40cm",
         initialPanel: {
           orderable: false,
-          reason: "Select a trade customer to place an order",
+          reason: "Select a trade test level in Admin to enable ordering.",
           caseQty: null,
           caseTitle: "Single unit",
           caseSubtitle: "Sold individually",
@@ -478,22 +485,21 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
       }),
     );
     expect(markup).toContain("Trade ordering");
-    expect(markup).toContain("Select a trade customer to place an order");
+    expect(markup).toMatch(/trade test level/i);
+    expect(markup).toContain("/admin/settings");
     expect(markup).not.toMatch(/Sign in/i);
+    expect(markup).not.toMatch(/Select a trade customer/i);
     expect(markup).not.toMatch(/Add to basket/i);
     expect(markup).toContain('data-ordering-actor="internal"');
   });
 
-  it("admin with acting company context can see quantity and Add to Basket", () => {
+  it("admin with trade test level can see quantity and Add to Basket", () => {
     sessionState.current = {
       signedIn: true,
       user: {
         ...adminNoCompany.user,
-        actingFor: {
-          companyId: "co-act",
-          companyName: "Acting Factors",
-          accountNumber: "AB-22",
-        },
+        tradeTestPriceListId: "pl-a",
+        tradeTestPriceListName: "Trade Level A",
       },
     };
     const markup = html(
@@ -510,7 +516,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
             categorySlug: "accessories",
             imageSrc: "/media/pmpc1.jpg",
             rrp: 4.99,
-            price: { currency: "GBP", trade: 2.19, rrp: 4.99, source: "base_catalogue" },
+            price: { currency: "GBP", trade: 2.19, rrp: 4.99, source: "price_list" },
             availability: "in",
             isNew: false,
             isFeatured: false,

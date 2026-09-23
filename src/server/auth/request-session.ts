@@ -12,6 +12,7 @@
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
 import { auth } from "@/infra/auth";
+import { prisma } from "@/infra/database/client";
 import { loadAccessProfile } from "@/server/rbac/access";
 import { getActiveActingContext } from "@/server/acting-context";
 import type { PermissionKey, TradeAccessKey } from "@/domain/permissions";
@@ -36,6 +37,9 @@ export interface SafeSessionUser {
     companyName: string;
     accountNumber: string | null;
   } | null;
+  /** INTERNAL only — selected Admin Trade Test Level (PriceList). */
+  tradeTestPriceListId: string | null;
+  tradeTestPriceListName: string | null;
 }
 
 export interface SafeSession {
@@ -76,6 +80,17 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
 
   const acting = await getActiveActingContext(userId);
 
+  const tradeTest =
+    profile.actorType === "INTERNAL"
+      ? await prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            tradeTestPriceListId: true,
+            tradeTestPriceList: { select: { name: true } },
+          },
+        })
+      : null;
+
   return {
     signedIn: true,
     user: {
@@ -97,6 +112,8 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
             accountNumber: acting.onBehalfOfCompany.accountNumber,
           }
         : null,
+      tradeTestPriceListId: tradeTest?.tradeTestPriceListId ?? null,
+      tradeTestPriceListName: tradeTest?.tradeTestPriceList?.name ?? null,
     },
   };
 }

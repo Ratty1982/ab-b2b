@@ -1317,4 +1317,26 @@ export const previewProductOrderQuantityFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getMyTradeTestLevelFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const { getMyTradeTestLevel } = await import("@/server/admin-trade-test/service");
+    return { ok: true as const, data: await getMyTradeTestLevel(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const setMyTradeTestLevelFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { priceListId: string | null })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { setMyTradeTestLevel } = await import("@/server/admin-trade-test/service");
+      return { ok: true as const, data: await setMyTradeTestLevel(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

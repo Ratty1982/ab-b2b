@@ -39,8 +39,9 @@ export function publicHeaderAccountLinks(session: ClientSession): PublicHeaderAc
   const ctx = navCtxFromUser(user);
   const links: PublicHeaderAccountLink[] = [];
 
-  // Acting-for-customer: explicit Trade Portal alongside Admin (never ambiguous Account).
-  if (user.actorType === "INTERNAL" && user.actingFor?.companyId) {
+  // Acting-for-customer is reserved for a later feature.
+  // Admin Trade Test Level enables isolated test basket + Trade Portal.
+  if (user.actorType === "INTERNAL" && user.tradeTestPriceListId) {
     links.push({ key: "trade-portal", label: "Trade Portal", to: ROUTES.portal });
   }
 

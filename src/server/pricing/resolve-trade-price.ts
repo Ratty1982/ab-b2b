@@ -1,18 +1,27 @@
 import { prisma } from "@/infra/database/client";
-import { getActiveActingContext } from "@/server/acting-context";
 import { loadAccessProfile } from "@/server/rbac/access";
 import { viewerFromAccess, type PriceViewer } from "@/server/pricing/trade-price";
 import { inValidityWindow, resolveTradePriceFromFacts, type PriceResolutionFacts } from "@/domain/trade-price-resolution";
 
 export type PricingActor = {
   viewer: PriceViewer;
+  /** Real trade company (membership). Null for anonymous, internal base, and admin test. */
   companyId: string | null;
+  /**
+   * INTERNAL admin Trade Test Level — a real PriceList id from the user's
+   * persisted setting. Never accepted from the browser on price/basket calls.
+   */
+  adminTestPriceListId: string | null;
 };
 
 export async function loadPricingActor(userId: string | null): Promise<PricingActor> {
-  if (!userId) return { viewer: { kind: "anonymous" }, companyId: null };
+  if (!userId) {
+    return { viewer: { kind: "anonymous" }, companyId: null, adminTestPriceListId: null };
+  }
   const profile = await loadAccessProfile(userId);
-  if (!profile) return { viewer: { kind: "anonymous" }, companyId: null };
+  if (!profile) {
+    return { viewer: { kind: "anonymous" }, companyId: null, adminTestPriceListId: null };
+  }
   const viewer = viewerFromAccess({
     signedIn: true,
     actorType: profile.actorType,
@@ -20,13 +29,24 @@ export async function loadPricingActor(userId: string | null): Promise<PricingAc
   });
 
   if (profile.actorType === "INTERNAL") {
-    const acting = await getActiveActingContext(userId);
-    return { viewer, companyId: acting?.onBehalfOfCompanyId ?? null };
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { tradeTestPriceListId: true },
+    });
+    return {
+      viewer,
+      companyId: null,
+      adminTestPriceListId: user?.tradeTestPriceListId ?? null,
+    };
   }
 
   const membership =
     profile.companyMemberships.find((m) => m.isDefault) ?? profile.companyMemberships[0];
-  return { viewer, companyId: membership?.companyId ?? null };
+  return {
+    viewer,
+    companyId: membership?.companyId ?? null,
+    adminTestPriceListId: null,
+  };
 }
 
 function promoScope(metadata: unknown): { variantIds: string[] | null; skus: string[] | null } {
@@ -51,10 +71,15 @@ export type VariantPriceInput = {
 
 /**
  * One company lookup + one item/break/customer/promotion query set for the whole page.
+ *
+ * Admin test mode: pass `priceListId` without `companyId`. That loads PriceListItem
+ * rows only — never CustomerPrice (which is company-scoped).
  */
 export async function loadTradePriceFactsForVariants(input: {
   variants: VariantPriceInput[];
   companyId: string | null;
+  /** Explicit PriceList for admin trade-test context (no company). */
+  priceListId?: string | null;
   quantity?: number;
   at?: Date;
 }): Promise<Map<string, PriceResolutionFacts>> {
@@ -77,10 +102,22 @@ export async function loadTradePriceFactsForVariants(input: {
       })
     : null;
 
+  // Company list wins when a real company context exists. Admin test list only
+  // applies when there is no company (never blend with CustomerPrice).
+  const effectivePriceListId = company?.priceListId ?? input.priceListId ?? null;
+
+  const adminTestList =
+    !company && input.priceListId
+      ? await prisma.priceList.findUnique({
+          where: { id: input.priceListId },
+          select: { id: true, name: true },
+        })
+      : null;
+
   const [listItems, customerPrices, quantityBreaks, promotions] = await Promise.all([
-    company?.priceListId
+    effectivePriceListId
       ? prisma.priceListItem.findMany({
-          where: { priceListId: company.priceListId, variantId: { in: ids } },
+          where: { priceListId: effectivePriceListId, variantId: { in: ids } },
           select: {
             id: true,
             variantId: true,
@@ -90,6 +127,7 @@ export async function loadTradePriceFactsForVariants(input: {
           },
         })
       : Promise.resolve([]),
+    // CustomerPrice is company-scoped — never load for admin test context.
     company
       ? prisma.customerPrice.findMany({
           where: { companyId: company.id, variantId: { in: ids } },
@@ -151,7 +189,15 @@ export async function loadTradePriceFactsForVariants(input: {
             priceListId: company.priceListId,
             priceListName: company.priceList?.name ?? null,
           }
-        : null,
+        : adminTestList
+          ? {
+              // Synthetic STANDARD tax — never inherits a real customer's exemption.
+              id: `admin-test:${adminTestList.id}`,
+              taxStatus: "STANDARD",
+              priceListId: adminTestList.id,
+              priceListName: adminTestList.name,
+            }
+          : null,
       customerPrice: customer
         ? {
             id: customer.id,
@@ -182,6 +228,7 @@ export async function loadTradePriceFactsForVariants(input: {
 export async function resolveVariantTradePrices(input: {
   variants: VariantPriceInput[];
   companyId: string | null;
+  priceListId?: string | null;
   quantity?: number;
   at?: Date;
 }) {
@@ -189,4 +236,15 @@ export async function resolveVariantTradePrices(input: {
   return new Map(
     [...facts.entries()].map(([id, row]) => [id, resolveTradePriceFromFacts(row)] as const),
   );
+}
+
+/** Helper for callers that already have a PricingActor. */
+export function pricingArgsFromActor(actor: PricingActor): {
+  companyId: string | null;
+  priceListId: string | null;
+} {
+  return {
+    companyId: actor.companyId,
+    priceListId: actor.adminTestPriceListId,
+  };
 }
