@@ -94,7 +94,7 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
                 {showOrdering ? (
                   <ProductTradeOrdering
                     caseQty={data.caseQty}
-                    variantId={data.variantId}
+                    {...(data.variantId != null ? { variantId: data.variantId } : {})}
                     productName={data.card.name}
                   />
                 ) : null}

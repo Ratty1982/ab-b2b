@@ -45,8 +45,8 @@ export function ProductTradeOrdering({
   return (
     <ProductTradeOrderingCard
       copy={copy}
-      variantId={variantId}
-      productName={productName}
+      {...(variantId != null ? { variantId } : {})}
+      {...(productName != null ? { productName } : {})}
     />
   );
 }
@@ -61,12 +61,14 @@ function ProductTradeOrderingCard({
   productName?: string;
 }) {
   const session = useSession();
+  const tradeActor =
+    session.signedIn && session.user?.actorType === "TRADE" ? session.user : null;
   const [panel, setPanel] = useState<Panel | null>(null);
   const [quantity, setQuantity] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!variantId || !session.signedIn || session.user.actorType !== "TRADE") {
+    if (!variantId || !tradeActor) {
       setPanel(null);
       return;
     }
@@ -79,7 +81,7 @@ function ProductTradeOrderingCard({
     return () => {
       cancelled = true;
     };
-  }, [variantId, session.signedIn, session.signedIn ? session.user.actorType : null]);
+  }, [variantId, tradeActor?.id]);
 
   const interactive = Boolean(variantId && panel);
 

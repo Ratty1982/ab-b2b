@@ -12,11 +12,11 @@ export function BasketNavBadge({ className }: { className?: string }) {
   const [lineCount, setLineCount] = useState(0);
 
   useEffect(() => {
-    if (!session.signedIn || session.user.actorType !== "TRADE") {
+    if (!session.signedIn || session.user?.actorType !== "TRADE") {
       setLineCount(0);
       return;
     }
-    if (!session.user.navPermissions.includes("orders.view")) {
+    if (!session.user.navPermissions?.includes("orders.view")) {
       setLineCount(0);
       return;
     }
@@ -36,10 +36,14 @@ export function BasketNavBadge({ className }: { className?: string }) {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
-  }, [session.signedIn, session.signedIn ? session.user.actorType : null, session.signedIn ? session.user.navPermissions.join(",") : ""]);
+  }, [
+    session.signedIn,
+    session.signedIn ? session.user?.actorType : null,
+    session.signedIn ? session.user?.navPermissions?.join(",") : "",
+  ]);
 
-  if (!session.signedIn || session.user.actorType !== "TRADE") return null;
-  if (!session.user.navPermissions.includes("orders.view")) return null;
+  if (!session.signedIn || session.user?.actorType !== "TRADE") return null;
+  if (!session.user.navPermissions?.includes("orders.view")) return null;
 
   return (
     <Link

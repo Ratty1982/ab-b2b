@@ -20,7 +20,7 @@ const nav = [
 export function PublicHeader() {
   const [open, setOpen] = useState(false);
   const session = useSession();
-  const tradeSignedIn = session.signedIn && session.user.actorType === "TRADE";
+  const tradeSignedIn = Boolean(session.signedIn && session.user?.actorType === "TRADE");
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-ink/90 backdrop-blur">

@@ -50,7 +50,7 @@ export function getOrderingRules(input: {
   }
   const minimumOrderQty = minimumCustomerOrderQuantity({
     caseQty: increment,
-    minimumOrderQty: input.minimumOrderQty,
+    ...(input.minimumOrderQty !== undefined ? { minimumOrderQty: input.minimumOrderQty } : {}),
   })!;
   return {
     caseQty: increment,
@@ -233,7 +233,9 @@ export function assessBasketLineQuantity(input: {
     caseQty: rules.caseQty,
     minimumOrderQty: rules.minimumOrderQty,
     sellableQty: input.sellableQty,
-    orderableByStockPolicy: input.orderableByStockPolicy,
+    ...(input.orderableByStockPolicy !== undefined
+      ? { orderableByStockPolicy: input.orderableByStockPolicy }
+      : {}),
   });
   if (result.ok) return "VALID";
   if (result.code === "INSUFFICIENT_FULL_CASE") return "INSUFFICIENT_FULL_CASE";

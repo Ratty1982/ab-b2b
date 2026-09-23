@@ -113,6 +113,10 @@ export function mulQty(value: Money, quantity: number): Money {
   return { minor: value.minor * BigInt(quantity) };
 }
 
+export function moneyToNumber(value: Money): number {
+  return Number(moneyToString(value));
+}
+
 export function vatRateForCodes(input: {
   vatCode?: string | null;
   companyTaxStatus?: string | null;
