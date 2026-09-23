@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientSession } from "@/server/auth/session";
 import { canViewBasketSession, isTradeCustomerSession } from "@/lib/session-guards";
 import { buildSafeSession, sessionDiagnostics } from "@/server/auth/request-session";
+import { BASKET_UPDATED_EVENT } from "@/lib/basket-events";
 
 const sessionState: { current: ClientSession } = {
   current: { signedIn: false },
@@ -12,13 +13,9 @@ const sessionState: { current: ClientSession } = {
 vi.mock("@/lib/session", () => ({
   useSession: () => ({ ...sessionState.current, loading: false, refresh: async () => undefined }),
   guestSession: { signedIn: false },
+  // Mirror production session-guards: Basket chrome = TRADE + company.
   canViewBasketSession: (session: ClientSession) =>
-    Boolean(
-      session.signedIn &&
-        session.user?.actorType === "TRADE" &&
-        session.user.companyId &&
-        session.user.navPermissions?.includes("orders.view"),
-    ),
+    Boolean(session.signedIn && session.user?.actorType === "TRADE" && session.user.companyId),
   isTradeCustomerSession: (session: ClientSession) =>
     Boolean(session.signedIn && session.user?.actorType === "TRADE" && session.user.companyId),
   RequestSessionProvider: ({ children }: { children: ReactNode }) => children,
@@ -44,8 +41,8 @@ vi.mock("@/server/phase2/fns", () => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children, to }: { children: ReactNode; to: string }) =>
-    createElement("a", { href: typeof to === "string" ? to : "/" }, children),
+  Link: ({ children, to, ...rest }: { children: ReactNode; to: string } & Record<string, unknown>) =>
+    createElement("a", { href: typeof to === "string" ? to : "/", ...rest }, children),
   useRouter: () => ({ invalidate: async () => undefined }),
   getRouteApi: () => ({
     useRouteContext: () => ({ session: sessionState.current }),
@@ -53,8 +50,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 import { PublicHeader } from "@/components/ab/PublicLayout";
+import { BasketNavBadge } from "@/components/ab/BasketNavBadge";
 import { TradePrice } from "@/components/ab/Price";
 import { ProductTradeOrdering } from "@/components/public/ProductTradeOrdering";
+import { ProductDetailView, type PublicProductDetail } from "@/components/public/ProductDetail";
+import type { PublicProductCard } from "@/server/catalogue/products";
 
 function html(node: ReactNode) {
   return renderToStaticMarkup(node as ReactElement);
@@ -78,6 +78,71 @@ const tradeSession: ClientSession = {
   },
 };
 
+const orderablePanel = {
+  orderable: true,
+  reason: null,
+  caseQty: 12,
+  caseTitle: "Case of 12",
+  caseSubtitle: "Sold in multiples of 12",
+  minimumQuantity: 12,
+  quantity: 12,
+  caseCount: 1,
+  caseCountLabel: "1 case",
+  unitPriceExVatDisplay: "3.69",
+  lineNetDisplay: "44.28",
+  canIncrement: true,
+  canDecrement: false,
+  canAdd: true,
+  insufficientFullCase: false,
+} as const;
+
+function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
+  return {
+    id: "p-pmml",
+    sku: "PMML500SC40",
+    slug: "pmml500sc40",
+    name: "5-in-1 Multi Lube 500ml",
+    brand: "Power Maxed",
+    brandSlug: "power-maxed",
+    category: "Lubricants",
+    categorySlug: "lubricants",
+    imageSrc: "/media/pmml.jpg",
+    rrp: 7.99,
+    price: { currency: "GBP", trade: 3.69, rrp: 7.99, source: "base_catalogue" },
+    availability: "in",
+    isNew: false,
+    isFeatured: false,
+    ...partial,
+  };
+}
+
+function detail(partial: Partial<PublicProductDetail> = {}): PublicProductDetail {
+  return {
+    card: card(),
+    sku: "PMML500SC40",
+    variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+    shortDescription: "Versatile 500ml maintenance spray for workshops and trade use.",
+    description: "Full description for Multi Lube.",
+    specifications: [{ name: "size", value: "500ml" }],
+    selling: {
+      keyBenefits: ["Multi-purpose lubricant"],
+      features: ["500ml aerosol"],
+      applications: ["Workshop"],
+      directions: "Shake well before use.",
+      warnings: null,
+    },
+    gallery: [{ src: "/media/pmml.jpg", alt: "5-in-1 Multi Lube 500ml" }],
+    related: [],
+    packQty: 1,
+    caseQty: 12,
+    minimumOrderQty: 12,
+    orderIncrement: 12,
+    unit: "EA",
+    orderingPanel: orderablePanel,
+    ...partial,
+  };
+}
+
 describe("public trade session chrome", () => {
   beforeEach(() => {
     sessionState.current = { signedIn: false };
@@ -89,6 +154,7 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Open a Trade Account");
     expect(markup).not.toContain("My Account");
     expect(markup).not.toContain(">Basket<");
+    expect(markup).not.toContain('data-public-header="basket"');
     expect(markup).not.toContain("Log out");
   });
 
@@ -99,10 +165,13 @@ describe("public trade session chrome", () => {
     expect(markup).not.toContain("Open a Trade Account");
     expect(markup).toContain("My Account");
     expect(markup).toContain("Basket");
+    expect(markup).toContain('data-public-header="basket"');
     expect(markup).toContain("Log out");
+    // Desktop Basket must not be viewport-hidden (was hidden sm:inline-flex).
+    expect(markup).not.toMatch(/data-public-header="basket"[^>]*hidden sm:/);
   });
 
-  it("signed-in without orders.view still hides Trade Login (auth ≠ orderability)", () => {
+  it("signed-in trade without orders.view still shows Basket chrome (server enforces mutate)", () => {
     sessionState.current = {
       signedIn: true,
       user: {
@@ -115,10 +184,10 @@ describe("public trade session chrome", () => {
     expect(markup).not.toContain("Open a Trade Account");
     expect(markup).toContain("My Account");
     expect(markup).toContain("Log out");
-    expect(markup).not.toContain(">Basket<");
+    expect(markup).toContain("Basket");
   });
 
-  it("trade customer session guards require TRADE + company + orders.view for basket", () => {
+  it("trade customer session guards require TRADE + company for basket chrome", () => {
     expect(isTradeCustomerSession(tradeSession)).toBe(true);
     expect(canViewBasketSession(tradeSession)).toBe(true);
     expect(canViewBasketSession({ signedIn: false })).toBe(false);
@@ -126,6 +195,12 @@ describe("public trade session chrome", () => {
       canViewBasketSession({
         signedIn: true,
         user: { ...tradeSession.user, navPermissions: ["pricing.view"] },
+      }),
+    ).toBe(true);
+    expect(
+      canViewBasketSession({
+        signedIn: true,
+        user: { ...tradeSession.user, companyId: null as unknown as string },
       }),
     ).toBe(false);
   });
@@ -182,23 +257,7 @@ describe("public trade session chrome", () => {
         caseQty: 12,
         variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
         productName: "5-in-1 Multi Lube 500ml",
-        initialPanel: {
-          orderable: true,
-          reason: null,
-          caseQty: 12,
-          caseTitle: "Case of 12",
-          caseSubtitle: "Sold in multiples of 12",
-          minimumQuantity: 12,
-          quantity: 12,
-          caseCount: 1,
-          caseCountLabel: "1 case",
-          unitPriceExVatDisplay: "3.69",
-          lineNetDisplay: "44.28",
-          canIncrement: true,
-          canDecrement: false,
-          canAdd: true,
-          insufficientFullCase: false,
-        },
+        initialPanel: orderablePanel,
       }),
     );
     expect(markup).toContain("Case of 12");
@@ -206,6 +265,7 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("£44.28 ex VAT");
     expect(markup).toMatch(/Add to basket/i);
     expect(markup).toContain('aria-label="Increase quantity"');
+    expect(markup).toContain('data-ordering-placement="hero"');
     expect(markup).not.toContain("Trade Login");
   });
 
@@ -241,6 +301,57 @@ describe("public trade session chrome", () => {
     expect(header).toContain("My Account");
     expect(header).toContain("Basket");
     expect(header).not.toContain("Trade Login");
+  });
+
+  it("basket badge listens for basket-updated events", () => {
+    expect(BASKET_UPDATED_EVENT).toBe("ab:basket-updated");
+    sessionState.current = tradeSession;
+    const markup = html(createElement(BasketNavBadge));
+    expect(markup).toContain("Basket");
+    expect(markup).toContain("/portal/basket");
+  });
+});
+
+describe("authenticated orderable PDP render condition", () => {
+  beforeEach(() => {
+    sessionState.current = tradeSession;
+  });
+
+  it("renders Trade Ordering, quantity selector, and Add to Basket in the hero for an orderable product", () => {
+    const markup = html(createElement(ProductDetailView, { data: detail() }));
+
+    // Hero commerce: price + purchasing controls in the first composition.
+    expect(markup).toContain("£3.69");
+    expect(markup).toContain("Your price · each · ex VAT");
+    expect(markup).toContain("RRP £7.99");
+    expect(markup).toContain("Versatile 500ml maintenance spray");
+
+    expect(markup).toContain('data-ordering-placement="hero"');
+    expect(markup).toContain("Trade ordering");
+    expect(markup).toContain("Case of 12");
+    expect(markup).toContain("Sold in multiples of 12");
+    expect(markup).toContain('aria-label="Decrease quantity"');
+    expect(markup).toContain('aria-label="Increase quantity"');
+    expect(markup).toMatch(/Add to basket/i);
+    expect(markup).toContain("1 case");
+    expect(markup).toContain("12 units");
+    expect(markup).toContain("£44.28 ex VAT");
+    expect(markup).toContain("View basket");
+
+    // Primary controls sit under short description, before lower content.
+    expect(markup.indexOf("data-product-short-description")).toBeLessThan(
+      markup.indexOf('data-product-section="ordering"'),
+    );
+    expect(markup.indexOf('data-product-section="ordering"')).toBeLessThan(
+      markup.indexOf('data-product-detail="content"'),
+    );
+    expect(markup.match(/Trade ordering/g)?.length).toBe(1);
+    expect(markup.match(/Add to basket/gi)?.length).toBe(1);
+  });
+
+  it("does not expose exact stock figures in the purchasing UI", () => {
+    const markup = html(createElement(ProductDetailView, { data: detail() }));
+    expect(markup).not.toMatch(/17 available|qtyOnHand|sellableQty/i);
   });
 });
 

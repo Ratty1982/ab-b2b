@@ -74,7 +74,12 @@ export function PublicHeader() {
               <Search className="size-3.5 shrink-0" aria-hidden />
               <span className="truncate">Search product, SKU or brand…</span>
             </Link>
-            {showBasket ? <BasketNavBadge className="hidden sm:inline-flex" /> : null}
+            {showBasket ? (
+              <BasketNavBadge
+                data-public-header="basket"
+                className="inline-flex h-9"
+              />
+            ) : null}
             {signedIn && accountLabel ? (
               <Link
                 to={accountTo}
@@ -140,7 +145,7 @@ export function PublicHeader() {
             {signedIn ? (
               <>
                 {showBasket ? (
-                  <div className="px-3 py-2 sm:hidden">
+                  <div className="px-3 py-2" data-public-header="mobile-basket">
                     <BasketNavBadge className="w-full justify-center" />
                   </div>
                 ) : null}

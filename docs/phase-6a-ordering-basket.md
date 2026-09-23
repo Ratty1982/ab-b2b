@@ -107,9 +107,12 @@ and portal**.
 - PDP/catalogue loaders call `getClientSession()` **alongside** product data and
   wrap the public shell in `RequestSessionProvider`.
 - Header: any `signedIn` user sees account chrome (not Trade Login). Basket
-  still requires TRADE + company + `orders.view`.
+  chrome requires TRADE + company (server still enforces `orders.view` /
+  `orders.create` on basket APIs).
 - `/api/build` returns deploy SHA (`SOURCE_COMMIT` / `GIT_SHA`) for Coolify checks.
 - `Cache-Control: private, no-store` on root + catalogue/PDP routes.
+- Trade Ordering purchasing controls live in the **product hero** beneath the
+  short description (not under How to use).
 
 ### Manual production check (Wayne)
 
@@ -121,19 +124,20 @@ and portal**.
 5. Log in with a valid trade customer.
 6. Return to the same PDP (hard refresh once).
 7. Confirm Trade Login / Open Account are gone.
-8. Confirm Basket appears (needs `orders.view`).
-9. Confirm My Account appears.
+8. Confirm Basket appears in the header (desktop and mobile nav).
+9. Confirm My Account / Account appears.
 10. Confirm YOUR PRICE.
-11. Confirm case quantity controls (when stock allows a full case).
+11. Confirm Trade Ordering in the hero under the short description (case qty,
+    quantity stepper, order total) when stock allows a full case.
 12. Confirm Add to Basket.
 13. Add one case.
-14. Confirm basket badge changes.
-15. Open Basket (`/portal/basket`).
+14. Confirm basket badge changes without a full page refresh.
+15. Open Basket via the header link (`/portal/basket`).
 16. Refresh Basket.
 17. Confirm line persists.
 18. Return to public catalogue — still authenticated.
 19. Logout.
-20. Confirm anonymous header returns.
+20. Confirm anonymous header returns (no Basket).
 
 ## Phase 6B boundary
 

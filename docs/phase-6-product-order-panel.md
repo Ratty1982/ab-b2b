@@ -1,8 +1,9 @@
 # Phase 6 — Product ordering UI
 
 Phase **6A** implements persistent baskets and Add to Basket. The interactive
-controls live on the existing **Trade Ordering** card under How to use (left
-column). Product Details remains on the right.
+**Trade Ordering** controls live in the product hero (right column), directly
+beneath the short description. There is a single primary purchasing interface —
+do not duplicate it lower on the page.
 
 See [phase-6a-ordering-basket.md](./phase-6a-ordering-basket.md).
 

@@ -100,18 +100,25 @@ describe("commercial admin fields", () => {
 });
 
 describe("Phase 6 ProductOrderPanel plan", () => {
-  it("documents unit vs case totals and mounts Trade Ordering under How to use", () => {
+  it("documents unit vs case totals and mounts Trade Ordering in the product hero", () => {
     expect(PRODUCT_ORDER_PANEL_PLAN.component).toBe("ProductOrderPanel");
     expect(PRODUCT_ORDER_PANEL_PLAN.headlinePrice).toBe("unit-trade-price");
     expect(PRODUCT_ORDER_PANEL_PLAN.quantityRule).toBe("FULL_CASE_ONLY");
     expect(PRODUCT_ORDER_PANEL_PLAN.serverMustValidate).toBe(true);
-    const hero = readFileSync(path.join(process.cwd(), "src/components/public/ProductDetail.tsx"), "utf8");
-    expect(hero).toContain("ProductTradeOrdering");
-    expect(hero).not.toMatch(/Coming Soon/);
+    const src = readFileSync(path.join(process.cwd(), "src/components/public/ProductDetail.tsx"), "utf8");
+    expect(src).toContain("ProductTradeOrdering");
+    expect(src).not.toMatch(/Coming Soon/);
+    const heroFnStart = src.indexOf("export function ProductDetailHero");
+    const viewFn = src.slice(src.indexOf("export function ProductDetailView"), heroFnStart);
+    const heroFn = src.slice(heroFnStart);
+    expect(heroFn).toContain("ProductTradeOrdering");
+    expect(viewFn).not.toContain("ProductTradeOrdering");
     const panel = readFileSync(path.join(process.cwd(), "src/components/public/ProductTradeOrdering.tsx"), "utf8");
     expect(panel).toContain("Add to basket");
+    expect(panel).toContain('data-ordering-placement="hero"');
     const docs = readFileSync(path.join(process.cwd(), "docs/phase-6-product-order-panel.md"), "utf8");
     expect(docs).toContain("£8.70");
     expect(docs).toContain("requestedQuantity % caseQty === 0");
+    expect(docs).toContain("product hero");
   });
 });

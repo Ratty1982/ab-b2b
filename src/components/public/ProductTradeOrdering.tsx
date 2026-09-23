@@ -13,6 +13,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import { formatCaseCountLabel } from "@/domain/ordering";
+import { BASKET_UPDATED_EVENT } from "@/lib/basket-events";
 
 export type ProductOrderingPanelView = {
   orderable: boolean;
@@ -44,11 +45,17 @@ export function ProductTradeOrdering({
   /** SSR panel from the product loader when the actor is already known. */
   initialPanel?: ProductOrderingPanelView | null;
 }) {
+  const session = useSession();
+  const tradeCustomer = isTradeCustomerSession(session);
   const copy = publicTradeOrderingCopy(caseQty);
-  if (!copy) return null;
+
+  // Anonymous visitors with no case configuration: hide the block entirely.
+  if (!tradeCustomer && !copy) return null;
+
   return (
     <ProductTradeOrderingCard
       copy={copy}
+      tradeCustomer={tradeCustomer}
       {...(variantId != null ? { variantId } : {})}
       {...(productName != null ? { productName } : {})}
       {...(initialPanel != null ? { initialPanel } : {})}
@@ -58,17 +65,19 @@ export function ProductTradeOrdering({
 
 function ProductTradeOrderingCard({
   copy,
+  tradeCustomer,
   variantId,
   productName,
   initialPanel,
 }: {
-  copy: { title: string; subtitle: string };
+  copy: { title: string; subtitle: string } | null;
+  tradeCustomer: boolean;
   variantId?: string | null;
   productName?: string;
   initialPanel?: ProductOrderingPanelView | null;
 }) {
   const session = useSession();
-  const tradeActor = isTradeCustomerSession(session) && session.signedIn ? session.user : null;
+  const tradeActor = tradeCustomer && session.signedIn ? session.user : null;
   const [panel, setPanel] = useState<ProductOrderingPanelView | null>(
     tradeActor ? (initialPanel ?? null) : null,
   );
@@ -123,6 +132,9 @@ function ProductTradeOrderingCard({
       toast.error(result.error);
       return;
     }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(BASKET_UPDATED_EVENT));
+    }
     toast.success(`Added to basket · ${quantity} × ${productName ?? "product"}`, {
       action: {
         label: "View basket",
@@ -139,14 +151,21 @@ function ProductTradeOrderingCard({
     activeQty != null && panel?.caseQty
       ? formatCaseCountLabel(activeQty / panel.caseQty)
       : panel?.caseCountLabel;
+  const title = panel?.caseTitle ?? copy?.title ?? "Trade ordering";
+  const subtitle =
+    panel?.caseSubtitle ??
+    copy?.subtitle ??
+    (tradeCustomer ? "This product is not configured for online case ordering" : null);
 
   return (
-    <section data-product-section="ordering" className="rounded-lg border border-border bg-surface/40 p-5">
+    <section
+      data-product-section="ordering"
+      data-ordering-placement="hero"
+      className="mt-6 rounded-lg border border-border bg-surface/40 p-5"
+    >
       <h2 className="font-display text-lg font-semibold uppercase tracking-tight">Trade ordering</h2>
-      <p className="mt-3 font-display text-2xl font-semibold uppercase tracking-tight">
-        {panel?.caseTitle ?? copy.title}
-      </p>
-      <p className="mt-1 text-[13px] text-steel">{panel?.caseSubtitle ?? copy.subtitle}</p>
+      <p className="mt-3 font-display text-2xl font-semibold uppercase tracking-tight">{title}</p>
+      {subtitle ? <p className="mt-1 text-[13px] text-steel">{subtitle}</p> : null}
 
       {!tradeActor ? (
         <p className="mt-4 text-[13px] text-steel" role="status">
@@ -154,6 +173,12 @@ function ProductTradeOrderingCard({
             Sign in
           </Link>{" "}
           with a trade account to order online.
+        </p>
+      ) : null}
+
+      {tradeActor && !copy && !panel?.caseQty ? (
+        <p className="mt-4 text-[13px] text-steel" role="status">
+          This product is not available for online ordering
         </p>
       ) : null}
 
@@ -173,7 +198,7 @@ function ProductTradeOrderingCard({
             <div className="mt-2 flex items-center gap-3">
               <button
                 type="button"
-                className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40"
+                className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40"
                 aria-label="Decrease quantity"
                 disabled={busy || !panel.canDecrement || activeQty == null}
                 onClick={() => {
@@ -188,7 +213,7 @@ function ProductTradeOrderingCard({
               </span>
               <button
                 type="button"
-                className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40"
+                className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40"
                 aria-label="Increase quantity"
                 disabled={busy || !panel.canIncrement || activeQty == null}
                 onClick={() => {
@@ -211,7 +236,7 @@ function ProductTradeOrderingCard({
           <button
             type="button"
             className={cn(
-              "h-11 w-full rounded-md bg-primary text-[12px] font-bold uppercase tracking-wide text-primary-foreground",
+              "h-12 w-full rounded-md bg-primary text-[13px] font-bold uppercase tracking-wide text-primary-foreground",
               (!panel.canAdd || busy) && "opacity-50",
             )}
             disabled={!panel.canAdd || busy}

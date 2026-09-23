@@ -58,12 +58,10 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
     ean: data.ean,
     mpn: data.mpn,
   });
-  const ordering = data.caseQty;
   const showDescription = hasPublicText(data.description);
   const showDirections = hasPublicText(selling.directions);
   const showWarnings = hasPublicText(selling.warnings);
-  const showOrdering = ordering != null && ordering >= 1;
-  const showLeft = showDirections || showWarnings || showOrdering;
+  const showLeft = showDirections || showWarnings;
   const showRight = details.length > 0;
 
   return (
@@ -96,14 +94,6 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
               <div className="space-y-6">
                 {showDirections ? <ProductDirections text={selling.directions!} /> : null}
                 {showWarnings ? <ProductWarnings text={selling.warnings!} /> : null}
-                {showOrdering ? (
-                  <ProductTradeOrdering
-                    caseQty={data.caseQty}
-                    {...(data.variantId != null ? { variantId: data.variantId } : {})}
-                    productName={data.card.name}
-                    {...(data.orderingPanel != null ? { initialPanel: data.orderingPanel } : {})}
-                  />
-                ) : null}
               </div>
             ) : null}
             {showRight ? (
@@ -157,10 +147,12 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
             {data.shortDescription}
           </p>
         ) : null}
-        {/*
-          Phase 6A Add to Basket lives on the Trade Ordering card under How to use.
-          Do not mount a second order panel in the hero.
-        */}
+        <ProductTradeOrdering
+          caseQty={data.caseQty}
+          {...(data.variantId != null ? { variantId: data.variantId } : {})}
+          productName={data.card.name}
+          {...(data.orderingPanel != null ? { initialPanel: data.orderingPanel } : {})}
+        />
       </div>
     </div>
   );

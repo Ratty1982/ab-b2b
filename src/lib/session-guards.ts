@@ -1,12 +1,21 @@
 import type { ClientSession } from "@/server/auth/session";
 
-export function isTradeCustomerSession(session: ClientSession): boolean {
+export function isTradeCustomerSession(
+  session: ClientSession,
+): session is Extract<ClientSession, { signedIn: true }> {
   if (!session.signedIn) return false;
   return session.user.actorType === "TRADE" && Boolean(session.user.companyId);
 }
 
+/**
+ * Basket chrome for trade customers with a company.
+ * Server still enforces orders.view / orders.create on basket APIs.
+ */
 export function canViewBasketSession(session: ClientSession): boolean {
-  if (!session.signedIn) return false;
-  if (session.user.actorType !== "TRADE" || !session.user.companyId) return false;
-  return session.user.navPermissions.includes("orders.view");
+  return isTradeCustomerSession(session);
+}
+
+export function canMutateBasketSession(session: ClientSession): boolean {
+  if (!isTradeCustomerSession(session)) return false;
+  return session.user.navPermissions.includes("orders.create");
 }

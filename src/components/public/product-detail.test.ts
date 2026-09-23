@@ -306,24 +306,22 @@ describe("public product detail sections", () => {
     expect(noCase).not.toContain("Pack Quantity");
   });
 
-  it("places Trade ordering under How to use, with Product details in the right column", () => {
+  it("places Trade ordering in the hero beneath the short description, not under How to use", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
+    expect(markup).toContain('data-ordering-placement="hero"');
+    expect(markup).toContain('data-product-section="ordering"');
+    expect(markup.indexOf("data-product-short-description")).toBeLessThan(
+      markup.indexOf('data-product-section="ordering"'),
+    );
+    expect(markup.indexOf('data-product-section="ordering"')).toBeLessThan(
+      markup.indexOf('data-product-detail="content"'),
+    );
+    expect(markup.indexOf('data-product-section="ordering"')).toBeLessThan(markup.indexOf("How to use"));
     expect(markup).toContain('data-product-lower="split"');
-    expect(markup).toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
-    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Trade ordering"));
-    expect(markup.indexOf("Trade ordering")).toBeLessThan(markup.indexOf("Product details"));
+    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Product details"));
     expect(markup.indexOf("Product details")).toBeLessThan(markup.indexOf("Related products"));
-    const orderingAndDetails = html(
-      createElement(ProductDetailView, {
-        data: detail({
-          selling: { ...(detail().selling!), directions: null, warnings: null },
-        }),
-      }),
-    );
-    expect(orderingAndDetails).toContain('data-product-lower="split"');
-    expect(orderingAndDetails.indexOf("Trade ordering")).toBeLessThan(
-      orderingAndDetails.indexOf("Product details"),
-    );
+    // Only one Trade Ordering block on the page.
+    expect(markup.match(/Trade ordering/g)?.length).toBe(1);
     const detailsOnly = html(
       createElement(ProductDetailView, {
         data: detail({
