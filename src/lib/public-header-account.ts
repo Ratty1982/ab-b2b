@@ -10,7 +10,7 @@ import { isTradeCustomerSession } from "@/lib/session-guards";
 
 export type PublicHeaderAccountLink = {
   /** Stable key for tests / data attributes */
-  key: "my-account" | "admin" | "area-home";
+  key: "my-account" | "admin" | "trade-portal" | "area-home";
   label: string;
   to: string;
 };
@@ -19,11 +19,12 @@ export type PublicHeaderAccountLink = {
  * Role-aware public header destinations.
  *
  * Trade customers → My Account (/portal) — never /admin.
- * Internal admin-capable users → Admin (/admin) — never ambiguous "Account".
- * Other signed-in internal roles → their area home with an explicit label.
+ * Internal admin-capable users → Admin (/admin).
+ * When an admin also has an active acting-for-customer context, also expose
+ * Trade Portal (/portal) as a separate explicit destination.
  *
  * Destinations are derived from the server-built SafeSession (actorType +
- * permissions), not from client-supplied role claims.
+ * permissions + actingFor), not from client-supplied role claims.
  */
 export function publicHeaderAccountLinks(session: ClientSession): PublicHeaderAccountLink[] {
   if (!session.signedIn) return [];
@@ -36,10 +37,19 @@ export function publicHeaderAccountLinks(session: ClientSession): PublicHeaderAc
   // Remaining signed-in actors (INTERNAL and non-company trade).
   const user = session.user;
   const ctx = navCtxFromUser(user);
+  const links: PublicHeaderAccountLink[] = [];
+
+  // Acting-for-customer: explicit Trade Portal alongside Admin (never ambiguous Account).
+  if (user.actorType === "INTERNAL" && user.actingFor?.companyId) {
+    links.push({ key: "trade-portal", label: "Trade Portal", to: ROUTES.portal });
+  }
 
   if (canUseAdminShell(ctx)) {
-    return [{ key: "admin", label: "Admin", to: ROUTES.admin }];
+    links.push({ key: "admin", label: "Admin", to: ROUTES.admin });
+    return links;
   }
+
+  if (links.length) return links;
 
   // Signed-in but neither trade customer nor admin shell (e.g. sales-only).
   const label = areaHomeLabel(ctx);

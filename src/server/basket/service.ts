@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
-import { AuthError, requireAuthenticatedUser, requireCompanyPermission } from "@/server/rbac/guards";
+import {
+  AuthError,
+  requireAuthenticatedUser,
+  requireCompanyAccess,
+  requireCompanyPermission,
+} from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
 import { loadPricingActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
@@ -127,29 +132,69 @@ async function resolveTradeCompany(userId: string): Promise<{
   canView: boolean;
 }> {
   const profile = await requireAuthenticatedUser(userId);
-  if (profile.actorType !== "TRADE") {
-    throw new AuthError("Trade basket requires a trade customer account", "BASKET_FORBIDDEN", 403);
-  }
   const actor = await loadPricingActor(userId);
-  if (!actor.companyId) {
-    throw new AuthError("No company context for basket", "BASKET_NO_COMPANY", 403);
+
+  if (profile.actorType === "TRADE") {
+    if (!actor.companyId) {
+      throw new AuthError("No company context for basket", "BASKET_NO_COMPANY", 403);
+    }
+    const company = await prisma.company.findUnique({
+      where: { id: actor.companyId },
+      select: { id: true, name: true, status: true, taxStatus: true },
+    });
+    if (!company || company.status !== "ACTIVE") {
+      throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
+    }
+    await requireCompanyPermission(userId, company.id, "orders.view");
+    const canMutate = hasPermission(profile, "orders.create");
+    return {
+      companyId: company.id,
+      companyName: company.name,
+      taxStatus: company.taxStatus,
+      canMutate,
+      canView: true,
+    };
   }
-  const company = await prisma.company.findUnique({
-    where: { id: actor.companyId },
-    select: { id: true, name: true, status: true, taxStatus: true },
-  });
-  if (!company || company.status !== "ACTIVE") {
-    throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
+
+  // INTERNAL: only order when an active acting-for-customer context exists.
+  // Never invent a company from membership lists or client input.
+  if (profile.actorType === "INTERNAL") {
+    if (!actor.companyId) {
+      throw new AuthError(
+        "Select a trade customer to place an order",
+        "BASKET_NO_COMPANY",
+        403,
+      );
+    }
+    const canAct =
+      hasPermission(profile, "impersonation.order_for_customer") ||
+      hasPermission(profile, "orders.place_for_customer");
+    if (!canAct) {
+      throw new AuthError(
+        "You do not have permission to place orders for customers",
+        "BASKET_FORBIDDEN",
+        403,
+      );
+    }
+    // loadPricingActor already scoped companyId to the active ActingContext.
+    await requireCompanyAccess(userId, actor.companyId);
+    const company = await prisma.company.findUnique({
+      where: { id: actor.companyId },
+      select: { id: true, name: true, status: true, taxStatus: true },
+    });
+    if (!company || company.status !== "ACTIVE") {
+      throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
+    }
+    return {
+      companyId: company.id,
+      companyName: company.name,
+      taxStatus: company.taxStatus,
+      canMutate: canAct,
+      canView: true,
+    };
   }
-  await requireCompanyPermission(userId, company.id, "orders.view");
-  const canMutate = hasPermission(profile, "orders.create");
-  return {
-    companyId: company.id,
-    companyName: company.name,
-    taxStatus: company.taxStatus,
-    canMutate,
-    canView: true,
-  };
+
+  throw new AuthError("Trade basket requires a trade customer account", "BASKET_FORBIDDEN", 403);
 }
 
 async function requireMutableCompany(userId: string) {
@@ -553,6 +598,9 @@ export async function removeBasketItem(userId: string, raw: unknown): Promise<Pu
   return hydrateBasket(item.basketId, ctx.companyId, ctx.companyName);
 }
 
+const ANON_ORDER_REASON = "Sign in with a trade account to order";
+const INTERNAL_NO_COMPANY_REASON = "Select a trade customer to place an order";
+
 /** Preview ordering controls for a PDP. Never returns exact sellable qty. */
 export async function getProductOrderingPanel(
   userId: string | null,
@@ -561,7 +609,7 @@ export async function getProductOrderingPanel(
   const { variantId } = z.object({ variantId: z.string().cuid() }).parse(raw);
   const empty: ProductOrderingPanel = {
     orderable: false,
-    reason: "Sign in with a trade account to order",
+    reason: ANON_ORDER_REASON,
     caseQty: null,
     caseTitle: null,
     caseSubtitle: null,
@@ -581,8 +629,18 @@ export async function getProductOrderingPanel(
   let ctx: Awaited<ReturnType<typeof resolveTradeCompany>>;
   try {
     ctx = await resolveTradeCompany(userId);
-  } catch {
-    return empty;
+  } catch (error) {
+    // Authenticated actors must never be told to "Sign in".
+    if (error instanceof AuthError) {
+      if (error.code === "BASKET_NO_COMPANY") {
+        return { ...empty, reason: error.message || INTERNAL_NO_COMPANY_REASON };
+      }
+      return {
+        ...empty,
+        reason: error.message || "Customer account required for ordering",
+      };
+    }
+    return { ...empty, reason: INTERNAL_NO_COMPANY_REASON };
   }
   if (!ctx.canMutate) {
     return { ...empty, reason: "Your account can view prices but cannot place orders" };

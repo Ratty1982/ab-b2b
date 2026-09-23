@@ -95,19 +95,26 @@ export async function requireCompanyPermission(
   return profile;
 }
 
-/** Portal shell: must be a trade user with at least one company membership */
+/** Portal shell: trade membership, or INTERNAL with active acting-for-customer context. */
 export async function requireTradePortalAccess(
   userId: string | undefined | null,
 ): Promise<LoadedAccessProfile> {
   const profile = await requireAuthenticatedUser(userId);
-  if (profile.actorType !== "TRADE" || profile.companyMemberships.length === 0) {
-    // Internal users with company create access may still be redirected elsewhere
-    if (profile.actorType === "INTERNAL") {
-      throw new AuthError("Trade portal access required", "PORTAL_FORBIDDEN", 403);
-    }
-    throw new AuthError("Trade portal access required", "PORTAL_FORBIDDEN", 403);
+  if (profile.actorType === "TRADE" && profile.companyMemberships.length > 0) {
+    return profile;
   }
-  return profile;
+  if (profile.actorType === "INTERNAL") {
+    const { getActiveActingContext } = await import("@/server/acting-context");
+    const { hasPermission } = await import("@/server/rbac/access");
+    const acting = await getActiveActingContext(profile.userId);
+    const canAct =
+      hasPermission(profile, "impersonation.order_for_customer") ||
+      hasPermission(profile, "orders.place_for_customer");
+    if (acting && canAct) {
+      return profile;
+    }
+  }
+  throw new AuthError("Trade portal access required", "PORTAL_FORBIDDEN", 403);
 }
 
 /** Sales / CRM shells — internal users with sales/CRM permissions */

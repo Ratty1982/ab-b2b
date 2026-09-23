@@ -85,6 +85,34 @@ describe("publicHeaderAccountLinks", () => {
     expect(links.every((l) => l.to !== ROUTES.portal)).toBe(true);
   });
 
+  it("admin with acting-for-customer gets Trade Portal + Admin", () => {
+    const session: ClientSession = {
+      signedIn: true,
+      user: {
+        id: "u-admin",
+        email: "admin@example.com",
+        name: "Admin",
+        actorType: "INTERNAL",
+        systemRoles: ["SUPER_ADMIN"],
+        displayRole: "Super Admin",
+        companyId: null,
+        companyName: null,
+        accountNumber: null,
+        tradeRole: null,
+        navPermissions: [...ALL_PERMISSIONS],
+        actingFor: {
+          companyId: "co-act",
+          companyName: "Acting Co",
+          accountNumber: "AB-9",
+        },
+      },
+    };
+    expect(publicHeaderAccountLinks(session)).toEqual([
+      { key: "trade-portal", label: "Trade Portal", to: ROUTES.portal },
+      { key: "admin", label: "Admin", to: ROUTES.admin },
+    ]);
+  });
+
   it("sales-only internal gets Sales destination, not Account or admin portal for trade", () => {
     const links = publicHeaderAccountLinks(salesSession());
     expect(links).toHaveLength(1);

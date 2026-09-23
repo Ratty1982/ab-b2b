@@ -290,4 +290,71 @@ describe("Phase 6A basket ordering", () => {
     const buyerId = await ensureTradeBuyer(`nc-${sku}@example.invalid`, company.id);
     await expect(addToBasket(buyerId, { variantId: variant.id, quantity: 1 })).rejects.toBeInstanceOf(AuthError);
   });
+
+  it("admin without acting context is not told to Sign in and cannot invent a basket", async () => {
+    const sku = `B6ADM-${Date.now()}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Admin cloth",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 2.19,
+      rrp: 4.99,
+      packQty: 1,
+      caseQty: 1,
+      description: "admin-pdp",
+      active: true,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await seedStock(variant.id, 20);
+
+    const panel = await getProductOrderingPanel(adminId, { variantId: variant.id });
+    expect(panel.orderable).toBe(false);
+    expect(panel.reason).toMatch(/Select a trade customer/i);
+    expect(panel.reason).not.toMatch(/Sign in/i);
+    await expect(addToBasket(adminId, { variantId: variant.id, quantity: 1 })).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("admin with acting context orders into that company's basket", async () => {
+    const { startActingContext } = await import("@/server/acting-context");
+    const { loadAccessProfile } = await import("@/server/rbac/access");
+    const sku = `B6ACT-${Date.now()}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Acting cloth",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 2.19,
+      rrp: 4.99,
+      packQty: 1,
+      caseQty: 1,
+      description: "acting",
+      active: true,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await seedStock(variant.id, 20);
+    const company = await prisma.company.create({
+      data: { name: `Acting Co ${sku}`, status: "ACTIVE" },
+    });
+
+    const profile = await loadAccessProfile(adminId);
+    expect(profile).not.toBeNull();
+    await startActingContext({
+      profile: profile!,
+      onBehalfOfCompanyId: company.id,
+      reason: "Phase 6A admin ordering test",
+    });
+
+    const panel = await getProductOrderingPanel(adminId, { variantId: variant.id });
+    expect(panel.orderable).toBe(true);
+    expect(panel.caseQty).toBe(1);
+    expect(panel.quantity).toBe(1);
+    expect(panel.unitPriceExVatDisplay).toBe("2.19");
+    expect(panel.reason).toBeNull();
+
+    const basket = await addToBasket(adminId, { variantId: variant.id, quantity: 1 });
+    expect(basket.companyId).toBe(company.id);
+    expect(basket.lineCount).toBe(1);
+    expect(basket.lines[0]!.quantity).toBe(1);
+  });
 });

@@ -100,7 +100,7 @@ describe("public header route protection", () => {
     expect(profile.companyMemberships.some((m) => m.companyId === companyId)).toBe(true);
   });
 
-  it("internal admin cannot enter trade portal as a customer", async () => {
+  it("internal admin without acting context cannot enter trade portal", async () => {
     await expect(requireTradePortalAccess(adminId)).rejects.toBeInstanceOf(AuthError);
     try {
       await requireTradePortalAccess(adminId);
@@ -108,6 +108,25 @@ describe("public header route protection", () => {
       expect(error).toBeInstanceOf(AuthError);
       expect((error as AuthError).code).toBe("PORTAL_FORBIDDEN");
       expect((error as AuthError).status).toBe(403);
+    }
+  });
+
+  it("internal admin with acting context may enter trade portal for that customer", async () => {
+    const { startActingContext, endActingContext } = await import("@/server/acting-context");
+    const { loadAccessProfile } = await import("@/server/rbac/access");
+    const profile = await loadAccessProfile(adminId);
+    expect(profile).not.toBeNull();
+    await startActingContext({
+      profile: profile!,
+      onBehalfOfCompanyId: companyId,
+      reason: "portal access test",
+    });
+    try {
+      const allowed = await requireTradePortalAccess(adminId);
+      expect(allowed.userId).toBe(adminId);
+      expect(allowed.actorType).toBe("INTERNAL");
+    } finally {
+      await endActingContext({ profile: profile! });
     }
   });
 });

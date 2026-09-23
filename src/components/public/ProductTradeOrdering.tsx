@@ -8,7 +8,10 @@ import {
   previewProductOrderQuantityFn,
 } from "@/server/phase2/fns";
 import { useSession } from "@/lib/session";
-import { isTradeCustomerSession } from "@/lib/session-guards";
+import {
+  hasOrderingCompanyContext,
+  isTradeCustomerSession,
+} from "@/lib/session-guards";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
@@ -46,16 +49,22 @@ export function ProductTradeOrdering({
   initialPanel?: ProductOrderingPanelView | null;
 }) {
   const session = useSession();
+  const signedIn = session.signedIn;
   const tradeCustomer = isTradeCustomerSession(session);
+  const orderingContext = hasOrderingCompanyContext(session);
   const copy = publicTradeOrderingCopy(caseQty);
 
   // Anonymous visitors with no case configuration: hide the block entirely.
-  if (!tradeCustomer && !copy) return null;
+  // Signed-in actors always see the block (even without caseQty) so we never
+  // imply they are anonymous.
+  if (!signedIn && !copy) return null;
 
   return (
     <ProductTradeOrderingCard
       copy={copy}
+      signedIn={signedIn}
       tradeCustomer={tradeCustomer}
+      orderingContext={orderingContext}
       {...(variantId != null ? { variantId } : {})}
       {...(productName != null ? { productName } : {})}
       {...(initialPanel != null ? { initialPanel } : {})}
@@ -65,29 +74,35 @@ export function ProductTradeOrdering({
 
 function ProductTradeOrderingCard({
   copy,
+  signedIn,
   tradeCustomer,
+  orderingContext,
   variantId,
   productName,
   initialPanel,
 }: {
   copy: { title: string; subtitle: string } | null;
+  signedIn: boolean;
   tradeCustomer: boolean;
+  orderingContext: boolean;
   variantId?: string | null;
   productName?: string;
   initialPanel?: ProductOrderingPanelView | null;
 }) {
   const session = useSession();
-  const tradeActor = tradeCustomer && session.signedIn ? session.user : null;
+  const actorId = signedIn && session.signedIn ? session.user.id : null;
+  // Load panel for any signed-in actor — server decides company context.
+  const mayOrder = Boolean(signedIn && actorId);
   const [panel, setPanel] = useState<ProductOrderingPanelView | null>(
-    tradeActor ? (initialPanel ?? null) : null,
+    mayOrder ? (initialPanel ?? null) : null,
   );
   const [quantity, setQuantity] = useState<number | null>(
-    tradeActor ? (initialPanel?.quantity ?? null) : null,
+    mayOrder ? (initialPanel?.quantity ?? null) : null,
   );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!variantId || !tradeActor) {
+    if (!variantId || !mayOrder) {
       setPanel(null);
       setQuantity(null);
       return;
@@ -106,9 +121,9 @@ function ProductTradeOrderingCard({
     return () => {
       cancelled = true;
     };
-  }, [variantId, tradeActor?.id, initialPanel]);
+  }, [variantId, actorId, mayOrder, initialPanel]);
 
-  const interactive = Boolean(variantId && tradeActor && panel);
+  const interactive = Boolean(variantId && mayOrder && panel);
 
   async function applyQuantity(next: number) {
     if (!variantId || !panel) return;
@@ -155,19 +170,35 @@ function ProductTradeOrderingCard({
   const subtitle =
     panel?.caseSubtitle ??
     copy?.subtitle ??
-    (tradeCustomer ? "This product is not configured for online case ordering" : null);
+    (tradeCustomer || orderingContext
+      ? "This product is not configured for online case ordering"
+      : null);
+
+  const showAnonSignIn = !signedIn;
+  const showAuthenticatedBlocked =
+    signedIn &&
+    panel &&
+    !panel.orderable &&
+    !panel.insufficientFullCase &&
+    panel.reason;
+  const showAwaitingContext =
+    signedIn &&
+    !orderingContext &&
+    !panel &&
+    !showAnonSignIn;
 
   return (
     <section
       data-product-section="ordering"
       data-ordering-placement="hero"
+      data-ordering-actor={signedIn ? (tradeCustomer ? "trade" : "internal") : "anonymous"}
       className="mt-6 rounded-lg border border-border bg-surface/40 p-5"
     >
       <h2 className="font-display text-lg font-semibold uppercase tracking-tight">Trade ordering</h2>
       <p className="mt-3 font-display text-2xl font-semibold uppercase tracking-tight">{title}</p>
       {subtitle ? <p className="mt-1 text-[13px] text-steel">{subtitle}</p> : null}
 
-      {!tradeActor ? (
+      {showAnonSignIn ? (
         <p className="mt-4 text-[13px] text-steel" role="status">
           <Link to="/login" className="font-semibold text-primary hover:underline">
             Sign in
@@ -176,7 +207,13 @@ function ProductTradeOrderingCard({
         </p>
       ) : null}
 
-      {tradeActor && !copy && !panel?.caseQty ? (
+      {showAwaitingContext ? (
+        <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="needs-customer">
+          Select a trade customer to place an order.
+        </p>
+      ) : null}
+
+      {signedIn && !copy && !panel?.caseQty && orderingContext ? (
         <p className="mt-4 text-[13px] text-steel" role="status">
           This product is not available for online ordering
         </p>
@@ -252,9 +289,9 @@ function ProductTradeOrderingCard({
         </div>
       ) : null}
 
-      {interactive && panel && !panel.orderable && !panel.insufficientFullCase && panel.reason ? (
-        <p className="mt-4 text-[13px] text-steel" role="status">
-          {panel.reason}
+      {showAuthenticatedBlocked ? (
+        <p className="mt-4 text-[13px] text-steel" role="status" data-ordering-status="blocked">
+          {panel!.reason}
         </p>
       ) : null}
     </section>

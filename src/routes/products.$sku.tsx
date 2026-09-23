@@ -4,8 +4,6 @@ import { ProductDetailView } from "@/components/public/ProductDetail";
 import { getClientSession } from "@/server/auth/session";
 import { getProductOrderingPanelFn, getPublicProductFn } from "@/server/phase2/fns";
 import type { ProductOrderingPanelView } from "@/components/public/ProductTradeOrdering";
-import { isTradeCustomerSession } from "@/lib/session-guards";
-
 export const Route = createFileRoute("/products/$sku")({
   loader: async ({ params }) => {
     // Resolve session with the SAME createServerFn / cookie path as pricing.
@@ -16,8 +14,10 @@ export const Route = createFileRoute("/products/$sku")({
     ]);
     if (!result.ok || !result.data) throw notFound();
 
+    // Any signed-in actor gets an ordering panel preview. The basket service
+    // decides TRADE vs INTERNAL+acting vs "select a customer" messaging.
     let orderingPanel: ProductOrderingPanelView | null = null;
-    if (isTradeCustomerSession(requestSession) && result.data.variantId) {
+    if (requestSession.signedIn && result.data.variantId) {
       const panel = await getProductOrderingPanelFn({
         data: { variantId: result.data.variantId },
       });

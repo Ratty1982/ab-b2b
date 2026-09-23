@@ -2,9 +2,10 @@ import { createElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientSession } from "@/server/auth/session";
-import { canViewBasketSession, isTradeCustomerSession } from "@/lib/session-guards";
+import { canViewBasketSession, hasOrderingCompanyContext, isTradeCustomerSession } from "@/lib/session-guards";
 import { buildSafeSession, sessionDiagnostics } from "@/server/auth/request-session";
 import { BASKET_UPDATED_EVENT } from "@/lib/basket-events";
+import { ALL_PERMISSIONS } from "@/domain/permissions";
 
 const sessionState: { current: ClientSession } = {
   current: { signedIn: false },
@@ -13,9 +14,18 @@ const sessionState: { current: ClientSession } = {
 vi.mock("@/lib/session", () => ({
   useSession: () => ({ ...sessionState.current, loading: false, refresh: async () => undefined }),
   guestSession: { signedIn: false },
-  // Mirror production session-guards: Basket chrome = TRADE + company.
   canViewBasketSession: (session: ClientSession) =>
-    Boolean(session.signedIn && session.user?.actorType === "TRADE" && session.user.companyId),
+    Boolean(
+      session.signedIn &&
+        ((session.user?.actorType === "TRADE" && session.user.companyId) ||
+          (session.user?.actorType === "INTERNAL" && session.user.actingFor?.companyId)),
+    ),
+  hasOrderingCompanyContext: (session: ClientSession) =>
+    Boolean(
+      session.signedIn &&
+        ((session.user?.actorType === "TRADE" && session.user.companyId) ||
+          (session.user?.actorType === "INTERNAL" && session.user.actingFor?.companyId)),
+    ),
   isTradeCustomerSession: (session: ClientSession) =>
     Boolean(session.signedIn && session.user?.actorType === "TRADE" && session.user.companyId),
   RequestSessionProvider: ({ children }: { children: ReactNode }) => children,
@@ -204,6 +214,36 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Log out");
   });
 
+  it("admin with acting context shows Basket + Trade Portal + Admin", () => {
+    sessionState.current = {
+      signedIn: true,
+      user: {
+        id: "u-admin",
+        email: "admin@example.com",
+        name: "Admin User",
+        actorType: "INTERNAL",
+        systemRoles: ["SUPER_ADMIN"],
+        displayRole: "Super Admin",
+        companyId: null,
+        companyName: null,
+        accountNumber: null,
+        tradeRole: null,
+        navPermissions: [...ALL_PERMISSIONS],
+        actingFor: {
+          companyId: "co-act",
+          companyName: "Acting Factors",
+          accountNumber: "AB-22",
+        },
+      },
+    };
+    const markup = html(createElement(PublicHeader));
+    expect(markup).toContain("Basket");
+    expect(markup).toContain("Trade Portal");
+    expect(markup).toContain("Admin");
+    expect(markup).not.toContain("My Account");
+    expect(markup).not.toContain(">Account<");
+  });
+
   it("signed-in trade without orders.view still shows Basket chrome (server enforces mutate)", () => {
     sessionState.current = {
       signedIn: true,
@@ -220,9 +260,10 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Basket");
   });
 
-  it("trade customer session guards require TRADE + company for basket chrome", () => {
+  it("trade customer session guards require TRADE + company for basket chrome; acting INTERNAL also qualifies", () => {
     expect(isTradeCustomerSession(tradeSession)).toBe(true);
     expect(canViewBasketSession(tradeSession)).toBe(true);
+    expect(hasOrderingCompanyContext(tradeSession)).toBe(true);
     expect(canViewBasketSession({ signedIn: false })).toBe(false);
     expect(
       canViewBasketSession({
@@ -236,6 +277,34 @@ describe("public trade session chrome", () => {
         user: { ...tradeSession.user, companyId: null as unknown as string },
       }),
     ).toBe(false);
+    const adminNoCtx: ClientSession = {
+      signedIn: true,
+      user: {
+        id: "u-admin",
+        email: "a@example.com",
+        name: "Admin",
+        actorType: "INTERNAL",
+        systemRoles: ["SUPER_ADMIN"],
+        displayRole: "Super Admin",
+        companyId: null,
+        companyName: null,
+        accountNumber: null,
+        tradeRole: null,
+        navPermissions: [...ALL_PERMISSIONS],
+        actingFor: null,
+      },
+    };
+    expect(hasOrderingCompanyContext(adminNoCtx)).toBe(false);
+    expect(canViewBasketSession(adminNoCtx)).toBe(false);
+    const adminActing: ClientSession = {
+      signedIn: true,
+      user: {
+        ...adminNoCtx.user,
+        actingFor: { companyId: "co1", companyName: "Co", accountNumber: null },
+      },
+    };
+    expect(hasOrderingCompanyContext(adminActing)).toBe(true);
+    expect(canViewBasketSession(adminActing)).toBe(true);
   });
 
   it("anonymous PDP price does not show YOUR PRICE amount even when trade leaks into props", () => {
@@ -342,6 +411,138 @@ describe("public trade session chrome", () => {
     const markup = html(createElement(BasketNavBadge));
     expect(markup).toContain("Basket");
     expect(markup).toContain("/portal/basket");
+  });
+});
+
+describe("admin / internal ordering context (PMPC1 regression)", () => {
+  const adminNoCompany: ClientSession = {
+    signedIn: true,
+    user: {
+      id: "u-admin",
+      email: "admin@example.com",
+      name: "Admin User",
+      actorType: "INTERNAL",
+      systemRoles: ["SUPER_ADMIN"],
+      displayRole: "Super Admin",
+      companyId: null,
+      companyName: null,
+      accountNumber: null,
+      tradeRole: null,
+      navPermissions: [...ALL_PERMISSIONS],
+      actingFor: null,
+    },
+  };
+
+  const singleUnitPanel = {
+    orderable: true,
+    reason: null,
+    caseQty: 1,
+    caseTitle: "Single unit",
+    caseSubtitle: "Sold individually",
+    minimumQuantity: 1,
+    quantity: 1,
+    caseCount: 1,
+    caseCountLabel: "1 unit",
+    unitPriceExVatDisplay: "2.19",
+    lineNetDisplay: "2.19",
+    canIncrement: true,
+    canDecrement: false,
+    canAdd: true,
+    insufficientFullCase: false,
+  } as const;
+
+  it("admin without company context is NOT told to Sign in", () => {
+    sessionState.current = adminNoCompany;
+    const markup = html(
+      createElement(ProductTradeOrdering, {
+        caseQty: 1,
+        variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+        productName: "Polishing Cloth 40cm × 40cm",
+        initialPanel: {
+          orderable: false,
+          reason: "Select a trade customer to place an order",
+          caseQty: null,
+          caseTitle: "Single unit",
+          caseSubtitle: "Sold individually",
+          minimumQuantity: null,
+          quantity: null,
+          caseCount: null,
+          caseCountLabel: null,
+          unitPriceExVatDisplay: null,
+          lineNetDisplay: null,
+          canIncrement: false,
+          canDecrement: false,
+          canAdd: false,
+          insufficientFullCase: false,
+        },
+      }),
+    );
+    expect(markup).toContain("Trade ordering");
+    expect(markup).toContain("Select a trade customer to place an order");
+    expect(markup).not.toMatch(/Sign in/i);
+    expect(markup).not.toMatch(/Add to basket/i);
+    expect(markup).toContain('data-ordering-actor="internal"');
+  });
+
+  it("admin with acting company context can see quantity and Add to Basket", () => {
+    sessionState.current = {
+      signedIn: true,
+      user: {
+        ...adminNoCompany.user,
+        actingFor: {
+          companyId: "co-act",
+          companyName: "Acting Factors",
+          accountNumber: "AB-22",
+        },
+      },
+    };
+    const markup = html(
+      createElement(ProductDetailView, {
+        data: {
+          card: {
+            id: "p-pmpc1",
+            sku: "PMPC1",
+            slug: "pmpc1",
+            name: "Polishing Cloth 40cm × 40cm",
+            brand: "Power Maxed",
+            brandSlug: "power-maxed",
+            category: "Accessories",
+            categorySlug: "accessories",
+            imageSrc: "/media/pmpc1.jpg",
+            rrp: 4.99,
+            price: { currency: "GBP", trade: 2.19, rrp: 4.99, source: "base_catalogue" },
+            availability: "in",
+            isNew: false,
+            isFeatured: false,
+          },
+          sku: "PMPC1",
+          variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+          shortDescription: "Soft polishing cloth.",
+          description: "Full description",
+          specifications: [],
+          selling: {
+            keyBenefits: [],
+            features: [],
+            applications: [],
+            directions: null,
+            warnings: null,
+          },
+          gallery: [],
+          related: [],
+          caseQty: 1,
+          unit: "EA",
+          orderingPanel: singleUnitPanel,
+        },
+      }),
+    );
+    expect(markup).toContain("£2.19");
+    expect(markup).toContain("Your price · each · ex VAT");
+    expect(markup).toContain("Single unit");
+    expect(markup).toContain("Sold individually");
+    expect(markup).toContain('aria-label="Increase quantity"');
+    expect(markup).toMatch(/Add to basket/i);
+    expect(markup).not.toMatch(/Sign in/i);
+    expect(markup).toContain("1 unit");
   });
 });
 

@@ -14,7 +14,11 @@ import { getRouteApi, useRouter } from "@tanstack/react-router";
 import type { ClientSession } from "@/server/auth/session";
 
 export type { ClientSession } from "@/server/auth/session";
-export { canViewBasketSession, isTradeCustomerSession } from "@/lib/session-guards";
+export {
+  canViewBasketSession,
+  hasOrderingCompanyContext,
+  isTradeCustomerSession,
+} from "@/lib/session-guards";
 
 export const guestSession: ClientSession = { signedIn: false };
 
