@@ -2,6 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Mail, Phone } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import {
+  ACCOUNT_MANAGER_HOURS,
+  ACCOUNT_MANAGER_HOURS_LINES,
+} from "@/domain/account-manager-hours";
 
 export const Route = createFileRoute("/portal/support")({
   head: () => ({
@@ -94,11 +98,13 @@ function Support() {
             </ul>
           </div>
           <div className="rounded-lg border border-border bg-surface/50 p-4 text-[13px]">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-steel">Trade counter hours</div>
+            <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
+              {ACCOUNT_MANAGER_HOURS.heading}
+            </div>
             <ul className="mt-2 space-y-1 text-steel">
-              <li>Monday to Friday · 08:00 – 17:30</li>
-              <li>Saturday · 08:30 – 12:30</li>
-              <li>Same-day despatch cut-off · 15:00</li>
+              {ACCOUNT_MANAGER_HOURS_LINES.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
             </ul>
           </div>
         </aside>

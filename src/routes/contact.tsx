@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PublicLayout, PageHeader, Breadcrumbs } from "@/components/ab/PublicLayout";
+import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 
 export const Route = createFileRoute("/contact")({
   head: () => ({
@@ -18,8 +19,16 @@ export const Route = createFileRoute("/contact")({
 });
 
 const teams = [
-  { name: "Trade sales", detail: "New accounts, pricing and brand enquiries", hours: "Mon–Fri 08:00–17:30" },
-  { name: "Customer service", detail: "Orders, deliveries, returns and stock", hours: "Mon–Fri 08:00–17:30" },
+  {
+    name: "Trade sales",
+    detail: "New accounts, pricing and brand enquiries",
+    hours: ACCOUNT_MANAGER_HOURS.weekdayCompact,
+  },
+  {
+    name: "Customer service",
+    detail: "Orders, deliveries, returns and stock",
+    hours: ACCOUNT_MANAGER_HOURS.weekdayCompact,
+  },
   { name: "Accounts", detail: "Invoices, statements and credit terms", hours: "Mon–Fri 09:00–17:00" },
 ];
 
