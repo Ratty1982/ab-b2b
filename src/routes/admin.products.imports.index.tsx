@@ -6,6 +6,7 @@ import { decodeCsvBytes, ingestCsvText } from "@/domain/catalogue-csv";
 import { listProductImportsFn, uploadProductImportFn, downloadProductImportTemplateFn } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { InstantText } from "@/components/ab/InstantText";
 
 export const Route = createFileRoute("/admin/products/imports/")({
   head: () => ({ meta: [{ title: "Product imports — Automotive Brands Admin" }] }),
@@ -155,7 +156,7 @@ function ProductImports() {
                   <td className="px-3 py-2">
                     <Link to="/admin/products/imports/$id" params={{ id: row.id }} className="font-medium text-primary hover:underline">{row.filename}</Link>
                   </td>
-                  <td className="num px-3 py-2 text-steel">{new Date(row.createdAt).toLocaleString("en-GB")}</td>
+                  <td className="num px-3 py-2 text-steel"><InstantText value={row.createdAt} variant="audit" /></td>
                   <td className="px-3 py-2 text-steel">{row.uploadedBy}</td>
                   <td className="px-3 py-2"><StatusBadge tone={row.status === "APPLIED" ? "good" : row.status === "FAILED" ? "bad" : "warn"}>{row.status}</StatusBadge></td>
                   <td className="num px-3 py-2 text-right">{row.rowCount}</td>

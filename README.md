@@ -47,6 +47,17 @@ src/
 
 See [docs/architecture.md](docs/architecture.md) and [docs/authentication-rbac.md](docs/authentication-rbac.md).
 
+### Date / time standard
+
+| Layer | Rule |
+| --- | --- |
+| Database / APIs | UTC instants |
+| Human-facing UI | `Europe/London` via `src/lib/datetime.ts` |
+| Date format | `DD/MM/YYYY`, 24-hour clock |
+| DST | GMT / BST from IANA `Europe/London`, never a fixed offset |
+
+Do not format with the server or browser default timezone. Coolify containers typically run in UTC.
+
 Authenticated back-office navigation is a **stable product contract** defined in `src/lib/app-nav.ts`. See [docs/navigation.md](docs/navigation.md). Do not reorganise, rename, remove or relocate existing nav items as part of unrelated feature work.
 
 Coolify production deploy (migrate + RBAC bootstrap + optional first admin):

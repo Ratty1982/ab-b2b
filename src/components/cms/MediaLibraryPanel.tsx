@@ -12,6 +12,7 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { cn } from "@/lib/utils";
 import { defaultMediaUsage, type MediaUploadUsage } from "@/domain/media-usage";
 import { catalogueStageClass, mediaLibraryThumbClass } from "@/lib/media-presentation";
+import { InstantText } from "@/components/ab/InstantText";
 
 export type CmsMediaListItem = {
   id: string;
@@ -246,7 +247,7 @@ export function MediaLibraryPanel({
               </div>
               <div>{formatBytes(selected.sizeBytes)}</div>
               <div>{selected.contentType}</div>
-              <div>Uploaded {new Date(selected.createdAt).toLocaleString()}</div>
+              <div>Uploaded <InstantText value={selected.createdAt} variant="audit" /></div>
               <div>{selected.uploadedByName ? `By ${selected.uploadedByName}` : "Uploader unknown"}</div>
               <div>
                 {selected.inUse

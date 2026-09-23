@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { cn } from "@/lib/utils";
+import { InstantText } from "@/components/ab/InstantText";
 import { useSession } from "@/lib/session";
 import {
   listAdminPriceListsFn,
@@ -161,7 +162,7 @@ function PriceListsPanel() {
                   </td>
                   <td className="num px-3 py-2 text-right">{list.itemCount}</td>
                   <td className="num px-3 py-2 text-right">{list.companyCount}</td>
-                  <td className="num px-3 py-2 text-steel">{new Date(list.updatedAt).toLocaleString("en-GB")}</td>
+                  <td className="num px-3 py-2 text-steel"><InstantText value={list.updatedAt} variant="audit" /></td>
                   <td className="px-3 py-2 text-right">
                     <Link to="/admin/pricing/$id" params={{ id: list.id }} className="text-[12px] font-semibold text-primary">
                       Open

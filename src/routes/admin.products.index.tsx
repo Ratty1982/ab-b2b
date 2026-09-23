@@ -15,6 +15,7 @@ import {
 import { CatalogueMedia } from "@/components/catalogue/CatalogueMedia";
 import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { cn } from "@/lib/utils";
+import { InstantText } from "@/components/ab/InstantText";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
 
@@ -330,7 +331,7 @@ function AdminProducts() {
                     <td className="px-3 py-2 text-right">
                       <InternalStockDisplay qty={p.stockQty} availability={p.availability} />
                     </td>
-                    <td className="num px-3 py-2 text-steel">{new Date(p.updatedAt).toLocaleDateString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-steel"><InstantText value={p.updatedAt} variant="date" /></td>
                     <td className="px-3 py-2 text-right">
                       <Link
                         to="/admin/products/$id"

@@ -26,6 +26,7 @@ import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
+import { InstantText } from "@/components/ab/InstantText";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -640,9 +641,7 @@ function InventoryPanel({ product }: { product: Workspace }) {
                   ) : null}
                 </td>
                 <td className="px-3 py-2 text-steel">
-                  {row.externalSyncedAt
-                    ? new Date(row.externalSyncedAt).toLocaleString("en-GB", { timeZone: "UTC" }) + " UTC"
-                    : "—"}
+                  <InstantText value={row.externalSyncedAt} />
                 </td>
               </tr>
             ))}
@@ -718,7 +717,8 @@ function ActivityPanel({ product }: { product: Workspace }) {
         <li key={event.id} className="px-3 py-2 text-[13px]">
           <div className="font-medium">{catalogueActivityLabel(event.action)}</div>
           <div className="num text-[12px] text-steel">
-            {[event.actorName, new Date(event.at).toLocaleString("en-GB")].filter(Boolean).join(" · ")}
+            {event.actorName ? `${event.actorName} · ` : null}
+            <InstantText value={event.at} variant="audit" />
           </div>
         </li>
       ))}

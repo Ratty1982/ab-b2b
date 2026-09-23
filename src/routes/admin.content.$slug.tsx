@@ -45,6 +45,7 @@ import {
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { cmsPublicPath } from "@/lib/cms-pages";
 import { cn } from "@/lib/utils";
+import { InstantText } from "@/components/ab/InstantText";
 import {
   getCmsPageDraftFn,
   previewPublicHomepageFn,
@@ -349,7 +350,14 @@ function CmsEditor() {
           <div className="font-display text-lg uppercase leading-tight">{meta.title || slug}</div>
           <div className="text-[11px] text-steel">
             {statusLabel}
-            {meta.publishedAt ? ` · Published ${new Date(meta.publishedAt).toLocaleString()}` : " · Never published"}
+            {meta.publishedAt ? (
+              <>
+                {" "}
+                · Published <InstantText value={meta.publishedAt} variant="audit" />
+              </>
+            ) : (
+              " · Never published"
+            )}
           </div>
         </div>
         <div className="flex gap-1 rounded-md border border-border p-0.5">
@@ -726,15 +734,27 @@ function HistoryPanel({
       <div className="rounded-md border border-border p-3 text-[12px]">
         <div className="font-semibold">Published</div>
         <p className="mt-1 text-steel">
-          {meta.publishedAt ? `${new Date(meta.publishedAt).toLocaleString()}${meta.publishedByName ? ` · ${meta.publishedByName}` : ""}` : "Not published yet"}
+          {meta.publishedAt ? (
+            <>
+              <InstantText value={meta.publishedAt} variant="audit" />
+              {meta.publishedByName ? ` · ${meta.publishedByName}` : ""}
+            </>
+          ) : (
+            "Not published yet"
+          )}
         </p>
       </div>
       <div className="rounded-md border border-border p-3 text-[12px]">
         <div className="font-semibold">Draft</div>
         <p className="mt-1 text-steel">
-          {meta.draftSavedAt
-            ? `${new Date(meta.draftSavedAt).toLocaleString()}${meta.draftSavedByName ? ` · ${meta.draftSavedByName}` : ""}`
-            : "Not saved yet"}
+          {meta.draftSavedAt ? (
+            <>
+              <InstantText value={meta.draftSavedAt} variant="audit" />
+              {meta.draftSavedByName ? ` · ${meta.draftSavedByName}` : ""}
+            </>
+          ) : (
+            "Not saved yet"
+          )}
         </p>
       </div>
       <ul className="grid gap-2">
@@ -744,7 +764,7 @@ function HistoryPanel({
               v{v.version} {v.isPublished ? "· live" : ""} {v.isDraft ? "· current draft" : ""}
             </div>
             <p className="mt-1 text-steel">
-              {v.label} · {new Date(v.createdAt).toLocaleString()}
+              {v.label} · <InstantText value={v.createdAt} variant="audit" />
               {v.createdByName ? ` · ${v.createdByName}` : ""}
             </p>
             {!v.isDraft ? (

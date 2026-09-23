@@ -49,6 +49,8 @@ Manual **Poll now** / upload ignore the windows and still use the DB lock. UID +
 
 Admin → Autopart Stock: configure IMAP, **Test connection**, **Poll now (dry run)** then **Poll now (live)**. Password is never returned in DTOs.
 
+Sync History, scheduler ticks, and related timestamps are **stored UTC** and **displayed Europe/London** (for example `23/09/2026, 12:03:14 BST`). The 09:00–18:00 schedule labels stay London civil times; they are not converted to UTC in the UI.
+
 Dedupe: `Message-ID|UID` (UID required). Message-ID alone is not unique. Dry-run does **not** consume the message. Live success marks the receipt consumed. Default: leave mail in INBOX (no delete). Archive-after-success is optional and off by default.
 
 ## 231PO3NEW format

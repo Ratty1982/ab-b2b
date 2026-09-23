@@ -82,6 +82,15 @@ Line items store historical commercial snapshots (`sku`, `name`, `unitPrice`, `v
 
 Designed as a future adapter under `src/infra/integrations`. `externalRef` fields exist on company, variant, order, and invoice. No integration in Phase 0.
 
+## Date / time standard
+
+- **Database and machine timestamps:** UTC instants (`timestamptz` / ISO-8601 with `Z`). Do not store timezone-adjusted wall clocks.
+- **Human-facing business timezone:** IANA `Europe/London` (GMT in winter, BST in summer). DST is handled by timezone data — never hard-code UTC+1 or append `"BST"` / `"GMT"` by season.
+- **Display:** UK `DD/MM/YYYY`, 24-hour clock. Operational admin timestamps (sync history, audit, scheduler ticks) include the derived zone abbreviation.
+- **Formatting:** `src/lib/datetime.ts` (`formatDate`, `formatTime`, `formatDateTime`). Always pass `timeZone: "Europe/London"`; never `new Date(...).toLocaleString()` without an explicit zone.
+- **Date-only values** (`YYYY-MM-DD` with no time-of-day) must not be wrapped in `Date` and converted — that can shift the calendar day.
+- **APIs / CSV:** remain canonical UTC ISO unless the export is explicitly a human-readable report.
+
 ## Deployment
 
 - Dev: `bun run dev` + `docker compose` Postgres  

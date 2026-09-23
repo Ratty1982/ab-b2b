@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listCommercialAuditFn } from "@/server/phase2/fns";
+import { InstantText } from "@/components/ab/InstantText";
 
 export function CommercialAuditList(filter: {
   priceListId?: string;
@@ -25,7 +26,8 @@ export function CommercialAuditList(filter: {
             <li key={row.id} className="px-3 py-2">
               <div className="text-[13px] font-medium">{row.title}</div>
               <div className="num text-[12px] text-steel">
-                {[row.actor, new Date(row.at).toLocaleString("en-GB")].filter(Boolean).join(" · ")}
+                {row.actor ? `${row.actor} · ` : null}
+                <InstantText value={row.at} variant="audit" />
               </div>
             </li>
           ))}

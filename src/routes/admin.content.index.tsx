@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { cmsPageBlurb, cmsPublicPath } from "@/lib/cms-pages";
 import { ROUTES } from "@/lib/app-nav";
 import { listCmsPagesFn } from "@/server/phase2/fns";
+import { InstantText } from "@/components/ab/InstantText";
 
 export const Route = createFileRoute("/admin/content/")({
   head: () => ({
@@ -90,11 +91,11 @@ function CmsPages() {
                           </div>
                         ) : null}
                         <div>
-                          Last updated {new Date(p.updatedAt).toLocaleString()}
+                          Last updated <InstantText value={p.updatedAt} variant="audit" />
                         </div>
                         <div>
                           Last published{" "}
-                          {p.publishedAt ? new Date(p.publishedAt).toLocaleString() : "Never"}
+                          {p.publishedAt ? <InstantText value={p.publishedAt} variant="audit" /> : "Never"}
                         </div>
                       </dl>
                     </button>

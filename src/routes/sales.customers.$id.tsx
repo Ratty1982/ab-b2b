@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { COMPANY_STATUS_LABEL } from "@/domain/company";
 import { getCompanyWorkspaceFn, listCompanyActivityFn } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
+import { InstantText } from "@/components/ab/InstantText";
 
 export const Route = createFileRoute("/sales/customers/$id")({
   head: () => ({
@@ -178,7 +179,7 @@ function SalesCustomer() {
             {activity.map((a) => (
               <li key={a.id} className="border border-border px-3 py-2">
                 <div className="text-[12px] text-steel">
-                  {a.actor} · {new Date(a.at).toLocaleString()}
+                  {a.actor} · <InstantText value={a.at} variant="audit" />
                 </div>
                 <div className="font-semibold">{a.title}</div>
               </li>

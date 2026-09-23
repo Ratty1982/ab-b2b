@@ -10,6 +10,7 @@ import {
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { InstantText } from "@/components/ab/InstantText";
 
 export const Route = createFileRoute("/crm/applications")({
   head: () => ({
@@ -159,7 +160,7 @@ function ApplicationQueue() {
                       </StatusBadge>
                     </td>
                     <td className="px-3 py-2 text-steel">
-                      {new Date(r.submittedAt).toLocaleDateString()}
+                      <InstantText value={r.submittedAt} variant="date" />
                     </td>
                   </tr>
                 ))}

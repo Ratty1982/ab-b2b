@@ -23,6 +23,8 @@ import {
   upsertCustomerPriceFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
+import { InstantText } from "@/components/ab/InstantText";
+import { formatDate, formatOrDash } from "@/lib/datetime";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/admin/customers/$id")({
@@ -193,8 +195,8 @@ function CustomerWorkspace() {
                 <Row label="Tax status" value={company.taxStatus} />
               </dl>
               <p className="mt-4 text-[12px] text-steel">
-                Created {new Date(company.createdAt).toLocaleString()} · Updated{" "}
-                {new Date(company.updatedAt).toLocaleString()}
+                Created <InstantText value={company.createdAt} variant="audit" /> · Updated{" "}
+                <InstantText value={company.updatedAt} variant="audit" />
               </p>
             </section>
           </div>
@@ -255,7 +257,7 @@ function CustomerWorkspace() {
                     <StatusBadge>{u.role}</StatusBadge>
                     <StatusBadge tone={u.status === "ACTIVE" ? "good" : "warn"}>{u.status}</StatusBadge>
                     <span className="text-steel">
-                      Last login {u.user.lastLoginAt ? new Date(u.user.lastLoginAt).toLocaleString() : "—"}
+                      Last login <InstantText value={u.user.lastLoginAt} variant="audit" />
                     </span>
                   </div>
                 </li>
@@ -364,7 +366,7 @@ function CustomerWorkspace() {
                 <li key={a.id} className="border border-border px-4 py-3">
                   <div className="flex justify-between gap-3 text-[12px] text-steel">
                     <span>{a.actor ?? "System"}</span>
-                    <time>{new Date(a.at).toLocaleString()}</time>
+                    <time dateTime={a.at}><InstantText value={a.at} variant="audit" /></time>
                   </div>
                   <div className="mt-1 font-semibold text-[13px]">{a.title}</div>
                   {a.body ? <p className="mt-1 text-[13px] text-steel">{a.body}</p> : null}
@@ -1025,8 +1027,8 @@ function CustomerPricesEditor({
                   <td className="num px-3 py-2 text-right">{row.baseTradePriceDisplay ?? "—"}</td>
                   <td className="num px-3 py-2 text-right">{row.priceListPriceDisplay ?? "—"}</td>
                   <td className="num px-3 py-2 text-right">{row.unitPriceDisplay ?? "—"}</td>
-                  <td className="num px-3 py-2">{row.startsAt ? row.startsAt.slice(0, 10) : "—"}</td>
-                  <td className="num px-3 py-2">{row.endsAt ? row.endsAt.slice(0, 10) : "—"}</td>
+                  <td className="num px-3 py-2">{formatOrDash(formatDate(row.startsAt))}</td>
+                  <td className="num px-3 py-2">{formatOrDash(formatDate(row.endsAt))}</td>
                   <td className="px-3 py-2"><ValidityBadge status={row.status} /></td>
                   {canEdit ? (
                     <td className="px-3 py-2 text-right">

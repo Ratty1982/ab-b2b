@@ -138,7 +138,7 @@ function QuickOrder() {
                     { sku: "SS-2287", qty: 24 },
                     { sku: "BP-5540", qty: 6 },
                   ],
-                  "Loaded order AB-9821 (10 Sep 2026)",
+                  "Loaded order AB-9821 (10/09/2026)",
                 )
               }
               className="inline-flex h-10 items-center gap-2 rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel"

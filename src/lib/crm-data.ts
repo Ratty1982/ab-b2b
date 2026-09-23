@@ -19,21 +19,21 @@ export const news = [
   {
     title: "Power Maxed braking range extended across 240 additional applications",
     kind: "Range update",
-    date: "11 Sep 2026",
+    date: "11/09/2026",
     summary:
       "New disc and pad references cover recent PSA, VAG and Ford light commercial platforms, all ECE R90 approved.",
   },
   {
     title: "Steel Seal case pricing confirmed for Q4 counter promotions",
     kind: "Promotion",
-    date: "04 Sep 2026",
+    date: "04/09/2026",
     summary:
       "Counter display cases and point-of-sale artwork are available to order alongside the chemical range.",
   },
   {
     title: "Bramley Power winter battery stock plan now open to trade accounts",
     kind: "Trade notice",
-    date: "28 Aug 2026",
+    date: "28/08/2026",
     summary:
       "Reserve winter battery volume ahead of the seasonal peak with agreed call-off dates and pallet pricing.",
   },
@@ -82,8 +82,8 @@ export const quotes: Quote[] = [
     customerId: "abc-motor-factors",
     contact: "Karen Doyle",
     owner: "James Whitfield",
-    created: "08 Sep 2026",
-    expires: "22 Sep 2026",
+    created: "08/09/2026",
+    expires: "22/09/2026",
     status: "Sent",
     notes: "Display stand included free of charge on first order of 24 units.",
     lines: [
@@ -98,8 +98,8 @@ export const quotes: Quote[] = [
     customerId: "seaforth-motor-spares",
     contact: "Alan Prentice",
     owner: "Priya Nayar",
-    created: "11 Sep 2026",
-    expires: "25 Sep 2026",
+    created: "11/09/2026",
+    expires: "25/09/2026",
     status: "Viewed",
     notes: "Case pricing agreed verbally — awaiting purchase order.",
     lines: [
@@ -113,8 +113,8 @@ export const quotes: Quote[] = [
     customerId: "penrose-autoparts",
     contact: "Marie Penrose",
     owner: "James Whitfield",
-    created: "13 Sep 2026",
-    expires: "27 Sep 2026",
+    created: "13/09/2026",
+    expires: "27/09/2026",
     status: "Draft",
     notes: "Kidzmotion retail rollout — six branches, staged delivery.",
     lines: [
@@ -127,8 +127,8 @@ export const quotes: Quote[] = [
     customerId: "abc-motor-factors",
     contact: "Karen Doyle",
     owner: "James Whitfield",
-    created: "12 Aug 2026",
-    expires: "26 Aug 2026",
+    created: "12/08/2026",
+    expires: "26/08/2026",
     status: "Accepted",
     notes: "Converted to order AB-9714.",
     lines: [{ sku: "BP-5540", name: "AGM Battery 80Ah", qty: 18, unit: 78.4, discount: 0 }],
@@ -139,8 +139,8 @@ export const quotes: Quote[] = [
     customerId: "northgate-garage-group",
     contact: "Ryan Dodds",
     owner: "James Whitfield",
-    created: "22 Jul 2026",
-    expires: "05 Aug 2026",
+    created: "22/07/2026",
+    expires: "05/08/2026",
     status: "Expired",
     notes: "No response after three follow-ups.",
     lines: [{ sku: "PM-4410", name: "Ceramic Brake Disc Kit 310mm", qty: 40, unit: 41.2, discount: 0 }],
@@ -189,7 +189,7 @@ export const contacts: Contact[] = [
     mobile: "07700 900118",
     email: "derek@abcmotorfactors.co.uk",
     preferred: "Telephone",
-    lastContact: "04 Sep 2026",
+    lastContact: "04/09/2026",
   },
   {
     id: "c-3",
@@ -202,7 +202,7 @@ export const contacts: Contact[] = [
     mobile: "—",
     email: "accounts@abcmotorfactors.co.uk",
     preferred: "Email",
-    lastContact: "29 Aug 2026",
+    lastContact: "29/08/2026",
   },
   {
     id: "c-4",
@@ -215,7 +215,7 @@ export const contacts: Contact[] = [
     mobile: "07700 900622",
     email: "tyseley@abcmotorfactors.co.uk",
     preferred: "Mobile",
-    lastContact: "12 Sep 2026",
+    lastContact: "12/09/2026",
   },
   {
     id: "c-5",
@@ -228,7 +228,7 @@ export const contacts: Contact[] = [
     mobile: "07700 900884",
     email: "alan@seaforthspares.co.uk",
     preferred: "Mobile",
-    lastContact: "11 Sep 2026",
+    lastContact: "11/09/2026",
   },
 ];
 
@@ -242,10 +242,10 @@ export interface Invoice {
 }
 
 export const invoices: Invoice[] = [
-  { id: "INV-88214", order: "AB-9821", date: "10 Sep 2026", due: "10 Oct 2026", value: 1496.88, status: "Due" },
-  { id: "INV-88190", order: "AB-9714", date: "28 Aug 2026", due: "27 Sep 2026", value: 1693.44, status: "Due" },
-  { id: "INV-88122", order: "AB-9644", date: "12 Aug 2026", due: "11 Sep 2026", value: 842.3, status: "Overdue" },
-  { id: "INV-88041", order: "AB-9588", date: "24 Jul 2026", due: "23 Aug 2026", value: 2210.16, status: "Paid" },
+  { id: "INV-88214", order: "AB-9821", date: "10/09/2026", due: "10/10/2026", value: 1496.88, status: "Due" },
+  { id: "INV-88190", order: "AB-9714", date: "28/08/2026", due: "27/09/2026", value: 1693.44, status: "Due" },
+  { id: "INV-88122", order: "AB-9644", date: "12/08/2026", due: "11/09/2026", value: 842.3, status: "Overdue" },
+  { id: "INV-88041", order: "AB-9588", date: "24/07/2026", due: "23/08/2026", value: 2210.16, status: "Paid" },
 ];
 
 export const monthlySales = [
@@ -408,7 +408,7 @@ export const applications: Application[] = [
     company: "Bexley Tyre & Exhaust",
     type: "Workshop / garage",
     town: "Bexleyheath",
-    submitted: "12 Sep 2026",
+    submitted: "12/09/2026",
     status: "More Information Required",
     companyNumber: "07741220",
     vat: "Not supplied",
@@ -429,7 +429,7 @@ export const applications: Application[] = [
     company: "Tamar Vehicle Supplies Ltd",
     type: "Distributor",
     town: "Plymouth",
-    submitted: "08 Sep 2026",
+    submitted: "08/09/2026",
     status: "Approved",
     companyNumber: "05512308",
     vat: "GB 190 4482 10",
@@ -453,7 +453,7 @@ export const applications: Application[] = [
     company: "Redline Car Spares",
     type: "Retailer",
     town: "Swansea",
-    submitted: "02 Sep 2026",
+    submitted: "02/09/2026",
     status: "Rejected",
     companyNumber: "Not supplied",
     vat: "Not supplied",

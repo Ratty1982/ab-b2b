@@ -19,6 +19,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/session";
 import { summariseStockQtyChanges } from "@/domain/stock";
+import { InstantText } from "@/components/ab/InstantText";
+import { formatLondonScheduleLabel, formatOrDash, formatOperationalDateTime } from "@/lib/datetime";
 
 export const Route = createFileRoute("/admin/products/stock")({
   head: () => ({ meta: [{ title: "Autopart stock — Automotive Brands Admin" }] }),
@@ -41,8 +43,7 @@ function statusTone(status: string): Tone {
 }
 
 function formatUtc(value: string | null | undefined) {
-  if (!value) return "—";
-  return `${new Date(value).toLocaleString("en-GB", { timeZone: "UTC" })} UTC`;
+  return formatOrDash(formatOperationalDateTime(value));
 }
 
 type ActionNotice = { tone: "good" | "warn" | "bad"; title: string; detail: string };
@@ -344,7 +345,7 @@ function AutopartStockOps() {
           {stale ? (
             <p>
               Stock is stale — last successful live sync{" "}
-              {formatUtc(overview?.freshness.lastSuccessAt)}. Customer IN/LOW STOCK badges are withheld until a successful refresh.
+              <InstantText value={overview?.freshness.lastSuccessAt} />. Customer IN/LOW STOCK badges are withheld until a successful refresh.
             </p>
           ) : null}
         </div>
@@ -358,7 +359,17 @@ function AutopartStockOps() {
         />
         <StatusCard label="Timezone" value={overview?.config.scheduleTimezone ?? "Europe/London"} />
         <StatusCard label="Current window" value={overview?.scheduler?.currentWindow.display ?? "—"} />
-        <StatusCard label="Next sync" value={overview?.scheduler?.nextSync.label ?? "—"} />
+        <StatusCard
+          label="Next sync"
+          value={
+            overview?.scheduler?.nextSync.label
+              ? formatLondonScheduleLabel(
+                  overview.scheduler.nextSync.label,
+                  overview.scheduler.lastTickAt ?? overview.freshness.lastSuccessAt ?? new Date(),
+                )
+              : "—"
+          }
+        />
         <StatusCard label="Last scheduler check" value={formatUtc(overview?.scheduler?.lastTickAt)} />
         <StatusCard label="Last success" value={formatUtc(overview?.freshness.lastSuccessAt)} />
         <StatusCard label="Last attempt" value={formatUtc(overview?.lastAttempt?.startedAt)} />
@@ -476,9 +487,13 @@ function AutopartStockOps() {
           <StatusCard
             label="Last email"
             value={
-              overview?.imap?.lastEmailFrom
-                ? `${overview.imap.lastEmailFrom}${overview.imap.lastEmailSubject ? ` · ${overview.imap.lastEmailSubject}` : ""}`
-                : overview?.imap?.lastEmailSubject || "—"
+              [
+                overview?.imap?.lastEmailFrom,
+                overview?.imap?.lastEmailSubject,
+                formatOperationalDateTime(overview?.imap?.lastEmailReceivedAt),
+              ]
+                .filter(Boolean)
+                .join(" · ") || "—"
             }
           />
           <StatusCard label="Last attachment" value={overview?.imap?.lastAttachmentFilename || "—"} />
@@ -514,6 +529,7 @@ function AutopartStockOps() {
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Mode</th>
                 <th className="px-3 py-2">Started</th>
+                <th className="px-3 py-2">Completed</th>
                 <th className="px-3 py-2">Source</th>
                 <th className="px-3 py-2 text-right">Read</th>
                 <th className="px-3 py-2 text-right">Matched</th>
@@ -526,7 +542,7 @@ function AutopartStockOps() {
             <tbody>
               {runs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-steel">
+                  <td colSpan={11} className="px-3 py-8 text-center text-steel">
                     No sync runs yet. Deploy does not import stock — run a dry run, then a live sync.
                   </td>
                 </tr>
@@ -546,7 +562,8 @@ function AutopartStockOps() {
                       <StatusBadge tone={statusTone(run.status)}>{run.status}</StatusBadge>
                     </td>
                     <td className="px-3 py-2">{run.mode}</td>
-                    <td className="px-3 py-2">{formatUtc(run.startedAt)}</td>
+                    <td className="px-3 py-2"><InstantText value={run.startedAt} /></td>
+                    <td className="px-3 py-2"><InstantText value={run.completedAt} /></td>
                     <td className="px-3 py-2 text-steel">{run.source}</td>
                     <td className="num px-3 py-2 text-right">{run.rowsRead.toLocaleString("en-GB")}</td>
                     <td className="num px-3 py-2 text-right">{run.matched.toLocaleString("en-GB")}</td>
@@ -683,8 +700,8 @@ function AutopartStockOps() {
                     <td className="num px-3 py-2">{row.sku}</td>
                     <td className="px-3 py-2">{row.description ?? "—"}</td>
                     <td className="num px-3 py-2">{row.avail ?? "—"}</td>
-                    <td className="px-3 py-2">{formatUtc(row.firstSeenAt)}</td>
-                    <td className="px-3 py-2">{formatUtc(row.lastSeenAt)}</td>
+                    <td className="px-3 py-2"><InstantText value={row.firstSeenAt} /></td>
+                    <td className="px-3 py-2"><InstantText value={row.lastSeenAt} /></td>
                     <td className="num px-3 py-2 text-right">{row.occurrenceCount}</td>
                   </tr>
                 ))
@@ -699,7 +716,14 @@ function AutopartStockOps() {
         <div className="mt-4 space-y-3">
           {selected ? (
             <p className="text-[13px] text-steel">
-              {selected.status} · {selected.mode} · {selected.source} · started {formatUtc(selected.startedAt)}
+              {selected.status} · {selected.mode} · {selected.source} · started{" "}
+              <InstantText value={selected.startedAt} />
+              {selected.completedAt ? (
+                <>
+                  {" "}
+                  · completed <InstantText value={selected.completedAt} />
+                </>
+              ) : null}
               {selected.errorSummary ? ` · ${selected.errorSummary}` : ""}
             </p>
           ) : (
@@ -988,6 +1012,7 @@ function ChangedTable({ items, dry }: { items: ChangeItem[]; dry: boolean }) {
             <th className="px-3 py-2 text-right">New</th>
             <th className="px-3 py-2 text-right">{dry ? "Would change" : "Change"}</th>
             <th className="px-3 py-2">Availability change</th>
+            <th className="px-3 py-2">Changed at</th>
           </tr>
         </thead>
         <tbody>
@@ -1036,6 +1061,7 @@ function ChangedTable({ items, dry }: { items: ChangeItem[]; dry: boolean }) {
                 {formatDelta(row.quantityChange)}
               </td>
               <td className="px-3 py-2 text-steel">{row.availabilityChange}</td>
+              <td className="px-3 py-2"><InstantText value={row.createdAt} /></td>
             </tr>
           ))}
         </tbody>
