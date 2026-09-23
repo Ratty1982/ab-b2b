@@ -56,8 +56,8 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
   const showDescription = hasPublicText(data.description);
   const showDirections = hasPublicText(selling.directions);
   const showWarnings = hasPublicText(selling.warnings);
-  const showLeft = showDirections || showWarnings;
-  const showRight = details.length > 0 || ordering != null;
+  const showLeft = showDirections || showWarnings || ordering != null;
+  const showRight = details.length > 0;
 
   return (
     <div data-product-detail="page" className="overflow-x-hidden">
@@ -89,12 +89,12 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
               <div className="space-y-6">
                 {showDirections ? <ProductDirections text={selling.directions!} /> : null}
                 {showWarnings ? <ProductWarnings text={selling.warnings!} /> : null}
+                <ProductTradeOrdering card={ordering} />
               </div>
             ) : null}
             {showRight ? (
               <div className="space-y-6">
                 <ProductDetails rows={details} />
-                <ProductTradeOrdering card={ordering} />
               </div>
             ) : null}
           </div>

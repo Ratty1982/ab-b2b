@@ -301,23 +301,36 @@ describe("public product detail sections", () => {
     expect(noCase).not.toContain("Pack Quantity");
   });
 
-  it("places How to use beside Product details on desktop and stacks on smaller viewports", () => {
+  it("places Trade ordering under How to use, with Product details in the right column", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
     expect(markup).toContain('data-product-lower="split"');
     expect(markup).toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
-    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Product details"));
-    expect(markup.indexOf("Product details")).toBeLessThan(markup.indexOf("Trade ordering"));
-    expect(markup.indexOf("Trade ordering")).toBeLessThan(markup.indexOf("Related products"));
-    const detailsOnly = html(
+    expect(markup.indexOf("How to use")).toBeLessThan(markup.indexOf("Trade ordering"));
+    expect(markup.indexOf("Trade ordering")).toBeLessThan(markup.indexOf("Product details"));
+    expect(markup.indexOf("Product details")).toBeLessThan(markup.indexOf("Related products"));
+    const orderingAndDetails = html(
       createElement(ProductDetailView, {
         data: detail({
           selling: { ...(detail().selling!), directions: null, warnings: null },
         }),
       }),
     );
+    expect(orderingAndDetails).toContain('data-product-lower="split"');
+    expect(orderingAndDetails.indexOf("Trade ordering")).toBeLessThan(
+      orderingAndDetails.indexOf("Product details"),
+    );
+    const detailsOnly = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          selling: { ...(detail().selling!), directions: null, warnings: null },
+          caseQty: null,
+        }),
+      }),
+    );
     expect(detailsOnly).toContain('data-product-lower="details"');
     expect(detailsOnly).toContain("max-w-3xl");
     expect(detailsOnly).not.toContain("lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]");
+    expect(detailsOnly).not.toContain("Trade ordering");
   });
 
   it("can still render technical details for non-chemical products", () => {
