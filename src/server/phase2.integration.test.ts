@@ -235,6 +235,49 @@ describe("trade application approval", () => {
 });
 
 describe("CMS draft vs published", () => {
+  let homepageSnapshot: {
+    title: string;
+    seoTitle: string | null;
+    metaDescription: string | null;
+    sections: Array<{ type: string; enabled: boolean; config: Record<string, unknown> }>;
+  } | null = null;
+
+  beforeAll(async () => {
+    await bootstrapHomepageCms(prisma);
+    const page = await prisma.cmsPage.findUniqueOrThrow({ where: { slug: "home" } });
+    const published = await getPublishedHomepage();
+    homepageSnapshot = {
+      title: page.title,
+      seoTitle: page.seoTitle,
+      metaDescription: page.metaDescription,
+      sections: (published?.sections ?? []).map((section) => ({
+        type: section.type,
+        enabled: true,
+        config: (section.config ?? {}) as Record<string, unknown>,
+      })),
+    };
+  });
+
+  afterAll(async () => {
+    if (!homepageSnapshot?.sections.length) return;
+    await saveCmsDraftSections(
+      adminId,
+      "home",
+      homepageSnapshot.sections.map((section) => ({
+        type: section.type,
+        enabled: section.enabled,
+        config: section.config,
+      })),
+    );
+    await publishCmsPage(adminId, "home", "Restore homepage after CMS integration tests");
+    await updateCmsPageMeta(adminId, {
+      slug: "home",
+      title: homepageSnapshot.title,
+      seoTitle: homepageSnapshot.seoTitle ?? "",
+      metaDescription: homepageSnapshot.metaDescription ?? "",
+    });
+  });
+
   it("bootstraps homepage and keeps public on published version", async () => {
     const boot = await bootstrapHomepageCms(prisma);
     expect(boot.pageId).toBeTruthy();
@@ -310,35 +353,6 @@ describe("CMS draft vs published", () => {
         ? String((afterHero.config as { headline: string }).headline)
         : "";
     expect(afterHeadline).toBe(draftHeadlineB);
-
-    // Restore a sensible homepage for local browsing
-    await saveCmsDraftSections(adminId, "home", [
-      {
-        type: "HERO",
-        enabled: true,
-        config: {
-          headline: "The brands behind the automotive aftermarket.",
-          supporting:
-            "Automotive Brands supplies trusted automotive products to motor factors, retailers, workshops and distributors throughout the UK.",
-          ctaLabel: "Open a Trade Account",
-          ctaHref: "/register",
-          secondaryCtaLabel: "Explore Our Brands",
-          secondaryCtaHref: "/brands",
-          variant: "split",
-        },
-      },
-      {
-        type: "TRADE_CTA",
-        enabled: true,
-        config: {
-          headline: "Ready to open a trade account?",
-          supporting: "Apply online.",
-          ctaLabel: "Apply for a trade account",
-          ctaHref: "/register",
-        },
-      },
-    ]);
-    await publishCmsPage(adminId, "home");
   });
 
   it("saves and publishes editor-shaped homepage sections including string counts", async () => {
@@ -478,6 +492,31 @@ const PNG_1X1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 describe("CMS media library", () => {
+  let draftSnapshot: Array<{ type: string; enabled: boolean; config: Record<string, unknown> }> | null =
+    null;
+
+  beforeAll(async () => {
+    const draft = await getCmsPageDraft(adminId, "home");
+    draftSnapshot = (draft.version?.sections ?? []).map((section) => ({
+      type: section.type,
+      enabled: section.enabled,
+      config: (section.config ?? {}) as Record<string, unknown>,
+    }));
+  });
+
+  afterAll(async () => {
+    if (!draftSnapshot?.length) return;
+    await saveCmsDraftSections(
+      adminId,
+      "home",
+      draftSnapshot.map((section) => ({
+        type: section.type,
+        enabled: section.enabled,
+        config: section.config,
+      })),
+    );
+  });
+
   it("uploads, lists, serves bytes, and applies mediaId on a draft hero", async () => {
     const uploaded = await uploadCmsMedia(adminId, {
       filename: "picker-test.png",
