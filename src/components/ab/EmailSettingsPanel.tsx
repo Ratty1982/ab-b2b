@@ -29,6 +29,7 @@ type EmailSettingsDto = {
   replyToEmail: string | null;
   tradeApplicationRecipients: string[];
   orderNotificationRecipients: string[];
+  motorsportEnquiryRecipients: string[];
   status: {
     smtpConfigured: boolean;
     passwordConfigured: boolean;
@@ -36,6 +37,7 @@ type EmailSettingsDto = {
     senderConfigured: boolean;
     applicationAlertsConfigured: boolean;
     orderAlertsConfigured: boolean;
+    motorsportAlertsConfigured: boolean;
   };
   lastConnectionTestAt: string | null;
   lastConnectionTestOk: boolean | null;
@@ -81,6 +83,12 @@ function purposeLabel(purpose: string): string {
       return "Account Activated";
     case "EMAIL_TEST":
       return "Test Email";
+    case "PASSWORD_RESET":
+      return "Password Reset";
+    case "COMPANY_USER_INVITED":
+      return "Portal Invite";
+    case "MOTORSPORT_PARTNERSHIP_INTERNAL":
+      return "Motorsport Enquiry";
     default:
       return purpose;
   }
@@ -186,6 +194,7 @@ export function EmailSettingsPanel() {
     replyToEmail: "",
     tradeApplicationRecipients: [] as string[],
     orderNotificationRecipients: [] as string[],
+    motorsportEnquiryRecipients: [] as string[],
   });
 
   const loadHistory = useCallback(async (status: string, purpose: string) => {
@@ -221,6 +230,7 @@ export function EmailSettingsPanel() {
       replyToEmail: data.replyToEmail ?? "",
       tradeApplicationRecipients: data.tradeApplicationRecipients,
       orderNotificationRecipients: data.orderNotificationRecipients,
+      motorsportEnquiryRecipients: data.motorsportEnquiryRecipients,
     });
     setReplacePassword(false);
     setSmtpPassword("");
@@ -246,6 +256,7 @@ export function EmailSettingsPanel() {
       replyToEmail: form.replyToEmail.trim() || null,
       tradeApplicationRecipients: form.tradeApplicationRecipients,
       orderNotificationRecipients: form.orderNotificationRecipients,
+      motorsportEnquiryRecipients: form.motorsportEnquiryRecipients,
     };
     if (replacePassword || (!settings?.smtpPasswordConfigured && smtpPassword)) {
       payload["replacePassword"] = true;
@@ -345,6 +356,7 @@ export function EmailSettingsPanel() {
             ["Sender", status?.senderConfigured],
             ["Application Alerts", status?.applicationAlertsConfigured],
             ["Order Alerts", status?.orderAlertsConfigured],
+            ["Motorsport Alerts", status?.motorsportAlertsConfigured],
           ].map(([label, ok]) => (
             <div key={String(label)} className="flex items-center justify-between gap-2 rounded border border-border/60 px-3 py-2">
               <dt className="text-steel">{label as string}</dt>
@@ -513,6 +525,13 @@ export function EmailSettingsPanel() {
             recipients={form.orderNotificationRecipients}
             onChange={(orderNotificationRecipients) =>
               setForm((f) => ({ ...f, orderNotificationRecipients }))
+            }
+          />
+          <RecipientEditor
+            label="Motorsport partnership enquiries"
+            recipients={form.motorsportEnquiryRecipients}
+            onChange={(motorsportEnquiryRecipients) =>
+              setForm((f) => ({ ...f, motorsportEnquiryRecipients }))
             }
           />
         </div>

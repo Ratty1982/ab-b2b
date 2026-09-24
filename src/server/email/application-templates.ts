@@ -133,7 +133,7 @@ export function buildTradeApplicationApprovedBodies(
       ? snap.activationPath
       : `${appBaseUrl()}${snap.activationPath.startsWith("/") ? "" : "/"}${snap.activationPath}`
     : null;
-  const subject = `Your Automotive Brands trade account is approved — ${snap.companyName}`;
+  const subject = `Your Automotive Brands trade account is ready to activate`;
   const activateBlock = activationUrl
     ? `\nActivate your account:\n${activationUrl}\n`
     : "\nYour activation link will follow separately if not included here.\n";

@@ -94,5 +94,12 @@ export async function submitMotorsportPartnershipEnquiry(
     },
   });
 
+  try {
+    const { sendMotorsportEnquiryInternalEmails } = await import("@/server/email/transactional");
+    await sendMotorsportEnquiryInternalEmails(lead.id);
+  } catch {
+    /* email secondary */
+  }
+
   return { ok: true, leadId: lead.id };
 }

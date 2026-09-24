@@ -186,6 +186,9 @@ enum TransactionalEmailPurpose {
   TRADE_APPLICATION_APPROVED
   TRADE_APPLICATION_REJECTED
   TRADE_ACCOUNT_ACTIVATED
+  COMPANY_USER_INVITED
+  PASSWORD_RESET
+  MOTORSPORT_PARTNERSHIP_INTERNAL
   EMAIL_TEST
 }
 
@@ -1014,6 +1017,8 @@ model EmailSettings {
   tradeApplicationRecipients   Json         @default("[]")
   /// JSON string array of email addresses for new B2B order alerts.
   orderNotificationRecipients  Json         @default("[]")
+  /// JSON string array for motorsport partnership enquiry alerts.
+  motorsportEnquiryRecipients  Json         @default("[]")
   lastConnectionTestAt         DateTime?
   lastConnectionTestOk         Boolean?
   lastConnectionTestError      String?

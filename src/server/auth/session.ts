@@ -117,7 +117,8 @@ export const requestPasswordReset = createServerFn({ method: "POST" })
     }
     return {
       ok: true as const,
-      message: "If an account exists for that email, password reset instructions have been sent.",
+      message:
+        "If an account exists for that email address, we've sent instructions to reset the password.",
     };
   });
 

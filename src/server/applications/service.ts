@@ -796,6 +796,16 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       companyId: result.companyId,
       metadata: { emailSent, userId: result.userId },
     });
+    if (emailSent) {
+      await prisma.userInvitation.updateMany({
+        where: {
+          companyId: result.companyId,
+          email: contactEmail(preview.primaryContact)?.toLowerCase() ?? undefined,
+          status: "PENDING",
+        },
+        data: { emailDeferred: false },
+      });
+    }
   }
 
   return {

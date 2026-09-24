@@ -11,6 +11,7 @@ import {
   createStaffUserFn,
   listStaffUsersFn,
   resetStaffUserPasswordFn,
+  sendUserPasswordResetEmailFn,
   updateStaffUserFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
@@ -478,6 +479,7 @@ function ManageUserDrawer({
   const [newPassword, setNewPassword] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -488,6 +490,7 @@ function ManageUserDrawer({
       setNewPassword("");
       setConfirmReset(false);
       setResetting(false);
+      setSendingReset(false);
     }
   }, [user]);
 
@@ -568,10 +571,37 @@ function ManageUserDrawer({
       </form>
 
       <div className="mt-6 grid gap-3 border-t border-border pt-5">
-        <p className="text-[13px] font-semibold">Reset password</p>
+        <p className="text-[13px] font-semibold">Send password reset</p>
         <p className="text-[12px] text-steel">
-          Signs them out of every session. Email sending is not configured — you will see the new
-          password once and must share it yourself.
+          Sends a secure reset link to {user.email} via transactional email. Does not reveal or set a
+          password — they choose a new one themselves.
+        </p>
+        <button
+          type="button"
+          disabled={saving || resetting || sendingReset}
+          className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+          onClick={() => {
+            void (async () => {
+              setSendingReset(true);
+              const result = await sendUserPasswordResetEmailFn({ data: { userId: user.id } });
+              setSendingReset(false);
+              if (!result.ok) {
+                toast.error(result.error);
+                return;
+              }
+              toast.success(`Password reset email sent to ${result.data.email}`);
+            })();
+          }}
+        >
+          {sendingReset ? "Sending…" : "Send password reset email"}
+        </button>
+      </div>
+
+      <div className="mt-6 grid gap-3 border-t border-border pt-5">
+        <p className="text-[13px] font-semibold">Force set password (emergency)</p>
+        <p className="text-[12px] text-steel">
+          Immediately sets a password and signs them out of every session. Prefer Send password reset
+          email above. You will see the new password once and must share it yourself.
         </p>
         <Field label="New password (optional)" htmlFor="manage-reset-password">
           <input
@@ -594,7 +624,7 @@ function ManageUserDrawer({
         ) : null}
         <button
           type="button"
-          disabled={saving || resetting}
+          disabled={saving || resetting || sendingReset}
           className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
           onClick={() => {
             if (!confirmReset) {
@@ -622,7 +652,7 @@ function ManageUserDrawer({
             })();
           }}
         >
-          {resetting ? "Resetting…" : confirmReset ? "Confirm reset password" : "Reset password"}
+          {resetting ? "Resetting…" : confirmReset ? "Confirm force set password" : "Force set password"}
         </button>
       </div>
     </Drawer>

@@ -58,6 +58,7 @@ export type EmailSettingsPublicDto = {
   replyToEmail: string | null;
   tradeApplicationRecipients: string[];
   orderNotificationRecipients: string[];
+  motorsportEnquiryRecipients: string[];
   status: {
     smtpConfigured: boolean;
     passwordConfigured: boolean;
@@ -65,6 +66,7 @@ export type EmailSettingsPublicDto = {
     senderConfigured: boolean;
     applicationAlertsConfigured: boolean;
     orderAlertsConfigured: boolean;
+    motorsportAlertsConfigured: boolean;
   };
   lastConnectionTestAt: string | null;
   lastConnectionTestOk: boolean | null;
@@ -90,6 +92,7 @@ export async function getOrCreateEmailSettings() {
 function toPublicDto(row: Awaited<ReturnType<typeof getOrCreateEmailSettings>>): EmailSettingsPublicDto {
   const tradeApplicationRecipients = parseRecipients(row.tradeApplicationRecipients);
   const orderNotificationRecipients = parseRecipients(row.orderNotificationRecipients);
+  const motorsportEnquiryRecipients = parseRecipients(row.motorsportEnquiryRecipients);
   const smtpPasswordConfigured = Boolean(row.smtpPasswordEncrypted);
   const smtpConfigured = isSmtpConfigured({
     smtpHost: row.smtpHost,
@@ -111,6 +114,7 @@ function toPublicDto(row: Awaited<ReturnType<typeof getOrCreateEmailSettings>>):
     replyToEmail: row.replyToEmail,
     tradeApplicationRecipients,
     orderNotificationRecipients,
+    motorsportEnquiryRecipients,
     status: {
       smtpConfigured,
       passwordConfigured: smtpPasswordConfigured,
@@ -118,6 +122,7 @@ function toPublicDto(row: Awaited<ReturnType<typeof getOrCreateEmailSettings>>):
       senderConfigured,
       applicationAlertsConfigured: tradeApplicationRecipients.length > 0,
       orderAlertsConfigured: orderNotificationRecipients.length > 0,
+      motorsportAlertsConfigured: motorsportEnquiryRecipients.length > 0,
     },
     lastConnectionTestAt: row.lastConnectionTestAt?.toISOString() ?? null,
     lastConnectionTestOk: row.lastConnectionTestOk,
@@ -210,6 +215,9 @@ export async function updateEmailSettings(
       ...(input.orderNotificationRecipients !== undefined
         ? { orderNotificationRecipients: input.orderNotificationRecipients }
         : {}),
+      ...(input.motorsportEnquiryRecipients !== undefined
+        ? { motorsportEnquiryRecipients: input.motorsportEnquiryRecipients }
+        : {}),
       updatedByUserId: actorUserId,
     },
   });
@@ -290,6 +298,11 @@ export async function getOrderNotificationRecipients(): Promise<string[]> {
 export async function getTradeApplicationNotificationRecipients(): Promise<string[]> {
   const row = await getOrCreateEmailSettings();
   return parseRecipients(row.tradeApplicationRecipients);
+}
+
+export async function getMotorsportEnquiryRecipients(): Promise<string[]> {
+  const row = await getOrCreateEmailSettings();
+  return parseRecipients(row.motorsportEnquiryRecipients);
 }
 
 /** Footer / reply meta for branded shells — never includes SMTP credentials. */

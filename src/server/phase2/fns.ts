@@ -998,6 +998,18 @@ export const resetStaffUserPasswordFn = createServerFn({ method: "POST" })
     }
   });
 
+export const sendUserPasswordResetEmailFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { userId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await staffUsers.sendUserPasswordResetEmail(userId, data.userId);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listAdminPriceListsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

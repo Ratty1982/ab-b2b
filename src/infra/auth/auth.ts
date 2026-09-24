@@ -3,7 +3,6 @@ import { prismaAdapter } from "@better-auth/prisma-adapter";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 
 import { prisma } from "@/infra/database/client";
-import { getEmailAdapter } from "@/infra/email";
 import { getServerEnv } from "@/server/env";
 import { recordAuditEvent } from "@/server/audit/record";
 
@@ -69,14 +68,21 @@ function createAuth() {
       maxPasswordLength: 128,
       requireEmailVerification: false,
       sendResetPassword: async ({ user, url }) => {
-        const email = getEmailAdapter();
-        const result = await email.send({
-          to: user.email,
-          subject: "Reset your Automotive Brands password",
-          text: `Reset your password using this link (expires soon):\n\n${url}\n\nIf you did not request this, ignore this email.`,
-          html: `<p>Reset your password using this link (expires soon):</p><p><a href="${url}">${url}</a></p><p>If you did not request this, ignore this email.</p>`,
-          tags: { template: "password_reset" },
-        });
+        // Wire through transactional outbox (same SMTP + shell as all other mail).
+        // Never record the reset URL/token in AuditEvent metadata.
+        const { sendPasswordResetTransactionalEmail } = await import(
+          "@/server/email/transactional"
+        );
+        let deliveryOk = false;
+        try {
+          deliveryOk = await sendPasswordResetTransactionalEmail({
+            userId: user.id,
+            email: user.email,
+            resetUrl: url,
+          });
+        } catch {
+          deliveryOk = false;
+        }
 
         await recordAuditEvent({
           action: "PASSWORD_RESET_REQUESTED",
@@ -84,13 +90,12 @@ function createAuth() {
           entityId: user.id,
           actorUserId: user.id,
           metadata: {
-            emailAdapter: email.name,
-            deliveryOk: result.ok,
+            deliveryOk,
             // never store the reset URL or token
           },
         });
 
-        if (!result.ok && isProd) {
+        if (!deliveryOk && isProd) {
           throw new Error("Unable to send password reset email");
         }
       },

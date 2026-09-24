@@ -264,3 +264,38 @@ export async function resetStaffUserPassword(actorUserId: string, raw: unknown) 
 
   return { email: existing.email, temporaryPassword: password };
 }
+
+/**
+ * Admin-initiated secure password reset email (Better Auth flow).
+ * Does NOT set or reveal a password — user chooses their own via the email link.
+ */
+export async function sendUserPasswordResetEmail(actorUserId: string, userId: string) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+  if (!existing) {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+
+  const { auth } = await import("@/infra/auth/auth");
+  try {
+    await auth.api.requestPasswordReset({
+      body: {
+        email: existing.email,
+        redirectTo: "/reset-password",
+      },
+    });
+  } catch {
+    throw new AuthError("Unable to send password reset email", "EMAIL_FAILED", 502);
+  }
+
+  await recordAuditEvent({
+    action: "ADMIN_PASSWORD_RESET_REQUESTED",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+    metadata: { email: existing.email },
+  });
+
+  return { ok: true as const, email: existing.email };
+}

@@ -27,10 +27,18 @@ import {
 } from "@/server/email/application-templates";
 import {
   getEmailFooterMeta,
+  getMotorsportEnquiryRecipients,
   getOrderNotificationRecipients,
   getTradeApplicationNotificationRecipients,
   isTransactionalEmailEnabled,
 } from "@/server/email/settings";
+import {
+  buildCompanyUserInviteBodies,
+  buildMotorsportEnquiryInternalBodies,
+  buildPasswordResetBodies,
+  passwordResetIdempotencyKey,
+} from "@/server/email/extra-templates";
+import { formatDateTime } from "@/lib/datetime";
 
 export type { OrderEmailSnapshot };
 
@@ -456,6 +464,106 @@ export async function sendTradeAccountActivatedEmail(input: {
   return safeAttempt(upsert.id);
 }
 
+/**
+ * Password reset via Better Auth URL — outbox history, no token in audit metadata.
+ * Delivery toggle applies (DEFERRED when disabled).
+ */
+export async function sendPasswordResetTransactionalEmail(input: {
+  userId: string;
+  email: string;
+  resetUrl: string;
+}): Promise<boolean> {
+  const footer = await getEmailFooterMeta();
+  const bodies = buildPasswordResetBodies({ resetUrl: input.resetUrl }, footer);
+  const upsert = await upsertPendingEmail({
+    purpose: "PASSWORD_RESET",
+    toEmail: input.email,
+    subject: bodies.subject,
+    textBody: bodies.text,
+    htmlBody: bodies.html,
+    entityType: "User",
+    entityId: input.userId,
+    idempotencyKey: passwordResetIdempotencyKey(input.userId, input.resetUrl),
+  });
+  return safeAttempt(upsert.id);
+}
+
+export async function sendCompanyUserInviteEmail(input: {
+  invitationId: string;
+  email: string;
+  companyId: string;
+  companyName: string;
+  role: string;
+  activationPath: string;
+}): Promise<boolean> {
+  const footer = await getEmailFooterMeta();
+  const base = getServerEnv().APP_URL.replace(/\/$/, "");
+  const activationUrl = input.activationPath.startsWith("http")
+    ? input.activationPath
+    : `${base}${input.activationPath.startsWith("/") ? "" : "/"}${input.activationPath}`;
+  const bodies = buildCompanyUserInviteBodies(
+    {
+      companyName: input.companyName,
+      role: input.role,
+      activationPath: activationUrl,
+      inviteeEmail: input.email,
+    },
+    footer,
+  );
+  const upsert = await upsertPendingEmail({
+    purpose: "COMPANY_USER_INVITED",
+    toEmail: input.email,
+    subject: bodies.subject,
+    textBody: bodies.text,
+    htmlBody: bodies.html,
+    entityType: "UserInvitation",
+    entityId: input.invitationId,
+    idempotencyKey: `COMPANY_USER_INVITED:${input.invitationId}`,
+  });
+  return safeAttempt(upsert.id);
+}
+
+export async function sendMotorsportEnquiryInternalEmails(leadId: string): Promise<void> {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) return;
+  const recipients = await getMotorsportEnquiryRecipients();
+  if (recipients.length === 0) return;
+
+  const footer = await getEmailFooterMeta();
+  const base = getServerEnv().APP_URL.replace(/\/$/, "");
+  // CRM leads list — no dedicated lead detail route yet.
+  const adminLeadUrl = `${base}/admin/crm`;
+  const submittedAtLabel =
+    formatDateTime(lead.createdAt, { seconds: false }) ?? lead.createdAt.toISOString();
+  const bodies = buildMotorsportEnquiryInternalBodies(
+    {
+      leadId: lead.id,
+      companyName: lead.companyName,
+      contactName: lead.contactName ?? "—",
+      email: lead.email ?? "",
+      telephone: lead.phone,
+      messagePreview: (lead.notes ?? "").slice(0, 800),
+      adminLeadUrl,
+      submittedAtLabel,
+    },
+    footer,
+  );
+
+  for (const toEmail of recipients) {
+    const upsert = await upsertPendingEmail({
+      purpose: "MOTORSPORT_PARTNERSHIP_INTERNAL",
+      toEmail,
+      subject: bodies.subject,
+      textBody: bodies.text,
+      htmlBody: bodies.html,
+      entityType: "Lead",
+      entityId: lead.id,
+      idempotencyKey: `MOTORSPORT_PARTNERSHIP_INTERNAL:${lead.id}:${toEmail}`,
+    });
+    await safeAttempt(upsert.id);
+  }
+}
+
 export type TransactionalEmailListItem = {
   id: string;
   purpose: TransactionalEmailPurpose;
@@ -502,7 +610,14 @@ async function resolveReference(
     });
     return app?.reference ?? null;
   }
+  if (entityType === "UserInvitation") {
+    return "INVITE";
+  }
+  if (entityType === "Lead") {
+    return "LEAD";
+  }
   if (purpose === "EMAIL_TEST") return "TEST";
+  if (purpose === "PASSWORD_RESET") return "RESET";
   return null;
 }
 
@@ -620,6 +735,36 @@ export async function retryTransactionalEmail(
   }
   if (row.status === "SENT") {
     throw new AuthError("Email was already sent", "CONFLICT", 409);
+  }
+
+  // Password-reset links expire — staff retry issues a fresh Better Auth reset email.
+  if (row.purpose === "PASSWORD_RESET") {
+    const { auth } = await import("@/infra/auth/auth");
+    try {
+      await auth.api.requestPasswordReset({
+        body: {
+          email: row.toEmail,
+          redirectTo: "/reset-password",
+        },
+      });
+    } catch {
+      throw new AuthError("Unable to issue a new password reset email", "EMAIL_FAILED", 502);
+    }
+    await recordAuditEvent({
+      action: "email.retried",
+      entityType: "TransactionalEmail",
+      entityId: emailId,
+      actorUserId,
+      metadata: { purpose: row.purpose, strategy: "reissue_reset", toEmail: row.toEmail },
+    });
+    const updated = await prisma.transactionalEmail.findFirst({
+      where: { purpose: "PASSWORD_RESET", toEmail: row.toEmail },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!updated) {
+      throw new AuthError("Reset email was requested but not recorded", "EMAIL_NOT_FOUND", 404);
+    }
+    return toListItem(updated);
   }
 
   let subject = row.subject;

@@ -928,8 +928,8 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
         userId: actorUserId,
         type: "SYSTEM",
         subject: "User invited",
-        body: `${email} (${input.role}) — email deferred`,
-        metadata: { action: "user.invited", invitationId: inv.id, emailDeferred: true },
+        body: `${email} (${input.role})`,
+        metadata: { action: "user.invited", invitationId: inv.id },
       },
     });
 
@@ -942,18 +942,46 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
     entityId: invitation.id,
     actorUserId,
     companyId: input.companyId,
-    after: { email, role: input.role, emailDeferred: true },
+    after: { email, role: input.role },
   });
+
+  const company = await prisma.company.findUnique({
+    where: { id: input.companyId },
+    select: { name: true },
+  });
+  const activationPath = `/activate?token=${encodeURIComponent(token)}`;
+  let emailSent = false;
+  try {
+    const { sendCompanyUserInviteEmail } = await import("@/server/email/transactional");
+    emailSent = await sendCompanyUserInviteEmail({
+      invitationId: invitation.id,
+      email,
+      companyId: input.companyId,
+      companyName: company?.name ?? "your company",
+      role: input.role,
+      activationPath,
+    });
+    if (emailSent) {
+      await prisma.userInvitation.update({
+        where: { id: invitation.id },
+        data: { emailDeferred: false },
+      });
+    }
+  } catch {
+    emailSent = false;
+  }
 
   return {
     id: invitation.id,
     email: invitation.email,
     role: invitation.role,
     status: invitation.status,
-    emailDeferred: true,
+    emailDeferred: !emailSent,
+    emailSent,
     expiresAt: invitation.expiresAt.toISOString(),
-    /** Opaque token for admin copy / future email — only returned at creation time */
-    inviteToken: token,
+    /** Opaque token for admin copy if email deferred — only returned at creation time */
+    inviteToken: emailSent ? null : token,
+    activationPath: emailSent ? null : activationPath,
   };
 }
 

@@ -333,7 +333,8 @@ function CustomerWorkspace() {
               )}
               {inviteToken ? (
                 <p className="mt-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
-                  Invite token (copy now — not emailed): <code className="break-all">{inviteToken}</code>
+                  Invite email was deferred — copy activation token now:{" "}
+                  <code className="break-all">{inviteToken}</code>
                 </p>
               ) : null}
             </section>
@@ -1036,7 +1037,7 @@ function InviteDrawer({
 }: {
   companyId: string;
   onClose: () => void;
-  onSaved: (token: string) => Promise<void>;
+  onSaved: (token: string | null) => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("TRADE_BUYER");
@@ -1053,14 +1054,19 @@ function InviteDrawer({
             });
             if (!r.ok) toast.error(r.error);
             else {
-              toast.success("Invitation created (email deferred)");
+              toast.success(
+                r.data.emailSent
+                  ? "Invitation sent"
+                  : "Invitation created (email deferred)",
+              );
               await onSaved(r.data.inviteToken);
             }
           })();
         }}
       >
         <p className="text-[12px] text-steel">
-          Email delivery is not configured. An invite token will be shown for admin use.
+          An activation email is sent when outbound email is enabled. If delivery is deferred, an
+          activation token will be shown for admin use.
         </p>
         <Field label="Email">
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />

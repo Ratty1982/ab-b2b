@@ -25,7 +25,8 @@ function ForgotPassword() {
           Forgot password
         </h1>
         <p className="mt-3 text-sm text-steel">
-          Enter your email and we will send reset instructions if an account exists.
+          Enter your email and we will send reset instructions if an account exists for that
+          address.
         </p>
         <form
           className="mt-8 grid gap-4 rounded-lg border border-border bg-surface/60 p-6"
