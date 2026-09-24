@@ -474,9 +474,9 @@ function BenefitsSection({ config }: { config: Record<string, unknown> }) {
   const media = mediaObj(config);
   const imageSrc = cmsMediaDisplaySrc(media) || warehouseFallback;
   return (
-    <section className="border-b border-border/60">
-      <div className="mx-auto grid max-w-[1400px] gap-10 px-4 py-16 sm:px-6 lg:grid-cols-12 lg:px-10">
-        <div className="lg:col-span-5">
+    <section className="overflow-hidden border-b border-border/60">
+      <div className="mx-auto grid max-w-[1400px] items-start gap-10 px-4 py-14 sm:px-6 lg:grid-cols-12 lg:px-10">
+        <div className="min-w-0 lg:col-span-5">
           <Eyebrow>{str(config, "eyebrow", "Why Automotive Brands")}</Eyebrow>
           <h2 className="mt-2 font-display text-3xl font-semibold uppercase leading-tight tracking-tight sm:text-4xl">
             {str(config, "heading", "One trade account. Every brand.")}
@@ -484,16 +484,17 @@ function BenefitsSection({ config }: { config: Record<string, unknown> }) {
           {str(config, "supporting") ? (
             <p className="mt-4 text-[14px] leading-relaxed text-steel">{str(config, "supporting")}</p>
           ) : null}
-          <img
-            src={imageSrc}
-            alt={str(media ?? {}, "alt", "Automotive Brands distribution warehouse")}
-            loading="lazy"
-            className={cn(
-              "mt-6 aspect-[16/9] w-full rounded-lg outline outline-1 -outline-offset-1 outline-border/60",
-              cmsImageFitClass(media?.["fit"] ?? "fill"),
-            )}
-            style={cmsFocalStyle(media)}
-          />
+          {/* Frame owns the aspect ratio — do not put h-full on the bare <img> or intrinsic
+              photo height can inflate the column and paint over the next homepage section. */}
+          <div className="mt-6 aspect-[16/9] w-full overflow-hidden rounded-lg bg-surface/40 outline outline-1 -outline-offset-1 outline-border/60">
+            <img
+              src={imageSrc}
+              alt={str(media ?? {}, "alt", "Automotive Brands distribution warehouse")}
+              loading="lazy"
+              className={cn("size-full", cmsImageFitClass(media?.["fit"] ?? "fill"))}
+              style={cmsFocalStyle(media)}
+            />
+          </div>
           {str(config, "ctaLabel") ? (
             <a
               href={str(config, "ctaHref", "/why-automotive-brands")}
@@ -503,7 +504,7 @@ function BenefitsSection({ config }: { config: Record<string, unknown> }) {
             </a>
           ) : null}
         </div>
-        <div className="grid gap-px self-start border border-border bg-border sm:grid-cols-2 lg:col-span-7">
+        <div className="grid min-w-0 gap-px self-start border border-border bg-border sm:grid-cols-2 lg:col-span-7">
           {items.map((item) => {
             const Icon = ICONS[(item.icon as keyof typeof ICONS) ?? "warehouse"] ?? Warehouse;
             return (
@@ -626,16 +627,20 @@ function TradeCta({ config }: { config: Record<string, unknown> }) {
     : str(config, "secondaryCtaLabel", "Trade Login");
 
   return (
-    <section className="relative overflow-hidden">
+    <section className="relative overflow-hidden border-t border-border/60 bg-ink">
       <img
         src={src}
         alt=""
         aria-hidden
         loading="lazy"
-        className={cn("absolute inset-0 size-full opacity-20", cmsImageFitClass(media?.["fit"] ?? "fill"))}
+        className={cn(
+          "pointer-events-none absolute inset-0 size-full opacity-20",
+          // Absolute fill frame — cover only; avoid contain+padding which can escape the box.
+          "object-cover object-center",
+        )}
         style={cmsFocalStyle(media)}
       />
-      <div className="relative mx-auto grid max-w-[1400px] gap-6 px-4 py-16 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-10 lg:py-20">
+      <div className="relative z-10 mx-auto grid max-w-[1400px] gap-6 px-4 py-16 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-10 lg:py-20">
         <div className="min-w-0">
           <Eyebrow>{str(config, "eyebrow", "Built for trade")}</Eyebrow>
           <h2 className="mt-2 max-w-2xl font-display text-3xl font-semibold uppercase leading-tight tracking-tight sm:text-5xl">

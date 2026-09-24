@@ -706,7 +706,7 @@ export function SectionSettings({
             rows={5}
             value={multilineListToTextareaValue(selected)}
             onChange={(e) => onChange("categorySlugs", linesFromMultilineInput(e.target.value))}
-            onBlur={() => onChange("categorySlugs", compactMultilineList(selected))}
+            onBlur={(e) => onChange("categorySlugs", compactMultilineList(linesFromMultilineInput(e.target.value)))}
             className={inputClass}
           />
         </Field>
@@ -816,7 +816,7 @@ export function SectionSettings({
             rows={6}
             value={multilineListToTextareaValue(skus)}
             onChange={(e) => onChange("productSkus", linesFromMultilineInput(e.target.value))}
-            onBlur={() => onChange("productSkus", compactMultilineList(skus))}
+            onBlur={(e) => onChange("productSkus", compactMultilineList(linesFromMultilineInput(e.target.value)))}
             className={inputClass}
             placeholder={"PM-1001\nSS-2002"}
             spellCheck={false}
