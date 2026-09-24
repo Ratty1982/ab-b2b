@@ -20,18 +20,21 @@ export function TeamMemberCard({
   return (
     <article
       className={cn(
-        "flex h-full flex-col overflow-hidden border border-border bg-surface/40",
-        variant === "featured" && "bg-surface/60",
+        "flex h-full flex-col items-center px-4 py-6 text-center sm:px-5",
+        variant === "featured" && "rounded-md border border-border/60 bg-surface/40",
       )}
       data-team-card={variant}
     >
-      <div className="relative aspect-[4/5] overflow-hidden bg-[#0b1220]">
+      <div
+        className="relative mx-auto aspect-square w-full max-w-[220px] overflow-hidden rounded-full border border-border/50 bg-[#0b1220]"
+        data-team-photo="circle"
+      >
         {member.photo ? (
           <img
             src={member.photo.src}
             alt={member.photo.alt}
-            width={member.photo.width ?? 640}
-            height={member.photo.height ?? 800}
+            width={member.photo.width ?? 440}
+            height={member.photo.height ?? 440}
             loading={priority ? "eager" : "lazy"}
             decoding="async"
             className="h-full w-full object-cover"
@@ -39,17 +42,17 @@ export function TeamMemberCard({
           />
         ) : (
           <div
-            className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-center"
+            className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center"
             aria-hidden
           >
-            <img src="/brand/ab-logo.jpg" alt="" className="h-10 w-auto opacity-80" />
-            <span className="font-display text-2xl font-semibold tracking-wide text-white/90">
+            <img src="/brand/ab-logo.jpg" alt="" className="h-8 w-auto opacity-80" />
+            <span className="font-display text-xl font-semibold tracking-wide text-white/90">
               {member.initials}
             </span>
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-2 p-4 sm:p-5">
+      <div className="mt-5 flex flex-1 flex-col gap-2">
         <div>
           <h3 className="font-display text-lg font-semibold uppercase leading-tight text-foreground">
             {member.displayName}
@@ -67,7 +70,7 @@ export function TeamMemberCard({
           <p className="text-[13px] leading-relaxed text-steel">{member.bio}</p>
         ) : null}
         {showContact ? (
-          <div className="mt-auto flex flex-wrap items-center gap-3 pt-2">
+          <div className="mt-auto flex flex-wrap items-center justify-center gap-3 pt-2">
             {member.email ? (
               <a
                 href={`mailto:${member.email}`}
@@ -119,7 +122,7 @@ export function MeetTheTeamTeaser({
       aria-labelledby="meet-team-teaser-heading"
     >
       <div className="mx-auto max-w-[1400px] px-4 py-14 sm:px-6 lg:px-10 lg:py-16">
-        <div className="max-w-2xl">
+        <div className="mx-auto max-w-2xl text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
             Meet the Team
           </p>
@@ -144,7 +147,7 @@ export function MeetTheTeamTeaser({
             />
           ))}
         </div>
-        <div className="mt-10">
+        <div className="mt-10 text-center">
           <Link
             to="/meet-the-team"
             className="inline-flex h-11 items-center rounded-md bg-primary px-5 text-[12px] font-bold uppercase tracking-wide text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"

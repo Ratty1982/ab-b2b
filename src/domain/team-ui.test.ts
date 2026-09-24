@@ -42,6 +42,8 @@ describe("TeamMemberCard", () => {
     expect(markup).toContain("Wayne Radford");
     expect(markup).toContain("WR");
     expect(markup).toContain("/brand/ab-logo.jpg");
+    expect(markup).toContain('data-team-photo="circle"');
+    expect(markup).toContain("rounded-full");
     expect(markup).toContain("Contact Wayne");
     expect(markup).toContain('href="mailto:wayne@example.com"');
     expect(markup).toContain('href="tel:01234000000"');
