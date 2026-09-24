@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -12,6 +12,7 @@ import {
   createAddressFn,
   createContactFn,
   clearCompanyAutopartCustomerCodeFn,
+  deleteCompanyFn,
   deleteCustomerPriceFn,
   getCompanyWorkspaceFn,
   inviteCompanyUserFn,
@@ -52,6 +53,7 @@ const tabs = [
 
 function CustomerWorkspace() {
   const { id } = Route.useParams();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,8 @@ function CustomerWorkspace() {
   const [addressOpen, setAddressOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -210,6 +214,24 @@ function CustomerWorkspace() {
                 <InstantText value={company.updatedAt} variant="audit" />
               </p>
             </section>
+            {permissions.canDelete ? (
+              <section className="border border-bad/40 bg-surface/40 p-5 lg:col-span-2">
+                <h2 className="font-display text-lg uppercase text-bad">Delete customer</h2>
+                <p className="mt-2 max-w-2xl text-[13px] text-steel">
+                  Permanently removes this customer and related contacts, addresses, portal
+                  memberships, invites, baskets, and negotiated prices. Customers with orders,
+                  quotes, or invoices cannot be deleted — set status to Closed instead.
+                </p>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setDeleteOpen(true)}
+                  className="mt-4 border border-bad bg-transparent px-4 py-2 text-[13px] font-semibold text-bad hover:bg-bad/10 disabled:opacity-60"
+                >
+                  {deleting ? "Deleting…" : "Delete customer"}
+                </button>
+              </section>
+            ) : null}
           </div>
         ) : null}
 
@@ -438,6 +460,26 @@ function CustomerWorkspace() {
           }}
         />
       ) : null}
+      <ConfirmAction
+        open={deleteOpen}
+        title="Delete this customer?"
+        description={`Permanently delete ${company.name}? Contacts, addresses, portal memberships, invites, baskets, and negotiated prices will be removed. This cannot be undone.`}
+        confirmLabel="Delete customer"
+        onOpenChange={setDeleteOpen}
+        onConfirm={() => {
+          void (async () => {
+            setDeleting(true);
+            const r = await deleteCompanyFn({ data: { id: company.id } });
+            setDeleting(false);
+            if (!r.ok) {
+              toast.error(r.error);
+              return;
+            }
+            toast.success("Customer deleted");
+            await navigate({ to: ROUTES.adminCustomers });
+          })();
+        }}
+      />
     </div>
   );
 }

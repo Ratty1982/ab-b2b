@@ -14,6 +14,7 @@ import {
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import {
   companyCreateSchema,
+  companyDeleteSchema,
   companyListQuerySchema,
   companyUpdateSchema,
   contactSchema,
@@ -287,6 +288,8 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
     company: serialized,
     permissions: {
       canEdit: hasPermission(profile, "companies.edit") || hasPermission(profile, "admin.access"),
+      canDelete:
+        hasPermission(profile, "companies.delete") || hasPermission(profile, "admin.access"),
       canManageUsers:
         hasPermission(profile, "companies.manage_users") || hasPermission(profile, "admin.access"),
       canViewCredit,
@@ -506,6 +509,101 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
     select: companySelect(),
   });
   return serializeCompany(full);
+}
+
+/**
+ * Permanently delete a customer company.
+ * Blocked when orders, quotes, or invoices exist — close the account instead.
+ * Cascades contacts/addresses/memberships/prices/baskets; detaches CRM/audit/application links.
+ */
+export async function deleteCompany(actorUserId: string, raw: unknown) {
+  const profile = await requireSystemPermission(actorUserId, "companies.delete");
+  const input = companyDeleteSchema.parse(raw);
+  await assertCompanyReadable(profile, input.id);
+
+  const existing = await prisma.company.findUnique({
+    where: { id: input.id },
+    include: {
+      _count: {
+        select: {
+          orders: true,
+          quotes: true,
+          invoices: true,
+          opportunities: true,
+          contacts: true,
+          addresses: true,
+          users: true,
+        },
+      },
+    },
+  });
+  if (!existing) throw new AuthError("Company not found", "NOT_FOUND", 404);
+
+  const orderCount = existing._count.orders;
+  const quoteCount = existing._count.quotes;
+  const invoiceCount = existing._count.invoices;
+  if (orderCount > 0 || quoteCount > 0 || invoiceCount > 0) {
+    throw new AuthError(
+      "Cannot delete a customer with orders, quotes, or invoices. Set status to Closed instead.",
+      "COMPANY_HAS_COMMERCIAL_HISTORY",
+      409,
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.tradeApplication.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.lead.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.activity.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.task.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.note.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.document.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.auditEvent.updateMany({
+      where: { companyId: input.id },
+      data: { companyId: null },
+    });
+    await tx.opportunity.deleteMany({ where: { companyId: input.id } });
+    await tx.company.delete({ where: { id: input.id } });
+  });
+
+  await recordAuditEvent({
+    action: "company.deleted",
+    entityType: "Company",
+    entityId: input.id,
+    actorUserId,
+    metadata: {
+      name: existing.name,
+      accountNumber: existing.accountNumber,
+      status: existing.status,
+      opportunityCount: existing._count.opportunities,
+      contactCount: existing._count.contacts,
+      addressCount: existing._count.addresses,
+      membershipCount: existing._count.users,
+    },
+  });
+
+  return {
+    ok: true as const,
+    id: input.id,
+    name: existing.name,
+  };
 }
 
 export async function createContact(actorUserId: string, raw: unknown) {

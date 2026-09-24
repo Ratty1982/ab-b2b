@@ -14,6 +14,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "companies.view",
   "companies.create",
   "companies.edit",
+  "companies.delete",
   "companies.manage_users",
   "contacts.view",
   "contacts.create",

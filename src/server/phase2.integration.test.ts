@@ -11,6 +11,7 @@ import {
   createAddress,
   createCompany,
   createContact,
+  deleteCompany,
   getCompanyWorkspace,
   listCompaniesForActor,
   updateCompany,
@@ -132,6 +133,54 @@ describe("company CRUD + sales scoping", () => {
     await expect(getCompanyWorkspace(outsiderId, assigned.id)).rejects.toBeInstanceOf(AuthError);
     const ws = await getCompanyWorkspace(salesRepUserId, assigned.id);
     expect(ws.company.id).toBe(assigned.id);
+  });
+
+  it("deletes a customer without commercial history and denies sales reps", async () => {
+    const company = await createCompany(adminId, {
+      name: `Delete Me ${Date.now()}`,
+      status: "PROSPECT",
+      salesRepId,
+    });
+    await createContact(adminId, {
+      companyId: company.id,
+      firstName: "Temp",
+      lastName: "Contact",
+      email: `temp.${Date.now()}@example.invalid`,
+    });
+
+    await expect(deleteCompany(salesRepUserId, { id: company.id })).rejects.toBeInstanceOf(AuthError);
+
+    const deleted = await deleteCompany(adminId, { id: company.id });
+    expect(deleted.ok).toBe(true);
+    expect(deleted.id).toBe(company.id);
+
+    await expect(getCompanyWorkspace(adminId, company.id)).rejects.toBeInstanceOf(AuthError);
+    const listed = await listCompaniesForActor(adminId, { q: company.name, page: 1, pageSize: 10 });
+    expect(listed.items.some((i) => i.id === company.id)).toBe(false);
+  });
+
+  it("refuses to delete a customer that has an order", async () => {
+    const company = await createCompany(adminId, {
+      name: `Has Order ${Date.now()}`,
+      status: "ACTIVE",
+    });
+    await prisma.order.create({
+      data: {
+        orderNumber: `TEST-DEL-${Date.now()}`,
+        companyId: company.id,
+        status: "DRAFT",
+        currency: "GBP",
+        subtotal: 0,
+        vatTotal: 0,
+        grandTotal: 0,
+      },
+    });
+
+    await expect(deleteCompany(adminId, { id: company.id })).rejects.toMatchObject({
+      code: "COMPANY_HAS_COMMERCIAL_HISTORY",
+    });
+    const stillThere = await prisma.company.findUnique({ where: { id: company.id } });
+    expect(stillThere).toBeTruthy();
   });
 });
 

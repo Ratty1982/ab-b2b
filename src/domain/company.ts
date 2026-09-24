@@ -46,6 +46,10 @@ export const companyUpdateSchema = companyCreateSchema.partial().extend({
   id: z.string().cuid(),
 });
 
+export const companyDeleteSchema = z.object({
+  id: z.string().cuid(),
+});
+
 export const companyListQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
   status: z.enum(COMPANY_STATUSES).optional(),
