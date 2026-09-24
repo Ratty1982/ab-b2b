@@ -18,6 +18,8 @@ export const CMS_SECTION_TYPES = [
   "BANNER",
   "RICH_TEXT",
   "SPACER",
+  "MOTORSPORT_FEATURE",
+  "MEDIA_GALLERY",
 ] as const;
 
 export type CmsSectionTypeKey = (typeof CMS_SECTION_TYPES)[number];
@@ -312,6 +314,49 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
   SPACER: z.object({
     contentKey,
     size: z.enum(["sm", "md", "lg"]).default("md"),
+  }),
+  MOTORSPORT_FEATURE: z.object({
+    contentKey,
+    eyebrow: z.string().max(80).optional().default("POWER MAXED MOTORSPORT"),
+    headline: z.string().max(400).default("FROM THE TRADE COUNTER\nTO THE STARTING GRID."),
+    supporting: z.string().max(2000).default(""),
+    ctaLabel: z.string().max(80).default("Explore Motorsport"),
+    ctaHref: z.string().max(300).default("/motorsport"),
+    secondaryCtaLabel: z.string().max(80).optional().default("Partner with the Team"),
+    secondaryCtaHref: z.string().max(300).optional().default("/motorsport#partnerships"),
+    features: z
+      .array(
+        z.object({
+          title: z.string().max(80),
+          body: z.string().max(400),
+          icon: z.enum(["flag", "handshake", "users"]).default("flag"),
+        }),
+      )
+      .max(6)
+      .default([]),
+    media: mediaRef,
+    spacing,
+  }),
+  MEDIA_GALLERY: z.object({
+    contentKey,
+    eyebrow: z.string().max(80).optional().default(""),
+    heading: z.string().max(160).optional().default("Gallery"),
+    supporting: z.string().max(800).optional().default(""),
+    items: z
+      .array(
+        z.object({
+          mediaId: z.string().optional(),
+          src: z.string().max(2048).optional(),
+          alt: z.string().max(300).default(""),
+          fit: z.enum(CMS_IMAGE_FITS).optional(),
+          focalX: percent,
+          focalY: percent,
+          caption: z.string().max(200).optional().default(""),
+        }),
+      )
+      .max(24)
+      .default([]),
+    spacing,
   }),
 };
 

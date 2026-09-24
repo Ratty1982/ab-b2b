@@ -1,9 +1,10 @@
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
+import { HOMEPAGE_MOTORSPORT_DEFAULTS } from "@/domain/motorsport";
 
 /** Bumps when launch marketing copy must refresh published CMS seed content. */
-export const HOMEPAGE_LAUNCH_CONTENT_KEY = "trade-sales-demo-v1";
+export const HOMEPAGE_LAUNCH_CONTENT_KEY = "motorsport-feature-v1";
 
 export const CANONICAL_HOMEPAGE_SECTION_TYPES: CmsSectionTypeKey[] = [
   "HERO",
@@ -15,6 +16,7 @@ export const CANONICAL_HOMEPAGE_SECTION_TYPES: CmsSectionTypeKey[] = [
   "BENEFITS_GRID",
   "RESOURCES",
   "NEWS",
+  "MOTORSPORT_FEATURE",
   "TRADE_CTA",
 ];
 
@@ -180,6 +182,21 @@ export function defaultHomepageSections(): Array<{
         spacing: "standard",
       },
       enabled: false,
+    },
+    {
+      type: "MOTORSPORT_FEATURE",
+      config: {
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        ...HOMEPAGE_MOTORSPORT_DEFAULTS,
+        spacing: "relaxed",
+        media: {
+          alt: "Power Maxed Racing Steel Seal race car on track — upload licensed photography in Media",
+          fit: "fill",
+          focalX: 72,
+          focalY: 42,
+        },
+      },
+      enabled: true,
     },
     {
       type: "TRADE_CTA",

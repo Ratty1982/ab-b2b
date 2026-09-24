@@ -4,6 +4,7 @@ import { ArrowRight, ClipboardList, Download, Headphones, Truck, Warehouse } fro
 import { AvailabilityBadge, availabilityClass } from "@/components/ab/AvailabilityBadge";
 import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
+import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureSection";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { featuredBrandsIntro } from "@/domain/featured-brands";
@@ -780,6 +781,10 @@ export function PublicHomepage({ data }: { data: PublicHomepageData }) {
     }
     if (type === "TRADE_CTA") {
       nodes.push(<TradeCta key={section.id} config={config} />);
+      continue;
+    }
+    if (type === "MOTORSPORT_FEATURE") {
+      nodes.push(<MotorsportFeatureSection key={section.id} config={config} />);
       continue;
     }
     nodes.push(<GenericFallback key={section.id} section={section} />);

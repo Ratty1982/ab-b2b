@@ -1,6 +1,8 @@
 import { ArrowRight, ClipboardList, Headphones, Truck, Warehouse } from "lucide-react";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { resolveFeaturedBrandCards, featuredBrandsIntro } from "@/domain/featured-brands";
+import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureSection";
+import { MotorsportMediaGallery } from "@/components/public/MotorsportMediaGallery";
 import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
@@ -418,6 +420,11 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
         </section>
       );
     }
+
+    case "MOTORSPORT_FEATURE":
+      return <MotorsportFeatureSection config={c} />;
+    case "MEDIA_GALLERY":
+      return <MotorsportMediaGallery config={c} />;
 
     default:
       return null;

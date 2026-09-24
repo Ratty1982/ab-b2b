@@ -16,6 +16,7 @@ import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as MotorsportRouteImport } from './routes/motorsport'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -108,6 +109,11 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MotorsportRoute = MotorsportRouteImport.update({
+  id: '/motorsport',
+  path: '/motorsport',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PortalRoute = PortalRouteImport.update({
@@ -410,6 +416,7 @@ export interface FileRoutesByFullPath {
   '/crm': typeof CrmRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/motorsport': typeof MotorsportRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -475,6 +482,7 @@ export interface FileRoutesByTo {
   '/contact': typeof ContactRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/motorsport': typeof MotorsportRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/resources': typeof ResourcesRoute
@@ -537,6 +545,7 @@ export interface FileRoutesById {
   '/crm': typeof CrmRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/motorsport': typeof MotorsportRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -606,6 +615,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/forgot-password'
     | '/login'
+    | '/motorsport'
     | '/portal'
     | '/register'
     | '/reset-password'
@@ -671,6 +681,7 @@ export interface FileRouteTypes {
     | '/contact'
     | '/forgot-password'
     | '/login'
+    | '/motorsport'
     | '/register'
     | '/reset-password'
     | '/resources'
@@ -732,6 +743,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/forgot-password'
     | '/login'
+    | '/motorsport'
     | '/portal'
     | '/register'
     | '/reset-password'
@@ -800,6 +812,7 @@ export interface RootRouteChildren {
   CrmRoute: typeof CrmRouteWithChildren
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
+  MotorsportRoute: typeof MotorsportRoute
   PortalRoute: typeof PortalRouteWithChildren
   RegisterRoute: typeof RegisterRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
@@ -868,6 +881,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/motorsport': {
+      id: '/motorsport'
+      path: '/motorsport'
+      fullPath: '/motorsport'
+      preLoaderRoute: typeof MotorsportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/portal': {
@@ -1450,6 +1470,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmRoute: CrmRouteWithChildren,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
+  MotorsportRoute: MotorsportRoute,
   PortalRoute: PortalRouteWithChildren,
   RegisterRoute: RegisterRoute,
   ResetPasswordRoute: ResetPasswordRoute,

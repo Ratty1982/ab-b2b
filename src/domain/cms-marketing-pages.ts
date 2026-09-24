@@ -1,6 +1,7 @@
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
+import { MOTORSPORT_PAGE_DEFAULTS } from "@/domain/motorsport";
 
 export type MarketingPageSeed = {
   slug: string;
@@ -360,6 +361,95 @@ export const MARKETING_CMS_PAGES: MarketingPageSeed[] = [
           content:
             "Downloadable resources are not published on the public website yet. This page is editable in Website Builder so finished assets can be added without a code change.",
           spacing: "standard",
+        },
+      },
+    ],
+  },
+  {
+    slug: "motorsport",
+    title: "Motorsport",
+    seoTitle: MOTORSPORT_PAGE_DEFAULTS.seoTitle,
+    metaDescription: MOTORSPORT_PAGE_DEFAULTS.metaDescription,
+    blurb: "Power Maxed Racing showcase and commercial partnership enquiries",
+    primaryNav: true,
+    sections: [
+      {
+        type: "MOTORSPORT_FEATURE",
+        config: {
+          eyebrow: MOTORSPORT_PAGE_DEFAULTS.hero.eyebrow,
+          headline: MOTORSPORT_PAGE_DEFAULTS.hero.headline,
+          supporting: MOTORSPORT_PAGE_DEFAULTS.hero.supporting,
+          ctaLabel: MOTORSPORT_PAGE_DEFAULTS.hero.ctaLabel,
+          ctaHref: MOTORSPORT_PAGE_DEFAULTS.hero.ctaHref,
+          secondaryCtaLabel: MOTORSPORT_PAGE_DEFAULTS.hero.secondaryCtaLabel,
+          secondaryCtaHref: MOTORSPORT_PAGE_DEFAULTS.hero.externalRacingUrl || "",
+          features: [],
+          spacing: "relaxed",
+          media: {
+            alt: "Power Maxed Racing Steel Seal race action — upload licensed photography in Media",
+            fit: "fill",
+            focalX: 68,
+            focalY: 40,
+          },
+        },
+      },
+      {
+        type: "IMAGE_TEXT",
+        config: {
+          heading: MOTORSPORT_PAGE_DEFAULTS.about.heading,
+          body: MOTORSPORT_PAGE_DEFAULTS.about.body,
+          spacing: "standard",
+          media: {
+            alt: "Power Maxed Racing team and cars — upload licensed photography in Media",
+            fit: "fill",
+            focalX: 50,
+            focalY: 50,
+          },
+        },
+      },
+      {
+        type: "TEXT_IMAGE",
+        config: {
+          heading: MOTORSPORT_PAGE_DEFAULTS.brandsOnTrack.heading,
+          body: MOTORSPORT_PAGE_DEFAULTS.brandsOnTrack.body,
+          ctaLabel: MOTORSPORT_PAGE_DEFAULTS.brandsOnTrack.powerMaxedLabel,
+          ctaHref: MOTORSPORT_PAGE_DEFAULTS.brandsOnTrack.powerMaxedHref,
+          spacing: "standard",
+          media: {
+            alt: "Steel Seal and Power Maxed branding on track — upload licensed photography in Media",
+            fit: "fill",
+            focalX: 55,
+            focalY: 45,
+          },
+        },
+      },
+      {
+        type: "MEDIA_GALLERY",
+        config: {
+          eyebrow: "Gallery",
+          heading: "Power Maxed Racing",
+          supporting:
+            "Genuine motorsport photography. Watermarked preview files must not be altered — replace with licensed originals in Media before public launch.",
+          items: [],
+          spacing: "standard",
+        },
+      },
+      {
+        type: "BENEFITS_GRID",
+        config: {
+          eyebrow: MOTORSPORT_PAGE_DEFAULTS.partnerships.eyebrow,
+          heading: MOTORSPORT_PAGE_DEFAULTS.partnerships.headline,
+          supporting: MOTORSPORT_PAGE_DEFAULTS.partnerships.body,
+          ctaLabel: "",
+          ctaHref: "#partnerships",
+          items: MOTORSPORT_PAGE_DEFAULTS.partnerships.opportunities.map((item) => ({
+            title: item.title,
+            body: item.body,
+            icon: "clipboard" as const,
+          })),
+          customerTypes: [],
+          spacing: "standard",
+          media: { alt: "", fit: "fill" },
         },
       },
     ],

@@ -260,6 +260,67 @@ export function BrandLogoPicker({
   );
 }
 
+function GalleryItemsField({
+  items,
+  onChange,
+}: {
+  items: Array<Record<string, unknown>>;
+  onChange: (items: Array<Record<string, unknown>>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="grid gap-2">
+      <ul className="grid gap-2">
+        {items.map((item, index) => {
+          const alt = typeof item["alt"] === "string" ? item["alt"] : "";
+          const id = typeof item["mediaId"] === "string" ? item["mediaId"] : "";
+          return (
+            <li
+              key={`${id}-${index}`}
+              className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-[12px]"
+            >
+              <span className="truncate text-steel">{alt || id || `Image ${index + 1}`}</span>
+              <button
+                type="button"
+                className="text-bad hover:underline"
+                onClick={() => onChange(items.filter((_, i) => i !== index))}
+              >
+                Remove
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <button
+        type="button"
+        className="h-9 rounded-md border border-border text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
+        onClick={() => setOpen(true)}
+      >
+        Add image from Media
+      </button>
+      <MediaPicker
+        open={open}
+        onClose={() => setOpen(false)}
+        onSelect={(item) => {
+          onChange([
+            ...items,
+            {
+              mediaId: item.id,
+              src: item.src,
+              alt: item.altText || "Power Maxed Racing photography",
+              fit: "fill",
+              focalX: 50,
+              focalY: 50,
+              caption: "",
+            },
+          ]);
+          setOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
 export function SectionSettings({
   type,
   config,
@@ -567,6 +628,113 @@ export function SectionSettings({
           options={VARIANTS}
           onChange={(v) => onChange("variant", v)}
         />
+      </div>
+    );
+  }
+
+  if (type === "MOTORSPORT_FEATURE") {
+    return (
+      <div className="grid gap-3">
+        <Group title="Content">
+          <Field label="Eyebrow">
+            <input
+              value={str(config, "eyebrow")}
+              onChange={(e) => onChange("eyebrow", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Headline">
+            <textarea
+              rows={3}
+              value={str(config, "headline")}
+              onChange={(e) => onChange("headline", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Supporting text">
+            <textarea
+              rows={4}
+              value={str(config, "supporting")}
+              onChange={(e) => onChange("supporting", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA label">
+            <input
+              value={str(config, "ctaLabel")}
+              onChange={(e) => onChange("ctaLabel", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA URL">
+            <input
+              value={str(config, "ctaHref", "/motorsport")}
+              onChange={(e) => onChange("ctaHref", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA label">
+            <input
+              value={str(config, "secondaryCtaLabel")}
+              onChange={(e) => onChange("secondaryCtaLabel", e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA URL (path or https:// for Power Maxed Racing)">
+            <input
+              value={str(config, "secondaryCtaHref")}
+              onChange={(e) => onChange("secondaryCtaHref", e.target.value)}
+              className={inputClass}
+              placeholder="/motorsport#partnerships or https://…"
+            />
+          </Field>
+        </Group>
+        <Group title="Background photography">
+          <p className="text-[12px] text-steel">
+            Use genuine Power Maxed Racing / Steel Seal photography. Do not alter watermarks —
+            replace preview files with licensed originals in Media.
+          </p>
+          <MediaField config={config} onChange={onChange} />
+        </Group>
+      </div>
+    );
+  }
+
+  if (type === "MEDIA_GALLERY") {
+    const items = Array.isArray(config["items"])
+      ? (config["items"] as Array<Record<string, unknown>>)
+      : [];
+    return (
+      <div className="grid gap-3">
+        <Field label="Eyebrow">
+          <input
+            value={str(config, "eyebrow")}
+            onChange={(e) => onChange("eyebrow", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Heading">
+          <input
+            value={str(config, "heading")}
+            onChange={(e) => onChange("heading", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Supporting text">
+          <textarea
+            rows={3}
+            value={str(config, "supporting")}
+            onChange={(e) => onChange("supporting", e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Group title="Gallery images">
+          <p className="text-[12px] text-steel">
+            {items.length} image(s). Use genuine licensed photography. Do not alter watermarks —
+            replace preview files with clean originals in Media.
+          </p>
+          <GalleryItemsField items={items} onChange={(next) => onChange("items", next)} />
+        </Group>
       </div>
     );
   }

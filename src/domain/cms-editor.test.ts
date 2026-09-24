@@ -50,6 +50,8 @@ describe("CMS editor draft operations", () => {
       "IMAGE_TEXT",
       "BENEFITS_GRID",
       "TRADE_CTA",
+      "MOTORSPORT_FEATURE",
+      "MEDIA_GALLERY",
       "BANNER",
       "RICH_TEXT",
       "SPACER",

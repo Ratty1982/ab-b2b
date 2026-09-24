@@ -1,5 +1,6 @@
 import { CMS_SECTION_TYPES, type CmsSectionTypeKey } from "@/domain/cms";
 import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
+import { HOMEPAGE_MOTORSPORT_DEFAULTS } from "@/domain/motorsport";
 
 export type EditorSection = {
   id: string;
@@ -35,6 +36,16 @@ export const SECTION_LIBRARY: Array<{
   { type: "IMAGE_TEXT", name: "Image + Text", description: "Image on the left, copy on the right" },
   { type: "BENEFITS_GRID", name: "Benefits / Icon Grid", description: "Four reasons to trade with you" },
   { type: "TRADE_CTA", name: "Trade CTA", description: "Full-width apply-for-account band" },
+  {
+    type: "MOTORSPORT_FEATURE",
+    name: "Motorsport Feature",
+    description: "Full-bleed Power Maxed Racing photographic band with partnership CTAs",
+  },
+  {
+    type: "MEDIA_GALLERY",
+    name: "Media Gallery",
+    description: "Responsive photographic gallery from uploaded media",
+  },
   { type: "BANNER", name: "Banner", description: "Short announcement strip" },
   { type: "RICH_TEXT", name: "Rich Text", description: "Plain text block — no HTML or scripts" },
   { type: "SPACER", name: "Spacer", description: "Vertical breathing room" },
@@ -152,6 +163,25 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
       return {
         eyebrow: "Latest from Automotive Brands",
         heading: "Range updates and trade notices",
+        items: [],
+        spacing: "standard",
+      };
+    case "MOTORSPORT_FEATURE":
+      return {
+        ...HOMEPAGE_MOTORSPORT_DEFAULTS,
+        spacing: "relaxed",
+        media: {
+          alt: "Power Maxed Racing / Steel Seal motorsport photography — replace with licensed imagery",
+          fit: "fill",
+          focalX: 72,
+          focalY: 45,
+        },
+      };
+    case "MEDIA_GALLERY":
+      return {
+        eyebrow: "On track",
+        heading: "Motorsport gallery",
+        supporting: "Genuine Power Maxed Racing photography. Replace watermarked previews with licensed originals via Media.",
         items: [],
         spacing: "standard",
       };

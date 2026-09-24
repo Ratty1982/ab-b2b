@@ -79,6 +79,10 @@ enum CmsSectionType {
   BANNER
   RICH_TEXT
   SPACER
+  /// Homepage / marketing photographic motorsport feature band.
+  MOTORSPORT_FEATURE
+  /// Responsive media gallery (motorsport page and reusable CMS).
+  MEDIA_GALLERY
 }
 
 /// Company-scoped trade access levels (distinct from system Role).

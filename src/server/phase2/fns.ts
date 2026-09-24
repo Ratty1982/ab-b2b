@@ -17,6 +17,7 @@ import * as staffUsers from "@/server/users/service";
 import * as pricing from "@/server/pricing/service";
 import * as stock from "@/server/stock/service";
 import * as basket from "@/server/basket/service";
+import * as motorsport from "@/server/motorsport/service";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -195,6 +196,27 @@ export const submitTradeApplicationFn = createServerFn({ method: "POST" })
         headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
       const result = await applications.submitTradeApplication(data, { ip });
       return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const submitMotorsportPartnershipEnquiryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const headers = getRequestHeaders();
+      const ip =
+        headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
+      const result = await motorsport.submitMotorsportPartnershipEnquiry(data, { ip });
+      if (!result.ok) {
+        return {
+          ok: false as const,
+          error: result.error,
+          ...(result.fieldErrors ? { fieldErrors: result.fieldErrors } : {}),
+        };
+      }
+      return { ok: true as const, data: { leadId: result.leadId, duplicate: result.duplicate ?? false } };
     } catch (e) {
       return toError(e);
     }

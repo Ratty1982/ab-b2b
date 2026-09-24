@@ -184,6 +184,7 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Products");
     expect(markup).toContain("Brands");
     expect(markup).toContain("Trade Solutions");
+    expect(markup).toContain("Motorsport");
     expect(markup).toContain("Why Automotive Brands");
     expect(markup).not.toContain(">Resources<");
     expect(markup).not.toContain(">About Us<");

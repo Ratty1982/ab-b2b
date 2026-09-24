@@ -13,6 +13,7 @@ const primaryNav = [
   { label: "Products", to: "/products" },
   { label: "Brands", to: "/brands" },
   { label: "Trade Solutions", to: "/trade-solutions" },
+  { label: "Motorsport", to: "/motorsport" },
   { label: "Why Automotive Brands", to: "/why-automotive-brands" },
 ] as const;
 
@@ -34,6 +35,7 @@ const footerSupport = [
 
 const footerCompany = [
   { label: "Why Automotive Brands", to: "/why-automotive-brands" as const },
+  { label: "Motorsport", to: "/motorsport" as const },
   { label: "About", to: "/about" as const },
 ] as const;
 

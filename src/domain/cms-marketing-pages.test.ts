@@ -16,8 +16,10 @@ describe("marketing CMS pages", () => {
       "about",
       "contact",
       "resources",
+      "motorsport",
     ]);
     expect(marketingCmsPageBySlug("home")).toBeUndefined();
+    expect(marketingCmsPageBySlug("motorsport")?.primaryNav).toBe(true);
   });
 
   it("validates every seeded section config", () => {
