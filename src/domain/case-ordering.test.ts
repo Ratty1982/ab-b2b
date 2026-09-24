@@ -17,6 +17,7 @@ describe("full-case ordering domain", () => {
   it("treats caseQty as the customer order multiple, never inventory", () => {
     expect(FULL_CASE_ORDERING.rule).toBe("FULL_CASE_ONLY");
     expect(FULL_CASE_ORDERING.customerIncrementField).toBe("caseQty");
+    expect(FULL_CASE_ORDERING.finalPartCaseException).toBe("FINAL_PART_CASE_STOCK");
     expect(customerOrderIncrement(2)).toBe(2);
     expect(customerOrderIncrement(6)).toBe(6);
     expect(customerOrderIncrement(null)).toBeNull();

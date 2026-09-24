@@ -26,6 +26,7 @@ export type ProductOrderingPanelView = {
   caseTitle: string | null;
   caseSubtitle: string | null;
   minimumQuantity: number | null;
+  quantityStep: number | null;
   quantity: number | null;
   caseCount: number | null;
   caseCountLabel: string | null;
@@ -36,6 +37,8 @@ export type ProductOrderingPanelView = {
   canDecrement: boolean;
   canAdd: boolean;
   insufficientFullCase: boolean;
+  isFinalPartCase: boolean;
+  remainingQty: number | null;
 };
 
 export function ProductTradeOrdering({
@@ -172,8 +175,9 @@ function ProductTradeOrderingCard({
 
   const showControls = interactive && panel && (panel.orderable || panel.insufficientFullCase);
   const activeQty = quantity ?? panel?.quantity ?? panel?.minimumQuantity;
+  const step = panel?.quantityStep ?? panel?.caseQty;
   const cases =
-    activeQty != null && panel?.caseQty
+    activeQty != null && panel?.caseQty && panel.orderable && !panel.isFinalPartCase
       ? formatCaseCountLabel(activeQty / panel.caseQty)
       : panel?.caseCountLabel;
   const title = panel?.caseTitle ?? copy?.title ?? "Trade ordering";
@@ -214,17 +218,27 @@ function ProductTradeOrderingCard({
       (blockedReason != null && /trade test level/i.test(blockedReason)));
 
   const orderSummary =
-    cases && activeQty != null
-      ? panel?.caseQty === 1
-        ? `${activeQty === 1 ? "1 unit" : `${activeQty} units`}`
-        : `${cases} · ${activeQty} units`
-      : null;
+    panel?.isFinalPartCase && activeQty != null
+      ? activeQty === 1
+        ? "1 unit"
+        : `${activeQty} units`
+      : cases && activeQty != null
+        ? panel?.caseQty === 1
+          ? `${activeQty === 1 ? "1 unit" : `${activeQty} units`}`
+          : `${cases} · ${activeQty} units`
+        : null;
+
+  const finalStock =
+    showControls && panel?.orderable && panel.isFinalPartCase && panel.remainingQty != null;
 
   return (
     <section
       data-product-section="ordering"
       data-ordering-placement="hero"
       data-ordering-actor={signedIn ? (tradeCustomer ? "trade" : "internal") : "anonymous"}
+      data-ordering-mode={
+        panel?.isFinalPartCase ? "final-part-case" : panel?.orderable ? "case" : undefined
+      }
       className="mt-5 rounded-lg border border-border bg-surface/40 px-4 py-3.5 sm:px-5 sm:py-4"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -273,6 +287,24 @@ function ProductTradeOrderingCard({
         </p>
       ) : null}
 
+      {finalStock ? (
+        <div
+          className="mt-3 rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2"
+          role="status"
+          data-ordering-final-stock="true"
+        >
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-200">
+            Final stock
+          </p>
+          <p className="mt-0.5 text-[13px] font-medium text-amber-900 dark:text-amber-100">
+            Only {panel!.remainingQty} remaining
+          </p>
+          <p className="mt-1 text-[12px] text-amber-900/80 dark:text-amber-100/80">
+            Final stock can be ordered as individual units.
+          </p>
+        </div>
+      ) : null}
+
       {showControls && panel && !panel.insufficientFullCase && panel.orderable ? (
         <div className="mt-3 space-y-3">
           {/* Desktop: quantity / order / total in one row; mobile stacks */}
@@ -284,10 +316,10 @@ function ProductTradeOrderingCard({
                   type="button"
                   className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
                   aria-label="Decrease quantity"
-                  disabled={busy || !panel.canDecrement || activeQty == null}
+                  disabled={busy || !panel.canDecrement || activeQty == null || step == null}
                   onClick={() => {
-                    if (activeQty == null || panel.caseQty == null) return;
-                    void applyQuantity(activeQty - panel.caseQty);
+                    if (activeQty == null || step == null) return;
+                    void applyQuantity(activeQty - step);
                   }}
                 >
                   <Minus className="size-4" aria-hidden />
@@ -299,10 +331,10 @@ function ProductTradeOrderingCard({
                   type="button"
                   className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
                   aria-label="Increase quantity"
-                  disabled={busy || !panel.canIncrement || activeQty == null}
+                  disabled={busy || !panel.canIncrement || activeQty == null || step == null}
                   onClick={() => {
-                    if (activeQty == null || panel.caseQty == null) return;
-                    void applyQuantity(activeQty + panel.caseQty);
+                    if (activeQty == null || step == null) return;
+                    void applyQuantity(activeQty + step);
                   }}
                 >
                   <Plus className="size-4" aria-hidden />

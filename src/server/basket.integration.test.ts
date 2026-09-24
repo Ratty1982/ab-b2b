@@ -234,6 +234,79 @@ describe("Phase 6A basket ordering", () => {
     expect(basket.lines[0]!.issue).toBe("PRODUCT_UNAVAILABLE");
   });
 
+  it("allows final part-case stock, duplicate-add caps, and replenishment flags", async () => {
+    const sku = `B6FP-${Date.now()}`;
+    const product = await saveProduct(adminId, {
+      sku,
+      name: "Final part-case product",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3.69,
+      rrp: 7.99,
+      caseQty: 12,
+      packQty: 1,
+      description: "final-part",
+      active: true,
+    });
+    const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await prisma.productVariant.update({
+      where: { id: variant.id },
+      data: { minOrderQty: 24 },
+    });
+    await seedStock(variant.id, 7);
+
+    const company = await prisma.company.create({ data: { name: `FP ${sku}`, status: "ACTIVE" } });
+    const buyerId = await ensureTradeBuyer(`fp-${sku}@example.invalid`, company.id);
+
+    const panel = await getProductOrderingPanel(buyerId, { variantId: variant.id });
+    expect(panel.orderable).toBe(true);
+    expect(panel.isFinalPartCase).toBe(true);
+    expect(panel.remainingQty).toBe(7);
+    expect(panel.quantity).toBe(7);
+    expect(panel.quantityStep).toBe(1);
+    expect(panel.caseSubtitle).toMatch(/Normally sold in multiples of 12/i);
+
+    // MOQ 24 must not block final stock of 7.
+    const added = await addToBasket(buyerId, { variantId: variant.id, quantity: 5 });
+    expect(added.lines[0]!.quantity).toBe(5);
+    expect(added.lines[0]!.issue).toBe("VALID");
+    expect(added.lines[0]!.isFinalPartCase).toBe(true);
+    expect(added.lines[0]!.quantityStep).toBe(1);
+
+    // Duplicate add 2 → 7 valid; 3 → 8 rejected without leaking surplus stock messaging.
+    const merged = await addToBasket(buyerId, { variantId: variant.id, quantity: 2 });
+    expect(merged.lines[0]!.quantity).toBe(7);
+    await expect(addToBasket(buyerId, { variantId: variant.id, quantity: 3 })).rejects.toMatchObject({
+      message: expect.stringMatching(/no longer available|reduce/i),
+    });
+
+    // Stock drop → QUANTITY_UNAVAILABLE; customer may reduce to remaining.
+    await seedStock(variant.id, 5);
+    let basket = await getBasket(buyerId);
+    expect(basket.lines[0]!.quantity).toBe(7);
+    expect(basket.lines[0]!.issue).toBe("QUANTITY_UNAVAILABLE");
+    expect(basket.lines[0]!.canDecrement).toBe(true);
+    const reduced = await updateBasketItem(buyerId, {
+      itemId: basket.lines[0]!.id,
+      quantity: 5,
+    });
+    expect(reduced.lines[0]!.issue).toBe("VALID");
+    expect(reduced.lines[0]!.quantity).toBe(5);
+
+    // Replenishment into normal case mode flags part-case qty — do not silent-mutate.
+    await seedStock(variant.id, 20);
+    basket = await getBasket(buyerId);
+    expect(basket.lines[0]!.quantity).toBe(5);
+    expect(basket.lines[0]!.issue).toBe("CASE_CONFIGURATION_CHANGED");
+    expect(basket.lines[0]!.isFinalPartCase).toBe(false);
+
+    // Anonymous never receives final remaining qty.
+    const anon = await getProductOrderingPanel(null, { variantId: variant.id });
+    expect(anon.remainingQty).toBeNull();
+    expect(anon.isFinalPartCase).toBe(false);
+    expect(JSON.stringify(anon)).not.toMatch(/"remainingQty":\s*5/);
+  }, 30_000);
+
   it("re-resolves quantity breaks when basket quantity changes", async () => {
     const sku = `B6QB-${Date.now()}`;
     const product = await saveProduct(adminId, {
@@ -541,9 +614,12 @@ describe("catalogue list batch ordering panels", () => {
     expect(panels.get(vOos.id)?.insufficientFullCase).toBe(true);
     expect(JSON.stringify(panels.get(vOos.id))).not.toMatch(/\b0 available\b|\bAvail\b/);
 
-    expect(panels.get(vShort.id)?.orderable).toBe(false);
-    expect(panels.get(vShort.id)?.insufficientFullCase).toBe(true);
-    expect(JSON.stringify(panels.get(vShort.id))).not.toContain("7");
+    expect(panels.get(vShort.id)?.orderable).toBe(true);
+    expect(panels.get(vShort.id)?.isFinalPartCase).toBe(true);
+    expect(panels.get(vShort.id)?.remainingQty).toBe(7);
+    expect(panels.get(vShort.id)?.quantity).toBe(7);
+    expect(panels.get(vShort.id)?.quantityStep).toBe(1);
+    expect(panels.get(vShort.id)?.insufficientFullCase).toBe(false);
 
     const anonPanels = await getCatalogueOrderingPanels(null, [
       {

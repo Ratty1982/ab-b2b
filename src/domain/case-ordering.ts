@@ -1,5 +1,5 @@
 /**
- * Automotive Brands B2B ordering: FULL CASES ONLY.
+ * Automotive Brands B2B ordering: FULL CASES by default.
  *
  * Authoritative customer multiple is ProductVariant.caseQty when populated.
  * packQty is the sale-unit contents; it is not the customer order step.
@@ -7,10 +7,14 @@
  * as the public/customer increment when caseQty exists. Do not bulk-rewrite
  * orderIncrement in this phase.
  *
- * Phase 6 (not implemented here) must enforce the same rule on quantity
- * steppers, manual input, basket, checkout, and API:
+ * Normal rule (stock ≥ caseQty):
  *   requestedQuantity % caseQty === 0
  *   initial / + / − steps = caseQty
+ *
+ * FINAL PART-CASE STOCK EXCEPTION (see src/domain/ordering.ts):
+ * when 0 < sellable < caseQty, remaining units may be ordered 1..sellable
+ * in steps of 1 (MOQ overridden). Never use orderIncrement for that path.
+ *
  * Clients cannot bypass this; the server must re-validate independently.
  */
 
@@ -19,6 +23,7 @@ export const FULL_CASE_ORDERING = {
   customerIncrementField: "caseQty",
   packQtyMeaning: "sale-unit contents, not the customer order multiple",
   caseQtyMeaning: "number of sale units in a trade case; customer order multiple",
+  finalPartCaseException: "FINAL_PART_CASE_STOCK",
 } as const;
 
 export function isPositiveInt(value: number | null | undefined): value is number {

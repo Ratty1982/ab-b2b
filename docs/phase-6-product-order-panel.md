@@ -9,8 +9,10 @@ See [phase-6a-ordering-basket.md](./phase-6a-ordering-basket.md).
 
 ## Business rule
 
-Customers order **full cases only**. `ProductVariant.caseQty` is the customer
-quantity increment.
+### NORMAL CASE ORDERING
+
+Customers order **full cases** when sellable stock is at least one complete
+case. `ProductVariant.caseQty` is the customer quantity increment.
 
 | caseQty | Valid quantities |
 | --- | --- |
@@ -19,14 +21,30 @@ quantity increment.
 | 1 | 1, 2, 3, 4, … |
 | 12 | 12, 24, 36, … |
 
+Example with sellable 17 and caseQty 12: only **12** is valid — not 13–17.
+
 The UI stepper and any manual input must step by `caseQty`. The **server**
 must re-validate independently:
 
 ```text
 requestedQuantity % caseQty === 0
 requestedQuantity >= minimum case-multiple (MOQ aware)
-requestedQuantity <= sellable Autopart Avail
+requestedQuantity <= max full-case quantity from sellable Autopart Avail
 ```
+
+### FINAL PART-CASE STOCK EXCEPTION
+
+When `0 < sellable < caseQty` (trusted/current stock only):
+
+```text
+valid quantity = integer between 1 and sellable
+step = 1
+default quantity = sellable
+MOQ overridden
+```
+
+Do not use `orderIncrement`. Exact remaining may be shown only to
+authenticated order-eligible trade customers in this mode.
 
 Clients cannot be trusted to enforce this.
 
@@ -47,6 +65,8 @@ Example when unit trade = £8.70 and `caseQty` = 2:
 
 ## Target UI (Phase 6A)
 
+### Normal case mode
+
 ```text
 TRADE ORDERING
 
@@ -66,7 +86,29 @@ Quantity
 ```
 
 Initial quantity = minimum valid case multiple. Plus/minus changes quantity by
-`caseQty`. Exact stock is never shown.
+`caseQty`. Exact stock is not shown when sellable ≥ caseQty.
 
-Helpers: `src/domain/case-ordering.ts`, `src/domain/ordering.ts`,
-`src/server/basket/service.ts`.
+### Final part-case mode
+
+```text
+TRADE ORDERING
+
+CASE OF 12
+Normally sold in multiples of 12
+
+FINAL STOCK
+Only 7 remaining
+Final stock can be ordered as individual units.
+
+Quantity
+[ − ]     7     [ + ]
+
+7 units
+
+TOTAL £xx.xx ex VAT
+
+[ ADD TO BASKET ]
+```
+
+Helpers: `src/domain/case-ordering.ts`, `src/domain/ordering.ts`
+(`resolveCustomerOrdering`), `src/server/basket/service.ts`.

@@ -60,7 +60,7 @@ export function CatalogueListQuickOrder({
     );
   }
 
-  if (panel.insufficientFullCase) {
+  if (panel.insufficientFullCase && !panel.isFinalPartCase) {
     return (
       <div className="max-w-[11rem] text-[11px] leading-snug text-warn" data-catalogue-order="insufficient-case">
         Insufficient stock for full case
@@ -86,8 +86,14 @@ export function CatalogueListQuickOrder({
     );
   }
 
-  const caseHint =
-    panel.caseQty === 1 ? "Single unit" : panel.caseTitle ?? `Case of ${panel.caseQty}`;
+  const step = panel.quantityStep ?? panel.caseQty;
+  const caseHint = panel.isFinalPartCase
+    ? panel.remainingQty != null
+      ? `Final stock · ${panel.remainingQty} left`
+      : "Final stock"
+    : panel.caseQty === 1
+      ? "Single unit"
+      : panel.caseTitle ?? `Case of ${panel.caseQty}`;
 
   async function applyQuantity(next: number) {
     setBusy(true);
@@ -124,6 +130,7 @@ export function CatalogueListQuickOrder({
     <div
       className="flex flex-col items-stretch gap-1"
       data-catalogue-order="controls"
+      data-catalogue-order-mode={panel.isFinalPartCase ? "final-part-case" : "case"}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
@@ -137,8 +144,8 @@ export function CatalogueListQuickOrder({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (panel.caseQty == null || quantity == null) return;
-              void applyQuantity(quantity - panel.caseQty);
+              if (quantity == null || step == null) return;
+              void applyQuantity(quantity - step);
             }}
           >
             <Minus className="size-3.5" aria-hidden />
@@ -157,8 +164,8 @@ export function CatalogueListQuickOrder({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (panel.caseQty == null || quantity == null) return;
-              void applyQuantity(quantity + panel.caseQty);
+              if (quantity == null || step == null) return;
+              void applyQuantity(quantity + step);
             }}
           >
             <Plus className="size-3.5" aria-hidden />
@@ -185,7 +192,14 @@ export function CatalogueListQuickOrder({
           )}
         </button>
       </div>
-      <p className="text-[10px] leading-tight text-steel">{caseHint}</p>
+      <p
+        className={cn(
+          "text-[10px] leading-tight",
+          panel.isFinalPartCase ? "font-medium text-amber-800 dark:text-amber-200" : "text-steel",
+        )}
+      >
+        {caseHint}
+      </p>
     </div>
   );
 }

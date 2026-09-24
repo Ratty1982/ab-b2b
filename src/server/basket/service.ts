@@ -25,10 +25,11 @@ import {
   canDecrementQuantity,
   canIncrementQuantity,
   caseCountForQuantity,
+  finalPartCaseOrderingCopy,
   formatCaseCountLabel,
   getOrderingRules,
   isOrderableByStockPolicy,
-  maxOrderableQuantity,
+  resolveCustomerOrdering,
   validateOrderQuantity,
   type BasketLineIssue,
 } from "@/domain/ordering";
@@ -69,9 +70,12 @@ export type PublicBasketLine = {
   imageSrc: string | null;
   quantity: number;
   caseQty: number | null;
+  /** Stepper increment for this line under current stock mode (caseQty or 1). */
+  quantityStep: number | null;
   caseCount: number | null;
   caseCountLabel: string | null;
   caseTitle: string | null;
+  isFinalPartCase: boolean;
   unitPriceExVat: string | null;
   unitPriceExVatDisplay: string | null;
   lineNet: string | null;
@@ -116,6 +120,8 @@ export type ProductOrderingPanel = {
   caseTitle: string | null;
   caseSubtitle: string | null;
   minimumQuantity: number | null;
+  /** Stepper increment: caseQty in CASE mode, 1 in FINAL_PART_CASE. */
+  quantityStep: number | null;
   quantity: number | null;
   caseCount: number | null;
   caseCountLabel: string | null;
@@ -127,6 +133,13 @@ export type ProductOrderingPanel = {
   canDecrement: boolean;
   canAdd: boolean;
   insufficientFullCase: boolean;
+  /** True when 0 < sellable < caseQty and final-part-case ordering is active. */
+  isFinalPartCase: boolean;
+  /**
+   * Exact remaining sellable — only set in FINAL_PART_CASE for order-eligible
+   * authenticated actors. Never populate for anonymous responses.
+   */
+  remainingQty: number | null;
 };
 
 type BasketContext = {
@@ -394,6 +407,9 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     const availability = stock?.availability ?? null;
     const resolution = priceByVariant.get(variant.id) ?? null;
     const money = lineTotalsFromResolution(resolution, item.qty);
+    const orderableByStockPolicy = stock
+      ? isOrderableByStockPolicy({ sellableQty, stale, availability })
+      : false;
     const issue = assessBasketLineQuantity({
       quantity: item.qty,
       caseQty: variant.caseQty,
@@ -401,20 +417,37 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       sellableQty,
       productActive: product.status === "ACTIVE" && product.isActive,
       tradeVisible: product.isTradeVisible,
-      orderableByStockPolicy: stock ? isOrderableByStockPolicy({ sellableQty, stale, availability }) : false,
+      orderableByStockPolicy,
       hasTradePrice: money.hasPrice,
     });
     if (issue !== "VALID") hasBlockingIssues = true;
+    const ordering = resolveCustomerOrdering({
+      caseQty: variant.caseQty,
+      minimumOrderQty: variant.minOrderQty,
+      sellableQty,
+      orderableByStockPolicy,
+    });
     const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
     const caseQty = rules.orderable ? rules.caseQty : null;
-    const cases = caseQty != null ? caseCountForQuantity(item.qty, caseQty) : null;
-    const copy = publicTradeOrderingCopy(caseQty);
+    const cases =
+      ordering.mode === "CASE" && caseQty != null ? caseCountForQuantity(item.qty, caseQty) : null;
+    const copy =
+      ordering.mode === "FINAL_PART_CASE" && caseQty != null
+        ? finalPartCaseOrderingCopy(caseQty)
+        : publicTradeOrderingCopy(caseQty);
     if (money.hasPrice && issue === "VALID") {
       totalNet = addMoney(totalNet, parseMoney(money.lineNet!)!);
       totalVat = addMoney(totalVat, parseMoney(money.lineVat!)!);
       totalGross = addMoney(totalGross, parseMoney(money.lineGross!)!);
     }
     const imageId = product.media[0]?.mediaId ?? null;
+    const stepInput = {
+      currentQuantity: item.qty,
+      caseQty: variant.caseQty,
+      minimumOrderQty: variant.minOrderQty,
+      sellableQty,
+      orderableByStockPolicy,
+    };
     lines.push({
       id: item.id,
       variantId: variant.id,
@@ -425,9 +458,11 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       imageSrc: imageId ? cmsMediaPublicPath(imageId) : null,
       quantity: item.qty,
       caseQty,
+      quantityStep: ordering.step,
       caseCount: cases,
       caseCountLabel: cases != null ? formatCaseCountLabel(cases) : null,
       caseTitle: copy?.title ?? null,
+      isFinalPartCase: ordering.isFinalPartCase,
       unitPriceExVat: money.unitEx,
       unitPriceExVatDisplay: money.unitExDisplay,
       lineNet: money.lineNet,
@@ -437,21 +472,11 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       availability,
       issue,
       issueMessage: basketLineIssueMessage(issue),
-      canIncrement:
-        issue === "VALID" &&
-        canIncrementQuantity({
-          currentQuantity: item.qty,
-          caseQty: variant.caseQty,
-          minimumOrderQty: variant.minOrderQty,
-          sellableQty,
-        }),
+      canIncrement: issue === "VALID" && canIncrementQuantity(stepInput),
+      // Allow reducing an oversold line toward a valid final-part-case / case qty.
       canDecrement:
-        issue === "VALID" &&
-        canDecrementQuantity({
-          currentQuantity: item.qty,
-          caseQty: variant.caseQty,
-          minimumOrderQty: variant.minOrderQty,
-        }),
+        (issue === "VALID" || issue === "QUANTITY_UNAVAILABLE") &&
+        canDecrementQuantity(stepInput),
       priceSource: money.source,
     });
   }
@@ -680,7 +705,7 @@ export async function removeBasketItem(userId: string, raw: unknown): Promise<Pu
 const ANON_ORDER_REASON = "Sign in with a trade account to order";
 const ADMIN_NO_TEST_LEVEL_REASON = ADMIN_NO_TEST_LEVEL;
 
-/** Preview ordering controls for a PDP. Never returns exact sellable qty. */
+/** Preview ordering controls for a PDP. Exact sellable only in FINAL_PART_CASE. */
 export async function getProductOrderingPanel(
   userId: string | null,
   raw: unknown,
@@ -693,6 +718,7 @@ export async function getProductOrderingPanel(
     caseTitle: null,
     caseSubtitle: null,
     minimumQuantity: null,
+    quantityStep: null,
     quantity: null,
     caseCount: null,
     caseCountLabel: null,
@@ -703,6 +729,8 @@ export async function getProductOrderingPanel(
     canDecrement: false,
     canAdd: false,
     insufficientFullCase: false,
+    isFinalPartCase: false,
+    remainingQty: null,
   };
   if (!userId) return empty;
 
@@ -727,16 +755,21 @@ export async function getProductOrderingPanel(
   }
 
   const variant = await loadOrderableVariant(variantId);
-  const copy = publicTradeOrderingCopy(variant.caseQty);
+  const baseCopy = publicTradeOrderingCopy(variant.caseQty);
   const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
-  if (!rules.orderable || !copy) {
+  if (!rules.orderable || !baseCopy) {
     return {
       ...empty,
       reason: "This product is not available for online ordering",
     };
   }
   if (variant.product.status !== "ACTIVE" || !variant.product.isActive || !variant.product.isTradeVisible) {
-    return { ...empty, reason: "This product is not available for ordering", caseTitle: copy.title, caseSubtitle: copy.subtitle };
+    return {
+      ...empty,
+      reason: "This product is not available for ordering",
+      caseTitle: baseCopy.title,
+      caseSubtitle: baseCopy.subtitle,
+    };
   }
 
   const stockMap = await loadStockByVariantIds([variant.id]);
@@ -749,19 +782,22 @@ export async function getProductOrderingPanel(
         availability: stock.availability,
       })
     : false;
-  const maxQty = maxOrderableQuantity({
+  const ordering = resolveCustomerOrdering({
     caseQty: rules.caseQty,
     minimumOrderQty: rules.minimumOrderQty,
     sellableQty,
+    orderableByStockPolicy,
   });
-  if (!orderableByStockPolicy || maxQty == null) {
+
+  if (ordering.mode === "NOT_ORDERABLE") {
     return {
       orderable: false,
       reason: "Insufficient stock for a full case",
       caseQty: rules.caseQty,
-      caseTitle: copy.title,
-      caseSubtitle: copy.subtitle,
+      caseTitle: baseCopy.title,
+      caseSubtitle: baseCopy.subtitle,
       minimumQuantity: rules.minimumOrderQty,
+      quantityStep: rules.increment,
       quantity: rules.minimumOrderQty,
       caseCount: rules.minimumOrderQty / rules.caseQty,
       caseCountLabel: formatCaseCountLabel(rules.minimumOrderQty / rules.caseQty),
@@ -772,10 +808,16 @@ export async function getProductOrderingPanel(
       canDecrement: false,
       canAdd: false,
       insufficientFullCase: true,
+      isFinalPartCase: false,
+      remainingQty: null,
     };
   }
 
-  const quantity = rules.minimumOrderQty;
+  const copy =
+    ordering.mode === "FINAL_PART_CASE"
+      ? finalPartCaseOrderingCopy(rules.caseQty)
+      : baseCopy;
+  const quantity = ordering.defaultQuantity!;
   const pricing = pricingInputFromContext(ctx);
   const priced = await resolveVariantTradePrices({
     companyId: pricing.companyId,
@@ -803,16 +845,20 @@ export async function getProductOrderingPanel(
     };
   }
 
+  const caseCount =
+    ordering.mode === "CASE" ? quantity / rules.caseQty : null;
+
   return {
     orderable: true,
     reason: null,
     caseQty: rules.caseQty,
     caseTitle: copy.title,
     caseSubtitle: copy.subtitle,
-    minimumQuantity: rules.minimumOrderQty,
+    minimumQuantity: ordering.minimumQuantity,
+    quantityStep: ordering.step,
     quantity,
-    caseCount: quantity / rules.caseQty,
-    caseCountLabel: formatCaseCountLabel(quantity / rules.caseQty),
+    caseCount,
+    caseCountLabel: caseCount != null ? formatCaseCountLabel(caseCount) : null,
     unitPriceExVat: money.unitEx,
     unitPriceExVatDisplay: money.unitExDisplay,
     lineNetDisplay: money.lineNetDisplay,
@@ -821,10 +867,19 @@ export async function getProductOrderingPanel(
       caseQty: rules.caseQty,
       minimumOrderQty: rules.minimumOrderQty,
       sellableQty,
+      orderableByStockPolicy,
     }),
-    canDecrement: false,
+    canDecrement: canDecrementQuantity({
+      currentQuantity: quantity,
+      caseQty: rules.caseQty,
+      minimumOrderQty: rules.minimumOrderQty,
+      sellableQty,
+      orderableByStockPolicy,
+    }),
     canAdd: true,
     insufficientFullCase: false,
+    isFinalPartCase: ordering.isFinalPartCase,
+    remainingQty: ordering.remainingSellable,
   };
 }
 
@@ -842,18 +897,19 @@ export async function previewProductOrderQuantity(
   const stockMap = await loadStockByVariantIds([variant.id]);
   const stock = stockMap.get(variant.id);
   const sellableQty = stock?.sellableQty ?? 0;
+  const orderableByStockPolicy = stock
+    ? isOrderableByStockPolicy({
+        sellableQty,
+        stale: stock.stale,
+        availability: stock.availability,
+      })
+    : false;
   const validated = validateOrderQuantity({
     requestedQuantity: input.quantity,
     caseQty: variant.caseQty,
     minimumOrderQty: variant.minOrderQty,
     sellableQty,
-    orderableByStockPolicy: stock
-      ? isOrderableByStockPolicy({
-          sellableQty,
-          stale: stock.stale,
-          availability: stock.availability,
-        })
-      : false,
+    orderableByStockPolicy,
   });
   if (!validated.ok) {
     return {
@@ -864,6 +920,8 @@ export async function previewProductOrderQuantity(
       canIncrement: false,
       canDecrement: false,
       insufficientFullCase: validated.code === "INSUFFICIENT_FULL_CASE",
+      isFinalPartCase: false,
+      remainingQty: null,
     };
   }
 
@@ -883,11 +941,18 @@ export async function previewProductOrderQuantity(
     ],
   });
   const money = lineTotalsFromResolution(priced.get(variant.id) ?? null, input.quantity);
+  const ordering = resolveCustomerOrdering({
+    caseQty: variant.caseQty,
+    minimumOrderQty: variant.minOrderQty,
+    sellableQty,
+    orderableByStockPolicy,
+  });
   return {
     ...panel,
     quantity: input.quantity,
     caseCount: validated.caseCount,
-    caseCountLabel: formatCaseCountLabel(validated.caseCount),
+    caseCountLabel:
+      validated.caseCount != null ? formatCaseCountLabel(validated.caseCount) : null,
     unitPriceExVat: money.unitEx,
     unitPriceExVatDisplay: money.unitExDisplay,
     lineNetDisplay: money.lineNetDisplay,
@@ -896,14 +961,21 @@ export async function previewProductOrderQuantity(
       caseQty: variant.caseQty,
       minimumOrderQty: variant.minOrderQty,
       sellableQty,
+      orderableByStockPolicy,
     }),
     canDecrement: canDecrementQuantity({
       currentQuantity: input.quantity,
       caseQty: variant.caseQty,
       minimumOrderQty: variant.minOrderQty,
+      sellableQty,
+      orderableByStockPolicy,
     }),
     canAdd: money.hasPrice,
     insufficientFullCase: false,
+    isFinalPartCase: validated.isFinalPartCase,
+    remainingQty: ordering.remainingSellable,
+    quantityStep: ordering.step,
+    minimumQuantity: ordering.minimumQuantity,
     reason: null,
     orderable: true,
   };
@@ -920,6 +992,7 @@ const emptyOrderingPanel = (reason: string | null = null): ProductOrderingPanel 
   caseTitle: null,
   caseSubtitle: null,
   minimumQuantity: null,
+  quantityStep: null,
   quantity: null,
   caseCount: null,
   caseCountLabel: null,
@@ -930,6 +1003,8 @@ const emptyOrderingPanel = (reason: string | null = null): ProductOrderingPanel 
   canDecrement: false,
   canAdd: false,
   insufficientFullCase: false,
+  isFinalPartCase: false,
+  remainingQty: null,
 });
 
 export type CatalogueOrderingVariantInput = {
@@ -973,7 +1048,7 @@ export async function getCatalogueOrderingPanels(
   const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
   const pricing = pricingInputFromContext(ctx);
 
-  // First pass: classify orderable candidates and collect MOQ quantities for pricing.
+  // First pass: classify orderable candidates and collect default quantities for pricing.
   type Candidate = {
     variant: CatalogueOrderingVariantInput;
     caseQty: number;
@@ -981,13 +1056,15 @@ export async function getCatalogueOrderingPanels(
     copy: { title: string; subtitle: string };
     sellableQty: number;
     quantity: number;
+    ordering: ReturnType<typeof resolveCustomerOrdering>;
+    orderableByStockPolicy: boolean;
   };
   const candidates: Candidate[] = [];
 
   for (const variant of variants) {
-    const copy = publicTradeOrderingCopy(variant.caseQty);
+    const baseCopy = publicTradeOrderingCopy(variant.caseQty);
     const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
-    if (!rules.orderable || !copy) {
+    if (!rules.orderable || !baseCopy) {
       out.set(
         variant.id,
         emptyOrderingPanel("This product is not available for online ordering"),
@@ -997,8 +1074,8 @@ export async function getCatalogueOrderingPanels(
     if (variant.product.status !== "ACTIVE" || !variant.product.isActive || !variant.product.isTradeVisible) {
       out.set(variant.id, {
         ...emptyOrderingPanel("This product is not available for ordering"),
-        caseTitle: copy.title,
-        caseSubtitle: copy.subtitle,
+        caseTitle: baseCopy.title,
+        caseSubtitle: baseCopy.subtitle,
         caseQty: rules.caseQty,
       });
       continue;
@@ -1013,19 +1090,22 @@ export async function getCatalogueOrderingPanels(
           availability: stock.availability,
         })
       : false;
-    const maxQty = maxOrderableQuantity({
+    const ordering = resolveCustomerOrdering({
       caseQty: rules.caseQty,
       minimumOrderQty: rules.minimumOrderQty,
       sellableQty,
+      orderableByStockPolicy,
     });
-    if (!orderableByStockPolicy || maxQty == null) {
+
+    if (ordering.mode === "NOT_ORDERABLE") {
       out.set(variant.id, {
         orderable: false,
         reason: "Insufficient stock for a full case",
         caseQty: rules.caseQty,
-        caseTitle: copy.title,
-        caseSubtitle: copy.subtitle,
+        caseTitle: baseCopy.title,
+        caseSubtitle: baseCopy.subtitle,
         minimumQuantity: rules.minimumOrderQty,
+        quantityStep: rules.increment,
         quantity: rules.minimumOrderQty,
         caseCount: rules.minimumOrderQty / rules.caseQty,
         caseCountLabel: formatCaseCountLabel(rules.minimumOrderQty / rules.caseQty),
@@ -1036,21 +1116,30 @@ export async function getCatalogueOrderingPanels(
         canDecrement: false,
         canAdd: false,
         insufficientFullCase: true,
+        isFinalPartCase: false,
+        remainingQty: null,
       });
       continue;
     }
 
+    const copy =
+      ordering.mode === "FINAL_PART_CASE"
+        ? finalPartCaseOrderingCopy(rules.caseQty)
+        : baseCopy;
+
     candidates.push({
       variant,
       caseQty: rules.caseQty,
-      minimumOrderQty: rules.minimumOrderQty,
+      minimumOrderQty: ordering.minimumQuantity!,
       copy,
       sellableQty,
-      quantity: rules.minimumOrderQty,
+      quantity: ordering.defaultQuantity!,
+      ordering,
+      orderableByStockPolicy,
     });
   }
 
-  // Group candidates by MOQ quantity so QuantityBreak re-resolution stays correct
+  // Group candidates by default quantity so QuantityBreak re-resolution stays correct
   // without one pricing call per row. Most catalogue pages share a small set of MOQs.
   const byQty = new Map<number, Candidate[]>();
   for (const candidate of candidates) {
@@ -1083,28 +1172,40 @@ export async function getCatalogueOrderingPanels(
         });
         continue;
       }
+      const caseCount =
+        candidate.ordering.mode === "CASE" ? quantity / candidate.caseQty : null;
       out.set(candidate.variant.id, {
         orderable: true,
         reason: null,
         caseQty: candidate.caseQty,
         caseTitle: candidate.copy.title,
         caseSubtitle: candidate.copy.subtitle,
-        minimumQuantity: candidate.minimumOrderQty,
+        minimumQuantity: candidate.ordering.minimumQuantity,
+        quantityStep: candidate.ordering.step,
         quantity,
-        caseCount: quantity / candidate.caseQty,
-        caseCountLabel: formatCaseCountLabel(quantity / candidate.caseQty),
+        caseCount,
+        caseCountLabel: caseCount != null ? formatCaseCountLabel(caseCount) : null,
         unitPriceExVat: money.unitEx,
         unitPriceExVatDisplay: money.unitExDisplay,
         lineNetDisplay: money.lineNetDisplay,
         canIncrement: canIncrementQuantity({
           currentQuantity: quantity,
           caseQty: candidate.caseQty,
-          minimumOrderQty: candidate.minimumOrderQty,
+          minimumOrderQty: candidate.variant.minOrderQty,
           sellableQty: candidate.sellableQty,
+          orderableByStockPolicy: candidate.orderableByStockPolicy,
         }),
-        canDecrement: false,
+        canDecrement: canDecrementQuantity({
+          currentQuantity: quantity,
+          caseQty: candidate.caseQty,
+          minimumOrderQty: candidate.variant.minOrderQty,
+          sellableQty: candidate.sellableQty,
+          orderableByStockPolicy: candidate.orderableByStockPolicy,
+        }),
         canAdd: true,
         insufficientFullCase: false,
+        isFinalPartCase: candidate.ordering.isFinalPartCase,
+        remainingQty: candidate.ordering.remainingSellable,
       });
     }
   }

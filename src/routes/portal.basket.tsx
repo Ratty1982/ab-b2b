@@ -150,10 +150,14 @@ function BasketPage() {
                         type="button"
                         className="inline-grid size-9 place-items-center rounded-md border border-border disabled:opacity-40"
                         aria-label="Decrease quantity"
-                        disabled={busyId === line.id || !line.canDecrement || line.caseQty == null}
+                        disabled={
+                          busyId === line.id ||
+                          !line.canDecrement ||
+                          line.quantityStep == null
+                        }
                         onClick={() => {
-                          if (line.caseQty == null) return;
-                          void changeQty(line.id, line.quantity - line.caseQty);
+                          if (line.quantityStep == null) return;
+                          void changeQty(line.id, line.quantity - line.quantityStep);
                         }}
                       >
                         <Minus className="size-3.5" aria-hidden />
@@ -163,10 +167,14 @@ function BasketPage() {
                         type="button"
                         className="inline-grid size-9 place-items-center rounded-md border border-border disabled:opacity-40"
                         aria-label="Increase quantity"
-                        disabled={busyId === line.id || !line.canIncrement || line.caseQty == null}
+                        disabled={
+                          busyId === line.id ||
+                          !line.canIncrement ||
+                          line.quantityStep == null
+                        }
                         onClick={() => {
-                          if (line.caseQty == null) return;
-                          void changeQty(line.id, line.quantity + line.caseQty);
+                          if (line.quantityStep == null) return;
+                          void changeQty(line.id, line.quantity + line.quantityStep);
                         }}
                       >
                         <Plus className="size-3.5" aria-hidden />
@@ -185,6 +193,10 @@ function BasketPage() {
                     {line.caseCountLabel ? (
                       <p className="mt-1 text-[12px] text-steel">
                         {line.caseCountLabel} · {line.quantity} units
+                      </p>
+                    ) : line.isFinalPartCase ? (
+                      <p className="mt-1 text-[12px] text-amber-800 dark:text-amber-200">
+                        {line.quantity === 1 ? "1 unit" : `${line.quantity} units`} · final stock
                       </p>
                     ) : null}
                   </div>

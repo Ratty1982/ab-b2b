@@ -27,7 +27,9 @@ The server resolves:
 - Phase 4 trade price (including quantity breaks / promotions / VAT)
 - line and basket money totals
 
-## caseQty
+Never trust client quantity, client stock, client mode, or client price.
+
+## NORMAL CASE ORDERING
 
 `ProductVariant.caseQty` is the customer order multiple. Missing / zero /
 invalid → not orderable online. Do **not** invent `caseQty = 1`.
@@ -35,7 +37,62 @@ invalid → not orderable online. Do **not** invent `caseQty = 1`.
 `orderIncrement` remains internal catalogue data and does not override case
 ordering.
 
-## MOQ
+When sellable stock is **at least one complete case** (`sellable ≥ caseQty`):
+
+| caseQty | sellable | Valid quantities |
+| --- | --- | --- |
+| 12 | 37 | 12, 24, 36 |
+| 12 | 17 | **12 only** (not 13–17) |
+| 12 | 12 | 12 |
+
+Part-case quantities are **not** allowed while a full case remains.
+
+## FINAL PART-CASE STOCK EXCEPTION
+
+When:
+
+```text
+0 < current sellable stock < caseQty
+```
+
+and Phase 5 stock policy considers the stock safe to order (not stale-hidden),
+the customer may order the **remaining units as a final part case**:
+
+| caseQty | sellable | Valid quantities |
+| --- | --- | --- |
+| 12 | 11 | 1–11 |
+| 12 | 7 | 1–7 |
+| 12 | 1 | 1 |
+| 12 | 0 | not orderable |
+
+- Step = **1** (individual units). Do **not** use `orderIncrement`.
+- Default quantity = **all remaining stock**.
+- Domain mode: `FINAL_PART_CASE` via `resolveCustomerOrdering` in
+  `src/domain/ordering.ts` (shared by PDP, catalogue list, basket, admin trade
+  test).
+
+### MOQ override
+
+Final-part-case **overrides MOQ** where necessary. Example: caseQty 12,
+minOrderQty 24, sellable 7 → allow 1–7. Otherwise MOQ would make the exception
+useless. Normal case/MOQ rules apply again once sellable ≥ caseQty.
+
+### Stock privacy
+
+Exact Avail must not normally leave the server.
+
+Exception: authenticated, order-eligible trade (or admin trade-test) actors
+may receive `remainingQty` **only** in `FINAL_PART_CASE` mode.
+
+Anonymous users continue to see only In / Low / Out bands and must **never**
+receive exact remaining quantity in HTML/JSON/API responses.
+
+### Stale stock
+
+If positive stock is stale and Phase 5 policy withholds it, final-part-case
+is **not** enabled.
+
+## MOQ (normal case mode)
 
 `getMinimumOrderQuantity` / `minimumCustomerOrderQuantity` returns the
 smallest valid **case multiple** that satisfies `minOrderQty`.
@@ -46,7 +103,8 @@ Example: case 12 + MOQ 20 → minimum **24**.
 
 Uses Phase 5 `loadStockByVariantIds` / `getSellableQuantity`.
 
-- Exact Avail never leaves the server in customer DTOs
+- Exact Avail never leaves the server in customer DTOs except final-part-case
+  `remainingQty` for eligible actors
 - Public bands remain IN / LOW / OUT
 - Stale positive stock follows Phase 5 policy (not orderable)
 - Basket lines are **not** inventory reservations — `qtyOnHand` /
@@ -56,19 +114,28 @@ Uses Phase 5 `loadStockByVariantIds` / `getSellableQuantity`.
 
 Reuses `resolveVariantTradePrices` / `resolveTradePriceFromFacts`.
 
-Quantity changes re-resolve prices (quantity breaks). Money uses
-`src/domain/money.ts` scaled integers (4dp internal, 2dp display).
+Quantity changes re-resolve prices (quantity breaks) at the **actual**
+requested quantity — a final stock order of 7 does **not** receive a 12-unit
+break simply because caseQty is 12.
 
-## PDP
+Customer sell unit price: commercial resolution → 2dp sell unit
+(`toCustomerSellUnitPrice`) → × quantity. Money uses `src/domain/money.ts`.
 
-Trade Ordering stays under **How to use** (left column). Controls enhance
-that card — they do not move to the hero and do not redesign Product Details.
+## PDP / catalogue
+
+Trade Ordering (PDP) and catalogue list quick order share the same panel
+engine (`getProductOrderingPanel` / `getCatalogueOrderingPanels`).
+
+**Normal mode:** case stepper, default = minimum case quantity.
+
+**Final stock mode:** amber FINAL STOCK callout with exact remaining,
+unit stepper 1…N, default = N.
 
 ## Basket UI
 
 - Route: `/portal/basket`
 - Nav: portal **Basket** + header badge with **line count**
-- Empty state, quantity ± by case, remove, live totals
+- Empty state, quantity ± by `quantityStep` (case or 1), remove, live totals
 
 ## Revalidation
 
@@ -77,13 +144,16 @@ On every basket load, lines are assessed:
 | Issue | Meaning |
 | --- | --- |
 | `VALID` | OK |
-| `QUANTITY_UNAVAILABLE` | Stock no longer covers quantity |
-| `INSUFFICIENT_FULL_CASE` | Below one full case |
-| `CASE_CONFIGURATION_CHANGED` | caseQty / MOQ no longer fits quantity |
+| `QUANTITY_UNAVAILABLE` | Stock no longer covers quantity (e.g. final 7 → stock 5) |
+| `INSUFFICIENT_FULL_CASE` | No orderable quantity under current rules |
+| `CASE_CONFIGURATION_CHANGED` | caseQty / MOQ no longer fits quantity (e.g. part-case line after stock replenishes into normal case mode) |
 | `PRODUCT_UNAVAILABLE` | Inactive / not trade-visible |
 | `PRICE_UNAVAILABLE` | No resolvable trade price |
 
-Lines are **not** silently deleted.
+Lines are **not** silently deleted or quantity-mutated.
+
+Duplicate add merges qty then re-validates against sellable (5 + 2 = 7 OK;
+5 + 3 = 8 rejected when sellable is 7).
 
 ## Public session consistency (Phase 6A fix)
 
@@ -138,6 +208,8 @@ and portal**.
 18. Return to public catalogue — still authenticated.
 19. Logout.
 20. Confirm anonymous header returns (no Basket).
+21. With sellable below one case: confirm FINAL STOCK controls and remaining qty
+    for signed-in trade; anonymous still sees only stock bands.
 
 ## Phase 6B boundary
 
@@ -148,6 +220,9 @@ Not in 6A:
 - Autopart order file / email / API
 - inventory reservation
 - Quick Order bulk add backend
+
+Phase 6B checkout **must** honour the same `resolveCustomerOrdering` /
+`validateOrderQuantity` rules (including FINAL PART-CASE STOCK EXCEPTION).
 
 ### Customer sell-price snapshot (required for 6B)
 

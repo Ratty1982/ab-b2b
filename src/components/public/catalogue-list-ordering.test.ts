@@ -54,6 +54,7 @@ const orderableCase: ProductOrderingPanel = {
   caseTitle: "Case of 12",
   caseSubtitle: "Sold in multiples of 12",
   minimumQuantity: 12,
+  quantityStep: 12,
   quantity: 12,
   caseCount: 1,
   caseCountLabel: "1 case",
@@ -64,6 +65,8 @@ const orderableCase: ProductOrderingPanel = {
   canDecrement: false,
   canAdd: true,
   insufficientFullCase: false,
+  isFinalPartCase: false,
+  remainingQty: null,
 };
 
 const orderableSingle: ProductOrderingPanel = {
@@ -72,6 +75,7 @@ const orderableSingle: ProductOrderingPanel = {
   caseTitle: "Single unit",
   caseSubtitle: "Sold individually",
   minimumQuantity: 1,
+  quantityStep: 1,
   quantity: 1,
   caseCount: 1,
   caseCountLabel: "1 case",
@@ -172,6 +176,8 @@ describe("catalogue list quick ordering presentation", () => {
           orderable: false,
           canAdd: false,
           insufficientFullCase: true,
+          isFinalPartCase: false,
+          remainingQty: null,
           reason: "Insufficient stock for a full case",
         },
       }),
@@ -179,6 +185,36 @@ describe("catalogue list quick ordering presentation", () => {
     expect(markup).toContain("Insufficient stock for full case");
     expect(markup).not.toMatch(/\b7\b/);
     expect(markup).not.toContain('data-catalogue-order-action="add"');
+  });
+
+  it("shows final-part-case controls with remaining stock hint", () => {
+    const markup = html(
+      createElement(CatalogueListQuickOrder, {
+        variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+        productName: "Final stock",
+        availability: "low",
+        initialPanel: {
+          ...orderableCase,
+          orderable: true,
+          canAdd: true,
+          canDecrement: true,
+          canIncrement: false,
+          quantity: 7,
+          minimumQuantity: 1,
+          quantityStep: 1,
+          caseCount: null,
+          caseCountLabel: null,
+          caseSubtitle: "Normally sold in multiples of 12",
+          isFinalPartCase: true,
+          remainingQty: 7,
+          lineNetDisplay: "25.83",
+        },
+      }),
+    );
+    expect(markup).toContain("Final stock · 7 left");
+    expect(markup).toContain('data-catalogue-order-mode="final-part-case"');
+    expect(markup).toContain('data-catalogue-order-action="add"');
+    expect(markup).toContain(">7<");
   });
 
   it("blocks Add when trade price is unavailable", () => {

@@ -104,6 +104,7 @@ const orderablePanel = {
   caseTitle: "Case of 12",
   caseSubtitle: "Sold in multiples of 12",
   minimumQuantity: 12,
+  quantityStep: 12,
   quantity: 12,
   caseCount: 1,
   caseCountLabel: "1 case",
@@ -114,6 +115,8 @@ const orderablePanel = {
   canDecrement: false,
   canAdd: true,
   insufficientFullCase: false,
+  isFinalPartCase: false,
+  remainingQty: null,
 } as const;
 
 function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
@@ -413,6 +416,7 @@ describe("public trade session chrome", () => {
           caseTitle: "Case of 12",
           caseSubtitle: "Sold in multiples of 12",
           minimumQuantity: 12,
+          quantityStep: 12,
           quantity: 12,
           caseCount: 1,
           caseCountLabel: "1 case",
@@ -422,6 +426,8 @@ describe("public trade session chrome", () => {
           canDecrement: false,
           canAdd: false,
           insufficientFullCase: true,
+          isFinalPartCase: false,
+          remainingQty: null,
         },
       }),
     );
@@ -432,6 +438,45 @@ describe("public trade session chrome", () => {
     expect(header).toContain("Trade Portal");
     expect(header).toContain("Basket");
     expect(header).not.toContain("Trade Login");
+  });
+
+  it("authenticated final-part-case mode shows FINAL STOCK and unit stepper", () => {
+    sessionState.current = tradeSession;
+    const markup = html(
+      createElement(ProductTradeOrdering, {
+        caseQty: 12,
+        variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
+        initialPanel: {
+          orderable: true,
+          reason: null,
+          caseQty: 12,
+          caseTitle: "Case of 12",
+          caseSubtitle: "Normally sold in multiples of 12",
+          minimumQuantity: 1,
+          quantityStep: 1,
+          quantity: 7,
+          caseCount: null,
+          caseCountLabel: null,
+          unitPriceExVat: "3.6900",
+          unitPriceExVatDisplay: "3.69",
+          lineNetDisplay: "25.83",
+          canIncrement: false,
+          canDecrement: true,
+          canAdd: true,
+          insufficientFullCase: false,
+          isFinalPartCase: true,
+          remainingQty: 7,
+        },
+      }),
+    );
+    expect(markup).toContain("Final stock");
+    expect(markup).toContain("Only 7 remaining");
+    expect(markup).toContain("Final stock can be ordered as individual units");
+    expect(markup).toContain("Normally sold in multiples of 12");
+    expect(markup).toContain("7 units");
+    expect(markup).toContain('data-ordering-mode="final-part-case"');
+    expect(markup).toMatch(/Add to basket/i);
+    expect(markup).not.toContain("Insufficient stock for a full case");
   });
 
   it("basket badge listens for basket-updated events", () => {
@@ -472,6 +517,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
     caseTitle: "Single unit",
     caseSubtitle: "Sold individually",
     minimumQuantity: 1,
+    quantityStep: 1,
     quantity: 1,
     caseCount: 1,
     caseCountLabel: "1 unit",
@@ -482,6 +528,8 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
     canDecrement: false,
     canAdd: true,
     insufficientFullCase: false,
+    isFinalPartCase: false,
+    remainingQty: null,
   } as const;
 
   it("admin without trade test level is NOT told to Sign in or select a customer", () => {
@@ -498,6 +546,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
           caseTitle: "Single unit",
           caseSubtitle: "Sold individually",
           minimumQuantity: null,
+          quantityStep: null,
           quantity: null,
           caseCount: null,
           caseCountLabel: null,
@@ -507,6 +556,8 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
           canDecrement: false,
           canAdd: false,
           insufficientFullCase: false,
+          isFinalPartCase: false,
+          remainingQty: null,
         },
       }),
     );
