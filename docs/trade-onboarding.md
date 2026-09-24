@@ -14,7 +14,7 @@ It builds on existing `TradeApplication`, `Company`, `CompanyUser`, `User`, Bett
 | --- | --- |
 | `SUBMITTED` | Application received from `/register` |
 | `UNDER_REVIEW` | Staff opened / flagged for review |
-| `MORE_INFO_REQUIRED` | Staff asked the applicant for more information (customer-facing message stored; email deferred until outbound mail is configured) |
+| `MORE_INFO_REQUIRED` | Staff asked the applicant for more information (customer-facing message stored; emailed via Admin SMTP when delivery is enabled) |
 | `APPROVED` | Company + invite created; applicant must activate |
 | `REJECTED` | Closed without trade access |
 | `DRAFT` / `WITHDRAWN` | Reserved; not used by public submit today |
@@ -115,16 +115,18 @@ No temporary passwords are emailed. When outbound email is configured, send the 
 
 ---
 
-## Email capability / gap
+## Email
 
-| Event | Behaviour today |
+| Event | Behaviour |
 | --- | --- |
-| Application submitted | Audit only |
-| More info / reject messages | Stored; **not sent** |
-| Activation invite | Token shown to staff; **emailDeferred** |
-| Password reset | Better Auth path; depends on email adapter |
+| Application submitted | Customer acknowledgement + internal notification (Admin recipients) |
+| More info / reject | Customer email using stored `customerMessage` |
+| Activation invite | Approval email includes `/activate?token=` from the existing invitation |
+| Account activated | Welcome / portal confirmation |
+| Password reset | Better Auth path via the same transport |
 
-Dev/test may log mail via the email adapter. Production without a provider fails closed for transactional mail.
+Configure SMTP in **Admin → Settings → Email**. See `docs/transactional-email.md`.
+When delivery is disabled, outbox rows are `DEFERRED` and `emailDeferred` remains true until send succeeds.
 
 ---
 
@@ -147,14 +149,3 @@ After approval, staff continue commercial management on the Customer record:
 - Invites  
 
 Do not duplicate that surface inside Trade Applications.
-
----
-
-## Future email work
-
-When a provider is attached:
-
-1. Send activation link on approve  
-2. Optionally notify on more-info / rejection using stored `customerMessage`  
-3. Keep `emailDeferred` false only when send succeeds  
-4. Preserve hashed invite tokens and activation route

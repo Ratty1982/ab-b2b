@@ -150,9 +150,10 @@ beforeAll(async () => {
   adminId = await ensureUser("reserve.admin@example.invalid", ["SUPER_ADMIN"]);
 });
 
-afterEach(() => {
+afterEach(async () => {
   setEmailAdapterForTests(null);
   delete process.env["TRADE_ORDER_NOTIFICATION_EMAIL"];
+  await prisma.emailSettings.updateMany({ data: { enabled: false } });
 });
 
 afterAll(async () => {
@@ -386,7 +387,23 @@ describe("Phase 6B stock reservations", () => {
 });
 
 describe("Phase 6B order emails", () => {
+  async function enableTransactionalEmail() {
+    await prisma.emailSettings.upsert({
+      where: { id: "singleton" },
+      create: {
+        id: "singleton",
+        enabled: true,
+        fromEmail: "from@example.invalid",
+        smtpHost: "smtp.example.invalid",
+        smtpUsername: "u",
+        smtpPasswordEncrypted: "v1:dGVzdA==:dGVzdA==:dGVzdA==",
+      },
+      update: { enabled: true },
+    });
+  }
+
   it("creates ORDER_RECEIVED; failure does not rollback; retry uses snapshot; double place one email", async () => {
+    await enableTransactionalEmail();
     const { sku, variant } = await seedOrderableVariant("RSVEM", {
       trade: 3.25,
       caseQty: 4,
@@ -466,6 +483,7 @@ describe("Phase 6B order emails", () => {
   });
 
   it("creates internal email when TRADE_ORDER_NOTIFICATION_EMAIL is set", async () => {
+    await enableTransactionalEmail();
     process.env["TRADE_ORDER_NOTIFICATION_EMAIL"] = "ops@example.invalid";
     setEmailAdapterForTests({
       name: "test-ok",
@@ -491,7 +509,9 @@ describe("Phase 6B order emails", () => {
     if (!result.ok) return;
 
     const internal = await prisma.transactionalEmail.findUnique({
-      where: { idempotencyKey: `ORDER_RECEIVED_INTERNAL:${result.order.id}` },
+      where: {
+        idempotencyKey: `ORDER_RECEIVED_INTERNAL:${result.order.id}:ops@example.invalid`,
+      },
     });
     expect(internal).toBeTruthy();
     expect(internal!.toEmail).toBe("ops@example.invalid");

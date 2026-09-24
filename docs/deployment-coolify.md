@@ -29,6 +29,10 @@ runs migrate, remove it to avoid double-running (harmless but redundant).
 | `APP_URL` | Yes | `https://b2b.automotivebrands.co.uk` |
 | `NODE_ENV` | Yes | `production` |
 
+Outbound SMTP is **not** configured via Coolify. Use **Admin → Settings → Email**
+(SiteGround host/port/user/password). `AUTH_SECRET` encrypts the stored SMTP password.
+Do not set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, or `SMTP_PASSWORD`.
+
 ## Optional one-time initial administrator
 
 | Variable | Required together | Notes |

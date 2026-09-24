@@ -161,7 +161,7 @@ export function buildOrderReceivedInternalBodies(order: OrderEmailSnapshot): {
   text: string;
   html: string;
 } {
-  const subject = `Order received ${order.orderNumber} — ${order.companyName}`;
+  const subject = `New B2B order ${order.orderNumber} — ${order.companyName}`;
   const salesRep =
     order.salesRepNameSnapshot || order.salesRepCodeSnapshot
       ? `${order.salesRepNameSnapshot ?? "—"}${order.salesRepCodeSnapshot ? ` (${order.salesRepCodeSnapshot})` : ""}`

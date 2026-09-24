@@ -1740,4 +1740,65 @@ export const retryTransactionalEmailFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getEmailSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const settings = await import("@/server/email/settings");
+    return { ok: true as const, data: await settings.getEmailSettingsForActor(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const saveEmailSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const settings = await import("@/server/email/settings");
+      return { ok: true as const, data: await settings.updateEmailSettings(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const testSmtpConnectionFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const settings = await import("@/server/email/settings");
+    return { ok: true as const, data: await settings.testSmtpConnection(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const sendTestEmailFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { toEmail: string; toName?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const settings = await import("@/server/email/settings");
+      return { ok: true as const, data: await settings.sendTestEmail(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listTransactionalEmailsFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) => data as { status?: string; purpose?: string; limit?: number } | undefined,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const email = await import("@/server/email/transactional");
+      return {
+        ok: true as const,
+        data: await email.listTransactionalEmails(userId, data ?? {}),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

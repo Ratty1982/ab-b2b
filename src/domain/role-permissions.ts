@@ -43,6 +43,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "credit.view",
   "audit.view",
   "settings.view",
+  "settings.edit",
 ];
 
 const SALES_MANAGER_PERMS: PermissionKey[] = [

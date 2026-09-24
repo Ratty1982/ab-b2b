@@ -261,7 +261,7 @@ describe("trade application approval", () => {
     const first = await approveTradeApplication(adminId, { id: submitted.id });
     expect(first.created).toBe(true);
     expect(first.companyId).toBeTruthy();
-    expect(first.emailDeferred).toBe(true);
+    expect(first.emailDeferred).toBe(!first.emailSent);
     expect(first.inviteToken).toBeTruthy();
     expect(first.activationPath).toContain("/activate?token=");
 

@@ -180,6 +180,20 @@ enum StockReservationStatus {
 enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
+  TRADE_APPLICATION_RECEIVED
+  TRADE_APPLICATION_INTERNAL_NOTIFICATION
+  TRADE_APPLICATION_MORE_INFO
+  TRADE_APPLICATION_APPROVED
+  TRADE_APPLICATION_REJECTED
+  TRADE_ACCOUNT_ACTIVATED
+  EMAIL_TEST
+}
+
+/// SMTP security mode for outbound transactional email (Admin → Settings → Email).
+enum SmtpSecurity {
+  SSL_TLS
+  STARTTLS
+  NONE
 }
 
 enum TransactionalEmailStatus {
@@ -980,6 +994,35 @@ model StockScheduleWindow {
 
   @@index([businessDate])
   @@index([status])
+}
+
+/// Outbound transactional email settings (Admin → Settings → Email).
+/// SMTP password is write-only: stored AES-256-GCM encrypted; never returned to clients.
+model EmailSettings {
+  id                           String       @id @default("singleton")
+  enabled                      Boolean      @default(false)
+  smtpHost                     String?
+  smtpPort                     Int          @default(465)
+  smtpSecurity                 SmtpSecurity @default(SSL_TLS)
+  smtpUsername                 String?
+  smtpPasswordEncrypted        String?
+  fromName                     String?
+  fromEmail                    String?
+  replyToName                  String?
+  replyToEmail                 String?
+  /// JSON string array of email addresses for new trade application alerts.
+  tradeApplicationRecipients   Json         @default("[]")
+  /// JSON string array of email addresses for new B2B order alerts.
+  orderNotificationRecipients  Json         @default("[]")
+  lastConnectionTestAt         DateTime?
+  lastConnectionTestOk         Boolean?
+  lastConnectionTestError      String?
+  lastTestEmailAt              DateTime?
+  lastTestEmailOk              Boolean?
+  lastTestEmailError           String?
+  updatedByUserId              String?
+  updatedAt                    DateTime     @updatedAt
+  createdAt                    DateTime     @default(now())
 }
 
 /// Operational IMAP settings. Password is write-only (encrypted or env-backed).

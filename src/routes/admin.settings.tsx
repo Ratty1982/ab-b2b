@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
 import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
 
@@ -13,10 +14,10 @@ export const Route = createFileRoute("/admin/settings")({
       {
         name: "description",
         content:
-          "Trading, ordering, delivery, credit and notification settings for the Automotive Brands trade platform.",
+          "Trading, ordering, delivery, credit, email and notification settings for the Automotive Brands trade platform.",
       },
       { property: "og:title", content: "Platform Settings — Automotive Brands Admin" },
-      { property: "og:description", content: "Trading, ordering and notification defaults." },
+      { property: "og:description", content: "Trading, ordering, email and notification defaults." },
     ],
   }),
   component: AdminSettings,
@@ -161,10 +162,12 @@ function TradeTestingPanel() {
 function AdminSettings() {
   return (
     <div>
-      <PanelHeader title="Settings" sub="Trading defaults, ordering rules and notifications" />
+      <PanelHeader title="Settings" sub="Trading defaults, ordering rules, email and notifications" />
 
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <TradeTestingPanel />
+
+        <EmailSettingsPanel />
 
         <section className="space-y-4">
           <h2 className="font-display text-lg font-semibold uppercase">Trading</h2>
@@ -231,7 +234,6 @@ function AdminSettings() {
             {[
               ["Email account manager when a customer places an order", true],
               ["Email accounts team when an order exceeds credit", true],
-              ["Email sales manager on new trade applications", true],
               ["Notify representative when a quote is viewed", true],
               ["Weekly at-risk customer digest", false],
             ].map(([label, on]) => (
@@ -249,6 +251,10 @@ function AdminSettings() {
               </li>
             ))}
           </ul>
+          <p className="text-[12px] text-steel">
+            Trade application and new B2B order alert recipients are configured in the Email section
+            above.
+          </p>
         </section>
       </div>
     </div>

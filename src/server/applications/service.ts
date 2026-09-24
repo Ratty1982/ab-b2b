@@ -297,6 +297,14 @@ export async function submitTradeApplication(raw: unknown, meta?: { ip?: string 
     },
   });
 
+  // Email is secondary — never roll back application create on SMTP failure.
+  try {
+    const { sendTradeApplicationEmailsAfterSubmit } = await import("@/server/email/transactional");
+    await sendTradeApplicationEmailsAfterSubmit(app.id);
+  } catch {
+    /* recorded as FAILED/DEFERRED in outbox when possible */
+  }
+
   return { id: app.id, reference: app.reference, duplicate: false as const };
 }
 
@@ -508,16 +516,23 @@ export async function requestApplicationMoreInfo(actorUserId: string, raw: unkno
     actorUserId,
     after: {
       customerMessage: input.customerMessage,
-      emailDeferred: true,
     },
   });
+
+  let emailSent = false;
+  try {
+    const { sendTradeApplicationMoreInfoEmail } = await import("@/server/email/transactional");
+    emailSent = await sendTradeApplicationMoreInfoEmail(updated.id);
+  } catch {
+    emailSent = false;
+  }
 
   return {
     id: updated.id,
     status: updated.status,
     customerMessage: updated.customerMessage,
-    emailDeferred: true as const,
-    emailSent: false as const,
+    emailDeferred: !emailSent,
+    emailSent,
   };
 }
 
@@ -551,7 +566,7 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       created: false as const,
       inviteToken: null as string | null,
       activationPath: null as string | null,
-      emailDeferred: true,
+      emailDeferred: false,
       emailSent: false,
     };
   }
@@ -744,6 +759,18 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     };
   });
 
+  const activationPath = result.inviteToken
+    ? `/activate?token=${encodeURIComponent(result.inviteToken)}`
+    : null;
+
+  let emailSent = false;
+  try {
+    const { sendTradeApplicationApprovedEmail } = await import("@/server/email/transactional");
+    emailSent = await sendTradeApplicationApprovedEmail(input.id, activationPath);
+  } catch {
+    emailSent = false;
+  }
+
   await recordAuditEvent({
     action: "application.approved",
     entityType: "TradeApplication",
@@ -756,7 +783,7 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       priceListId: input.priceListId ?? null,
       salesRepId: input.salesRepId ?? null,
       activationInitiated: Boolean(result.inviteToken),
-      emailDeferred: true,
+      emailSent,
     },
   });
 
@@ -767,7 +794,7 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       entityId: input.id,
       actorUserId,
       companyId: result.companyId,
-      metadata: { emailDeferred: true, userId: result.userId },
+      metadata: { emailSent, userId: result.userId },
     });
   }
 
@@ -776,9 +803,9 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     companyId: result.companyId,
     created: result.created,
     inviteToken: result.inviteToken,
-    activationPath: result.inviteToken ? `/activate?token=${encodeURIComponent(result.inviteToken)}` : null,
-    emailDeferred: true,
-    emailSent: false,
+    activationPath,
+    emailDeferred: !emailSent,
+    emailSent,
   };
 }
 
@@ -806,6 +833,14 @@ export async function rejectTradeApplication(actorUserId: string, raw: unknown) 
     },
   });
 
+  let emailSent = false;
+  try {
+    const { sendTradeApplicationRejectedEmail } = await import("@/server/email/transactional");
+    emailSent = await sendTradeApplicationRejectedEmail(updated.id);
+  } catch {
+    emailSent = false;
+  }
+
   await recordAuditEvent({
     action: "application.rejected",
     entityType: "TradeApplication",
@@ -814,11 +849,17 @@ export async function rejectTradeApplication(actorUserId: string, raw: unknown) 
     after: {
       reviewNotes: input.reviewNotes,
       customerMessage: input.customerMessage ?? null,
-      emailDeferred: true,
+      emailSent,
     },
   });
 
-  return { id: updated.id, status: updated.status, already: false as const, emailDeferred: true };
+  return {
+    id: updated.id,
+    status: updated.status,
+    already: false as const,
+    emailDeferred: !emailSent,
+    emailSent,
+  };
 }
 
 /**
@@ -1067,6 +1108,23 @@ export async function acceptTradeInvitation(raw: unknown) {
     targetUserId: result.userId,
     metadata: { email: result.email },
   });
+
+  try {
+    const company = await prisma.company.findUnique({
+      where: { id: result.companyId },
+      select: { name: true },
+    });
+    const { sendTradeAccountActivatedEmail } = await import("@/server/email/transactional");
+    await sendTradeAccountActivatedEmail({
+      userId: result.userId,
+      companyId: result.companyId,
+      contactEmail: result.email,
+      contactName: result.email,
+      companyName: company?.name ?? "your company",
+    });
+  } catch {
+    /* email failure must not roll back activation */
+  }
 
   return {
     userId: result.userId,

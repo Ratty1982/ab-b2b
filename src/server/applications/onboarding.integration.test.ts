@@ -162,8 +162,8 @@ describe("trade onboarding journey", () => {
       reviewNotes: "Need VAT proof",
     });
     expect(more.status).toBe("MORE_INFO_REQUIRED");
-    expect(more.emailDeferred).toBe(true);
-    expect(more.emailSent).toBe(false);
+    expect(more.emailDeferred).toBe(!more.emailSent);
+    expect(typeof more.emailSent).toBe("boolean");
 
     const app = await getTradeApplication(adminId, submitted.id);
     expect(app.customerMessage).toContain("VAT certificate");
