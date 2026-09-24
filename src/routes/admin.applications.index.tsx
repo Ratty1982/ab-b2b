@@ -3,10 +3,18 @@ import { useEffect, useState } from "react";
 import { PanelHeader, Metric } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { InstantText } from "@/components/ab/InstantText";
+import {
+  BUSINESS_TYPES,
+  ESTIMATED_SPEND_RANGES,
+  EXISTING_ACCOUNT_CLAIMS,
+  HOW_HEARD_OPTIONS,
+} from "@/domain/trade-application";
 import { ROUTES } from "@/lib/app-nav";
 import {
   approveTradeApplicationFn,
+  deleteTradeApplicationFn,
   getTradeApplicationFn,
   listPriceListsFn,
   listSalesRepsFn,
@@ -14,6 +22,8 @@ import {
   markTradeApplicationUnderReviewFn,
   rejectTradeApplicationFn,
   requestTradeApplicationMoreInfoFn,
+  updateTradeApplicationDetailsFn,
+  withdrawTradeApplicationFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -32,7 +42,11 @@ const filters = [
   "MORE_INFO_REQUIRED",
   "APPROVED",
   "REJECTED",
+  "WITHDRAWN",
 ] as const;
+
+const actionBtn =
+  "h-10 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:cursor-not-allowed disabled:opacity-40";
 
 type Row = {
   id: string;
@@ -101,6 +115,66 @@ type Detail = {
   consentAcceptedAt?: string | null;
 };
 
+type EditForm = {
+  companyName: string;
+  tradingName: string;
+  companyNumber: string;
+  vatNumber: string;
+  businessType: string;
+  businessTypeOther: string;
+  website: string;
+  line1: string;
+  line2: string;
+  town: string;
+  county: string;
+  postcode: string;
+  country: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  email: string;
+  phone: string;
+  existingAccountClaim: string;
+  claimedAutopartCustomerCode: string;
+  estimatedSpend: string;
+  howHeardAboutUs: string;
+  brandsInterest: string;
+  notes: string;
+};
+
+function detailToEditForm(detail: Detail): EditForm {
+  const storedType = detail.businessType ?? "Motor Factor";
+  const otherMatch = storedType.match(/^Other\s*[—-]\s*(.+)$/i);
+  return {
+    companyName: detail.companyName ?? "",
+    tradingName: detail.tradingName ?? "",
+    companyNumber: detail.companyNumber ?? "",
+    vatNumber: detail.vatNumber ?? "",
+    businessType: otherMatch ? "Other" : (BUSINESS_TYPES as readonly string[]).includes(storedType)
+      ? storedType
+      : "Other",
+    businessTypeOther: otherMatch?.[1] ?? (otherMatch ? "" : storedType.startsWith("Other") ? "" : ""),
+    website: detail.website ?? "",
+    line1: detail.tradingAddress?.line1 ?? "",
+    line2: detail.tradingAddress?.line2 ?? "",
+    town: detail.tradingAddress?.town ?? "",
+    county: detail.tradingAddress?.county ?? "",
+    postcode: detail.tradingAddress?.postcode ?? "",
+    country: detail.tradingAddress?.country ?? "GB",
+    firstName: detail.primaryContact?.firstName ?? "",
+    lastName: detail.primaryContact?.lastName ?? "",
+    role: detail.primaryContact?.role ?? "",
+    email: detail.primaryContact?.email ?? "",
+    phone: detail.primaryContact?.phone ?? "",
+    existingAccountClaim: detail.existingAccountClaim ?? "no",
+    claimedAutopartCustomerCode: detail.claimedAutopartCustomerCode ?? "",
+    estimatedSpend: detail.estimatedSpend ?? "",
+    howHeardAboutUs: detail.howHeardAboutUs ?? "",
+    brandsInterest: (detail.brandsInterest ?? []).join(", "),
+    notes: detail.notes ?? "",
+  };
+}
+
 function ApplicationsPage() {
   const [filter, setFilter] = useState<(typeof filters)[number]>("ALL");
   const [q, setQ] = useState("");
@@ -120,6 +194,9 @@ function ApplicationsPage() {
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [activationPath, setActivationPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
 
   async function load() {
     setLoading(true);
@@ -157,26 +234,53 @@ function ApplicationsPage() {
       setDetail(null);
       setInviteToken(null);
       setActivationPath(null);
+      setEditing(false);
+      setEditForm(null);
       return;
     }
     void getTradeApplicationFn({ data: { id: selected } }).then((r) => {
       if (r.ok) {
-        setDetail(r.data as Detail);
-        setReviewNotes((r.data as Detail).reviewNotes ?? "");
-        setCustomerMessage((r.data as Detail).customerMessage ?? "");
+        const next = r.data as Detail;
+        setDetail(next);
+        setReviewNotes(next.reviewNotes ?? "");
+        setCustomerMessage(next.customerMessage ?? "");
         setConfirmExistingUserLink(false);
+        setEditing(false);
+        setEditForm(detailToEditForm(next));
       }
     });
   }, [selected]);
 
   const submitted = rows.filter((r) => r.status === "SUBMITTED").length;
   const review = rows.filter((r) => r.status === "UNDER_REVIEW").length;
-  const open = detail && detail.status !== "APPROVED" && detail.status !== "REJECTED";
+  const open =
+    detail &&
+    detail.status !== "APPROVED" &&
+    detail.status !== "REJECTED" &&
+    detail.status !== "WITHDRAWN";
 
   async function refreshDetail(id: string) {
     const d = await getTradeApplicationFn({ data: { id } });
-    if (d.ok) setDetail(d.data as Detail);
+    if (d.ok) {
+      const next = d.data as Detail;
+      setDetail(next);
+      setEditForm(detailToEditForm(next));
+      setReviewNotes(next.reviewNotes ?? "");
+      setCustomerMessage(next.customerMessage ?? "");
+    }
     await load();
+  }
+
+  async function runAction(label: string, work: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await work();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `${label} failed`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -307,79 +411,238 @@ function ApplicationsPage() {
             <p className="text-sm text-steel">Select an application to review</p>
           ) : (
             <div className="grid gap-4 text-[13px]">
-              <div>
-                <div className="font-display text-xl uppercase">{detail.companyName}</div>
-                <div className="num mt-1 text-steel">{detail.reference}</div>
-                <div className="mt-2">
-                  <StatusBadge>{detail.status.replaceAll("_", " ")}</StatusBadge>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="font-display text-xl uppercase">{detail.companyName}</div>
+                  <div className="num mt-1 text-steel">{detail.reference}</div>
+                  <div className="mt-2">
+                    <StatusBadge>{detail.status.replaceAll("_", " ")}</StatusBadge>
+                  </div>
                 </div>
+                {open ? (
+                  <button
+                    type="button"
+                    className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
+                    onClick={() => {
+                      if (!editing) setEditForm(detailToEditForm(detail));
+                      setEditing((value) => !value);
+                    }}
+                  >
+                    {editing ? "Cancel edit" : "Edit details"}
+                  </button>
+                ) : null}
               </div>
 
-              <ReviewBlock title="Business details">
-                <Row label="Trading name" value={detail.tradingName} />
-                <Row label="Company number" value={detail.companyNumber} />
-                <Row label="VAT" value={detail.vatNumber} />
-                <Row label="Business type" value={detail.businessType} />
-                <Row label="Website" value={detail.website} />
-              </ReviewBlock>
-
-              <ReviewBlock title="Contact">
-                <Row
-                  label="Name"
-                  value={`${detail.primaryContact?.firstName ?? ""} ${detail.primaryContact?.lastName ?? ""}`.trim()}
-                />
-                <Row label="Job title" value={detail.primaryContact?.role} />
-                <Row label="Email" value={detail.primaryContact?.email} />
-                <Row label="Telephone" value={detail.primaryContact?.phone} />
-              </ReviewBlock>
-
-              <ReviewBlock title="Address">
-                <Row label="Line 1" value={detail.tradingAddress?.line1} />
-                <Row label="Line 2" value={detail.tradingAddress?.line2} />
-                <Row label="Town" value={detail.tradingAddress?.town} />
-                <Row label="County" value={detail.tradingAddress?.county} />
-                <Row label="Postcode" value={detail.tradingAddress?.postcode} />
-                <Row label="Country" value={detail.tradingAddress?.country} />
-              </ReviewBlock>
-
-              <ReviewBlock title="Existing account">
-                <Row label="Claim" value={detail.existingAccountClaim ?? "—"} />
-                {detail.claimedAutopartCustomerCode ? (
-                  <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-steel">
-                      Claimed Autopart account — UNVERIFIED
-                    </div>
-                    <div className="num mt-1 font-semibold">{detail.claimedAutopartCustomerCode}</div>
-                    <p className="mt-1 text-[12px] text-steel">
-                      Claim only. Verify and link on the customer Commercial tab after approval —
-                      never trust this value for pricing or access.
-                    </p>
+              {editing && editForm && open ? (
+                <form
+                  className="grid gap-3 border-t border-border/50 pt-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void runAction("Save details", async () => {
+                      const r = await updateTradeApplicationDetailsFn({
+                        data: {
+                          id: detail.id,
+                          companyName: editForm.companyName,
+                          tradingName: editForm.tradingName || null,
+                          companyNumber: editForm.companyNumber || null,
+                          vatNumber: editForm.vatNumber || null,
+                          businessType: editForm.businessType,
+                          businessTypeOther: editForm.businessTypeOther || null,
+                          website: editForm.website || null,
+                          tradingAddress: {
+                            line1: editForm.line1,
+                            line2: editForm.line2 || null,
+                            town: editForm.town,
+                            county: editForm.county || null,
+                            postcode: editForm.postcode,
+                            country: editForm.country || "GB",
+                          },
+                          primaryContact: {
+                            firstName: editForm.firstName,
+                            lastName: editForm.lastName,
+                            role: editForm.role || null,
+                            email: editForm.email,
+                            phone: editForm.phone,
+                          },
+                          existingAccountClaim: editForm.existingAccountClaim,
+                          claimedAutopartCustomerCode: editForm.claimedAutopartCustomerCode || null,
+                          estimatedSpend: editForm.estimatedSpend || null,
+                          howHeardAboutUs: editForm.howHeardAboutUs || null,
+                          brandsInterest: editForm.brandsInterest
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                          notes: editForm.notes || null,
+                        },
+                      });
+                      if (!r.ok) {
+                        toast.error(r.error);
+                        return;
+                      }
+                      toast.success("Application details saved");
+                      setEditing(false);
+                      await refreshDetail(detail.id);
+                    });
+                  }}
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">
+                    Edit submitted details
                   </div>
-                ) : (
-                  <p className="text-steel">No account number claimed.</p>
-                )}
-                {detail.company?.autopartCustomerCode ? (
-                  <Row label="Verified on company" value={detail.company.autopartCustomerCode} />
-                ) : null}
-              </ReviewBlock>
-
-              <ReviewBlock title="Trade information">
-                <Row label="Estimated spend" value={detail.estimatedSpend} />
-                <Row label="How heard" value={detail.howHeardAboutUs} />
-                <Row
-                  label="Brands interest"
-                  value={(detail.brandsInterest ?? []).join(", ") || "—"}
-                />
-                <Row label="Notes" value={detail.notes} />
-              </ReviewBlock>
+                  <Field label="Legal / company name">
+                    <input required className={inputClass} value={editForm.companyName} onChange={(e) => setEditForm({ ...editForm, companyName: e.target.value })} />
+                  </Field>
+                  <Field label="Trading name">
+                    <input className={inputClass} value={editForm.tradingName} onChange={(e) => setEditForm({ ...editForm, tradingName: e.target.value })} />
+                  </Field>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Company number">
+                      <input className={inputClass} value={editForm.companyNumber} onChange={(e) => setEditForm({ ...editForm, companyNumber: e.target.value })} />
+                    </Field>
+                    <Field label="VAT">
+                      <input className={inputClass} value={editForm.vatNumber} onChange={(e) => setEditForm({ ...editForm, vatNumber: e.target.value })} />
+                    </Field>
+                  </div>
+                  <Field label="Business type">
+                    <select className={inputClass} value={editForm.businessType} onChange={(e) => setEditForm({ ...editForm, businessType: e.target.value })}>
+                      {BUSINESS_TYPES.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  {editForm.businessType === "Other" ? (
+                    <Field label="Business type (other)">
+                      <input className={inputClass} value={editForm.businessTypeOther} onChange={(e) => setEditForm({ ...editForm, businessTypeOther: e.target.value })} />
+                    </Field>
+                  ) : null}
+                  <Field label="Website">
+                    <input className={inputClass} value={editForm.website} onChange={(e) => setEditForm({ ...editForm, website: e.target.value })} />
+                  </Field>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="First name">
+                      <input required className={inputClass} value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} />
+                    </Field>
+                    <Field label="Last name">
+                      <input required className={inputClass} value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} />
+                    </Field>
+                  </div>
+                  <Field label="Job title">
+                    <input className={inputClass} value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} />
+                  </Field>
+                  <Field label="Email">
+                    <input required type="email" className={inputClass} value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                  </Field>
+                  <Field label="Telephone">
+                    <input required className={inputClass} value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+                  </Field>
+                  <Field label="Address line 1">
+                    <input required className={inputClass} value={editForm.line1} onChange={(e) => setEditForm({ ...editForm, line1: e.target.value })} />
+                  </Field>
+                  <Field label="Address line 2">
+                    <input className={inputClass} value={editForm.line2} onChange={(e) => setEditForm({ ...editForm, line2: e.target.value })} />
+                  </Field>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Town">
+                      <input required className={inputClass} value={editForm.town} onChange={(e) => setEditForm({ ...editForm, town: e.target.value })} />
+                    </Field>
+                    <Field label="Postcode">
+                      <input required className={inputClass} value={editForm.postcode} onChange={(e) => setEditForm({ ...editForm, postcode: e.target.value })} />
+                    </Field>
+                  </div>
+                  <Field label="County">
+                    <input className={inputClass} value={editForm.county} onChange={(e) => setEditForm({ ...editForm, county: e.target.value })} />
+                  </Field>
+                  <Field label="Existing account claim">
+                    <select className={inputClass} value={editForm.existingAccountClaim} onChange={(e) => setEditForm({ ...editForm, existingAccountClaim: e.target.value })}>
+                      {EXISTING_ACCOUNT_CLAIMS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Claimed Autopart account">
+                    <input className={inputClass} value={editForm.claimedAutopartCustomerCode} onChange={(e) => setEditForm({ ...editForm, claimedAutopartCustomerCode: e.target.value })} />
+                  </Field>
+                  <Field label="Estimated spend">
+                    <select className={inputClass} value={editForm.estimatedSpend} onChange={(e) => setEditForm({ ...editForm, estimatedSpend: e.target.value })}>
+                      <option value="">—</option>
+                      {ESTIMATED_SPEND_RANGES.map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="How heard">
+                    <select className={inputClass} value={editForm.howHeardAboutUs} onChange={(e) => setEditForm({ ...editForm, howHeardAboutUs: e.target.value })}>
+                      <option value="">—</option>
+                      {HOW_HEARD_OPTIONS.map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Brands interest (comma-separated)">
+                    <input className={inputClass} value={editForm.brandsInterest} onChange={(e) => setEditForm({ ...editForm, brandsInterest: e.target.value })} />
+                  </Field>
+                  <Field label="Applicant notes">
+                    <textarea className={inputClass} rows={3} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+                  </Field>
+                  <button type="submit" disabled={busy} className="h-10 rounded-md bg-primary px-4 text-[11px] font-bold uppercase text-primary-foreground disabled:opacity-40">
+                    Save details
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <ReviewBlock title="Business details">
+                    <Row label="Trading name" value={detail.tradingName} />
+                    <Row label="Company number" value={detail.companyNumber} />
+                    <Row label="VAT" value={detail.vatNumber} />
+                    <Row label="Business type" value={detail.businessType} />
+                    <Row label="Website" value={detail.website} />
+                  </ReviewBlock>
+                  <ReviewBlock title="Contact">
+                    <Row label="Name" value={`${detail.primaryContact?.firstName ?? ""} ${detail.primaryContact?.lastName ?? ""}`.trim()} />
+                    <Row label="Job title" value={detail.primaryContact?.role} />
+                    <Row label="Email" value={detail.primaryContact?.email} />
+                    <Row label="Telephone" value={detail.primaryContact?.phone} />
+                  </ReviewBlock>
+                  <ReviewBlock title="Address">
+                    <Row label="Line 1" value={detail.tradingAddress?.line1} />
+                    <Row label="Line 2" value={detail.tradingAddress?.line2} />
+                    <Row label="Town" value={detail.tradingAddress?.town} />
+                    <Row label="County" value={detail.tradingAddress?.county} />
+                    <Row label="Postcode" value={detail.tradingAddress?.postcode} />
+                    <Row label="Country" value={detail.tradingAddress?.country} />
+                  </ReviewBlock>
+                  <ReviewBlock title="Existing account">
+                    <Row label="Claim" value={detail.existingAccountClaim ?? "—"} />
+                    {detail.claimedAutopartCustomerCode ? (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-steel">
+                          Claimed Autopart account — UNVERIFIED
+                        </div>
+                        <div className="num mt-1 font-semibold">{detail.claimedAutopartCustomerCode}</div>
+                        <p className="mt-1 text-[12px] text-steel">
+                          Claim only. Verify and link on the customer Commercial tab after approval —
+                          never trust this value for pricing or access.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-steel">No account number claimed.</p>
+                    )}
+                    {detail.company?.autopartCustomerCode ? (
+                      <Row label="Verified on company" value={detail.company.autopartCustomerCode} />
+                    ) : null}
+                  </ReviewBlock>
+                  <ReviewBlock title="Trade information">
+                    <Row label="Estimated spend" value={detail.estimatedSpend} />
+                    <Row label="How heard" value={detail.howHeardAboutUs} />
+                    <Row label="Brands interest" value={(detail.brandsInterest ?? []).join(", ") || "—"} />
+                    <Row label="Notes" value={detail.notes} />
+                  </ReviewBlock>
+                </>
+              )}
 
               {(detail.possibleDuplicates?.length || detail.identityWarnings?.length) ? (
                 <ReviewBlock title="Duplicate / match warnings">
                   {detail.identityWarnings?.map((w) => (
-                    <div
-                      key={w.code}
-                      className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]"
-                    >
+                    <div key={w.code} className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
                       <div className="font-semibold uppercase tracking-wide text-warn">Possible issue</div>
                       <p className="mt-1">{w.message}</p>
                     </div>
@@ -398,64 +661,37 @@ function ApplicationsPage() {
               {open ? (
                 <ReviewBlock title="Internal commercial setup">
                   <Field label="Sales rep">
-                    <select
-                      className={inputClass}
-                      value={salesRepId}
-                      onChange={(e) => setSalesRepId(e.target.value)}
-                    >
+                    <select className={inputClass} value={salesRepId} onChange={(e) => setSalesRepId(e.target.value)}>
                       <option value="">Unassigned</option>
                       {reps.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.label}
-                        </option>
+                        <option key={r.id} value={r.id}>{r.label}</option>
                       ))}
                     </select>
                   </Field>
                   <Field label="Price list">
-                    <select
-                      className={inputClass}
-                      value={priceListId}
-                      onChange={(e) => setPriceListId(e.target.value)}
-                    >
+                    <select className={inputClass} value={priceListId} onChange={(e) => setPriceListId(e.target.value)}>
                       <option value="">Assign later</option>
                       {priceLists.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
+                        <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
                   </Field>
                   <Field label="Payment terms">
-                    <input
-                      className={inputClass}
-                      placeholder="e.g. 30 days"
-                      value={paymentTerms}
-                      onChange={(e) => setPaymentTerms(e.target.value)}
-                    />
+                    <input className={inputClass} placeholder="e.g. 30 days" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />
                   </Field>
-                  <Field label="Internal notes">
-                    <textarea
-                      className={inputClass}
-                      rows={3}
-                      value={reviewNotes}
-                      onChange={(e) => setReviewNotes(e.target.value)}
-                    />
+                  <Field label="Internal notes (required to reject)">
+                    <textarea className={inputClass} rows={3} value={reviewNotes} onChange={(e) => setReviewNotes(e.target.value)} />
                   </Field>
-                  <Field label="Customer-facing message (more info / optional reject)">
-                    <textarea
-                      className={inputClass}
-                      rows={3}
-                      value={customerMessage}
-                      onChange={(e) => setCustomerMessage(e.target.value)}
-                    />
+                  <Field label="Customer-facing message (required to request info)">
+                    <textarea className={inputClass} rows={3} value={customerMessage} onChange={(e) => setCustomerMessage(e.target.value)} />
                   </Field>
+                  <p className="text-[12px] text-steel">
+                    Request info needs a customer message. Reject needs internal notes. Under review and Approve
+                    work without those fields.
+                  </p>
                   {detail.identityWarnings?.length ? (
                     <label className="flex items-start gap-2 text-[12px] text-steel">
-                      <input
-                        type="checkbox"
-                        checked={confirmExistingUserLink}
-                        onChange={(e) => setConfirmExistingUserLink(e.target.checked)}
-                      />
+                      <input type="checkbox" checked={confirmExistingUserLink} onChange={(e) => setConfirmExistingUserLink(e.target.checked)} />
                       I confirm linking despite the identity warnings above
                     </label>
                   ) : null}
@@ -468,9 +704,7 @@ function ApplicationsPage() {
                   <p className="mt-1 text-steel">
                     Outbound email is not configured. Copy the activation link for the applicant.
                   </p>
-                  <code className="mt-2 block break-all rounded bg-ink/50 p-2 text-[11px]">
-                    {activationPath}
-                  </code>
+                  <code className="mt-2 block break-all rounded bg-ink/50 p-2 text-[11px]">{activationPath}</code>
                   <code className="mt-2 block break-all text-[11px] text-steel">Token: {inviteToken}</code>
                 </div>
               ) : null}
@@ -490,29 +724,30 @@ function ApplicationsPage() {
                   <button
                     type="button"
                     disabled={busy}
-                    className="h-10 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
-                    onClick={() => {
-                      void (async () => {
-                        setBusy(true);
+                    className={actionBtn}
+                    onClick={() =>
+                      void runAction("Under review", async () => {
                         const r = await markTradeApplicationUnderReviewFn({ data: { id: detail.id } });
-                        setBusy(false);
                         if (!r.ok) toast.error(r.error);
                         else {
-                          toast.success("Marked under review");
+                          toast.success(r.data.already ? "Already under review" : "Marked under review");
                           await refreshDetail(detail.id);
                         }
-                      })();
-                    }}
+                      })
+                    }
                   >
                     Under review
                   </button>
                   <button
                     type="button"
-                    disabled={busy || !customerMessage.trim()}
-                    className="h-10 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
-                    onClick={() => {
-                      void (async () => {
-                        setBusy(true);
+                    disabled={busy}
+                    className={actionBtn}
+                    onClick={() =>
+                      void runAction("Request info", async () => {
+                        if (!customerMessage.trim()) {
+                          toast.error("Add a customer-facing message before requesting info");
+                          return;
+                        }
                         const r = await requestTradeApplicationMoreInfoFn({
                           data: {
                             id: detail.id,
@@ -520,7 +755,6 @@ function ApplicationsPage() {
                             reviewNotes: reviewNotes || null,
                           },
                         });
-                        setBusy(false);
                         if (!r.ok) toast.error(r.error);
                         else {
                           toast.success(
@@ -530,18 +764,17 @@ function ApplicationsPage() {
                           );
                           await refreshDetail(detail.id);
                         }
-                      })();
-                    }}
+                      })
+                    }
                   >
                     Request info
                   </button>
                   <button
                     type="button"
                     disabled={busy}
-                    className="h-10 rounded-md bg-good px-4 text-[11px] font-bold uppercase text-ink"
-                    onClick={() => {
-                      void (async () => {
-                        setBusy(true);
+                    className="h-10 rounded-md bg-good px-4 text-[11px] font-bold uppercase text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() =>
+                      void runAction("Approve", async () => {
                         const r = await approveTradeApplicationFn({
                           data: {
                             id: detail.id,
@@ -552,7 +785,6 @@ function ApplicationsPage() {
                             confirmExistingUserLink,
                           },
                         });
-                        setBusy(false);
                         if (!r.ok) {
                           toast.error(r.error);
                           return;
@@ -565,18 +797,21 @@ function ApplicationsPage() {
                             : "Already approved (idempotent)",
                         );
                         await refreshDetail(detail.id);
-                      })();
-                    }}
+                      })
+                    }
                   >
                     Approve
                   </button>
                   <button
                     type="button"
-                    disabled={busy || !reviewNotes.trim()}
-                    className="h-10 rounded-md border border-bad/50 px-4 text-[11px] font-bold uppercase text-bad"
-                    onClick={() => {
-                      void (async () => {
-                        setBusy(true);
+                    disabled={busy}
+                    className="h-10 rounded-md border border-bad/50 px-4 text-[11px] font-bold uppercase text-bad disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() =>
+                      void runAction("Reject", async () => {
+                        if (!reviewNotes.trim()) {
+                          toast.error("Add internal notes before rejecting");
+                          return;
+                        }
                         const r = await rejectTradeApplicationFn({
                           data: {
                             id: detail.id,
@@ -584,19 +819,75 @@ function ApplicationsPage() {
                             customerMessage: customerMessage || null,
                           },
                         });
-                        setBusy(false);
                         if (!r.ok) toast.error(r.error);
                         else {
                           toast.success("Application rejected");
                           await refreshDetail(detail.id);
                         }
-                      })();
-                    }}
+                      })
+                    }
                   >
                     Reject
                   </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="h-10 rounded-md border border-bad px-4 text-[11px] font-bold uppercase text-bad disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : detail.status !== "APPROVED" ? (
+                <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="h-10 rounded-md border border-bad px-4 text-[11px] font-bold uppercase text-bad disabled:opacity-40"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    Delete
+                  </button>
                 </div>
               ) : null}
+
+              <ConfirmAction
+                open={deleteOpen}
+                title={detail.companyId ? "Withdraw this application?" : "Delete this application?"}
+                description={
+                  detail.companyId
+                    ? "This application is linked to a customer, so it will be withdrawn (soft-deleted) rather than permanently removed."
+                    : "Permanently delete this unlinked application? This cannot be undone."
+                }
+                confirmLabel={detail.companyId ? "Withdraw" : "Delete"}
+                onOpenChange={setDeleteOpen}
+                onConfirm={() => {
+                  void runAction("Delete application", async () => {
+                    if (detail.companyId) {
+                      const r = await withdrawTradeApplicationFn({
+                        data: { id: detail.id, reviewNotes: reviewNotes || null },
+                      });
+                      if (!r.ok) {
+                        toast.error(r.error);
+                        return;
+                      }
+                      toast.success("Application withdrawn");
+                    } else {
+                      const r = await deleteTradeApplicationFn({ data: { id: detail.id } });
+                      if (!r.ok) {
+                        toast.error(r.error);
+                        return;
+                      }
+                      toast.success("Application deleted");
+                      setSelected(null);
+                      setDetail(null);
+                    }
+                    setDeleteOpen(false);
+                    await load();
+                  });
+                }}
+              />
+
             </div>
           )}
         </aside>

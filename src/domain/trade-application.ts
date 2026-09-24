@@ -144,6 +144,58 @@ export const tradeApplicationRejectSchema = z.object({
   customerMessage: optionalText(4000),
 });
 
+/** Staff amendment of applicant-submitted fields (open applications only). */
+export const tradeApplicationStaffEditSchema = z
+  .object({
+    id: z.string().cuid(),
+    companyName: z.string().trim().min(1).max(200),
+    tradingName: optionalText(200),
+    companyNumber: optionalText(40),
+    vatNumber: optionalText(40),
+    businessType: z.enum(BUSINESS_TYPES),
+    businessTypeOther: optionalText(120),
+    website: optionalText(300),
+    tradingAddress: z.object({
+      line1: z.string().trim().min(1).max(200),
+      line2: optionalText(200),
+      town: z.string().trim().min(1).max(120),
+      county: optionalText(120),
+      postcode: z.string().trim().min(1).max(20),
+      country: z.string().trim().length(2).default("GB"),
+    }),
+    primaryContact: z.object({
+      firstName: z.string().trim().min(1).max(100),
+      lastName: z.string().trim().min(1).max(100),
+      role: optionalText(120),
+      email: z.string().trim().email().max(320),
+      phone: z.string().trim().min(7).max(40),
+    }),
+    existingAccountClaim: z.enum(EXISTING_ACCOUNT_CLAIMS),
+    claimedAutopartCustomerCode: optionalText(80),
+    estimatedSpend: z.enum(ESTIMATED_SPEND_RANGES).optional().nullable(),
+    howHeardAboutUs: z.enum(HOW_HEARD_OPTIONS).optional().nullable(),
+    brandsInterest: z.array(z.string().trim().max(80)).max(20).default([]),
+    notes: optionalText(4000),
+  })
+  .superRefine((value, ctx) => {
+    if (value.businessType === "Other" && !value.businessTypeOther?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["businessTypeOther"],
+        message: "Please describe your business type",
+      });
+    }
+  });
+
+export const tradeApplicationWithdrawSchema = z.object({
+  id: z.string().cuid(),
+  reviewNotes: optionalText(4000),
+});
+
+export const tradeApplicationDeleteSchema = z.object({
+  id: z.string().cuid(),
+});
+
 export const acceptTradeInviteSchema = z.object({
   token: z.string().trim().min(20).max(200),
   password: z.string().min(10).max(128),

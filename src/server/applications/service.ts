@@ -9,9 +9,12 @@ import {
   OPEN_APPLICATION_STATUSES,
   resolveBusinessTypeLabel,
   tradeApplicationDecisionSchema,
+  tradeApplicationDeleteSchema,
   tradeApplicationMoreInfoSchema,
   tradeApplicationRejectSchema,
+  tradeApplicationStaffEditSchema,
   tradeApplicationSubmitSchema,
+  tradeApplicationWithdrawSchema,
 } from "@/domain/trade-application";
 import { emptyToNull } from "@/domain/company";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
@@ -816,6 +819,147 @@ export async function rejectTradeApplication(actorUserId: string, raw: unknown) 
   });
 
   return { id: updated.id, status: updated.status, already: false as const, emailDeferred: true };
+}
+
+/**
+ * Staff amendment of applicant-submitted details while the application is still open.
+ * Does not change status or create/update Company records.
+ */
+export async function updateTradeApplicationDetails(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "applications.review");
+  const input = tradeApplicationStaffEditSchema.parse(raw);
+  const app = await prisma.tradeApplication.findUnique({ where: { id: input.id } });
+  if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
+  if (!(OPEN_APPLICATION_STATUSES as readonly string[]).includes(app.status)) {
+    throw new AuthError("Only open applications can be edited", "CONFLICT", 409);
+  }
+
+  const claimedCode =
+    input.existingAccountClaim === "yes"
+      ? normalizeAutopartCustomerCode(input.claimedAutopartCustomerCode)
+      : null;
+
+  const businessType = resolveBusinessTypeLabel(input.businessType, input.businessTypeOther);
+
+  const updated = await prisma.tradeApplication.update({
+    where: { id: input.id },
+    data: {
+      companyName: input.companyName,
+      tradingName: emptyToNull(input.tradingName),
+      companyNumber: emptyToNull(input.companyNumber),
+      vatNumber: emptyToNull(input.vatNumber),
+      businessType,
+      website: emptyToNull(input.website),
+      tradingAddress: input.tradingAddress as Prisma.InputJsonValue,
+      primaryContact: {
+        ...input.primaryContact,
+        email: input.primaryContact.email.toLowerCase(),
+      } as Prisma.InputJsonValue,
+      existingAccountClaim: input.existingAccountClaim,
+      claimedAutopartCustomerCode: claimedCode,
+      estimatedSpend: input.estimatedSpend ?? null,
+      howHeardAboutUs: input.howHeardAboutUs ?? null,
+      brandsInterest: input.brandsInterest,
+      notes: emptyToNull(input.notes),
+      reviewedById: actorUserId,
+    },
+  });
+
+  await recordAuditEvent({
+    action: "application.details_updated",
+    entityType: "TradeApplication",
+    entityId: input.id,
+    actorUserId,
+    before: {
+      companyName: app.companyName,
+      contactEmail: contactEmail(app.primaryContact),
+    },
+    after: {
+      companyName: updated.companyName,
+      contactEmail: input.primaryContact.email.toLowerCase(),
+    },
+  });
+
+  return getTradeApplication(actorUserId, input.id);
+}
+
+/** Soft-delete: mark WITHDRAWN. Keeps history; hides from default open workflows. */
+export async function withdrawTradeApplication(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "applications.review");
+  const input = tradeApplicationWithdrawSchema.parse(raw);
+  const app = await prisma.tradeApplication.findUnique({ where: { id: input.id } });
+  if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
+  if (app.status === "APPROVED") {
+    throw new AuthError(
+      "Approved applications cannot be withdrawn. Close the customer account instead.",
+      "CONFLICT",
+      409,
+    );
+  }
+  if (app.status === "WITHDRAWN") {
+    return { id: app.id, status: app.status, already: true as const };
+  }
+
+  const updated = await prisma.tradeApplication.update({
+    where: { id: input.id },
+    data: {
+      status: "WITHDRAWN",
+      reviewedById: actorUserId,
+      reviewNotes: input.reviewNotes ?? app.reviewNotes,
+      decidedAt: new Date(),
+    },
+  });
+
+  await recordAuditEvent({
+    action: "application.withdrawn",
+    entityType: "TradeApplication",
+    entityId: input.id,
+    actorUserId,
+    companyId: app.companyId,
+  });
+
+  return { id: updated.id, status: updated.status, already: false as const };
+}
+
+/**
+ * Permanent delete for unlinked spam/test applications only.
+ * Blocked when a Company was created from approval.
+ */
+export async function deleteTradeApplication(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "applications.approve");
+  const input = tradeApplicationDeleteSchema.parse(raw);
+  const app = await prisma.tradeApplication.findUnique({ where: { id: input.id } });
+  if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
+  if (app.companyId) {
+    throw new AuthError(
+      "Cannot delete an application linked to a customer. Withdraw it or close the customer instead.",
+      "CONFLICT",
+      409,
+    );
+  }
+  if (app.status === "APPROVED") {
+    throw new AuthError("Approved applications cannot be deleted", "CONFLICT", 409);
+  }
+
+  await prisma.document.updateMany({
+    where: { applicationId: input.id },
+    data: { applicationId: null },
+  });
+  await prisma.tradeApplication.delete({ where: { id: input.id } });
+
+  await recordAuditEvent({
+    action: "application.deleted",
+    entityType: "TradeApplication",
+    entityId: input.id,
+    actorUserId,
+    metadata: {
+      reference: app.reference,
+      companyName: app.companyName,
+      status: app.status,
+    },
+  });
+
+  return { ok: true as const, id: input.id };
 }
 
 /**

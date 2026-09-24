@@ -189,6 +189,65 @@ describe("trade onboarding journey", () => {
     ).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("allows staff to edit open application details and delete unlinked apps", async () => {
+    const {
+      updateTradeApplicationDetails,
+      withdrawTradeApplication,
+      deleteTradeApplication,
+    } = await import("@/server/applications/service");
+
+    const submitted = await submitTradeApplication(
+      validTradeApplicationInput({
+        companyName: `Edit Me ${suffix}`,
+        email: `editme.${suffix}@example.invalid`,
+      }),
+    );
+    const edited = await updateTradeApplicationDetails(adminId, {
+      id: submitted.id,
+      companyName: `Edited Factors ${suffix}`,
+      tradingName: "Edited T/A",
+      businessType: "Garage / Workshop",
+      tradingAddress: {
+        line1: "99 New Street",
+        line2: null,
+        town: "Leeds",
+        county: null,
+        postcode: "LS1 2AB",
+        country: "GB",
+      },
+      primaryContact: {
+        firstName: "Pat",
+        lastName: "Buyer",
+        role: "Buyer",
+        email: `editme.${suffix}@example.invalid`,
+        phone: "01131112222",
+      },
+      existingAccountClaim: "no",
+      brandsInterest: ["power-maxed"],
+      notes: "Staff corrected address",
+    });
+    expect(edited.companyName).toBe(`Edited Factors ${suffix}`);
+    const address = edited.tradingAddress as { line1?: string } | null;
+    expect(address?.line1).toBe("99 New Street");
+    expect(edited.notes).toBe("Staff corrected address");
+
+    const withdrawn = await withdrawTradeApplication(adminId, {
+      id: submitted.id,
+      reviewNotes: "Duplicate / withdrawn",
+    });
+    expect(withdrawn.status).toBe("WITHDRAWN");
+
+    const spam = await submitTradeApplication(
+      validTradeApplicationInput({
+        companyName: `Spam ${suffix}`,
+        email: `spam.${suffix}@example.invalid`,
+      }),
+    );
+    const deleted = await deleteTradeApplication(adminId, { id: spam.id });
+    expect(deleted.ok).toBe(true);
+    await expect(getTradeApplication(adminId, spam.id)).rejects.toBeInstanceOf(AuthError);
+  });
+
   it("approves with commercial setup, activates invite, and scopes company", async () => {
     const email = `activate.${suffix}@example.invalid`;
     const submitted = await submitTradeApplication(

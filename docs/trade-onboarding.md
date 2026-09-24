@@ -61,6 +61,8 @@ Approval **does not** copy the claim onto the Company. Staff use the Customer Co
 
 Workspace sections: business, contact, address, existing account, trade info, duplicate/identity warnings, internal commercial setup, actions.
 
+Staff can **Edit details** on open applications (submitted / under review / more info) to correct applicant data without creating a Company.
+
 Commercial setup before approve (optional unless business requires them):
 
 - Sales rep  
@@ -73,7 +75,8 @@ Actions:
 - Under review  
 - Request info (requires customer-facing message; **email deferred**)  
 - Approve (transactional)  
-- Reject (requires internal reason; optional customer message — never auto-emailed)
+- Reject (requires internal notes; optional customer message — never auto-emailed)  
+- Delete — permanent remove when no Company is linked; otherwise **Withdraw** (`WITHDRAWN`) to soft-delete  
 
 **View customer** opens the existing Customer workspace after approval.
 

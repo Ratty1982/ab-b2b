@@ -315,6 +315,42 @@ export const rejectTradeApplicationFn = createServerFn({ method: "POST" })
     }
   });
 
+export const updateTradeApplicationDetailsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.updateTradeApplicationDetails(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const withdrawTradeApplicationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.withdrawTradeApplication(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const deleteTradeApplicationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.deleteTradeApplication(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getTradeInvitationPreviewFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { token: string })
   .handler(async ({ data }) => {
