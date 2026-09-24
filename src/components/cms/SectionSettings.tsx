@@ -8,6 +8,11 @@ import {
   hydrateFeaturedBrandCards,
   type FeaturedBrandCard,
 } from "@/domain/featured-brands";
+import {
+  compactMultilineList,
+  linesFromMultilineInput,
+  multilineListToTextareaValue,
+} from "@/domain/cms-editor";
 import { cmsMediaDisplaySrc, type BrandLogoRef } from "@/lib/cms-media";
 import { mediaContainClass } from "@/lib/media-presentation";
 import { type MediaUploadUsage } from "@/domain/media-usage";
@@ -699,16 +704,9 @@ export function SectionSettings({
         <Field label="Category slugs (one per line, controls order)">
           <textarea
             rows={5}
-            value={selected.join("\n")}
-            onChange={(e) =>
-              onChange(
-                "categorySlugs",
-                e.target.value
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              )
-            }
+            value={multilineListToTextareaValue(selected)}
+            onChange={(e) => onChange("categorySlugs", linesFromMultilineInput(e.target.value))}
+            onBlur={() => onChange("categorySlugs", compactMultilineList(selected))}
             className={inputClass}
           />
         </Field>
@@ -816,17 +814,13 @@ export function SectionSettings({
         <Field label="Product SKUs (one per line)">
           <textarea
             rows={6}
-            value={skus.join("\n")}
-            onChange={(e) =>
-              onChange(
-                "productSkus",
-                e.target.value
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              )
-            }
+            value={multilineListToTextareaValue(skus)}
+            onChange={(e) => onChange("productSkus", linesFromMultilineInput(e.target.value))}
+            onBlur={() => onChange("productSkus", compactMultilineList(skus))}
             className={inputClass}
+            placeholder={"PM-1001\nSS-2002"}
+            spellCheck={false}
+            autoCapitalize="characters"
           />
         </Field>
         {type === "FEATURED_PRODUCTS" ? (

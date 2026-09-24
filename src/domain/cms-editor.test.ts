@@ -4,9 +4,12 @@ import {
   SECTION_LIBRARY,
   addEditorSection,
   collectMediaIds,
+  compactMultilineList,
   deleteEditorSection,
   duplicateEditorSection,
+  linesFromMultilineInput,
   moveEditorSection,
+  multilineListToTextareaValue,
   reorderEditorSections,
   toggleEditorSection,
   EDITOR_VIEWPORTS,
@@ -57,6 +60,13 @@ describe("CMS editor draft operations", () => {
     expect(EDITOR_VIEWPORTS.desktop).toBe(1280);
     expect(EDITOR_VIEWPORTS.tablet).toBe(768);
     expect(EDITOR_VIEWPORTS.mobile).toBe(390);
+  });
+
+  it("keeps blank lines while typing multi-line SKU lists so Enter opens a new row", () => {
+    expect(linesFromMultilineInput("PM-1\n")).toEqual(["PM-1", ""]);
+    expect(multilineListToTextareaValue(["PM-1", ""])).toBe("PM-1\n");
+    expect(linesFromMultilineInput("PM-1\nSS-2\n")).toEqual(["PM-1", "SS-2", ""]);
+    expect(compactMultilineList(["PM-1", "", " SS-2 ", "PM-1"])).toEqual(["PM-1", "SS-2"]);
   });
 });
 

@@ -252,3 +252,29 @@ export function collectMediaIds(config: unknown, into = new Set<string>()): Set<
   }
   return into;
 }
+
+/**
+ * Parse a "one per line" textarea while the user is typing.
+ * Blank lines are kept so pressing Enter can open the next row.
+ * Trailing spaces on a line are trimmed; leading spaces stay until blur/compact.
+ */
+export function linesFromMultilineInput(value: string): string[] {
+  return value.split("\n").map((line) => line.replace(/[ \t]+$/u, ""));
+}
+
+/** Drop blank/whitespace-only rows after editing (blur / save). */
+export function compactMultilineList(lines: unknown): string[] {
+  if (!Array.isArray(lines)) return [];
+  const out: string[] = [];
+  for (const item of lines) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
+export function multilineListToTextareaValue(lines: unknown): string {
+  if (!Array.isArray(lines)) return "";
+  return lines.map((item) => (typeof item === "string" ? item : "")).join("\n");
+}
