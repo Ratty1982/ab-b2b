@@ -101,6 +101,6 @@ export async function sendOrderReceivedEmails(order: OrderReceivedEmailInput): P
   return {
     customerOk: customer.ok,
     internalOk,
-    detail: customer.detail,
+    ...(customer.detail ? { detail: customer.detail } : {}),
   };
 }

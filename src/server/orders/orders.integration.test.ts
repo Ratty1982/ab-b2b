@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
-import { bootstrapRbac } from "../../prisma/bootstrap/rbac";
+import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { saveProduct } from "@/server/catalogue/service";
 import { AuthError } from "@/server/rbac/guards";
 import { addToBasket, getBasket } from "@/server/basket/service";
@@ -191,7 +191,8 @@ describe("Phase 6B checkout order creation", () => {
     expect(dbOrder.externalRef).toBeNull();
     expect(dbOrder.status).toBe("SUBMITTED");
     expect(dbOrder.items[0]!.customerUnitPrice.toString()).toBe("3.25");
-    expect(dbOrder.items[0]!.unitPrice.toString()).toBe("3.2500");
+    expect(Number(dbOrder.items[0]!.unitPrice.toString())).toBe(3.25);
+    expect(dbOrder.items[0]!.unitPrice.toFixed(4)).toBe("3.2500");
 
     const afterInv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(afterInv.qtyOnHand).toBe(48);

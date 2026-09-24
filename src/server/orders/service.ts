@@ -161,7 +161,7 @@ export type PortalOrderListItem = {
   lineCount: number;
 };
 
-export type PortalOrderDetail = PublicOrderConfirmation & {
+export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"> & {
   status: string;
   items: Array<{
     id: string;
@@ -340,7 +340,10 @@ async function loadPrimarySalesRepSnapshot(companyId: string): Promise<{
 
 async function resolveDeliverySnapshot(
   companyId: string,
-  input: { addressId?: string | null; oneOffAddress?: DeliveryAddressSnapshot | null },
+  input: {
+    addressId?: string | null | undefined;
+    oneOffAddress?: DeliveryAddressSnapshot | null | undefined;
+  },
 ): Promise<DeliveryAddressSnapshot> {
   if (input.oneOffAddress) {
     return deliveryAddressSnapshotSchema.parse(input.oneOffAddress);
@@ -687,7 +690,10 @@ export async function previewCheckout(
 
   let deliveryAddress: DeliveryAddressSnapshot | null = null;
   try {
-    deliveryAddress = await resolveDeliverySnapshot(company.id, draft);
+    deliveryAddress = await resolveDeliverySnapshot(company.id, {
+      addressId: draft.addressId ?? null,
+      oneOffAddress: draft.oneOffAddress ?? null,
+    });
   } catch {
     deliveryAddress = null;
   }
@@ -818,7 +824,10 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     });
     let deliveryAddress: DeliveryAddressSnapshot | null = null;
     try {
-      deliveryAddress = await resolveDeliverySnapshot(company.id, input);
+      deliveryAddress = await resolveDeliverySnapshot(company.id, {
+        addressId: input.addressId ?? null,
+        oneOffAddress: input.oneOffAddress ?? null,
+      });
     } catch {
       deliveryAddress = null;
     }
@@ -842,7 +851,10 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     };
   }
 
-  const deliveryAddress = await resolveDeliverySnapshot(company.id, input);
+  const deliveryAddress = await resolveDeliverySnapshot(company.id, {
+    addressId: input.addressId ?? null,
+    oneOffAddress: input.oneOffAddress ?? null,
+  });
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: userId },
     select: { name: true, email: true },
