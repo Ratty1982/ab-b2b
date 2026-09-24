@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PublicLayout, PublicPageBreadcrumbs } from "@/components/ab/PublicLayout";
-import { TeamMemberCard } from "@/components/team/TeamMemberCard";
+import { TeamMemberCard, teamMemberGridClassName } from "@/components/team/TeamMemberCard";
 import { getPublicTeamPageFn } from "@/server/phase2/fns";
 
 const SEO_TITLE = "Meet the Team | Automotive Brands";
@@ -39,16 +39,16 @@ function MeetTheTeamPage() {
         items={[{ label: "Home", to: "/" }, { label: "Meet the Team" }]}
       />
       <section className="border-b border-border bg-ink" data-team-page="hero">
-        <div className="mx-auto max-w-[1400px] px-4 py-12 sm:px-6 lg:px-10 lg:py-16">
+        <div className="mx-auto max-w-[1400px] px-4 py-10 sm:px-6 lg:px-10 lg:py-12">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
             Meet the Team
           </p>
-          <h1 className="mt-3 max-w-3xl font-display text-4xl font-semibold uppercase leading-[1.05] text-foreground sm:text-5xl">
+          <h1 className="mt-2 max-w-3xl font-display text-3xl font-semibold uppercase leading-[1.05] text-foreground sm:text-4xl lg:text-[2.75rem]">
             The people behind
             <br />
             Automotive Brands
           </h1>
-          <p className="mt-5 max-w-2xl text-[15px] leading-relaxed text-steel sm:text-base">
+          <p className="mt-4 max-w-[42rem] text-[15px] leading-relaxed text-steel sm:text-base">
             Automotive Brands combines product expertise, trade sales, customer support and
             operational know-how — real people supporting Power Maxed and Steel Seal trade customers
             across the UK.
@@ -56,7 +56,7 @@ function MeetTheTeamPage() {
         </div>
       </section>
 
-      <div className="mx-auto max-w-[1400px] px-4 py-10 sm:px-6 lg:px-10 lg:py-14">
+      <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
         {data.error ? (
           <p className="text-sm text-bad" role="alert">
             {data.error}
@@ -71,17 +71,17 @@ function MeetTheTeamPage() {
             </p>
           </div>
         ) : null}
-        <div className="grid gap-14">
+        <div className="grid gap-12 lg:gap-14">
           {data.departments.map((dept) => (
             <section
               key={dept.id}
               aria-labelledby={`dept-${dept.slug}`}
               data-team-department={dept.slug}
             >
-              <div className="max-w-2xl">
+              <div className="max-w-[42rem]">
                 <h2
                   id={`dept-${dept.slug}`}
-                  className="font-display text-2xl font-semibold uppercase tracking-wide text-foreground"
+                  className="font-display text-xl font-semibold uppercase tracking-wide text-foreground sm:text-2xl"
                 >
                   {dept.name}
                 </h2>
@@ -89,7 +89,13 @@ function MeetTheTeamPage() {
                   <p className="mt-2 text-[14px] text-steel">{dept.description}</p>
                 ) : null}
               </div>
-              <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div
+                className={
+                  dept.members.length > 0 && dept.members.length <= 3
+                    ? "mt-6 grid grid-cols-1 justify-items-stretch gap-x-8 gap-y-12 sm:grid-cols-2 sm:justify-items-start md:grid-cols-3"
+                    : `mt-6 ${teamMemberGridClassName()}`
+                }
+              >
                 {dept.members.map((member, index) => (
                   <TeamMemberCard
                     key={member.id}

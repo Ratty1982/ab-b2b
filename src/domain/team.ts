@@ -38,6 +38,36 @@ export function teamMemberInitials(firstName: string, lastName: string): string 
   return `${a}${b}`.toUpperCase() || "AB";
 }
 
+/**
+ * Job titles safe to show on public surfaces.
+ * Blank / recognised placeholder CMS values are omitted — admin still keeps the raw string.
+ */
+const PUBLIC_JOB_TITLE_PLACEHOLDERS = new Set([
+  "what is my job title",
+  "what is my job title?",
+  "job title here",
+  "tbc",
+  "tba",
+  "todo",
+  "unknown",
+  "n/a",
+  "na",
+  "none",
+  "placeholder",
+  "coming soon",
+  "photo coming soon",
+]);
+
+export function publicTeamJobTitle(jobTitle: string | null | undefined): string | null {
+  const trimmed = emptyToNull(jobTitle ?? null);
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase().replace(/[.!]+$/g, "").trim();
+  if (PUBLIC_JOB_TITLE_PLACEHOLDERS.has(normalized)) return null;
+  if (/^what\s+is\s+my\s+job\s+title\??$/i.test(trimmed)) return null;
+  if (/^(tbc|tba|todo|n\/?a|unknown|placeholder)[.!?]*$/i.test(trimmed)) return null;
+  return trimmed;
+}
+
 function emptyToNull(value: string | null | undefined): string | null {
   if (value == null) return null;
   const trimmed = value.trim();

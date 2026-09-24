@@ -276,6 +276,32 @@ describe("team public roster", () => {
     expect(found).toBeTruthy();
     expect(found!.photo).toBeNull();
     expect(found!.initials).toBe("TN");
+    expect(found!.jobTitle).toBe("Operator");
+    await deleteTeamMember(adminId, member.id);
+  });
+
+  it("suppresses placeholder job titles on the public roster only", async () => {
+    const sales = await prisma.teamDepartment.findUniqueOrThrow({
+      where: { slug: "operations-production" },
+    });
+    const member = await upsertTeamMember(adminId, {
+      firstName: "TmTest",
+      lastName: "PlaceholderTitle",
+      jobTitle: "What is my job title?",
+      departmentId: sales.id,
+      isPublic: true,
+      sortOrder: 2,
+    });
+    const page = await listPublicTeamPage();
+    const found = page.departments
+      .flatMap((d) => d.members)
+      .find((m) => m.id === member.id);
+    expect(found).toBeTruthy();
+    expect(found!.jobTitle).toBeNull();
+
+    const adminRows = await listTeamMembersAdmin(adminId, { q: "PlaceholderTitle" });
+    expect(adminRows[0]?.jobTitle).toBe("What is my job title?");
+
     await deleteTeamMember(adminId, member.id);
   });
 });

@@ -228,7 +228,7 @@ function AdminTeam() {
                 members.map((m, i) => (
                   <tr key={m.id} className={cn("border-b border-border/60", i % 2 && "bg-surface/30")}>
                     <td className="px-3 py-2">
-                      <div className="grid size-10 place-items-center overflow-hidden rounded-full border border-border bg-[#0b1220] text-[10px] font-semibold text-white">
+                      <div className="grid size-10 place-items-center overflow-hidden rounded-md border border-border bg-[#0b1220] text-[10px] font-semibold text-white">
                         {m.photo ? (
                           <img
                             src={m.photo.src}
@@ -237,11 +237,7 @@ function AdminTeam() {
                             style={{ objectPosition: m.photo.objectPosition }}
                           />
                         ) : (
-                          <img
-                            src="/brand/team-photo-coming-soon.svg"
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
+                          m.initials
                         )}
                       </div>
                     </td>
