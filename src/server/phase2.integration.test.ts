@@ -126,7 +126,11 @@ describe("company CRUD + sales scoping", () => {
       status: "ACTIVE",
     });
 
-    const mine = await listCompaniesForActor(salesRepUserId, { page: 1, pageSize: 100 });
+    const mine = await listCompaniesForActor(salesRepUserId, {
+      page: 1,
+      pageSize: 100,
+      q: assigned.name,
+    });
     expect(mine.items.some((i) => i.id === assigned.id)).toBe(true);
     expect(mine.items.some((i) => i.id === other.id)).toBe(false);
 

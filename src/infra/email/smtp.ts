@@ -6,21 +6,7 @@ import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import type { EmailMessage, EmailSendResult } from "./types";
 import type { EmailTransport, SmtpTransportConfig } from "./transport";
-
-function buildFrom(config: SmtpTransportConfig): string {
-  if (config.fromName?.trim()) {
-    return `"${config.fromName.trim().replace(/"/g, "")}" <${config.fromEmail}>`;
-  }
-  return config.fromEmail;
-}
-
-function buildReplyTo(config: SmtpTransportConfig): string | undefined {
-  if (!config.replyToEmail?.trim()) return undefined;
-  if (config.replyToName?.trim()) {
-    return `"${config.replyToName.trim().replace(/"/g, "")}" <${config.replyToEmail}>`;
-  }
-  return config.replyToEmail;
-}
+import { buildSmtpMailAddresses } from "@/server/email/addresses";
 
 function createTransporter(config: SmtpTransportConfig): Transporter {
   const secure = config.security === "SSL_TLS";
@@ -49,7 +35,8 @@ export function sanitiseSmtpError(error: unknown): string {
   if (
     lower.includes("invalid login") ||
     lower.includes("authentication failed") ||
-    lower.includes("auth") && (lower.includes("fail") || lower.includes("invalid") || lower.includes("denied"))
+    (lower.includes("auth") &&
+      (lower.includes("fail") || lower.includes("invalid") || lower.includes("denied")))
   ) {
     return "Authentication failed";
   }
@@ -86,22 +73,37 @@ export function sanitiseSmtpError(error: unknown): string {
   return "SMTP connection failed";
 }
 
+export type CapturedSmtpSend = {
+  from: { name?: string; address: string };
+  replyTo?: { name?: string; address: string };
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+};
+
 export function createSmtpEmailTransport(config: SmtpTransportConfig): EmailTransport {
   const transporter = createTransporter(config);
-  const from = buildFrom(config);
-  const replyTo = buildReplyTo(config);
+  const addresses = buildSmtpMailAddresses({
+    fromName: config.fromName,
+    fromEmail: config.fromEmail,
+    replyToName: config.replyToName,
+    replyToEmail: config.replyToEmail,
+    smtpUsername: config.username,
+  });
 
   return {
     name: "smtp",
     async send(message: EmailMessage): Promise<EmailSendResult> {
       try {
         const info = await transporter.sendMail({
-          from,
+          // Structured address — nodemailer encodes display name correctly.
+          from: addresses.from,
           to: message.to,
           subject: message.subject,
           text: message.text,
           ...(message.html ? { html: message.html } : {}),
-          ...(replyTo ? { replyTo } : {}),
+          ...(addresses.replyTo ? { replyTo: addresses.replyTo } : {}),
         });
         const messageId = typeof info.messageId === "string" ? info.messageId : undefined;
         return {
@@ -129,14 +131,34 @@ export function createMockSmtpTransport(options?: {
   verifyResult?: { ok: true } | { ok: false; error: string };
   sendResult?: EmailSendResult;
   onSend?: (message: EmailMessage) => void;
-}): EmailTransport & { sent: EmailMessage[] } {
+  /** Optional fixed From/Reply-To as production transport would apply. */
+  addresses?: {
+    from: { name?: string; address: string };
+    replyTo?: { name?: string; address: string };
+  };
+}): EmailTransport & {
+  sent: EmailMessage[];
+  captured: CapturedSmtpSend[];
+} {
   const sent: EmailMessage[] = [];
+  const captured: CapturedSmtpSend[] = [];
   return {
     name: "mock-smtp",
     sent,
+    captured,
     async send(message) {
       sent.push(message);
       options?.onSend?.(message);
+      if (options?.addresses) {
+        captured.push({
+          from: options.addresses.from,
+          ...(options.addresses.replyTo ? { replyTo: options.addresses.replyTo } : {}),
+          to: message.to,
+          subject: message.subject,
+          text: message.text,
+          ...(message.html ? { html: message.html } : {}),
+        });
+      }
       return options?.sendResult ?? { ok: true, id: "mock-id", detail: "mock" };
     },
     async verifyConnection() {

@@ -91,6 +91,29 @@ Retry rebuilds content from the authoritative Order / Application snapshot and
 - Access requires `settings.view` (read) / `settings.edit` (mutate, test, retry).
 - Trade customers and sales users without settings permissions have no access.
 
+## Sender display name (Microsoft 365)
+
+Admin → Settings → Email **From Name** / **From Email** are passed to nodemailer as a
+structured address:
+
+```ts
+from: { name: fromName, address: fromEmail }
+// equivalent header: "Automotive Brands" <b2b@automotivebrands.co.uk>
+```
+
+SMTP username is **never** used as the visible sender name.
+
+**Microsoft 365 note:** For recipients inside the same M365 tenant, Outlook often shows the
+mailbox’s **directory display name** (e.g. local-part `b2b`) instead of the SMTP From display
+name, even when the message header is correct. External recipients usually see the configured
+From Name. If Outlook still shows `b2b` after this fix, set the mailbox display name to
+**Automotive Brands** in the Microsoft 365 admin centre.
+
+## Branded HTML shell
+
+All transactional HTML emails share `renderTransactionalEmailShell`
+(navy header, logo, red CTA, ~600px table layout). Plain-text alternatives are always included.
+
 ## Encryption
 
 `src/server/crypto/secret.ts` — AES-256-GCM, key = SHA-256(`AUTH_SECRET`),

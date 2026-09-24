@@ -6,6 +6,10 @@
 
 import { moneyToString, parseMoney } from "@/domain/money";
 import type { EmailMessage } from "@/infra/email";
+import {
+  escapeEmailHtml,
+  renderTransactionalEmailShell,
+} from "@/server/email/shell";
 
 export type OrderEmailLine = {
   sku: string;
@@ -48,17 +52,15 @@ export type OrderEmailSnapshot = {
   adminOrderUrl: string;
 };
 
+export type EmailFooterMeta = {
+  fromName?: string | null;
+  fromEmail?: string | null;
+  replyToEmail?: string | null;
+};
+
 function formatGbp(raw: string): string {
   const m = parseMoney(raw);
   return m ? moneyToString(m, 2) : raw;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function formatDelivery(order: OrderEmailSnapshot): string {
@@ -77,31 +79,53 @@ function itemsPlain(order: OrderEmailSnapshot): string {
     .join("\n");
 }
 
-function itemsHtml(order: OrderEmailSnapshot): string {
+/** Email-safe order summary: Product (+SKU), Qty, Unit Price, Total. */
+function orderSummaryTableHtml(order: OrderEmailSnapshot): string {
   const rows = order.items
     .map(
       (item) => `<tr>
-  <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${escapeHtml(item.sku)}</td>
-  <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${escapeHtml(item.name)}</td>
-  <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${item.qty}</td>
-  <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">£${escapeHtml(formatGbp(item.customerUnitPrice))}</td>
-  <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">£${escapeHtml(formatGbp(item.lineTotal))}</td>
+  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;vertical-align:top;">
+    <strong>${escapeEmailHtml(item.name)}</strong><br/>
+    <span style="font-family:Consolas,monospace;font-size:12px;color:#5c6578;">${escapeEmailHtml(item.sku)}</span>
+  </td>
+  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">${item.qty}</td>
+  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">£${escapeEmailHtml(formatGbp(item.customerUnitPrice))}</td>
+  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">£${escapeEmailHtml(formatGbp(item.lineTotal))}</td>
 </tr>`,
     )
     .join("\n");
-  return `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">
-<thead><tr>
-  <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #111">SKU</th>
-  <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #111">Item</th>
-  <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #111">Qty</th>
-  <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #111">Unit</th>
-  <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #111">Net</th>
-</tr></thead>
+
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-collapse:collapse;margin:20px 0 8px;">
+<thead>
+<tr>
+  <th align="left" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Product</th>
+  <th align="right" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Qty</th>
+  <th align="right" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Unit Price</th>
+  <th align="right" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Total</th>
+</tr>
+</thead>
 <tbody>${rows}</tbody>
+</table>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin:8px 0 16px;">
+  <tr>
+    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">Subtotal (ex VAT)</td>
+    <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">£${escapeEmailHtml(formatGbp(order.subtotal))}</td>
+  </tr>
+  <tr>
+    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">VAT</td>
+    <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">£${escapeEmailHtml(formatGbp(order.vatTotal))}</td>
+  </tr>
+  <tr>
+    <td style="padding:10px 8px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#1a1f2c;border-top:1px solid #d7dbe3;">Total (inc VAT)</td>
+    <td align="right" style="padding:10px 8px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#1a1f2c;border-top:1px solid #d7dbe3;">£${escapeEmailHtml(formatGbp(order.grandTotal))} ${escapeEmailHtml(order.currency)}</td>
+  </tr>
 </table>`;
 }
 
-export function buildOrderReceivedCustomerBodies(order: OrderEmailSnapshot): {
+export function buildOrderReceivedCustomerBodies(
+  order: OrderEmailSnapshot,
+  footer?: EmailFooterMeta,
+): {
   subject: string;
   text: string;
   html: string;
@@ -128,35 +152,37 @@ export function buildOrderReceivedCustomerBodies(order: OrderEmailSnapshot): {
     "Your order has been received and is pending processing.",
     "This confirmation does not mean the order has been despatched.",
     "",
-    `VIEW ORDER: ${order.portalOrderUrl}`,
+    `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
     "",
     "If you have questions, reply to this email or contact your account manager.",
     "",
     "Automotive Brands",
+    "https://automotivebrands.co.uk",
   ].join("\n");
 
-  const html = `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;line-height:1.5">
-<p>Hello ${escapeHtml(order.contact.name)},</p>
-<p>We've received your Automotive Brands order <strong>${escapeHtml(order.orderNumber)}</strong>${escapeHtml(ref)}.</p>
-<p><strong>Company:</strong> ${escapeHtml(order.companyName)}<br/>
-<strong>Delivery:</strong> ${escapeHtml(delivery)}</p>
-${itemsHtml(order)}
-<p>
-Subtotal (ex VAT): <strong>£${escapeHtml(formatGbp(order.subtotal))}</strong> ${escapeHtml(order.currency)}<br/>
-VAT: <strong>£${escapeHtml(formatGbp(order.vatTotal))}</strong><br/>
-Total (inc VAT): <strong>£${escapeHtml(formatGbp(order.grandTotal))}</strong>
-</p>
-<p>Your order has been received and is pending processing.<br/>
-This confirmation does not mean the order has been despatched.</p>
-<p><a href="${escapeHtml(order.portalOrderUrl)}" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;text-decoration:none;font-weight:600">VIEW ORDER</a></p>
-<p>If you have questions, reply to this email or contact your account manager.</p>
-<p>Automotive Brands</p>
-</body></html>`;
+  const bodyHtml = `
+<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
+<p style="margin:0 0 16px;">We've received your Automotive Brands order <strong>${escapeEmailHtml(order.orderNumber)}</strong>${escapeEmailHtml(ref)}.</p>
+<p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}<br/>
+<strong>Delivery:</strong> ${escapeEmailHtml(delivery)}</p>
+${orderSummaryTableHtml(order)}
+<p style="margin:0 0 8px;">Your order has been received and is pending processing.<br/>
+This confirmation does not mean the order has been despatched.</p>`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Order ${order.orderNumber} received`,
+    bodyHtml,
+    cta: { label: "View your order", href: order.portalOrderUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
 
   return { subject, text, html };
 }
 
-export function buildOrderReceivedInternalBodies(order: OrderEmailSnapshot): {
+export function buildOrderReceivedInternalBodies(
+  order: OrderEmailSnapshot,
+  footer?: EmailFooterMeta,
+): {
   subject: string;
   text: string;
   html: string;
@@ -186,27 +212,29 @@ export function buildOrderReceivedInternalBodies(order: OrderEmailSnapshot): {
     "",
     "Status: SUBMITTED (received / pending Autopart handoff — not despatched).",
     `VIEW ORDER (admin): ${order.adminOrderUrl}`,
+    "",
+    "Automotive Brands",
   ].join("\n");
 
-  const html = `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;color:#111;line-height:1.5">
-<p>Order <strong>${escapeHtml(order.orderNumber)}</strong> received for <strong>${escapeHtml(order.companyName)}</strong>.</p>
-<p>
-Contact: ${escapeHtml(order.contact.name)} &lt;${escapeHtml(order.contact.email)}&gt;<br/>
-PO/reference: ${escapeHtml(order.poNumber ?? "—")}<br/>
-Payment terms: ${escapeHtml(order.paymentTerms ?? "—")}<br/>
+  const bodyHtml = `
+<p style="margin:0 0 16px;">Order <strong>${escapeEmailHtml(order.orderNumber)}</strong> received for <strong>${escapeEmailHtml(order.companyName)}</strong>.</p>
+<p style="margin:0 0 12px;">
+Contact: ${escapeEmailHtml(order.contact.name)} &lt;${escapeEmailHtml(order.contact.email)}&gt;<br/>
+PO/reference: ${escapeEmailHtml(order.poNumber ?? "—")}<br/>
+Payment terms: ${escapeEmailHtml(order.paymentTerms ?? "—")}<br/>
 Autopart linked: <strong>${order.autopartAccountLinked ? "Yes" : "No"}</strong><br/>
-Autopart code snapshot: <span style="font-family:monospace">${escapeHtml(codeSnap)}</span><br/>
-Sales rep: ${escapeHtml(salesRep)}
+Autopart code snapshot: <span style="font-family:Consolas,monospace;">${escapeEmailHtml(codeSnap)}</span><br/>
+Sales rep: ${escapeEmailHtml(salesRep)}
 </p>
-${itemsHtml(order)}
-<p>
-Subtotal: £${escapeHtml(formatGbp(order.subtotal))}<br/>
-VAT: £${escapeHtml(formatGbp(order.vatTotal))}<br/>
-Total (inc VAT): <strong>£${escapeHtml(formatGbp(order.grandTotal))}</strong> ${escapeHtml(order.currency)}
-</p>
-<p>Status: SUBMITTED (received / pending Autopart handoff — not despatched).</p>
-<p><a href="${escapeHtml(order.adminOrderUrl)}" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;text-decoration:none;font-weight:600">VIEW ORDER</a></p>
-</body></html>`;
+${orderSummaryTableHtml(order)}
+<p style="margin:0 0 8px;">Status: SUBMITTED (received / pending Autopart handoff — not despatched).</p>`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `New B2B order ${order.orderNumber}`,
+    bodyHtml,
+    cta: { label: "View order", href: order.adminOrderUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
 
   return { subject, text, html };
 }

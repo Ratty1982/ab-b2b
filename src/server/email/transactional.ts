@@ -26,6 +26,7 @@ import {
   type TradeApplicationEmailSnapshot,
 } from "@/server/email/application-templates";
 import {
+  getEmailFooterMeta,
   getOrderNotificationRecipients,
   getTradeApplicationNotificationRecipients,
   isTransactionalEmailEnabled,
@@ -285,7 +286,8 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
     return { customerOk: false, internalOk: null, detail: "order snapshot missing contact email" };
   }
 
-  const customerBodies = buildOrderReceivedCustomerBodies(snapshot);
+  const footer = await getEmailFooterMeta();
+  const customerBodies = buildOrderReceivedCustomerBodies(snapshot, footer);
   const customerUpsert = await upsertPendingEmail({
     purpose: "ORDER_RECEIVED",
     toEmail: snapshot.contact.email,
@@ -307,7 +309,7 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
 
   let internalOk: boolean | null = null;
   if (internalList.length > 0) {
-    const internalBodies = buildOrderReceivedInternalBodies(snapshot);
+    const internalBodies = buildOrderReceivedInternalBodies(snapshot, footer);
     let anyOk = false;
     for (const toEmail of internalList) {
       const internalUpsert = await upsertPendingEmail({
@@ -333,7 +335,8 @@ export async function sendTradeApplicationEmailsAfterSubmit(applicationId: strin
   const snap = await loadTradeApplicationEmailSnapshot(applicationId);
   if (!snap?.contactEmail) return;
 
-  const customer = buildTradeApplicationReceivedBodies(snap);
+  const footer = await getEmailFooterMeta();
+  const customer = buildTradeApplicationReceivedBodies(snap, footer);
   const customerUpsert = await upsertPendingEmail({
     purpose: "TRADE_APPLICATION_RECEIVED",
     toEmail: snap.contactEmail,
@@ -347,7 +350,7 @@ export async function sendTradeApplicationEmailsAfterSubmit(applicationId: strin
 
   const recipients = await getTradeApplicationNotificationRecipients();
   if (recipients.length === 0) return;
-  const internal = buildTradeApplicationInternalBodies(snap);
+  const internal = buildTradeApplicationInternalBodies(snap, footer);
   for (const toEmail of recipients) {
     const upsert = await upsertPendingEmail({
       purpose: "TRADE_APPLICATION_INTERNAL_NOTIFICATION",
@@ -366,7 +369,8 @@ export async function sendTradeApplicationEmailsAfterSubmit(applicationId: strin
 export async function sendTradeApplicationMoreInfoEmail(applicationId: string): Promise<boolean> {
   const snap = await loadTradeApplicationEmailSnapshot(applicationId);
   if (!snap?.contactEmail) return false;
-  const bodies = buildTradeApplicationMoreInfoBodies(snap);
+  const footer = await getEmailFooterMeta();
+  const bodies = buildTradeApplicationMoreInfoBodies(snap, footer);
   const upsert = await upsertPendingEmail({
     purpose: "TRADE_APPLICATION_MORE_INFO",
     toEmail: snap.contactEmail,
@@ -386,10 +390,14 @@ export async function sendTradeApplicationApprovedEmail(
 ): Promise<boolean> {
   const snap = await loadTradeApplicationEmailSnapshot(applicationId);
   if (!snap?.contactEmail) return false;
-  const bodies = buildTradeApplicationApprovedBodies({
-    ...snap,
-    activationPath,
-  });
+  const footer = await getEmailFooterMeta();
+  const bodies = buildTradeApplicationApprovedBodies(
+    {
+      ...snap,
+      activationPath,
+    },
+    footer,
+  );
   const upsert = await upsertPendingEmail({
     purpose: "TRADE_APPLICATION_APPROVED",
     toEmail: snap.contactEmail,
@@ -405,7 +413,8 @@ export async function sendTradeApplicationApprovedEmail(
 export async function sendTradeApplicationRejectedEmail(applicationId: string): Promise<boolean> {
   const snap = await loadTradeApplicationEmailSnapshot(applicationId);
   if (!snap?.contactEmail) return false;
-  const bodies = buildTradeApplicationRejectedBodies(snap);
+  const footer = await getEmailFooterMeta();
+  const bodies = buildTradeApplicationRejectedBodies(snap, footer);
   const upsert = await upsertPendingEmail({
     purpose: "TRADE_APPLICATION_REJECTED",
     toEmail: snap.contactEmail,
@@ -425,11 +434,15 @@ export async function sendTradeAccountActivatedEmail(input: {
   contactName: string;
   companyName: string;
 }): Promise<boolean> {
-  const bodies = buildTradeAccountActivatedBodies({
-    contactName: input.contactName,
-    contactEmail: input.contactEmail,
-    companyName: input.companyName,
-  });
+  const footer = await getEmailFooterMeta();
+  const bodies = buildTradeAccountActivatedBodies(
+    {
+      contactName: input.contactName,
+      contactEmail: input.contactEmail,
+      companyName: input.companyName,
+    },
+    footer,
+  );
   const upsert = await upsertPendingEmail({
     purpose: "TRADE_ACCOUNT_ACTIVATED",
     toEmail: input.contactEmail,
@@ -613,6 +626,7 @@ export async function retryTransactionalEmail(
   let textBody = row.textBody;
   let htmlBody = row.htmlBody;
   let toEmail = row.toEmail;
+  const footer = await getEmailFooterMeta();
 
   if (row.entityType === "Order") {
     const snapshot = await loadOrderEmailSnapshot(row.entityId);
@@ -620,13 +634,13 @@ export async function retryTransactionalEmail(
       throw new AuthError("Order not found for email", "ORDER_NOT_FOUND", 404);
     }
     if (row.purpose === "ORDER_RECEIVED") {
-      const bodies = buildOrderReceivedCustomerBodies(snapshot);
+      const bodies = buildOrderReceivedCustomerBodies(snapshot, footer);
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;
       toEmail = snapshot.contact.email || row.toEmail;
     } else if (row.purpose === "ORDER_RECEIVED_INTERNAL") {
-      const bodies = buildOrderReceivedInternalBodies(snapshot);
+      const bodies = buildOrderReceivedInternalBodies(snapshot, footer);
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;
@@ -637,18 +651,18 @@ export async function retryTransactionalEmail(
       throw new AuthError("Application not found for email", "NOT_FOUND", 404);
     }
     if (row.purpose === "TRADE_APPLICATION_RECEIVED") {
-      const bodies = buildTradeApplicationReceivedBodies(snap);
+      const bodies = buildTradeApplicationReceivedBodies(snap, footer);
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;
       toEmail = snap.contactEmail || row.toEmail;
     } else if (row.purpose === "TRADE_APPLICATION_INTERNAL_NOTIFICATION") {
-      const bodies = buildTradeApplicationInternalBodies(snap);
+      const bodies = buildTradeApplicationInternalBodies(snap, footer);
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;
     } else if (row.purpose === "TRADE_APPLICATION_MORE_INFO") {
-      const bodies = buildTradeApplicationMoreInfoBodies(snap);
+      const bodies = buildTradeApplicationMoreInfoBodies(snap, footer);
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;
@@ -658,7 +672,7 @@ export async function retryTransactionalEmail(
       // Rebuild message without changing activation URL already stored in text/html.
       toEmail = snap.contactEmail || row.toEmail;
     } else if (row.purpose === "TRADE_APPLICATION_REJECTED") {
-      const bodies = buildTradeApplicationRejectedBodies(snap);
+      const bodies = buildTradeApplicationRejectedBodies(snap, footer);
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;

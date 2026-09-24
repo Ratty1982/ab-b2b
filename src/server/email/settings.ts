@@ -19,7 +19,8 @@ import {
   validateEmailSettingsSave,
   type EmailSettingsUpdateInput,
 } from "@/domain/email-settings";
-import { formatDateTime } from "@/lib/datetime";
+import { buildDiagnosticTestEmailBodies } from "@/server/email/test-template";
+import { buildSmtpMailAddresses } from "@/server/email/addresses";
 
 export const EMAIL_SETTINGS_ID = "singleton";
 
@@ -291,6 +292,20 @@ export async function getTradeApplicationNotificationRecipients(): Promise<strin
   return parseRecipients(row.tradeApplicationRecipients);
 }
 
+/** Footer / reply meta for branded shells — never includes SMTP credentials. */
+export async function getEmailFooterMeta(): Promise<{
+  fromName: string | null;
+  fromEmail: string | null;
+  replyToEmail: string | null;
+}> {
+  const row = await getOrCreateEmailSettings();
+  return {
+    fromName: row.fromName,
+    fromEmail: row.fromEmail,
+    replyToEmail: row.replyToEmail,
+  };
+}
+
 const diagnosticRate = new Map<string, number>();
 
 function assertDiagnosticRateLimit(actorUserId: string, action: string) {
@@ -385,25 +400,27 @@ export async function sendTestEmail(
   }
 
   const sentAt = new Date();
-  const sentLabel = formatDateTime(sentAt, { seconds: false }) ?? sentAt.toISOString();
-  const toName = parsed.data.toName?.trim();
-  const greeting = toName ? `Hello ${toName},\n\n` : "";
-  const subject = "Automotive Brands Email Test";
-  const text = `${greeting}Automotive Brands
-Transactional Email Test
+  const footer = {
+    fromName: config.fromName,
+    fromEmail: config.fromEmail,
+    replyToEmail: config.replyToEmail,
+  };
+  // Same sender builder as production SmtpEmailTransport.
+  const mailAddresses = buildSmtpMailAddresses({
+    fromName: config.fromName,
+    fromEmail: config.fromEmail,
+    replyToName: config.replyToName,
+    replyToEmail: config.replyToEmail,
+    smtpUsername: config.username,
+  });
+  void mailAddresses;
 
-This email confirms that the Automotive Brands transactional email
-system is configured and able to send email successfully.
-
-Sent: ${sentLabel}
-
-This is a diagnostic TEST message from Admin → Settings → Email.`;
-  const html = `<p>${toName ? `Hello ${escapeHtml(toName)},` : ""}</p>
-<p><strong>Automotive Brands</strong><br/>Transactional Email Test</p>
-<p>This email confirms that the Automotive Brands transactional email
-system is configured and able to send email successfully.</p>
-<p>Sent: ${escapeHtml(sentLabel)}</p>
-<p><em>This is a diagnostic TEST message from Admin → Settings → Email.</em></p>`;
+  const bodies = buildDiagnosticTestEmailBodies({
+    ...(parsed.data.toName ? { toName: parsed.data.toName } : {}),
+    sentAt,
+    footer,
+  });
+  const { subject, text, html } = bodies;
 
   const idempotencyKey = `EMAIL_TEST:${actorUserId}:${sentAt.toISOString()}`;
   const row = await prisma.transactionalEmail.create({
@@ -478,6 +495,7 @@ system is configured and able to send email successfully.</p>
     metadata: {
       ok: sendOk,
       toEmail: parsed.data.toEmail,
+      fromHeader: mailAddresses.fromHeader,
       error: sendOk ? null : (detail ?? null),
     },
   });
@@ -497,10 +515,3 @@ system is configured and able to send email successfully.</p>
   };
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
