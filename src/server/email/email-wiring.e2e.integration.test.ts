@@ -97,7 +97,14 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await prisma.emailSettings.updateMany({ data: { enabled: false } });
+  await prisma.emailSettings.updateMany({
+    data: {
+      enabled: false,
+      tradeApplicationRecipients: [],
+      orderNotificationRecipients: [],
+      motorsportEnquiryRecipients: [],
+    },
+  });
   await prisma.$disconnect();
 });
 
@@ -159,6 +166,7 @@ describe("transactional email E2E wiring", () => {
     const activated = await acceptTradeInvitation({
       token: approved.inviteToken!,
       password: "E2eTradePass99!",
+      confirmPassword: "E2eTradePass99!",
     });
     expect(activated.userId).toBeTruthy();
     const welcome = await prisma.transactionalEmail.findFirst({

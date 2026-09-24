@@ -397,8 +397,13 @@ describe("Phase 6B order emails", () => {
         smtpHost: "smtp.example.invalid",
         smtpUsername: "u",
         smtpPasswordEncrypted: "v1:dGVzdA==:dGVzdA==:dGVzdA==",
+        orderNotificationRecipients: [],
       },
-      update: { enabled: true },
+      update: {
+        enabled: true,
+        // Clear Admin recipients so TRADE_ORDER_NOTIFICATION_EMAIL env fallback applies.
+        orderNotificationRecipients: [],
+      },
     });
   }
 
