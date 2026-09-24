@@ -1,12 +1,10 @@
 import { ROUTES } from "@/lib/app-nav";
+import { MARKETING_CMS_PAGES } from "@/domain/cms-marketing-pages";
 
 /** Display copy for known CMS slugs — only used when the page exists in the database. */
 const BLURBS: Record<string, string> = {
   home: "Main public website homepage",
-  about: "About Automotive Brands",
-  brands: "Brand portfolio",
-  "trade-solutions": "Trade solutions",
-  contact: "Contact",
+  ...Object.fromEntries(MARKETING_CMS_PAGES.map((page) => [page.slug, page.blurb])),
 };
 
 export function cmsPageBlurb(slug: string): string {
@@ -14,7 +12,9 @@ export function cmsPageBlurb(slug: string): string {
 }
 
 export function cmsPublicPath(slug: string): string {
-  return slug === "home" ? ROUTES.home : `/${slug}`;
+  if (slug === "home") return ROUTES.home;
+  if (slug === "brands") return "/brands";
+  return `/${slug}`;
 }
 
 export function cmsEditorPath(slug: string): string {

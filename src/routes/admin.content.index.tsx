@@ -50,7 +50,8 @@ function CmsPages() {
         {loading ? <p className="text-sm text-steel">Loading pages…</p> : null}
         {!loading && pages.length === 0 && !error ? (
           <p className="text-sm text-steel">
-            No CMS pages yet. The homepage is created automatically on production bootstrap.
+            No CMS pages yet. Homepage and marketing pages are created automatically on production
+            bootstrap (or the first public page request).
           </p>
         ) : null}
         {pages.length > 0 ? (

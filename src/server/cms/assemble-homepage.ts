@@ -41,8 +41,8 @@ export async function loadPublicHomepage(userId: string | null): Promise<PublicH
   let cmsError: string | null = null;
   let published: Awaited<ReturnType<typeof getPublishedHomepage>> = null;
   try {
-    const { bootstrapHomepageCms } = await import("@/server/cms/service");
-    await bootstrapHomepageCms();
+    const { bootstrapPublicCms } = await import("@/server/cms/service");
+    await bootstrapPublicCms();
     published = await getPublishedHomepage();
   } catch (error) {
     cmsError = error instanceof Error ? error.message : "Homepage content could not be loaded";

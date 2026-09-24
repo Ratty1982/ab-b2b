@@ -339,6 +339,26 @@ export const getPublicHomepageFn = createServerFn({ method: "GET" }).handler(asy
   }
 });
 
+/** Public marketing CMS page by slug (about, brands, trade-solutions, …). */
+export const getPublicCmsPageFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { slug: string })
+  .handler(async ({ data }) => {
+    try {
+      const slug = typeof data?.slug === "string" ? data.slug.trim() : "";
+      if (!slug || slug === "home") {
+        return { ok: false as const, error: "Invalid CMS page slug", code: "VALIDATION" };
+      }
+      await cms.bootstrapMarketingCmsPages();
+      const page = await cms.getPublishedCmsPage(slug);
+      if (!page) {
+        return { ok: false as const, error: "Page not found", code: "NOT_FOUND" };
+      }
+      return { ok: true as const, data: page };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const previewPublicHomepageFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>

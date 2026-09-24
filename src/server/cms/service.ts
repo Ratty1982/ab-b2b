@@ -14,6 +14,7 @@ import {
   defaultHomepageSections,
   HOMEPAGE_LAUNCH_CONTENT_KEY,
 } from "@/server/cms/homepage-seed";
+import { MARKETING_CMS_PAGES } from "@/domain/cms-marketing-pages";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
 import { attachFeaturedBrandLogos } from "@/domain/featured-brands";
 import { mergeBrandLogoMaps, readBrandLogos } from "@/lib/cms-media";
@@ -134,8 +135,13 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
 
 /** Public: published version only. Returns null when nothing published. */
 export async function getPublishedHomepage() {
+  return getPublishedCmsPage("home");
+}
+
+/** Public: any published CMS page by slug. Returns null when missing/unpublished. */
+export async function getPublishedCmsPage(slug: string) {
   const page = await prisma.cmsPage.findUnique({
-    where: { slug: "home" },
+    where: { slug },
     include: {
       publishedVersion: {
         include: { sections: { orderBy: { sortOrder: "asc" }, where: { enabled: true } } },
@@ -150,15 +156,21 @@ export async function getPublishedHomepage() {
     console.error("[ab:cms] brand logos unavailable", error);
   }
   return {
+    slug: page.slug,
     title: page.title,
     seoTitle: page.seoTitle ?? page.publishedVersion.seoTitle,
     metaDescription: page.metaDescription ?? page.publishedVersion.metaDescription,
     ogImageSrc: page.ogImageMediaId ? `/api/cms-media/${page.ogImageMediaId}` : null,
-    sections: page.publishedVersion.sections.map((s) => ({
-      id: s.id,
-      type: s.type as CmsSectionTypeKey,
-      config: attachBrandLogos(s.type, s.config, catalogueLogos),
-    })),
+    sections: page.publishedVersion.sections.map((s) => {
+      const withLogos = attachBrandLogos(s.type, s.config, catalogueLogos);
+      return {
+        id: s.id,
+        type: s.type as CmsSectionTypeKey,
+        config: (withLogos && typeof withLogos === "object" && !Array.isArray(withLogos)
+          ? withLogos
+          : {}) as { [key: string]: import("@/domain/homepage").HomepageJson },
+      };
+    }),
   };
 }
 
@@ -740,4 +752,86 @@ export async function bootstrapHomepageCms(
   });
 
   return { created: true, pageId: page.id };
+}
+
+/**
+ * Idempotent seed for public marketing CMS pages (about, brands, trade-solutions, etc.).
+ * Does not overwrite pages that already have a published version.
+ */
+export async function bootstrapMarketingCmsPages(
+  prismaClient: typeof prisma = prisma,
+): Promise<{ created: string[]; existing: string[] }> {
+  const created: string[] = [];
+  const existing: string[] = [];
+
+  for (const seed of MARKETING_CMS_PAGES) {
+    const row = await prismaClient.cmsPage.findUnique({
+      where: { slug: seed.slug },
+      select: { id: true, publishedVersionId: true },
+    });
+    if (row?.publishedVersionId) {
+      existing.push(seed.slug);
+      continue;
+    }
+
+    await prismaClient.$transaction(async (tx) => {
+      const page =
+        row ??
+        (await tx.cmsPage.create({
+          data: {
+            slug: seed.slug,
+            title: seed.title,
+            seoTitle: seed.seoTitle,
+            metaDescription: seed.metaDescription,
+            status: "DRAFT",
+          },
+        }));
+
+      if (page.publishedVersionId) return;
+
+      const version = await tx.cmsPageVersion.create({
+        data: {
+          pageId: page.id,
+          version: 1,
+          label: "Marketing page seed",
+          seoTitle: seed.seoTitle,
+          metaDescription: seed.metaDescription,
+          sections: {
+            create: seed.sections.map((section, index) => ({
+              type: section.type,
+              config: section.config as Prisma.InputJsonValue,
+              sortOrder: index,
+              enabled: section.enabled !== false,
+            })),
+          },
+        },
+      });
+
+      await tx.cmsPage.update({
+        where: { id: page.id },
+        data: {
+          draftVersionId: version.id,
+          publishedVersionId: version.id,
+          status: "PUBLISHED",
+          publishedAt: new Date(),
+          title: seed.title,
+          seoTitle: seed.seoTitle,
+          metaDescription: seed.metaDescription,
+        },
+      });
+    });
+
+    created.push(seed.slug);
+  }
+
+  return { created, existing };
+}
+
+/** Homepage + marketing pages used by production bootstrap and public loaders. */
+export async function bootstrapPublicCms(
+  prismaClient: typeof prisma = prisma,
+): Promise<{ homepage: Awaited<ReturnType<typeof bootstrapHomepageCms>>; marketing: Awaited<ReturnType<typeof bootstrapMarketingCmsPages>> }> {
+  const homepage = await bootstrapHomepageCms(prismaClient);
+  const marketing = await bootstrapMarketingCmsPages(prismaClient);
+  return { homepage, marketing };
 }

@@ -98,6 +98,53 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
         </div>
       );
 
+      if (variant === "dark" || variant === "light") {
+        // Compact page header for marketing CMS pages (no full-bleed hero media).
+        return (
+          <section className="border-b border-border/60">
+            <div className={cn("mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-10", pad)}>
+              <div className={cn("max-w-3xl", textAlign)}>
+                {str(c, "eyebrow") ? (
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary">
+                    {str(c, "eyebrow")}
+                  </div>
+                ) : null}
+                <h1
+                  className={cn(
+                    "font-display text-3xl font-semibold uppercase tracking-tight sm:text-4xl",
+                    str(c, "eyebrow") && "mt-2",
+                  )}
+                >
+                  {str(c, "headline")}
+                </h1>
+                {str(c, "supporting") ? (
+                  <p className="mt-3 max-w-2xl text-sm leading-relaxed text-steel">{str(c, "supporting")}</p>
+                ) : null}
+                <div className={cn("mt-6 flex flex-wrap items-center gap-3", ctaWrap)}>
+                  {str(c, "ctaLabel") ? (
+                    <a
+                      href={str(c, "ctaHref", "/register")}
+                      className="inline-flex h-11 items-center gap-2 rounded-md bg-primary px-5 text-sm font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
+                    >
+                      {str(c, "ctaLabel")}
+                      <ArrowRight className="size-4" aria-hidden />
+                    </a>
+                  ) : null}
+                  {str(c, "secondaryCtaLabel") ? (
+                    <a
+                      href={str(c, "secondaryCtaHref", "/brands")}
+                      className="inline-flex h-11 items-center rounded-md border border-border bg-surface/50 px-5 text-sm font-semibold uppercase tracking-wide transition-colors hover:border-steel"
+                    >
+                      {str(c, "secondaryCtaLabel")}
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      }
+
       if (variant === "wide") {
         return (
           <section className="relative overflow-hidden border-b border-border/60">
