@@ -71,9 +71,27 @@ Reuses `src/domain/ordering.ts`:
 
 ## Stock
 
-Uses Phase 5 Avail / sellable helpers + freshness policy.  
-**Does not** subtract Autopart `qtyOnHand` or invent ERP reservations.  
-Concurrent oversell of the same final units is a known 6C limitation.
+Uses Phase 5 Autopart Avail (`qtyOnHand`) plus Automotive Brands reservations:
+
+```text
+effective sellable = max(0, qtyOnHand − qtyReserved)
+```
+
+- `qtyOnHand` = latest Autopart 231PO3NEW Avail (sync updates this only)  
+- `qtyReserved` = sum of **ACTIVE** `OrderStockReservation` quantities  
+- **Sync must never reset `qtyReserved`**  
+- Basket / checkout preview does **not** reserve — only `placeOrder` does, under `SELECT … FOR UPDATE` inside the order transaction  
+- Autopart `qtyOnHand` is never decremented by 6B; there is no Autopart ERP reservation  
+
+### Reservation lifecycle
+
+| Status | Meaning |
+| --- | --- |
+| ACTIVE | Hold after successful place |
+| RELEASED | Hold freed (cancel / expiry — Phase 6C) |
+| CONSUMED | Applied when Autopart handoff completes (Phase 6C) |
+
+Concurrent placeOrders racing the last units: exactly one succeeds; the other fails with `INSUFFICIENT_STOCK`.
 
 ## Order number
 
@@ -107,9 +125,16 @@ Do not claim despatched / paid / Autopart-sent.
 
 ## Email
 
-After commit, best-effort order-received email via existing adapter.  
-Failure is audited and **does not** roll back the order.  
-Optional `TRADE_ORDER_NOTIFICATION_EMAIL` for internal notify.
+After commit, `sendOrderEmailsAfterCommit`:
+
+1. Creates durable `TransactionalEmail` rows (`ORDER_RECEIVED`, optional `ORDER_RECEIVED_INTERNAL`) with idempotency key `purpose:orderId`  
+2. Attempts send via the email adapter  
+3. Updates `SENT` / `FAILED` — **never rolls back the order**  
+
+Bodies use **order snapshot** prices and line items (not live catalogue).  
+Customer copy must not claim Autopart reservation or despatch.  
+Internal notify uses `TRADE_ORDER_NOTIFICATION_EMAIL` when set.  
+Admin order detail shows status and can **Retry** (rebuilds from snapshot).
 
 ## Portal routes
 
@@ -122,7 +147,8 @@ Optional `TRADE_ORDER_NOTIFICATION_EMAIL` for internal notify.
 
 ## Admin
 
-`/admin/orders` + `/admin/orders/$orderId` — real Order rows, sales-scoped where applicable.
+`/admin/orders` + `/admin/orders/$orderId` — real Order rows, sales-scoped where applicable.  
+Product inventory panel shows Autopart Avail, AB Reserved, Effective Sellable.
 
 ## Remaining mock surfaces
 
@@ -133,7 +159,7 @@ Optional `TRADE_ORDER_NOTIFICATION_EMAIL` for internal notify.
 ## Phase 6C requirements
 
 - Autopart sales-order submission using **order** Autopart code snapshot  
-- Real-time / reserved stock semantics  
+- Reconciliation of `OrderStockReservation` (RELEASED / CONSUMED) against Autopart acknowledgement  
 - Shipping charge engine / APC services  
 - Richer status machine for ERP acknowledgement  
-- Customer cancellation / amendment workflows  
+- Customer cancellation / amendment workflows (release reservations)  

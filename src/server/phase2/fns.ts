@@ -1713,4 +1713,31 @@ export const getAdminOrderFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listOrderEmailsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const email = await import("@/server/email/transactional");
+      return { ok: true as const, data: await email.listOrderEmails(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const retryTransactionalEmailFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { emailId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const email = await import("@/server/email/transactional");
+      return {
+        ok: true as const,
+        data: await email.retryTransactionalEmail(userId, data.emailId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

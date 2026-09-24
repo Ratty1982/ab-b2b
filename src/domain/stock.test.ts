@@ -3,6 +3,7 @@ import {
   catalogueMatchSummary,
   customerAvailabilityForStock,
   describeStockQtyChange,
+  getEffectiveSellableQuantity,
   getSellableQuantity,
   internalStatusFromSellable,
   isStockStale,
@@ -23,6 +24,9 @@ describe("authoritative stock vs public availability", () => {
     expect(sellableQuantityFromAvail(0)).toBe(0);
     expect(sellableQuantityFromAvail(-5)).toBe(0);
     expect(getSellableQuantity({ sellableQty: 11 })).toBe(11);
+    expect(getEffectiveSellableQuantity({ autopartAvail: 48, reservedQty: 24 })).toBe(24);
+    expect(getEffectiveSellableQuantity({ autopartAvail: 7, reservedQty: 0 })).toBe(7);
+    expect(getEffectiveSellableQuantity({ autopartAvail: 10, reservedQty: 15 })).toBe(0);
   });
 
   it("maps customer bands from sellable qty", () => {

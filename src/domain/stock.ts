@@ -31,7 +31,10 @@ export function skuMatchKey(raw: string): string {
 export type VariantStock = {
   variantId: string;
   sku: string;
-  /** Authoritative sellable units from Autopart Avail (not case-rounded). */
+  /**
+   * Effective B2B sellable = max(0, Autopart Avail − ACTIVE AB reservations).
+   * Not raw Autopart Avail; see getEffectiveSellableQuantity.
+   */
   sellableQty: number;
   reservedQty: number;
   availability: PublicAvailability | null;
@@ -40,6 +43,17 @@ export type VariantStock = {
   source: typeof AUTOPART_FEED_SOURCE;
   sourceAvailRaw: string | null;
 };
+
+/**
+ * Effective sellable for B2B ordering under AB reservations.
+ * qtyOnHand / autopartAvail stays as latest Autopart Avail; reserved is AB-only.
+ */
+export function getEffectiveSellableQuantity(input: {
+  autopartAvail: number; // qtyOnHand / trusted Avail
+  reservedQty: number;
+}): number {
+  return Math.max(0, Math.trunc(input.autopartAvail) - Math.max(0, Math.trunc(input.reservedQty)));
+}
 
 /** Phase 6 will call this. Does not enforce case multiples. */
 export function getSellableQuantity(stock: Pick<VariantStock, "sellableQty">): number {

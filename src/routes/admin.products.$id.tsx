@@ -607,7 +607,8 @@ function InventoryPanel({ product }: { product: Workspace }) {
       <div className="max-w-xl rounded-lg border border-dashed border-border p-6">
         <p className="font-semibold">No Autopart stock recorded</p>
         <p className="mt-2 text-[13px] text-steel">
-          Sellable quantity comes from Autopart 231PO3NEW Avail, matched on SKU. Nothing is invented here until a successful sync.
+          Sellable quantity comes from Autopart 231PO3NEW Avail minus ACTIVE Automotive Brands
+          order reservations. Nothing is invented here until a successful sync.
         </p>
       </div>
     );
@@ -620,7 +621,9 @@ function InventoryPanel({ product }: { product: Workspace }) {
             <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
               <th className="px-3 py-2">SKU</th>
               <th className="px-3 py-2">Source</th>
-              <th className="px-3 py-2 text-right">Available</th>
+              <th className="px-3 py-2 text-right">Autopart Avail</th>
+              <th className="px-3 py-2 text-right">AB Reserved</th>
+              <th className="px-3 py-2 text-right">Effective Sellable</th>
               <th className="px-3 py-2">Customer status</th>
               <th className="px-3 py-2">Last sync</th>
             </tr>
@@ -633,7 +636,11 @@ function InventoryPanel({ product }: { product: Workspace }) {
                   {row.source === "231PO3NEW" ? "Autopart 231PO3NEW" : row.warehouse}
                   {row.stale ? <span className="ml-2 text-[10px] font-semibold uppercase text-warn">Stale</span> : null}
                 </td>
-                <td className="num px-3 py-2 text-right">{row.sellableQty ?? row.qtyOnHand ?? "—"}</td>
+                <td className="num px-3 py-2 text-right">{row.qtyOnHand ?? "—"}</td>
+                <td className="num px-3 py-2 text-right">{row.qtyReserved ?? "—"}</td>
+                <td className="num px-3 py-2 text-right font-semibold">
+                  {row.sellableQty ?? "—"}
+                </td>
                 <td className="px-3 py-2">
                   <InternalStockDisplay qty={null} availability={row.customerAvailability} stale={row.stale} className="justify-start" />
                   {row.customerAvailability ? (
@@ -649,7 +656,9 @@ function InventoryPanel({ product }: { product: Workspace }) {
         </table>
       </div>
       <p className="text-[12px] text-steel">
-        Autopart stock is the exact Avail figure. Customers see only IN STOCK / LOW STOCK / OUT OF STOCK. Case quantity does not change this number.
+        Autopart Avail is the latest feed figure. AB Reserved is the sum of ACTIVE order holds.
+        Effective sellable = max(0, Avail − reserved). Sync never resets reserved. Customers see
+        only IN STOCK / LOW STOCK / OUT OF STOCK.
       </p>
     </div>
   );

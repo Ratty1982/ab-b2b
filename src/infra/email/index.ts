@@ -3,12 +3,14 @@ import type { EmailAdapter } from "./types";
 import { getServerEnv } from "@/server/env";
 
 let cached: EmailAdapter | undefined;
+let testOverride: EmailAdapter | undefined;
 
 /**
  * Resolve the active email adapter.
  * Production without a configured provider refuses to pretend mail was sent.
  */
 export function getEmailAdapter(): EmailAdapter {
+  if (testOverride) return testOverride;
   if (cached) return cached;
 
   const env = getServerEnv();
@@ -44,6 +46,11 @@ export function getEmailAdapter(): EmailAdapter {
     },
   };
   return cached;
+}
+
+/** Test-only override — pass null to clear. */
+export function setEmailAdapterForTests(adapter: EmailAdapter | null): void {
+  testOverride = adapter ?? undefined;
 }
 
 export type { EmailAdapter, EmailMessage, EmailSendResult } from "./types";

@@ -11,6 +11,7 @@ import {
   catalogueMatchSummary,
   customerAvailabilityForStock,
   describeStockQtyChange,
+  getEffectiveSellableQuantity,
   internalStatusFromSellable,
   isStockStale,
   NOT_IN_AB_CATALOGUE_REASON,
@@ -297,6 +298,7 @@ export async function applyStockFeed(input: {
                 externalSyncedAt: now,
                 sourceAvailRaw: String(row.avail),
               },
+              // Never reset qtyReserved — AB order reservations survive Autopart Avail sync.
               update: {
                 qtyOnHand: sellable,
                 status,
@@ -1039,7 +1041,10 @@ export async function loadStockByVariantIds(variantIds: string[], now = new Date
       })
     : [];
   for (const row of rows) {
-    const sellable = Math.max(0, row.qtyOnHand - row.qtyReserved);
+    const sellable = getEffectiveSellableQuantity({
+      autopartAvail: row.qtyOnHand,
+      reservedQty: row.qtyReserved,
+    });
     out.set(row.variantId, {
       variantId: row.variantId,
       sku: row.variant.sku,

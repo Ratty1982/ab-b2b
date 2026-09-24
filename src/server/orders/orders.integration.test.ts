@@ -132,7 +132,7 @@ afterAll(async () => {
 });
 
 describe("Phase 6B checkout order creation", () => {
-  it("places a normal case-multiple order and leaves Autopart stock untouched", async () => {
+  it("places a normal case-multiple order and reserves AB stock", async () => {
     const sku = `O6B-${Date.now()}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -196,7 +196,13 @@ describe("Phase 6B checkout order creation", () => {
 
     const afterInv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(afterInv.qtyOnHand).toBe(48);
-    expect(afterInv.qtyReserved).toBe(0);
+    expect(afterInv.qtyReserved).toBe(24);
+
+    const reservation = await prisma.orderStockReservation.findFirstOrThrow({
+      where: { orderId: result.order.id },
+    });
+    expect(reservation.status).toBe("ACTIVE");
+    expect(reservation.quantity).toBe(24);
 
     const basket = await prisma.basket.findFirst({
       where: { companyId: company.id },
@@ -246,6 +252,10 @@ describe("Phase 6B checkout order creation", () => {
     });
     expect(dbItem.caseQty).toBe(12);
     expect(dbItem.orderingMode).toBe("FINAL_PART_CASE");
+
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv.qtyOnHand).toBe(7);
+    expect(inv.qtyReserved).toBe(7);
   });
 
   it("blocks place when expected unit price changed", async () => {

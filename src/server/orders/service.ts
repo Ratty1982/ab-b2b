@@ -6,7 +6,8 @@
  * - TRADE + ACTIVE company only for placeOrder (admin test baskets cannot place real orders).
  * - Status SUBMITTED = received / pending Autopart — not despatched.
  * - ZERO Autopart order side effects: no Autopart API calls, no externalRef,
- *   and no qtyOnHand / qtyReserved mutations (no Autopart stock reservation in 6B).
+ *   and no Autopart qtyOnHand mutation. AB qtyReserved is updated on place
+ *   (OrderStockReservation) — not an Autopart ERP reservation.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -51,7 +52,8 @@ import {
   type PreviewCheckoutDraft,
 } from "@/domain/checkout";
 import { allocateOrderNumber } from "@/server/orders/order-number";
-import { sendOrderReceivedEmails } from "@/server/orders/email";
+import { reserveStockForOrder } from "@/server/orders/reservations";
+import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 
 export type CheckoutAddressSummary = {
   id: string;
@@ -429,7 +431,7 @@ function buildContactSnapshot(
 
 /**
  * Re-resolve basket lines for checkout (prices, stock, ordering).
- * Does not mutate Autopart inventory (no reservation / qtyOnHand change).
+ * Does not mutate inventory — reservation happens only inside placeOrder.
  */
 async function resolveCheckoutLines(
   companyId: string,
@@ -968,6 +970,17 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       include: { items: true, company: { select: { name: true } } },
     });
 
+    // AB stock reservation under row locks — authoritative over preview checks.
+    // Basket does NOT reserve; only order creation does.
+    await reserveStockForOrder(tx, {
+      orderId: order.id,
+      lines: order.items.map((item) => ({
+        orderItemId: item.id,
+        variantId: item.variantId!,
+        quantity: item.qty,
+      })),
+    });
+
     await tx.basket.update({
       where: { id: openBasket.id },
       data: { status: "CONVERTED" },
@@ -996,8 +1009,9 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       status: "SUBMITTED",
       grandTotal: confirmation.grandTotal,
       lineCount: confirmation.lineCount,
-      // Explicit: Phase 6B does not reserve Autopart stock or set externalRef.
+      // Autopart ERP side effects remain false; AB reservation is local.
       autopartSideEffects: false,
+      abReservation: true,
       externalRef: null,
     },
   });
@@ -1012,21 +1026,7 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
 
   // Email after commit — failures must not roll back the order.
   try {
-    const emailResult = await sendOrderReceivedEmails({
-      orderNumber: confirmation.orderNumber,
-      companyName: confirmation.companyName,
-      contactEmail: contact.email,
-      contactName: contact.name,
-      poNumber: confirmation.poNumber,
-      subtotal: confirmation.subtotal,
-      vatTotal: confirmation.vatTotal,
-      grandTotal: confirmation.grandTotal,
-      currency: confirmation.currency,
-      lineCount: confirmation.lineCount,
-      placedAt: new Date(confirmation.placedAt),
-      deliveryTown: deliveryAddress.town,
-      deliveryPostcode: deliveryAddress.postcode,
-    });
+    const emailResult = await sendOrderEmailsAfterCommit(created.order.id);
     if (!emailResult.customerOk) {
       await recordAuditEvent({
         action: "order.email_failed",
