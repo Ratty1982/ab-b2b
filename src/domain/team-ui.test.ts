@@ -16,7 +16,12 @@ vi.mock("@tanstack/react-router", () => ({
     createElement("a", { href: to, className, ...rest }, children),
 }));
 
-import { MeetTheTeamTeaser, TeamMemberCard } from "@/components/team/TeamMemberCard";
+import {
+  MeetTheTeamTeaser,
+  TEAM_PHOTO_COMING_SOON_LABEL,
+  TEAM_PHOTO_COMING_SOON_SRC,
+  TeamMemberCard,
+} from "@/components/team/TeamMemberCard";
 import type { PublicTeamMember } from "@/server/team/service";
 
 const baseMember: PublicTeamMember = {
@@ -35,13 +40,16 @@ const baseMember: PublicTeamMember = {
 };
 
 describe("TeamMemberCard", () => {
-  it("renders placeholder initials when photo is missing", () => {
+  it("renders photo-coming-soon plate when photo is missing", () => {
     const markup = renderToStaticMarkup(
       createElement(TeamMemberCard, { member: baseMember, variant: "featured" }),
     );
     expect(markup).toContain("Wayne Radford");
-    expect(markup).toContain("WR");
-    expect(markup).toContain("/brand/ab-logo.jpg");
+    expect(markup).toContain(TEAM_PHOTO_COMING_SOON_SRC);
+    expect(markup).toContain(TEAM_PHOTO_COMING_SOON_LABEL);
+    expect(markup).toContain('data-team-photo-placeholder="coming-soon"');
+    expect(markup).not.toContain("/brand/ab-logo.jpg");
+    expect(markup).not.toContain(">WR<");
     expect(markup).toContain('data-team-photo="circle"');
     expect(markup).toContain("rounded-full");
     expect(markup).toContain("Contact Wayne");

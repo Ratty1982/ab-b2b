@@ -3,6 +3,10 @@ import { Linkedin, Mail, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PublicTeamMember } from "@/server/team/service";
 
+/** Circular missing-photo plate — camera mark, never AI faces or initials. */
+export const TEAM_PHOTO_COMING_SOON_SRC = "/brand/team-photo-coming-soon.svg";
+export const TEAM_PHOTO_COMING_SOON_LABEL = "Photo coming soon";
+
 export function TeamMemberCard({
   member,
   variant = "standard",
@@ -41,16 +45,20 @@ export function TeamMemberCard({
             style={{ objectPosition: member.photo.objectPosition }}
           />
         ) : (
-          <div
-            className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center"
+          <img
+            src={TEAM_PHOTO_COMING_SOON_SRC}
+            alt=""
+            width={440}
+            height={440}
+            decoding="async"
+            className="h-full w-full object-cover"
+            data-team-photo-placeholder="coming-soon"
             aria-hidden
-          >
-            <img src="/brand/ab-logo.jpg" alt="" className="h-8 w-auto opacity-80" />
-            <span className="font-display text-xl font-semibold tracking-wide text-white/90">
-              {member.initials}
-            </span>
-          </div>
+          />
         )}
+        {!member.photo ? (
+          <span className="sr-only">{TEAM_PHOTO_COMING_SOON_LABEL}</span>
+        ) : null}
       </div>
       <div className="mt-5 flex flex-1 flex-col gap-2">
         <div>

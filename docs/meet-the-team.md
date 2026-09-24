@@ -72,7 +72,7 @@ Empty public departments (no public members) are not rendered.
 
 - Use Website → Media / MediaPicker (same CmsMedia pipeline).
 - Portrait ratio ~4:5, `object-fit: cover`, focal point supported.
-- Missing photo → dark navy placeholder with AB mark + initials (never AI faces).
+- Missing photo → circular navy plate with red camera + “Photo coming soon” (`/brand/team-photo-coming-soon.svg`). Never AI faces or initials.
 - Below-fold portraits lazy-load.
 
 ---
