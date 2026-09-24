@@ -9,6 +9,7 @@ import {
   requireAuthenticatedUser,
   requireCompanyAccess,
   requireSystemPermission,
+  requireAnySystemPermission,
   AuthError,
 } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
@@ -517,7 +518,10 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
  * Cascades contacts/addresses/memberships/prices/baskets; detaches CRM/audit/application links.
  */
 export async function deleteCompany(actorUserId: string, raw: unknown) {
-  const profile = await requireSystemPermission(actorUserId, "companies.delete");
+  const profile = await requireAnySystemPermission(actorUserId, [
+    "companies.delete",
+    "admin.access",
+  ]);
   const input = companyDeleteSchema.parse(raw);
   await assertCompanyReadable(profile, input.id);
 

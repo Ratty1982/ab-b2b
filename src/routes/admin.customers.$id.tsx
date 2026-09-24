@@ -124,17 +124,30 @@ function CustomerWorkspace() {
           { label: company.name },
         ]}
         actions={
-          <StatusBadge
-            tone={
-              company.status === "ACTIVE"
-                ? "good"
-                : company.status === "SUSPENDED" || company.status === "ON_HOLD"
-                  ? "warn"
-                  : "brand"
-            }
-          >
-            {COMPANY_STATUS_LABEL[company.status as keyof typeof COMPANY_STATUS_LABEL]}
-          </StatusBadge>
+          <div className="flex flex-wrap items-center gap-2">
+            {permissions.canDelete ? (
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteOpen(true)}
+                className="h-9 border border-bad bg-transparent px-3 text-[12px] font-semibold text-bad hover:bg-bad/10 disabled:opacity-60"
+                data-customer-action="delete"
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            ) : null}
+            <StatusBadge
+              tone={
+                company.status === "ACTIVE"
+                  ? "good"
+                  : company.status === "SUSPENDED" || company.status === "ON_HOLD"
+                    ? "warn"
+                    : "brand"
+              }
+            >
+              {COMPANY_STATUS_LABEL[company.status as keyof typeof COMPANY_STATUS_LABEL]}
+            </StatusBadge>
+          </div>
         }
       />
 
