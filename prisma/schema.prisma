@@ -1117,6 +1117,7 @@ model Order {
   orderNumber     String      @unique
   companyId       String
   status          OrderStatus @default(DRAFT)
+  /// Customer PO / reference (YOUR REFERENCE).
   poNumber        String?
   orderedByUserId String?
   onBehalfOfUserId String?
@@ -1126,8 +1127,29 @@ model Order {
   vatTotal        Decimal     @db.Decimal(12, 2)
   deliveryTotal   Decimal     @db.Decimal(12, 2) @default(0)
   grandTotal      Decimal     @db.Decimal(12, 2)
+  /// Delivery destination snapshot at place time (never live Address.id alone).
   deliveryAddress Json?
+  /// Optional billing/company address snapshot.
+  billingAddress  Json?
+  /// Ordering contact snapshot: { name, email, phone }.
+  contactSnapshot Json?
+  deliveryInstructions String?
+  /// Company payment terms snapshotted at place (null if none configured).
+  paymentTermsSnapshot String?
+  /// Verified Autopart customer code only — never claimed-unverified application values.
+  autopartCustomerCodeSnapshot String?
+  autopartAccountLinked Boolean @default(false)
+  salesRepIdSnapshot   String?
+  salesRepCodeSnapshot String?
+  salesRepNameSnapshot String?
+  /// Restrained Phase 6B label — no shipping engine / APC.
+  deliveryMethodLabel  String?
+  /// Source basket converted by this order (audit link).
+  basketId        String?
+  /// Client/server idempotency key — unique per successful place.
+  idempotencyKey  String?     @unique
   notes           String?
+  /// Reserved for Phase 6C Autopart handoff — never set by 6B submission.
   externalRef     String?     @unique
   placedAt        DateTime?
   createdAt       DateTime    @default(now())
@@ -1139,25 +1161,46 @@ model Order {
 
   @@index([companyId, placedAt])
   @@index([status])
+  @@index([poNumber])
 }
 
 model OrderItem {
   id          String  @id @default(cuid())
   orderId     String
   variantId   String?
+  productId   String?
   sku         String
   name        String
   qty         Int
+  /// Authoritative commercial unit price ex VAT (4dp) at place time.
   unitPrice   Decimal @db.Decimal(12, 4)
+  /// Customer sell unit price ex VAT (2dp HALF-UP) used for line maths.
+  customerUnitPrice Decimal @db.Decimal(12, 2)
   discountPct Decimal @default(0) @db.Decimal(5, 2)
   vatRate     Decimal @db.Decimal(5, 2)
+  vatCode     String?
+  /// Line net ex VAT (= customerUnitPrice × qty).
   lineTotal   Decimal @db.Decimal(12, 2)
+  lineVat     Decimal @db.Decimal(12, 2) @default(0)
+  lineGross   Decimal @db.Decimal(12, 2) @default(0)
+  caseQty     Int?
+  /// CASE | FINAL_PART_CASE at place time.
+  orderingMode String?
+  priceSource String?
+  quantityBreakId String?
+  promotionId String?
 
   order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant ProductVariant? @relation(fields: [variantId], references: [id])
 
   @@index([orderId])
   @@index([sku])
+}
+
+/// Race-safe Automotive Brands order number allocator (AB-000001…).
+model OrderNumberSequence {
+  id        String @id @default("default")
+  nextValue Int    @default(1)
 }
 
 model Quote {

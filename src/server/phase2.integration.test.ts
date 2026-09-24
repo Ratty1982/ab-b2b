@@ -173,6 +173,19 @@ describe("company CRUD + sales scoping", () => {
         subtotal: 0,
         vatTotal: 0,
         grandTotal: 0,
+        items: {
+          create: {
+            sku: "TEST-SKU",
+            name: "Placeholder line",
+            qty: 1,
+            unitPrice: 0,
+            customerUnitPrice: 0,
+            vatRate: 20,
+            lineTotal: 0,
+            lineVat: 0,
+            lineGross: 0,
+          },
+        },
       },
     });
 

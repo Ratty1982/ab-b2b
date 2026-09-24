@@ -1626,4 +1626,91 @@ export const deleteTeamDepartmentFn = createServerFn({ method: "POST" })
     }
   });
 
+// ─── Phase 6B checkout / orders ──────────────────────────────────────────────
+
+export const getCheckoutContextFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const orders = await import("@/server/orders/service");
+    return { ok: true as const, data: await orders.getCheckoutContext(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const previewCheckoutFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.previewCheckout(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const placeOrderFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.placeOrder(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPortalOrdersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { page?: number; pageSize?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.listPortalOrders(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPortalOrderFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.getPortalOrder(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listAdminOrdersFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { page?: number; pageSize?: number; companyId?: string; q?: string } | undefined,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.listAdminOrders(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getAdminOrderFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.getAdminOrder(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

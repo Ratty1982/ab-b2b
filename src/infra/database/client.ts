@@ -21,7 +21,8 @@ function isUsable(client: PrismaClient | undefined): client is PrismaClient {
     typeof client?.cmsPage?.findUnique === "function" &&
     typeof client?.category?.findUnique === "function" &&
     typeof client?.teamDepartment?.findUnique === "function" &&
-    typeof client?.teamMember?.findUnique === "function"
+    typeof client?.teamMember?.findUnique === "function" &&
+    typeof client?.orderNumberSequence?.findUnique === "function"
   );
 }
 
