@@ -71,8 +71,9 @@ Empty public departments (no public members) are not rendered.
 # Media
 
 - Use Website → Media / MediaPicker (same CmsMedia pipeline).
-- Portrait ratio 4:5 portrait cards (`object-fit: cover`, focal point supported). Not circular.
-- Missing photo → same 4:5 navy plate with subtle AB mark + large initials. Never AI faces; never “photo missing” copy.
+- Portrait ratio 4:5 cohesive cards (`object-fit: cover`, focal point, neutral stage). Not circular.
+- Missing photo → same 4:5 navy plate with subtle AB mark + large initials. Never “photo missing” copy.
+- Bios are not rendered in the directory grid — use **More about {name}** profile dialog when a public bio exists.
 - Below-fold portraits lazy-load; `sizes` hints target ~280px cards.
 
 ---

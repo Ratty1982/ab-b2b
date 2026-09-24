@@ -71,7 +71,7 @@ function MeetTheTeamPage() {
             </p>
           </div>
         ) : null}
-        <div className="grid gap-12 lg:gap-14">
+        <div className="grid gap-16 lg:gap-20">
           {data.departments.map((dept) => (
             <section
               key={dept.id}
@@ -92,8 +92,8 @@ function MeetTheTeamPage() {
               <div
                 className={
                   dept.members.length > 0 && dept.members.length <= 3
-                    ? "mt-6 grid grid-cols-1 justify-items-stretch gap-x-8 gap-y-12 sm:grid-cols-2 sm:justify-items-start md:grid-cols-3"
-                    : `mt-6 ${teamMemberGridClassName()}`
+                    ? "mt-7 grid grid-cols-1 justify-items-stretch gap-x-7 gap-y-8 sm:grid-cols-2 sm:justify-items-start md:grid-cols-3 sm:gap-x-8 sm:gap-y-9"
+                    : `mt-7 ${teamMemberGridClassName()}`
                 }
               >
                 {dept.members.map((member, index) => (

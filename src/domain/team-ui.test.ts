@@ -16,14 +16,45 @@ vi.mock("@tanstack/react-router", () => ({
     createElement("a", { href: to, className, ...rest }, children),
 }));
 
+vi.mock("@/components/ui/dialog", () => {
+  const Pass = ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) =>
+    createElement("div", rest, children);
+  return {
+    Dialog: ({
+      children,
+      open,
+    }: {
+      children?: ReactNode;
+      open?: boolean;
+      onOpenChange?: (open: boolean) => void;
+    }) => (open ? createElement("div", { "data-mock-dialog": "open" }, children) : null),
+    DialogContent: Pass,
+    DialogHeader: Pass,
+    DialogTitle: ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) =>
+      createElement("h2", rest, children),
+    DialogDescription: ({
+      children,
+      ...rest
+    }: { children?: ReactNode } & Record<string, unknown>) => createElement("p", rest, children),
+  };
+});
+
 import {
   MeetTheTeamTeaser,
   TEAM_PHOTO_PLACEHOLDER_MARK,
   TEAM_PORTRAIT_ASPECT_CLASS,
+  TEAM_PORTRAIT_STAGE_CLASS,
   TeamMemberCard,
+  TeamMemberProfileBody,
   teamMemberGridClassName,
 } from "@/components/team/TeamMemberCard";
-import { publicTeamJobTitle } from "@/domain/team";
+import {
+  publicTeamBio,
+  publicTeamJobTitle,
+  teamMemberFirstName,
+  teamMemberHasProfileDialog,
+  teamMemberHasPublicContact,
+} from "@/domain/team";
 import type { PublicTeamMember } from "@/server/team/service";
 
 const baseMember: PublicTeamMember = {
@@ -59,27 +90,81 @@ describe("publicTeamJobTitle", () => {
   });
 });
 
+describe("publicTeamBio / profile helpers", () => {
+  it("keeps real bios and suppresses technical placeholders", () => {
+    expect(publicTeamBio("Supports trade customers across the Midlands.")).toContain("Midlands");
+    expect(publicTeamBio("TODO")).toBeNull();
+    expect(publicTeamBio("TBC")).toBeNull();
+    expect(publicTeamBio("lorem ipsum")).toBeNull();
+    expect(publicTeamBio("")).toBeNull();
+  });
+
+  it("derives first name and profile/contact flags", () => {
+    expect(teamMemberFirstName("Luke Andrews")).toBe("Luke");
+    expect(teamMemberHasProfileDialog({ bio: "A short approved biography." })).toBe(true);
+    expect(teamMemberHasProfileDialog({ bio: "TODO" })).toBe(false);
+    expect(
+      teamMemberHasPublicContact({
+        isContactable: true,
+        email: "a@example.com",
+        phone: null,
+        linkedInUrl: null,
+      }),
+    ).toBe(true);
+    expect(
+      teamMemberHasPublicContact({
+        isContactable: false,
+        email: "a@example.com",
+        phone: "1",
+        linkedInUrl: "https://www.linkedin.com/in/x",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("TeamMemberCard", () => {
-  it("renders a 4:5 portrait card with intentional initials placeholder", () => {
+  it("renders a cohesive 4:5 portrait card with intentional initials placeholder", () => {
     const markup = renderToStaticMarkup(
       createElement(TeamMemberCard, { member: baseMember, variant: "featured" }),
     );
     expect(markup).toContain("Wayne Radford");
     expect(markup).toContain("Retail Sales Manager");
     expect(markup).toContain('data-team-portrait="card"');
+    expect(markup).toContain('data-team-card-body');
     expect(markup).toContain('data-team-photo="portrait"');
     expect(markup).toContain(TEAM_PORTRAIT_ASPECT_CLASS);
+    expect(markup).toContain(TEAM_PORTRAIT_STAGE_CLASS);
     expect(markup).toContain('data-team-photo-placeholder="initials"');
     expect(markup).toContain(TEAM_PHOTO_PLACEHOLDER_MARK);
     expect(markup).toContain("WR");
     expect(markup).not.toContain("rounded-full");
     expect(markup).not.toContain('data-team-photo="circle"');
     expect(markup).not.toContain("Trade Sales & Accounts");
-    expect(markup).toContain("Contact Wayne");
+    expect(markup).toContain("border");
+    expect(markup).toContain("More about Wayne");
+    expect(markup).toContain('data-team-profile-trigger');
+    expect(markup).toContain("Email Wayne");
     expect(markup).toContain('href="mailto:wayne@example.com"');
     expect(markup).toContain('href="tel:01234000000"');
     expect(markup).toContain('rel="noopener noreferrer"');
     expect(markup).toContain('target="_blank"');
+  });
+
+  it("does not permanently render biography in the directory card", () => {
+    const markup = renderToStaticMarkup(createElement(TeamMemberCard, { member: baseMember }));
+    expect(markup).not.toContain("Supporting Automotive Brands trade customers");
+    expect(markup).toContain("More about Wayne");
+  });
+
+  it("does not show View Profile when there is no public bio", () => {
+    const markup = renderToStaticMarkup(
+      createElement(TeamMemberCard, {
+        member: { ...baseMember, bio: null },
+      }),
+    );
+    expect(markup).not.toContain("More about");
+    expect(markup).not.toContain('data-team-profile-trigger');
+    expect(markup).toContain('data-team-contact-actions');
   });
 
   it("does not repeat department under each card by default", () => {
@@ -107,7 +192,7 @@ describe("TeamMemberCard", () => {
     expect(markup).toContain('data-team-job-title');
   });
 
-  it("renders live portrait with object-cover and sizes hint", () => {
+  it("renders live portrait with object-cover, sizes hint and neutral stage", () => {
     const markup = renderToStaticMarkup(
       createElement(TeamMemberCard, {
         member: {
@@ -128,6 +213,7 @@ describe("TeamMemberCard", () => {
     );
     expect(markup).toContain('data-team-photo-live="true"');
     expect(markup).toContain("object-cover");
+    expect(markup).toContain(TEAM_PORTRAIT_STAGE_CLASS);
     expect(markup).toContain('sizes="(max-width: 640px) 100vw, (max-width: 1024px) 40vw, 280px"');
     expect(markup).toContain('loading="eager"');
     expect(markup).not.toContain('data-team-photo-placeholder');
@@ -146,7 +232,19 @@ describe("TeamMemberCard", () => {
     expect(markup).not.toContain("mailto:");
     expect(markup).not.toContain("tel:");
     expect(markup).not.toContain("linkedin.com");
-    expect(markup).not.toContain("Supporting Automotive Brands");
+    expect(markup).not.toContain("More about");
+  });
+
+  it("renders profile dialog body with bio and contact privacy fields", () => {
+    const markup = renderToStaticMarkup(createElement(TeamMemberProfileBody, { member: baseMember }));
+    expect(markup).toContain('data-team-profile-body');
+    expect(markup).toContain("Wayne Radford");
+    expect(markup).toContain("Retail Sales Manager");
+    expect(markup).toContain('data-team-profile-bio');
+    expect(markup).toContain("Supporting Automotive Brands trade customers");
+    expect(markup).toContain('href="mailto:wayne@example.com"');
+    expect(markup).toContain('href="tel:01234000000"');
+    expect(markup).toContain("LinkedIn");
   });
 
   it("Why Us teaser uses portrait cards and links to /meet-the-team", () => {
@@ -158,6 +256,7 @@ describe("TeamMemberCard", () => {
     expect(markup).toContain('href="/meet-the-team"');
     expect(markup).toContain("The people behind Automotive Brands");
     expect(markup).not.toContain("rounded-full");
+    expect(markup).not.toContain("Supporting Automotive Brands trade customers");
   });
 
   it("renders nothing when featured list is empty", () => {
@@ -168,6 +267,6 @@ describe("TeamMemberCard", () => {
   it("exposes a compact responsive grid class", () => {
     expect(teamMemberGridClassName()).toContain("xl:grid-cols-4");
     expect(teamMemberGridClassName()).toContain("sm:grid-cols-2");
-    expect(teamMemberGridClassName(true)).toContain("gap-y-10");
+    expect(teamMemberGridClassName(true)).toContain("gap-y-8");
   });
 });

@@ -1,7 +1,21 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Linkedin, Mail, Phone } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { publicTeamJobTitle } from "@/domain/team";
+import {
+  publicTeamBio,
+  publicTeamJobTitle,
+  teamMemberFirstName,
+  teamMemberHasProfileDialog,
+  teamMemberHasPublicContact,
+} from "@/domain/team";
 import type { PublicTeamMember } from "@/server/team/service";
 
 /** 4:5 portrait frame — matches real headshots and missing-photo plate. */
@@ -9,6 +23,153 @@ export const TEAM_PORTRAIT_ASPECT_CLASS = "aspect-[4/5]";
 /** ~240–280px card width from tablet up; full-width on narrow phones. */
 export const TEAM_CARD_MAX_WIDTH_CLASS = "w-full max-w-none sm:max-w-[280px]";
 export const TEAM_PHOTO_PLACEHOLDER_MARK = "/brand/ab-logo.jpg";
+/** Neutral stage behind mixed source photography (white / dark / legacy circular). */
+export const TEAM_PORTRAIT_STAGE_CLASS = "bg-[#d7dbe3]";
+
+function TeamPortrait({
+  member,
+  priority = false,
+  sizes = "(max-width: 640px) 100vw, (max-width: 1024px) 40vw, 280px",
+  className,
+}: {
+  member: PublicTeamMember;
+  priority?: boolean;
+  sizes?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "relative w-full overflow-hidden",
+        TEAM_PORTRAIT_ASPECT_CLASS,
+        TEAM_PORTRAIT_STAGE_CLASS,
+        className,
+      )}
+      data-team-photo="portrait"
+    >
+      {member.photo ? (
+        <img
+          src={member.photo.src}
+          alt={member.photo.alt}
+          width={560}
+          height={700}
+          sizes={sizes}
+          loading={priority ? "eager" : "lazy"}
+          decoding="async"
+          className="h-full w-full object-cover"
+          style={{ objectPosition: member.photo.objectPosition }}
+          data-team-photo-live="true"
+        />
+      ) : (
+        <div
+          className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#0b1220] px-5 text-center"
+          data-team-photo-placeholder="initials"
+          aria-hidden
+        >
+          <img
+            src={TEAM_PHOTO_PLACEHOLDER_MARK}
+            alt=""
+            width={32}
+            height={32}
+            className="h-7 w-auto rounded-sm object-contain opacity-40"
+          />
+          <span className="font-display text-4xl font-semibold tracking-[0.1em] text-white/95 sm:text-[2.75rem]">
+            {member.initials}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamContactActions({
+  member,
+  featured = false,
+  className,
+}: {
+  member: PublicTeamMember;
+  featured?: boolean;
+  className?: string;
+}) {
+  if (!teamMemberHasPublicContact(member)) return null;
+  const firstName = teamMemberFirstName(member.displayName);
+  return (
+    <div
+      className={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5", className)}
+      data-team-contact-actions
+    >
+      {member.email ? (
+        <a
+          href={`mailto:${member.email}`}
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-primary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          <Mail className="size-3.5 shrink-0" aria-hidden />
+          {featured ? `Email ${firstName}` : "Email"}
+        </a>
+      ) : null}
+      {member.phone ? (
+        <a
+          href={`tel:${member.phone.replace(/\s+/g, "")}`}
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-steel transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          aria-label={`Call ${member.displayName}`}
+        >
+          <Phone className="size-3.5 shrink-0" aria-hidden />
+          Call
+        </a>
+      ) : null}
+      {member.linkedInUrl ? (
+        <a
+          href={member.linkedInUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-steel transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          aria-label={`${member.displayName} on LinkedIn (opens in a new tab)`}
+        >
+          <Linkedin className="size-3.5 shrink-0" aria-hidden />
+          LinkedIn
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+/** Profile body shared by dialog — safe public fields only. */
+export function TeamMemberProfileBody({ member }: { member: PublicTeamMember }) {
+  const jobTitle = publicTeamJobTitle(member.jobTitle);
+  const bio = publicTeamBio(member.bio);
+  return (
+    <div className="grid gap-5 sm:grid-cols-[180px_minmax(0,1fr)]" data-team-profile-body>
+      <TeamPortrait
+        member={member}
+        priority
+        sizes="180px"
+        className="mx-auto w-full max-w-[180px] rounded-md sm:mx-0"
+      />
+      <div className="min-w-0">
+        <DialogHeader className="space-y-1 text-left">
+          <DialogTitle className="font-display text-xl font-semibold uppercase tracking-wide text-foreground">
+            {member.displayName}
+          </DialogTitle>
+          {jobTitle ? (
+            <DialogDescription className="text-[14px] font-medium text-steel">
+              {jobTitle}
+            </DialogDescription>
+          ) : (
+            <DialogDescription className="sr-only">
+              Team member profile for {member.displayName}
+            </DialogDescription>
+          )}
+        </DialogHeader>
+        {bio ? (
+          <p className="mt-4 text-[14px] leading-relaxed text-steel" data-team-profile-bio>
+            {bio}
+          </p>
+        ) : null}
+        <TeamContactActions member={member} featured className="mt-5" />
+      </div>
+    </div>
+  );
+}
 
 export function TeamMemberCard({
   member,
@@ -26,62 +187,30 @@ export function TeamMemberCard({
   /** Tighter spacing for Why Us teaser. */
   compact?: boolean;
 }) {
+  const [profileOpen, setProfileOpen] = useState(false);
   const jobTitle = publicTeamJobTitle(member.jobTitle);
-  const showContact =
-    member.isContactable && (member.email || member.phone || member.linkedInUrl);
-  const contactLabel = member.displayName.split(" ")[0] || member.displayName;
+  const showProfile = teamMemberHasProfileDialog(member);
+  const showContact = teamMemberHasPublicContact(member);
+  const firstName = teamMemberFirstName(member.displayName);
 
   return (
     <article
       className={cn(
-        "flex w-full flex-col",
+        "flex h-full w-full flex-col overflow-hidden rounded-md border border-border/70 bg-[#101826]",
         TEAM_CARD_MAX_WIDTH_CLASS,
-        compact ? "gap-3" : "gap-3.5",
       )}
       data-team-card={variant}
       data-team-portrait="card"
     >
+      <TeamPortrait member={member} priority={priority} />
+
       <div
         className={cn(
-          "relative w-full overflow-hidden rounded-md bg-[#0b1220]",
-          TEAM_PORTRAIT_ASPECT_CLASS,
+          "flex flex-1 flex-col px-4",
+          compact ? "gap-2 py-3.5" : "gap-2.5 py-4",
         )}
-        data-team-photo="portrait"
+        data-team-card-body
       >
-        {member.photo ? (
-          <img
-            src={member.photo.src}
-            alt={member.photo.alt}
-            width={560}
-            height={700}
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 40vw, 280px"
-            loading={priority ? "eager" : "lazy"}
-            decoding="async"
-            className="h-full w-full object-cover"
-            style={{ objectPosition: member.photo.objectPosition }}
-            data-team-photo-live="true"
-          />
-        ) : (
-          <div
-            className="flex h-full w-full flex-col items-center justify-center gap-3 px-5 text-center"
-            data-team-photo-placeholder="initials"
-            aria-hidden
-          >
-            <img
-              src={TEAM_PHOTO_PLACEHOLDER_MARK}
-              alt=""
-              width={36}
-              height={36}
-              className="h-8 w-auto rounded-sm object-contain opacity-45"
-            />
-            <span className="font-display text-4xl font-semibold tracking-[0.08em] text-white/95 sm:text-[2.65rem]">
-              {member.initials}
-            </span>
-          </div>
-        )}
-      </div>
-
-      <div className={cn("flex flex-1 flex-col", compact ? "gap-1.5" : "gap-2")}>
         <div>
           <h3 className="font-display text-[15px] font-semibold uppercase leading-snug tracking-wide text-foreground sm:text-base">
             {member.displayName}
@@ -97,44 +226,36 @@ export function TeamMemberCard({
             </p>
           ) : null}
         </div>
-        {member.bio ? (
-          <p className="text-[13px] leading-relaxed text-steel">{member.bio}</p>
-        ) : null}
-        {showContact ? (
-          <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-1">
-            {member.email ? (
-              <a
-                href={`mailto:${member.email}`}
-                className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-primary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-              >
-                <Mail className="size-3.5" aria-hidden />
-                {variant === "featured" ? `Contact ${contactLabel}` : "Email"}
-              </a>
+
+        {/* Bios stay out of the directory grid — only in the profile dialog. */}
+        {(showProfile || showContact) && (
+          <div className="mt-auto flex flex-col gap-2.5 pt-1">
+            {showProfile ? (
+              <>
+                <button
+                  type="button"
+                  className="inline-flex w-fit items-center text-[11px] font-semibold uppercase tracking-[0.14em] text-primary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  onClick={() => setProfileOpen(true)}
+                  data-team-profile-trigger
+                  aria-haspopup="dialog"
+                >
+                  More about {firstName}
+                </button>
+                <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+                  <DialogContent
+                    className="max-h-[min(92vh,720px)] w-[calc(100%-1.5rem)] max-w-xl overflow-y-auto border-border bg-ink p-5 text-foreground sm:p-6"
+                    data-team-profile-dialog
+                  >
+                    <TeamMemberProfileBody member={member} />
+                  </DialogContent>
+                </Dialog>
+              </>
             ) : null}
-            {member.phone ? (
-              <a
-                href={`tel:${member.phone.replace(/\s+/g, "")}`}
-                className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-steel transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                aria-label={`Call ${member.displayName}`}
-              >
-                <Phone className="size-3.5" aria-hidden />
-                <span className="sr-only sm:not-sr-only">{member.phone}</span>
-              </a>
-            ) : null}
-            {member.linkedInUrl ? (
-              <a
-                href={member.linkedInUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-steel transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                aria-label={`${member.displayName} on LinkedIn (opens in a new tab)`}
-              >
-                <Linkedin className="size-3.5" aria-hidden />
-                <span className="sr-only sm:not-sr-only">LinkedIn</span>
-              </a>
+            {showContact ? (
+              <TeamContactActions member={member} featured={variant === "featured"} />
             ) : null}
           </div>
-        ) : null}
+        )}
       </div>
     </article>
   );
@@ -143,8 +264,8 @@ export function TeamMemberCard({
 /** Shared responsive team grid — ~240–280px cards, no full-bleed stretch. */
 export function teamMemberGridClassName(compact = false) {
   return cn(
-    "grid grid-cols-1 justify-items-stretch gap-x-8 gap-y-12 sm:grid-cols-2 sm:justify-items-start md:grid-cols-3 xl:grid-cols-4",
-    compact ? "gap-x-7 gap-y-10" : "gap-x-8 gap-y-12 sm:gap-x-9 sm:gap-y-14",
+    "grid grid-cols-1 justify-items-stretch gap-x-7 gap-y-8 sm:grid-cols-2 sm:justify-items-start md:grid-cols-3 xl:grid-cols-4",
+    compact ? "gap-x-7 gap-y-8" : "gap-x-8 gap-y-9 sm:gap-x-8 sm:gap-y-10",
   );
 }
 
@@ -154,6 +275,7 @@ export function MeetTheTeamTeaser({
   members: PublicTeamMember[];
 }) {
   if (!members.length) return null;
+  const featured = members.slice(0, 4);
   return (
     <section
       className="border-t border-border bg-ink"
@@ -177,7 +299,7 @@ export function MeetTheTeamTeaser({
           </p>
         </div>
         <div className={cn("mt-8", teamMemberGridClassName(true))}>
-          {members.map((member, index) => (
+          {featured.map((member, index) => (
             <TeamMemberCard
               key={member.id}
               member={member}

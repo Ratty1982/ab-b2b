@@ -11,6 +11,7 @@ import {
   DEFAULT_TEAM_DEPARTMENTS,
   normalizeTeamDepartmentInput,
   normalizeTeamMemberInput,
+  publicTeamBio,
   publicTeamJobTitle,
   teamDepartmentUpsertSchema,
   teamMemberDisplayName,
@@ -140,7 +141,7 @@ function serializePublicMember(
     displayName,
     initials: teamMemberInitials(row.firstName, row.lastName),
     jobTitle: publicTeamJobTitle(row.jobTitle),
-    bio: row.bio,
+    bio: publicTeamBio(row.bio),
     isFeatured: row.isFeatured,
     isContactable: row.isContactable,
     department: row.department

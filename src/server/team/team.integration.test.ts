@@ -288,6 +288,7 @@ describe("team public roster", () => {
       firstName: "TmTest",
       lastName: "PlaceholderTitle",
       jobTitle: "What is my job title?",
+      bio: "TODO",
       departmentId: sales.id,
       isPublic: true,
       sortOrder: 2,
@@ -298,9 +299,11 @@ describe("team public roster", () => {
       .find((m) => m.id === member.id);
     expect(found).toBeTruthy();
     expect(found!.jobTitle).toBeNull();
+    expect(found!.bio).toBeNull();
 
     const adminRows = await listTeamMembersAdmin(adminId, { q: "PlaceholderTitle" });
     expect(adminRows[0]?.jobTitle).toBe("What is my job title?");
+    expect(adminRows[0]?.bio).toBe("TODO");
 
     await deleteTeamMember(adminId, member.id);
   });

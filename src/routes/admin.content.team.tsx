@@ -16,6 +16,7 @@ import {
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { publicTeamJobTitle } from "@/domain/team";
 
 export const Route = createFileRoute("/admin/content/team")({
   head: () => ({ meta: [{ title: "Team — Automotive Brands Admin" }] }),
@@ -241,7 +242,28 @@ function AdminTeam() {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2 font-medium">{m.displayName}</td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{m.displayName}</div>
+                      <div className="mt-1.5 flex flex-wrap gap-1" data-team-admin-flags>
+                        {!m.photo ? (
+                          <StatusBadge tone="warn">Missing photo</StatusBadge>
+                        ) : null}
+                        {!m.jobTitle?.trim() ? (
+                          <StatusBadge tone="warn">Missing job title</StatusBadge>
+                        ) : !publicTeamJobTitle(m.jobTitle) ? (
+                          <StatusBadge tone="warn">Placeholder title</StatusBadge>
+                        ) : null}
+                        {m.isContactable && !m.email && !m.phone && !m.linkedInUrl ? (
+                          <StatusBadge tone="neutral">No public contact</StatusBadge>
+                        ) : null}
+                        {!m.isContactable ? (
+                          <StatusBadge tone="neutral">Not contactable</StatusBadge>
+                        ) : null}
+                        {!m.isPublic ? (
+                          <StatusBadge tone="warn">Hidden</StatusBadge>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-3 py-2 text-steel">{m.jobTitle || "—"}</td>
                     <td className="px-3 py-2">{m.department?.name || "—"}</td>
                     <td className="px-3 py-2">

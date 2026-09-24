@@ -68,6 +68,55 @@ export function publicTeamJobTitle(jobTitle: string | null | undefined): string 
   return trimmed;
 }
 
+/** Suppress only recognised technical placeholder bios — not subjective content review. */
+const PUBLIC_BIO_PLACEHOLDERS = new Set([
+  "tbc",
+  "tba",
+  "todo",
+  "unknown",
+  "n/a",
+  "na",
+  "none",
+  "placeholder",
+  "coming soon",
+  "lorem ipsum",
+  "bio here",
+  "biography here",
+  "test",
+  "testing",
+]);
+
+export function publicTeamBio(bio: string | null | undefined): string | null {
+  const trimmed = emptyToNull(bio ?? null);
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase().replace(/[.!]+$/g, "").trim();
+  if (PUBLIC_BIO_PLACEHOLDERS.has(normalized)) return null;
+  if (/^(tbc|tba|todo|n\/?a|unknown|placeholder|lorem ipsum)[.!?]*$/i.test(trimmed)) return null;
+  return trimmed;
+}
+
+export function teamMemberFirstName(displayName: string): string {
+  const first = displayName.trim().split(/\s+/)[0];
+  return first || displayName.trim() || "team member";
+}
+
+/** Profile dialog is warranted when there is a public bio (contacts alone stay on-card). */
+export function teamMemberHasProfileDialog(input: {
+  bio?: string | null;
+}): boolean {
+  return Boolean(publicTeamBio(input.bio));
+}
+
+export function teamMemberHasPublicContact(input: {
+  isContactable?: boolean;
+  email?: string | null;
+  phone?: string | null;
+  linkedInUrl?: string | null;
+}): boolean {
+  if (!input.isContactable) return false;
+  return Boolean(input.email || input.phone || input.linkedInUrl);
+}
+
 function emptyToNull(value: string | null | undefined): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
