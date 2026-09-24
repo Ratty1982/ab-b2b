@@ -91,7 +91,8 @@ describe("canonical homepage route contract", () => {
     expect(types).toContain("NEW_PRODUCTS");
     expect(types).toContain("POPULAR_PRODUCTS");
     const hero = defaultHomepageSections().find((section) => section.type === "HERO");
-    expect(strConfig(hero?.config ?? {}, "ctaLabel")).toMatch(/Trade Account/i);
-    expect(strConfig(hero?.config ?? {}, "headline")).toMatch(/brands behind/i);
+    expect(strConfig(hero?.config ?? {}, "ctaLabel")).toMatch(/Shop Products/i);
+    expect(strConfig(hero?.config ?? {}, "secondaryCtaLabel")).toMatch(/Trade Account/i);
+    expect(strConfig(hero?.config ?? {}, "headline")).toMatch(/BUILT FOR THE TRADE/i);
   });
 });

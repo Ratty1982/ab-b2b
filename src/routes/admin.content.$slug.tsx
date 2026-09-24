@@ -487,6 +487,7 @@ function CmsEditor() {
                         categories: [],
                         productsBySku: {},
                         recentProducts: [],
+                        featuredProducts: [],
                         cmsError: null,
                       }),
                       sections: sections as HomepageSection[],
