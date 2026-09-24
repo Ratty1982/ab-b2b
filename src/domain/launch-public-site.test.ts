@@ -26,6 +26,9 @@ describe("launch public brands", () => {
     expect(bySlug["bramley-power"]?.isActive).toBe(false);
     expect(bySlug["kidzmotion"]?.isActive).toBe(false);
     expect(DEFAULT_BRANDS).toHaveLength(5);
+    expect(bySlug["power-maxed"]?.tagline).toMatch(/Vehicle Care/i);
+    expect(bySlug["power-maxed"]?.description).toMatch(/valeting|cleaning|workshop/i);
+    expect(bySlug["steel-seal"]?.description).toMatch(/head gasket|cooling/i);
   });
 });
 
