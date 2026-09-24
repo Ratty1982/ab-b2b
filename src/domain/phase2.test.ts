@@ -123,24 +123,49 @@ describe("CMS media display src", () => {
 });
 
 describe("trade application schema", () => {
-  it("requires company and contact", () => {
+  it("requires company, address, contact, business type and consent", () => {
     const parsed = tradeApplicationSubmitSchema.parse({
       companyName: "Trade Co",
+      businessType: "Motor Factor",
+      tradingAddress: {
+        line1: "1 High Street",
+        town: "Birmingham",
+        postcode: "B1 1AA",
+        country: "GB",
+      },
       primaryContact: {
         firstName: "Sam",
         lastName: "Lee",
         email: "sam@example.com",
+        phone: "01214567890",
       },
+      existingAccountClaim: "no",
       brandsInterest: ["power-maxed"],
+      consentAccepted: true,
     });
     expect(parsed.companyName).toBe("Trade Co");
+    expect(parsed.businessType).toBe("Motor Factor");
   });
 
   it("rejects honeypot", () => {
     expect(() =>
       tradeApplicationSubmitSchema.parse({
         companyName: "Trade Co",
-        primaryContact: { firstName: "A", lastName: "B", email: "a@b.com" },
+        businessType: "Motor Factor",
+        tradingAddress: {
+          line1: "1 High Street",
+          town: "Birmingham",
+          postcode: "B1 1AA",
+          country: "GB",
+        },
+        primaryContact: {
+          firstName: "A",
+          lastName: "B",
+          email: "a@b.com",
+          phone: "01214567890",
+        },
+        existingAccountClaim: "no",
+        consentAccepted: true,
         websiteConfirm: "bot",
       }),
     ).toThrow();

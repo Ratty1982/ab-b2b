@@ -20,6 +20,7 @@ import {
   rejectTradeApplication,
   submitTradeApplication,
 } from "@/server/applications/service";
+import { validTradeApplicationInput } from "@/server/applications/test-fixtures";
 import {
   bootstrapHomepageCms,
   getPublishedHomepage,
@@ -185,32 +186,22 @@ describe("contacts and addresses", () => {
 describe("trade application approval", () => {
   it("submits and approves idempotently", async () => {
     const stamp = Date.now();
-    const submitted = await submitTradeApplication({
-      companyName: `App Co ${stamp}`,
-      tradingName: "App Trading",
-      businessType: "Motor factor",
-      primaryContact: {
-        firstName: "Alex",
-        lastName: "Trade",
+    const submitted = await submitTradeApplication(
+      validTradeApplicationInput({
+        companyName: `App Co ${stamp}`,
         email: `alex.${stamp}@example.invalid`,
-        phone: "07000000000",
-        role: "Buyer",
-      },
-      tradingAddress: {
-        line1: "10 Trade Row",
-        town: "Manchester",
-        postcode: "M1 1AA",
-        country: "GB",
-      },
-      brandsInterest: ["power-maxed"],
-      notes: "Please review",
-    });
+        tradingName: "App Trading",
+        notes: "Please review",
+      }),
+    );
     expect(submitted.reference).toMatch(/^APP-/);
 
     const first = await approveTradeApplication(adminId, { id: submitted.id });
     expect(first.created).toBe(true);
     expect(first.companyId).toBeTruthy();
     expect(first.emailDeferred).toBe(true);
+    expect(first.inviteToken).toBeTruthy();
+    expect(first.activationPath).toContain("/activate?token=");
 
     const second = await approveTradeApplication(adminId, { id: submitted.id });
     expect(second.created).toBe(false);
@@ -224,21 +215,21 @@ describe("trade application approval", () => {
 
   it("rejects without creating company", async () => {
     const stamp = Date.now();
-    const submitted = await submitTradeApplication({
-      companyName: `Reject Co ${stamp}`,
-      primaryContact: {
-        firstName: "R",
-        lastName: "J",
+    const submitted = await submitTradeApplication(
+      validTradeApplicationInput({
+        companyName: `Reject Co ${stamp}`,
         email: `reject.${stamp}@example.invalid`,
-      },
-      brandsInterest: [],
-    });
+      }),
+    );
     const result = await rejectTradeApplication(adminId, {
       id: submitted.id,
       reviewNotes: "Incomplete",
     });
     expect(result.status).toBe("REJECTED");
-    const again = await rejectTradeApplication(adminId, { id: submitted.id });
+    const again = await rejectTradeApplication(adminId, {
+      id: submitted.id,
+      reviewNotes: "Incomplete",
+    });
     expect(again.already).toBe(true);
   });
 });

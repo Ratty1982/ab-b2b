@@ -223,11 +223,20 @@ export const submitMotorsportPartnershipEnquiryFn = createServerFn({ method: "PO
   });
 
 export const listTradeApplicationsFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { status?: string })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        status?: string;
+        businessType?: string;
+        existingAccount?: string;
+        q?: string;
+        assignedRepId?: string;
+      },
+  )
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
-      const result = await applications.listTradeApplications(userId, data?.status);
+      const result = await applications.listTradeApplications(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);
@@ -240,6 +249,30 @@ export const getTradeApplicationFn = createServerFn({ method: "GET" })
     try {
       const userId = await requireUserId();
       const result = await applications.getTradeApplication(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const markTradeApplicationUnderReviewFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.markApplicationUnderReview(userId, data.id);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const requestTradeApplicationMoreInfoFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.requestApplicationMoreInfo(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);
@@ -264,6 +297,31 @@ export const rejectTradeApplicationFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       const result = await applications.rejectTradeApplication(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getTradeInvitationPreviewFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { token: string })
+  .handler(async ({ data }) => {
+    try {
+      const result = await applications.getInvitationPreview(data.token);
+      if (!result) {
+        return { ok: false as const, error: "Invitation not found", code: "NOT_FOUND" };
+      }
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const acceptTradeInvitationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const result = await applications.acceptTradeInvitation(data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);

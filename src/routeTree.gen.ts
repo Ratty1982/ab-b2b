@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AboutRouteImport } from './routes/about'
+import { Route as ActivateRouteImport } from './routes/activate'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
@@ -84,6 +85,11 @@ const IndexRoute = IndexRouteImport.update({
 const AboutRoute = AboutRouteImport.update({
   id: '/about',
   path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ActivateRoute = ActivateRouteImport.update({
+  id: '/activate',
+  path: '/activate',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminRoute = AdminRouteImport.update({
@@ -411,6 +417,7 @@ const AdminProductsImportsIdRoute = AdminProductsImportsIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/activate': typeof ActivateRoute
   '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
@@ -479,6 +486,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/activate': typeof ActivateRoute
   '/contact': typeof ContactRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -540,6 +548,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/activate': typeof ActivateRoute
   '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
@@ -610,6 +619,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/about'
+    | '/activate'
     | '/admin'
     | '/contact'
     | '/crm'
@@ -678,6 +688,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/about'
+    | '/activate'
     | '/contact'
     | '/forgot-password'
     | '/login'
@@ -738,6 +749,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/about'
+    | '/activate'
     | '/admin'
     | '/contact'
     | '/crm'
@@ -807,6 +819,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
+  ActivateRoute: typeof ActivateRoute
   AdminRoute: typeof AdminRouteWithChildren
   ContactRoute: typeof ContactRoute
   CrmRoute: typeof CrmRouteWithChildren
@@ -846,6 +859,13 @@ declare module '@tanstack/react-router' {
       path: '/about'
       fullPath: '/about'
       preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/activate': {
+      id: '/activate'
+      path: '/activate'
+      fullPath: '/activate'
+      preLoaderRoute: typeof ActivateRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin': {
@@ -1465,6 +1485,7 @@ const SalesRouteWithChildren = SalesRoute._addFileChildren(SalesRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
+  ActivateRoute: ActivateRoute,
   AdminRoute: AdminRouteWithChildren,
   ContactRoute: ContactRoute,
   CrmRoute: CrmRouteWithChildren,

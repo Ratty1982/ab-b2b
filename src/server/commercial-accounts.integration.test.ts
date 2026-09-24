@@ -9,6 +9,7 @@ import {
   verifyCompanyAutopartCustomerCode,
 } from "@/server/companies/autopart-account";
 import { submitTradeApplication, getTradeApplication, approveTradeApplication } from "@/server/applications/service";
+import { validTradeApplicationInput } from "@/server/applications/test-fixtures";
 import { upsertCustomerPrice, deleteCustomerPrice, listCustomerPrices } from "@/server/pricing/service";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { saveProduct } from "@/server/catalogue/service";
@@ -190,19 +191,14 @@ describe("Phase 6A.5 commercial accounts", () => {
   });
 
   it("registration claimed Autopart code does not verify Company link", async () => {
-    const submitted = await submitTradeApplication({
-      companyName: `Claim Co ${suffix}`,
-      primaryContact: {
-        firstName: "Sam",
-        lastName: "Claim",
+    const submitted = await submitTradeApplication(
+      validTradeApplicationInput({
+        companyName: `Claim Co ${suffix}`,
         email: `claim.${suffix}@example.invalid`,
-        phone: null,
-        role: null,
-      },
-      brandsInterest: [],
-      claimedAutopartCustomerCode: "ABC001",
-      websiteConfirm: "",
-    });
+        existingAccountClaim: "yes",
+        claimedAutopartCustomerCode: "ABC001",
+      }),
+    );
     const app = await getTradeApplication(adminId, submitted.id);
     expect(app.claimedAutopartCustomerCode).toBe("ABC001");
 

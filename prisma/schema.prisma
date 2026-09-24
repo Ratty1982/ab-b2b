@@ -612,11 +612,19 @@ model TradeApplication {
   primaryContact   Json?
   accountsContact  Json?
   estimatedSpend   String?
+  /// How the applicant heard about Automotive Brands (optional marketing insight).
+  howHeardAboutUs  String?
   brandsInterest   String[]
   notes            String?
   reviewNotes      String?
+  /// Customer-facing message for MORE_INFO_REQUIRED / optional rejection notice.
+  customerMessage  String?
+  /// yes | no | not_sure — claim about an existing Autopart/trade account.
+  existingAccountClaim String?
   /// Applicant-claimed Autopart/account number — evidence only, never a verified ERP link.
   claimedAutopartCustomerCode String?
+  /// When the applicant accepted privacy/terms acknowledgement on submit.
+  consentAcceptedAt DateTime?
   assignedRepId    String?
   reviewedById     String?
   submittedAt      DateTime               @default(now())
