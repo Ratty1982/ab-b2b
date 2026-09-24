@@ -1,8 +1,10 @@
 import { Link, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { Menu, Search, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { Logo } from "./Logo";
 import { BasketNavBadge } from "./BasketNavBadge";
+import { PublicAccountMenu } from "./PublicAccountMenu";
+import { PublicHeaderSearch } from "./PublicHeaderSearch";
 import { cn } from "@/lib/utils";
 import { canViewBasketSession, RequestSessionProvider, useSession } from "@/lib/session";
 import { publicHeaderAccountLinks } from "@/lib/public-header-account";
@@ -14,7 +16,7 @@ const primaryNav = [
   { label: "Brands", to: "/brands" },
   { label: "Trade Solutions", to: "/trade-solutions" },
   { label: "Motorsport", to: "/motorsport" },
-  { label: "Why Automotive Brands", to: "/why-automotive-brands" },
+  { label: "Why Us", to: "/why-automotive-brands" },
 ] as const;
 
 const footerShop = [
@@ -38,6 +40,11 @@ const footerCompany = [
   { label: "Motorsport", to: "/motorsport" as const },
   { label: "About", to: "/about" as const },
 ] as const;
+
+const navLinkClass =
+  "relative whitespace-nowrap py-1 text-steel transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none";
+const navActiveClass =
+  "text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary";
 
 export function PublicHeader() {
   const [open, setOpen] = useState(false);
@@ -64,82 +71,68 @@ export function PublicHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border/70 bg-ink/90 backdrop-blur" data-public-header="shell">
+    <header
+      className="sticky top-0 z-40 border-b border-border/70 bg-ink/95 backdrop-blur"
+      data-public-header="shell"
+    >
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-10">
-        <div className="grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-          <div className="flex min-w-0 items-center gap-8">
-            <Logo />
-            <nav className="hidden items-center gap-6 text-[13px] font-medium text-steel xl:flex">
+        <div className="flex h-[74px] items-center gap-4 xl:gap-6">
+          <div className="flex min-w-0 flex-1 items-center gap-6 xl:gap-8">
+            <Logo markOnly size="header" className="shrink-0" />
+            <nav
+              className="hidden items-center gap-5 text-[13px] font-medium xl:flex xl:gap-6"
+              data-public-header="primary-nav"
+              aria-label="Primary"
+            >
               {primaryNav.map((item) => (
                 <Link
                   key={item.to}
                   to={item.to}
-                  className="transition-colors hover:text-foreground"
-                  activeProps={{ className: "text-foreground" }}
+                  className={navLinkClass}
+                  activeProps={{ className: cn(navLinkClass, navActiveClass) }}
+                  activeOptions={{ exact: false }}
                 >
                   {item.label}
                 </Link>
               ))}
             </nav>
           </div>
-          <div className="flex shrink-0 items-center gap-2.5" data-public-header="actions">
-            <Link
-              to="/products"
-              className="hidden h-9 w-56 items-center gap-2 rounded-md border border-border bg-surface px-3 text-[13px] text-steel transition-colors hover:border-steel lg:flex"
-            >
-              <Search className="size-3.5 shrink-0" aria-hidden />
-              <span className="truncate">Search product, SKU or brand…</span>
-            </Link>
+          <div className="flex shrink-0 items-center gap-2 sm:gap-2.5" data-public-header="actions">
+            <PublicHeaderSearch />
             {showBasket ? (
-              <BasketNavBadge
-                data-public-header="basket"
-                className="inline-flex h-9"
-              />
+              <BasketNavBadge data-public-header="basket" className="inline-flex h-9" />
             ) : null}
             {signedIn ? (
-              accountLinks.map((link) => (
+              <PublicAccountMenu
+                links={accountLinks}
+                signingOut={signingOut}
+                onSignOut={() => void onSignOut()}
+                className="hidden xl:block"
+              />
+            ) : (
+              <>
                 <Link
-                  key={link.key}
-                  to={link.to}
-                  data-public-header={link.key}
-                  className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
+                  to="/login"
+                  data-public-header="trade-login"
+                  className="hidden h-9 items-center rounded-md border border-border px-3 text-[13px] font-semibold whitespace-nowrap transition-colors hover:border-steel xl:inline-flex"
                 >
-                  {link.label}
+                  Trade Login
                 </Link>
-              ))
-            ) : (
-              <Link
-                to="/login"
-                data-public-header="trade-login"
-                className="hidden h-9 items-center rounded-md border border-border px-4 text-[13px] font-semibold transition-colors hover:border-steel sm:inline-flex"
-              >
-                Trade Login
-              </Link>
-            )}
-            {!signedIn ? (
-              <Link
-                to="/register"
-                data-public-header="open-account"
-                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
-              >
-                Open a Trade Account
-              </Link>
-            ) : (
-              <button
-                type="button"
-                data-public-header="logout"
-                disabled={signingOut}
-                onClick={() => void onSignOut()}
-                className="hidden h-9 items-center rounded-md px-3 text-[13px] font-semibold text-steel transition-colors hover:text-foreground sm:inline-flex"
-              >
-                Log out
-              </button>
+                <Link
+                  to="/register"
+                  data-public-header="open-account"
+                  className="hidden h-9 items-center rounded-md bg-primary px-4 text-[13px] font-bold whitespace-nowrap text-primary-foreground transition hover:brightness-110 xl:inline-flex"
+                >
+                  Open Trade Account
+                </Link>
+              </>
             )}
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
               aria-label={open ? "Close menu" : "Open menu"}
               aria-expanded={open}
+              data-public-header="mobile-menu-toggle"
               className="grid size-9 shrink-0 place-items-center rounded-md border border-border xl:hidden"
             >
               {open ? <X className="size-4" /> : <Menu className="size-4" />}
@@ -149,25 +142,21 @@ export function PublicHeader() {
       </div>
       {open ? (
         <div className="border-t border-border/70 bg-ink xl:hidden" data-public-header="mobile-menu">
-          <nav className="mx-auto grid max-w-[1400px] gap-1 px-4 py-3 sm:px-6">
+          <nav className="mx-auto grid max-w-[1400px] gap-1 px-4 py-3 sm:px-6" aria-label="Mobile">
             {primaryNav.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
                 onClick={() => setOpen(false)}
-                className="rounded-md px-3 py-2 text-sm text-steel transition-colors hover:bg-secondary hover:text-foreground"
+                className="rounded-md px-3 py-2 text-sm whitespace-nowrap text-steel transition-colors hover:bg-secondary hover:text-foreground"
                 activeProps={{ className: "text-foreground bg-secondary" }}
+                activeOptions={{ exact: false }}
               >
                 {item.label}
               </Link>
             ))}
             {signedIn ? (
               <>
-                {showBasket ? (
-                  <div className="px-3 py-2" data-public-header="mobile-basket">
-                    <BasketNavBadge className="w-full justify-center" />
-                  </div>
-                ) : null}
                 {accountLinks.map((link) => (
                   <Link
                     key={`mobile-${link.key}`}
@@ -195,7 +184,7 @@ export function PublicHeader() {
                   to="/login"
                   onClick={() => setOpen(false)}
                   data-public-header="mobile-trade-login"
-                  className="rounded-md px-3 py-2 text-sm font-semibold sm:hidden"
+                  className="rounded-md px-3 py-2 text-sm font-semibold"
                 >
                   Trade Login
                 </Link>
@@ -203,9 +192,9 @@ export function PublicHeader() {
                   to="/register"
                   onClick={() => setOpen(false)}
                   data-public-header="mobile-open-account"
-                  className="rounded-md px-3 py-2 text-sm font-semibold text-primary sm:hidden"
+                  className="rounded-md px-3 py-2 text-sm font-semibold text-primary"
                 >
-                  Open a Trade Account
+                  Open Trade Account
                 </Link>
               </>
             )}
@@ -330,5 +319,21 @@ export function Breadcrumbs({ items }: { items: { label: string; to?: string | u
         </span>
       ))}
     </nav>
+  );
+}
+
+/** In-content breadcrumb band — page context, not a second navigation strip. */
+export function PublicPageBreadcrumbs({
+  items,
+}: {
+  items: { label: string; to?: string | undefined }[];
+}) {
+  return (
+    <div
+      className="mx-auto max-w-[1400px] px-4 pt-5 pb-3 sm:px-6 lg:px-10"
+      data-public-breadcrumbs="page"
+    >
+      <Breadcrumbs items={items} />
+    </div>
   );
 }

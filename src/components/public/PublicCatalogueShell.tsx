@@ -91,7 +91,11 @@ export function PublicCatalogueLayout({
           <div className="mb-4 lg:hidden">
             <CatalogueMobileNav brands={brands} categories={categories} context={context} />
           </div>
-          {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
+          {breadcrumbs ? (
+            <div className="mb-4" data-public-breadcrumbs="catalogue">
+              <Breadcrumbs items={breadcrumbs} />
+            </div>
+          ) : null}
           {children}
         </div>
       </div>
@@ -128,8 +132,10 @@ export function PublicCatalogueShell({
   return (
     <PublicLayout {...(requestSession ? { requestSession } : {})}>
       <div className="border-b border-border/60">
-        <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-10">
-          <Breadcrumbs items={breadcrumbs} />
+        <div className="mx-auto max-w-[1400px] px-4 pt-5 pb-8 sm:px-6 lg:px-10">
+          <div data-public-breadcrumbs="catalogue">
+            <Breadcrumbs items={breadcrumbs} />
+          </div>
           {leading}
           <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
             <div>

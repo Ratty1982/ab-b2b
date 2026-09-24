@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
+import { PublicLayout, PublicPageBreadcrumbs } from "@/components/ab/PublicLayout";
 import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import type { HomepageJson } from "@/domain/homepage";
@@ -34,13 +34,7 @@ export function PublicCmsPage({
 }) {
   return (
     <PublicLayout kinetic={kinetic} {...(requestSession ? { requestSession } : {})}>
-      {breadcrumbs?.length ? (
-        <div className="border-b border-border/40">
-          <div className="mx-auto max-w-[1400px] px-4 py-3 sm:px-6 lg:px-10">
-            <Breadcrumbs items={breadcrumbs} />
-          </div>
-        </div>
-      ) : null}
+      {breadcrumbs?.length ? <PublicPageBreadcrumbs items={breadcrumbs} /> : null}
       <CmsPageView
         sections={page.sections.map((section) => ({
           id: section.id,

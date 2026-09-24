@@ -163,6 +163,7 @@ describe("motorsport public UI", () => {
     expect(markup).toContain("Motorsport");
     expect(markup).toContain('href="/motorsport"');
     expect(markup).toContain("Trade Solutions");
-    expect(markup).toContain("Why Automotive Brands");
+    expect(markup).toContain("Why Us");
+    expect(markup).toContain('href="/why-automotive-brands"');
   });
 });

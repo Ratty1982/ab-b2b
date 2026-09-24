@@ -173,10 +173,10 @@ describe("public trade session chrome", () => {
     sessionState.current = { signedIn: false };
   });
 
-  it("anonymous header shows Trade Login and Open a Trade Account, not Basket", () => {
+  it("anonymous header shows Trade Login and Open Trade Account, not Basket", () => {
     const markup = html(createElement(PublicHeader));
     expect(markup).toContain("Trade Login");
-    expect(markup).toContain("Open a Trade Account");
+    expect(markup).toContain("Open Trade Account");
     expect(markup).not.toContain("My Account");
     expect(markup).not.toContain(">Basket<");
     expect(markup).not.toContain('data-public-header="basket"');
@@ -185,22 +185,24 @@ describe("public trade session chrome", () => {
     expect(markup).toContain("Brands");
     expect(markup).toContain("Trade Solutions");
     expect(markup).toContain("Motorsport");
-    expect(markup).toContain("Why Automotive Brands");
+    expect(markup).toContain("Why Us");
+    expect(markup).not.toContain(">Why Automotive Brands<");
     expect(markup).not.toContain(">Resources<");
     expect(markup).not.toContain(">About Us<");
   });
 
-  it("authenticated trade header hides login CTAs and shows Basket + Trade Portal → /portal", () => {
+  it("authenticated trade header shows Basket + My Account menu with Trade Portal", () => {
     sessionState.current = tradeSession;
     const markup = html(createElement(PublicHeader));
     expect(markup).not.toContain("Trade Login");
-    expect(markup).not.toContain("Open a Trade Account");
+    expect(markup).not.toContain("Open Trade Account");
+    expect(markup).toContain("My Account");
+    expect(markup).toContain('data-public-header="my-account"');
+    expect(markup).toContain('data-public-header="account-menu"');
     expect(markup).toContain("Trade Portal");
     expect(markup).toContain('data-public-header="trade-portal"');
     expect(markup).toContain('href="/portal"');
     expect(markup).not.toContain('data-public-header="admin"');
-    expect(markup).not.toContain("My Account");
-    expect(markup).not.toContain(">Account<");
     expect(markup).toContain("Basket");
     expect(markup).toContain('data-public-header="basket"');
     expect(markup).toContain("Log out");
@@ -208,7 +210,7 @@ describe("public trade session chrome", () => {
     expect(markup).not.toMatch(/data-public-header="basket"[^>]*hidden sm:/);
   });
 
-  it("authenticated internal admin header shows Admin → /admin, not Account or My Account", () => {
+  it("authenticated internal admin header shows My Account with Admin, not Trade Login", () => {
     sessionState.current = {
       signedIn: true,
       user: {
@@ -230,17 +232,16 @@ describe("public trade session chrome", () => {
       },
     };
     const markup = html(createElement(PublicHeader));
+    expect(markup).toContain("My Account");
     expect(markup).toContain("Admin");
     expect(markup).toContain('data-public-header="admin"');
     expect(markup).toContain('href="/admin"');
-    expect(markup).not.toContain("My Account");
-    expect(markup).not.toContain(">Account<");
     expect(markup).not.toContain("Trade Login");
     expect(markup).not.toContain("Basket");
     expect(markup).toContain("Log out");
   });
 
-  it("admin with trade test level shows Basket + Trade Portal + Admin", () => {
+  it("admin with trade test level shows Basket + Trade Portal + Admin in account menu", () => {
     sessionState.current = {
       signedIn: true,
       user: {
@@ -263,10 +264,9 @@ describe("public trade session chrome", () => {
     };
     const markup = html(createElement(PublicHeader));
     expect(markup).toContain("Basket");
+    expect(markup).toContain("My Account");
     expect(markup).toContain("Trade Portal");
     expect(markup).toContain("Admin");
-    expect(markup).not.toContain("My Account");
-    expect(markup).not.toContain(">Account<");
   });
 
   it("signed-in trade without orders.view still shows Basket chrome (server enforces mutate)", () => {
@@ -279,10 +279,11 @@ describe("public trade session chrome", () => {
     };
     const markup = html(createElement(PublicHeader));
     expect(markup).not.toContain("Trade Login");
-    expect(markup).not.toContain("Open a Trade Account");
+    expect(markup).not.toContain("Open Trade Account");
     expect(markup).toContain("Trade Portal");
     expect(markup).toContain("Log out");
     expect(markup).toContain("Basket");
+    expect(markup).toContain("My Account");
   });
 
   it("trade customer session guards require TRADE + company; INTERNAL needs trade test level", () => {
@@ -363,7 +364,7 @@ describe("public trade session chrome", () => {
     );
     const header = html(createElement(PublicHeader));
     const showsYourPrice = price.includes("Your price ·") && price.includes("£3.69");
-    const showsAnonCtas = header.includes("Trade Login") || header.includes("Open a Trade Account");
+    const showsAnonCtas = header.includes("Trade Login") || header.includes("Open Trade Account");
     expect(showsYourPrice).toBe(true);
     expect(showsAnonCtas).toBe(false);
   });

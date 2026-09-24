@@ -1,5 +1,5 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { PublicLayout, Breadcrumbs } from "@/components/ab/PublicLayout";
+import { PublicLayout, PublicPageBreadcrumbs } from "@/components/ab/PublicLayout";
 import { MotorsportLanding } from "@/components/public/MotorsportLanding";
 import { getPublicCmsPageFn } from "@/server/phase2/fns";
 import { marketingCmsPageBySlug } from "@/domain/cms-marketing-pages";
@@ -36,11 +36,7 @@ function MotorsportPage() {
   const page = Route.useLoaderData();
   return (
     <PublicLayout kinetic>
-      <div className="border-b border-border/40">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 sm:px-6 lg:px-10">
-          <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Motorsport" }]} />
-        </div>
-      </div>
+      <PublicPageBreadcrumbs items={[{ label: "Home", to: "/" }, { label: "Motorsport" }]} />
       <MotorsportLanding
         sections={page.sections.map((section) => ({
           id: section.id,
