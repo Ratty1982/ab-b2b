@@ -64,6 +64,7 @@ vi.mock("@tanstack/react-router", () => ({
     );
   },
   useRouter: () => ({ invalidate: async () => undefined }),
+  useNavigate: () => async () => undefined,
 }));
 
 import {
@@ -167,8 +168,9 @@ describe("public header navigation refinement", () => {
     expect(markup).toContain("Search products or SKU");
     expect(markup).toContain('data-public-header="search-full"');
     expect(markup).toContain('data-public-header="search-toggle"');
-    expect(markup).toContain('data-public-header="search-mobile"');
-    expect(markup).toContain('href="/products"');
+    expect(markup).toContain('role="search"');
+    expect(markup).toContain('name="q"');
+    expect(markup).toContain('type="search"');
   });
 
   it("anonymous right-side hierarchy: search, Trade Login, Open Trade Account CTA", () => {

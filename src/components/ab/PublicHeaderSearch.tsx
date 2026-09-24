@@ -1,19 +1,22 @@
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const SEARCH_PLACEHOLDER = "Search products or SKU";
 
 /**
- * Public header search affordance — routes to the existing catalogue search.
- * Full field on large desktops; icon → expandable field on intermediate widths;
- * icon-only on compact/mobile.
+ * Public header search — submits to the catalogue with `?q=`.
+ * Full field on large desktops; icon → expandable field below that.
  */
 export function PublicHeaderSearch() {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState("");
   const panelId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const fullInputRef = useRef<HTMLInputElement>(null);
+  const expandedInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!expanded) return;
@@ -38,23 +41,46 @@ export function PublicHeaderSearch() {
 
   useEffect(() => {
     if (!expanded) return;
-    const link = panelRef.current?.querySelector("a");
-    link?.focus();
+    expandedInputRef.current?.focus();
   }, [expanded]);
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const q = query.trim();
+    setExpanded(false);
+    void navigate({
+      to: "/products",
+      search: q ? { q } : {},
+    });
+  }
+
+  const fieldClass =
+    "h-9 w-full rounded-md border border-border bg-surface py-0 pl-9 pr-3 text-[13px] text-foreground placeholder:text-steel transition-colors hover:border-steel focus-visible:border-steel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60";
 
   return (
     <div className="relative flex items-center" data-public-header="search" ref={panelRef}>
       {/* Large desktop: full search field */}
-      <Link
-        to="/products"
+      <form
         data-public-header="search-full"
-        className="hidden h-9 w-[240px] items-center gap-2 rounded-md border border-border bg-surface px-3 text-[13px] text-steel transition-colors hover:border-steel 2xl:flex"
+        className="relative hidden w-[240px] 2xl:block"
+        role="search"
+        onSubmit={submitSearch}
       >
-        <Search className="size-3.5 shrink-0" aria-hidden />
-        <span className="truncate">{SEARCH_PLACEHOLDER}</span>
-      </Link>
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-steel" aria-hidden />
+        <input
+          ref={fullInputRef}
+          type="search"
+          name="q"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={SEARCH_PLACEHOLDER}
+          aria-label={SEARCH_PLACEHOLDER}
+          className={fieldClass}
+          autoComplete="off"
+        />
+      </form>
 
-      {/* Intermediate desktop (nav visible, limited width): compact toggle */}
+      {/* Compact / intermediate: icon toggles expandable field */}
       <button
         type="button"
         data-public-header="search-toggle"
@@ -63,36 +89,41 @@ export function PublicHeaderSearch() {
         aria-controls={panelId}
         onClick={() => setExpanded((value) => !value)}
         className={cn(
-          "hidden size-9 place-items-center rounded-md border border-border text-steel transition-colors hover:border-steel hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 xl:grid 2xl:hidden",
+          "grid size-9 place-items-center rounded-md border border-border text-steel transition-colors hover:border-steel hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 2xl:hidden",
           expanded && "border-steel text-foreground",
         )}
       >
         {expanded ? <X className="size-4" aria-hidden /> : <Search className="size-4" aria-hidden />}
       </button>
 
-      {/* Mobile / tablet: icon links to catalogue search */}
-      <Link
-        to="/products"
-        data-public-header="search-mobile"
-        aria-label={SEARCH_PLACEHOLDER}
-        className="grid size-9 place-items-center rounded-md border border-border text-steel transition-colors hover:border-steel hover:text-foreground xl:hidden"
-      >
-        <Search className="size-4" aria-hidden />
-      </Link>
-
       {expanded ? (
         <div
           id={panelId}
           data-public-header="search-expanded"
-          className="absolute right-0 top-[calc(100%+6px)] z-50 hidden xl:block 2xl:hidden"
+          className="absolute right-0 top-[calc(100%+6px)] z-50 w-[min(100vw-2rem,280px)] 2xl:hidden"
         >
-          <Link
-            to="/products"
-            className="flex h-9 w-[240px] items-center gap-2 rounded-md border border-border bg-ink px-3 text-[13px] text-steel shadow-md transition-colors hover:border-steel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          <form
+            data-public-header="search-mobile"
+            role="search"
+            className="relative rounded-md border border-border bg-ink p-1 shadow-md"
+            onSubmit={submitSearch}
           >
-            <Search className="size-3.5 shrink-0" aria-hidden />
-            <span className="truncate">{SEARCH_PLACEHOLDER}</span>
-          </Link>
+            <Search
+              className="pointer-events-none absolute left-3.5 top-1/2 size-3.5 -translate-y-1/2 text-steel"
+              aria-hidden
+            />
+            <input
+              ref={expandedInputRef}
+              type="search"
+              name="q"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={SEARCH_PLACEHOLDER}
+              aria-label={SEARCH_PLACEHOLDER}
+              className={cn(fieldClass, "bg-ink")}
+              autoComplete="off"
+            />
+          </form>
         </div>
       ) : null}
     </div>
