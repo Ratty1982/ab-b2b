@@ -59,6 +59,10 @@ async function main() {
     const marketing = await bootstrapMarketingCmsPages(prisma);
     console.log("[ab:bootstrap] CMS marketing pages", marketing);
 
+    const { bootstrapTeamDepartments } = await import("../../src/server/team/service");
+    const team = await bootstrapTeamDepartments(prisma);
+    console.log("[ab:bootstrap] Team departments", team);
+
     const catalogue = await bootstrapCatalogue(prisma);
     console.log("[ab:bootstrap] Catalogue taxonomy", catalogue);
 

@@ -46,6 +46,7 @@ vi.mock("@tanstack/react-router", () => ({
       children,
     ),
   useRouter: () => ({ invalidate: async () => undefined }),
+  useNavigate: () => async () => undefined,
 }));
 
 vi.mock("@/server/phase2/fns", () => ({

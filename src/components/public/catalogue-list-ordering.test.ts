@@ -23,6 +23,7 @@ vi.mock("@/server/phase2/fns", () => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => async () => undefined,
   Link: ({
     children,
     to,

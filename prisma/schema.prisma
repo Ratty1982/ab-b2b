@@ -578,6 +578,7 @@ model SalesRep {
   teamMembers  SalesRep[]          @relation("SalesRepTeam")
   assignments  CompanyAssignment[]
   applications TradeApplication[]
+  publicTeamProfile TeamMember?
 
   @@index([managerId])
 }
@@ -1455,9 +1456,63 @@ model CmsMedia {
   brandLogos    Brand[]        @relation("BrandLogo")
   categoryImages Category[]    @relation("CategoryImage")
   productMedia  ProductMedia[] @relation("ProductMedia")
+  teamPhotos    TeamMember[]   @relation("TeamMemberPhoto")
 
   @@index([contentType])
   @@index([uploadedById])
+}
+
+model TeamDepartment {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  /// When false, department and its members are omitted from public pages.
+  isPublic    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members TeamMember[]
+
+  @@index([sortOrder])
+  @@index([isPublic])
+}
+
+model TeamMember {
+  id            String   @id @default(cuid())
+  firstName     String
+  lastName      String
+  jobTitle      String?
+  bio           String?
+  /// Public contact email only — never copied from User automatically.
+  email         String?
+  /// Public telephone only — never copied from User automatically.
+  phone         String?
+  linkedInUrl   String?
+  sortOrder     Int      @default(0)
+  /// Defaults hidden until staff explicitly publish.
+  isPublic      Boolean  @default(false)
+  isFeatured    Boolean  @default(false)
+  /// When false, email/phone/LinkedIn must not appear in public HTML.
+  isContactable Boolean  @default(false)
+  departmentId  String?
+  photoMediaId  String?
+  photoAlt      String?
+  photoFocalX   Int      @default(50)
+  photoFocalY   Int      @default(50)
+  /// Optional link to CRM SalesRep for future Account Manager presentation.
+  salesRepId    String?  @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  department TeamDepartment? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  photoMedia CmsMedia?       @relation("TeamMemberPhoto", fields: [photoMediaId], references: [id], onDelete: SetNull)
+  salesRep   SalesRep?       @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
+
+  @@index([departmentId, sortOrder])
+  @@index([isPublic, isFeatured])
+  @@index([sortOrder])
 }
 
 model CmsPublishEvent {

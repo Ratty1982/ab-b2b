@@ -17,6 +17,7 @@ import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as MeetTheTeamRouteImport } from './routes/meet-the-team'
 import { Route as MotorsportRouteImport } from './routes/motorsport'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as RegisterRouteImport } from './routes/register'
@@ -56,6 +57,7 @@ import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.appli
 import { Route as AdminContentIndexRouteImport } from './routes/admin.content.index'
 import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$slug'
 import { Route as AdminContentMediaRouteImport } from './routes/admin.content.media'
+import { Route as AdminContentTeamRouteImport } from './routes/admin.content.team'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
 import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.index'
@@ -115,6 +117,11 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MeetTheTeamRoute = MeetTheTeamRouteImport.update({
+  id: '/meet-the-team',
+  path: '/meet-the-team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MotorsportRoute = MotorsportRouteImport.update({
@@ -312,6 +319,11 @@ const AdminContentMediaRoute = AdminContentMediaRouteImport.update({
   path: '/media',
   getParentRoute: () => AdminContentRoute,
 } as any)
+const AdminContentTeamRoute = AdminContentTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => AdminContentRoute,
+} as any)
 const AdminCustomersIndexRoute = AdminCustomersIndexRouteImport.update({
   id: '/customers/',
   path: '/customers/',
@@ -423,6 +435,7 @@ export interface FileRoutesByFullPath {
   '/crm': typeof CrmRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/meet-the-team': typeof MeetTheTeamRoute
   '/motorsport': typeof MotorsportRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
@@ -460,6 +473,7 @@ export interface FileRoutesByFullPath {
   '/sales/': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
+  '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -490,6 +504,7 @@ export interface FileRoutesByTo {
   '/contact': typeof ContactRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/meet-the-team': typeof MeetTheTeamRoute
   '/motorsport': typeof MotorsportRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -522,6 +537,7 @@ export interface FileRoutesByTo {
   '/sales': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
+  '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -554,6 +570,7 @@ export interface FileRoutesById {
   '/crm': typeof CrmRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/meet-the-team': typeof MeetTheTeamRoute
   '/motorsport': typeof MotorsportRoute
   '/portal': typeof PortalRouteWithChildren
   '/register': typeof RegisterRoute
@@ -591,6 +608,7 @@ export interface FileRoutesById {
   '/sales/': typeof SalesIndexRoute
   '/admin/content/$slug': typeof AdminContentSlugRouteWithChildren
   '/admin/content/media': typeof AdminContentMediaRoute
+  '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -625,6 +643,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/forgot-password'
     | '/login'
+    | '/meet-the-team'
     | '/motorsport'
     | '/portal'
     | '/register'
@@ -662,6 +681,7 @@ export interface FileRouteTypes {
     | '/sales/'
     | '/admin/content/$slug'
     | '/admin/content/media'
+    | '/admin/content/team'
     | '/admin/customers/$id'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -692,6 +712,7 @@ export interface FileRouteTypes {
     | '/contact'
     | '/forgot-password'
     | '/login'
+    | '/meet-the-team'
     | '/motorsport'
     | '/register'
     | '/reset-password'
@@ -724,6 +745,7 @@ export interface FileRouteTypes {
     | '/sales'
     | '/admin/content/$slug'
     | '/admin/content/media'
+    | '/admin/content/team'
     | '/admin/customers/$id'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -755,6 +777,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/forgot-password'
     | '/login'
+    | '/meet-the-team'
     | '/motorsport'
     | '/portal'
     | '/register'
@@ -792,6 +815,7 @@ export interface FileRouteTypes {
     | '/sales/'
     | '/admin/content/$slug'
     | '/admin/content/media'
+    | '/admin/content/team'
     | '/admin/customers/$id'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -825,6 +849,7 @@ export interface RootRouteChildren {
   CrmRoute: typeof CrmRouteWithChildren
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
+  MeetTheTeamRoute: typeof MeetTheTeamRoute
   MotorsportRoute: typeof MotorsportRoute
   PortalRoute: typeof PortalRouteWithChildren
   RegisterRoute: typeof RegisterRoute
@@ -901,6 +926,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/meet-the-team': {
+      id: '/meet-the-team'
+      path: '/meet-the-team'
+      fullPath: '/meet-the-team'
+      preLoaderRoute: typeof MeetTheTeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/motorsport': {
@@ -1176,6 +1208,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminContentMediaRouteImport
       parentRoute: typeof AdminContentRoute
     }
+    '/admin/content/team': {
+      id: '/admin/content/team'
+      path: '/team'
+      fullPath: '/admin/content/team'
+      preLoaderRoute: typeof AdminContentTeamRouteImport
+      parentRoute: typeof AdminContentRoute
+    }
     '/admin/customers/': {
       id: '/admin/customers/'
       path: '/customers'
@@ -1333,12 +1372,14 @@ const AdminContentSlugRouteWithChildren =
 interface AdminContentRouteChildren {
   AdminContentSlugRoute: typeof AdminContentSlugRouteWithChildren
   AdminContentMediaRoute: typeof AdminContentMediaRoute
+  AdminContentTeamRoute: typeof AdminContentTeamRoute
   AdminContentIndexRoute: typeof AdminContentIndexRoute
 }
 
 const AdminContentRouteChildren: AdminContentRouteChildren = {
   AdminContentSlugRoute: AdminContentSlugRouteWithChildren,
   AdminContentMediaRoute: AdminContentMediaRoute,
+  AdminContentTeamRoute: AdminContentTeamRoute,
   AdminContentIndexRoute: AdminContentIndexRoute,
 }
 
@@ -1491,6 +1532,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmRoute: CrmRouteWithChildren,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
+  MeetTheTeamRoute: MeetTheTeamRoute,
   MotorsportRoute: MotorsportRoute,
   PortalRoute: PortalRouteWithChildren,
   RegisterRoute: RegisterRoute,

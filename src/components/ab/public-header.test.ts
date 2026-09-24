@@ -69,6 +69,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import {
   Breadcrumbs,
+  PublicFooter,
   PublicHeader,
   PublicPageBreadcrumbs,
 } from "@/components/ab/PublicLayout";
@@ -171,6 +172,15 @@ describe("public header navigation refinement", () => {
     expect(markup).toContain('role="search"');
     expect(markup).toContain('name="q"');
     expect(markup).toContain('type="search"');
+  });
+
+  it("footer Company group includes Meet the Team", () => {
+    sessionState.current = { signedIn: false };
+    const markup = html(createElement(PublicFooter));
+    expect(markup).toContain("Meet the Team");
+    expect(markup).toContain('href="/meet-the-team"');
+    expect(markup).toContain("Why Automotive Brands");
+    expect(markup).toContain("About");
   });
 
   it("anonymous right-side hierarchy: search, Trade Login, Open Trade Account CTA", () => {

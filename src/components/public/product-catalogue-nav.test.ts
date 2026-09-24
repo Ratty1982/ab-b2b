@@ -47,6 +47,7 @@ vi.mock("@tanstack/react-router", () => ({
       children,
     ),
   useRouter: () => ({ invalidate: async () => undefined }),
+  useNavigate: () => async () => undefined,
 }));
 
 function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {

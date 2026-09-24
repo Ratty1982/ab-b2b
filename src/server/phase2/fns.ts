@@ -1497,4 +1497,85 @@ export const clearCompanyAutopartCustomerCodeFn = createServerFn({ method: "POST
     }
   });
 
+export const getPublicTeamPageFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const team = await import("@/server/team/service");
+    return { ok: true as const, data: await team.listPublicTeamPage() };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const listFeaturedPublicTeamMembersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { limit?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const team = await import("@/server/team/service");
+      return {
+        ok: true as const,
+        data: await team.listFeaturedPublicTeamMembers(data?.limit ?? 4),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listTeamDepartmentsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const team = await import("@/server/team/service");
+    return { ok: true as const, data: await team.listTeamDepartmentsAdmin(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const upsertTeamDepartmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const team = await import("@/server/team/service");
+      return { ok: true as const, data: await team.upsertTeamDepartment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listTeamMembersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as Record<string, unknown> | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const team = await import("@/server/team/service");
+      return { ok: true as const, data: await team.listTeamMembersAdmin(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const upsertTeamMemberFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const team = await import("@/server/team/service");
+      return { ok: true as const, data: await team.upsertTeamMember(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const deleteTeamMemberFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const team = await import("@/server/team/service");
+      return { ok: true as const, data: await team.deleteTeamMember(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

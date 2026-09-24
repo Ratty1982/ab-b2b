@@ -37,6 +37,7 @@ const footerSupport = [
 
 const footerCompany = [
   { label: "Why Automotive Brands", to: "/why-automotive-brands" as const },
+  { label: "Meet the Team", to: "/meet-the-team" as const },
   { label: "Motorsport", to: "/motorsport" as const },
   { label: "About", to: "/about" as const },
 ] as const;

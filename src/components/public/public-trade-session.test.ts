@@ -60,6 +60,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to, ...rest }: { children: ReactNode; to: string } & Record<string, unknown>) =>
     createElement("a", { href: typeof to === "string" ? to : "/", ...rest }, children),
   useRouter: () => ({ invalidate: async () => undefined }),
+  useNavigate: () => async () => undefined,
   getRouteApi: () => ({
     useRouteContext: () => ({ session: sessionState.current }),
   }),

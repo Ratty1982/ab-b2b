@@ -77,26 +77,34 @@ describe("canonical navigation contract", () => {
     expect(visible.map((i) => i.id)).not.toContain("audit-log");
   });
 
-  it("gives SUPER_ADMIN Website Pages, Homepage and Media", () => {
+  it("gives SUPER_ADMIN Website Pages, Homepage, Team and Media", () => {
     const items = flattenVisible(backOfficeNavForUser(superAdmin));
     const ids = items.map((i) => i.id);
     expect(ids).toContain("website-pages");
     expect(ids).toContain("website-homepage");
+    expect(ids).toContain("website-team");
     expect(ids).toContain("website-media");
     expect(items.find((i) => i.id === "website-homepage")?.to).toBe(ROUTES.adminHomepage);
     expect(items.find((i) => i.id === "website-pages")?.to).toBe(ROUTES.adminContent);
+    expect(items.find((i) => i.id === "website-team")?.to).toBe(ROUTES.adminTeam);
     expect(items.find((i) => i.id === "website-media")?.to).toBe(ROUTES.adminMedia);
     const sections = backOfficeNavForUser(superAdmin).map((s) => s.id);
     expect(sections).toEqual(["home", "sales", "catalogue", "crm", "website", "operations", "system"]);
   });
 
-  it("keeps Website nav as Pages, Homepage, Media in that order", () => {
+  it("keeps Website nav as Pages, Homepage, Team, Media in that order", () => {
     const website = BACK_OFFICE_NAV.find((s) => s.id === "website");
-    expect(website?.items.map((i) => i.id)).toEqual(["website-pages", "website-homepage", "website-media"]);
-    expect(website?.items.map((i) => i.label)).toEqual(["Pages", "Homepage", "Media"]);
+    expect(website?.items.map((i) => i.id)).toEqual([
+      "website-pages",
+      "website-homepage",
+      "website-team",
+      "website-media",
+    ]);
+    expect(website?.items.map((i) => i.label)).toEqual(["Pages", "Homepage", "Team", "Media"]);
     expect(website?.items.map((i) => i.to)).toEqual([
       ROUTES.adminContent,
       ROUTES.adminHomepage,
+      ROUTES.adminTeam,
       ROUTES.adminMedia,
     ]);
     const sections = BACK_OFFICE_NAV.map((s) => s.id);
@@ -119,6 +127,7 @@ describe("canonical navigation contract", () => {
     expect(ids).toContain("opportunities");
     expect(ids).not.toContain("website-pages");
     expect(ids).not.toContain("website-homepage");
+    expect(ids).not.toContain("website-team");
     expect(ids).not.toContain("website-media");
     expect(ids).not.toContain("products");
     expect(ids).not.toContain("users");
