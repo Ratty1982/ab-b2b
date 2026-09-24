@@ -289,17 +289,17 @@ function ProductTradeOrderingCard({
 
       {finalStock ? (
         <div
-          className="mt-3 rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2"
+          className="mt-3 rounded-md border border-warn/45 bg-warn/15 px-3 py-2"
           role="status"
           data-ordering-final-stock="true"
         >
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-200">
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-warn">
             Final stock
           </p>
-          <p className="mt-0.5 text-[13px] font-medium text-amber-900 dark:text-amber-100">
+          <p className="mt-0.5 text-[13px] font-medium text-warn">
             Only {panel!.remainingQty} remaining
           </p>
-          <p className="mt-1 text-[12px] text-amber-900/80 dark:text-amber-100/80">
+          <p className="mt-1 text-[12px] text-warn/85">
             Final stock can be ordered as individual units.
           </p>
         </div>

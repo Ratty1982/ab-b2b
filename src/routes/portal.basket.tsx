@@ -195,7 +195,7 @@ function BasketPage() {
                         {line.caseCountLabel} · {line.quantity} units
                       </p>
                     ) : line.isFinalPartCase ? (
-                      <p className="mt-1 text-[12px] text-amber-800 dark:text-amber-200">
+                      <p className="mt-1 text-[12px] text-warn">
                         {line.quantity === 1 ? "1 unit" : `${line.quantity} units`} · final stock
                       </p>
                     ) : null}

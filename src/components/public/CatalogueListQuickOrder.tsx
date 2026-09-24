@@ -195,7 +195,7 @@ export function CatalogueListQuickOrder({
       <p
         className={cn(
           "text-[10px] leading-tight",
-          panel.isFinalPartCase ? "font-medium text-amber-800 dark:text-amber-200" : "text-steel",
+          panel.isFinalPartCase ? "font-medium text-warn" : "text-steel",
         )}
       >
         {caseHint}
