@@ -44,18 +44,24 @@ vi.mock("@tanstack/react-router", () => ({
     to,
     activeProps,
     activeOptions: _activeOptions,
+    className,
     ...rest
   }: {
     children: ReactNode;
     to: string;
     activeProps?: { className?: string };
     activeOptions?: unknown;
+    className?: string;
   } & Record<string, unknown>) => {
-    const className =
-      typeof rest.className === "string" && activeProps?.className && to === "/motorsport"
+    const resolvedClassName =
+      typeof className === "string" && activeProps?.className && to === "/motorsport"
         ? activeProps.className
-        : rest.className;
-    return createElement("a", { href: typeof to === "string" ? to : "/", ...rest, className }, children);
+        : className;
+    return createElement(
+      "a",
+      { href: typeof to === "string" ? to : "/", ...rest, className: resolvedClassName },
+      children,
+    );
   },
   useRouter: () => ({ invalidate: async () => undefined }),
 }));
