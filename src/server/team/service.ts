@@ -21,10 +21,12 @@ import {
 type Db = PrismaClient | Prisma.TransactionClient;
 
 export async function bootstrapTeamDepartments(db: Db = prisma) {
+  // Only seed when the table is empty so admin deletes of default departments stick.
+  const existingCount = await db.teamDepartment.count();
+  if (existingCount > 0) return { created: 0 };
+
   let created = 0;
   for (const dept of DEFAULT_TEAM_DEPARTMENTS) {
-    const existing = await db.teamDepartment.findUnique({ where: { slug: dept.slug } });
-    if (existing) continue;
     await db.teamDepartment.create({
       data: {
         slug: dept.slug,
@@ -459,6 +461,30 @@ export async function deleteTeamMember(actorUserId: string, id: string) {
     },
   });
   return { ok: true as const, id };
+}
+
+export async function deleteTeamDepartment(actorUserId: string, id: string) {
+  await requireSystemPermission(actorUserId, "cms.page.edit");
+  const before = await prisma.teamDepartment.findUnique({
+    where: { id },
+    include: { _count: { select: { members: true } } },
+  });
+  if (!before) throw new AuthError("Department not found", "NOT_FOUND", 404);
+
+  // Members keep their profiles; departmentId is SetNull via schema relation.
+  await prisma.teamDepartment.delete({ where: { id } });
+  await recordAuditEvent({
+    action: "team.department_deleted",
+    entityType: "TeamDepartment",
+    entityId: id,
+    actorUserId,
+    metadata: {
+      name: before.name,
+      slug: before.slug,
+      memberCount: before._count.members,
+    },
+  });
+  return { ok: true as const, id, memberCount: before._count.members };
 }
 
 export async function assertCanManageTeam(actorUserId: string) {

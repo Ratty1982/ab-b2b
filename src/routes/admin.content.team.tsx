@@ -6,6 +6,7 @@ import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
 import {
+  deleteTeamDepartmentFn,
   deleteTeamMemberFn,
   listSalesRepsFn,
   listTeamDepartmentsFn,
@@ -97,6 +98,7 @@ function AdminTeam() {
   const [deptEdit, setDeptEdit] = useState<Partial<DeptRow> | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteDeptId, setDeleteDeptId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [deptR, memberR, repR] = await Promise.all([
@@ -296,13 +298,22 @@ function AdminTeam() {
                   </td>
                   <td className="num px-3 py-2 text-right">{d.sortOrder}</td>
                   <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      className="text-[12px] font-semibold text-primary"
-                      onClick={() => setDeptEdit(d)}
-                    >
-                      Edit
-                    </button>
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        className="text-[12px] font-semibold text-primary"
+                        onClick={() => setDeptEdit(d)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[12px] font-semibold text-bad"
+                        onClick={() => setDeleteDeptId(d.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -643,12 +654,23 @@ function AdminTeam() {
               />
               Public department
             </label>
-            <button
-              type="submit"
-              className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground"
-            >
-              Save department
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className="h-10 rounded-md bg-primary px-5 text-[13px] font-bold uppercase text-primary-foreground"
+              >
+                Save department
+              </button>
+              {deptEdit.id ? (
+                <button
+                  type="button"
+                  className="h-10 rounded-md border border-bad px-4 text-[12px] font-semibold text-bad"
+                  onClick={() => setDeleteDeptId(deptEdit.id!)}
+                >
+                  Delete
+                </button>
+              ) : null}
+            </div>
           </form>
         </Drawer>
       ) : null}
@@ -688,6 +710,30 @@ function AdminTeam() {
               toast.success("Member deleted");
               setDeleteId(null);
               setEdit(null);
+              await load();
+            }
+          })();
+        }}
+      />
+
+      <ConfirmAction
+        open={Boolean(deleteDeptId)}
+        title="Delete department?"
+        description="This removes the department permanently. Team members keep their profiles and become unassigned."
+        confirmLabel="Delete"
+        onOpenChange={(open) => {
+          if (!open) setDeleteDeptId(null);
+        }}
+        onConfirm={() => {
+          if (!deleteDeptId) return;
+          void (async () => {
+            const r = await deleteTeamDepartmentFn({ data: { id: deleteDeptId } });
+            if (!r.ok) toast.error(r.error);
+            else {
+              toast.success("Department deleted");
+              if (departmentId === deleteDeptId) setDepartmentId("");
+              setDeleteDeptId(null);
+              setDeptEdit(null);
               await load();
             }
           })();

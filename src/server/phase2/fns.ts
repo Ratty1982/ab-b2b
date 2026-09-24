@@ -1614,4 +1614,16 @@ export const deleteTeamMemberFn = createServerFn({ method: "POST" })
     }
   });
 
+export const deleteTeamDepartmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const team = await import("@/server/team/service");
+      return { ok: true as const, data: await team.deleteTeamDepartment(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

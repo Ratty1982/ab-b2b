@@ -99,10 +99,13 @@ Do **not** merge TeamMember and SalesRep.
 4. Enter public contact only if approved.  
 5. Set Public when ready; Featured for Why Us.  
 6. Optionally link SalesRep for future AM presentation.
+7. Delete unused departments from the Departments table (or Edit → Delete). Members are unassigned, not deleted.
 
 RBAC: `cms.page.read` (list) / `cms.page.edit` (write). Marketing + Super Admin by default.
 
-Audit actions: `team.member_created|updated|published|hidden|deleted`, department create/update, SalesRep link changes in metadata.
+Audit actions: `team.member_created|updated|published|hidden|deleted`, `team.department_created|updated|deleted`, SalesRep link changes in metadata.
+
+Default departments are seeded only when the table is empty. Deleting a seed department does not recreate it.
 
 ---
 

@@ -7,10 +7,12 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import {
   bootstrapTeamDepartments,
+  deleteTeamDepartment,
   deleteTeamMember,
   getPublicTeamMemberForSalesRep,
   listFeaturedPublicTeamMembers,
   listPublicTeamPage,
+  listTeamDepartmentsAdmin,
   listTeamMembersAdmin,
   upsertTeamDepartment,
   upsertTeamMember,
@@ -193,6 +195,66 @@ describe("team public roster", () => {
       sortOrder: 30,
       isPublic: true,
     });
+  });
+
+  it("deletes a department and unassigns members without recreating seeds", async () => {
+    const created = await upsertTeamDepartment(adminId, {
+      name: "Temp Delete Dept",
+      slug: `temp-delete-dept-${Date.now()}`,
+      description: null,
+      sortOrder: 500,
+      isPublic: true,
+    });
+    const member = await upsertTeamMember(adminId, {
+      firstName: "TmTest",
+      lastName: "Unassign",
+      jobTitle: "Temp",
+      departmentId: created.id,
+      isPublic: false,
+      sortOrder: 1,
+    });
+
+    const result = await deleteTeamDepartment(adminId, created.id);
+    expect(result.ok).toBe(true);
+    expect(result.memberCount).toBe(1);
+
+    const gone = await prisma.teamDepartment.findUnique({ where: { id: created.id } });
+    expect(gone).toBeNull();
+
+    const stillThere = await prisma.teamMember.findUnique({ where: { id: member.id } });
+    expect(stillThere).toBeTruthy();
+    expect(stillThere!.departmentId).toBeNull();
+
+    // Bootstrap must not recreate deleted departments while any remain.
+    await bootstrapTeamDepartments(prisma);
+    const resurrected = await prisma.teamDepartment.findUnique({ where: { id: created.id } });
+    expect(resurrected).toBeNull();
+    const bySlug = await prisma.teamDepartment.findUnique({ where: { slug: created.slug } });
+    expect(bySlug).toBeNull();
+
+    await deleteTeamMember(adminId, member.id);
+
+    // Deleting a seed department must also stick.
+    const leadership = await prisma.teamDepartment.findUnique({ where: { slug: "leadership" } });
+    expect(leadership).toBeTruthy();
+    await deleteTeamDepartment(adminId, leadership!.id);
+    await bootstrapTeamDepartments(prisma);
+    const leadershipAgain = await prisma.teamDepartment.findUnique({
+      where: { slug: "leadership" },
+    });
+    expect(leadershipAgain).toBeNull();
+
+    // Restore leadership for other tests / local admin UX.
+    await upsertTeamDepartment(adminId, {
+      name: "Leadership",
+      slug: "leadership",
+      description: null,
+      sortOrder: 10,
+      isPublic: true,
+    });
+
+    const listed = await listTeamDepartmentsAdmin(adminId);
+    expect(listed.some((d) => d.slug === "leadership")).toBe(true);
   });
 
   it("renders without a SalesRep link and without a photo", async () => {
