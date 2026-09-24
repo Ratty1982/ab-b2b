@@ -49,13 +49,19 @@ export const ROUTES = {
 
   portal: "/portal",
   portalBasket: "/portal/basket",
+  portalCheckout: "/portal/checkout",
   portalQuickOrder: "/portal/quick-order",
   portalOrders: "/portal/orders",
+  portalOrder: (id: string) => `/portal/orders/${id}` as const,
+  portalOrderConfirmation: (id: string) => `/portal/orders/${id}/confirmation` as const,
   portalQuotes: "/portal/quotes",
   portalInvoices: "/portal/invoices",
   portalFavourites: "/portal/favourites",
   portalUsers: "/portal/users",
   portalSupport: "/portal/support",
+
+  adminOrders: "/admin/orders",
+  adminOrder: (id: string) => `/admin/orders/${id}` as const,
 } as const;
 
 /**
@@ -222,9 +228,9 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         id: "orders",
         label: "Orders",
         icon: "shopping-bag",
-        to: "/admin/orders",
+        to: ROUTES.adminOrders,
         permission: "orders.view",
-        implemented: false,
+        implemented: true,
       },
       {
         id: "invoices",

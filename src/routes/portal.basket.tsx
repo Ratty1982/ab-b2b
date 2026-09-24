@@ -233,14 +233,28 @@ function BasketPage() {
           <p className="mt-4 text-[12px] text-steel">Prices exclude VAT unless otherwise stated.</p>
           {basket.hasBlockingIssues ? (
             <p className="mt-3 text-[13px] font-medium text-warn" role="status">
-              Resolve quantity or product issues before checkout (coming in Phase 6B).
+              Resolve quantity or product issues before checkout.
             </p>
+          ) : null}
+          {basket.hasBlockingIssues ? (
+            <button
+              type="button"
+              disabled
+              className="mt-5 inline-flex h-11 w-full cursor-not-allowed items-center justify-center rounded-md bg-primary/40 text-[12px] font-bold uppercase text-primary-foreground"
+            >
+              Proceed to checkout
+            </button>
           ) : (
-            <p className="mt-3 text-[13px] text-steel">Checkout is not available yet.</p>
+            <Link
+              to={ROUTES.portalCheckout}
+              className="mt-5 inline-flex h-11 w-full items-center justify-center rounded-md bg-primary text-[12px] font-bold uppercase text-primary-foreground transition hover:brightness-110"
+            >
+              Proceed to checkout
+            </Link>
           )}
           <Link
             to={ROUTES.products}
-            className="mt-5 inline-flex h-10 w-full items-center justify-center rounded-md border border-border text-[12px] font-bold uppercase"
+            className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-md border border-border text-[12px] font-bold uppercase"
           >
             Continue shopping
           </Link>

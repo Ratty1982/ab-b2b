@@ -68,7 +68,7 @@ describe("canonical navigation contract", () => {
 
   it("does not expose unimplemented items", () => {
     const visible = flattenVisible(backOfficeNavForUser(superAdmin));
-    expect(visible.map((i) => i.id)).not.toContain("orders");
+    expect(visible.map((i) => i.id)).toContain("orders");
     expect(visible.map((i) => i.id)).not.toContain("invoices");
     expect(visible.map((i) => i.id)).toContain("brands");
     expect(visible.map((i) => i.id)).toContain("categories");

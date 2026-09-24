@@ -1,0 +1,139 @@
+# Phase 6B — B2B Checkout & Authoritative Order Creation
+
+Creates the Automotive Brands order from the trade basket.
+
+**PHASE 6B DOES NOT SUBMIT ORDERS TO AUTOPART.**
+
+There is:
+
+- NO Autopart sales-order API  
+- NO Autopart file generation  
+- NO email-to-Autopart order  
+- NO ERP side effects / `externalRef` writes  
+
+Phase 6C will handle controlled Autopart handoff using order snapshots.
+
+---
+
+## Journey
+
+```text
+Basket → Checkout → Delivery / Contact / Reference
+→ Order review → Final server validation → Place order
+→ Order SUBMITTED → Confirmation → Portal history → Admin workspace
+```
+
+## Company scoping
+
+Checkout company is resolved from authenticated `CompanyUser` membership
+(via pricing actor / basket context). The browser never supplies a trusted
+`companyId`.
+
+Only **ACTIVE** trade companies with `orders.create` may place orders.
+Admin trade-test baskets cannot place real company orders.
+
+## Delivery & contact
+
+- Select a company delivery `Address` owned by that company, **or**
+- Enter a one-off delivery address (does **not** auto-write the master address book)
+- Order stores a **delivery address snapshot** (JSON) — historical truth
+- Contact name / email / phone snapshotted at place time
+
+## Customer reference & instructions
+
+- `poNumber` = YOUR REFERENCE (optional, max 80)
+- `deliveryInstructions` = plain text (optional, max 500; HTML stripped)
+
+## Payment terms
+
+Snapshotted from `Company.paymentTerms` when set.  
+**Never invents “30 days”.**
+
+Delivery method label is restrained (e.g. Standard Trade Delivery) — **no shipping charge engine / APC**.
+
+## Pricing revalidation
+
+Every place-order:
+
+1. Re-resolves Phase 4 trade prices  
+2. Establishes **customer sell unit** via HALF-UP 2dp (`toCustomerSellUnitPrice`)  
+3. Line net = sell unit × qty  
+4. If `expectedLinePrices` differ → `REVIEW_REQUIRED` / `PRICE_UPDATED` — no silent submit  
+
+## Case ordering & FINAL_PART_CASE
+
+Reuses `src/domain/ordering.ts`:
+
+- Normal: case multiples of `caseQty` (MOQ-aware)  
+- Final part-case: when `0 < trusted sellable < caseQty`, qty `1..sellable`  
+- Exact remaining stock only for authenticated order-eligible trade users in final-part-case  
+- Anonymous never receives exact stock  
+
+## Stock
+
+Uses Phase 5 Avail / sellable helpers + freshness policy.  
+**Does not** subtract Autopart `qtyOnHand` or invent ERP reservations.  
+Concurrent oversell of the same final units is a known 6C limitation.
+
+## Order number
+
+Race-safe `OrderNumberSequence` → `AB-000001` style.
+
+## Idempotency
+
+`idempotencyKey` unique on Order. Retries / double-clicks return the same order.
+
+## Snapshots on Order / OrderItem
+
+| Field | Purpose |
+| --- | --- |
+| deliveryAddress / billingAddress / contactSnapshot | Historical parties |
+| paymentTermsSnapshot | Terms at place |
+| autopartCustomerCodeSnapshot | **Verified** code only |
+| salesRep*Snapshot | Primary assignment at place |
+| OrderItem unitPrice (4dp) + customerUnitPrice (2dp) | Commercial + sell |
+| caseQty / orderingMode / priceSource | Ordering audit |
+| lineTotal / lineVat / lineGross | Immutable money |
+
+## Basket conversion
+
+Successful place marks the OPEN basket `CONVERTED`.  
+A new OPEN basket is created lazily on next shop.
+
+## Status
+
+Placed orders use `SUBMITTED` (= received / pending Autopart).  
+Do not claim despatched / paid / Autopart-sent.
+
+## Email
+
+After commit, best-effort order-received email via existing adapter.  
+Failure is audited and **does not** roll back the order.  
+Optional `TRADE_ORDER_NOTIFICATION_EMAIL` for internal notify.
+
+## Portal routes
+
+| Path | Role |
+| --- | --- |
+| `/portal/checkout` | Place order |
+| `/portal/orders` | History |
+| `/portal/orders/$orderId` | Detail (company IDOR-safe) |
+| `/portal/orders/$orderId/confirmation` | Confirmation |
+
+## Admin
+
+`/admin/orders` + `/admin/orders/$orderId` — real Order rows, sales-scoped where applicable.
+
+## Remaining mock surfaces
+
+- `/portal` dashboard “recent orders” may still use prototype fixtures until updated separately  
+- `/portal/quick-order` remains mock backend (6A out of scope)  
+- `/sales/order/$id` sales mock route remains until replaced  
+
+## Phase 6C requirements
+
+- Autopart sales-order submission using **order** Autopart code snapshot  
+- Real-time / reserved stock semantics  
+- Shipping charge engine / APC services  
+- Richer status machine for ERP acknowledgement  
+- Customer cancellation / amendment workflows  

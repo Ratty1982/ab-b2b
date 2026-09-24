@@ -177,6 +177,32 @@ export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"
   }>;
 };
 
+export type AdminOrderListItem = PortalOrderListItem & {
+  companyName: string;
+  salesRepName: string | null;
+  autopartAccountLinked: boolean;
+  subtotal: string;
+  vatTotal: string;
+};
+
+export type AdminOrderDetail = PortalOrderDetail & {
+  autopartCustomerCodeSnapshot: string | null;
+  autopartAccountLinked: boolean;
+  salesRepIdSnapshot: string | null;
+  salesRepCodeSnapshot: string | null;
+  salesRepNameSnapshot: string | null;
+  deliveryMethodLabel: string | null;
+  basketId: string | null;
+  items: Array<
+    PortalOrderDetail["items"][number] & {
+      unitPrice: string;
+      priceSource: string | null;
+      vatRate: string;
+      vatCode: string | null;
+    }
+  >;
+};
+
 type ResolvedLine = {
   variantId: string;
   productId: string;
@@ -1104,7 +1130,7 @@ export async function getPortalOrder(userId: string, orderId: string): Promise<P
 export async function listAdminOrders(
   userId: string,
   raw?: { page?: number; pageSize?: number; companyId?: string; q?: string },
-): Promise<{ items: PortalOrderListItem[]; total: number; page: number; pageSize: number }> {
+): Promise<{ items: AdminOrderListItem[]; total: number; page: number; pageSize: number }> {
   const profile = await requireSystemPermission(userId, "orders.view");
   const page = Math.max(1, raw?.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, raw?.pageSize ?? 25));
@@ -1134,6 +1160,8 @@ export async function listAdminOrders(
           OR: [
             { orderNumber: { contains: q, mode: "insensitive" } },
             { poNumber: { contains: q, mode: "insensitive" } },
+            { company: { name: { contains: q, mode: "insensitive" } } },
+            { autopartCustomerCodeSnapshot: { contains: q, mode: "insensitive" } },
           ],
         }
       : {}),
@@ -1161,13 +1189,18 @@ export async function listAdminOrders(
       placedAt: row.placedAt?.toISOString() ?? null,
       poNumber: row.poNumber,
       grandTotal: moneyToString(parseMoney(String(row.grandTotal)) ?? moneyZero(), 2),
+      subtotal: moneyToString(parseMoney(String(row.subtotal)) ?? moneyZero(), 2),
+      vatTotal: moneyToString(parseMoney(String(row.vatTotal)) ?? moneyZero(), 2),
       currency: row.currency,
       lineCount: row._count.items,
+      companyName: row.company.name,
+      salesRepName: row.salesRepNameSnapshot,
+      autopartAccountLinked: row.autopartAccountLinked,
     })),
   };
 }
 
-export async function getAdminOrder(userId: string, orderId: string): Promise<PortalOrderDetail> {
+export async function getAdminOrder(userId: string, orderId: string): Promise<AdminOrderDetail> {
   const profile = await requireSystemPermission(userId, "orders.view");
 
   const order = await prisma.order.findUnique({
@@ -1189,6 +1222,13 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Po
   return {
     ...base,
     status: order.status,
+    autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot,
+    autopartAccountLinked: order.autopartAccountLinked,
+    salesRepIdSnapshot: order.salesRepIdSnapshot,
+    salesRepCodeSnapshot: order.salesRepCodeSnapshot,
+    salesRepNameSnapshot: order.salesRepNameSnapshot,
+    deliveryMethodLabel: order.deliveryMethodLabel,
+    basketId: order.basketId,
     items: order.items.map((item) => ({
       id: item.id,
       sku: item.sku,
@@ -1198,11 +1238,15 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Po
         parseMoney(String(item.customerUnitPrice)) ?? moneyZero(),
         2,
       ),
+      unitPrice: moneyToString(parseMoney(String(item.unitPrice)) ?? moneyZero(), 4),
       lineTotal: moneyToString(parseMoney(String(item.lineTotal)) ?? moneyZero(), 2),
       lineVat: moneyToString(parseMoney(String(item.lineVat)) ?? moneyZero(), 2),
       lineGross: moneyToString(parseMoney(String(item.lineGross)) ?? moneyZero(), 2),
       orderingMode: item.orderingMode,
       caseQty: item.caseQty,
+      priceSource: item.priceSource,
+      vatRate: moneyToString(parseMoney(String(item.vatRate)) ?? moneyZero(), 2),
+      vatCode: item.vatCode,
     })),
   };
 }
