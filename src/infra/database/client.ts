@@ -19,7 +19,9 @@ function isUsable(client: PrismaClient | undefined): client is PrismaClient {
   return (
     typeof client?.user?.findUnique === "function" &&
     typeof client?.cmsPage?.findUnique === "function" &&
-    typeof client?.category?.findUnique === "function"
+    typeof client?.category?.findUnique === "function" &&
+    typeof client?.teamDepartment?.findUnique === "function" &&
+    typeof client?.teamMember?.findUnique === "function"
   );
 }
 
