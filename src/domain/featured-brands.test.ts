@@ -16,15 +16,16 @@ import {
 const catalogue = brands.map((b) => ({ slug: b.slug, name: b.name }));
 
 describe("featured brands CMS copy", () => {
-  it("ships editable defaults rather than catalogue blurbs", () => {
+  it("ships editable defaults for launch brands only", () => {
     const cfg = defaultFeaturedBrandsConfig();
     expect(cfg["heading"]).toBe(DEFAULT_FEATURED_BRANDS_HEADING);
     expect(cfg["intro"]).toBe(DEFAULT_FEATURED_BRANDS_INTRO);
     const cards = resolveFeaturedBrandCards(cfg);
-    expect(cards).toHaveLength(5);
-    expect(cards.find((c) => c.slug === "power-maxed")?.description).toMatch(/cleaning, detailing/);
-    expect(cards.find((c) => c.slug === "steel-seal")?.description).toMatch(/head gasket/);
-    expect(cards.find((c) => c.slug === "kidzmotion")?.heading).toBe("KidZmotion");
+    expect(cards).toHaveLength(2);
+    expect(cards.map((c) => c.slug)).toEqual(["power-maxed", "steel-seal"]);
+    expect(cards.find((c) => c.slug === "power-maxed")?.description).toMatch(/valeting|cleaning|workshop/i);
+    expect(cards.find((c) => c.slug === "steel-seal")?.description).toMatch(/head gasket/i);
+    expect(DEFAULT_FEATURED_BRAND_CARDS.find((c) => c.slug === "kidzmotion")?.enabled).toBe(false);
     const power = brands.find((b) => b.slug === "power-maxed");
     expect(power?.blurb).toBeTruthy();
     expect(cards.find((c) => c.slug === "power-maxed")?.description).not.toBe(power?.blurb);
@@ -82,7 +83,7 @@ describe("featured brands CMS copy", () => {
     expect(power?.description).toBe(DEFAULT_FEATURED_BRAND_CARDS[0]?.description);
     expect(power?.logo?.mediaId).toBe("cms-logo-1");
     expect(power?.description).not.toBe(brands.find((b) => b.slug === "power-maxed")?.blurb);
-    expect(featuredBrandsIntro({ heading: "Five brands. One supply partner." })).toBe(
+    expect(featuredBrandsIntro({ heading: "TWO BRANDS. ONE TRADE SUPPLIER." })).toBe(
       DEFAULT_FEATURED_BRANDS_INTRO,
     );
     expect(featuredBrandsIntro({ intro: "" })).toBe("");
@@ -92,16 +93,17 @@ describe("featured brands CMS copy", () => {
     const parsed = validateSectionConfig("FEATURED_BRANDS", defaultSectionConfig("FEATURED_BRANDS")) as {
       heading: string;
       intro: string;
-      brandCards: Array<{ slug: string; heading: string }>;
+      brandCards: Array<{ slug: string; heading: string; enabled?: boolean }>;
     };
     expect(parsed.heading).toBe(DEFAULT_FEATURED_BRANDS_HEADING);
-    expect(parsed.intro).toMatch(/one place/);
+    expect(parsed.intro).toMatch(/Power Maxed|Steel Seal|one account/i);
     expect(parsed.brandCards.map((c) => c.slug)).toContain("bramley-power");
+    expect(parsed.brandCards.find((c) => c.slug === "bramley-power")?.enabled).toBe(false);
   });
 
   it("still validates legacy featured brands configs without brandCards", () => {
     const cfg = validateSectionConfig("FEATURED_BRANDS", {
-      heading: "Five brands. One supply partner.",
+      heading: "TWO BRANDS. ONE TRADE SUPPLIER.",
       brandSlugs: ["power-maxed"],
       displayCount: "5",
     }) as { brandCards: unknown[]; displayCount: number };

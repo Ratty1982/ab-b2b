@@ -80,11 +80,12 @@ describe("publicHeaderAccountLinks", () => {
     expect(publicHeaderAccountLinks({ signedIn: false })).toEqual([]);
   });
 
-  it("trade customer gets My Account → /portal and never /admin", () => {
+  it("trade customer gets Trade Portal → /portal and never /admin", () => {
     const links = publicHeaderAccountLinks(tradeSession());
-    expect(links).toEqual([{ key: "my-account", label: "My Account", to: ROUTES.portal }]);
+    expect(links).toEqual([{ key: "trade-portal", label: "Trade Portal", to: ROUTES.portal }]);
     expect(links.every((l) => l.to !== ROUTES.admin)).toBe(true);
     expect(links.every((l) => l.label !== "Account")).toBe(true);
+    expect(links.every((l) => l.label !== "My Account")).toBe(true);
   });
 
   it("internal admin gets Admin → /admin, not ambiguous Account", () => {

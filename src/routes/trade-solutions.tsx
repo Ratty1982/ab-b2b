@@ -1,42 +1,50 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicLayout, PageHeader, Breadcrumbs } from "@/components/ab/PublicLayout";
+import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 
 export const Route = createFileRoute("/trade-solutions")({
   head: () => ({
     meta: [
-      { title: "Trade Solutions by Industry — Automotive Brands" },
+      { title: "Trade Solutions — Automotive Brands" },
       {
         name: "description",
         content:
-          "Supply, pricing and support built around motor factors, workshops and garages, retailers, distributors and buying groups.",
+          "Trade pricing, case ordering, live availability and account support for Power Maxed and Steel Seal customers.",
       },
-      { property: "og:title", content: "Trade Solutions by Industry — Automotive Brands" },
-      { property: "og:description", content: "How we supply factors, workshops, retailers and distributors." },
+      { property: "og:title", content: "Trade Solutions — Automotive Brands" },
+      {
+        property: "og:description",
+        content: "How Automotive Brands supports trade customers on Power Maxed and Steel Seal.",
+      },
     ],
   }),
   component: TradeSolutions,
 });
 
-const industries = [
+const capabilities = [
   {
-    name: "Motor factors",
-    body: "Counter-ready packaging, quantity breaks and case pricing, plus same-day despatch so your shelves stay filled between deliveries.",
-    points: ["Trade A–C price groups", "Case and pallet pricing", "Backorder visibility"],
+    name: "Trade pricing",
+    body: "Approved customers see their account pricing on the catalogue and product pages.",
   },
   {
-    name: "Workshops & garages",
-    body: "Fast reordering of the consumables you fit every day, with fitment data and safety documentation attached to every product.",
-    points: ["Quick Order by SKU", "Saved usual-order lists", "Technical documents"],
+    name: "Customer-specific pricing",
+    body: "Negotiated product prices can be applied to individual trade accounts.",
   },
   {
-    name: "Retailers",
-    body: "Retail-ready lines across five brands with approved imagery, point-of-sale artwork and promotional support.",
-    points: ["Approved imagery pack", "POS and display kits", "Seasonal promotions"],
+    name: "Case ordering",
+    body: "Products can be ordered in the correct trade case quantities where case packs apply.",
   },
   {
-    name: "Distributors & buying groups",
-    body: "Contract pricing, volume agreements and account-specific catalogues, managed by a named account representative.",
-    points: ["Contract pricing", "Distributor price group", "Dedicated representative"],
+    name: "Live availability",
+    body: "Customer-safe availability is derived from current stock data at the point of browsing and ordering.",
+  },
+  {
+    name: "Account support",
+    body: `Dedicated account manager details are available in the trade portal. ${ACCOUNT_MANAGER_HOURS.weekdayLine}. ${ACCOUNT_MANAGER_HOURS.orderCutoffLine}.`,
+  },
+  {
+    name: "Quick ordering",
+    body: "Trade catalogue designed for rapid repeat purchasing of Power Maxed and Steel Seal lines.",
   },
 ];
 
@@ -45,24 +53,16 @@ function TradeSolutions() {
     <PublicLayout>
       <PageHeader
         eyebrow="Trade solutions"
-        title="Built around how your business buys"
-        lead="Five brands, one account, and pricing structured for the way your trade operates."
+        title="Built for trade ordering"
+        lead="Practical capabilities for approved Automotive Brands trade accounts ordering Power Maxed and Steel Seal."
       />
       <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Trade Solutions" }]} />
-        <div className="mt-8 grid gap-px border border-border bg-border sm:grid-cols-2">
-          {industries.map((i) => (
-            <article key={i.name} className="bg-surface/60 p-6">
-              <h2 className="font-display text-xl font-semibold uppercase">{i.name}</h2>
-              <p className="mt-2 text-[14px] leading-relaxed text-steel">{i.body}</p>
-              <ul className="mt-4 space-y-1.5 text-[13px]">
-                {i.points.map((p) => (
-                  <li key={p} className="flex items-center gap-2">
-                    <span className="size-1.5 shrink-0 bg-primary" aria-hidden />
-                    {p}
-                  </li>
-                ))}
-              </ul>
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          {capabilities.map((item) => (
+            <article key={item.name} className="rounded-lg border border-border/80 bg-surface/40 p-6">
+              <h2 className="font-display text-xl font-semibold uppercase">{item.name}</h2>
+              <p className="mt-2 text-[14px] leading-relaxed text-steel">{item.body}</p>
             </article>
           ))}
         </div>
@@ -74,10 +74,10 @@ function TradeSolutions() {
             Open a trade account
           </Link>
           <Link
-            to="/brands"
+            to="/products"
             className="inline-flex h-12 items-center rounded-md border border-border px-6 text-[13px] font-bold uppercase tracking-wide transition-colors hover:border-steel"
           >
-            Explore our brands
+            Shop products
           </Link>
         </div>
       </div>

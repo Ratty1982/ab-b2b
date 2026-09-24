@@ -8,14 +8,33 @@ import { canViewBasketSession, RequestSessionProvider, useSession } from "@/lib/
 import { publicHeaderAccountLinks } from "@/lib/public-header-account";
 import { signOutCurrent, type ClientSession } from "@/server/auth/session";
 
-const nav = [
+/** Concise launch navigation — Resources stays routable but off the public chrome. */
+const primaryNav = [
   { label: "Products", to: "/products" },
   { label: "Brands", to: "/brands" },
   { label: "Trade Solutions", to: "/trade-solutions" },
   { label: "Why Automotive Brands", to: "/why-automotive-brands" },
-  { label: "Resources", to: "/resources" },
-  { label: "About Us", to: "/about" },
-  { label: "Contact", to: "/contact" },
+] as const;
+
+const footerShop = [
+  { label: "Products", to: "/products" as const },
+  { label: "Power Maxed", href: "/brands/power-maxed" },
+  { label: "Steel Seal", href: "/brands/steel-seal" },
+] as const;
+
+const footerTrade = [
+  { label: "Open a Trade Account", to: "/register" as const },
+  { label: "Trade Login", to: "/login" as const },
+  { label: "Trade Solutions", to: "/trade-solutions" as const },
+] as const;
+
+const footerSupport = [
+  { label: "Contact / Support", to: "/contact" as const },
+] as const;
+
+const footerCompany = [
+  { label: "Why Automotive Brands", to: "/why-automotive-brands" as const },
+  { label: "About", to: "/about" as const },
 ] as const;
 
 export function PublicHeader() {
@@ -49,7 +68,7 @@ export function PublicHeader() {
           <div className="flex min-w-0 items-center gap-8">
             <Logo />
             <nav className="hidden items-center gap-6 text-[13px] font-medium text-steel xl:flex">
-              {nav.slice(0, 5).map((item) => (
+              {primaryNav.map((item) => (
                 <Link
                   key={item.to}
                   to={item.to}
@@ -129,7 +148,7 @@ export function PublicHeader() {
       {open ? (
         <div className="border-t border-border/70 bg-ink xl:hidden" data-public-header="mobile-menu">
           <nav className="mx-auto grid max-w-[1400px] gap-1 px-4 py-3 sm:px-6">
-            {nav.map((item) => (
+            {primaryNav.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
@@ -195,19 +214,54 @@ export function PublicHeader() {
   );
 }
 
+function FooterColumn({
+  title,
+  links,
+}: {
+  title: string;
+  links: ReadonlyArray<{ label: string; to?: string; href?: string }>;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-steel">{title}</div>
+      <ul className="mt-3 space-y-2">
+        {links.map((item) => (
+          <li key={item.label}>
+            {item.to ? (
+              <Link to={item.to} className="text-[13px] text-foreground/90 transition-colors hover:text-primary">
+                {item.label}
+              </Link>
+            ) : (
+              <a href={item.href} className="text-[13px] text-foreground/90 transition-colors hover:text-primary">
+                {item.label}
+              </a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function PublicFooter() {
   return (
     <footer className="border-t border-border/60 bg-ink">
-      <div className="mx-auto flex max-w-[1400px] flex-col justify-between gap-6 px-4 py-12 sm:px-6 md:flex-row md:items-center lg:px-10">
-        <Logo subtitle={null} />
-        <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-steel">
-          {nav.map((item) => (
-            <Link key={item.to} to={item.to} className="transition-colors hover:text-foreground">
-              {item.label}
-            </Link>
-          ))}
+      <div className="mx-auto max-w-[1400px] px-4 py-12 sm:px-6 lg:px-10">
+        <div className="grid gap-10 md:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,1fr))]">
+          <div>
+            <Logo subtitle={null} />
+            <p className="mt-4 max-w-xs text-[13px] leading-relaxed text-steel">
+              Power Maxed and Steel Seal — professional automotive products for UK trade customers.
+            </p>
+          </div>
+          <FooterColumn title="Shop" links={footerShop} />
+          <FooterColumn title="Trade" links={footerTrade} />
+          <FooterColumn title="Support" links={footerSupport} />
+          <FooterColumn title="Company" links={footerCompany} />
         </div>
-        <div className="text-[12px] text-steel">© 2026 Automotive Brands · automotivebrands.co.uk</div>
+        <div className="mt-10 border-t border-border/50 pt-6 text-[12px] text-steel">
+          © 2026 Automotive Brands · automotivebrands.co.uk
+        </div>
       </div>
     </footer>
   );

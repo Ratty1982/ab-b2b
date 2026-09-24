@@ -52,6 +52,8 @@ export type PublicHomepageData = {
   categories: HomepageCategory[];
   productsBySku: Record<string, HomepageProduct>;
   recentProducts: HomepageProduct[];
+  /** Featured catalogue lines used when FEATURED_PRODUCTS has no explicit SKUs. */
+  featuredProducts: HomepageProduct[];
   cmsError: string | null;
 };
 

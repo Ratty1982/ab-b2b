@@ -10,7 +10,10 @@ import {
   validateSectionConfig,
   type CmsSectionTypeKey,
 } from "@/domain/cms";
-import { defaultHomepageSections } from "@/server/cms/homepage-seed";
+import {
+  defaultHomepageSections,
+  HOMEPAGE_LAUNCH_CONTENT_KEY,
+} from "@/server/cms/homepage-seed";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
 import { attachFeaturedBrandLogos } from "@/domain/featured-brands";
 import { mergeBrandLogoMaps, readBrandLogos } from "@/lib/cms-media";
@@ -462,6 +465,145 @@ export async function restoreCmsVersion(actorUserId: string, slug: string, versi
   return getCmsPageDraft(actorUserId, slug);
 }
 
+function sectionContentKey(config: unknown): string | null {
+  if (!config || typeof config !== "object") return null;
+  const key = (config as Record<string, unknown>)["contentKey"];
+  return typeof key === "string" ? key : null;
+}
+
+function preserveMedia(
+  next: Record<string, unknown>,
+  previous: unknown,
+): Record<string, unknown> {
+  if (!previous || typeof previous !== "object") return next;
+  const prev = previous as Record<string, unknown>;
+  const prevMedia = prev["media"];
+  if (!prevMedia || typeof prevMedia !== "object") return next;
+  const nextMedia =
+    next["media"] && typeof next["media"] === "object"
+      ? (next["media"] as Record<string, unknown>)
+      : {};
+  return {
+    ...next,
+    media: { ...nextMedia, ...prevMedia },
+  };
+}
+
+/**
+ * Refresh published/draft homepage seed when launch marketing content key drifts.
+ * Preserves uploaded media refs so Website Builder imagery is not wiped.
+ */
+async function refreshHomepageLaunchContent(
+  prismaClient: typeof prisma,
+  pageId: string,
+) {
+  const page = await prismaClient.cmsPage.findUnique({
+    where: { id: pageId },
+    select: {
+      id: true,
+      publishedVersionId: true,
+      draftVersionId: true,
+      seoTitle: true,
+      metaDescription: true,
+    },
+  });
+  if (!page) return;
+
+  const versionIds = [
+    ...new Set([page.publishedVersionId, page.draftVersionId].filter(Boolean) as string[]),
+  ];
+  const defaults = defaultHomepageSections();
+  const defaultByType = new Map(defaults.map((section) => [section.type, section]));
+
+  const seoTitle = "Automotive Brands — Automotive products built for the trade";
+  const metaDescription =
+    "Trade supply of Power Maxed and Steel Seal to UK motor factors, workshops, retailers and distributors. Open a trade account for account pricing and case ordering.";
+
+  for (const versionId of versionIds) {
+    const existing = await prismaClient.cmsSection.findMany({
+      where: { versionId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const needsRefresh = existing.some((row) => {
+      if (!defaultByType.has(row.type as CmsSectionTypeKey)) return false;
+      return sectionContentKey(row.config) !== HOMEPAGE_LAUNCH_CONTENT_KEY;
+    });
+    if (!needsRefresh && existing.length >= defaults.length) {
+      // Still enforce RESOURCES/NEWS disabled for launch if present.
+      for (const row of existing) {
+        if ((row.type === "RESOURCES" || row.type === "NEWS") && row.enabled) {
+          await prismaClient.cmsSection.update({
+            where: { id: row.id },
+            data: { enabled: false },
+          });
+        }
+      }
+      continue;
+    }
+
+    const byType = new Map(existing.map((row) => [row.type, row]));
+    const merged: Array<{
+      id?: string;
+      type: CmsSectionType;
+      config: Prisma.InputJsonValue;
+      enabled: boolean;
+    }> = [];
+
+    for (const section of defaults) {
+      const current = byType.get(section.type as CmsSectionType);
+      const nextConfig = preserveMedia(section.config, current?.config);
+      merged.push({
+        ...(current ? { id: current.id } : {}),
+        type: section.type as CmsSectionType,
+        config: nextConfig as Prisma.InputJsonValue,
+        enabled: section.enabled !== false,
+      });
+      if (current) byType.delete(section.type as CmsSectionType);
+    }
+    for (const leftover of byType.values()) {
+      merged.push({
+        id: leftover.id,
+        type: leftover.type,
+        config: leftover.config as Prisma.InputJsonValue,
+        enabled: leftover.type === "RESOURCES" || leftover.type === "NEWS" ? false : leftover.enabled,
+      });
+    }
+
+    await prismaClient.$transaction(async (tx) => {
+      for (const [index, row] of merged.entries()) {
+        if (row.id) {
+          await tx.cmsSection.update({
+            where: { id: row.id },
+            data: {
+              sortOrder: index,
+              config: row.config,
+              enabled: row.enabled,
+              type: row.type,
+            },
+          });
+        } else {
+          await tx.cmsSection.create({
+            data: {
+              versionId,
+              type: row.type,
+              config: row.config,
+              enabled: row.enabled,
+              sortOrder: index,
+            },
+          });
+        }
+      }
+    });
+  }
+
+  if (page.seoTitle !== seoTitle || page.metaDescription !== metaDescription) {
+    await prismaClient.cmsPage.update({
+      where: { id: pageId },
+      data: { seoTitle, metaDescription },
+    });
+  }
+}
+
 /**
  * Idempotent homepage CMS bootstrap for production.
  * Creates home page + published seed sections if missing.
@@ -503,7 +645,7 @@ async function ensureCanonicalHomepageSections(
         merged.push({
           type: section.type as CmsSectionType,
           config: section.config as Prisma.InputJsonValue,
-          enabled: true,
+          enabled: section.enabled !== false,
         });
       }
     }
@@ -533,6 +675,8 @@ async function ensureCanonicalHomepageSections(
       }
     });
   }
+
+  await refreshHomepageLaunchContent(prismaClient, pageId);
 }
 
 export async function bootstrapHomepageCms(
@@ -545,6 +689,9 @@ export async function bootstrapHomepageCms(
   }
 
   const sections = defaultHomepageSections();
+  const seoTitle = "Automotive Brands — Automotive products built for the trade";
+  const metaDescription =
+    "Trade supply of Power Maxed and Steel Seal to UK motor factors, workshops, retailers and distributors. Open a trade account for account pricing and case ordering.";
 
   const page = await prismaClient.$transaction(async (tx) => {
     const p =
@@ -553,9 +700,8 @@ export async function bootstrapHomepageCms(
         data: {
           slug: "home",
           title: "Homepage",
-          seoTitle: "Automotive Brands — The brands behind the automotive aftermarket",
-          metaDescription:
-            "Trade supply of Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion to UK motor factors, retailers, workshops and distributors.",
+          seoTitle,
+          metaDescription,
           status: "DRAFT",
         },
       }));
@@ -566,15 +712,15 @@ export async function bootstrapHomepageCms(
       data: {
         pageId: p.id,
         version: 1,
-        label: "Phase 2 homepage seed",
-        seoTitle: p.seoTitle,
-        metaDescription: p.metaDescription,
+        label: "Trade sales demo homepage",
+        seoTitle,
+        metaDescription,
         sections: {
           create: sections.map((s, i) => ({
             type: s.type,
             config: s.config as Prisma.InputJsonValue,
             sortOrder: i,
-            enabled: true,
+            enabled: s.enabled !== false,
           })),
         },
       },
@@ -587,6 +733,8 @@ export async function bootstrapHomepageCms(
         publishedVersionId: version.id,
         status: "PUBLISHED",
         publishedAt: new Date(),
+        seoTitle,
+        metaDescription,
       },
     });
   });

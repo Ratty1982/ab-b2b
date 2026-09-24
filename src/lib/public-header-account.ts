@@ -18,7 +18,7 @@ export type PublicHeaderAccountLink = {
 /**
  * Role-aware public header destinations.
  *
- * Trade customers → My Account (/portal) — never /admin.
+ * Trade customers → Trade Portal (/portal) — never /admin.
  * Internal admin-capable users → Admin (/admin).
  * When an admin also has an active acting-for-customer context, also expose
  * Trade Portal (/portal) as a separate explicit destination.
@@ -31,7 +31,7 @@ export function publicHeaderAccountLinks(session: ClientSession): PublicHeaderAc
 
   // Normal trade customers always land in the customer portal.
   if (isTradeCustomerSession(session)) {
-    return [{ key: "my-account", label: "My Account", to: ROUTES.portal }];
+    return [{ key: "trade-portal", label: "Trade Portal", to: ROUTES.portal }];
   }
 
   // Remaining signed-in actors (INTERNAL and non-company trade).

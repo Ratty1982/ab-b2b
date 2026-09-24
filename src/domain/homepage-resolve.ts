@@ -46,18 +46,21 @@ export function resolveHomepageBrands(
 ): ResolvedHomepageBrand[] {
   const cards = resolveFeaturedBrandCards(config);
   const bySlug = new Map(brands.map((brand) => [brand.slug, brand]));
-  const resolved = cards.map((card) => {
-    const db = bySlug.get(card.slug);
-    return {
-      ...card,
-      heading: card.heading || db?.name || card.slug,
-      name: db?.name || card.heading || card.slug,
-      description: card.description || db?.description || db?.tagline || "",
-      publicDescription: db?.description ?? db?.tagline ?? null,
-      logoSrc: cmsMediaDisplaySrc(card.logo) ?? db?.logoSrc ?? null,
-      href: card.href || (db ? `/brands/${db.slug}` : `/brands/${card.slug}`),
-    };
-  });
+  // Only surface brands that are currently public/trade-visible in the catalogue.
+  const resolved = cards
+    .filter((card) => bySlug.has(card.slug))
+    .map((card) => {
+      const db = bySlug.get(card.slug)!;
+      return {
+        ...card,
+        heading: card.heading || db.name || card.slug,
+        name: db.name || card.heading || card.slug,
+        description: card.description || db.description || db.tagline || "",
+        publicDescription: db.description ?? db.tagline ?? null,
+        logoSrc: cmsMediaDisplaySrc(card.logo) ?? db.logoSrc ?? null,
+        href: card.href || `/brands/${db.slug}`,
+      };
+    });
   if (resolved.length) return resolved;
   return brands.map((brand) => ({
     slug: brand.slug,

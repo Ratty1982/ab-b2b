@@ -66,7 +66,7 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
     case "BRAND_LOGO_STRIP":
       return {
         heading: "Our brands",
-        brandSlugs: ["power-maxed", "steel-seal", "street-rhino", "bramley-power", "kidzmotion"],
+        brandSlugs: ["power-maxed", "steel-seal"],
         spacing: "standard",
       };
     case "TRADE_CTA":
@@ -99,10 +99,10 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
       return { text: "Announcement", tone: "brand", spacing: "compact" };
     case "BENEFITS_GRID":
       return {
-        eyebrow: "Why Automotive Brands",
-        heading: "One trade account. Every brand.",
+        eyebrow: "Why buy from Automotive Brands?",
+        heading: "Trade supply built for repeat ordering",
         supporting: "",
-        ctaLabel: "See how it works",
+        ctaLabel: "Why Automotive Brands",
         ctaHref: "/why-automotive-brands",
         items: [{ title: "Benefit", body: "Short supporting line", icon: "warehouse" }],
         customerTypes: [],

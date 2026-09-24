@@ -5,10 +5,10 @@ import {
   type BrandLogoRef,
 } from "@/lib/cms-media";
 
-export const DEFAULT_FEATURED_BRANDS_HEADING = "FIVE BRANDS. ONE SUPPLY PARTNER.";
+export const DEFAULT_FEATURED_BRANDS_HEADING = "TWO BRANDS. ONE TRADE SUPPLIER.";
 
 export const DEFAULT_FEATURED_BRANDS_INTRO =
-  "Trusted automotive brands, supplied to the trade from one place. From vehicle care and repair to accessories, lifestyle products and nursery seating.";
+  "Power Maxed and Steel Seal — professional automotive products supplied to trade customers across the UK from one account.";
 
 export type FeaturedBrandCard = {
   slug: string;
@@ -25,15 +25,14 @@ export const DEFAULT_FEATURED_BRAND_CARDS: FeaturedBrandCard[] = [
     slug: "power-maxed",
     heading: "Power Maxed",
     description:
-      "Professional automotive cleaning, detailing, workshop chemicals and vehicle care products.",
+      "Professional valeting, cleaning, workshop and vehicle maintenance products.",
     href: "/brands/power-maxed",
     enabled: true,
   },
   {
     slug: "steel-seal",
     heading: "Steel Seal",
-    description:
-      "Professional head gasket repair trusted by motorists, workshops and the automotive trade.",
+    description: "Head gasket repair and cooling-system repair products.",
     href: "/brands/steel-seal",
     enabled: true,
   },
@@ -42,21 +41,21 @@ export const DEFAULT_FEATURED_BRAND_CARDS: FeaturedBrandCard[] = [
     heading: "Street Rhino",
     description: "Vehicle accessories, maintenance, travel and leisure products for cars, vans and caravans.",
     href: "/brands/street-rhino",
-    enabled: true,
+    enabled: false,
   },
   {
     slug: "bramley-power",
     heading: "Bramley Power",
     description: "Practical home, office and lifestyle products designed to make everyday life easier.",
     href: "/brands/bramley-power",
-    enabled: true,
+    enabled: false,
   },
   {
     slug: "kidzmotion",
     heading: "KidZmotion",
     description: "Comfortable nursing, maternity and nursery seating designed for parents and growing families.",
     href: "/brands/kidzmotion",
-    enabled: true,
+    enabled: false,
   },
 ];
 
@@ -134,7 +133,7 @@ function displayCountFrom(config: Record<string, unknown>): number {
     const n = Number(value);
     if (Number.isFinite(n) && n > 0) return n;
   }
-  return 5;
+  return 2;
 }
 
 function brandSlugsFrom(config: Record<string, unknown>): string[] {
@@ -186,7 +185,7 @@ export function hydrateFeaturedBrandCards(
     if (existing) enabled = existing.enabled;
     else if (hasStoredCards) enabled = false;
     else if (hasSelected) enabled = selected.includes(slug);
-    else enabled = DEFAULT_BY_SLUG.has(slug);
+    else enabled = DEFAULT_BY_SLUG.get(slug)?.enabled ?? false;
     return {
       ...base,
       enabled,
@@ -204,7 +203,10 @@ export function resolveFeaturedBrandCards(config: Record<string, unknown>): Feat
 
   const resolved: FeaturedBrandCard[] = stored.length
     ? stored.map((card) => ({ ...card, logo: cardLogoOrMap(card, logos) }))
-    : (slugs.length ? slugs : DEFAULT_FEATURED_BRAND_CARDS.map((card) => card.slug)).map((slug) => {
+    : (slugs.length
+        ? slugs
+        : DEFAULT_FEATURED_BRAND_CARDS.filter((card) => card.enabled).map((card) => card.slug)
+      ).map((slug) => {
         const base = defaultFeaturedBrandCard(slug);
         return { ...base, enabled: true, logo: logos[slug] ?? base.logo };
       });
@@ -255,7 +257,7 @@ export function defaultFeaturedBrandsConfig(): Record<string, unknown> {
     supporting: "",
     brandSlugs: cards.filter((card) => card.enabled).map((card) => card.slug),
     brandCards: cards,
-    displayCount: 5,
+    displayCount: 2,
     variant: "standard",
     spacing: "standard",
     logos: {},

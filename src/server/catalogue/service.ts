@@ -10,6 +10,8 @@ import {
   categoryUpdateSchema,
   DEFAULT_BRANDS,
   DEFAULT_CATEGORY_TREE,
+  isLaunchPublicBrandSlug,
+  LAUNCH_PUBLIC_BRAND_SLUGS,
   normalizeVatCode,
   productDraftSchema,
   shouldSeedDefaultCatalogue,
@@ -98,6 +100,35 @@ function mapCategory(
   };
 }
 
+/**
+ * Idempotent public launch visibility: only Power Maxed + Steel Seal are
+ * trade-visible on the public site. Other brands stay in the catalogue with
+ * isActive=false so they can be enabled later without re-importing.
+ */
+export async function ensureLaunchPublicBrands(
+  prismaClient: PrismaClient = prisma,
+): Promise<{ activated: string[]; deactivated: string[] }> {
+  const rows = await prismaClient.brand.findMany({
+    select: { id: true, slug: true, isActive: true },
+  });
+  const activated: string[] = [];
+  const deactivated: string[] = [];
+
+  for (const row of rows) {
+    const shouldBePublic = isLaunchPublicBrandSlug(row.slug);
+    if (row.isActive === shouldBePublic) continue;
+    await prismaClient.brand.update({
+      where: { id: row.id },
+      data: { isActive: shouldBePublic },
+    });
+    if (shouldBePublic) activated.push(row.slug);
+    else deactivated.push(row.slug);
+  }
+
+  void LAUNCH_PUBLIC_BRAND_SLUGS;
+  return { activated, deactivated };
+}
+
 export async function bootstrapCatalogue(
   prismaClient: PrismaClient = prisma,
 ): Promise<{ created: boolean; categories: number; brands: number }> {
@@ -105,56 +136,59 @@ export async function bootstrapCatalogue(
     prismaClient.category.count(),
     prismaClient.brand.count(),
   ]);
-  if (!shouldSeedDefaultCatalogue(categoryCount, brandCount)) {
-    return { created: false, categories: categoryCount, brands: brandCount };
-  }
 
-  await prismaClient.$transaction(async (tx) => {
-    if ((await tx.brand.count()) === 0) {
-      await tx.brand.createMany({
-        data: DEFAULT_BRANDS.map((b) => ({
-          slug: b.slug,
-          name: b.name,
-          tagline: b.tagline,
-          description: b.description,
-          sortOrder: b.sortOrder,
-          isActive: true,
-        })),
-      });
-    }
-
-    if ((await tx.category.count()) === 0) {
-      for (const [i, group] of DEFAULT_CATEGORY_TREE.entries()) {
-        const parent = await tx.category.create({
-          data: {
-            slug: await uniqueSlug(tx, "category", group.name),
-            name: group.name,
-            description: group.description,
-            sortOrder: i + 1,
-            isActive: true,
-          },
+  let created = false;
+  if (shouldSeedDefaultCatalogue(categoryCount, brandCount)) {
+    await prismaClient.$transaction(async (tx) => {
+      if ((await tx.brand.count()) === 0) {
+        await tx.brand.createMany({
+          data: DEFAULT_BRANDS.map((b) => ({
+            slug: b.slug,
+            name: b.name,
+            tagline: b.tagline,
+            description: b.description,
+            sortOrder: b.sortOrder,
+            isActive: b.isActive,
+          })),
         });
-        for (const [j, child] of group.children.entries()) {
-          await tx.category.create({
+      }
+
+      if ((await tx.category.count()) === 0) {
+        for (const [i, group] of DEFAULT_CATEGORY_TREE.entries()) {
+          const parent = await tx.category.create({
             data: {
-              slug: await uniqueSlug(tx, "category", child.name),
-              name: child.name,
-              description: child.description,
-              parentId: parent.id,
-              sortOrder: j + 1,
+              slug: await uniqueSlug(tx, "category", group.name),
+              name: group.name,
+              description: group.description,
+              sortOrder: i + 1,
               isActive: true,
             },
           });
+          for (const [j, child] of group.children.entries()) {
+            await tx.category.create({
+              data: {
+                slug: await uniqueSlug(tx, "category", child.name),
+                name: child.name,
+                description: child.description,
+                parentId: parent.id,
+                sortOrder: j + 1,
+                isActive: true,
+              },
+            });
+          }
         }
       }
-    }
-  });
+    });
+    created = true;
+  }
+
+  await ensureLaunchPublicBrands(prismaClient);
 
   const [categories, brands] = await Promise.all([
     prismaClient.category.count(),
     prismaClient.brand.count(),
   ]);
-  return { created: true, categories, brands };
+  return { created, categories, brands };
 }
 
 export async function listCategories(actorUserId: string): Promise<CategoryRecord[]> {

@@ -35,7 +35,11 @@ const teams = [
 function Contact() {
   return (
     <PublicLayout>
-      <PageHeader eyebrow="Contact" title="Talk to the trade team" lead="Placeholder contact details — send us the real numbers and addresses and we will swap them in." />
+      <PageHeader
+        eyebrow="Contact"
+        title="Talk to the trade team"
+        lead="Use the form below or reach your account manager through the trade portal once your account is active."
+      />
       <div className="mx-auto grid max-w-5xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-2">
         <div>
           <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Contact" }]} />
@@ -44,11 +48,14 @@ function Contact() {
               <li key={t.name} className="p-4">
                 <div className="font-display text-base font-semibold uppercase">{t.name}</div>
                 <div className="text-[13px] text-steel">{t.detail}</div>
-                <div className="num mt-1 text-[13px]">0000 000 0000 · trade@automotivebrands.co.uk</div>
-                <div className="text-[11px] text-steel">{t.hours}</div>
+                <div className="mt-1 text-[13px] text-steel">{t.hours}</div>
               </li>
             ))}
           </ul>
+          <p className="mt-4 text-[12px] text-steel">
+            {ACCOUNT_MANAGER_HOURS.orderCutoffLine}. Contact phone numbers will be published here once
+            confirmed.
+          </p>
         </div>
 
         <form

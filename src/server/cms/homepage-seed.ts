@@ -1,5 +1,9 @@
 import type { CmsSectionTypeKey } from "@/domain/cms";
+import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
+
+/** Bumps when launch marketing copy must refresh published CMS seed content. */
+export const HOMEPAGE_LAUNCH_CONTENT_KEY = "trade-sales-demo-v1";
 
 export const CANONICAL_HOMEPAGE_SECTION_TYPES: CmsSectionTypeKey[] = [
   "HERO",
@@ -17,19 +21,21 @@ export const CANONICAL_HOMEPAGE_SECTION_TYPES: CmsSectionTypeKey[] = [
 export function defaultHomepageSections(): Array<{
   type: CmsSectionTypeKey;
   config: Record<string, unknown>;
+  enabled?: boolean;
 }> {
   return [
     {
       type: "HERO",
       config: {
-        eyebrow: "UK Automotive Aftermarket Supply",
-        headline: "The brands behind the automotive aftermarket.",
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        eyebrow: "POWER MAXED + STEEL SEAL",
+        headline: "AUTOMOTIVE PRODUCTS\nBUILT FOR THE TRADE",
         supporting:
-          "Automotive Brands supplies trusted automotive products to motor factors, retailers, workshops and distributors throughout the UK — one trade account, every brand.",
-        ctaLabel: "Open a Trade Account",
-        ctaHref: "/register",
-        secondaryCtaLabel: "Explore Our Brands",
-        secondaryCtaHref: "/brands",
+          "Professional automotive products supplied to trade customers across the UK.",
+        ctaLabel: "Shop Products",
+        ctaHref: "/products",
+        secondaryCtaLabel: "Open a Trade Account",
+        secondaryCtaHref: "/register",
         loginCtaLabel: "Trade Login",
         loginCtaHref: "/login",
         calloutSku: "",
@@ -39,8 +45,8 @@ export function defaultHomepageSections(): Array<{
         spacing: "relaxed",
         overlayStrength: 0,
         media: {
-          alt: "Brake discs and alloy wheels under studio lighting",
-          fit: "fill",
+          alt: "Automotive Brands trade product photography",
+          fit: "contain",
           focalX: 50,
           focalY: 50,
         },
@@ -48,24 +54,32 @@ export function defaultHomepageSections(): Array<{
     },
     {
       type: "FEATURED_BRANDS",
-      config: defaultFeaturedBrandsConfig(),
+      config: {
+        ...defaultFeaturedBrandsConfig(),
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+      },
     },
     {
       type: "CATEGORY_GRID",
       config: {
-        eyebrow: "Product categories",
-        heading: "Everything a trade counter turns over",
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        eyebrow: "Shop by category",
+        heading: "Browse the trade catalogue",
+        supporting: "Categories with live trade-visible products.",
         categorySlugs: [],
         categories: [],
+        ctaLabel: "View all products",
+        ctaHref: "/products",
         spacing: "standard",
       },
     },
     {
       type: "FEATURED_PRODUCTS",
       config: {
-        eyebrow: "Featured ranges",
-        heading: "Ranges moving this quarter",
-        supporting: "",
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        eyebrow: "Catalogue",
+        heading: "Featured products",
+        supporting: "Selected lines from the live trade catalogue.",
         productSkus: [],
         layout: "grid",
         spacing: "standard",
@@ -74,64 +88,73 @@ export function defaultHomepageSections(): Array<{
     {
       type: "NEW_PRODUCTS",
       config: {
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
         eyebrow: "New products",
         heading: "Recently added lines",
-        limit: 3,
+        limit: 4,
         spacing: "standard",
       },
+      enabled: true,
     },
     {
       type: "POPULAR_PRODUCTS",
       config: {
-        eyebrow: "Popular trade lines",
-        heading: "Popular trade lines",
-        supporting: "Manually featured lines — not ranked by order volume.",
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        eyebrow: "Featured lines",
+        heading: "Featured products",
+        supporting: "Manually featured catalogue lines — not ranked by order volume.",
         productSkus: [],
         spacing: "standard",
       },
+      // Hidden until SKUs are configured in Website Builder — avoids empty "popular" claims.
+      enabled: false,
     },
     {
       type: "BENEFITS_GRID",
       config: {
-        eyebrow: "Why Automotive Brands",
-        heading: "One trade account. Every brand.",
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        eyebrow: "Why buy from Automotive Brands?",
+        heading: "Trade supply built for repeat ordering",
         supporting:
-          "Buying the group rather than five separate suppliers means one order, one delivery, one invoice and one representative who knows your business.",
-        ctaLabel: "See how it works",
+          "Approved trade accounts get account pricing, live availability and dedicated support for Power Maxed and Steel Seal.",
+        ctaLabel: "Why Automotive Brands",
         ctaHref: "/why-automotive-brands",
         items: [
           {
-            title: "UK stockholding",
-            body: "Five brands picked from one warehouse and consolidated onto one delivery.",
-            icon: "warehouse",
-          },
-          {
-            title: "Same-day despatch",
-            body: "Orders placed before 3pm leave the same working day on next-day or pallet service.",
-            icon: "truck",
-          },
-          {
-            title: "Account ordering",
-            body: "Purchase order references, agreed terms and full order history on every account.",
+            title: "Trade pricing",
+            body: "Pricing for approved trade accounts.",
             icon: "clipboard",
           },
           {
-            title: "Named representative",
-            body: "A dedicated account manager, not a general enquiry queue.",
+            title: "UK stock",
+            body: "Products stocked for trade supply.",
+            icon: "warehouse",
+          },
+          {
+            title: "Dedicated account support",
+            body: `Account manager support for trade customers. ${ACCOUNT_MANAGER_HOURS.weekdayLine}.`,
             icon: "headphones",
+          },
+          {
+            title: "Quick ordering",
+            body: "Fast catalogue browsing and case-quantity ordering.",
+            icon: "truck",
+          },
+          {
+            title: "Same-day order cut-off",
+            body: ACCOUNT_MANAGER_HOURS.orderCutoffLine,
+            icon: "clipboard",
           },
         ],
         customerTypes: [
-          { name: "Motor factors", detail: "Counter and van stock across five brands on one delivery." },
-          { name: "Workshops & garages", detail: "Fast reordering of the consumables you fit every day." },
-          { name: "Retailers", detail: "Retail-ready packaging with approved imagery and POS." },
-          { name: "Distributors", detail: "Contract pricing, call-off volume and pallet despatch." },
-          { name: "Buying groups", detail: "Group terms applied automatically at the point of ordering." },
-          { name: "Fleet & commercial", detail: "Consolidated ordering across multiple sites and depots." },
+          { name: "Motor factors", detail: "Counter and van stock from Power Maxed and Steel Seal." },
+          { name: "Workshops & garages", detail: "Reorder consumables and repair products used every day." },
+          { name: "Retailers", detail: "Trade catalogue with account pricing once approved." },
+          { name: "Distributors", detail: "Account pricing and dedicated account support." },
         ],
         spacing: "standard",
         media: {
-          alt: "Automotive Brands distribution warehouse with racked parts and palletised despatch",
+          alt: "Automotive Brands distribution warehouse",
           fit: "fill",
         },
       },
@@ -139,37 +162,41 @@ export function defaultHomepageSections(): Array<{
     {
       type: "RESOURCES",
       config: {
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
         eyebrow: "Trade resources",
         heading: "Documentation your counter needs",
-        items: [
-          { label: "Trade catalogue", meta: "PDF", href: "/resources" },
-          { label: "Safety data sheets", meta: "Per product", href: "/resources" },
-          { label: "Fitment & technical guides", meta: "PDF", href: "/resources" },
-          { label: "Approved marketing imagery", meta: "Media library", href: "/resources" },
-        ],
+        items: [],
         spacing: "standard",
       },
+      enabled: false,
     },
     {
       type: "NEWS",
       config: {
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
         eyebrow: "Latest from Automotive Brands",
         heading: "Range updates and trade notices",
         items: [],
         spacing: "standard",
       },
+      enabled: false,
     },
     {
       type: "TRADE_CTA",
       config: {
-        eyebrow: "Open a trade account",
-        headline: "Trade pricing, live stock and one account across every brand.",
+        contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
+        eyebrow: "Built for trade",
+        headline: "Ready to order with trade pricing?",
         supporting:
-          "Applications are reviewed by our trade team. Once approved, your account is activated with your pricing, catalogues and payment terms already in place.",
+          "Existing customers: access your trade pricing, basket and trade portal. New customers: apply for an Automotive Brands trade account.",
         ctaLabel: "Open a Trade Account",
         ctaHref: "/register",
         secondaryCtaLabel: "Trade Login",
         secondaryCtaHref: "/login",
+        signedInCtaLabel: "Trade Portal",
+        signedInCtaHref: "/portal",
+        signedInSecondaryCtaLabel: "Shop Products",
+        signedInSecondaryCtaHref: "/products",
         variant: "dark",
         spacing: "relaxed",
         media: {

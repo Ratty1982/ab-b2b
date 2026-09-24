@@ -6,20 +6,21 @@ import { defaultHomepageSections } from "@/server/cms/homepage-seed";
 import { getPublicHomepageFn } from "@/server/phase2/fns";
 
 const EMPTY_HOMEPAGE: PublicHomepageData = {
-  seoTitle: "Automotive Brands — The brands behind the automotive aftermarket",
+  seoTitle: "Automotive Brands — Automotive products built for the trade",
   metaDescription:
-    "Trade supply of Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion to UK motor factors, retailers, workshops and distributors. One trade account, every brand.",
+    "Trade supply of Power Maxed and Steel Seal to UK motor factors, workshops, retailers and distributors. Open a trade account for account pricing and case ordering.",
   ogImageSrc: null,
   sections: defaultHomepageSections().map((section, index) => ({
     id: `fallback-${section.type}-${index}`,
     type: section.type,
     config: section.config as PublicHomepageData["sections"][number]["config"],
-    enabled: true,
+    enabled: section.enabled !== false,
   })),
   brands: [],
   categories: [],
   productsBySku: {},
   recentProducts: [],
+  featuredProducts: [],
   cmsError: "Homepage content could not be loaded",
 };
 

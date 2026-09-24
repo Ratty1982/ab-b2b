@@ -1,29 +1,43 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicLayout, PageHeader, Breadcrumbs } from "@/components/ab/PublicLayout";
+import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 
 export const Route = createFileRoute("/why-automotive-brands")({
   head: () => ({
     meta: [
-      { title: "Why Automotive Brands — One Trade Account, Every Brand" },
+      { title: "Why Automotive Brands — Trade Supplier for Power Maxed & Steel Seal" },
       {
         name: "description",
         content:
-          "One account across five brands, live availability, structured trade pricing, same-day despatch and a named account representative.",
+          "Automotive Brands supplies Power Maxed and Steel Seal to UK trade customers with account pricing, live availability and dedicated support.",
       },
       { property: "og:title", content: "Why Automotive Brands" },
-      { property: "og:description", content: "One trade account across five automotive brands." },
+      {
+        property: "og:description",
+        content: "Trade supply of Power Maxed and Steel Seal from one account.",
+      },
     ],
   }),
   component: Why,
 });
 
 const reasons = [
-  ["One account, every brand", "Order Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion on one account, one delivery, one invoice."],
-  ["Pricing that reflects your business", "Trade A, B, C, distributor and buying-group pricing, with quantity breaks and case rates applied automatically."],
-  ["Live availability", "Stock figures shown at the point of ordering, with backorder dates rather than silent shortfalls."],
-  ["Fast ordering", "Quick Order by SKU, pasted SKU lists, CSV upload and one-click reorder of your usual products."],
-  ["Full order history", "Every order, PO number, invoice and tracking reference retained and searchable."],
-  ["A named representative", "A dedicated account manager who knows your business, not a general call queue."],
+  [
+    "Trade supplier for Power Maxed & Steel Seal",
+    "Browse both brands in one catalogue and order through a single Automotive Brands trade account.",
+  ],
+  [
+    "Commercial pricing for approved accounts",
+    "Approved trade customers see their account pricing on products and in the basket.",
+  ],
+  [
+    "Ordering convenience",
+    "Catalogue browsing with case quantities and customer-safe availability for trade supply.",
+  ],
+  [
+    "Account support",
+    `Dedicated account manager support for trade customers. ${ACCOUNT_MANAGER_HOURS.weekdayLine}. ${ACCOUNT_MANAGER_HOURS.orderCutoffLine}.`,
+  ],
 ];
 
 function Why() {
@@ -31,14 +45,14 @@ function Why() {
     <PublicLayout>
       <PageHeader
         eyebrow="Why Automotive Brands"
-        title="One trade account. Every brand."
-        lead="What trade customers get when they buy the group rather than five separate suppliers."
+        title="Trade supply, without the noise"
+        lead="A concise proposition for trade customers who need Power Maxed and Steel Seal from one supplier."
       />
       <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "Why Automotive Brands" }]} />
-        <ol className="mt-8 grid gap-px border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
+        <ol className="mt-8 grid gap-4 sm:grid-cols-2">
           {reasons.map(([title, body], i) => (
-            <li key={title} className="bg-surface/60 p-6">
+            <li key={title} className="rounded-lg border border-border/80 bg-surface/40 p-6">
               <span className="num font-display text-sm font-semibold text-primary">
                 {String(i + 1).padStart(2, "0")}
               </span>
@@ -47,12 +61,20 @@ function Why() {
             </li>
           ))}
         </ol>
-        <Link
-          to="/register"
-          className="mt-10 inline-flex h-12 items-center rounded-md bg-primary px-6 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
-        >
-          Open a trade account
-        </Link>
+        <div className="mt-10 flex flex-wrap gap-3">
+          <Link
+            to="/register"
+            className="inline-flex h-12 items-center rounded-md bg-primary px-6 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
+          >
+            Open a trade account
+          </Link>
+          <Link
+            to="/brands"
+            className="inline-flex h-12 items-center rounded-md border border-border px-6 text-[13px] font-bold uppercase tracking-wide transition-colors hover:border-steel"
+          >
+            View brands
+          </Link>
+        </div>
       </div>
     </PublicLayout>
   );

@@ -2,6 +2,7 @@ import { defaultHomepageSections } from "@/server/cms/homepage-seed";
 import { getPublishedHomepage } from "@/server/cms/service";
 import {
   getPublicProductsBySkus,
+  listFeaturedPublicProducts,
   listPublicBrands,
   listPublicCategories,
   listRecentPublicProducts,
@@ -10,9 +11,9 @@ import {
 import { collectHomepageSkus, type HomepageJson, type HomepageProduct, type HomepageSection, type PublicHomepageData } from "@/domain/homepage";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 
-const DEFAULT_SEO_TITLE = "Automotive Brands — The brands behind the automotive aftermarket";
+const DEFAULT_SEO_TITLE = "Automotive Brands — Automotive products built for the trade";
 const DEFAULT_SEO_DESC =
-  "Trade supply of Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion to UK motor factors, retailers, workshops and distributors. One trade account, every brand.";
+  "Trade supply of Power Maxed and Steel Seal to UK motor factors, workshops, retailers and distributors. Open a trade account for account pricing and case ordering.";
 
 function toHomepageProduct(card: PublicProductCard): HomepageProduct {
   return {
@@ -32,7 +33,7 @@ function fallbackSections(): HomepageSection[] {
     id: `default-${section.type}-${index}`,
     type: section.type,
     config: section.config as { [key: string]: HomepageJson },
-    enabled: true,
+    enabled: section.enabled !== false,
   }));
 }
 
@@ -40,6 +41,8 @@ export async function loadPublicHomepage(userId: string | null): Promise<PublicH
   let cmsError: string | null = null;
   let published: Awaited<ReturnType<typeof getPublishedHomepage>> = null;
   try {
+    const { bootstrapHomepageCms } = await import("@/server/cms/service");
+    await bootstrapHomepageCms();
     published = await getPublishedHomepage();
   } catch (error) {
     cmsError = error instanceof Error ? error.message : "Homepage content could not be loaded";
@@ -70,14 +73,21 @@ export async function loadPublicHomepage(userId: string | null): Promise<PublicH
 
 async function loadCatalogue(userId: string | null, sections: HomepageSection[]) {
   try {
-    const [brands, categories, recentCards, skuCards] = await Promise.all([
+    const needsFeaturedFallback = sections.some(
+      (section) =>
+        section.enabled &&
+        section.type === "FEATURED_PRODUCTS" &&
+        (!Array.isArray(section.config["productSkus"]) || section.config["productSkus"].length === 0),
+    );
+    const [brands, categories, recentCards, skuCards, featuredCards] = await Promise.all([
       listPublicBrands(),
       listPublicCategories(),
       listRecentPublicProducts(userId, 6),
       getPublicProductsBySkus(userId, collectHomepageSkus(sections)),
+      needsFeaturedFallback ? listFeaturedPublicProducts(userId, 8) : Promise.resolve([] as PublicProductCard[]),
     ]);
     const productsBySku: Record<string, HomepageProduct> = {};
-    for (const card of [...skuCards, ...recentCards]) {
+    for (const card of [...skuCards, ...recentCards, ...featuredCards]) {
       if (card.sku) productsBySku[card.sku.toUpperCase()] = toHomepageProduct(card);
     }
     return {
@@ -89,13 +99,14 @@ async function loadCatalogue(userId: string | null, sections: HomepageSection[])
         logoSrc: brand.logoSrc,
       })),
       categories: categories.map((category) => ({
-          slug: category.slug,
-          name: category.name,
-          description: category.description,
-          parentId: category.parentId,
-        })),
+        slug: category.slug,
+        name: category.name,
+        description: category.description,
+        parentId: category.parentId,
+      })),
       productsBySku,
       recentProducts: recentCards.map(toHomepageProduct),
+      featuredProducts: featuredCards.map(toHomepageProduct),
     };
   } catch (error) {
     console.error("[ab:homepage] catalogue load failed", error);
@@ -104,6 +115,7 @@ async function loadCatalogue(userId: string | null, sections: HomepageSection[])
       categories: [],
       productsBySku: {},
       recentProducts: [],
+      featuredProducts: [],
     };
   }
 }

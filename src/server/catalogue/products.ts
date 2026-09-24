@@ -874,6 +874,9 @@ export type PublicCatalogueNav = {
 
 /** Single nav assembly for listing + product detail — no per-section fetches. */
 export async function loadPublicCatalogueNav(): Promise<PublicCatalogueNav> {
+  const { ensureLaunchPublicBrands } = await import("@/server/catalogue/service");
+  await ensureLaunchPublicBrands();
+
   const [categoryRows, brands, categoryCounts] = await Promise.all([
     prisma.category.findMany({
       where: { isActive: true },
@@ -1046,6 +1049,9 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
 }
 
 export async function listPublicBrands() {
+  const { ensureLaunchPublicBrands } = await import("@/server/catalogue/service");
+  await ensureLaunchPublicBrands();
+
   const rows = await prisma.brand.findMany({
     where: { isActive: true },
     orderBy: { sortOrder: "asc" },
@@ -1067,10 +1073,32 @@ export async function listPublicBrands() {
 }
 
 export async function listPublicCategories() {
-  return prisma.category.findMany({
-    where: { isActive: true },
+  const rows = await prisma.category.findMany({
+    where: {
+      isActive: true,
+      products: { some: publicWhere },
+    },
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: { slug: true, name: true, description: true, parentId: true },
+  });
+  return rows;
+}
+
+export async function listFeaturedPublicProducts(userId: string | null, take = 8) {
+  const rows = await prisma.product.findMany({
+    where: { ...publicWhere, isFeatured: true },
+    include: publicInclude,
+    orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
+    take: Math.min(12, Math.max(1, take)),
+  });
+  if (!rows.length) {
+    return listRecentPublicProducts(userId, take);
+  }
+  const { viewer, byVariantId } = await displayPricesForProductRows(userId, rows);
+  const freshness = await stockFreshness();
+  return rows.map((row) => {
+    const variant = defaultVariant(row.variants);
+    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale);
   });
 }
 

@@ -256,26 +256,43 @@ export const DEFAULT_CATEGORY_TREE: Array<{
   },
 ];
 
+/**
+ * Brands exposed on the public / trade-visible storefront at launch.
+ * Other catalogue brands remain in the database with isActive=false until enabled.
+ */
+export const LAUNCH_PUBLIC_BRAND_SLUGS = ["power-maxed", "steel-seal"] as const;
+
+export type LaunchPublicBrandSlug = (typeof LAUNCH_PUBLIC_BRAND_SLUGS)[number];
+
+export function isLaunchPublicBrandSlug(slug: string): boolean {
+  return (LAUNCH_PUBLIC_BRAND_SLUGS as readonly string[]).includes(slug);
+}
+
 export const DEFAULT_BRANDS: Array<{
   slug: string;
   name: string;
   tagline: string;
   description: string;
   sortOrder: number;
+  /** Public storefront visibility. Non-launch brands seed inactive. */
+  isActive: boolean;
 }> = [
   {
     slug: "power-maxed",
     name: "Power Maxed",
-    tagline: "Performance Parts",
-    description: "Braking, clutch and drivetrain components engineered for the UK aftermarket.",
+    tagline: "Vehicle Care & Workshop",
+    description:
+      "Professional valeting, cleaning, workshop and vehicle maintenance products for the trade.",
     sortOrder: 1,
+    isActive: true,
   },
   {
     slug: "steel-seal",
     name: "Steel Seal",
-    tagline: "Gaskets & Seals",
-    description: "Sealants, gaskets and chemical repair products trusted by workshops.",
+    tagline: "Head Gasket & Cooling Repair",
+    description: "Head gasket repair and cooling-system repair products for workshops and trade counters.",
     sortOrder: 2,
+    isActive: true,
   },
   {
     slug: "street-rhino",
@@ -283,6 +300,7 @@ export const DEFAULT_BRANDS: Array<{
     tagline: "Off-Road & 4x4",
     description: "Wheels, lighting and protection for the 4x4 and light commercial market.",
     sortOrder: 3,
+    isActive: false,
   },
   {
     slug: "bramley-power",
@@ -290,6 +308,7 @@ export const DEFAULT_BRANDS: Array<{
     tagline: "Electrical & Battery",
     description: "Batteries, charging and starting components with full UK warranty support.",
     sortOrder: 4,
+    isActive: false,
   },
   {
     slug: "kidzmotion",
@@ -297,5 +316,6 @@ export const DEFAULT_BRANDS: Array<{
     tagline: "Child Safety",
     description: "Child seats, boosters and in-car safety accessories for retail ranges.",
     sortOrder: 5,
+    isActive: false,
   },
 ];

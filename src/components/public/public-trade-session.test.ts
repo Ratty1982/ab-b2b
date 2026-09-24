@@ -178,17 +178,24 @@ describe("public trade session chrome", () => {
     expect(markup).not.toContain(">Basket<");
     expect(markup).not.toContain('data-public-header="basket"');
     expect(markup).not.toContain("Log out");
+    expect(markup).toContain("Products");
+    expect(markup).toContain("Brands");
+    expect(markup).toContain("Trade Solutions");
+    expect(markup).toContain("Why Automotive Brands");
+    expect(markup).not.toContain(">Resources<");
+    expect(markup).not.toContain(">About Us<");
   });
 
-  it("authenticated trade header hides login CTAs and shows Basket + My Account → /portal", () => {
+  it("authenticated trade header hides login CTAs and shows Basket + Trade Portal → /portal", () => {
     sessionState.current = tradeSession;
     const markup = html(createElement(PublicHeader));
     expect(markup).not.toContain("Trade Login");
     expect(markup).not.toContain("Open a Trade Account");
-    expect(markup).toContain("My Account");
-    expect(markup).toContain('data-public-header="my-account"');
+    expect(markup).toContain("Trade Portal");
+    expect(markup).toContain('data-public-header="trade-portal"');
     expect(markup).toContain('href="/portal"');
     expect(markup).not.toContain('data-public-header="admin"');
+    expect(markup).not.toContain("My Account");
     expect(markup).not.toContain(">Account<");
     expect(markup).toContain("Basket");
     expect(markup).toContain('data-public-header="basket"');
@@ -269,7 +276,7 @@ describe("public trade session chrome", () => {
     const markup = html(createElement(PublicHeader));
     expect(markup).not.toContain("Trade Login");
     expect(markup).not.toContain("Open a Trade Account");
-    expect(markup).toContain("My Account");
+    expect(markup).toContain("Trade Portal");
     expect(markup).toContain("Log out");
     expect(markup).toContain("Basket");
   });
@@ -422,7 +429,7 @@ describe("public trade session chrome", () => {
     expect(markup).not.toMatch(/Add to basket/i);
     expect(markup).not.toContain("Sign in");
     const header = html(createElement(PublicHeader));
-    expect(header).toContain("My Account");
+    expect(header).toContain("Trade Portal");
     expect(header).toContain("Basket");
     expect(header).not.toContain("Trade Login");
   });

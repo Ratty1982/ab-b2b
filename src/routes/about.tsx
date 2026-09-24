@@ -1,19 +1,19 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicLayout, PageHeader, Breadcrumbs } from "@/components/ab/PublicLayout";
 
 export const Route = createFileRoute("/about")({
   head: () => ({
     meta: [
-      { title: "About Automotive Brands — UK Multi-Brand Automotive Supplier" },
+      { title: "About Automotive Brands — UK Trade Supplier" },
       {
         name: "description",
         content:
-          "Automotive Brands supplies Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion to UK motor factors, workshops, retailers and distributors.",
+          "Automotive Brands supplies Power Maxed and Steel Seal to UK motor factors, workshops, retailers and distributors.",
       },
       { property: "og:title", content: "About Automotive Brands" },
       {
         property: "og:description",
-        content: "The umbrella business behind five automotive aftermarket brands.",
+        content: "Trade supplier of Power Maxed and Steel Seal.",
       },
     ],
   }),
@@ -25,40 +25,37 @@ function About() {
     <PublicLayout>
       <PageHeader
         eyebrow="About us"
-        title="The group behind five automotive brands"
-        lead="Manufacturing, distribution and trade supply from a single UK operation."
+        title="Automotive Brands"
+        lead="The trade supplier behind Power Maxed and Steel Seal."
       />
       <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
         <Breadcrumbs items={[{ label: "Home", to: "/" }, { label: "About Us" }]} />
         <div className="mt-8 space-y-6 text-[15px] leading-relaxed text-steel">
           <p>
-            Automotive Brands is a UK aftermarket group supplying trade customers with products from
-            Power Maxed, Steel Seal, Street Rhino, Bramley Power and Kidzmotion. Each brand keeps its
-            own identity, product development and following — while factors, workshops and
-            distributors buy them all through one trade account, one delivery and one invoice.
+            Automotive Brands supplies professional automotive products to trade customers across the
+            UK. At launch, the public catalogue focuses on Power Maxed and Steel Seal — available
+            through one trade account with account pricing once approved.
           </p>
           <p>
-            We hold stock in the UK, pick and despatch the same working day on orders placed before
-            3pm, and support accounts with a dedicated representative rather than a call queue.
-          </p>
-          <p>
-            Our customers range from single-site garages to national buying groups and export
-            distributors. Pricing is structured by account, with quantity breaks, case pricing and
-            contract rates applied automatically at the point of ordering.
+            Trade customers can browse the live catalogue, see customer-safe availability, and order
+            in trade case quantities where applicable. Dedicated account manager support is available
+            through the trade portal.
           </p>
         </div>
-        <dl className="mt-10 grid gap-px border border-border bg-border sm:grid-cols-3">
-          {[
-            ["5", "Aftermarket brands"],
-            ["2,400+", "Trade accounts"],
-            ["Same day", "Despatch before 3pm"],
-          ].map(([v, l]) => (
-            <div key={l} className="bg-surface/60 p-5">
-              <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">{l}</dt>
-              <dd className="num mt-1 font-display text-2xl font-semibold text-primary">{v}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="mt-10 flex flex-wrap gap-3">
+          <Link
+            to="/register"
+            className="inline-flex h-11 items-center rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
+          >
+            Open a trade account
+          </Link>
+          <Link
+            to="/products"
+            className="inline-flex h-11 items-center rounded-md border border-border px-5 text-[13px] font-bold uppercase tracking-wide transition-colors hover:border-steel"
+          >
+            Shop products
+          </Link>
+        </div>
       </div>
     </PublicLayout>
   );
