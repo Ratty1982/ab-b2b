@@ -148,3 +148,19 @@ Not in 6A:
 - Autopart order file / email / API
 - inventory reservation
 - Quick Order bulk add backend
+
+### Customer sell-price snapshot (required for 6B)
+
+Commercial resolution may remain at 4 decimal places internally.
+
+The B2B customer sell unit price is established by half-up rounding that
+commercial amount to **2 decimal places** (`toCustomerSellUnitPrice`)
+**before** multiplying by quantity. Line net = sell unit × quantity.
+
+When Phase 6B creates an Order it must snapshot, at minimum:
+
+- the resolved commercial unit facts needed for audit (source, 4dp value), and
+- the **actual customer sell unit price (2dp)** used for the order line,
+
+so the invoiced line reconciles: `unit sell price × quantity = line net`
+(subject to any later explicit line/order discounts).

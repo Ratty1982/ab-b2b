@@ -81,21 +81,44 @@ export function roundGbpDisplay(value: Money): Money {
 }
 
 /**
- * Trade ordering unit-price label from an authoritative 4dp amount.
- * Keeps at least 2dp; shows up to 4dp when commercially meaningful so
- * "£3.69 × 12" does not appear to disagree with a 4dp line total.
+ * Customer sell unit price for B2B ordering.
+ *
+ * Commercial resolution may stay at 4dp internally. The price the customer
+ * sees and buys at is half-up rounded to 2dp first; that 2dp amount is then
+ * multiplied by quantity for the line net.
  */
-export function formatTradeOrderingUnitPrice(unitPriceExVat4dp: string | null | undefined): string | null {
-  if (unitPriceExVat4dp == null || unitPriceExVat4dp === "") return null;
-  const money = parseMoney(unitPriceExVat4dp);
+export function toCustomerSellUnitPrice(resolvedCommercialUnit: Money): Money {
+  return roundGbpDisplay(resolvedCommercialUnit);
+}
+
+/**
+ * Customer order line net ex VAT: sellUnit(2dp) × quantity.
+ * Do not multiply the unresolved 4dp commercial price for customer lines.
+ */
+export function customerLineNetExVat(resolvedCommercialUnit: Money, quantity: number): Money {
+  return mulQty(toCustomerSellUnitPrice(resolvedCommercialUnit), quantity);
+}
+
+/**
+ * Format the customer-facing unit sell price as standard UK currency digits (x.xx).
+ * Never exposes commercial 3dp/4dp fractions on public/trade surfaces.
+ */
+export function formatCustomerSellUnitPrice(
+  resolvedCommercialUnit4dp: string | null | undefined,
+): string | null {
+  if (resolvedCommercialUnit4dp == null || resolvedCommercialUnit4dp === "") return null;
+  const money = parseMoney(resolvedCommercialUnit4dp);
   if (!money) return null;
-  const full = moneyToString(money, 4);
-  const [whole, frac = "0000"] = full.split(".");
-  const digits = frac.padEnd(4, "0").slice(0, 4);
-  let keep = 2;
-  if (digits[3] !== "0") keep = 4;
-  else if (digits[2] !== "0") keep = 3;
-  return `${whole}.${digits.slice(0, keep)}`;
+  return moneyToString(toCustomerSellUnitPrice(money), 2);
+}
+
+/**
+ * @deprecated Use formatCustomerSellUnitPrice — customer-facing sell prices are always 2dp.
+ */
+export function formatTradeOrderingUnitPrice(
+  unitPriceExVat4dp: string | null | undefined,
+): string | null {
+  return formatCustomerSellUnitPrice(unitPriceExVat4dp);
 }
 
 export function addMoney(a: Money, b: Money): Money {

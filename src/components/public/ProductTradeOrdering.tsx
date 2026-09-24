@@ -16,7 +16,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import { formatCaseCountLabel } from "@/domain/ordering";
-import { formatTradeOrderingUnitPrice } from "@/domain/money";
+import { formatCustomerSellUnitPrice } from "@/domain/money";
 import { BASKET_UPDATED_EVENT } from "@/lib/basket-events";
 
 export type ProductOrderingPanelView = {
@@ -191,7 +191,7 @@ function ProductTradeOrderingCard({
       : null;
 
   const unitLabel =
-    formatTradeOrderingUnitPrice(panel?.unitPriceExVat) ?? panel?.unitPriceExVatDisplay;
+    panel?.unitPriceExVatDisplay ?? formatCustomerSellUnitPrice(panel?.unitPriceExVat);
 
   const showAnonSignIn = !signedIn;
   const showAuthenticatedBlocked =

@@ -107,9 +107,9 @@ const orderablePanel = {
   quantity: 12,
   caseCount: 1,
   caseCountLabel: "1 case",
-  unitPriceExVat: "3.6875",
+  unitPriceExVat: "3.6900",
   unitPriceExVatDisplay: "3.69",
-  lineNetDisplay: "44.25",
+  lineNetDisplay: "44.28",
   canIncrement: true,
   canDecrement: false,
   canAdd: true,
@@ -382,8 +382,9 @@ describe("public trade session chrome", () => {
       }),
     );
     expect(markup).toContain("Case of 12 · Sold in multiples of 12");
-    expect(markup).toContain("£3.6875 each ex VAT");
-    expect(markup).toContain("£44.25");
+    expect(markup).toContain("£3.69 each ex VAT");
+    expect(markup).toContain("£44.28");
+    expect(markup).not.toContain("£3.6875");
     expect(markup).toMatch(/Total[\s\S]*ex VAT/i);
     expect(markup).toMatch(/Add to basket/i);
     expect(markup).toContain('aria-label="Increase quantity"');
@@ -595,8 +596,9 @@ describe("authenticated orderable PDP render condition", () => {
     expect(markup).toMatch(/Add to basket/i);
     expect(markup).toContain("1 case");
     expect(markup).toContain("12 units");
-    expect(markup).toContain("£3.6875 each ex VAT");
-    expect(markup).toContain("£44.25");
+    expect(markup).toContain("£3.69 each ex VAT");
+    expect(markup).toContain("£44.28");
+    expect(markup).not.toContain("£3.6875");
     expect(markup).toMatch(/Total[\s\S]*ex VAT/i);
     // Basket navigation lives in the header, not duplicated on every PDP card.
     expect(markup).not.toContain(">View basket<");

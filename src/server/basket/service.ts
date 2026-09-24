@@ -12,11 +12,12 @@ import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   addMoney,
   moneyToString,
-  mulQty,
   parseMoney,
   roundGbpDisplay,
   applyVatInc,
   moneyZero,
+  toCustomerSellUnitPrice,
+  customerLineNetExVat,
 } from "@/domain/money";
 import {
   assessBasketLineQuantity,
@@ -118,7 +119,7 @@ export type ProductOrderingPanel = {
   quantity: number | null;
   caseCount: number | null;
   caseCountLabel: string | null;
-  /** Authoritative 4dp unit price ex VAT (do not multiply the 2dp display). */
+  /** Customer sell unit price ex VAT (2dp, stored scaled to 4dp e.g. "10.1100"). */
   unitPriceExVat: string | null;
   unitPriceExVatDisplay: string | null;
   lineNetDisplay: string | null;
@@ -307,16 +308,19 @@ function lineTotalsFromResolution(resolution: TradePriceResolution | null, quant
       source: null as TradePriceResolution["source"] | null,
     };
   }
-  const unitEx = parseMoney(resolution.unitPriceExVat)!;
+  const commercial = parseMoney(resolution.unitPriceExVat)!;
+  // Customer buy price is 2dp first; line net = sellUnit × qty (not 4dp × qty).
+  const sellUnit = toCustomerSellUnitPrice(commercial);
   const vatRate = parseMoney(resolution.vatRate)!;
-  const lineNet = roundGbpDisplay(mulQty(unitEx, quantity));
+  const lineNet = customerLineNetExVat(commercial, quantity);
   const lineGross = applyVatInc(lineNet, vatRate);
   const lineVat = roundGbpDisplay({
     minor: lineGross.minor - lineNet.minor,
   });
   return {
-    unitEx: moneyToString(unitEx, 4),
-    unitExDisplay: moneyToString(roundGbpDisplay(unitEx), 2),
+    // Customer DTOs expose the 2dp sell unit (scaled to 4dp storage), never commercial 4dp fractions.
+    unitEx: moneyToString(sellUnit, 4),
+    unitExDisplay: moneyToString(sellUnit, 2),
     lineNet: moneyToString(lineNet, 4),
     lineNetDisplay: moneyToString(lineNet, 2),
     lineVat: moneyToString(lineVat, 4),

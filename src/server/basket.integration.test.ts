@@ -527,8 +527,9 @@ describe("catalogue list batch ordering panels", () => {
 
     expect(panels.get(v12.id)?.orderable).toBe(true);
     expect(panels.get(v12.id)?.quantity).toBe(12);
-    expect(panels.get(v12.id)?.unitPriceExVat).toBe("3.6875");
-    expect(panels.get(v12.id)?.lineNetDisplay).toBe("44.25");
+    expect(panels.get(v12.id)?.unitPriceExVat).toBe("3.6900");
+    expect(panels.get(v12.id)?.unitPriceExVatDisplay).toBe("3.69");
+    expect(panels.get(v12.id)?.lineNetDisplay).toBe("44.28");
 
     expect(panels.get(v1.id)?.orderable).toBe(true);
     expect(panels.get(v1.id)?.quantity).toBe(1);
@@ -573,5 +574,60 @@ describe("catalogue list batch ordering panels", () => {
     const merged = await addToBasket(buyerId, { variantId: v12.id, quantity: 12 });
     expect(merged.lineCount).toBe(1);
     expect(merged.lines[0]!.quantity).toBe(24);
+  }, 30_000);
+
+  it("customer sell unit is 2dp before line multiply (PMCAT / PMML regressions)", async () => {
+    const stamp = Date.now();
+    const pmcat = await saveProduct(adminId, {
+      sku: `PMCAT-${stamp}`,
+      name: "Catalytic Converter Cleaner",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 10.105,
+      rrp: 14.99,
+      packQty: 1,
+      caseQty: 12,
+      description: "sell-price",
+      active: true,
+    });
+    const pmml = await saveProduct(adminId, {
+      sku: `PMML-${stamp}`,
+      name: "5-in-1 Multi Lube",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3.6875,
+      rrp: 7.99,
+      packQty: 1,
+      caseQty: 12,
+      description: "sell-price",
+      active: true,
+    });
+    const vCat = await prisma.productVariant.findFirstOrThrow({ where: { productId: pmcat.id } });
+    const vMl = await prisma.productVariant.findFirstOrThrow({ where: { productId: pmml.id } });
+    await seedStock(vCat.id, 120);
+    await seedStock(vMl.id, 120);
+
+    const company = await prisma.company.create({ data: { name: `SP ${stamp}`, status: "ACTIVE" } });
+    const buyerId = await ensureTradeBuyer(`sp-${stamp}@example.invalid`, company.id);
+
+    const catPanel = await getProductOrderingPanel(buyerId, { variantId: vCat.id });
+    expect(catPanel.unitPriceExVatDisplay).toBe("10.11");
+    expect(catPanel.unitPriceExVat).toBe("10.1100");
+    expect(catPanel.lineNetDisplay).toBe("121.32");
+    expect(catPanel.unitPriceExVatDisplay).not.toContain("105");
+
+    const mlPanel = await getProductOrderingPanel(buyerId, { variantId: vMl.id });
+    expect(mlPanel.unitPriceExVatDisplay).toBe("3.69");
+    expect(mlPanel.lineNetDisplay).toBe("44.28");
+
+    const basket = await addToBasket(buyerId, { variantId: vCat.id, quantity: 12 });
+    expect(basket.lines[0]!.unitPriceExVatDisplay).toBe("10.11");
+    expect(basket.lines[0]!.lineNetDisplay).toBe("121.32");
+    expect(basket.totals.netDisplay).toBe("121.32");
+
+    const doubled = await addToBasket(buyerId, { variantId: vCat.id, quantity: 12 });
+    expect(doubled.lines[0]!.quantity).toBe(24);
+    expect(doubled.lines[0]!.unitPriceExVatDisplay).toBe("10.11");
+    expect(doubled.lines[0]!.lineNetDisplay).toBe("242.64");
   }, 30_000);
 });

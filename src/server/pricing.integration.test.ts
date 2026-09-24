@@ -98,7 +98,8 @@ describe("Phase 4A trade price resolution", () => {
     expect(anon?.card.price.rrp).toBe(17.99);
 
     const staff = await getPublicProduct(adminId, sku);
-    expect(staff?.card.price.trade).toBe(8.6967);
+    // Public/customer catalogue surfaces the 2dp sell unit, not commercial 4dp.
+    expect(staff?.card.price.trade).toBe(8.7);
     expect(staff?.card.price.source).toBe("base_catalogue");
 
     const cat = await listPublicProducts({ userId: null, q: sku });

@@ -4,7 +4,7 @@
  * Never read ProductVariant.tradePrice in UI for a logged-in customer price.
  */
 
-import { moneyToNumber, parseMoney } from "@/domain/money";
+import { moneyFromUnknown, moneyToNumber, parseMoney, toCustomerSellUnitPrice } from "@/domain/money";
 import {
   PUBLIC_PRICE_SOURCE,
   type TradePriceResolution,
@@ -47,10 +47,12 @@ export function toDisplayPrice(input: {
   if (!canViewTrade(input.viewer) || !input.resolution || input.resolution.source === "NONE") {
     return { currency: "GBP", rrp, trade: null, source: "hidden" };
   }
+  const commercial = parseMoney(input.resolution.unitPriceExVat);
+  const sell = commercial ? toCustomerSellUnitPrice(commercial) : null;
   return {
     currency: "GBP",
     rrp,
-    trade: Number(input.resolution.unitPriceExVat),
+    trade: sell ? moneyToNumber(sell) : null,
     source: PUBLIC_PRICE_SOURCE[input.resolution.source],
   };
 }
@@ -62,7 +64,8 @@ export function resolveDisplayPrice(input: {
   rrp: unknown;
 }): DisplayPrice {
   const rrp = moneyNumber(input.rrp);
-  const trade = moneyNumber(input.tradePrice);
+  const commercial = moneyFromUnknown(input.tradePrice);
+  const trade = commercial ? moneyToNumber(toCustomerSellUnitPrice(commercial)) : null;
   if (!canViewTrade(input.viewer)) {
     return { currency: "GBP", rrp, trade: null, source: "hidden" };
   }
