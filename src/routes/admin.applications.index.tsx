@@ -22,6 +22,7 @@ import {
   markTradeApplicationUnderReviewFn,
   rejectTradeApplicationFn,
   requestTradeApplicationMoreInfoFn,
+  resendTradeApplicationActivationEmailFn,
   updateTradeApplicationDetailsFn,
   withdrawTradeApplicationFn,
 } from "@/server/phase2/fns";
@@ -113,6 +114,28 @@ type Detail = {
     matchReasons: string[];
   }>;
   consentAcceptedAt?: string | null;
+  contactEmail?: string | null;
+  activation?: {
+    contactEmail: string;
+    membershipStatus: string | null;
+    userStatus: string | null;
+    invitationStatus: string | null;
+    invitationExpiresAt: string | null;
+    emailDeferred: boolean;
+    emailStatus: string;
+    emailSent: boolean;
+    sentAt: string | null;
+    canResendActivation: boolean;
+  } | null;
+};
+
+type ApprovalEmailResult = {
+  emailSent: boolean;
+  emailDeferred: boolean;
+  emailStatus: string;
+  contactEmail: string | null;
+  sentAt: string | null;
+  canResendActivation?: boolean;
 };
 
 type EditForm = {
@@ -191,8 +214,7 @@ function ApplicationsPage() {
   const [reviewNotes, setReviewNotes] = useState("");
   const [customerMessage, setCustomerMessage] = useState("");
   const [confirmExistingUserLink, setConfirmExistingUserLink] = useState(false);
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
-  const [activationPath, setActivationPath] = useState<string | null>(null);
+  const [approvalEmail, setApprovalEmail] = useState<ApprovalEmailResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -232,8 +254,7 @@ function ApplicationsPage() {
   useEffect(() => {
     if (!selected) {
       setDetail(null);
-      setInviteToken(null);
-      setActivationPath(null);
+      setApprovalEmail(null);
       setEditing(false);
       setEditForm(null);
       return;
@@ -698,14 +719,176 @@ function ApplicationsPage() {
                 </ReviewBlock>
               ) : null}
 
-              {inviteToken ? (
-                <div className="rounded-md border border-primary/40 bg-primary/5 px-3 py-3 text-[12px]">
-                  <div className="font-semibold uppercase tracking-wide">Activation (email deferred)</div>
-                  <p className="mt-1 text-steel">
-                    Outbound email is not configured. Copy the activation link for the applicant.
-                  </p>
-                  <code className="mt-2 block break-all rounded bg-ink/50 p-2 text-[11px]">{activationPath}</code>
-                  <code className="mt-2 block break-all text-[11px] text-steel">Token: {inviteToken}</code>
+              {approvalEmail || detail.status === "APPROVED" ? (
+                <div className="rounded-md border border-good/40 bg-good/5 px-3 py-3 text-[12px]">
+                  <div className="font-semibold uppercase tracking-wide text-good">Account approved</div>
+                  <p className="mt-1 text-steel">Customer account created successfully.</p>
+                  {(() => {
+                    const membershipStatus = detail.activation?.membershipStatus ?? null;
+                    if (membershipStatus === "ACTIVE") {
+                      return (
+                        <p className="mt-3 border-t border-border/50 pt-3 text-steel">
+                          Customer has activated their account.
+                        </p>
+                      );
+                    }
+                    const status =
+                      approvalEmail?.emailStatus ?? detail.activation?.emailStatus ?? "NONE";
+                    const to =
+                      approvalEmail?.contactEmail ??
+                      detail.activation?.contactEmail ??
+                      detail.contactEmail ??
+                      detail.primaryContact?.email ??
+                      null;
+                    const sentAt = approvalEmail?.sentAt ?? detail.activation?.sentAt ?? null;
+                    const canResend =
+                      approvalEmail?.canResendActivation ??
+                      detail.activation?.canResendActivation ??
+                      false;
+                    if (status === "SENT") {
+                      return (
+                        <div className="mt-3 border-t border-border/50 pt-3">
+                          <div className="font-semibold uppercase tracking-wide">Activation email sent</div>
+                          {to ? (
+                            <p className="mt-1 text-steel">
+                              Activation email sent to: <span className="text-chrome">{to}</span>
+                            </p>
+                          ) : null}
+                          {sentAt ? (
+                            <p className="mt-1 text-steel">
+                              Sent: <InstantText value={sentAt} variant="audit" />
+                            </p>
+                          ) : null}
+                          {canResend ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              className={`${actionBtn} mt-3`}
+                              onClick={() =>
+                                void runAction("Resend activation email", async () => {
+                                  const r = await resendTradeApplicationActivationEmailFn({
+                                    data: { id: detail.id },
+                                  });
+                                  if (!r.ok) {
+                                    toast.error(r.error);
+                                    return;
+                                  }
+                                  setApprovalEmail({
+                                    emailSent: r.data.emailSent,
+                                    emailDeferred: r.data.emailDeferred,
+                                    emailStatus: r.data.emailStatus,
+                                    contactEmail: r.data.contactEmail,
+                                    sentAt: r.data.sentAt,
+                                    canResendActivation: r.data.canResendActivation,
+                                  });
+                                  toast.success(
+                                    r.data.emailSent
+                                      ? "Activation email resent"
+                                      : "Could not resend activation email",
+                                  );
+                                  await refreshDetail(detail.id);
+                                })
+                              }
+                            >
+                              Resend activation email
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    }
+                    if (status === "DEFERRED") {
+                      return (
+                        <div className="mt-3 border-t border-border/50 pt-3">
+                          <div className="font-semibold uppercase tracking-wide text-warn">
+                            Activation email deferred
+                          </div>
+                          <p className="mt-1 text-steel">
+                            Transactional email is currently disabled in Admin → Settings → Email.
+                          </p>
+                          {canResend ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              className={`${actionBtn} mt-3`}
+                              onClick={() =>
+                                void runAction("Send activation email", async () => {
+                                  const r = await resendTradeApplicationActivationEmailFn({
+                                    data: { id: detail.id },
+                                  });
+                                  if (!r.ok) {
+                                    toast.error(r.error);
+                                    return;
+                                  }
+                                  setApprovalEmail({
+                                    emailSent: r.data.emailSent,
+                                    emailDeferred: r.data.emailDeferred,
+                                    emailStatus: r.data.emailStatus,
+                                    contactEmail: r.data.contactEmail,
+                                    sentAt: r.data.sentAt,
+                                    canResendActivation: r.data.canResendActivation,
+                                  });
+                                  toast.success(
+                                    r.data.emailSent
+                                      ? "Activation email sent"
+                                      : r.data.emailDeferred
+                                        ? "Activation email deferred — enable delivery to send"
+                                        : "Activation email failed — retry when ready",
+                                  );
+                                  await refreshDetail(detail.id);
+                                })
+                              }
+                            >
+                              Send activation email
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="mt-3 border-t border-border/50 pt-3">
+                        <div className="font-semibold uppercase tracking-wide text-bad">
+                          Activation email failed
+                        </div>
+                        <p className="mt-1 text-steel">We couldn&apos;t deliver the activation email.</p>
+                        {canResend ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className={`${actionBtn} mt-3`}
+                            onClick={() =>
+                              void runAction("Retry activation email", async () => {
+                                const r = await resendTradeApplicationActivationEmailFn({
+                                  data: { id: detail.id },
+                                });
+                                if (!r.ok) {
+                                  toast.error(r.error);
+                                  return;
+                                }
+                                setApprovalEmail({
+                                  emailSent: r.data.emailSent,
+                                  emailDeferred: r.data.emailDeferred,
+                                  emailStatus: r.data.emailStatus,
+                                  contactEmail: r.data.contactEmail,
+                                  sentAt: r.data.sentAt,
+                                  canResendActivation: r.data.canResendActivation,
+                                });
+                                toast.success(
+                                  r.data.emailSent
+                                    ? "Activation email sent"
+                                    : r.data.emailDeferred
+                                      ? "Activation email deferred"
+                                      : "Activation email still failing",
+                                );
+                                await refreshDetail(detail.id);
+                              })
+                            }
+                          >
+                            Retry activation email
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : null}
 
@@ -789,13 +972,23 @@ function ApplicationsPage() {
                           toast.error(r.error);
                           return;
                         }
-                        setInviteToken(r.data.inviteToken);
-                        setActivationPath(r.data.activationPath);
-                        toast.success(
-                          r.data.created
-                            ? "Approved — activation link ready (email deferred)"
-                            : "Already approved (idempotent)",
-                        );
+                        setApprovalEmail({
+                          emailSent: r.data.emailSent,
+                          emailDeferred: r.data.emailDeferred,
+                          emailStatus: r.data.emailStatus,
+                          contactEmail: r.data.contactEmail,
+                          sentAt: r.data.sentAt,
+                          canResendActivation: r.data.canResendActivation,
+                        });
+                        if (!r.data.created) {
+                          toast.success("Already approved (idempotent)");
+                        } else if (r.data.emailSent) {
+                          toast.success("Account approved — activation email sent");
+                        } else if (r.data.emailDeferred) {
+                          toast.success("Account approved — activation email deferred");
+                        } else {
+                          toast.success("Account approved — activation email failed");
+                        }
                         await refreshDetail(detail.id);
                       })
                     }

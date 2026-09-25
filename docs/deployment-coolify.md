@@ -119,7 +119,7 @@ The Docker **deps** stage now runs `bun install --frozen-lockfile --production -
 
 If unpack still fails: on the Coolify server run `docker system df` / `docker builder prune` to free disk, then redeploy.
 
-- Invitations are created with `emailDeferred: true` until an email provider is configured — do not expect outbound mail.
+- Activation emails go through Admin → Settings → Email (TransactionalEmailService). Do not expect Coolify `SMTP_*` env vars.
 
 ## Phase 5 / 5A Autopart stock
 

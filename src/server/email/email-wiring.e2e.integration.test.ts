@@ -154,17 +154,23 @@ describe("transactional email E2E wiring", () => {
     // 6–7 approve + activation email
     const approved = await approveTradeApplication(adminId, { id: submitted.id });
     expect(approved.created).toBe(true);
-    expect(approved.inviteToken).toBeTruthy();
+    expect((approved as { inviteToken?: string }).inviteToken).toBeUndefined();
+    expect(approved.emailSent).toBe(true);
+    expect(approved.emailStatus).toBe("SENT");
     const approveMail = await prisma.transactionalEmail.findFirst({
       where: { entityId: submitted.id, purpose: "TRADE_APPLICATION_APPROVED" },
     });
     expect(approveMail).toBeTruthy();
+    expect(approveMail!.status).toBe("SENT");
     expect(approveMail!.htmlBody).toContain("Activate");
     expect(approveMail!.textBody).toContain("/activate?token=");
+    expect(approveMail!.toEmail).toBe(email);
 
     // 8–9 activate + welcome
+    const { loadApprovedActivationToken } = await import("@/server/applications/test-fixtures");
+    const inviteToken = await loadApprovedActivationToken(prisma, submitted.id);
     const activated = await acceptTradeInvitation({
-      token: approved.inviteToken!,
+      token: inviteToken,
       password: "E2eTradePass99!",
       confirmPassword: "E2eTradePass99!",
     });

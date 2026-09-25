@@ -133,26 +133,25 @@ export function buildTradeApplicationApprovedBodies(
       ? snap.activationPath
       : `${appBaseUrl()}${snap.activationPath.startsWith("/") ? "" : "/"}${snap.activationPath}`
     : null;
-  const subject = `Your Automotive Brands trade account is ready to activate`;
+  const subject = `Your Automotive Brands trade account is ready`;
   const activateBlock = activationUrl
-    ? `\nActivate your account:\n${activationUrl}\n`
-    : "\nYour activation link will follow separately if not included here.\n";
+    ? `\nUse the link below to activate your account and set your password:\n${activationUrl}\n`
+    : "\nYou will receive a separate message with your activation link shortly.\n";
   const text = `Hello ${snap.contactName},
 
-Good news — your Automotive Brands trade application ${snap.reference} for ${snap.companyName} has been approved.
+Your Automotive Brands trade account for ${snap.companyName} has been approved.
 ${activateBlock}
 Automotive Brands
 https://automotivebrands.co.uk`;
 
   const bodyHtml = `
 <p style="margin:0 0 16px;">Hello ${escapeEmailHtml(snap.contactName)},</p>
-<p style="margin:0 0 16px;">Good news — your Automotive Brands trade application
-<strong>${escapeEmailHtml(snap.reference)}</strong> for
+<p style="margin:0 0 16px;">Your Automotive Brands trade account for
 <strong>${escapeEmailHtml(snap.companyName)}</strong> has been approved.</p>
 ${
   activationUrl
     ? `<p style="margin:0;">Use the button below to activate your account and set your password.</p>`
-    : `<p style="margin:0;">Your activation link will follow separately if not included here.</p>`
+    : `<p style="margin:0;">You will receive a separate message with your activation link shortly.</p>`
 }`;
 
   const html = renderTransactionalEmailShell({

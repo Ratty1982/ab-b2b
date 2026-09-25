@@ -16,7 +16,7 @@ import {
   requestApplicationMoreInfo,
   submitTradeApplication,
 } from "@/server/applications/service";
-import { validTradeApplicationInput } from "@/server/applications/test-fixtures";
+import { loadApprovedActivationToken, validTradeApplicationInput } from "@/server/applications/test-fixtures";
 import { setCompanyAutopartCustomerCode, verifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { addToBasket, getBasket } from "@/server/basket/service";
@@ -266,8 +266,10 @@ describe("trade onboarding journey", () => {
       reviewNotes: "Looks good",
     });
     expect(approved.created).toBe(true);
-    expect(approved.inviteToken).toBeTruthy();
-    expect(approved.activationPath).toContain("/activate?token=");
+    expect(approved.inviteToken).toBeUndefined();
+    expect(approved.activationPath).toBeUndefined();
+    expect(typeof approved.emailSent).toBe("boolean");
+    expect(approved.emailStatus).toBeTruthy();
 
     const company = await prisma.company.findUniqueOrThrow({
       where: { id: approved.companyId },
@@ -286,12 +288,13 @@ describe("trade onboarding journey", () => {
     expect(verified.autopartCustomerCode).toBe(verifiedCode);
     expect(verified.autopartCustomerCodeVerifiedAt).toBeTruthy();
 
-    const preview = await getInvitationPreview(approved.inviteToken!);
+    const inviteToken = await loadApprovedActivationToken(prisma, submitted.id);
+    const preview = await getInvitationPreview(inviteToken);
     expect(preview?.email).toBe(email);
     expect(preview?.expired).toBe(false);
 
     const activated = await acceptTradeInvitation({
-      token: approved.inviteToken!,
+      token: inviteToken,
       password: "SecurePass-Onboard1",
       confirmPassword: "SecurePass-Onboard1",
     });
@@ -307,7 +310,7 @@ describe("trade onboarding journey", () => {
     expect(membership.role).toBe("TRADE_ADMIN");
 
     const invite = await prisma.userInvitation.findUniqueOrThrow({
-      where: { tokenHash: hashInviteToken(approved.inviteToken!) },
+      where: { tokenHash: hashInviteToken(inviteToken) },
     });
     expect(invite.status).toBe("ACCEPTED");
 

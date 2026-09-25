@@ -215,7 +215,11 @@ function ApplicationQueue() {
                         else {
                           toast.success(
                             r.data.created
-                              ? "Approved — company created (invite email deferred)"
+                              ? r.data.emailSent
+                                ? "Approved — activation email sent"
+                                : r.data.emailDeferred
+                                  ? "Approved — activation email deferred"
+                                  : "Approved — activation email failed"
                               : "Already approved (idempotent)",
                           );
                           await load();

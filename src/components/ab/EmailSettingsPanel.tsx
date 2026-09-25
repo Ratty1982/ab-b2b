@@ -76,7 +76,7 @@ function purposeLabel(purpose: string): string {
     case "TRADE_APPLICATION_MORE_INFO":
       return "Application More Info";
     case "TRADE_APPLICATION_APPROVED":
-      return "Application Approved";
+      return "Trade Account Approved";
     case "TRADE_APPLICATION_REJECTED":
       return "Application Rejected";
     case "TRADE_ACCOUNT_ACTIVATED":

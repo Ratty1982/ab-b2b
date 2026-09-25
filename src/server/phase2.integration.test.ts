@@ -265,9 +265,17 @@ describe("trade application approval", () => {
     const first = await approveTradeApplication(adminId, { id: submitted.id });
     expect(first.created).toBe(true);
     expect(first.companyId).toBeTruthy();
-    expect(first.emailDeferred).toBe(!first.emailSent);
-    expect(first.inviteToken).toBeTruthy();
-    expect(first.activationPath).toContain("/activate?token=");
+    expect(first.emailDeferred).toBe(first.emailStatus === "DEFERRED");
+    expect(first.emailSent).toBe(first.emailStatus === "SENT");
+    expect((first as { inviteToken?: string }).inviteToken).toBeUndefined();
+    expect((first as { activationPath?: string }).activationPath).toBeUndefined();
+
+    const approveMail = await prisma.transactionalEmail.findFirst({
+      where: { entityId: submitted.id, purpose: "TRADE_APPLICATION_APPROVED" },
+    });
+    expect(approveMail).toBeTruthy();
+    expect(approveMail!.textBody).toContain("/activate?token=");
+    expect(JSON.stringify(approveMail)).not.toMatch(/"token"\s*:/);
 
     const second = await approveTradeApplication(adminId, { id: submitted.id });
     expect(second.created).toBe(false);

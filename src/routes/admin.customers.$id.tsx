@@ -70,7 +70,6 @@ function CustomerWorkspace() {
   const [contactOpen, setContactOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -294,7 +293,12 @@ function CustomerWorkspace() {
                 id: string;
                 role: string;
                 status: string;
-                user: { name: string | null; email: string; lastLoginAt: string | null };
+                user: {
+                  name: string | null;
+                  email: string;
+                  status?: string;
+                  lastLoginAt: string | null;
+                };
               }) => (
                 <li key={u.id} className="border border-border bg-surface/40 p-4">
                   <div className="font-semibold">{u.user.name ?? u.user.email}</div>
@@ -306,6 +310,32 @@ function CustomerWorkspace() {
                       Last login <InstantText value={u.user.lastLoginAt} variant="audit" />
                     </span>
                   </div>
+                  {u.status === "INVITED" || u.user.status === "INVITED" ? (
+                    <button
+                      type="button"
+                      className="mt-3 h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase hover:border-steel"
+                      onClick={() => {
+                        void (async () => {
+                          const r = await inviteCompanyUserFn({
+                            data: { companyId: id, email: u.user.email, role: u.role },
+                          });
+                          if (!r.ok) toast.error(r.error);
+                          else {
+                            toast.success(
+                              r.data.emailSent
+                                ? "Invitation resent"
+                                : r.data.emailDeferred
+                                  ? "Invitation deferred — enable email delivery to send"
+                                  : "Invitation created but email failed",
+                            );
+                            await reload();
+                          }
+                        })();
+                      }}
+                    >
+                      Resend invitation
+                    </button>
+                  ) : null}
                 </li>
               ))}
             </WorkspaceList>
@@ -321,22 +351,27 @@ function CustomerWorkspace() {
                     role: string;
                     status: string;
                     emailDeferred: boolean;
+                    createdAt?: string;
                   }) => (
                     <li key={inv.id} className="border border-border px-4 py-3 text-[13px]">
-                      {inv.email} · {inv.role} · {inv.status}
-                      {inv.emailDeferred ? (
-                        <span className="ml-2 text-steel">(email deferred)</span>
-                      ) : null}
+                      <div>
+                        {inv.email} · {inv.role} · {inv.status}
+                      </div>
+                      <div className="mt-1 text-[12px] text-steel">
+                        {inv.emailDeferred
+                          ? "Email deferred (delivery disabled or not yet sent)"
+                          : "Invitation sent"}
+                        {inv.createdAt ? (
+                          <>
+                            {" · "}
+                            <InstantText value={inv.createdAt} variant="audit" />
+                          </>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
                 </ul>
               )}
-              {inviteToken ? (
-                <p className="mt-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
-                  Invite email was deferred — copy activation token now:{" "}
-                  <code className="break-all">{inviteToken}</code>
-                </p>
-              ) : null}
             </section>
           </div>
         ) : null}
@@ -467,9 +502,8 @@ function CustomerWorkspace() {
         <InviteDrawer
           companyId={company.id}
           onClose={() => setInviteOpen(false)}
-          onSaved={async (token) => {
+          onSaved={async () => {
             setInviteOpen(false);
-            setInviteToken(token);
             await reload();
           }}
         />
@@ -1037,7 +1071,7 @@ function InviteDrawer({
 }: {
   companyId: string;
   onClose: () => void;
-  onSaved: (token: string | null) => Promise<void>;
+  onSaved: () => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("TRADE_BUYER");
@@ -1057,16 +1091,18 @@ function InviteDrawer({
               toast.success(
                 r.data.emailSent
                   ? "Invitation sent"
-                  : "Invitation created (email deferred)",
+                  : r.data.emailDeferred
+                    ? "Invitation created — email deferred (delivery disabled)"
+                    : "Invitation created — email failed; use Resend invitation",
               );
-              await onSaved(r.data.inviteToken);
+              await onSaved();
             }
           })();
         }}
       >
         <p className="text-[12px] text-steel">
-          An activation email is sent when outbound email is enabled. If delivery is deferred, an
-          activation token will be shown for admin use.
+          Sends a branded activation email via Admin → Settings → Email. The activation link is
+          never shown in this workspace.
         </p>
         <Field label="Email">
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
@@ -1080,7 +1116,7 @@ function InviteDrawer({
           </select>
         </Field>
         <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">
-          Create invitation
+          Send invitation
         </button>
       </form>
     </Drawer>

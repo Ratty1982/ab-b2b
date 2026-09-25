@@ -144,6 +144,11 @@ export const tradeApplicationRejectSchema = z.object({
   customerMessage: optionalText(4000),
 });
 
+/** Resend / retry TRADE_APPLICATION_APPROVED for an already-approved application. */
+export const tradeApplicationResendActivationSchema = z.object({
+  id: z.string().cuid(),
+});
+
 /** Staff amendment of applicant-submitted fields (open applications only). */
 export const tradeApplicationStaffEditSchema = z
   .object({

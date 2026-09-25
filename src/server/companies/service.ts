@@ -981,9 +981,6 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
     emailDeferred: !emailSent,
     emailSent,
     expiresAt: invitation.expiresAt.toISOString(),
-    /** Opaque token for admin copy if email deferred — only returned at creation time */
-    inviteToken: emailSent ? null : token,
-    activationPath: emailSent ? null : activationPath,
   };
 }
 

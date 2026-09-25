@@ -92,13 +92,14 @@ On approve (idempotent if already approved with `companyId`):
 4. Optional sales-rep assignment  
 5. Create or link TRADE User (`INVITED`)  
 6. Upsert `CompanyUser` (`TRADE_ADMIN`, `INVITED`)  
-7. Create `UserInvitation` (token hashed; raw token returned once; `emailDeferred: true`)  
+7. Create `UserInvitation` (token hashed; raw token never returned to Admin UI; `emailDeferred` cleared after successful send)  
 8. Mark application `APPROVED`  
-9. Audit `application.approved` + `application.activation_initiated`
+9. Audit `application.approved` + `application.activation_initiated` (no raw token in metadata)  
+10. Dispatch `TRADE_APPLICATION_APPROVED` via TransactionalEmailService (SMTP from Admin → Settings → Email)
 
-Rollback: all steps run in a Prisma transaction. Failure leaves the application reviewable.
+Rollback: company/user creation runs in a Prisma transaction. Email send happens **after** commit — SMTP failure does not undo approval.
 
-Double approve does **not** create duplicate companies/users.
+Double approve does **not** create duplicate companies/users. Use **Send / Retry activation email** to resend (reissues a fresh invitation token).
 
 ---
 
@@ -111,7 +112,7 @@ Double approve does **not** create duplicate companies/users.
 5. Invitation `ACCEPTED`  
 6. Applicant logs in → `/portal`
 
-No temporary passwords are emailed. When outbound email is configured, send the same `/activate?token=` link; do not invent a second auth stack.
+No temporary passwords are emailed. Activation links are delivered only via `TRADE_APPLICATION_APPROVED` / company invite emails — never displayed in the Admin UI.
 
 ---
 
@@ -126,7 +127,7 @@ No temporary passwords are emailed. When outbound email is configured, send the 
 | Password reset | Better Auth path via the same transport |
 
 Configure SMTP in **Admin → Settings → Email**. See `docs/transactional-email.md`.
-When delivery is disabled, outbox rows are `DEFERRED` and `emailDeferred` remains true until send succeeds.
+When delivery is disabled, outbox rows are `DEFERRED` and invitation `emailDeferred` remains true until send succeeds. Staff can retry from the application detail panel after re-enabling delivery.
 
 ---
 

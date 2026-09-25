@@ -303,6 +303,18 @@ export const approveTradeApplicationFn = createServerFn({ method: "POST" })
     }
   });
 
+export const resendTradeApplicationActivationEmailFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.resendTradeApplicationActivationEmail(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const rejectTradeApplicationFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

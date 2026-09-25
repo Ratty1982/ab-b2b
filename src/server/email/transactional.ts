@@ -263,21 +263,79 @@ export async function attemptSend(
 }
 
 async function safeAttempt(emailId: string): Promise<boolean> {
+  const result = await safeAttemptDetailed(emailId);
+  return result.emailSent;
+}
+
+export type EmailDispatchResult = {
+  emailSent: boolean;
+  emailDeferred: boolean;
+  emailStatus: TransactionalEmailStatus | "NONE";
+  toEmail: string | null;
+  sentAt: string | null;
+  emailId: string | null;
+};
+
+export async function safeAttemptDetailed(emailId: string): Promise<EmailDispatchResult> {
   try {
-    const sent = await attemptSend(emailId);
-    return sent.ok;
+    await attemptSend(emailId);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "unknown";
-    await prisma.transactionalEmail.update({
-      where: { id: emailId },
-      data: {
-        status: "FAILED",
-        attemptCount: { increment: 1 },
-        lastError: detail.slice(0, 500),
-      },
-    }).catch(() => undefined);
-    return false;
+    await prisma.transactionalEmail
+      .update({
+        where: { id: emailId },
+        data: {
+          status: "FAILED",
+          attemptCount: { increment: 1 },
+          lastError: detail.slice(0, 500),
+        },
+      })
+      .catch(() => undefined);
   }
+  return loadEmailDispatchResult(emailId);
+}
+
+export async function loadEmailDispatchResult(emailId: string | null | undefined): Promise<EmailDispatchResult> {
+  if (!emailId) {
+    return {
+      emailSent: false,
+      emailDeferred: false,
+      emailStatus: "NONE",
+      toEmail: null,
+      sentAt: null,
+      emailId: null,
+    };
+  }
+  const row = await prisma.transactionalEmail.findUnique({ where: { id: emailId } });
+  if (!row) {
+    return {
+      emailSent: false,
+      emailDeferred: false,
+      emailStatus: "NONE",
+      toEmail: null,
+      sentAt: null,
+      emailId: null,
+    };
+  }
+  return {
+    emailSent: row.status === "SENT",
+    emailDeferred: row.status === "DEFERRED",
+    emailStatus: row.status,
+    toEmail: row.toEmail,
+    sentAt: row.sentAt?.toISOString() ?? null,
+    emailId: row.id,
+  };
+}
+
+export async function loadLatestPurposeDispatch(
+  purpose: TransactionalEmailPurpose,
+  entityId: string,
+): Promise<EmailDispatchResult> {
+  const row = await prisma.transactionalEmail.findFirst({
+    where: { purpose, entityId },
+    orderBy: { createdAt: "desc" },
+  });
+  return loadEmailDispatchResult(row?.id);
 }
 
 /**
@@ -392,12 +450,27 @@ export async function sendTradeApplicationMoreInfoEmail(applicationId: string): 
   return safeAttempt(upsert.id);
 }
 
+/**
+ * Queue + attempt TRADE_APPLICATION_APPROVED.
+ * Pass `refreshBodies: true` when reissuing a fresh activation token (resend).
+ * Never logs or returns the activation token.
+ */
 export async function sendTradeApplicationApprovedEmail(
   applicationId: string,
   activationPath: string | null,
-): Promise<boolean> {
+  options?: { refreshBodies?: boolean },
+): Promise<EmailDispatchResult> {
   const snap = await loadTradeApplicationEmailSnapshot(applicationId);
-  if (!snap?.contactEmail) return false;
+  if (!snap?.contactEmail) {
+    return {
+      emailSent: false,
+      emailDeferred: false,
+      emailStatus: "NONE",
+      toEmail: null,
+      sentAt: null,
+      emailId: null,
+    };
+  }
   const footer = await getEmailFooterMeta();
   const bodies = buildTradeApplicationApprovedBodies(
     {
@@ -415,7 +488,22 @@ export async function sendTradeApplicationApprovedEmail(
     entityType: "TradeApplication",
     entityId: applicationId,
   });
-  return safeAttempt(upsert.id);
+
+  if (!upsert.created && options?.refreshBodies) {
+    await prisma.transactionalEmail.update({
+      where: { id: upsert.id },
+      data: {
+        subject: bodies.subject,
+        textBody: bodies.text,
+        htmlBody: bodies.html,
+        toEmail: snap.contactEmail,
+        status: "PENDING",
+        lastError: null,
+      },
+    });
+  }
+
+  return safeAttemptDetailed(upsert.id);
 }
 
 export async function sendTradeApplicationRejectedEmail(applicationId: string): Promise<boolean> {

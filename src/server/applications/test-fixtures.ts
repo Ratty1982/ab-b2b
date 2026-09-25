@@ -71,3 +71,33 @@ export function validTradeApplicationInput(partial: {
     websiteConfirm: partial.websiteConfirm ?? "",
   };
 }
+
+/** Extract activation token from TRADE_APPLICATION_APPROVED email body (tests only). */
+export function activationTokenFromEmailBody(textBody: string): string {
+  const match = textBody.match(/\/activate\?token=([^&\s<"']+)/);
+  if (!match?.[1]) {
+    throw new Error("Activation token not found in email body");
+  }
+  return decodeURIComponent(match[1]);
+}
+
+export async function loadApprovedActivationToken(
+  db: {
+    transactionalEmail: {
+      findFirst: (args: {
+        where: { entityId: string; purpose: string };
+        orderBy: { createdAt: string };
+      }) => Promise<{ textBody: string | null } | null>;
+    };
+  },
+  applicationId: string,
+): Promise<string> {
+  const mail = await db.transactionalEmail.findFirst({
+    where: { entityId: applicationId, purpose: "TRADE_APPLICATION_APPROVED" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!mail?.textBody) {
+    throw new Error("TRADE_APPLICATION_APPROVED email not found");
+  }
+  return activationTokenFromEmailBody(mail.textBody);
+}

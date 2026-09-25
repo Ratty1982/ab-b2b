@@ -12,10 +12,12 @@ import {
   tradeApplicationDeleteSchema,
   tradeApplicationMoreInfoSchema,
   tradeApplicationRejectSchema,
+  tradeApplicationResendActivationSchema,
   tradeApplicationStaffEditSchema,
   tradeApplicationSubmitSchema,
   tradeApplicationWithdrawSchema,
 } from "@/domain/trade-application";
+import type { EmailDispatchResult } from "@/server/email/transactional";
 import { emptyToNull } from "@/domain/company";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
 
@@ -435,7 +437,7 @@ export async function getTradeApplication(actorUserId: string, id: string) {
   if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
 
   const email = contactEmail(app.primaryContact);
-  const [identityWarnings, possibleDuplicates] = await Promise.all([
+  const [identityWarnings, possibleDuplicates, activation] = await Promise.all([
     email ? findIdentityWarnings(email) : Promise.resolve([]),
     findPossibleDuplicates({
       id: app.id,
@@ -446,6 +448,7 @@ export async function getTradeApplication(actorUserId: string, id: string) {
       claimedAutopartCustomerCode: app.claimedAutopartCustomerCode,
       postcode: tradingPostcode(app.tradingAddress),
     }),
+    loadActivationSummary(app),
   ]);
 
   return {
@@ -464,6 +467,62 @@ export async function getTradeApplication(actorUserId: string, id: string) {
       : null,
     identityWarnings,
     possibleDuplicates,
+    activation,
+    contactEmail: email || null,
+  };
+}
+
+async function loadActivationSummary(app: {
+  id: string;
+  status: string;
+  companyId: string | null;
+  primaryContact: unknown;
+}) {
+  if (app.status !== "APPROVED" || !app.companyId) return null;
+  const email = contactEmail(app.primaryContact);
+  if (!email) return null;
+
+  const membership = await prisma.companyUser.findFirst({
+    where: {
+      companyId: app.companyId,
+      user: { email },
+    },
+    include: { user: { select: { id: true, status: true, email: true } } },
+  });
+
+  const { loadLatestPurposeDispatch } = await import("@/server/email/transactional");
+  const dispatch = await loadLatestPurposeDispatch("TRADE_APPLICATION_APPROVED", app.id);
+
+  const pendingInvite = membership
+    ? await prisma.userInvitation.findFirst({
+        where: {
+          companyId: app.companyId,
+          userId: membership.userId,
+          kind: "COMPANY_USER",
+          status: "PENDING",
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : null;
+
+  const membershipStatus = membership?.status ?? null;
+  const alreadyActive = membershipStatus === "ACTIVE";
+  const canResend =
+    !alreadyActive &&
+    Boolean(membership) &&
+    (membershipStatus === "INVITED" || Boolean(pendingInvite));
+
+  return {
+    contactEmail: email,
+    membershipStatus,
+    userStatus: membership?.user.status ?? null,
+    invitationStatus: pendingInvite?.status ?? (alreadyActive ? "ACCEPTED" : null),
+    invitationExpiresAt: pendingInvite?.expiresAt.toISOString() ?? null,
+    emailDeferred: pendingInvite?.emailDeferred ?? dispatch.emailDeferred,
+    emailStatus: dispatch.emailStatus,
+    emailSent: dispatch.emailSent,
+    sentAt: dispatch.sentAt,
+    canResendActivation: canResend,
   };
 }
 
@@ -560,14 +619,17 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       companyId: preview.companyId,
       after: { companyId: preview.companyId, created: false, idempotent: true },
     });
+    const activation = await loadActivationSummary(preview);
     return {
       applicationId: preview.id,
       companyId: preview.companyId,
       created: false as const,
-      inviteToken: null as string | null,
-      activationPath: null as string | null,
-      emailDeferred: false,
-      emailSent: false,
+      contactEmail: contactEmail(preview.primaryContact) || null,
+      emailSent: activation?.emailSent ?? false,
+      emailDeferred: activation?.emailDeferred ?? false,
+      emailStatus: activation?.emailStatus ?? ("NONE" as const),
+      sentAt: activation?.sentAt ?? null,
+      canResendActivation: activation?.canResendActivation ?? false,
     };
   }
 
@@ -765,12 +827,26 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     ? `/activate?token=${encodeURIComponent(result.inviteToken)}`
     : null;
 
-  let emailSent = false;
-  try {
-    const { sendTradeApplicationApprovedEmail } = await import("@/server/email/transactional");
-    emailSent = await sendTradeApplicationApprovedEmail(input.id, activationPath);
-  } catch {
-    emailSent = false;
+  let dispatch: EmailDispatchResult = {
+    emailSent: false,
+    emailDeferred: false,
+    emailStatus: "NONE",
+    toEmail: contactEmail(preview.primaryContact) || null,
+    sentAt: null,
+    emailId: null,
+  };
+  if (activationPath) {
+    try {
+      const { sendTradeApplicationApprovedEmail } = await import("@/server/email/transactional");
+      dispatch = await sendTradeApplicationApprovedEmail(input.id, activationPath);
+    } catch {
+      dispatch = {
+        ...dispatch,
+        emailSent: false,
+        emailDeferred: false,
+        emailStatus: "FAILED",
+      };
+    }
   }
 
   await recordAuditEvent({
@@ -785,7 +861,8 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       priceListId: input.priceListId ?? null,
       salesRepId: input.salesRepId ?? null,
       activationInitiated: Boolean(result.inviteToken),
-      emailSent,
+      emailSent: dispatch.emailSent,
+      emailStatus: dispatch.emailStatus,
     },
   });
 
@@ -796,9 +873,13 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       entityId: input.id,
       actorUserId,
       companyId: result.companyId,
-      metadata: { emailSent, userId: result.userId },
+      metadata: {
+        emailSent: dispatch.emailSent,
+        emailStatus: dispatch.emailStatus,
+        userId: result.userId,
+      },
     });
-    if (emailSent) {
+    if (dispatch.emailSent) {
       await prisma.userInvitation.updateMany({
         where: {
           companyId: result.companyId,
@@ -810,14 +891,150 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     }
   }
 
+  const canResend =
+    Boolean(result.inviteToken) &&
+    !dispatch.emailSent &&
+    (dispatch.emailStatus === "FAILED" ||
+      dispatch.emailStatus === "DEFERRED" ||
+      dispatch.emailStatus === "PENDING" ||
+      dispatch.emailStatus === "NONE");
+
   return {
     applicationId: result.app.id,
     companyId: result.companyId,
     created: result.created,
-    inviteToken: result.inviteToken,
-    activationPath,
-    emailDeferred: !emailSent,
-    emailSent,
+    contactEmail: dispatch.toEmail ?? (contactEmail(preview.primaryContact) || null),
+    emailSent: dispatch.emailSent,
+    emailDeferred: dispatch.emailDeferred,
+    emailStatus: dispatch.emailStatus,
+    sentAt: dispatch.sentAt,
+    canResendActivation: canResend || dispatch.emailSent,
+  };
+}
+
+/**
+ * Resend TRADE_APPLICATION_APPROVED for an already-approved application.
+ * Reissues a fresh invitation token (raw token cannot be recovered from hash).
+ * Does not recreate Company / User / CompanyUser / approval.
+ */
+export async function resendTradeApplicationActivationEmail(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "applications.approve");
+  const input = tradeApplicationResendActivationSchema.parse(raw);
+
+  const app = await prisma.tradeApplication.findUnique({ where: { id: input.id } });
+  if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
+  if (app.status !== "APPROVED" || !app.companyId) {
+    throw new AuthError("Only approved applications can resend activation email", "VALIDATION", 400);
+  }
+
+  const email = contactEmail(app.primaryContact);
+  if (!email) throw new AuthError("Application missing contact email", "VALIDATION", 400);
+
+  const membership = await prisma.companyUser.findFirst({
+    where: {
+      companyId: app.companyId,
+      user: { email },
+    },
+    include: { user: true },
+  });
+  if (!membership) {
+    throw new AuthError("No company membership found for applicant", "NOT_FOUND", 404);
+  }
+  if (membership.status === "ACTIVE" || membership.user.status === "ACTIVE") {
+    throw new AuthError(
+      "Account is already activated. Use password reset instead.",
+      "VALIDATION",
+      400,
+    );
+  }
+
+  const { token, tokenHash } = generateInviteToken();
+  const invitation = await prisma.$transaction(async (tx) => {
+    await tx.userInvitation.updateMany({
+      where: {
+        companyId: app.companyId!,
+        userId: membership.userId,
+        kind: "COMPANY_USER",
+        status: "PENDING",
+      },
+      data: { status: "REVOKED" },
+    });
+
+    await tx.companyUser.update({
+      where: { companyId_userId: { companyId: app.companyId!, userId: membership.userId } },
+      data: { status: "INVITED" },
+    });
+
+    if (membership.user.status !== "INVITED") {
+      await tx.user.update({
+        where: { id: membership.userId },
+        data: { status: "INVITED" },
+      });
+    }
+
+    return tx.userInvitation.create({
+      data: {
+        kind: "COMPANY_USER",
+        companyId: app.companyId!,
+        userId: membership.userId,
+        email,
+        role: membership.role,
+        tokenHash,
+        invitedById: actorUserId,
+        expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        emailDeferred: true,
+      },
+    });
+  });
+
+  const activationPath = `/activate?token=${encodeURIComponent(token)}`;
+  let dispatch: EmailDispatchResult;
+  try {
+    const { sendTradeApplicationApprovedEmail } = await import("@/server/email/transactional");
+    dispatch = await sendTradeApplicationApprovedEmail(app.id, activationPath, {
+      refreshBodies: true,
+    });
+  } catch {
+    dispatch = {
+      emailSent: false,
+      emailDeferred: false,
+      emailStatus: "FAILED",
+      toEmail: email,
+      sentAt: null,
+      emailId: null,
+    };
+  }
+
+  if (dispatch.emailSent) {
+    await prisma.userInvitation.update({
+      where: { id: invitation.id },
+      data: { emailDeferred: false },
+    });
+  }
+
+  await recordAuditEvent({
+    action: "application.activation_resent",
+    entityType: "TradeApplication",
+    entityId: app.id,
+    actorUserId,
+    companyId: app.companyId,
+    metadata: {
+      emailSent: dispatch.emailSent,
+      emailStatus: dispatch.emailStatus,
+      invitationId: invitation.id,
+      userId: membership.userId,
+    },
+  });
+
+  return {
+    applicationId: app.id,
+    companyId: app.companyId,
+    contactEmail: dispatch.toEmail ?? email,
+    emailSent: dispatch.emailSent,
+    emailDeferred: dispatch.emailDeferred,
+    emailStatus: dispatch.emailStatus,
+    sentAt: dispatch.sentAt,
+    canResendActivation: true,
   };
 }
 
