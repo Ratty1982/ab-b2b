@@ -248,6 +248,29 @@ describe("trade onboarding journey", () => {
     await expect(getTradeApplication(adminId, spam.id)).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("deletes approved applications without removing the customer company", async () => {
+    const { deleteTradeApplication } = await import("@/server/applications/service");
+    const email = `del.approved.${suffix}@example.invalid`;
+    const submitted = await submitTradeApplication(
+      validTradeApplicationInput({
+        companyName: `Delete Approved ${suffix}`,
+        email,
+      }),
+    );
+    const approved = await approveTradeApplication(adminId, { id: submitted.id });
+    expect(approved.companyId).toBeTruthy();
+
+    const deleted = await deleteTradeApplication(adminId, { id: submitted.id });
+    expect(deleted.ok).toBe(true);
+    expect(deleted.customerPreserved).toBe(true);
+    expect(deleted.companyId).toBe(approved.companyId);
+
+    await expect(getTradeApplication(adminId, submitted.id)).rejects.toBeInstanceOf(AuthError);
+    const company = await prisma.company.findUnique({ where: { id: approved.companyId } });
+    expect(company).toBeTruthy();
+    expect(company!.name).toBe(`Delete Approved ${suffix}`);
+  });
+
   it("approves with commercial setup, activates invite, and scopes company", async () => {
     const email = `activate.${suffix}@example.invalid`;
     const submitted = await submitTradeApplication(

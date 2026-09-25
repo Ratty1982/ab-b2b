@@ -24,7 +24,6 @@ import {
   requestTradeApplicationMoreInfoFn,
   resendTradeApplicationActivationEmailFn,
   updateTradeApplicationDetailsFn,
-  withdrawTradeApplicationFn,
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -1028,59 +1027,45 @@ function ApplicationsPage() {
                   >
                     Reject
                   </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    className="h-10 rounded-md border border-bad px-4 text-[11px] font-bold uppercase text-bad disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => setDeleteOpen(true)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              ) : detail.status !== "APPROVED" ? (
-                <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    className="h-10 rounded-md border border-bad px-4 text-[11px] font-bold uppercase text-bad disabled:opacity-40"
-                    onClick={() => setDeleteOpen(true)}
-                  >
-                    Delete
-                  </button>
                 </div>
               ) : null}
 
+              <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="h-10 rounded-md border border-bad px-4 text-[11px] font-bold uppercase text-bad disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  Delete application
+                </button>
+              </div>
+
               <ConfirmAction
                 open={deleteOpen}
-                title={detail.companyId ? "Withdraw this application?" : "Delete this application?"}
+                title="Delete this application?"
                 description={
                   detail.companyId
-                    ? "This application is linked to a customer, so it will be withdrawn (soft-deleted) rather than permanently removed."
-                    : "Permanently delete this unlinked application? This cannot be undone."
+                    ? `Permanently remove application ${detail.reference} from the list? The linked customer account is kept — only the application record is deleted.`
+                    : `Permanently delete application ${detail.reference}? This cannot be undone.`
                 }
-                confirmLabel={detail.companyId ? "Withdraw" : "Delete"}
+                confirmLabel="Delete application"
                 onOpenChange={setDeleteOpen}
                 onConfirm={() => {
                   void runAction("Delete application", async () => {
-                    if (detail.companyId) {
-                      const r = await withdrawTradeApplicationFn({
-                        data: { id: detail.id, reviewNotes: reviewNotes || null },
-                      });
-                      if (!r.ok) {
-                        toast.error(r.error);
-                        return;
-                      }
-                      toast.success("Application withdrawn");
-                    } else {
-                      const r = await deleteTradeApplicationFn({ data: { id: detail.id } });
-                      if (!r.ok) {
-                        toast.error(r.error);
-                        return;
-                      }
-                      toast.success("Application deleted");
-                      setSelected(null);
-                      setDetail(null);
+                    const r = await deleteTradeApplicationFn({ data: { id: detail.id } });
+                    if (!r.ok) {
+                      toast.error(r.error);
+                      return;
                     }
+                    toast.success(
+                      r.data.customerPreserved
+                        ? "Application deleted — customer account kept"
+                        : "Application deleted",
+                    );
+                    setSelected(null);
+                    setDetail(null);
+                    setApprovalEmail(null);
                     setDeleteOpen(false);
                     await load();
                   });

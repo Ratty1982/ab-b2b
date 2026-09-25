@@ -76,7 +76,7 @@ Actions:
 - Request info (requires customer-facing message; **email deferred**)  
 - Approve (transactional)  
 - Reject (requires internal notes; optional customer message — never auto-emailed)  
-- Delete — permanent remove when no Company is linked; otherwise **Withdraw** (`WITHDRAWN`) to soft-delete  
+- Delete — permanently removes the application record from Admin. If approval already created a customer, the **Company / portal user are kept**; only the application row is deleted.  
 
 **View customer** opens the existing Customer workspace after approval.
 

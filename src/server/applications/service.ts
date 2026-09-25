@@ -1192,44 +1192,47 @@ export async function withdrawTradeApplication(actorUserId: string, raw: unknown
 }
 
 /**
- * Permanent delete for unlinked spam/test applications only.
- * Blocked when a Company was created from approval.
+ * Permanent delete of a trade application record.
+ * Does NOT delete Company / User / CompanyUser created by approval —
+ * those remain on the customer workspace.
  */
 export async function deleteTradeApplication(actorUserId: string, raw: unknown) {
   await requireSystemPermission(actorUserId, "applications.approve");
   const input = tradeApplicationDeleteSchema.parse(raw);
   const app = await prisma.tradeApplication.findUnique({ where: { id: input.id } });
   if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
-  if (app.companyId) {
-    throw new AuthError(
-      "Cannot delete an application linked to a customer. Withdraw it or close the customer instead.",
-      "CONFLICT",
-      409,
-    );
-  }
-  if (app.status === "APPROVED") {
-    throw new AuthError("Approved applications cannot be deleted", "CONFLICT", 409);
-  }
 
-  await prisma.document.updateMany({
-    where: { applicationId: input.id },
-    data: { applicationId: null },
+  const linkedCompanyId = app.companyId;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.document.updateMany({
+      where: { applicationId: input.id },
+      data: { applicationId: null },
+    });
+    await tx.tradeApplication.delete({ where: { id: input.id } });
   });
-  await prisma.tradeApplication.delete({ where: { id: input.id } });
 
   await recordAuditEvent({
     action: "application.deleted",
     entityType: "TradeApplication",
     entityId: input.id,
     actorUserId,
+    companyId: linkedCompanyId,
     metadata: {
       reference: app.reference,
       companyName: app.companyName,
       status: app.status,
+      linkedCompanyId,
+      customerPreserved: Boolean(linkedCompanyId),
     },
   });
 
-  return { ok: true as const, id: input.id };
+  return {
+    ok: true as const,
+    id: input.id,
+    companyId: linkedCompanyId,
+    customerPreserved: Boolean(linkedCompanyId),
+  };
 }
 
 /**
