@@ -383,13 +383,9 @@ describe("staff users — invitations & lifecycle", () => {
     expect(await prisma.user.findUnique({ where: { id: established.user.id } })).toBeTruthy();
   });
 
-  it("blocks deactivating the last effective Super Admin", async () => {
-    const supers = await prisma.userRole.findMany({
-      where: { role: { key: "SUPER_ADMIN" }, user: { status: "ACTIVE" } },
-      include: { user: true },
-    });
-    // Ensure only adminId is an ACTIVE super admin among our controlled set by
-    // verifying the guard when attempting to deactivate adminId from another super.
+  it("blocks self-deactivate and last Super Admin demotion", async () => {
+    await expect(deactivateStaffUser(adminId, { id: adminId })).rejects.toBeInstanceOf(AuthError);
+
     const extra = await createStaffUser(adminId, {
       firstName: "Extra",
       lastName: "Admin",
@@ -400,31 +396,35 @@ describe("staff users — invitations & lifecycle", () => {
       id: extra.user.id,
       password: "ExtraAdminPass99!",
     });
+    const deactivated = await deactivateStaffUser(adminId, { id: extra.user.id });
+    expect(deactivated.status).toBe("DISABLED");
 
-    // Deactivating one of two supers is OK
-    await deactivateStaffUser(adminId, { id: extra.user.id });
-
-    // With only adminId remaining active as super (plus any seed supers), try to
-    // remove all other supers then block last.
-    for (const row of supers) {
-      if (row.userId === adminId) continue;
-      if (row.user.status === "ACTIVE") {
-        try {
-          await deactivateStaffUser(adminId, { id: row.userId });
-        } catch {
-          /* may already be protected or not INTERNAL */
-        }
-      }
-    }
-
-    const remaining = await prisma.userRole.count({
+    const otherActiveSupers = await prisma.user.findMany({
       where: {
-        role: { key: "SUPER_ADMIN" },
-        user: { status: "ACTIVE", actorType: "INTERNAL" },
+        id: { not: adminId },
+        status: "ACTIVE",
+        actorType: "INTERNAL",
+        userRoles: { some: { role: { key: "SUPER_ADMIN" } } },
       },
+      select: { id: true },
     });
-    if (remaining === 1) {
-      await expect(deactivateStaffUser(adminId, { id: adminId })).rejects.toBeInstanceOf(AuthError);
+    if (otherActiveSupers.length > 0) {
+      await prisma.user.updateMany({
+        where: { id: { in: otherActiveSupers.map((u) => u.id) } },
+        data: { status: "DISABLED" },
+      });
+    }
+    try {
+      await expect(
+        updateStaffUser(adminId, { id: adminId, role: "MARKETING" }),
+      ).rejects.toMatchObject({ message: expect.stringMatching(/Super Admin/i) });
+    } finally {
+      if (otherActiveSupers.length > 0) {
+        await prisma.user.updateMany({
+          where: { id: { in: otherActiveSupers.map((u) => u.id) } },
+          data: { status: "ACTIVE" },
+        });
+      }
     }
   });
 

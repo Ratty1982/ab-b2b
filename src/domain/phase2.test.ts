@@ -205,32 +205,34 @@ describe("phase 2 permissions", () => {
 });
 
 describe("internal staff users", () => {
-  it("requires name, email and a system role", () => {
+  it("requires first name, last name, email and a system role", () => {
     expect(() =>
       internalUserCreateSchema.parse({
-        name: "Priya Nayar",
+        firstName: "Priya",
+        lastName: "Nayar",
         email: "priya.nayar@automotivebrands.co.uk",
         role: "SALES_REPRESENTATIVE",
       }),
     ).not.toThrow();
   });
 
-  it("rejects blank names and short passwords", () => {
+  it("rejects blank names", () => {
     expect(() =>
       internalUserCreateSchema.parse({
-        name: " ",
+        firstName: " ",
+        lastName: "Nayar",
         email: "not-an-email",
         role: "ACCOUNTS",
       }),
     ).toThrow();
     expect(() =>
       internalUserCreateSchema.parse({
-        name: "Accounts",
+        firstName: "Accounts",
+        lastName: "User",
         email: "accounts@automotivebrands.co.uk",
         role: "ACCOUNTS",
-        password: "short",
       }),
-    ).toThrow();
+    ).not.toThrow();
   });
 
   it("lists every internal system role for assignment", () => {
