@@ -35,6 +35,10 @@ import {
   toCustomerSellUnitPrice,
 } from "@/domain/money";
 import {
+  calculateTradeOrderTotals,
+  tradeDeliveryTotalsDto,
+} from "@/domain/trade-delivery";
+import {
   assessBasketLineQuantity,
   isOrderableByStockPolicy,
   resolveCustomerOrdering,
@@ -109,6 +113,9 @@ export type CheckoutReview = {
     deliveryTotal: string;
     grandTotal: string;
     currency: "GBP";
+    freeDelivery?: boolean;
+    amountToFreeDelivery?: string | null;
+    deliveryLabel?: string;
   };
   hasBlockingIssues: boolean;
   deliveryAddress: DeliveryAddressSnapshot | null;
@@ -622,24 +629,24 @@ function linesToReviewLines(lines: ResolvedLine[]): CheckoutReviewLine[] {
   }));
 }
 
-function sumValidTotals(lines: ResolvedLine[]) {
-  let subtotal = moneyZero();
-  let vatTotal = moneyZero();
-  let grandTotal = moneyZero();
+function sumValidTotals(
+  lines: ResolvedLine[],
+  companyTaxStatus?: string | null,
+) {
+  let goodsNet = moneyZero();
+  let goodsVat = moneyZero();
   for (const line of lines) {
     if (line.issue !== "VALID" && line.issue !== "PRICE_UPDATED") continue;
     if (line.priceSource === "NONE") continue;
-    subtotal = addMoney(subtotal, parseMoney(line.lineNet2dp)!);
-    vatTotal = addMoney(vatTotal, parseMoney(line.lineVat2dp)!);
-    grandTotal = addMoney(grandTotal, parseMoney(line.lineGross2dp)!);
+    goodsNet = addMoney(goodsNet, parseMoney(line.lineNet2dp)!);
+    goodsVat = addMoney(goodsVat, parseMoney(line.lineVat2dp)!);
   }
-  return {
-    subtotal: moneyToString(subtotal, 2),
-    vatTotal: moneyToString(vatTotal, 2),
-    deliveryTotal: "0.00",
-    grandTotal: moneyToString(grandTotal, 2),
-    currency: "GBP" as const,
-  };
+  const breakdown = calculateTradeOrderTotals({
+    goodsNet,
+    goodsVat,
+    companyTaxStatus: companyTaxStatus ?? "STANDARD",
+  });
+  return tradeDeliveryTotalsDto(breakdown);
 }
 
 function hasBlocking(lines: ResolvedLine[]): boolean {
@@ -733,7 +740,7 @@ export async function previewCheckout(
     companyId: company.id,
     companyName: company.name,
     lines: linesToReviewLines(lines),
-    totals: sumValidTotals(lines),
+    totals: sumValidTotals(lines, company.taxStatus),
     hasBlockingIssues: hasBlocking(lines),
     deliveryAddress,
     contact,
@@ -863,7 +870,7 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       companyId: company.id,
       companyName: company.name,
       lines: linesToReviewLines(lines),
-      totals: sumValidTotals(lines),
+      totals: sumValidTotals(lines, company.taxStatus),
       hasBlockingIssues: true,
       deliveryAddress,
       contact: buildContactSnapshot(user, input.contact),
@@ -894,7 +901,8 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       ? company.autopartCustomerCode
       : null;
   const poNumber = input.poNumber ?? input.customerReference ?? null;
-  const totals = sumValidTotals(lines);
+  // Authoritative delivery + VAT recalculated server-side immediately before commit.
+  const totals = sumValidTotals(lines, company.taxStatus);
 
   const created = await prisma.$transaction(async (tx) => {
     // Re-check idempotency inside the transaction.

@@ -20,6 +20,10 @@ import {
   customerLineNetExVat,
 } from "@/domain/money";
 import {
+  calculateTradeOrderTotals,
+  tradeDeliveryTotalsDto,
+} from "@/domain/trade-delivery";
+import {
   assessBasketLineQuantity,
   basketLineIssueMessage,
   canDecrementQuantity,
@@ -102,6 +106,16 @@ export type PublicBasket = {
   unitCount: number;
   lines: PublicBasketLine[];
   totals: BasketMoney;
+  /** Trade delivery estimate from goods net (server-authoritative). */
+  delivery: {
+    deliveryNetDisplay: string;
+    freeDelivery: boolean;
+    amountToFreeDeliveryDisplay: string | null;
+    deliveryLabel: string;
+    /** Order total inc VAT including estimated delivery. */
+    orderGrossDisplay: string;
+    vatWithDeliveryDisplay: string;
+  };
   currency: "GBP";
   hasBlockingIssues: boolean;
 };
@@ -146,6 +160,7 @@ type BasketContext = {
   kind: "company" | "admin_test";
   companyId: string | null;
   companyName: string;
+  companyTaxStatus: string;
   /**
    * Admin PRICE_LIST mode: selected PriceList id.
    * Admin BASE_TRADE mode: null (resolver uses ProductVariant.tradePrice).
@@ -173,7 +188,7 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
     }
     const company = await prisma.company.findUnique({
       where: { id: actor.companyId },
-      select: { id: true, name: true, status: true },
+      select: { id: true, name: true, status: true, taxStatus: true },
     });
     if (!company || company.status !== "ACTIVE") {
       throw new AuthError("Company is not approved for ordering", "BASKET_COMPANY_INACTIVE", 403);
@@ -183,6 +198,7 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
       kind: "company",
       companyId: company.id,
       companyName: company.name,
+      companyTaxStatus: company.taxStatus,
       priceListId: null,
       adminTestActive: false,
       canMutate: hasPermission(profile, "orders.create"),
@@ -210,6 +226,7 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
         kind: "admin_test",
         companyId: null,
         companyName: `${ADMIN_TEST_BASKET_LABEL} · Default Trade Price`,
+        companyTaxStatus: "STANDARD",
         priceListId: null,
         adminTestActive: true,
         canMutate: true,
@@ -230,6 +247,7 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
         kind: "admin_test",
         companyId: null,
         companyName: `${ADMIN_TEST_BASKET_LABEL} · ${list.name}`,
+        companyTaxStatus: "STANDARD",
         priceListId: list.id,
         adminTestActive: true,
         canMutate: true,
@@ -481,6 +499,13 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     });
   }
 
+  const deliveryBreakdown = calculateTradeOrderTotals({
+    goodsNet: totalNet,
+    goodsVat: totalVat,
+    companyTaxStatus: ctx.companyTaxStatus,
+  });
+  const deliveryDto = tradeDeliveryTotalsDto(deliveryBreakdown);
+
   return {
     id: basketId,
     companyId: ctx.companyId,
@@ -491,6 +516,14 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     unitCount: lines.reduce((sum, line) => sum + line.quantity, 0),
     lines,
     totals: moneyBundle(totalNet, totalVat, totalGross),
+    delivery: {
+      deliveryNetDisplay: deliveryDto.deliveryTotal,
+      freeDelivery: deliveryDto.freeDelivery,
+      amountToFreeDeliveryDisplay: deliveryDto.amountToFreeDelivery,
+      deliveryLabel: deliveryDto.deliveryLabel,
+      orderGrossDisplay: deliveryDto.grandTotal,
+      vatWithDeliveryDisplay: deliveryDto.vatTotal,
+    },
     currency: "GBP",
     hasBlockingIssues,
   };

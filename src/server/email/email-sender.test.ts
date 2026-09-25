@@ -208,9 +208,14 @@ describe("branded transactional email shell", () => {
     expect(bodies.html).toContain("Product");
     expect(bodies.html).toContain("SKU-1");
     expect(bodies.html).toContain("Unit Price");
+    expect(bodies.html).toContain("Goods ex VAT");
+    expect(bodies.html).toContain("Delivery");
+    expect(bodies.html).toContain("FREE");
     expect(bodies.html).toContain("View your order");
     expect(bodies.html).toContain(EMAIL_SHELL_COLORS.red);
     expect(bodies.text).toContain("AB-000001");
+    expect(bodies.text).toContain("Goods ex VAT");
+    expect(bodies.text).toContain("Delivery: FREE");
     expect(bodies.text).toContain("VIEW YOUR ORDER");
     expect(bodies.html).not.toContain("smtp.office365");
   });

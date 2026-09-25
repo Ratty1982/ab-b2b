@@ -168,6 +168,12 @@ function PortalOrderDetailPage() {
             <dd className="num">£{order.subtotal}</dd>
           </div>
           <div className="flex justify-between gap-3">
+            <dt className="text-steel">Delivery</dt>
+            <dd className="num">
+              {order.deliveryTotal === "0.00" ? "FREE" : `£${order.deliveryTotal}`}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
             <dt className="text-steel">VAT</dt>
             <dd className="num">£{order.vatTotal}</dd>
           </div>

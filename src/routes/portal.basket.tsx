@@ -217,18 +217,29 @@ function BasketPage() {
         <aside className="h-fit rounded-lg border border-border bg-surface/40 p-5">
           <h2 className="font-display text-lg font-semibold uppercase">Summary</h2>
           <dl className="mt-4 space-y-2 text-[14px]">
-            <div className="flex justify-between gap-3">
-              <dt className="text-steel">Subtotal ex VAT</dt>
-              <dd className="num font-semibold">£{basket.totals.netDisplay}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-steel">VAT</dt>
-              <dd className="num font-semibold">£{basket.totals.vatDisplay}</dd>
-            </div>
-            <div className="flex justify-between gap-3 border-t border-border pt-2 text-base">
-              <dt className="font-semibold">Total inc VAT</dt>
-              <dd className="num font-semibold">£{basket.totals.grossDisplay}</dd>
-            </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Goods ex VAT</dt>
+                <dd className="num font-semibold">£{basket.totals.netDisplay}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Delivery</dt>
+                <dd className="num font-semibold">
+                  {basket.delivery.freeDelivery ? "FREE" : `£${basket.delivery.deliveryNetDisplay}`}
+                </dd>
+              </div>
+              {!basket.delivery.freeDelivery && basket.delivery.amountToFreeDeliveryDisplay ? (
+                <p className="text-[12px] text-steel">
+                  Add £{basket.delivery.amountToFreeDeliveryDisplay} more for FREE delivery
+                </p>
+              ) : null}
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">VAT</dt>
+                <dd className="num font-semibold">£{basket.delivery.vatWithDeliveryDisplay}</dd>
+              </div>
+              <div className="flex justify-between gap-3 border-t border-border pt-2 text-base">
+                <dt className="font-semibold">Total inc VAT</dt>
+                <dd className="num font-semibold">£{basket.delivery.orderGrossDisplay}</dd>
+              </div>
           </dl>
           <p className="mt-4 text-[12px] text-steel">Prices exclude VAT unless otherwise stated.</p>
           {basket.hasBlockingIssues ? (

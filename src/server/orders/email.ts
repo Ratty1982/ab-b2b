@@ -108,8 +108,16 @@ function orderSummaryTableHtml(order: OrderEmailSnapshot): string {
 </table>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin:8px 0 16px;">
   <tr>
-    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">Subtotal (ex VAT)</td>
+    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">Goods ex VAT</td>
     <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">£${escapeEmailHtml(formatGbp(order.subtotal))}</td>
+  </tr>
+  <tr>
+    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">Delivery</td>
+    <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">${
+      formatGbp(order.deliveryTotal) === "0.00"
+        ? "FREE"
+        : `£${escapeEmailHtml(formatGbp(order.deliveryTotal))}`
+    }</td>
   </tr>
   <tr>
     <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">VAT</td>
@@ -140,12 +148,13 @@ export function buildOrderReceivedCustomerBodies(
     `We've received your Automotive Brands order ${order.orderNumber}${ref}.`,
     "",
     `Company: ${order.companyName}`,
-    `Delivery: ${delivery}`,
+    `Delivery address: ${delivery}`,
     "",
     "Items:",
     itemsPlain(order),
     "",
-    `Subtotal (ex VAT): £${formatGbp(order.subtotal)} ${order.currency}`,
+    `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
+    `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
     `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
     `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
@@ -164,7 +173,7 @@ export function buildOrderReceivedCustomerBodies(
 <p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
 <p style="margin:0 0 16px;">We've received your Automotive Brands order <strong>${escapeEmailHtml(order.orderNumber)}</strong>${escapeEmailHtml(ref)}.</p>
 <p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}<br/>
-<strong>Delivery:</strong> ${escapeEmailHtml(delivery)}</p>
+<strong>Delivery address:</strong> ${escapeEmailHtml(delivery)}</p>
 ${orderSummaryTableHtml(order)}
 <p style="margin:0 0 8px;">Your order has been received and is pending processing.<br/>
 This confirmation does not mean the order has been despatched.</p>`;
@@ -207,6 +216,7 @@ export function buildOrderReceivedInternalBodies(
     itemsPlain(order),
     "",
     `Subtotal: £${formatGbp(order.subtotal)}`,
+    `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)}`}`,
     `VAT: £${formatGbp(order.vatTotal)}`,
     `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",

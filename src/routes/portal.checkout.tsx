@@ -219,9 +219,13 @@ function CheckoutPage() {
     }));
   const totals = review?.totals ?? {
     subtotal: ctx.basket.totals.netDisplay,
-    vatTotal: ctx.basket.totals.vatDisplay,
-    deliveryTotal: "0.00",
-    grandTotal: ctx.basket.totals.grossDisplay,
+    vatTotal: ctx.basket.delivery.vatWithDeliveryDisplay,
+    deliveryTotal: ctx.basket.delivery.deliveryNetDisplay,
+    grandTotal: ctx.basket.delivery.orderGrossDisplay,
+    freeDelivery: ctx.basket.delivery.freeDelivery,
+    amountToFreeDelivery: ctx.basket.delivery.amountToFreeDeliveryDisplay,
+    deliveryLabel: ctx.basket.delivery.deliveryLabel,
+    currency: "GBP" as const,
   };
   const blocking = review?.hasBlockingIssues ?? ctx.basket.hasBlockingIssues;
 
@@ -425,8 +429,10 @@ function CheckoutPage() {
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-steel">Delivery</dt>
-                <dd className="text-right text-[12px] text-steel">
-                  Confirmed to your trade account terms
+                <dd className="num font-semibold">
+                  {totals.freeDelivery || totals.deliveryTotal === "0.00"
+                    ? "FREE"
+                    : `£${totals.deliveryTotal}`}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
