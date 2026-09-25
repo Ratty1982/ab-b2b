@@ -1944,4 +1944,76 @@ export const listTransactionalEmailsFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getAutopart504cFeedSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/orders/autopart-504c");
+    return { ok: true as const, data: await feed.getAutopart504cFeedSettingsForActor(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const updateAutopart504cFeedSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { configured?: boolean; enabled?: boolean; allowedSender?: string | null },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504c");
+      return {
+        ok: true as const,
+        data: await feed.updateAutopart504cFeedSettings(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const dryRunAutopart504cFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504c");
+      return {
+        ok: true as const,
+        data: await feed.dryRunAutopart504cFile(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listAutopart504cImportRunsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { limit?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504c");
+      return {
+        ok: true as const,
+        data: await feed.listAutopart504cImportRuns(userId, data?.limit ?? 25),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+/** Live mailbox poll — blocked while feed is disabled (default). */
+export const pollAutopart504cMailboxFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/orders/autopart-504c");
+    return {
+      ok: true as const,
+      data: await feed.pollAutopart504cMailboxNow(userId),
+    };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 

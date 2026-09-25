@@ -379,6 +379,10 @@ export async function exportAutopartOrdersCsv(
     });
 
     for (const order of uniqueOrders) {
+      // Successful Autopart CSV handoff → customer-facing PROCESSING (CONFIRMED).
+      // Do not overwrite later fulfilment states; do not touch reservations; no APC.
+      const nextStatus =
+        order.status === "SUBMITTED" ? ("CONFIRMED" as const) : undefined;
       await tx.order.update({
         where: { id: order.id },
         data: {
@@ -387,8 +391,7 @@ export async function exportAutopartOrdersCsv(
           autopartExportedByUserId: userId,
           autopartExportBatchId: batch.id,
           autopartExportCount: { increment: 1 },
-          // Do NOT change Order.status / fulfilment — export ≠ despatched.
-          // Do NOT touch OrderStockReservation — reservation unchanged.
+          ...(nextStatus ? { status: nextStatus } : {}),
         },
       });
     }
@@ -431,7 +434,9 @@ export async function exportAutopartOrdersCsv(
         exportCountAfter: order.autopartExportCount + 1,
         apcInvoked: false,
         reservationUnchanged: true,
-        fulfilmentUnchanged: true,
+        statusAfterExport:
+          order.status === "SUBMITTED" ? "CONFIRMED" : order.status,
+        customerEmailOnExport: false,
       },
     });
   }

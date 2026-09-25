@@ -12,6 +12,7 @@ import { getServerEnv } from "@/server/env";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
+  buildOrderDespatchedCustomerBodies,
   buildOrderReceivedCustomerBodies,
   buildOrderReceivedInternalBodies,
   type OrderEmailSnapshot,
@@ -943,6 +944,12 @@ export async function retryTransactionalEmail(
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;
+    } else if (row.purpose === "ORDER_DESPATCHED") {
+      const bodies = buildOrderDespatchedCustomerBodies(snapshot, footer);
+      subject = bodies.subject;
+      textBody = bodies.text;
+      htmlBody = bodies.html;
+      toEmail = snapshot.contact.email || row.toEmail;
     }
   } else if (row.entityType === "TradeApplication") {
     const snap = await loadTradeApplicationEmailSnapshot(row.entityId);

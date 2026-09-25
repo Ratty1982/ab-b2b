@@ -249,6 +249,63 @@ ${orderSummaryTableHtml(order)}
   return { subject, text, html };
 }
 
+/**
+ * Customer despatch confirmation.
+ * Do not claim tracking / APC unless separately available.
+ */
+export function buildOrderDespatchedCustomerBodies(
+  order: OrderEmailSnapshot,
+  footer?: EmailFooterMeta,
+): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const ref = order.poNumber ? ` (your reference: ${order.poNumber})` : "";
+  const subject = `Your Automotive Brands order ${order.orderNumber} has been despatched`;
+
+  const text = [
+    `Hello ${order.contact.name},`,
+    "",
+    `Your order ${order.orderNumber}${ref} has been despatched.`,
+    "",
+    `Company: ${order.companyName}`,
+    "",
+    "Items:",
+    itemsPlain(order),
+    "",
+    `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
+    `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
+    `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
+    `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
+    "",
+    "Tracking information, where available, may follow separately.",
+    "",
+    `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
+    "",
+    "If you have questions, reply to this email or contact your account manager.",
+    "",
+    "Automotive Brands",
+    "https://automotivebrands.co.uk",
+  ].join("\n");
+
+  const bodyHtml = `
+<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
+<p style="margin:0 0 16px;">Your order <strong>${escapeEmailHtml(order.orderNumber)}</strong>${escapeEmailHtml(ref)} has been despatched.</p>
+<p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}</p>
+${orderSummaryTableHtml(order)}
+<p style="margin:0 0 8px;">Tracking information, where available, may follow separately.</p>`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Order ${order.orderNumber} despatched`,
+    bodyHtml,
+    cta: { label: "View your order", href: order.portalOrderUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
+
+  return { subject, text, html };
+}
+
 /** @deprecated Prefer buildOrderReceivedCustomerBodies + transactional outbox. */
 export type OrderReceivedEmailInput = {
   orderNumber: string;

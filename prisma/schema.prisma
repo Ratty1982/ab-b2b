@@ -192,6 +192,7 @@ enum StockReservationStatus {
 enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
+  ORDER_DESPATCHED
   TRADE_APPLICATION_RECEIVED
   TRADE_APPLICATION_INTERNAL_NOTIFICATION
   TRADE_APPLICATION_MORE_INFO
@@ -236,6 +237,20 @@ enum InvoiceStatus {
   PAID
   OVERDUE
   VOID
+}
+
+/// Autopart 504C document classification.
+enum AutopartDocumentKind {
+  INVOICE
+  CREDIT
+  UNKNOWN
+}
+
+enum Autopart504cImportStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+  DRY_RUN
 }
 
 enum LeadStatus {
@@ -340,6 +355,7 @@ model User {
   autopartCodesVerified Company[]       @relation("AutopartCodeVerifier")
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
+  autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   ownedLeads         Lead[]
   ownedOpportunities Opportunity[]
   sessions           AuthSession[]
@@ -1439,15 +1455,88 @@ model Invoice {
   grandTotal    Decimal       @db.Decimal(12, 2)
   issuedAt      DateTime?
   dueAt         DateTime?
-  /// Autopart / accounts package reference — eventual source of truth
+  /// Autopart document number (or other accounts package reference). Unique when set.
   externalRef   String?       @unique
+  /// Autopart 504C classification when sourced from invoice feed.
+  autopartDocumentKind AutopartDocumentKind?
+  autopartAccountCode String?
+  autopartCustomerOrderNumber String?
+  autopartDocumentAt DateTime?
+  autopartInitials String?
+  autopartImportRunId String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
   company Company @relation(fields: [companyId], references: [id])
   order   Order?  @relation(fields: [orderId], references: [id])
+  autopartImportRun Autopart504cImportRun? @relation(fields: [autopartImportRunId], references: [id], onDelete: SetNull)
 
   @@index([companyId, status])
+  @@index([orderId])
+  @@index([autopartCustomerOrderNumber])
+  @@index([autopartImportRunId])
+}
+
+/// 504C invoice/despatch feed settings — automatic polling defaults OFF.
+model Autopart504cFeedSettings {
+  id                 String   @id @default("default")
+  /// When false (default), scheduler and live Poll Now must not reconcile mailbox files.
+  enabled            Boolean  @default(false)
+  /// Explicit admin mark that Autopart has configured the report email.
+  configured         Boolean  @default(false)
+  /// Working-day hours Europe/London — default [13, 16].
+  scheduleHoursJson  String   @default("[13,16]")
+  workingDaysOnly    Boolean  @default(true)
+  allowedSender      String?
+  subjectContains    String?  @default("504C")
+  filenamePattern    String   @default("*504C*")
+  /// Optional dedicated IMAP override; empty = reuse stock Autopart IMAP when enabled later.
+  imapHost           String?
+  imapPort           Int?
+  imapUser           String?
+  imapPasswordEnc    String?
+  imapSecure         Boolean  @default(true)
+  imapMailbox        String?  @default("INBOX")
+  lastPolledAt       DateTime?
+  lastSuccessAt      DateTime?
+  lastError          String?
+  updatedAt          DateTime @updatedAt
+  updatedByUserId    String?
+}
+
+model Autopart504cImportRun {
+  id              String                 @id @default(cuid())
+  status          Autopart504cImportStatus
+  isDryRun        Boolean                @default(false)
+  startedAt       DateTime               @default(now())
+  finishedAt      DateTime?
+  source          String
+  filename        String?
+  messageId       String?
+  fileHash        String?
+  rowsRead        Int                    @default(0)
+  abReferencesFound Int                  @default(0)
+  ordersMatched   Int                    @default(0)
+  newInvoices     Int                    @default(0)
+  duplicates      Int                    @default(0)
+  credits         Int                    @default(0)
+  unmatchedAbRefs Int                    @default(0)
+  invalidRows     Int                    @default(0)
+  nonAbRows       Int                    @default(0)
+  ordersDespatched Int                   @default(0)
+  emailsQueued    Int                    @default(0)
+  emailsSent      Int                    @default(0)
+  emailsFailed    Int                    @default(0)
+  diagnostics     Json?
+  createdByUserId String?
+  createdAt       DateTime               @default(now())
+
+  createdBy User? @relation("Autopart504cImportCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  invoices  Invoice[]
+
+  @@index([startedAt])
+  @@index([status])
+  @@index([fileHash])
 }
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────

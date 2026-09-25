@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { inputClass } from "@/components/ab/Drawer";
 import { formatDate } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
+import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import {
   exportAutopartOrdersCsvFn,
   listAdminOrdersFn,
@@ -238,8 +239,8 @@ function AdminOrdersPage() {
                     <td className="px-3 py-2">{o.companyName}</td>
                     <td className="px-3 py-2 text-steel">{o.poNumber || "—"}</td>
                     <td className="px-3 py-2">
-                      <StatusBadge tone={o.status === "SUBMITTED" ? "good" : "neutral"}>
-                        {o.status === "SUBMITTED" ? "Received" : o.status}
+                      <StatusBadge tone={customerOrderStatusTone(o.status)}>
+                        {customerOrderStatusLabel(o.status)}
                       </StatusBadge>
                     </td>
                     <td className="num px-3 py-2 text-right font-semibold">£{o.grandTotal}</td>

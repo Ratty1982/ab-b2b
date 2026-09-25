@@ -69,6 +69,8 @@ function purposeLabel(purpose: string): string {
       return "Order Received";
     case "ORDER_RECEIVED_INTERNAL":
       return "New B2B Order (internal)";
+    case "ORDER_DESPATCHED":
+      return "Order Despatched";
     case "TRADE_APPLICATION_RECEIVED":
       return "Application Received";
     case "TRADE_APPLICATION_INTERNAL_NOTIFICATION":
@@ -663,6 +665,7 @@ export function EmailSettingsPanel() {
               <option value="ALL">All purposes</option>
               <option value="ORDER_RECEIVED">Order Received</option>
               <option value="ORDER_RECEIVED_INTERNAL">Order Internal</option>
+              <option value="ORDER_DESPATCHED">Order Despatched</option>
               <option value="TRADE_APPLICATION_RECEIVED">Application Received</option>
               <option value="TRADE_APPLICATION_INTERNAL_NOTIFICATION">Application Internal</option>
               <option value="TRADE_APPLICATION_APPROVED">Application Approved</option>

@@ -12,6 +12,26 @@ There is:
 
 Staff download the CSV and import it into Autopart manually.
 
+## Lifecycle
+
+```text
+Customer places B2B order
+→ AB status RECEIVED (SUBMITTED)
+→ customer receives ORDER_RECEIVED email
+→ AB stock reservation exists
+
+Staff exports Autopart CSV (this document)
+→ CSV downloads successfully
+→ AB customer-facing status becomes PROCESSING (CONFIRMED)
+→ AB records Autopart export metadata
+
+Staff manually imports CSV into MAM Autopart
+→ warehouse picks / invoices in Autopart
+→ future 504C reconciliation → DESPATCHED
+```
+
+See also: `docs/autopart-504c-invoice-feed.md`.
+
 ## AlphaOps contract reference
 
 Studied independently from AlphaOps default branch (`Ratty1982/alphaops`):
@@ -29,6 +49,22 @@ Shipping Address 2, Shipping City, Shipping County, Shipping Postcode,
 Shipping Country, Email, Phone, Supplier SKU, Quantity, Sub Total,
 Shipping, VAT, Total, Price, Source, Payment Amount 1, MAM Account
 ```
+
+## External Reference — AB order number only
+
+`External Reference` is **always** the Automotive Brands order number (e.g. `AB-000002`).
+
+This is deliberate: Autopart 504C returns the value as **Customer Order Number**, which is the AB reconciliation key.
+
+| Concept | Value |
+| --- | --- |
+| AB Order Number | `AB-000002` |
+| External Reference (CSV) | `AB-000002` |
+| Autopart Customer Order Number (504C) | `AB-000002` |
+
+Customer PO / reference (e.g. `PO696969`) is preserved separately on the order (`poNumber`) and shown in admin, portal, and emails. It must **never** replace External Reference.
+
+The proven Autopart import contract has no dedicated Customer PO column in this CSV set — do not invent one.
 
 ## Field mapping (order snapshots only)
 
@@ -49,6 +85,12 @@ Shipping, VAT, Total, Price, Source, Payment Amount 1, MAM Account
 
 Never resolve live Company Autopart code, claimed TradeApplication values, or recalculate today's prices / delivery threshold.
 
+## MAM Account
+
+Uses the **verified Autopart customer code snapshotted on the Order**.
+
+Missing snapshot → **BLOCK EXPORT**. Never substitute company name, email, customer claim, or current unverified Company value.
+
 ## One row per line
 
 Multi-line orders produce one CSV row per `OrderItem`, sharing order header fields and MAM Account.
@@ -63,6 +105,8 @@ Order-level `deliveryTotal`, `vatTotal`, and `grandTotal` are split across lines
 - `sum(Total) = order gross`
 - `sum(Payment Amount 1) = order gross`
 
+Delivery uses the historical order snapshot (do not re-run the £150 free-delivery rule at export time).
+
 ## Eligibility
 
 Blocked when:
@@ -76,14 +120,25 @@ Blocked when:
 
 Batch export refuses partial success: Selected / Ready / Blocked must be resolved first.
 
-## Export lifecycle
+## Successful export → Processing
+
+Agreed business rule:
+
+- `SUBMITTED` (Received) → `CONFIRMED` (Processing) on **successful committed CSV export only**
+- Preview / modal / validation / failed / blocked export does **not** change status
+- Re-export of an already Processing order leaves it Processing
+- **No** additional customer email on export (next automatic email is DESPATCH via 504C)
+- **No** APC side effects
+- `OrderStockReservation` is **unchanged** by export
+
+## Export metadata
 
 - Status: `NOT_EXPORTED` → `EXPORTED`  
 - Metadata: `autopartExportedAt`, `autopartExportedByUserId`, `autopartExportBatchId`, `autopartExportCount`  
 - Batch record: `AutopartOrderExportBatch` (`APX-000001`…) — metadata only, no CSV body stored  
 - Re-export allowed with explicit confirmation + audit  
-- Customer fulfilment status is **not** changed to Despatched  
-- `OrderStockReservation` is **unchanged** by export  
+
+Admin order detail shows an AUTOPART section (account, export status, exported at/by, batch, Customer Order No = AB order number).
 
 ## Audit
 
@@ -91,6 +146,10 @@ Batch export refuses partial success: Selected / Ready / Blocked must be resolve
 - `order.autopart_reexport`  
 - `order.autopart_batch_export`  
 
+Metadata includes `apcInvoked: false`, `reservationUnchanged: true`, `customerEmailOnExport: false`.
+
 ## Customer portal
 
-Autopart account codes, export batches, and internal export state are **not** exposed to customers.
+Customer-safe labels: Received → Processing → Despatched.
+
+Autopart account codes, export batches, CSV, MAM, and internal export state are **not** exposed to customers.

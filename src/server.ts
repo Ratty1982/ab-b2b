@@ -54,6 +54,15 @@ function ensureStockScheduler() {
     .catch((error) => {
       console.error("[ab:stock-sync]", { event: "AUTOPART_SCHEDULED_SYNC_FAILED", error: error instanceof Error ? error.message : error });
     });
+  // 504C tick is always registered but no-ops while feed.enabled=false (default).
+  void import("./server/orders/autopart-504c-scheduler")
+    .then((mod) => mod.startAutopart504cScheduler())
+    .catch((error) => {
+      console.error("[ab:504c]", {
+        event: "AUTOPART_504C_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();

@@ -4,6 +4,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
+import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import { getPortalOrderFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/portal/orders/$orderId/")({
@@ -64,8 +65,8 @@ function PortalOrderDetailPage() {
         title={order.orderNumber}
         sub={order.placedAt ? formatDateTime(order.placedAt) ?? "Order detail" : "Order detail"}
         actions={
-          <StatusBadge tone={order.status === "SUBMITTED" ? "good" : "neutral"}>
-            {order.status === "SUBMITTED" ? "Received" : order.status}
+          <StatusBadge tone={customerOrderStatusTone(order.status)}>
+            {customerOrderStatusLabel(order.status)}
           </StatusBadge>
         }
       />

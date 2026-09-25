@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
+import { Autopart504cFeedPanel } from "@/components/ab/Autopart504cFeedPanel";
 import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
 
@@ -168,6 +169,8 @@ function AdminSettings() {
         <TradeTestingPanel />
 
         <EmailSettingsPanel />
+
+        <Autopart504cFeedPanel />
 
         <section className="space-y-4">
           <h2 className="font-display text-lg font-semibold uppercase">Trading</h2>

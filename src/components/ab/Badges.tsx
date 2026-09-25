@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { stockLabel, type Stock } from "@/lib/data";
+import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 
 const tones = {
   good: "text-good border-good/30 bg-good/10",
@@ -81,5 +82,9 @@ const orderTone: Record<string, Tone> = {
 };
 
 export function OrderStatusBadge({ status }: { status: string }) {
-  return <StatusBadge tone={orderTone[status] ?? "neutral"}>{status}</StatusBadge>;
+  return (
+    <StatusBadge tone={customerOrderStatusTone(status)}>
+      {customerOrderStatusLabel(status)}
+    </StatusBadge>
+  );
 }

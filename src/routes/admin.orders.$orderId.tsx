@@ -4,6 +4,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
+import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import {
   exportAutopartOrdersCsvFn,
   getAdminOrderFn,
@@ -115,6 +116,7 @@ function AdminOrderDetailPage() {
   const addr = order.deliveryAddress;
   const customerEmail = emails.find((e) => e.purpose === "ORDER_RECEIVED");
   const internalEmail = emails.find((e) => e.purpose === "ORDER_RECEIVED_INTERNAL");
+  const despatchEmail = emails.find((e) => e.purpose === "ORDER_DESPATCHED");
 
   return (
     <div>
@@ -122,8 +124,8 @@ function AdminOrderDetailPage() {
         title={order.orderNumber}
         sub={order.companyName}
         actions={
-          <StatusBadge tone={order.status === "SUBMITTED" ? "good" : "neutral"}>
-            {order.status === "SUBMITTED" ? "Received" : order.status}
+          <StatusBadge tone={customerOrderStatusTone(order.status)}>
+            {customerOrderStatusLabel(order.status)}
           </StatusBadge>
         }
       />
@@ -225,6 +227,10 @@ function AdminOrderDetailPage() {
               <dd className="num">{order.autopartExportBatch?.reference || "—"}</dd>
             </div>
             <div className="flex justify-between gap-3">
+              <dt className="text-steel">Customer Order No</dt>
+              <dd className="num">{order.orderNumber}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
               <dt className="text-steel">Sales rep</dt>
               <dd>
                 {order.salesRepNameSnapshot || "—"}
@@ -233,7 +239,7 @@ function AdminOrderDetailPage() {
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Customer fulfilment</dt>
-              <dd>{order.status === "SUBMITTED" ? "Order received" : order.status}</dd>
+              <dd>{customerOrderStatusLabel(order.status)}</dd>
             </div>
           </dl>
           {!order.autopartAccountLinked || !order.autopartCustomerCodeSnapshot ? (
@@ -264,8 +270,9 @@ function AdminOrderDetailPage() {
             )}
           </div>
           <p className="mt-3 text-[12px] text-steel">
-            CSV export is for manual Autopart import only. It does not book APC, call Autopart APIs,
-            or change customer fulfilment status.
+            Successful CSV export marks the order Processing for the customer portal. It does not
+            book APC, call Autopart APIs, send another customer email, or mark the order Despatched.
+            Despatch follows a future Autopart 504C invoice match.
           </p>
         </section>
         <section className="rounded-lg border border-border p-5 lg:col-span-2">
@@ -273,7 +280,7 @@ function AdminOrderDetailPage() {
           {retryMessage ? (
             <p className="mt-2 text-[12px] text-steel">{retryMessage}</p>
           ) : null}
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <EmailStatusCard
               label="Customer (ORDER_RECEIVED)"
               row={customerEmail}
@@ -288,6 +295,14 @@ function AdminOrderDetailPage() {
               retrying={retryingId === internalEmail?.id}
               {...(internalEmail
                 ? { onRetry: () => void onRetry(internalEmail.id) }
+                : {})}
+            />
+            <EmailStatusCard
+              label="Despatch (ORDER_DESPATCHED)"
+              row={despatchEmail}
+              retrying={retryingId === despatchEmail?.id}
+              {...(despatchEmail
+                ? { onRetry: () => void onRetry(despatchEmail.id) }
                 : {})}
             />
           </div>

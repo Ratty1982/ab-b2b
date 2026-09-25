@@ -4,6 +4,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate } from "@/lib/datetime";
+import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import { listPortalOrdersFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/portal/orders/")({
@@ -85,8 +86,8 @@ function OrdersPage() {
                     </td>
                     <td className="px-3 py-2.5 text-steel">{o.poNumber || "—"}</td>
                     <td className="px-3 py-2.5">
-                      <StatusBadge tone={o.status === "SUBMITTED" ? "good" : "neutral"}>
-                        {o.status === "SUBMITTED" ? "Received" : o.status}
+                      <StatusBadge tone={customerOrderStatusTone(o.status)}>
+                        {customerOrderStatusLabel(o.status)}
                       </StatusBadge>
                     </td>
                     <td className="num px-3 py-2.5 text-right font-semibold">£{o.grandTotal}</td>

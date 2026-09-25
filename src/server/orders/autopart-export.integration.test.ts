@@ -184,7 +184,7 @@ afterAll(async () => {
 });
 
 describe("autopart order CSV export service", () => {
-  it("exports eligible single-line order and records metadata without touching reservation/status", async () => {
+  it("exports eligible single-line order → Processing, metadata, reservation unchanged", async () => {
     const stamp = Date.now();
     const { order, reservation, inventory } = await createEligibleOrder({
       orderNumber: `AB-EXP-${stamp}`,
@@ -218,7 +218,7 @@ describe("autopart order CSV export service", () => {
     expect(refreshed.autopartExportedByUserId).toBe(adminId);
     expect(refreshed.autopartExportBatchId).toBe(result.batchId);
     expect(refreshed.autopartExportCount).toBe(1);
-    expect(refreshed.status).toBe("SUBMITTED"); // fulfilment unchanged
+    expect(refreshed.status).toBe("CONFIRMED"); // RECEIVED → PROCESSING on successful export
     expect(refreshed.externalRef).toBeNull();
 
     const resAfter = await prisma.orderStockReservation.findUniqueOrThrow({
@@ -315,11 +315,17 @@ describe("autopart order CSV export service", () => {
     expect(re.isReexport).toBe(true);
     const after = await prisma.order.findUniqueOrThrow({ where: { id: a.order.id } });
     expect(after.autopartExportCount).toBe(2);
+    expect(after.status).toBe("CONFIRMED"); // re-export stays Processing
 
     const reAudits = await prisma.auditEvent.findMany({
       where: { entityId: a.order.id, action: "order.autopart_reexport" },
     });
     expect(reAudits.length).toBeGreaterThan(0);
+
+    const emails = await prisma.transactionalEmail.findMany({
+      where: { entityId: a.order.id, purpose: "ORDER_DESPATCHED" },
+    });
+    expect(emails).toHaveLength(0);
   });
 
   it("denies export for staff without orders.edit / admin.access", async () => {
