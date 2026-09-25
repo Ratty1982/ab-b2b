@@ -35,8 +35,24 @@ export type TradeDeliveryBreakdown = {
   freeDelivery: boolean;
   /** Remaining goods net needed to reach free delivery; null when already free. */
   amountToFreeDelivery: Money | null;
+  /** 0–100 display progress toward free delivery (capped). Not used for charging. */
+  progressPercent: number;
   deliveryVatPercent: number;
 };
+
+/**
+ * Visual progress toward free delivery from goods net / threshold.
+ * Capped at 100. Uses integer minor-unit math — not authoritative for charge.
+ */
+export function freeDeliveryProgressPercent(goodsNetExVat: Money): number {
+  const threshold = TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT;
+  if (threshold.minor <= 0n) return 100;
+  if (goodsNetExVat.minor <= 0n) return 0;
+  // Two decimal places of percent: (goods * 10_000) / threshold → e.g. 2952 → 29.52
+  const scaled = (goodsNetExVat.minor * 10_000n) / threshold.minor;
+  const capped = scaled > 10_000n ? 10_000n : scaled;
+  return Number(capped) / 100;
+}
 
 /**
  * Delivery net ex VAT from goods subtotal ex VAT.
@@ -86,6 +102,7 @@ export function calculateTradeOrderTotals(input: {
     grandTotal,
     freeDelivery,
     amountToFreeDelivery,
+    progressPercent: freeDeliveryProgressPercent(input.goodsNet),
     deliveryVatPercent: vat.percent,
   };
 }
@@ -106,6 +123,8 @@ export function tradeDeliveryTotalsDto(breakdown: TradeDeliveryBreakdown) {
     amountToFreeDelivery: breakdown.amountToFreeDelivery
       ? moneyToString(breakdown.amountToFreeDelivery, 2)
       : null,
+    thresholdExVat: moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT, 2),
+    progressPercent: breakdown.progressPercent,
     deliveryLabel: breakdown.freeDelivery
       ? "FREE"
       : `£${moneyToString(breakdown.deliveryNet, 2)}`,

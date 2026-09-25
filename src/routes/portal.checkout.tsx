@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from
 import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { FreeDeliveryProgress } from "@/components/ab/FreeDeliveryProgress";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import {
@@ -224,6 +225,8 @@ function CheckoutPage() {
     grandTotal: ctx.basket.delivery.orderGrossDisplay,
     freeDelivery: ctx.basket.delivery.freeDelivery,
     amountToFreeDelivery: ctx.basket.delivery.amountToFreeDeliveryDisplay,
+    thresholdExVat: ctx.basket.delivery.thresholdExVatDisplay,
+    progressPercent: ctx.basket.delivery.progressPercent,
     deliveryLabel: ctx.basket.delivery.deliveryLabel,
     currency: "GBP" as const,
   };
@@ -422,6 +425,14 @@ function CheckoutPage() {
 
           <aside className="h-fit rounded-lg border border-border bg-surface/40 p-5 lg:sticky lg:top-24">
             <h2 className="font-display text-lg font-semibold uppercase">Order summary</h2>
+            <FreeDeliveryProgress
+              className="mt-4"
+              freeDelivery={Boolean(totals.freeDelivery)}
+              goodsNetDisplay={totals.subtotal}
+              thresholdExVatDisplay={totals.thresholdExVat}
+              amountToFreeDeliveryDisplay={totals.amountToFreeDelivery ?? null}
+              progressPercent={totals.progressPercent}
+            />
             <dl className="mt-4 space-y-2 text-[14px]">
               <div className="flex justify-between gap-3">
                 <dt className="text-steel">Goods ex VAT</dt>

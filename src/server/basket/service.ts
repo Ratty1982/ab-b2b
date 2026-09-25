@@ -112,6 +112,8 @@ export type PublicBasket = {
     freeDelivery: boolean;
     amountToFreeDeliveryDisplay: string | null;
     deliveryLabel: string;
+    thresholdExVatDisplay: string;
+    progressPercent: number;
     /** Order total inc VAT including estimated delivery. */
     orderGrossDisplay: string;
     vatWithDeliveryDisplay: string;
@@ -521,6 +523,8 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       freeDelivery: deliveryDto.freeDelivery,
       amountToFreeDeliveryDisplay: deliveryDto.amountToFreeDelivery,
       deliveryLabel: deliveryDto.deliveryLabel,
+      thresholdExVatDisplay: deliveryDto.thresholdExVat,
+      progressPercent: deliveryDto.progressPercent,
       orderGrossDisplay: deliveryDto.grandTotal,
       vatWithDeliveryDisplay: deliveryDto.vatTotal,
     },

@@ -113,9 +113,11 @@ export type CheckoutReview = {
     deliveryTotal: string;
     grandTotal: string;
     currency: "GBP";
-    freeDelivery?: boolean;
-    amountToFreeDelivery?: string | null;
-    deliveryLabel?: string;
+    freeDelivery: boolean;
+    amountToFreeDelivery: string | null;
+    thresholdExVat: string;
+    progressPercent: number;
+    deliveryLabel: string;
   };
   hasBlockingIssues: boolean;
   deliveryAddress: DeliveryAddressSnapshot | null;

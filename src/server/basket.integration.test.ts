@@ -152,6 +152,9 @@ describe("Phase 6A basket ordering", () => {
     expect(first.delivery.deliveryNetDisplay).toBe("5.95");
     expect(first.delivery.freeDelivery).toBe(false);
     expect(first.delivery.amountToFreeDeliveryDisplay).toBe("111.00");
+    expect(first.delivery.thresholdExVatDisplay).toBe("150.00");
+    expect(first.delivery.progressPercent).toBeGreaterThan(0);
+    expect(first.delivery.progressPercent).toBeLessThan(100);
 
     const second = await addToBasket(buyerId, { variantId: variant.id, quantity: 12 });
     expect(second.lineCount).toBe(1);

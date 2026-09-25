@@ -4,6 +4,7 @@ import { Minus, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
+import { FreeDeliveryProgress } from "@/components/ab/FreeDeliveryProgress";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import {
@@ -216,6 +217,14 @@ function BasketPage() {
 
         <aside className="h-fit rounded-lg border border-border bg-surface/40 p-5">
           <h2 className="font-display text-lg font-semibold uppercase">Summary</h2>
+          <FreeDeliveryProgress
+            className="mt-4"
+            freeDelivery={basket.delivery.freeDelivery}
+            goodsNetDisplay={basket.totals.netDisplay}
+            thresholdExVatDisplay={basket.delivery.thresholdExVatDisplay}
+            amountToFreeDeliveryDisplay={basket.delivery.amountToFreeDeliveryDisplay}
+            progressPercent={basket.delivery.progressPercent}
+          />
           <dl className="mt-4 space-y-2 text-[14px]">
               <div className="flex justify-between gap-3">
                 <dt className="text-steel">Goods ex VAT</dt>
@@ -227,11 +236,6 @@ function BasketPage() {
                   {basket.delivery.freeDelivery ? "FREE" : `£${basket.delivery.deliveryNetDisplay}`}
                 </dd>
               </div>
-              {!basket.delivery.freeDelivery && basket.delivery.amountToFreeDeliveryDisplay ? (
-                <p className="text-[12px] text-steel">
-                  Add £{basket.delivery.amountToFreeDeliveryDisplay} more for FREE delivery
-                </p>
-              ) : null}
               <div className="flex justify-between gap-3">
                 <dt className="text-steel">VAT</dt>
                 <dd className="num font-semibold">£{basket.delivery.vatWithDeliveryDisplay}</dd>
