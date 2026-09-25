@@ -192,13 +192,28 @@ export type AdminOrderListItem = PortalOrderListItem & {
   companyName: string;
   salesRepName: string | null;
   autopartAccountLinked: boolean;
+  autopartExportStatus: "NOT_EXPORTED" | "EXPORTED";
+  autopartCustomerCodeSnapshot: string | null;
   subtotal: string;
   vatTotal: string;
+  deliveryTotal: string;
+  /** Coarse Autopart readiness for list filters. */
+  autopartExportFilter: "READY" | "EXPORTED" | "BLOCKED";
 };
 
 export type AdminOrderDetail = PortalOrderDetail & {
   autopartCustomerCodeSnapshot: string | null;
   autopartAccountLinked: boolean;
+  autopartExportStatus: "NOT_EXPORTED" | "EXPORTED";
+  autopartExportedAt: string | null;
+  autopartExportedByName: string | null;
+  autopartExportCount: number;
+  autopartExportBatch: {
+    id: string;
+    reference: string;
+    filename: string;
+    createdAt: string;
+  } | null;
   salesRepIdSnapshot: string | null;
   salesRepCodeSnapshot: string | null;
   salesRepNameSnapshot: string | null;
@@ -1139,7 +1154,14 @@ export async function getPortalOrder(userId: string, orderId: string): Promise<P
 
 export async function listAdminOrders(
   userId: string,
-  raw?: { page?: number; pageSize?: number; companyId?: string; q?: string },
+  raw?: {
+    page?: number;
+    pageSize?: number;
+    companyId?: string;
+    q?: string;
+    /** Autopart export list filter. */
+    autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
+  },
 ): Promise<{ items: AdminOrderListItem[]; total: number; page: number; pageSize: number }> {
   const profile = await requireSystemPermission(userId, "orders.view");
   const page = Math.max(1, raw?.page ?? 1);
@@ -1162,6 +1184,8 @@ export async function listAdminOrders(
         };
 
   const q = raw?.q?.trim();
+  const exportFilter = raw?.autopartExport ?? "ALL";
+
   const where: Prisma.OrderWhereInput = {
     ...companyFilter,
     status: { not: "DRAFT" },
@@ -1175,6 +1199,27 @@ export async function listAdminOrders(
           ],
         }
       : {}),
+    ...(exportFilter === "EXPORTED"
+      ? { autopartExportStatus: "EXPORTED" }
+      : exportFilter === "READY"
+        ? {
+            autopartExportStatus: "NOT_EXPORTED",
+            status: { notIn: ["DRAFT", "CANCELLED"] },
+            autopartAccountLinked: true,
+            autopartCustomerCodeSnapshot: { not: null },
+            items: { some: {} },
+          }
+        : exportFilter === "BLOCKED"
+          ? {
+              OR: [
+                { status: "CANCELLED" },
+                { autopartAccountLinked: false },
+                { autopartCustomerCodeSnapshot: null },
+                { items: { none: {} } },
+              ],
+              autopartExportStatus: "NOT_EXPORTED",
+            }
+          : {}),
   };
 
   const [total, rows] = await prisma.$transaction([
@@ -1192,21 +1237,38 @@ export async function listAdminOrders(
     total,
     page,
     pageSize,
-    items: rows.map((row) => ({
-      id: row.id,
-      orderNumber: row.orderNumber,
-      status: row.status,
-      placedAt: row.placedAt?.toISOString() ?? null,
-      poNumber: row.poNumber,
-      grandTotal: moneyToString(parseMoney(String(row.grandTotal)) ?? moneyZero(), 2),
-      subtotal: moneyToString(parseMoney(String(row.subtotal)) ?? moneyZero(), 2),
-      vatTotal: moneyToString(parseMoney(String(row.vatTotal)) ?? moneyZero(), 2),
-      currency: row.currency,
-      lineCount: row._count.items,
-      companyName: row.company.name,
-      salesRepName: row.salesRepNameSnapshot,
-      autopartAccountLinked: row.autopartAccountLinked,
-    })),
+    items: rows.map((row) => {
+      const linked = row.autopartAccountLinked && Boolean(row.autopartCustomerCodeSnapshot?.trim());
+      const blocked =
+        row.status === "CANCELLED" ||
+        row._count.items === 0 ||
+        !linked;
+      const autopartExportFilter: AdminOrderListItem["autopartExportFilter"] =
+        row.autopartExportStatus === "EXPORTED"
+          ? "EXPORTED"
+          : blocked
+            ? "BLOCKED"
+            : "READY";
+      return {
+        id: row.id,
+        orderNumber: row.orderNumber,
+        status: row.status,
+        placedAt: row.placedAt?.toISOString() ?? null,
+        poNumber: row.poNumber,
+        grandTotal: moneyToString(parseMoney(String(row.grandTotal)) ?? moneyZero(), 2),
+        subtotal: moneyToString(parseMoney(String(row.subtotal)) ?? moneyZero(), 2),
+        vatTotal: moneyToString(parseMoney(String(row.vatTotal)) ?? moneyZero(), 2),
+        deliveryTotal: moneyToString(parseMoney(String(row.deliveryTotal)) ?? moneyZero(), 2),
+        currency: row.currency,
+        lineCount: row._count.items,
+        companyName: row.company.name,
+        salesRepName: row.salesRepNameSnapshot,
+        autopartAccountLinked: row.autopartAccountLinked,
+        autopartExportStatus: row.autopartExportStatus,
+        autopartCustomerCodeSnapshot: row.autopartCustomerCodeSnapshot,
+        autopartExportFilter,
+      };
+    }),
   };
 }
 
@@ -1215,7 +1277,12 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true, company: { select: { id: true, name: true } } },
+    include: {
+      items: true,
+      company: { select: { id: true, name: true } },
+      autopartExportedBy: { select: { name: true, email: true } },
+      autopartExportBatch: { select: { id: true, reference: true, filename: true, createdAt: true } },
+    },
   });
   if (!order) {
     throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
@@ -1234,6 +1301,18 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     status: order.status,
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot,
     autopartAccountLinked: order.autopartAccountLinked,
+    autopartExportStatus: order.autopartExportStatus,
+    autopartExportedAt: order.autopartExportedAt?.toISOString() ?? null,
+    autopartExportedByName: order.autopartExportedBy?.name ?? order.autopartExportedBy?.email ?? null,
+    autopartExportCount: order.autopartExportCount,
+    autopartExportBatch: order.autopartExportBatch
+      ? {
+          id: order.autopartExportBatch.id,
+          reference: order.autopartExportBatch.reference,
+          filename: order.autopartExportBatch.filename,
+          createdAt: order.autopartExportBatch.createdAt.toISOString(),
+        }
+      : null,
     salesRepIdSnapshot: order.salesRepIdSnapshot,
     salesRepCodeSnapshot: order.salesRepCodeSnapshot,
     salesRepNameSnapshot: order.salesRepNameSnapshot,

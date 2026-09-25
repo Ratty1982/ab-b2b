@@ -1780,7 +1780,15 @@ export const getPortalSupportContactFn = createServerFn({ method: "GET" }).handl
 export const listAdminOrdersFn = createServerFn({ method: "GET" })
   .inputValidator(
     (data: unknown) =>
-      data as { page?: number; pageSize?: number; companyId?: string; q?: string } | undefined,
+      data as
+        | {
+            page?: number;
+            pageSize?: number;
+            companyId?: string;
+            q?: string;
+            autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
+          }
+        | undefined,
   )
   .handler(async ({ data }) => {
     try {
@@ -1799,6 +1807,50 @@ export const getAdminOrderFn = createServerFn({ method: "GET" })
       const userId = await requireUserId();
       const orders = await import("@/server/orders/service");
       return { ok: true as const, data: await orders.getAdminOrder(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewAutopartOrderExportFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { orderIds: string[]; allowAlreadyExported?: boolean },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const exp = await import("@/server/orders/autopart-export");
+      return {
+        ok: true as const,
+        data: await exp.previewAutopartOrderExport(userId, data.orderIds, {
+          ...(data.allowAlreadyExported !== undefined
+            ? { allowAlreadyExported: data.allowAlreadyExported }
+            : {}),
+        }),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportAutopartOrdersCsvFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { orderIds: string[]; confirmReexport?: boolean },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const exp = await import("@/server/orders/autopart-export");
+      return {
+        ok: true as const,
+        data: await exp.exportAutopartOrdersCsv(userId, data.orderIds, {
+          ...(data.confirmReexport !== undefined
+            ? { confirmReexport: data.confirmReexport }
+            : {}),
+        }),
+      };
     } catch (e) {
       return toError(e);
     }

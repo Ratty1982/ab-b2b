@@ -5,10 +5,12 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
 import {
+  exportAutopartOrdersCsvFn,
   getAdminOrderFn,
   listOrderEmailsFn,
   retryTransactionalEmailFn,
 } from "@/server/phase2/fns";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -25,6 +27,7 @@ function AdminOrderDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     const [orderResult, emailResult] = await Promise.all([
@@ -57,6 +60,38 @@ function AdminOrderDetailPage() {
       return;
     }
     setRetryMessage(`Retried — status ${result.data.status}`);
+    await load();
+  }
+
+  async function onExportCsv(confirmReexport: boolean) {
+    if (!order) return;
+    if (confirmReexport) {
+      const when = order.autopartExportedAt
+        ? formatDateTime(order.autopartExportedAt)
+        : "a previous date";
+      const by = order.autopartExportedByName || "a staff user";
+      const ok = window.confirm(
+        `This order was previously exported to Autopart on ${when} by ${by}.\n\nRe-exporting may create a duplicate order if the previous file was already imported into Autopart.\n\nContinue?`,
+      );
+      if (!ok) return;
+    }
+    setExporting(true);
+    const result = await exportAutopartOrdersCsvFn({
+      data: { orderIds: [orderId], confirmReexport },
+    });
+    setExporting(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    const blob = new Blob([result.data.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = result.data.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${result.data.batchReference}`);
     await load();
   }
 
@@ -159,17 +194,35 @@ function AdminOrderDetailPage() {
           ) : null}
         </section>
         <section className="rounded-lg border border-border p-5 lg:col-span-2">
-          <h2 className="font-display text-base font-semibold uppercase">
-            Integration readiness
-          </h2>
+          <h2 className="font-display text-base font-semibold uppercase">Autopart</h2>
           <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2">
             <div className="flex justify-between gap-3">
-              <dt className="text-steel">Autopart account linked</dt>
-              <dd>{order.autopartAccountLinked ? "Yes" : "No"}</dd>
+              <dt className="text-steel">Customer account</dt>
+              <dd>{order.autopartAccountLinked ? "Linked" : "Not linked"}</dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-steel">Autopart code snapshot</dt>
+              <dt className="text-steel">Account snapshot</dt>
               <dd className="num">{order.autopartCustomerCodeSnapshot || "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Export status</dt>
+              <dd>
+                {order.autopartExportStatus === "EXPORTED" ? "Exported" : "Not exported"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Exported</dt>
+              <dd>
+                {order.autopartExportedAt ? formatDateTime(order.autopartExportedAt) : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Exported by</dt>
+              <dd>{order.autopartExportedByName || "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Batch</dt>
+              <dd className="num">{order.autopartExportBatch?.reference || "—"}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Sales rep</dt>
@@ -179,10 +232,41 @@ function AdminOrderDetailPage() {
               </dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-steel">Autopart submission</dt>
-              <dd>Not submitted (Phase 6B)</dd>
+              <dt className="text-steel">Customer fulfilment</dt>
+              <dd>{order.status === "SUBMITTED" ? "Order received" : order.status}</dd>
             </div>
           </dl>
+          {!order.autopartAccountLinked || !order.autopartCustomerCodeSnapshot ? (
+            <p className="mt-4 text-[13px] font-medium text-warn" role="status">
+              AUTOPART ACCOUNT REQUIRED — This order cannot be exported because it does not contain
+              a verified Autopart customer account snapshot.
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {order.autopartExportStatus === "EXPORTED" ? (
+              <button
+                type="button"
+                disabled={exporting}
+                onClick={() => void onExportCsv(true)}
+                className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase disabled:opacity-50"
+              >
+                {exporting ? "Exporting…" : "Re-export CSV"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={exporting || !order.autopartAccountLinked}
+                onClick={() => void onExportCsv(false)}
+                className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+              >
+                {exporting ? "Exporting…" : "Export to Autopart CSV"}
+              </button>
+            )}
+          </div>
+          <p className="mt-3 text-[12px] text-steel">
+            CSV export is for manual Autopart import only. It does not book APC, call Autopart APIs,
+            or change customer fulfilment status.
+          </p>
         </section>
         <section className="rounded-lg border border-border p-5 lg:col-span-2">
           <h2 className="font-display text-base font-semibold uppercase">Transactional email</h2>

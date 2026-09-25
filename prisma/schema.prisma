@@ -176,6 +176,12 @@ enum OrderStatus {
   ON_HOLD
 }
 
+/// Operational Autopart CSV handoff only — not fulfilment / despatch.
+enum AutopartExportStatus {
+  NOT_EXPORTED
+  EXPORTED
+}
+
 /// Automotive Brands order-side stock hold (not an Autopart ERP reservation).
 enum StockReservationStatus {
   ACTIVE
@@ -332,6 +338,8 @@ model User {
   auditEventsAsTarget AuditEvent[]     @relation("AuditTarget")
   tradeAppsReviewed  TradeApplication[] @relation("ApplicationReviewer")
   autopartCodesVerified Company[]       @relation("AutopartCodeVerifier")
+  autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
+  autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   ownedLeads         Lead[]
   ownedOpportunities Opportunity[]
   sessions           AuthSession[]
@@ -1238,8 +1246,15 @@ model Order {
   /// Client/server idempotency key — unique per successful place.
   idempotencyKey  String?     @unique
   notes           String?
-  /// Reserved for Phase 6C Autopart handoff — never set by 6B submission.
+  /// Reserved for future Autopart order id / ERP ref — CSV export does not set this.
   externalRef     String?     @unique
+  /// Autopart CSV export lifecycle (manual import handoff — not APC / not Autopart API).
+  autopartExportStatus AutopartExportStatus @default(NOT_EXPORTED)
+  autopartExportedAt   DateTime?
+  autopartExportedByUserId String?
+  autopartExportBatchId String?
+  /// How many times a CSV was generated for this order (first export + re-exports).
+  autopartExportCount  Int @default(0)
   placedAt        DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -1248,10 +1263,41 @@ model Order {
   items        OrderItem[]
   invoices     Invoice[]
   reservations OrderStockReservation[]
+  autopartExportedBy User? @relation("OrderAutopartExporter", fields: [autopartExportedByUserId], references: [id], onDelete: SetNull)
+  autopartExportBatch AutopartOrderExportBatch? @relation(fields: [autopartExportBatchId], references: [id], onDelete: SetNull)
 
   @@index([companyId, placedAt])
   @@index([status])
   @@index([poNumber])
+  @@index([autopartExportStatus])
+  @@index([autopartExportBatchId])
+}
+
+/// Durable metadata for an Autopart CSV download batch (no CSV body stored).
+model AutopartOrderExportBatch {
+  id              String   @id @default(cuid())
+  /// Human reference e.g. APX-000001
+  reference       String   @unique
+  createdAt       DateTime @default(now())
+  createdByUserId String
+  orderCount      Int
+  lineCount       Int
+  filename        String
+  /// Order ids included in this download (JSON string[]).
+  orderIds        Json
+  isReexport      Boolean  @default(false)
+
+  createdBy User    @relation("AutopartExportBatchCreator", fields: [createdByUserId], references: [id])
+  orders    Order[]
+
+  @@index([createdAt])
+  @@index([createdByUserId])
+}
+
+/// Race-safe Autopart export batch reference allocator (APX-000001…).
+model AutopartExportBatchSequence {
+  id        String @id @default("default")
+  nextValue Int    @default(1)
 }
 
 /// AB-side stock hold created at placeOrder. Basket does NOT reserve.

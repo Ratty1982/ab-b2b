@@ -7,11 +7,13 @@ Creates the Automotive Brands order from the trade basket.
 There is:
 
 - NO Autopart sales-order API  
-- NO Autopart file generation  
-- NO email-to-Autopart order  
-- NO ERP side effects / `externalRef` writes  
+- NO APC Overnight / carrier booking  
+- NO EDI / desktop automation  
 
-Phase 6C will handle controlled Autopart handoff using order snapshots.
+Staff may later download an Autopart-compatible **CSV export** for manual
+import (see `docs/autopart-order-export.md`). That export is a separate
+operational handoff and does not change customer fulfilment status or
+release AB stock reservations.
 
 ---
 
