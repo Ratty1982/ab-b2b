@@ -78,9 +78,9 @@ CREATED / INVITED
 | **Invitation** | New user who has never set a password (`INVITED`) | `USER_INVITATION` |
 | **Password reset** | Existing `ACTIVE` user forgot / admin-assisted reset | `PASSWORD_RESET` |
 | **Deactivate** | Established user must lose access | No email — sessions revoked, history kept |
-| **Hard delete** | Disposable unused invite only (server dependency check) | N/A |
+| **Hard delete** | Disposable unused invite, **or** established user after transferring sales/CRM ownership to another internal user | N/A |
 
-Hard delete is blocked when the user has meaningful history (orders, CRM ownership, imports, login, etc.). Prefer **Deactivate**. Self-delete / self-deactivate and last effective Super Admin removal are blocked server-side.
+Hard delete without transfer is blocked when the user has meaningful history (orders, CRM ownership, imports, login, sales assignments, etc.). Prefer **Deactivate**, or use **Transfer & delete** to reassign CompanyAssignment / assigned applications / CRM ownership / imports / tasks / notes to another staff user first. Order snapshots and AuditEvent rows remain. Self-delete / self-deactivate and last effective Super Admin removal are blocked server-side.
 
 Trade company portal invites continue to use `COMPANY_USER_INVITED` + the same `/activate` token accepter (`InvitationKind`).
 

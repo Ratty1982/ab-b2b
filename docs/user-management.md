@@ -26,7 +26,7 @@ Never email plaintext passwords. Emergency “Force set password” shows a pass
 ## Deactivate vs delete
 
 - **Deactivate** — normal removal. Revokes sessions, sets `DISABLED`, keeps Company / Orders / Audit / SalesRep history.
-- **Delete** — permanent. Server checks dependencies; blocked when history exists. Audit rows keep (actor/target SetNull).
+- **Delete** — permanent. Disposable invites can be removed directly. Established users require selecting another internal user to receive sales assignments and CRM ownership (`transferToUserId`). Order snapshots and audit history remain.
 
 ## Protections
 

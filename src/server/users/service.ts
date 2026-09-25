@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
@@ -10,6 +11,7 @@ import {
   internalUserCreateSchema,
   internalUserPasswordResetSchema,
   internalUserUpdateSchema,
+  staffUserDeleteSchema,
   staffUserIdSchema,
 } from "@/domain/users";
 import { formatDateTime } from "@/lib/datetime";
@@ -36,7 +38,11 @@ export type StaffUserRecord = {
   invitationExpiresAt: string | null;
   invitationCreatedAt: string | null;
   invitationLabel: string;
+  /** Disposable invite — delete without transfer. */
   canHardDelete: boolean;
+  /** Has history — delete allowed only after transferring ownership. */
+  requiresTransferToDelete: boolean;
+  deletionReasons: string[];
   canResendInvitation: boolean;
   canSendPasswordReset: boolean;
 };
@@ -107,7 +113,7 @@ function mapUser(
       createdAt: Date;
     }>;
   },
-  deletionSafe: boolean,
+  deletion: { safe: boolean; reasons: string[] },
 ): StaffUserRecord {
   const role = (user.userRoles[0]?.role.key as SystemRoleKey | undefined) ?? null;
   const pendingInvite =
@@ -129,7 +135,9 @@ function mapUser(
     invitationExpiresAt: pendingInvite?.expiresAt.toISOString() ?? null,
     invitationCreatedAt: pendingInvite?.createdAt.toISOString() ?? null,
     invitationLabel: inv.invitationLabel,
-    canHardDelete: deletionSafe,
+    canHardDelete: deletion.safe,
+    requiresTransferToDelete: !deletion.safe,
+    deletionReasons: deletion.reasons,
     canResendInvitation: user.status === "INVITED",
     canSendPasswordReset: user.status === "ACTIVE",
   };
@@ -158,8 +166,9 @@ async function countEffectiveSuperAdmins(excludeUserId?: string): Promise<number
 }
 
 /**
- * Server-side hard-delete eligibility. Disposable invited users with no
- * meaningful business history may be permanently removed.
+ * Server-side hard-delete eligibility without ownership transfer.
+ * Disposable invited users with no meaningful business history may be
+ * removed directly. Established users require transferToUserId.
  */
 export async function evaluateUserDeletionSafety(userId: string): Promise<{
   safe: boolean;
@@ -169,7 +178,7 @@ export async function evaluateUserDeletionSafety(userId: string): Promise<{
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
-      salesRep: { include: { assignments: { take: 1 }, applications: { take: 1 } } },
+      salesRep: { include: { assignments: { take: 1 }, applications: { take: 1 }, teamMembers: { take: 1 } } },
       companyUsers: { take: 1 },
       productImports: { take: 1 },
       ownedLeads: { take: 1 },
@@ -203,13 +212,14 @@ export async function evaluateUserDeletionSafety(userId: string): Promise<{
   if (user.tradeAppsReviewed.length > 0) reasons.push("Application review history");
   if (user.salesRep?.assignments.length) reasons.push("Sales company assignments");
   if (user.salesRep?.applications.length) reasons.push("Assigned trade applications");
+  if (user.salesRep?.teamMembers.length) reasons.push("Sales team management");
 
   const orderCount = await prisma.order.count({
     where: {
       OR: [{ orderedByUserId: userId }, { onBehalfOfUserId: userId }],
     },
   });
-  if (orderCount > 0) reasons.push("Order history");
+  if (orderCount > 0) reasons.push("Order history (snapshots retained)");
 
   // Invited-only staff with no history are safe even if SalesRep row exists unused.
   if (user.status === "INVITED" && reasons.length === 0) {
@@ -224,8 +234,8 @@ async function mapStaffUser(userId: string): Promise<StaffUserRecord> {
     where: { id: userId },
     include: staffInclude,
   });
-  const { safe } = await evaluateUserDeletionSafety(userId);
-  return mapUser(user, safe);
+  const deletion = await evaluateUserDeletionSafety(userId);
+  return mapUser(user, deletion);
 }
 
 export async function listStaffUsers(actorUserId: string): Promise<{
@@ -243,8 +253,8 @@ export async function listStaffUsers(actorUserId: string): Promise<{
 
   const items: StaffUserRecord[] = [];
   for (const row of rows) {
-    const { safe } = await evaluateUserDeletionSafety(row.id);
-    items.push(mapUser(row, safe));
+    const deletion = await evaluateUserDeletionSafety(row.id);
+    items.push(mapUser(row, deletion));
   }
 
   return {
@@ -621,11 +631,145 @@ export async function reactivateStaffUser(actorUserId: string, raw: unknown) {
   return mapStaffUser(existing.id);
 }
 
+/**
+ * Reassign sales / CRM / attribution ownership from one staff user to another
+ * inside an open transaction, then remove the source SalesRep row.
+ */
+async function transferStaffOwnershipInTx(
+  tx: Prisma.TransactionClient,
+  fromUserId: string,
+  toUserId: string,
+) {
+  const target = await tx.user.findUnique({ where: { id: toUserId } });
+  if (!target || target.actorType !== "INTERNAL") {
+    throw new AuthError("Transfer target must be an internal user", "VALIDATION", 400);
+  }
+  if (target.id === fromUserId) {
+    throw new AuthError("Cannot transfer ownership to the same user", "VALIDATION", 400);
+  }
+
+  const fromRep = await tx.salesRep.findUnique({ where: { userId: fromUserId } });
+  let toRep = await tx.salesRep.findUnique({ where: { userId: toUserId } });
+
+  if (fromRep && !toRep) {
+    const code =
+      target.email.split("@")[0]?.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12).toUpperCase() || "REP";
+    toRep = await tx.salesRep.create({
+      data: {
+        userId: toUserId,
+        code: `${code}-${toUserId.slice(-4).toUpperCase()}`,
+        active: target.status !== "DISABLED",
+        region: fromRep.region,
+        managerId: fromRep.managerId === fromRep.id ? null : fromRep.managerId,
+      },
+    });
+  }
+
+  if (fromRep && toRep) {
+    const assignments = await tx.companyAssignment.findMany({
+      where: { salesRepId: fromRep.id },
+    });
+    for (const assignment of assignments) {
+      const clash = await tx.companyAssignment.findUnique({
+        where: {
+          companyId_salesRepId: {
+            companyId: assignment.companyId,
+            salesRepId: toRep.id,
+          },
+        },
+      });
+      if (clash) {
+        await tx.companyAssignment.delete({ where: { id: assignment.id } });
+      } else {
+        await tx.companyAssignment.update({
+          where: { id: assignment.id },
+          data: { salesRepId: toRep.id },
+        });
+      }
+    }
+
+    await tx.tradeApplication.updateMany({
+      where: { assignedRepId: fromRep.id },
+      data: { assignedRepId: toRep.id },
+    });
+
+    await tx.salesRep.updateMany({
+      where: { managerId: fromRep.id },
+      data: { managerId: toRep.id },
+    });
+
+    // TeamMember.salesRepId is unique — move link or clear if target already linked.
+    const sourceTeam = await tx.teamMember.findUnique({ where: { salesRepId: fromRep.id } });
+    if (sourceTeam) {
+      const targetTeam = await tx.teamMember.findUnique({ where: { salesRepId: toRep.id } });
+      if (targetTeam) {
+        await tx.teamMember.update({
+          where: { id: sourceTeam.id },
+          data: { salesRepId: null },
+        });
+      } else {
+        await tx.teamMember.update({
+          where: { id: sourceTeam.id },
+          data: { salesRepId: toRep.id },
+        });
+      }
+    }
+
+    await tx.salesRep.delete({ where: { id: fromRep.id } });
+  } else if (fromRep && !toRep) {
+    await tx.salesRep.delete({ where: { id: fromRep.id } });
+  }
+
+  await tx.lead.updateMany({
+    where: { ownerId: fromUserId },
+    data: { ownerId: toUserId },
+  });
+  await tx.opportunity.updateMany({
+    where: { ownerId: fromUserId },
+    data: { ownerId: toUserId },
+  });
+  await tx.task.updateMany({
+    where: { assigneeId: fromUserId },
+    data: { assigneeId: toUserId },
+  });
+  await tx.task.updateMany({
+    where: { createdById: fromUserId },
+    data: { createdById: toUserId },
+  });
+  await tx.activity.updateMany({
+    where: { userId: fromUserId },
+    data: { userId: toUserId },
+  });
+  await tx.note.updateMany({
+    where: { authorId: fromUserId },
+    data: { authorId: toUserId },
+  });
+  await tx.productImportJob.updateMany({
+    where: { uploadedById: fromUserId },
+    data: { uploadedById: toUserId },
+  });
+  await tx.tradeApplication.updateMany({
+    where: { reviewedById: fromUserId },
+    data: { reviewedById: toUserId },
+  });
+  await tx.company.updateMany({
+    where: { autopartCustomerCodeVerifiedById: fromUserId },
+    data: { autopartCustomerCodeVerifiedById: toUserId },
+  });
+}
+
 export async function deleteStaffUser(actorUserId: string, raw: unknown) {
   await requireSystemPermission(actorUserId, "users.manage");
-  const { id } = staffUserIdSchema.parse(raw);
+  const input = staffUserDeleteSchema.parse(raw);
+  const { id, transferToUserId } = input;
   if (id === actorUserId) {
     throw new AuthError("You cannot delete your own account", "VALIDATION", 400);
+  }
+  if (transferToUserId === actorUserId) {
+    // Allowed — admin can absorb ownership themselves.
+  }
+  if (transferToUserId === id) {
+    throw new AuthError("Cannot transfer ownership to the user being deleted", "VALIDATION", 400);
   }
 
   const existing = await prisma.user.findUnique({
@@ -649,30 +793,52 @@ export async function deleteStaffUser(actorUserId: string, raw: unknown) {
   }
 
   const safety = await evaluateUserDeletionSafety(existing.id);
-  if (!safety.safe) {
+  if (!safety.safe && !transferToUserId) {
     throw new AuthError(
-      `This user has business history and cannot be permanently deleted. Deactivate the user instead. (${safety.reasons.join("; ")})`,
+      `This user has business history. Select another internal user to transfer sales and CRM ownership to, then delete. (${safety.reasons.join("; ")})`,
       "VALIDATION",
       400,
     );
   }
 
-  // Clear disposable SalesRep with no history (cascade assignments empty).
-  if (existing.salesRep) {
-    await prisma.salesRep.delete({ where: { id: existing.salesRep.id } });
+  if (transferToUserId) {
+    const target = await prisma.user.findUnique({ where: { id: transferToUserId } });
+    if (!target || target.actorType !== "INTERNAL") {
+      throw new AuthError("Transfer target must be an internal user", "VALIDATION", 400);
+    }
   }
 
-  await prisma.user.delete({ where: { id: existing.id } });
+  await prisma.$transaction(async (tx) => {
+    if (transferToUserId) {
+      await transferStaffOwnershipInTx(tx, existing.id, transferToUserId);
+    } else if (existing.salesRep) {
+      await tx.salesRep.delete({ where: { id: existing.salesRep.id } });
+    }
+
+    // Disposable attribution that should not block delete when no transfer was needed,
+    // or residual rows after transfer.
+    await tx.authSession.deleteMany({ where: { userId: existing.id } });
+    await tx.userInvitation.deleteMany({ where: { userId: existing.id } });
+    await tx.user.delete({ where: { id: existing.id } });
+  });
 
   await recordAuditEvent({
     action: "USER_DELETED",
     entityType: "User",
     entityId: id,
     actorUserId,
-    metadata: { email: existing.email },
+    metadata: {
+      email: existing.email,
+      transferToUserId: transferToUserId ?? null,
+      reasons: safety.reasons,
+    },
   });
 
-  return { ok: true as const, id };
+  return {
+    ok: true as const,
+    id,
+    transferredToUserId: transferToUserId ?? null,
+  };
 }
 
 export async function resetStaffUserPassword(actorUserId: string, raw: unknown) {

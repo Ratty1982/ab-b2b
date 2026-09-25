@@ -44,3 +44,10 @@ export const internalUserPasswordResetSchema = z.object({
 export const staffUserIdSchema = z.object({
   id: z.string().cuid(),
 });
+
+/** Hard-delete a staff user. When business history exists, transferToUserId is required. */
+export const staffUserDeleteSchema = z.object({
+  id: z.string().cuid(),
+  /** Internal user who receives sales assignments, CRM ownership, and related attribution. */
+  transferToUserId: z.string().cuid().optional(),
+});

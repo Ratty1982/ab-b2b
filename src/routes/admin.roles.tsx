@@ -80,6 +80,8 @@ type StaffUserRow = {
   status: string;
   invitationLabel?: string;
   canHardDelete?: boolean;
+  requiresTransferToDelete?: boolean;
+  deletionReasons?: string[];
   canResendInvitation?: boolean;
   canSendPasswordReset?: boolean;
   lastLoginAt?: string | null;
@@ -232,6 +234,7 @@ function AdminRoles() {
 
       <ManageUserDrawer
         user={manageUser}
+        users={users}
         currentUserId={currentUserId}
         roleOptions={roleOptions}
         onClose={() => setManageUser(null)}
@@ -482,6 +485,7 @@ function AddUserDrawer({
 
 function ManageUserDrawer({
   user,
+  users,
   currentUserId,
   roleOptions,
   onClose,
@@ -490,6 +494,7 @@ function ManageUserDrawer({
   onDeleted,
 }: {
   user: StaffUserRow | null;
+  users: StaffUserRow[];
   currentUserId: string | null;
   roleOptions: typeof STAFF_ROLE_OPTIONS;
   onClose: () => void;
@@ -508,6 +513,7 @@ function ManageUserDrawer({
   const [resending, setResending] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [transferToUserId, setTransferToUserId] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -523,6 +529,7 @@ function ManageUserDrawer({
       setResending(false);
       setDeleting(false);
       setDeleteOpen(false);
+      setTransferToUserId("");
       setBusy(false);
     }
   }, [user]);
@@ -533,6 +540,9 @@ function ManageUserDrawer({
   const isInvited = user.status === "INVITED";
   const isActive = user.status === "ACTIVE";
   const isDisabled = user.status === "DISABLED";
+  const needsTransfer = Boolean(user.requiresTransferToDelete);
+  const transferCandidates = users.filter((u) => u.id !== user.id);
+  const canDeleteNow = !isSelf && (user.canHardDelete || (needsTransfer && transferToUserId));
 
   return (
     <Drawer open title="Manage user" sub={user.email} onClose={onClose}>
@@ -735,28 +745,49 @@ function ManageUserDrawer({
         </div>
       ) : null}
 
-      {!isSelf && user.canHardDelete ? (
+      {!isSelf ? (
         <div className="mt-6 grid gap-3 border-t border-border pt-5">
           <p className="text-[13px] font-semibold text-bad">Delete user permanently</p>
-          <p className="text-[12px] text-steel">
-            Only available because this user has no retained business history (typically an unused
-            invitation).
-          </p>
+          {needsTransfer ? (
+            <>
+              <p className="text-[12px] text-steel">
+                This user has business history
+                {user.deletionReasons?.length
+                  ? ` (${user.deletionReasons.slice(0, 3).join("; ")}${user.deletionReasons.length > 3 ? "…" : ""})`
+                  : ""}
+                . Transfer sales assignments and CRM ownership to another internal user, then delete.
+                Order snapshots and audit history are retained.
+              </p>
+              <Field label="Transfer sales & CRM data to" htmlFor="transfer-to-user">
+                <select
+                  id="transfer-to-user"
+                  value={transferToUserId}
+                  onChange={(e) => setTransferToUserId(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">Select user…</option>
+                  {transferCandidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.name} ({candidate.email}) — {candidate.roleLabel}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </>
+          ) : (
+            <p className="text-[12px] text-steel">
+              This user has no retained business history (typically an unused invitation).
+            </p>
+          )}
           <button
             type="button"
-            disabled={busy || deleting}
+            disabled={busy || deleting || !canDeleteNow}
             className="h-11 rounded-md border border-bad/40 text-[13px] font-bold uppercase text-bad disabled:opacity-50"
             onClick={() => setDeleteOpen(true)}
           >
-            Delete user
+            {needsTransfer ? "Transfer & delete user" : "Delete user"}
           </button>
         </div>
-      ) : null}
-
-      {!isSelf && !user.canHardDelete && !isInvited ? (
-        <p className="mt-6 border-t border-border pt-5 text-[12px] text-steel">
-          Permanent delete is unavailable — this user has business history. Deactivate instead.
-        </p>
       ) : null}
 
       {isActive ? (
@@ -822,20 +853,33 @@ function ManageUserDrawer({
 
       <ConfirmAction
         open={deleteOpen}
-        title="Delete user?"
-        description="This permanently removes the user account. This action is only available because this user has no retained business history."
-        confirmLabel="Delete user"
+        title={needsTransfer ? "Transfer & delete user?" : "Delete user?"}
+        description={
+          needsTransfer
+            ? "Sales assignments and CRM ownership will move to the selected user. This account will then be permanently removed. Order snapshots and audit history are kept."
+            : "This permanently removes the user account. This action is only available because this user has no retained business history."
+        }
+        confirmLabel={needsTransfer ? "Transfer & delete" : "Delete user"}
         onOpenChange={setDeleteOpen}
         onConfirm={() => {
           void (async () => {
             setDeleting(true);
-            const result = await deleteStaffUserFn({ data: { id: user.id } });
+            const result = await deleteStaffUserFn({
+              data: {
+                id: user.id,
+                ...(needsTransfer && transferToUserId
+                  ? { transferToUserId }
+                  : {}),
+              },
+            });
             setDeleting(false);
             if (!result.ok) {
               toast.error(result.error);
               return;
             }
-            toast.success("User deleted");
+            toast.success(
+              needsTransfer ? "Ownership transferred and user deleted" : "User deleted",
+            );
             await onDeleted();
           })();
         }}

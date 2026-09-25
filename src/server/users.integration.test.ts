@@ -342,7 +342,7 @@ describe("staff users — invitations & lifecycle", () => {
     expect(reactivated.status).toBe("ACTIVE");
   });
 
-  it("allows hard delete for disposable invited users and blocks for established users", async () => {
+  it("allows hard delete for disposable invited users and blocks established users without transfer", async () => {
     const disposable = await createStaffUser(adminId, {
       firstName: "Disposable",
       lastName: "Invite",
@@ -378,9 +378,72 @@ describe("staff users — invitations & lifecycle", () => {
     const blocked = await evaluateUserDeletionSafety(established.user.id);
     expect(blocked.safe).toBe(false);
     await expect(deleteStaffUser(adminId, { id: established.user.id })).rejects.toMatchObject({
-      message: expect.stringMatching(/business history|Deactivate/i),
+      message: expect.stringMatching(/transfer|business history/i),
     });
     expect(await prisma.user.findUnique({ where: { id: established.user.id } })).toBeTruthy();
+  });
+
+  it("transfers sales assignments then deletes an established user", async () => {
+    const source = await createStaffUser(adminId, {
+      firstName: "Source",
+      lastName: "Rep",
+      email: `staff.source.${Date.now()}@example.invalid`,
+      role: "SALES_REPRESENTATIVE",
+    });
+    await resetStaffUserPassword(adminId, {
+      id: source.user.id,
+      password: "SourceRepPass99!",
+    });
+    const target = await createStaffUser(adminId, {
+      firstName: "Target",
+      lastName: "Rep",
+      email: `staff.target.${Date.now()}@example.invalid`,
+      role: "SALES_REPRESENTATIVE",
+    });
+    await resetStaffUserPassword(adminId, {
+      id: target.user.id,
+      password: "TargetRepPass99!",
+    });
+
+    const sourceRep = await prisma.salesRep.findUniqueOrThrow({
+      where: { userId: source.user.id },
+    });
+    const targetRep = await prisma.salesRep.findUniqueOrThrow({
+      where: { userId: target.user.id },
+    });
+    const company = await prisma.company.create({
+      data: {
+        name: `Transfer Co ${Date.now()}`,
+        status: "ACTIVE",
+        taxStatus: "STANDARD",
+      },
+    });
+    await prisma.companyAssignment.create({
+      data: { companyId: company.id, salesRepId: sourceRep.id },
+    });
+    await prisma.lead.create({
+      data: {
+        companyName: "Transfer Lead",
+        contactName: "Lead Contact",
+        email: `lead.${Date.now()}@example.invalid`,
+        ownerId: source.user.id,
+        status: "NEW",
+      },
+    });
+
+    await deleteStaffUser(adminId, {
+      id: source.user.id,
+      transferToUserId: target.user.id,
+    });
+
+    expect(await prisma.user.findUnique({ where: { id: source.user.id } })).toBeNull();
+    expect(
+      await prisma.companyAssignment.count({
+        where: { companyId: company.id, salesRepId: targetRep.id },
+      }),
+    ).toBe(1);
+    expect(await prisma.lead.count({ where: { ownerId: target.user.id } })).toBe(1);
+    expect(await prisma.company.findUnique({ where: { id: company.id } })).toBeTruthy();
   });
 
   it("blocks self-deactivate and last Super Admin demotion", async () => {
