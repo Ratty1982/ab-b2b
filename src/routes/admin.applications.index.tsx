@@ -847,16 +847,22 @@ function ApplicationsPage() {
                     return (
                       <div className="mt-3 border-t border-border/50 pt-3">
                         <div className="font-semibold uppercase tracking-wide text-bad">
-                          Activation email failed
+                          {status === "NONE" ? "Activation email not sent" : "Activation email failed"}
                         </div>
-                        <p className="mt-1 text-steel">We couldn&apos;t deliver the activation email.</p>
+                        <p className="mt-1 text-steel">
+                          {status === "NONE"
+                            ? "No activation email has been delivered yet."
+                            : "We couldn't deliver the activation email."}
+                        </p>
                         {canResend ? (
                           <button
                             type="button"
                             disabled={busy}
                             className={`${actionBtn} mt-3`}
                             onClick={() =>
-                              void runAction("Retry activation email", async () => {
+                              void runAction(
+                                status === "NONE" ? "Send activation email" : "Retry activation email",
+                                async () => {
                                 const r = await resendTradeApplicationActivationEmailFn({
                                   data: { id: detail.id },
                                 });
@@ -883,7 +889,7 @@ function ApplicationsPage() {
                               })
                             }
                           >
-                            Retry activation email
+                            {status === "NONE" ? "Send activation email" : "Retry activation email"}
                           </button>
                         ) : null}
                       </div>

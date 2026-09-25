@@ -266,8 +266,8 @@ describe("trade onboarding journey", () => {
       reviewNotes: "Looks good",
     });
     expect(approved.created).toBe(true);
-    expect(approved.inviteToken).toBeUndefined();
-    expect(approved.activationPath).toBeUndefined();
+    expect((approved as { inviteToken?: string }).inviteToken).toBeUndefined();
+    expect((approved as { activationPath?: string }).activationPath).toBeUndefined();
     expect(typeof approved.emailSent).toBe("boolean");
     expect(approved.emailStatus).toBeTruthy();
 

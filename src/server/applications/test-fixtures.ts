@@ -82,14 +82,8 @@ export function activationTokenFromEmailBody(textBody: string): string {
 }
 
 export async function loadApprovedActivationToken(
-  db: {
-    transactionalEmail: {
-      findFirst: (args: {
-        where: { entityId: string; purpose: string };
-        orderBy: { createdAt: string };
-      }) => Promise<{ textBody: string | null } | null>;
-    };
-  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: { transactionalEmail: { findFirst: (args: any) => Promise<any> } },
   applicationId: string,
 ): Promise<string> {
   const mail = await db.transactionalEmail.findFirst({
@@ -99,5 +93,5 @@ export async function loadApprovedActivationToken(
   if (!mail?.textBody) {
     throw new Error("TRADE_APPLICATION_APPROVED email not found");
   }
-  return activationTokenFromEmailBody(mail.textBody);
+  return activationTokenFromEmailBody(String(mail.textBody));
 }
