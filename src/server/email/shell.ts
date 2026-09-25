@@ -30,6 +30,16 @@ export function brandLogoUrl(): string {
   return `${appBaseUrl()}/brand/ab-logo.jpg`;
 }
 
+/** Supporting Power Maxed mark — static public asset for email clients. */
+export function powerMaxedLogoUrl(): string {
+  return `${appBaseUrl()}/brand/power-maxed-logo.png`;
+}
+
+/** Supporting Steel Seal mark — static public asset for email clients. */
+export function steelSealLogoUrl(): string {
+  return `${appBaseUrl()}/brand/steel-seal-logo.jpg`;
+}
+
 export function publicSiteUrl(): string {
   // Prefer public marketing site when APP_URL is the B2B host; still linked from APP_URL origin docs.
   return "https://automotivebrands.co.uk";
@@ -52,9 +62,15 @@ export type EmailShellOptions = {
 
 /**
  * Wrap content in the shared Automotive Brands B2B email shell (~600px).
+ *
+ * Header hierarchy:
+ *   [AB logo]  AUTOMOTIVE BRANDS
+ *              [Power Maxed]  [Steel Seal]
  */
 export function renderTransactionalEmailShell(options: EmailShellOptions): string {
   const logo = brandLogoUrl();
+  const powerMaxed = powerMaxedLogoUrl();
+  const steelSeal = steelSealLogoUrl();
   const site = publicSiteUrl();
   const preheader = options.preheader
     ? `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">${escapeEmailHtml(options.preheader)}</div>`
@@ -86,6 +102,11 @@ export function renderTransactionalEmailShell(options: EmailShellOptions): strin
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Automotive Brands</title>
+<!--[if mso]>
+<style type="text/css">
+  body, table, td { font-family: Arial, Helvetica, sans-serif !important; }
+</style>
+<![endif]-->
 </head>
 <body style="margin:0;padding:0;background-color:${BODY_BG};">
 ${preheader}
@@ -94,19 +115,26 @@ ${preheader}
     <td align="center" style="padding:24px 12px;">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:100%;max-width:600px;background-color:${CONTENT_BG};border:1px solid ${BORDER};">
         <tr>
-          <td bgcolor="${BRAND_NAVY}" style="background-color:${BRAND_NAVY};padding:22px 28px;">
+          <td bgcolor="${BRAND_NAVY}" style="background-color:${BRAND_NAVY};padding:18px 24px 16px;">
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr>
-                <td valign="middle" style="vertical-align:middle;">
-                  <img src="${escapeEmailHtml(logo)}" width="48" height="46" alt="Automotive Brands" style="display:block;border:0;width:48px;height:auto;background-color:#ffffff;border-radius:2px;" />
+                <td valign="middle" width="52" style="width:52px;vertical-align:middle;">
+                  <img src="${escapeEmailHtml(logo)}" width="48" height="46" alt="Automotive Brands" style="display:block;border:0;width:48px;height:auto;max-width:48px;background-color:#ffffff;border-radius:2px;" />
                 </td>
-                <td valign="middle" style="padding-left:14px;vertical-align:middle;">
-                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;">
+                <td valign="middle" style="padding-left:12px;vertical-align:middle;">
+                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;line-height:1.2;">
                     Automotive Brands
                   </div>
-                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:#a8b0c0;padding-top:4px;">
-                    Trade Supply
-                  </div>
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
+                    <tr>
+                      <td valign="middle" style="vertical-align:middle;padding-right:12px;">
+                        <img src="${escapeEmailHtml(powerMaxed)}" width="88" height="48" alt="Power Maxed" style="display:block;border:0;width:88px;height:auto;max-width:88px;max-height:48px;" />
+                      </td>
+                      <td valign="middle" style="vertical-align:middle;">
+                        <img src="${escapeEmailHtml(steelSeal)}" width="96" height="44" alt="Steel Seal" style="display:block;border:0;width:96px;height:auto;max-width:96px;max-height:44px;" />
+                      </td>
+                    </tr>
+                  </table>
                 </td>
               </tr>
             </table>

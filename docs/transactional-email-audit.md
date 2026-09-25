@@ -7,6 +7,10 @@ All production transactional mail uses:
 
 `TransactionalEmail` outbox → `EmailTransport` → `SmtpEmailTransport` (Admin → Settings → Email).
 
+Shared HTML shell (`src/server/email/shell.ts`): navy header with Automotive Brands logo + wordmark,
+supporting Power Maxed and Steel Seal logos (absolute `/brand/*` URLs via `APP_URL`), red CTA, plain-text
+bodies on every purpose.
+
 | WORKFLOW | EMAIL PURPOSE | RECIPIENT | TRIGGER | WIRED? | NOTES |
 | --- | --- | --- | --- | --- | --- |
 | Trade application submitted | `TRADE_APPLICATION_RECEIVED` | Customer (primary contact) | Successful `/register` submit | YES | Branded shell |

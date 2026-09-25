@@ -11,7 +11,9 @@ import {
 import {
   EMAIL_SHELL_COLORS,
   brandLogoUrl,
+  powerMaxedLogoUrl,
   renderTransactionalEmailShell,
+  steelSealLogoUrl,
 } from "@/server/email/shell";
 import { buildDiagnosticTestEmailBodies } from "@/server/email/test-template";
 import { buildOrderReceivedCustomerBodies } from "@/server/orders/email";
@@ -103,7 +105,7 @@ describe("SMTP From / Reply-To builders", () => {
 });
 
 describe("branded transactional email shell", () => {
-  it("renders navy header, red CTA, logo URL, and footer without secrets", () => {
+  it("renders navy header with AB + supporting brand logos, red CTA, no Trade Supply", () => {
     const html = renderTransactionalEmailShell({
       preheader: "Preview line",
       bodyHtml: "<p>Hello trade customer</p>",
@@ -119,12 +121,30 @@ describe("branded transactional email shell", () => {
     expect(html).toContain("View order");
     expect(html).toContain("https://example.com/portal/orders/1");
     expect(html).toContain(brandLogoUrl());
+    expect(html).toContain(powerMaxedLogoUrl());
+    expect(html).toContain(steelSealLogoUrl());
+    expect(html).toContain('alt="Automotive Brands"');
+    expect(html).toContain('alt="Power Maxed"');
+    expect(html).toContain('alt="Steel Seal"');
     expect(html).toContain("automotivebrands.co.uk");
     expect(html).toContain("Automotive Brands");
     expect(html).toContain("orders@automotivebrands.co.uk");
+    expect(html).not.toMatch(/Trade Supply/i);
     expect(html).not.toContain("smtpPassword");
     expect(html).not.toContain("smtp.office365.com");
     expect(html).toContain("max-width:600px");
+    // Supporting logos smaller than dominant AB identity block
+    expect(html).toContain('width="88"');
+    expect(html).toContain('width="96"');
+  });
+
+  it("exposes absolute brand logo helpers under APP_URL", () => {
+    expect(brandLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/ab-logo\.jpg$/);
+    expect(powerMaxedLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/power-maxed-logo\.png$/);
+    expect(steelSealLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/steel-seal-logo\.jpg$/);
+    // Relative filesystem paths must never be used in email HTML
+    expect(brandLogoUrl()).not.toMatch(/^\.\.?\/|^\/workspace/);
+    expect(powerMaxedLogoUrl()).not.toMatch(/^\.\.?\/|^\/workspace/);
   });
 
   it("test email uses branded shell + plain text", () => {
