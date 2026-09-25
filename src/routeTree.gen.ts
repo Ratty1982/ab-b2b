@@ -62,6 +62,7 @@ import { Route as AdminContentMediaRouteImport } from './routes/admin.content.me
 import { Route as AdminContentTeamRouteImport } from './routes/admin.content.team'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminOrdersIndexRouteImport } from './routes/admin.orders.index'
 import { Route as AdminOrdersOrderIdRouteImport } from './routes/admin.orders.$orderId'
 import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.index'
 import { Route as AdminPricingIdRouteImport } from './routes/admin.pricing.$id'
@@ -72,6 +73,7 @@ import { Route as AdminProductsStockRouteImport } from './routes/admin.products.
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
+import { Route as PortalOrdersIndexRouteImport } from './routes/portal.orders.index'
 import { Route as PortalOrdersOrderIdRouteImport } from './routes/portal.orders.$orderId'
 import { Route as ProductsCategorySlugRouteImport } from './routes/products.category.$slug'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
@@ -82,6 +84,7 @@ import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
+import { Route as PortalOrdersOrderIdIndexRouteImport } from './routes/portal.orders.$orderId.index'
 import { Route as PortalOrdersOrderIdConfirmationRouteImport } from './routes/portal.orders.$orderId.confirmation'
 
 const IndexRoute = IndexRouteImport.update({
@@ -349,6 +352,11 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminOrdersIndexRoute = AdminOrdersIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminOrdersRoute,
+} as any)
 const AdminOrdersOrderIdRoute = AdminOrdersOrderIdRouteImport.update({
   id: '/$orderId',
   path: '/$orderId',
@@ -398,6 +406,11 @@ const ApiInternalStockSyncRoute = ApiInternalStockSyncRouteImport.update({
   id: '/api/internal/stock-sync',
   path: '/api/internal/stock-sync',
   getParentRoute: () => rootRouteImport,
+} as any)
+const PortalOrdersIndexRoute = PortalOrdersIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PortalOrdersRoute,
 } as any)
 const PortalOrdersOrderIdRoute = PortalOrdersOrderIdRouteImport.update({
   id: '/$orderId',
@@ -450,6 +463,12 @@ const AdminProductsImportsIdRoute = AdminProductsImportsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminProductsImportsRoute,
 } as any)
+const PortalOrdersOrderIdIndexRoute =
+  PortalOrdersOrderIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => PortalOrdersOrderIdRoute,
+  } as any)
 const PortalOrdersOrderIdConfirmationRoute =
   PortalOrdersOrderIdConfirmationRouteImport.update({
     id: '/confirmation',
@@ -524,14 +543,17 @@ export interface FileRoutesByFullPath {
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
+  '/admin/orders/': typeof AdminOrdersIndexRoute
   '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
+  '/portal/orders/': typeof PortalOrdersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
+  '/portal/orders/$orderId/': typeof PortalOrdersOrderIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -549,7 +571,6 @@ export interface FileRoutesByTo {
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
-  '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
@@ -560,7 +581,6 @@ export interface FileRoutesByTo {
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
-  '/portal/orders': typeof PortalOrdersRouteWithChildren
   '/portal/quick-order': typeof PortalQuickOrderRoute
   '/portal/quotes': typeof PortalQuotesRoute
   '/portal/support': typeof PortalSupportRoute
@@ -584,7 +604,6 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
-  '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
@@ -592,14 +611,17 @@ export interface FileRoutesByTo {
   '/admin/applications': typeof AdminApplicationsIndexRoute
   '/admin/content': typeof AdminContentIndexRoute
   '/admin/customers': typeof AdminCustomersIndexRoute
+  '/admin/orders': typeof AdminOrdersIndexRoute
   '/admin/pricing': typeof AdminPricingIndexRoute
   '/admin/products': typeof AdminProductsIndexRoute
+  '/portal/orders': typeof PortalOrdersIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/products/imports': typeof AdminProductsImportsIndexRoute
+  '/portal/orders/$orderId': typeof PortalOrdersOrderIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -669,14 +691,17 @@ export interface FileRoutesById {
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
+  '/admin/orders/': typeof AdminOrdersIndexRoute
   '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
+  '/portal/orders/': typeof PortalOrdersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
+  '/portal/orders/$orderId/': typeof PortalOrdersOrderIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -747,14 +772,17 @@ export interface FileRouteTypes {
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
+    | '/admin/orders/'
     | '/admin/pricing/'
     | '/admin/products/'
+    | '/portal/orders/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/products/imports/'
+    | '/portal/orders/$orderId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -772,7 +800,6 @@ export interface FileRouteTypes {
     | '/why-automotive-brands'
     | '/admin/brands'
     | '/admin/categories'
-    | '/admin/orders'
     | '/admin/roles'
     | '/admin/settings'
     | '/api/build'
@@ -783,7 +810,6 @@ export interface FileRouteTypes {
     | '/portal/checkout'
     | '/portal/favourites'
     | '/portal/invoices'
-    | '/portal/orders'
     | '/portal/quick-order'
     | '/portal/quotes'
     | '/portal/support'
@@ -807,7 +833,6 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
-    | '/portal/orders/$orderId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
@@ -815,14 +840,17 @@ export interface FileRouteTypes {
     | '/admin/applications'
     | '/admin/content'
     | '/admin/customers'
+    | '/admin/orders'
     | '/admin/pricing'
     | '/admin/products'
+    | '/portal/orders'
     | '/sales/customers'
     | '/sales/quotes'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/products/imports'
+    | '/portal/orders/$orderId'
   id:
     | '__root__'
     | '/'
@@ -891,14 +919,17 @@ export interface FileRouteTypes {
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
+    | '/admin/orders/'
     | '/admin/pricing/'
     | '/admin/products/'
+    | '/portal/orders/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/products/imports/'
+    | '/portal/orders/$orderId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1304,6 +1335,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/orders/': {
+      id: '/admin/orders/'
+      path: '/'
+      fullPath: '/admin/orders/'
+      preLoaderRoute: typeof AdminOrdersIndexRouteImport
+      parentRoute: typeof AdminOrdersRoute
+    }
     '/admin/orders/$orderId': {
       id: '/admin/orders/$orderId'
       path: '/$orderId'
@@ -1373,6 +1411,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/internal/stock-sync'
       preLoaderRoute: typeof ApiInternalStockSyncRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/portal/orders/': {
+      id: '/portal/orders/'
+      path: '/'
+      fullPath: '/portal/orders/'
+      preLoaderRoute: typeof PortalOrdersIndexRouteImport
+      parentRoute: typeof PortalOrdersRoute
     }
     '/portal/orders/$orderId': {
       id: '/portal/orders/$orderId'
@@ -1444,6 +1489,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsImportsIdRouteImport
       parentRoute: typeof AdminProductsImportsRoute
     }
+    '/portal/orders/$orderId/': {
+      id: '/portal/orders/$orderId/'
+      path: '/'
+      fullPath: '/portal/orders/$orderId/'
+      preLoaderRoute: typeof PortalOrdersOrderIdIndexRouteImport
+      parentRoute: typeof PortalOrdersOrderIdRoute
+    }
     '/portal/orders/$orderId/confirmation': {
       id: '/portal/orders/$orderId/confirmation'
       path: '/confirmation'
@@ -1485,10 +1537,12 @@ const AdminContentRouteWithChildren = AdminContentRoute._addFileChildren(
 
 interface AdminOrdersRouteChildren {
   AdminOrdersOrderIdRoute: typeof AdminOrdersOrderIdRoute
+  AdminOrdersIndexRoute: typeof AdminOrdersIndexRoute
 }
 
 const AdminOrdersRouteChildren: AdminOrdersRouteChildren = {
   AdminOrdersOrderIdRoute: AdminOrdersOrderIdRoute,
+  AdminOrdersIndexRoute: AdminOrdersIndexRoute,
 }
 
 const AdminOrdersRouteWithChildren = AdminOrdersRoute._addFileChildren(
@@ -1588,10 +1642,12 @@ const CrmRouteWithChildren = CrmRoute._addFileChildren(CrmRouteChildren)
 
 interface PortalOrdersOrderIdRouteChildren {
   PortalOrdersOrderIdConfirmationRoute: typeof PortalOrdersOrderIdConfirmationRoute
+  PortalOrdersOrderIdIndexRoute: typeof PortalOrdersOrderIdIndexRoute
 }
 
 const PortalOrdersOrderIdRouteChildren: PortalOrdersOrderIdRouteChildren = {
   PortalOrdersOrderIdConfirmationRoute: PortalOrdersOrderIdConfirmationRoute,
+  PortalOrdersOrderIdIndexRoute: PortalOrdersOrderIdIndexRoute,
 }
 
 const PortalOrdersOrderIdRouteWithChildren =
@@ -1599,10 +1655,12 @@ const PortalOrdersOrderIdRouteWithChildren =
 
 interface PortalOrdersRouteChildren {
   PortalOrdersOrderIdRoute: typeof PortalOrdersOrderIdRouteWithChildren
+  PortalOrdersIndexRoute: typeof PortalOrdersIndexRoute
 }
 
 const PortalOrdersRouteChildren: PortalOrdersRouteChildren = {
   PortalOrdersOrderIdRoute: PortalOrdersOrderIdRouteWithChildren,
+  PortalOrdersIndexRoute: PortalOrdersIndexRoute,
 }
 
 const PortalOrdersRouteWithChildren = PortalOrdersRoute._addFileChildren(
