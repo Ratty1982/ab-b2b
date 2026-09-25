@@ -499,7 +499,7 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         icon: "clipboard-list",
         to: ROUTES.portalQuickOrder,
         permission: "orders.create",
-        implemented: true,
+        implemented: false,
       },
       {
         id: "portal-orders",
@@ -515,7 +515,7 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         icon: "file-text",
         to: ROUTES.portalQuotes,
         permission: "quotes.view",
-        implemented: true,
+        implemented: false,
       },
       {
         id: "portal-invoices",
@@ -523,21 +523,21 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         icon: "receipt",
         to: ROUTES.portalInvoices,
         permission: "invoices.view",
-        implemented: true,
+        implemented: false,
       },
       {
         id: "portal-favourites",
         label: "Favourites / Order Lists",
         icon: "heart",
         to: ROUTES.portalFavourites,
-        implemented: true,
+        implemented: false,
       },
       {
         id: "portal-downloads",
         label: "Downloads",
         icon: "download",
         to: ROUTES.resources,
-        implemented: true,
+        implemented: false,
       },
       {
         id: "portal-users",
@@ -545,7 +545,7 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         icon: "users",
         to: ROUTES.portalUsers,
         permission: "companies.manage_users",
-        implemented: true,
+        implemented: false,
       },
       {
         id: "portal-support",

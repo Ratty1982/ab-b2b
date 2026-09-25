@@ -56,6 +56,16 @@ export function StockBadge({ stock, qty }: { stock: Stock; qty?: number | undefi
 }
 
 const orderTone: Record<string, Tone> = {
+  // Live OrderStatus enum
+  DRAFT: "neutral",
+  SUBMITTED: "info",
+  CONFIRMED: "brand",
+  PICKING: "warn",
+  DISPATCHED: "info",
+  DELIVERED: "good",
+  CANCELLED: "bad",
+  ON_HOLD: "warn",
+  // Legacy prototype labels (keep harmless if any remain)
   Delivered: "good",
   Dispatched: "info",
   Picking: "warn",

@@ -1758,6 +1758,25 @@ export const getPortalOrderFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getPortalDashboardFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const portal = await import("@/server/portal/dashboard");
+    return { ok: true as const, data: await portal.getPortalDashboard(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getPortalSupportContactFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const portal = await import("@/server/portal/dashboard");
+    return { ok: true as const, data: await portal.getPortalSupportContact(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
 export const listAdminOrdersFn = createServerFn({ method: "GET" })
   .inputValidator(
     (data: unknown) =>

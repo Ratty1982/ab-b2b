@@ -141,6 +141,18 @@ describe("canonical navigation contract", () => {
     const portal = flattenVisible(portalNavForUser(tradeBuyer));
     expect(portal.some((i) => i.to === ROUTES.portal)).toBe(true);
     expect(portal.some((i) => i.id === "website-homepage")).toBe(false);
+    const ids = portal.map((i) => i.id);
+    expect(ids).toContain("portal-dashboard");
+    expect(ids).toContain("portal-shop");
+    expect(ids).toContain("portal-basket");
+    expect(ids).toContain("portal-orders");
+    expect(ids).toContain("portal-support");
+    expect(ids).not.toContain("portal-quotes");
+    expect(ids).not.toContain("portal-invoices");
+    expect(ids).not.toContain("portal-favourites");
+    expect(ids).not.toContain("portal-downloads");
+    expect(ids).not.toContain("portal-users");
+    expect(ids).not.toContain("portal-quick-order");
     const backoffice = flattenVisible(visibleNav(BACK_OFFICE_NAV, navCtxFromUser(tradeBuyer)));
     expect(backoffice.some((i) => i.id === "website-homepage")).toBe(false);
   });

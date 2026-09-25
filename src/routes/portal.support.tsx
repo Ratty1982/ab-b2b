@@ -1,7 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Mail, Phone } from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { Mail } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
-import { Field, inputClass } from "@/components/ab/Drawer";
+import { getPortalSupportContactFn } from "@/server/phase2/fns";
+import { ROUTES } from "@/lib/app-nav";
 import {
   ACCOUNT_MANAGER_HOURS,
   ACCOUNT_MANAGER_HOURS_LINES,
@@ -13,89 +15,88 @@ export const Route = createFileRoute("/portal/support")({
       { title: "Support — Automotive Brands Trade Portal" },
       {
         name: "description",
-        content: "Contact your account manager, report an order issue or request a callback.",
+        content: "Contact your account manager or Automotive Brands trade support.",
       },
-      { property: "og:title", content: "Support — Automotive Brands Trade Portal" },
-      { property: "og:description", content: "Account manager contact and order support." },
     ],
   }),
   component: Support,
 });
 
 function Support() {
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [manager, setManager] = useState<{ name: string; email: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await getPortalSupportContactFn();
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setCompanyName(r.data.companyName);
+      setManager(r.data.accountManager);
+    })();
+  }, []);
+
   return (
     <div>
-      <PanelHeader title="Support" sub="Account ABC001 · ABC Motor Factors Ltd" />
+      <PanelHeader
+        title="Support"
+        sub={companyName ? `Trade account · ${companyName}` : "Trade account"}
+      />
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <section className="rounded-lg border border-border bg-surface/40 p-5">
           <h2 className="font-display text-lg font-semibold uppercase tracking-tight">
-            Send a message to your account manager
+            How can we help?
           </h2>
-          <form
-            className="mt-4 grid gap-4 sm:grid-cols-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-            }}
-          >
-            <Field label="Subject">
-              <select className={inputClass} defaultValue="Order query">
-                {[
-                  "Order query",
-                  "Delivery issue",
-                  "Pricing enquiry",
-                  "Product or technical question",
-                  "Returns or warranty",
-                  "Account or credit",
-                ].map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Related order or quote (optional)">
-              <input className={inputClass} placeholder="AB-9821" />
-            </Field>
-            <div className="sm:col-span-2">
-              <Field label="Message">
-                <textarea
-                  rows={6}
-                  className={inputClass}
-                  defaultValue=""
-                  placeholder="Tell us what you need and we will respond the same working day."
-                />
-              </Field>
-            </div>
-            <div className="sm:col-span-2">
-              <button
-                type="submit"
-                className="h-11 rounded-md bg-primary px-6 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
-              >
-                Send message
-              </button>
-            </div>
-          </form>
+          <p className="mt-2 text-[13px] text-steel">
+            Use your account manager contact when assigned, or continue shopping while we expand
+            in-portal messaging.
+          </p>
+          {error ? <p className="mt-3 text-[13px] text-bad">{error}</p> : null}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              to={ROUTES.products}
+              className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+            >
+              Shop products
+            </Link>
+            <Link
+              to={ROUTES.portalOrders}
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-bold uppercase hover:border-steel"
+            >
+              View orders
+            </Link>
+          </div>
         </section>
 
         <aside className="space-y-4">
           <div className="rounded-lg border border-border bg-surface/50 p-4">
             <div className="text-[11px] uppercase tracking-[0.16em] text-steel">Account manager</div>
-            <div className="mt-1 font-display text-lg font-semibold uppercase">James Whitfield</div>
-            <ul className="num mt-3 space-y-1.5 text-[13px]">
-              <li className="flex items-center gap-2">
-                <Phone className="size-3.5 text-primary" aria-hidden />
-                <a href="tel:01214960142" className="hover:underline">
-                  0121 496 0142
-                </a>
-              </li>
-              <li className="flex min-w-0 items-center gap-2">
-                <Mail className="size-3.5 shrink-0 text-primary" aria-hidden />
+            {manager ? (
+              <>
+                <div className="mt-1 font-display text-lg font-semibold uppercase">{manager.name}</div>
+                <ul className="mt-3 space-y-1.5 text-[13px]">
+                  <li className="flex min-w-0 items-center gap-2">
+                    <Mail className="size-3.5 shrink-0 text-primary" aria-hidden />
+                    <a href={`mailto:${manager.email}`} className="truncate hover:underline">
+                      {manager.email}
+                    </a>
+                  </li>
+                </ul>
                 <a
-                  href="mailto:james.whitfield@automotivebrands.co.uk"
-                  className="truncate hover:underline"
+                  href={`mailto:${manager.email}`}
+                  className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
                 >
-                  james.whitfield@automotivebrands.co.uk
+                  Email account manager
                 </a>
-              </li>
-            </ul>
+              </>
+            ) : (
+              <p className="mt-2 text-[13px] text-steel">
+                No account manager is currently assigned to this company.
+              </p>
+            )}
           </div>
           <div className="rounded-lg border border-border bg-surface/50 p-4 text-[13px]">
             <div className="text-[11px] uppercase tracking-[0.16em] text-steel">
