@@ -11,6 +11,7 @@ export const STAFF_ROLE_OPTIONS = SYSTEM_ROLE_KEYS.map((key) => ({
   description: SYSTEM_ROLE_META[key].description,
 }));
 
+/** Emergency force-set password (admin only — never emailed). */
 export const staffPasswordField = z
   .string()
   .max(128)
@@ -20,10 +21,12 @@ export const staffPasswordField = z
   });
 
 export const internalUserCreateSchema = z.object({
-  name: z.string().trim().min(1, "Enter a name").max(120),
+  firstName: z.string().trim().min(1, "Enter a first name").max(60),
+  lastName: z.string().trim().min(1, "Enter a last name").max(60),
   email: z.string().trim().email("Enter a valid email").max(320),
   role: z.enum(SYSTEM_ROLE_KEYS),
-  password: staffPasswordField,
+  /** Days until invitation expires */
+  expiresInDays: z.number().int().min(1).max(30).default(14),
 });
 
 export const internalUserUpdateSchema = z.object({
@@ -36,4 +39,8 @@ export const internalUserUpdateSchema = z.object({
 export const internalUserPasswordResetSchema = z.object({
   id: z.string().cuid(),
   password: staffPasswordField,
+});
+
+export const staffUserIdSchema = z.object({
+  id: z.string().cuid(),
 });

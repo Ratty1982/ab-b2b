@@ -60,6 +60,30 @@ Future policy:
 
 `src/infra/email` adapter interface. Development uses `dev-log`. Production without a configured provider **refuses** to pretend mail was sent.
 
+Transactional mail (Admin → System → Settings → Email) covers password reset, staff invitations, trade application notices, and order confirmations.
+
+## Admin-created user lifecycle
+
+```
+CREATED / INVITED
+  → USER_INVITATION email (set password link)
+  → SET PASSWORD on /activate
+  → ACTIVE
+  → optional DISABLED (deactivate)
+  → optional Reactivate
+```
+
+| Concept | When | Email |
+| --- | --- | --- |
+| **Invitation** | New user who has never set a password (`INVITED`) | `USER_INVITATION` |
+| **Password reset** | Existing `ACTIVE` user forgot / admin-assisted reset | `PASSWORD_RESET` |
+| **Deactivate** | Established user must lose access | No email — sessions revoked, history kept |
+| **Hard delete** | Disposable unused invite only (server dependency check) | N/A |
+
+Hard delete is blocked when the user has meaningful history (orders, CRM ownership, imports, login, etc.). Prefer **Deactivate**. Self-delete / self-deactivate and last effective Super Admin removal are blocked server-side.
+
+Trade company portal invites continue to use `COMPANY_USER_INVITED` + the same `/activate` token accepter (`InvitationKind`).
+
 ## Development seed
 
 ```bash

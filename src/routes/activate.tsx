@@ -16,7 +16,7 @@ export const Route = createFileRoute("/activate")({
     return typeof token === "string" ? { token } : {};
   },
   head: () => ({
-    meta: [{ title: "Activate trade account — Automotive Brands" }],
+    meta: [{ title: "Activate account — Automotive Brands" }],
   }),
   component: ActivateAccount,
 });
@@ -28,14 +28,19 @@ function ActivateAccount() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [preview, setPreview] = useState<{
-    email?: string;
-    companyName?: string;
-    status?: string;
-    expired?: boolean;
+    email?: string | undefined;
+    companyName?: string | undefined;
+    status?: string | undefined;
+    expired?: boolean | undefined;
+    kind?: string | undefined;
+    roleLabel?: string | undefined;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [doneLoginPath, setDoneLoginPath] = useState("/login");
   const [error, setError] = useState<string | null>(null);
+
+  const isStaff = preview?.kind === "STAFF_USER";
 
   useEffect(() => {
     if (!tokenFromSearch) return;
@@ -67,37 +72,45 @@ function ActivateAccount() {
       toast.error(result.error);
       return;
     }
+    setDoneLoginPath(result.data.loginPath || "/login");
     setDone(true);
-    toast.success("Account activated — you can now log in");
+    toast.success("Account activated — you can now sign in");
   }
 
   return (
     <PublicLayout>
       <div className="mx-auto max-w-lg px-4 py-12 sm:px-6 lg:py-16">
         <h1 className="font-display text-3xl font-semibold uppercase tracking-tight">
-          Activate your trade account
+          {isStaff ? "Set your password" : "Activate your trade account"}
         </h1>
         <p className="mt-3 text-sm text-steel">
-          Set a password to access the Automotive Brands trade portal for your company.
+          {isStaff
+            ? "Choose a password to activate your Automotive Brands account."
+            : "Set a password to access the Automotive Brands trade portal for your company."}
         </p>
 
         {done ? (
           <div className="mt-8 rounded-md border border-good/40 bg-good/10 p-5 text-sm">
             <p className="font-semibold text-foreground">Account activated</p>
             <p className="mt-2 text-steel">
-              Your password has been set. Sign in with your email to open the trade portal.
+              Your password has been set. Sign in with your email to continue.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
               <button
                 type="button"
                 className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
-                onClick={() => void navigate({ to: "/login" })}
+                onClick={() => void navigate({ to: doneLoginPath })}
               >
-                Trade login
+                Sign in
               </button>
-              <Link to="/portal" className="inline-flex h-10 items-center text-[13px] text-steel hover:text-foreground">
-                Go to portal
-              </Link>
+              {!isStaff ? (
+                <Link
+                  to="/portal"
+                  className="inline-flex h-10 items-center text-[13px] text-steel hover:text-foreground"
+                >
+                  Go to portal
+                </Link>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -117,6 +130,10 @@ function ActivateAccount() {
                   </>
                 ) : null}
               </p>
+            ) : preview?.email ? (
+              <p className="text-sm text-steel">
+                Activating <span className="num font-semibold text-foreground">{preview.email}</span>
+              </p>
             ) : null}
             {!tokenFromSearch ? (
               <Field label="Activation token">
@@ -129,7 +146,7 @@ function ActivateAccount() {
                 />
               </Field>
             ) : null}
-            <Field label="Password *">
+            <Field label="New password *">
               <input
                 required
                 type="password"

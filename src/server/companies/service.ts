@@ -883,18 +883,6 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
       data: { status: "REVOKED" },
     });
 
-    const inv = await tx.userInvitation.create({
-      data: {
-        companyId: input.companyId,
-        email,
-        role: input.role,
-        tokenHash,
-        invitedById: actorUserId,
-        expiresAt,
-        emailDeferred: true,
-      },
-    });
-
     // Ensure User + CompanyUser exist in INVITED state for future acceptance
     let user = await tx.user.findUnique({ where: { email } });
     if (!user) {
@@ -919,6 +907,20 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
       update: {
         role: input.role,
         status: "INVITED",
+      },
+    });
+
+    const inv = await tx.userInvitation.create({
+      data: {
+        kind: "COMPANY_USER",
+        companyId: input.companyId,
+        userId: user.id,
+        email,
+        role: input.role,
+        tokenHash,
+        invitedById: actorUserId,
+        expiresAt,
+        emailDeferred: true,
       },
     });
 

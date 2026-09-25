@@ -5,11 +5,16 @@ import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
+import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { STAFF_ROLE_OPTIONS, type StaffUserStatus } from "@/domain/users";
 import type { SystemRoleKey } from "@/domain/permissions";
 import {
   createStaffUserFn,
+  deactivateStaffUserFn,
+  deleteStaffUserFn,
   listStaffUsersFn,
+  reactivateStaffUserFn,
+  resendStaffInvitationFn,
   resetStaffUserPasswordFn,
   sendUserPasswordResetEmailFn,
   updateStaffUserFn,
@@ -73,6 +78,11 @@ type StaffUserRow = {
   role: SystemRoleKey | null;
   roleLabel: string;
   status: string;
+  invitationLabel?: string;
+  canHardDelete?: boolean;
+  canResendInvitation?: boolean;
+  canSendPasswordReset?: boolean;
+  lastLoginAt?: string | null;
 };
 
 function statusTone(status: string) {
@@ -214,11 +224,8 @@ function AdminRoles() {
         open={addOpen}
         roleOptions={roleOptions}
         onClose={() => setAddOpen(false)}
-        onCreated={async (created) => {
+        onCreated={async () => {
           setAddOpen(false);
-          if (created.temporaryPassword) {
-            setIssuedPassword({ email: created.user.email, password: created.temporaryPassword });
-          }
           await load();
         }}
       />
@@ -235,6 +242,10 @@ function AdminRoles() {
         onPasswordReset={async (issued) => {
           setManageUser(null);
           setIssuedPassword(issued);
+          await load();
+        }}
+        onDeleted={async () => {
+          setManageUser(null);
           await load();
         }}
       />
@@ -307,6 +318,7 @@ function UsersPanel({
             <th className="px-3 py-2 font-semibold">Email</th>
             <th className="px-3 py-2 font-semibold">Role</th>
             <th className="px-3 py-2 font-semibold">Status</th>
+            <th className="px-3 py-2 font-semibold">Invitation</th>
             <th className="px-3 py-2 text-right font-semibold">Action</th>
           </tr>
         </thead>
@@ -319,6 +331,7 @@ function UsersPanel({
               <td className="px-3 py-2">
                 <StatusBadge tone={statusTone(u.status)}>{statusLabel(u.status)}</StatusBadge>
               </td>
+              <td className="px-3 py-2 text-[12px] text-steel">{u.invitationLabel ?? "—"}</td>
               <td className="px-3 py-2 text-right">
                 <button
                   type="button"
@@ -345,23 +358,24 @@ function AddUserDrawer({
   open: boolean;
   roleOptions: typeof STAFF_ROLE_OPTIONS;
   onClose: () => void;
-  onCreated: (result: {
-    user: StaffUserRow;
-    temporaryPassword: string | null;
-  }) => Promise<void>;
+  onCreated: () => Promise<void>;
 }) {
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<SystemRoleKey>("SALES_REPRESENTATIVE");
-  const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setName("");
+      setFirstName("");
+      setLastName("");
       setEmail("");
-      setRole(roleOptions.some((option) => option.key === "SALES_REPRESENTATIVE") ? "SALES_REPRESENTATIVE" : roleOptions[0]!.key);
-      setPassword("");
+      setRole(
+        roleOptions.some((option) => option.key === "SALES_REPRESENTATIVE")
+          ? "SALES_REPRESENTATIVE"
+          : roleOptions[0]!.key,
+      );
       setSaving(false);
     }
   }, [open, roleOptions]);
@@ -371,8 +385,8 @@ function AddUserDrawer({
   return (
     <Drawer
       open
-      title="Add internal user"
-      sub="Creates a sign-in. Email sending is not configured — share a password yourself if you leave it blank."
+      title="Create user"
+      sub="Creates the account and emails a secure invitation to set a password. Passwords are never emailed."
       onClose={onClose}
     >
       <form
@@ -383,10 +397,10 @@ function AddUserDrawer({
             setSaving(true);
             const result = await createStaffUserFn({
               data: {
-                name,
+                firstName,
+                lastName,
                 email,
                 role,
-                password: password.trim() || undefined,
               },
             });
             setSaving(false);
@@ -394,19 +408,35 @@ function AddUserDrawer({
               toast.error(result.error);
               return;
             }
-            toast.success(`${result.data.user.name} added`);
-            await onCreated(result.data);
+            if (result.data.invitationSent) {
+              toast.success(`${result.data.user.name} created — invitation sent`);
+            } else {
+              toast.warning(
+                `${result.data.user.name} created — invitation email failed. Use Resend Invitation.`,
+              );
+            }
+            await onCreated();
           })();
         }}
       >
-        <Field label="Name" htmlFor="staff-name">
+        <Field label="First name" htmlFor="staff-first-name">
           <input
-            id="staff-name"
+            id="staff-first-name"
             required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
             className={inputClass}
-            autoComplete="name"
+            autoComplete="given-name"
+          />
+        </Field>
+        <Field label="Last name" htmlFor="staff-last-name">
+          <input
+            id="staff-last-name"
+            required
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            className={inputClass}
+            autoComplete="family-name"
           />
         </Field>
         <Field label="Email" htmlFor="staff-email">
@@ -434,23 +464,16 @@ function AddUserDrawer({
             ))}
           </select>
         </Field>
-        <Field label="Password (optional)" htmlFor="staff-password">
-          <input
-            id="staff-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
-            autoComplete="new-password"
-            placeholder="Leave blank to generate"
-          />
-        </Field>
+        <p className="text-[12px] text-steel">
+          They will receive a Set your password email and choose their own credentials. Staff never need
+          to know the user&apos;s password.
+        </p>
         <button
           type="submit"
-          disabled={saving || !name.trim() || !email.trim()}
+          disabled={saving || !firstName.trim() || !lastName.trim() || !email.trim()}
           className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
         >
-          {saving ? "Adding…" : "Add user"}
+          {saving ? "Creating…" : "Create & send invite"}
         </button>
       </form>
     </Drawer>
@@ -464,6 +487,7 @@ function ManageUserDrawer({
   onClose,
   onSaved,
   onPasswordReset,
+  onDeleted,
 }: {
   user: StaffUserRow | null;
   currentUserId: string | null;
@@ -471,6 +495,7 @@ function ManageUserDrawer({
   onClose: () => void;
   onSaved: () => Promise<void>;
   onPasswordReset: (issued: { email: string; password: string }) => Promise<void>;
+  onDeleted: () => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState<SystemRoleKey>("SALES_REPRESENTATIVE");
@@ -480,6 +505,10 @@ function ManageUserDrawer({
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -491,12 +520,19 @@ function ManageUserDrawer({
       setConfirmReset(false);
       setResetting(false);
       setSendingReset(false);
+      setResending(false);
+      setDeleting(false);
+      setDeleteOpen(false);
+      setBusy(false);
     }
   }, [user]);
 
   if (!user) return null;
 
   const isSelf = user.id === currentUserId;
+  const isInvited = user.status === "INVITED";
+  const isActive = user.status === "ACTIVE";
+  const isDisabled = user.status === "DISABLED";
 
   return (
     <Drawer open title="Manage user" sub={user.email} onClose={onClose}>
@@ -519,6 +555,17 @@ function ManageUserDrawer({
           })();
         }}
       >
+        <div className="rounded-md border border-border bg-surface/40 px-3 py-3 text-[12px] text-steel">
+          <p>
+            Status: <span className="font-semibold text-foreground">{statusLabel(user.status)}</span>
+          </p>
+          <p className="mt-1">Invitation: {user.invitationLabel ?? "—"}</p>
+          {user.lastLoginAt ? (
+            <p className="mt-1">Last login: {new Date(user.lastLoginAt).toLocaleString("en-GB")}</p>
+          ) : (
+            <p className="mt-1">Last login: Never</p>
+          )}
+        </div>
         <Field label="Name" htmlFor="manage-name">
           <input
             id="manage-name"
@@ -559,102 +606,240 @@ function ManageUserDrawer({
           </select>
         </Field>
         {isSelf ? (
-          <p className="text-[12px] text-steel">You cannot disable your own account.</p>
+          <p className="text-[12px] text-steel">You cannot disable or delete your own account.</p>
         ) : null}
         <button
           type="submit"
-          disabled={saving || resetting || !name.trim()}
+          disabled={saving || resetting || busy || !name.trim()}
           className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save changes"}
         </button>
       </form>
 
-      <div className="mt-6 grid gap-3 border-t border-border pt-5">
-        <p className="text-[13px] font-semibold">Send password reset</p>
-        <p className="text-[12px] text-steel">
-          Sends a secure reset link to {user.email} via transactional email. Does not reveal or set a
-          password — they choose a new one themselves.
+      {isInvited ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Resend invitation</p>
+          <p className="text-[12px] text-steel">
+            Issues a fresh set-password link and emails it to {user.email}. Does not create a duplicate
+            user.
+          </p>
+          <button
+            type="button"
+            disabled={saving || busy || resending}
+            className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+            onClick={() => {
+              void (async () => {
+                setResending(true);
+                const result = await resendStaffInvitationFn({ data: { id: user.id } });
+                setResending(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                if (result.data.invitationSent) {
+                  toast.success("Invitation resent");
+                } else {
+                  toast.warning("Invitation reissued — email delivery failed");
+                }
+                await onSaved();
+              })();
+            }}
+          >
+            {resending ? "Sending…" : "Resend invitation"}
+          </button>
+        </div>
+      ) : null}
+
+      {isActive ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Send password reset</p>
+          <p className="text-[12px] text-steel">
+            Sends a secure reset link to {user.email}. Does not reveal or set a password — they choose a
+            new one themselves.
+          </p>
+          <button
+            type="button"
+            disabled={saving || resetting || sendingReset || busy}
+            className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+            onClick={() => {
+              void (async () => {
+                setSendingReset(true);
+                const result = await sendUserPasswordResetEmailFn({ data: { userId: user.id } });
+                setSendingReset(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                toast.success(`Password reset email sent to ${result.data.email}`);
+              })();
+            }}
+          >
+            {sendingReset ? "Sending…" : "Send password reset email"}
+          </button>
+        </div>
+      ) : null}
+
+      {!isSelf && isActive ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Deactivate user</p>
+          <p className="text-[12px] text-steel">
+            Prevents login and revokes sessions. Preserves orders, audit and company history.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+            onClick={() => {
+              void (async () => {
+                setBusy(true);
+                const result = await deactivateStaffUserFn({ data: { id: user.id } });
+                setBusy(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                toast.success("User deactivated");
+                await onSaved();
+              })();
+            }}
+          >
+            Deactivate user
+          </button>
+        </div>
+      ) : null}
+
+      {!isSelf && isDisabled ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Reactivate user</p>
+          <button
+            type="button"
+            disabled={busy}
+            className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+            onClick={() => {
+              void (async () => {
+                setBusy(true);
+                const result = await reactivateStaffUserFn({ data: { id: user.id } });
+                setBusy(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                toast.success("User reactivated");
+                await onSaved();
+              })();
+            }}
+          >
+            Reactivate user
+          </button>
+        </div>
+      ) : null}
+
+      {!isSelf && user.canHardDelete ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold text-bad">Delete user permanently</p>
+          <p className="text-[12px] text-steel">
+            Only available because this user has no retained business history (typically an unused
+            invitation).
+          </p>
+          <button
+            type="button"
+            disabled={busy || deleting}
+            className="h-11 rounded-md border border-bad/40 text-[13px] font-bold uppercase text-bad disabled:opacity-50"
+            onClick={() => setDeleteOpen(true)}
+          >
+            Delete user
+          </button>
+        </div>
+      ) : null}
+
+      {!isSelf && !user.canHardDelete && !isInvited ? (
+        <p className="mt-6 border-t border-border pt-5 text-[12px] text-steel">
+          Permanent delete is unavailable — this user has business history. Deactivate instead.
         </p>
-        <button
-          type="button"
-          disabled={saving || resetting || sendingReset}
-          className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
-          onClick={() => {
-            void (async () => {
-              setSendingReset(true);
-              const result = await sendUserPasswordResetEmailFn({ data: { userId: user.id } });
-              setSendingReset(false);
-              if (!result.ok) {
-                toast.error(result.error);
+      ) : null}
+
+      {isActive ? (
+        <div className="mt-6 grid gap-3 border-t border-border pt-5">
+          <p className="text-[13px] font-semibold">Force set password (emergency)</p>
+          <p className="text-[12px] text-steel">
+            Immediately sets a password and signs them out. Prefer Send password reset email. You will
+            see the new password once and must share it yourself — it is never emailed.
+          </p>
+          <Field label="New password (optional)" htmlFor="manage-reset-password">
+            <input
+              id="manage-reset-password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => {
+                setNewPassword(e.target.value);
+                setConfirmReset(false);
+              }}
+              className={inputClass}
+              autoComplete="new-password"
+              placeholder="Leave blank to generate"
+            />
+          </Field>
+          {confirmReset ? (
+            <p className="text-[12px] text-warn">
+              Confirm to set a new password and end all of their signed-in sessions.
+            </p>
+          ) : null}
+          <button
+            type="button"
+            disabled={saving || resetting || sendingReset || busy}
+            className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
+            onClick={() => {
+              if (!confirmReset) {
+                setConfirmReset(true);
                 return;
               }
-              toast.success(`Password reset email sent to ${result.data.email}`);
-            })();
-          }}
-        >
-          {sendingReset ? "Sending…" : "Send password reset email"}
-        </button>
-      </div>
-
-      <div className="mt-6 grid gap-3 border-t border-border pt-5">
-        <p className="text-[13px] font-semibold">Force set password (emergency)</p>
-        <p className="text-[12px] text-steel">
-          Immediately sets a password and signs them out of every session. Prefer Send password reset
-          email above. You will see the new password once and must share it yourself.
-        </p>
-        <Field label="New password (optional)" htmlFor="manage-reset-password">
-          <input
-            id="manage-reset-password"
-            type="password"
-            value={newPassword}
-            onChange={(e) => {
-              setNewPassword(e.target.value);
-              setConfirmReset(false);
+              void (async () => {
+                setResetting(true);
+                const result = await resetStaffUserPasswordFn({
+                  data: {
+                    id: user.id,
+                    password: newPassword.trim() || undefined,
+                  },
+                });
+                setResetting(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                toast.success("Password reset");
+                await onPasswordReset({
+                  email: result.data.email,
+                  password: result.data.temporaryPassword,
+                });
+              })();
             }}
-            className={inputClass}
-            autoComplete="new-password"
-            placeholder="Leave blank to generate"
-          />
-        </Field>
-        {confirmReset ? (
-          <p className="text-[12px] text-warn">
-            Confirm to set a new password and end all of their signed-in sessions.
-          </p>
-        ) : null}
-        <button
-          type="button"
-          disabled={saving || resetting || sendingReset}
-          className="h-11 rounded-md border border-border text-[13px] font-bold uppercase disabled:opacity-50"
-          onClick={() => {
-            if (!confirmReset) {
-              setConfirmReset(true);
+          >
+            {resetting ? "Resetting…" : confirmReset ? "Confirm force set password" : "Force set password"}
+          </button>
+        </div>
+      ) : null}
+
+      <ConfirmAction
+        open={deleteOpen}
+        title="Delete user?"
+        description="This permanently removes the user account. This action is only available because this user has no retained business history."
+        confirmLabel="Delete user"
+        onOpenChange={setDeleteOpen}
+        onConfirm={() => {
+          void (async () => {
+            setDeleting(true);
+            const result = await deleteStaffUserFn({ data: { id: user.id } });
+            setDeleting(false);
+            if (!result.ok) {
+              toast.error(result.error);
               return;
             }
-            void (async () => {
-              setResetting(true);
-              const result = await resetStaffUserPasswordFn({
-                data: {
-                  id: user.id,
-                  password: newPassword.trim() || undefined,
-                },
-              });
-              setResetting(false);
-              if (!result.ok) {
-                toast.error(result.error);
-                return;
-              }
-              toast.success("Password reset");
-              await onPasswordReset({
-                email: result.data.email,
-                password: result.data.temporaryPassword,
-              });
-            })();
-          }}
-        >
-          {resetting ? "Resetting…" : confirmReset ? "Confirm force set password" : "Force set password"}
-        </button>
-      </div>
+            toast.success("User deleted");
+            await onDeleted();
+          })();
+        }}
+      />
     </Drawer>
   );
 }
@@ -672,7 +857,7 @@ function IssuedPasswordDrawer({
     <Drawer
       open
       title="Share this password now"
-      sub="It is shown once. They sign in with their email and this password."
+      sub="Emergency force-set only. It is shown once and is never emailed."
       onClose={onClose}
     >
       <div className="grid gap-4">

@@ -523,6 +523,47 @@ export async function sendCompanyUserInviteEmail(input: {
   return safeAttempt(upsert.id);
 }
 
+/**
+ * Admin-created staff user invitation — set password / activate (not PASSWORD_RESET).
+ */
+export async function sendUserInvitationEmail(input: {
+  invitationId: string;
+  userId: string;
+  email: string;
+  displayName: string;
+  roleLabel: string;
+  activationPath: string;
+}): Promise<boolean> {
+  const footer = await getEmailFooterMeta();
+  const base = getServerEnv().APP_URL.replace(/\/$/, "");
+  const activationUrl = input.activationPath.startsWith("http")
+    ? input.activationPath
+    : `${base}${input.activationPath.startsWith("/") ? "" : "/"}${input.activationPath}`;
+  const { buildUserInvitationBodies } = await import(
+    "@/server/email/user-invitation-template"
+  );
+  const bodies = buildUserInvitationBodies(
+    {
+      email: input.email,
+      displayName: input.displayName,
+      roleLabel: input.roleLabel,
+      activationUrl,
+    },
+    footer,
+  );
+  const upsert = await upsertPendingEmail({
+    purpose: "USER_INVITATION",
+    toEmail: input.email,
+    subject: bodies.subject,
+    textBody: bodies.text,
+    htmlBody: bodies.html,
+    entityType: "User",
+    entityId: input.userId,
+    idempotencyKey: `USER_INVITATION:${input.invitationId}`,
+  });
+  return safeAttempt(upsert.id);
+}
+
 export async function sendMotorsportEnquiryInternalEmails(leadId: string): Promise<void> {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!lead) return;
@@ -763,6 +804,31 @@ export async function retryTransactionalEmail(
     });
     if (!updated) {
       throw new AuthError("Reset email was requested but not recorded", "EMAIL_NOT_FOUND", 404);
+    }
+    return toListItem(updated);
+  }
+
+  // Staff invitations: delivery retry re-issues a fresh invitation (token may be expired).
+  if (row.purpose === "USER_INVITATION") {
+    if (!row.entityId) {
+      throw new AuthError("Invitation email has no user reference", "VALIDATION", 400);
+    }
+    await requireSystemPermission(actorUserId, "users.manage");
+    const { resendStaffInvitation } = await import("@/server/users/service");
+    await resendStaffInvitation(actorUserId, { id: row.entityId });
+    await recordAuditEvent({
+      action: "email.retried",
+      entityType: "TransactionalEmail",
+      entityId: emailId,
+      actorUserId,
+      metadata: { purpose: row.purpose, strategy: "reissue_invitation", toEmail: row.toEmail },
+    });
+    const updated = await prisma.transactionalEmail.findFirst({
+      where: { purpose: "USER_INVITATION", entityId: row.entityId },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!updated) {
+      throw new AuthError("Invitation email was requested but not recorded", "EMAIL_NOT_FOUND", 404);
     }
     return toListItem(updated);
   }

@@ -16,8 +16,10 @@ All production transactional mail uses:
 | Application rejected | `TRADE_APPLICATION_REJECTED` | Customer | Staff reject | YES | Customer-facing text only |
 | Account activated | `TRADE_ACCOUNT_ACTIVATED` | Customer | `/activate` success | YES | Welcome / portal CTA |
 | Company portal invite | `COMPANY_USER_INVITED` | Invitee | Admin Invite user | YES | Token returned only if email deferred |
+| Admin create staff user | `USER_INVITATION` | New staff | Admin Users → Create & send invite | YES | INVITED → set password; never emails password |
+| Admin resend staff invite | `USER_INVITATION` | Invited staff | Resend Invitation | YES | Rotates token |
 | Forgot password | `PASSWORD_RESET` | User | Public forgot-password | YES | Better Auth URL; outbox + branded shell; no enumeration |
-| Admin send password reset | `PASSWORD_RESET` | User | Admin Users → Send password reset email | YES | Same Better Auth flow |
+| Admin send password reset | `PASSWORD_RESET` | Active user | Admin Users → Send password reset email | YES | Same Better Auth flow; blocked for INVITED |
 | Admin force-set password | — | — | Admin emergency set password | N/A | Shows password once; not emailed (intentional) |
 | Order placed | `ORDER_RECEIVED` | Order contact snapshot | After order commit | YES | Historical snapshots only |
 | Order placed | `ORDER_RECEIVED_INTERNAL` | Order notification recipients | After order commit | YES | Env fallback transitional |

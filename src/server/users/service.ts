@@ -5,7 +5,22 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import type { SystemRoleKey } from "@/domain/permissions";
 import { SYSTEM_ROLE_META } from "@/domain/role-permissions";
-import { internalUserCreateSchema, internalUserPasswordResetSchema, internalUserUpdateSchema } from "@/domain/users";
+import { generateInviteToken } from "@/domain/invitation";
+import {
+  internalUserCreateSchema,
+  internalUserPasswordResetSchema,
+  internalUserUpdateSchema,
+  staffUserIdSchema,
+} from "@/domain/users";
+import { formatDateTime } from "@/lib/datetime";
+
+export type StaffInvitationStatus =
+  | "NONE"
+  | "PENDING"
+  | "SENT"
+  | "DEFERRED"
+  | "EXPIRED"
+  | "ACCEPTED";
 
 export type StaffUserRecord = {
   id: string;
@@ -16,6 +31,14 @@ export type StaffUserRecord = {
   status: string;
   actorType: string;
   createdAt: string;
+  lastLoginAt: string | null;
+  invitationStatus: StaffInvitationStatus;
+  invitationExpiresAt: string | null;
+  invitationCreatedAt: string | null;
+  invitationLabel: string;
+  canHardDelete: boolean;
+  canResendInvitation: boolean;
+  canSendPasswordReset: boolean;
 };
 
 function generateTemporaryPassword(): string {
@@ -29,16 +52,69 @@ function roleLabel(key: string | null): string {
   return key ?? "No role";
 }
 
-function mapUser(user: {
-  id: string;
-  name: string | null;
-  email: string;
-  status: string;
-  actorType: string;
-  createdAt: Date;
-  userRoles: Array<{ role: { key: string } }>;
-}): StaffUserRecord {
+function invitationLabel(input: {
+  userStatus: string;
+  invite: {
+    status: string;
+    emailDeferred: boolean;
+    expiresAt: Date;
+    createdAt: Date;
+  } | null;
+}): { invitationStatus: StaffInvitationStatus; invitationLabel: string } {
+  if (input.userStatus === "ACTIVE") {
+    return { invitationStatus: "ACCEPTED", invitationLabel: "Active" };
+  }
+  if (input.userStatus === "DISABLED") {
+    return { invitationStatus: "NONE", invitationLabel: "Disabled" };
+  }
+  const invite = input.invite;
+  if (!invite) {
+    return { invitationStatus: "NONE", invitationLabel: "Invite pending" };
+  }
+  if (invite.status === "ACCEPTED") {
+    return { invitationStatus: "ACCEPTED", invitationLabel: "Active" };
+  }
+  if (invite.status === "EXPIRED" || invite.expiresAt.getTime() < Date.now()) {
+    return { invitationStatus: "EXPIRED", invitationLabel: "Invite expired" };
+  }
+  if (invite.status === "PENDING") {
+    if (invite.emailDeferred) {
+      return { invitationStatus: "DEFERRED", invitationLabel: "Invite pending" };
+    }
+    const sent = formatDateTime(invite.createdAt, { seconds: false });
+    return {
+      invitationStatus: "SENT",
+      invitationLabel: sent ? `Invite sent ${sent}` : "Invite sent",
+    };
+  }
+  return { invitationStatus: "NONE", invitationLabel: "Invite pending" };
+}
+
+function mapUser(
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+    status: string;
+    actorType: string;
+    createdAt: Date;
+    lastLoginAt: Date | null;
+    userRoles: Array<{ role: { key: string } }>;
+    invitations?: Array<{
+      status: string;
+      emailDeferred: boolean;
+      expiresAt: Date;
+      createdAt: Date;
+    }>;
+  },
+  deletionSafe: boolean,
+): StaffUserRecord {
   const role = (user.userRoles[0]?.role.key as SystemRoleKey | undefined) ?? null;
+  const pendingInvite =
+    user.invitations?.find((i) => i.status === "PENDING") ??
+    user.invitations?.[0] ??
+    null;
+  const inv = invitationLabel({ userStatus: user.status, invite: pendingInvite });
   return {
     id: user.id,
     name: user.name?.trim() || user.email.split("@")[0] || user.email,
@@ -48,12 +124,109 @@ function mapUser(user: {
     status: user.status,
     actorType: user.actorType,
     createdAt: user.createdAt.toISOString(),
+    lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    invitationStatus: inv.invitationStatus,
+    invitationExpiresAt: pendingInvite?.expiresAt.toISOString() ?? null,
+    invitationCreatedAt: pendingInvite?.createdAt.toISOString() ?? null,
+    invitationLabel: inv.invitationLabel,
+    canHardDelete: deletionSafe,
+    canResendInvitation: user.status === "INVITED",
+    canSendPasswordReset: user.status === "ACTIVE",
   };
 }
 
 const staffInclude = {
   userRoles: { include: { role: true }, take: 8 },
+  invitations: {
+    where: { kind: "STAFF_USER" as const },
+    orderBy: { createdAt: "desc" as const },
+    take: 3,
+  },
 } as const;
+
+async function countEffectiveSuperAdmins(excludeUserId?: string): Promise<number> {
+  return prisma.userRole.count({
+    where: {
+      role: { key: "SUPER_ADMIN" },
+      user: {
+        status: "ACTIVE",
+        actorType: "INTERNAL",
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+      },
+    },
+  });
+}
+
+/**
+ * Server-side hard-delete eligibility. Disposable invited users with no
+ * meaningful business history may be permanently removed.
+ */
+export async function evaluateUserDeletionSafety(userId: string): Promise<{
+  safe: boolean;
+  reasons: string[];
+}> {
+  const reasons: string[] = [];
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      salesRep: { include: { assignments: { take: 1 }, applications: { take: 1 } } },
+      companyUsers: { take: 1 },
+      productImports: { take: 1 },
+      ownedLeads: { take: 1 },
+      ownedOpportunities: { take: 1 },
+      assignedTasks: { take: 1 },
+      createdTasks: { take: 1 },
+      activities: { take: 1 },
+      notes: { take: 1 },
+      tradeAppsReviewed: { take: 1 },
+      accounts: { take: 1 },
+    },
+  });
+  if (!user) {
+    return { safe: false, reasons: ["User not found"] };
+  }
+
+  if (user.status === "ACTIVE" || user.lastLoginAt) {
+    reasons.push("User has activated or signed in");
+  }
+  if (user.accounts.length > 0 && user.status !== "INVITED") {
+    reasons.push("User has credential history");
+  }
+  if (user.productImports.length > 0) reasons.push("Product import history");
+  if (user.ownedLeads.length > 0) reasons.push("CRM lead ownership");
+  if (user.ownedOpportunities.length > 0) reasons.push("CRM opportunity ownership");
+  if (user.assignedTasks.length > 0 || user.createdTasks.length > 0) {
+    reasons.push("Task history");
+  }
+  if (user.activities.length > 0) reasons.push("Activity history");
+  if (user.notes.length > 0) reasons.push("Note authorship");
+  if (user.tradeAppsReviewed.length > 0) reasons.push("Application review history");
+  if (user.salesRep?.assignments.length) reasons.push("Sales company assignments");
+  if (user.salesRep?.applications.length) reasons.push("Assigned trade applications");
+
+  const orderCount = await prisma.order.count({
+    where: {
+      OR: [{ orderedByUserId: userId }, { onBehalfOfUserId: userId }],
+    },
+  });
+  if (orderCount > 0) reasons.push("Order history");
+
+  // Invited-only staff with no history are safe even if SalesRep row exists unused.
+  if (user.status === "INVITED" && reasons.length === 0) {
+    return { safe: true, reasons: [] };
+  }
+
+  return { safe: reasons.length === 0 && user.status === "INVITED", reasons };
+}
+
+async function mapStaffUser(userId: string): Promise<StaffUserRecord> {
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    include: staffInclude,
+  });
+  const { safe } = await evaluateUserDeletionSafety(userId);
+  return mapUser(user, safe);
+}
 
 export async function listStaffUsers(actorUserId: string): Promise<{
   items: StaffUserRecord[];
@@ -67,8 +240,15 @@ export async function listStaffUsers(actorUserId: string): Promise<{
     orderBy: [{ name: "asc" }, { email: "asc" }],
     take: 500,
   });
+
+  const items: StaffUserRecord[] = [];
+  for (const row of rows) {
+    const { safe } = await evaluateUserDeletionSafety(row.id);
+    items.push(mapUser(row, safe));
+  }
+
   return {
-    items: rows.map(mapUser),
+    items,
     currentUserId: actorUserId,
     canGrantSuperAdmin: profile.systemRoles.includes("SUPER_ADMIN"),
   };
@@ -88,43 +268,95 @@ async function ensureSalesRep(userId: string, email: string) {
   });
 }
 
+async function issueStaffInvitation(input: {
+  userId: string;
+  email: string;
+  systemRoleKey: string;
+  invitedById: string;
+  expiresInDays: number;
+}): Promise<{ invitationId: string; token: string; activationPath: string; emailSent: boolean }> {
+  const { token, tokenHash } = generateInviteToken();
+  const expiresAt = new Date(Date.now() + input.expiresInDays * 24 * 60 * 60 * 1000);
+
+  await prisma.userInvitation.updateMany({
+    where: { userId: input.userId, kind: "STAFF_USER", status: "PENDING" },
+    data: { status: "REVOKED" },
+  });
+
+  const invitation = await prisma.userInvitation.create({
+    data: {
+      kind: "STAFF_USER",
+      userId: input.userId,
+      email: input.email,
+      systemRoleKey: input.systemRoleKey,
+      role: null,
+      companyId: null,
+      tokenHash,
+      invitedById: input.invitedById,
+      expiresAt,
+      emailDeferred: true,
+    },
+  });
+
+  const activationPath = `/activate?token=${encodeURIComponent(token)}`;
+  let emailSent = false;
+  try {
+    const { sendUserInvitationEmail } = await import("@/server/email/transactional");
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: input.userId },
+      select: { name: true },
+    });
+    emailSent = await sendUserInvitationEmail({
+      invitationId: invitation.id,
+      userId: input.userId,
+      email: input.email,
+      displayName: user.name?.trim() || input.email,
+      roleLabel: roleLabel(input.systemRoleKey),
+      activationPath,
+    });
+    if (emailSent) {
+      await prisma.userInvitation.update({
+        where: { id: invitation.id },
+        data: { emailDeferred: false },
+      });
+    }
+  } catch {
+    emailSent = false;
+  }
+
+  return { invitationId: invitation.id, token, activationPath, emailSent };
+}
+
+/**
+ * Create an INTERNAL staff user in INVITED state and email a set-password link.
+ * Does NOT create AuthAccount credentials or return a password.
+ */
 export async function createStaffUser(actorUserId: string, raw: unknown) {
   const profile = await requireSystemPermission(actorUserId, "users.manage");
   const input = internalUserCreateSchema.parse(raw);
   const email = input.email.toLowerCase();
+  const name = `${input.firstName} ${input.lastName}`.trim();
 
   if (input.role === "SUPER_ADMIN" && !profile.systemRoles.includes("SUPER_ADMIN")) {
     throw new AuthError("Only a Super Admin can create another Super Admin", "FORBIDDEN", 403);
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) throw new AuthError("A user with that email already exists", "VALIDATION", 400);
+  if (existing) {
+    throw new AuthError("User already exists", "VALIDATION", 400);
+  }
 
   const role = await prisma.role.findUnique({ where: { key: input.role } });
   if (!role) throw new AuthError("Unknown role", "VALIDATION", 400);
-
-  const suppliedPassword = input.password?.trim() || "";
-  const temporaryPassword = suppliedPassword ? null : generateTemporaryPassword();
-  const password = suppliedPassword || temporaryPassword!;
-  const passwordHash = await hashPassword(password);
 
   const user = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
         email,
-        name: input.name,
+        name,
         actorType: "INTERNAL",
-        status: "ACTIVE",
-        emailVerified: true,
-        emailVerifiedAt: new Date(),
-      },
-    });
-    await tx.authAccount.create({
-      data: {
-        userId: created.id,
-        accountId: created.id,
-        providerId: "credential",
-        password: passwordHash,
+        status: "INVITED",
+        emailVerified: false,
       },
     });
     await tx.userRole.create({
@@ -143,13 +375,78 @@ export async function createStaffUser(actorUserId: string, raw: unknown) {
     entityId: user.id,
     actorUserId,
     targetUserId: user.id,
-    after: { email, role: input.role },
+    after: { email, role: input.role, status: "INVITED" },
   });
 
-  const listed = mapUser(
-    await prisma.user.findUniqueOrThrow({ where: { id: user.id }, include: staffInclude }),
-  );
-  return { user: listed, temporaryPassword };
+  const invite = await issueStaffInvitation({
+    userId: user.id,
+    email,
+    systemRoleKey: input.role,
+    invitedById: actorUserId,
+    expiresInDays: input.expiresInDays,
+  });
+
+  await recordAuditEvent({
+    action: "USER_INVITATION_SENT",
+    entityType: "UserInvitation",
+    entityId: invite.invitationId,
+    actorUserId,
+    targetUserId: user.id,
+    metadata: { emailSent: invite.emailSent, email },
+  });
+
+  const listed = await mapStaffUser(user.id);
+  return {
+    user: listed,
+    invitationSent: invite.emailSent,
+    invitationDeferred: !invite.emailSent,
+    invitationId: invite.invitationId,
+  };
+}
+
+export async function resendStaffInvitation(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const { id } = staffUserIdSchema.parse(raw);
+  const existing = await prisma.user.findUnique({
+    where: { id },
+    include: staffInclude,
+  });
+  if (!existing || existing.actorType !== "INTERNAL") {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+  if (existing.status !== "INVITED") {
+    throw new AuthError(
+      "Only invited users can receive an invitation. Use Send password reset for active users.",
+      "VALIDATION",
+      400,
+    );
+  }
+
+  const roleKey = existing.userRoles[0]?.role.key;
+  if (!roleKey) throw new AuthError("User has no role assigned", "VALIDATION", 400);
+
+  const invite = await issueStaffInvitation({
+    userId: existing.id,
+    email: existing.email,
+    systemRoleKey: roleKey,
+    invitedById: actorUserId,
+    expiresInDays: 14,
+  });
+
+  await recordAuditEvent({
+    action: "USER_INVITATION_RESENT",
+    entityType: "UserInvitation",
+    entityId: invite.invitationId,
+    actorUserId,
+    targetUserId: existing.id,
+    metadata: { emailSent: invite.emailSent },
+  });
+
+  return {
+    user: await mapStaffUser(existing.id),
+    invitationSent: invite.emailSent,
+    invitationDeferred: !invite.emailSent,
+  };
 }
 
 export async function updateStaffUser(actorUserId: string, raw: unknown) {
@@ -173,11 +470,24 @@ export async function updateStaffUser(actorUserId: string, raw: unknown) {
 
   const currentRole = existing.userRoles[0]?.role.key;
   if (currentRole === "SUPER_ADMIN" && input.role && input.role !== "SUPER_ADMIN") {
-    const others = await prisma.userRole.count({
-      where: { role: { key: "SUPER_ADMIN" }, userId: { not: existing.id } },
-    });
+    const others = await countEffectiveSuperAdmins(existing.id);
     if (others === 0) {
       throw new AuthError("Keep at least one Super Admin", "VALIDATION", 400);
+    }
+  }
+
+  if (
+    existing.status === "ACTIVE" &&
+    input.status === "DISABLED" &&
+    currentRole === "SUPER_ADMIN"
+  ) {
+    const others = await countEffectiveSuperAdmins(existing.id);
+    if (others === 0) {
+      throw new AuthError(
+        "Cannot deactivate the last effective administrator",
+        "VALIDATION",
+        400,
+      );
     }
   }
 
@@ -189,6 +499,14 @@ export async function updateStaffUser(actorUserId: string, raw: unknown) {
         ...(input.status !== undefined ? { status: input.status } : {}),
       },
     });
+  }
+
+  if (input.status === "DISABLED") {
+    await prisma.authSession.deleteMany({ where: { userId: existing.id } });
+    const rep = await prisma.salesRep.findUnique({ where: { userId: existing.id } });
+    if (rep?.active) {
+      await prisma.salesRep.update({ where: { id: rep.id }, data: { active: false } });
+    }
   }
 
   if (input.role && input.role !== currentRole) {
@@ -212,9 +530,149 @@ export async function updateStaffUser(actorUserId: string, raw: unknown) {
     after: { role: input.role, status: input.status, name: input.name },
   });
 
-  return mapUser(
-    await prisma.user.findUniqueOrThrow({ where: { id: existing.id }, include: staffInclude }),
-  );
+  return mapStaffUser(existing.id);
+}
+
+export async function deactivateStaffUser(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const { id } = staffUserIdSchema.parse(raw);
+  if (id === actorUserId) {
+    throw new AuthError("You cannot deactivate your own account", "VALIDATION", 400);
+  }
+  const existing = await prisma.user.findUnique({
+    where: { id },
+    include: { userRoles: { include: { role: true } } },
+  });
+  if (!existing || existing.actorType !== "INTERNAL") {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+  if (existing.status === "DISABLED") {
+    return mapStaffUser(existing.id);
+  }
+
+  const currentRole = existing.userRoles[0]?.role.key;
+  if (currentRole === "SUPER_ADMIN" && existing.status === "ACTIVE") {
+    const others = await countEffectiveSuperAdmins(existing.id);
+    if (others === 0) {
+      throw new AuthError(
+        "Cannot deactivate the last effective administrator",
+        "VALIDATION",
+        400,
+      );
+    }
+  }
+
+  await prisma.user.update({
+    where: { id: existing.id },
+    data: { status: "DISABLED" },
+  });
+  await prisma.authSession.deleteMany({ where: { userId: existing.id } });
+  const rep = await prisma.salesRep.findUnique({ where: { userId: existing.id } });
+  if (rep?.active) {
+    await prisma.salesRep.update({ where: { id: rep.id }, data: { active: false } });
+  }
+
+  await recordAuditEvent({
+    action: "USER_DEACTIVATED",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+  });
+
+  return mapStaffUser(existing.id);
+}
+
+export async function reactivateStaffUser(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const { id } = staffUserIdSchema.parse(raw);
+  const existing = await prisma.user.findUnique({ where: { id } });
+  if (!existing || existing.actorType !== "INTERNAL") {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+  if (existing.status !== "DISABLED") {
+    throw new AuthError("Only disabled users can be reactivated", "VALIDATION", 400);
+  }
+
+  const hasCredential = await prisma.authAccount.findFirst({
+    where: { userId: existing.id, providerId: "credential" },
+  });
+  const nextStatus = hasCredential ? "ACTIVE" : "INVITED";
+
+  await prisma.user.update({
+    where: { id: existing.id },
+    data: { status: nextStatus },
+  });
+
+  const rep = await prisma.salesRep.findUnique({ where: { userId: existing.id } });
+  if (rep && !rep.active) {
+    await prisma.salesRep.update({ where: { id: rep.id }, data: { active: true } });
+  }
+
+  await recordAuditEvent({
+    action: "USER_REACTIVATED",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+    after: { status: nextStatus },
+  });
+
+  return mapStaffUser(existing.id);
+}
+
+export async function deleteStaffUser(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "users.manage");
+  const { id } = staffUserIdSchema.parse(raw);
+  if (id === actorUserId) {
+    throw new AuthError("You cannot delete your own account", "VALIDATION", 400);
+  }
+
+  const existing = await prisma.user.findUnique({
+    where: { id },
+    include: { userRoles: { include: { role: true } }, salesRep: true },
+  });
+  if (!existing || existing.actorType !== "INTERNAL") {
+    throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+
+  const currentRole = existing.userRoles[0]?.role.key;
+  if (currentRole === "SUPER_ADMIN" && existing.status === "ACTIVE") {
+    const others = await countEffectiveSuperAdmins(existing.id);
+    if (others === 0) {
+      throw new AuthError(
+        "Cannot delete the last effective administrator",
+        "VALIDATION",
+        400,
+      );
+    }
+  }
+
+  const safety = await evaluateUserDeletionSafety(existing.id);
+  if (!safety.safe) {
+    throw new AuthError(
+      `This user has business history and cannot be permanently deleted. Deactivate the user instead. (${safety.reasons.join("; ")})`,
+      "VALIDATION",
+      400,
+    );
+  }
+
+  // Clear disposable SalesRep with no history (cascade assignments empty).
+  if (existing.salesRep) {
+    await prisma.salesRep.delete({ where: { id: existing.salesRep.id } });
+  }
+
+  await prisma.user.delete({ where: { id: existing.id } });
+
+  await recordAuditEvent({
+    action: "USER_DELETED",
+    entityType: "User",
+    entityId: id,
+    actorUserId,
+    metadata: { email: existing.email },
+  });
+
+  return { ok: true as const, id };
 }
 
 export async function resetStaffUserPassword(actorUserId: string, raw: unknown) {
@@ -251,6 +709,12 @@ export async function resetStaffUserPassword(actorUserId: string, raw: unknown) 
       });
     }
     await tx.authSession.deleteMany({ where: { userId: existing.id } });
+    if (existing.status === "INVITED") {
+      await tx.user.update({
+        where: { id: existing.id },
+        data: { status: "ACTIVE", emailVerified: true, emailVerifiedAt: new Date() },
+      });
+    }
   });
 
   await recordAuditEvent({
@@ -267,13 +731,23 @@ export async function resetStaffUserPassword(actorUserId: string, raw: unknown) 
 
 /**
  * Admin-initiated secure password reset email (Better Auth flow).
- * Does NOT set or reveal a password — user chooses their own via the email link.
+ * ACTIVE users only — invited users use Resend Invitation instead.
  */
 export async function sendUserPasswordResetEmail(actorUserId: string, userId: string) {
   await requireSystemPermission(actorUserId, "users.manage");
   const existing = await prisma.user.findUnique({ where: { id: userId } });
   if (!existing) {
     throw new AuthError("User not found", "NOT_FOUND", 404);
+  }
+  if (existing.status === "INVITED") {
+    throw new AuthError(
+      "This user has not activated yet. Use Resend Invitation instead of password reset.",
+      "VALIDATION",
+      400,
+    );
+  }
+  if (existing.status === "DISABLED") {
+    throw new AuthError("Reactivate the user before sending a password reset", "VALIDATION", 400);
   }
 
   const { auth } = await import("@/infra/auth/auth");

@@ -716,7 +716,9 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     const { token, tokenHash } = generateInviteToken();
     await tx.userInvitation.create({
       data: {
+        kind: "COMPANY_USER",
         companyId: company.id,
+        userId: user.id,
         email: contactEmailLower,
         role: "TRADE_ADMIN",
         tokenHash,
@@ -1014,7 +1016,7 @@ export async function deleteTradeApplication(actorUserId: string, raw: unknown) 
 }
 
 /**
- * Public activation: applicant sets password from invite token, then can log in.
+ * Public activation: applicant or staff invitee sets password from invite token.
  * Does not trust companyId from the client — invitation record is authoritative.
  */
 export async function acceptTradeInvitation(raw: unknown) {
@@ -1035,10 +1037,21 @@ export async function acceptTradeInvitation(raw: unknown) {
 
   const email = invite.email.toLowerCase();
   const passwordHash = await hashPassword(input.password);
+  const isStaffInvite = invite.kind === "STAFF_USER";
+
+  if (!isStaffInvite && !invite.companyId) {
+    throw new AuthError("Invitation is invalid", "NOT_FOUND", 404);
+  }
 
   const result = await prisma.$transaction(async (tx) => {
-    let user = await tx.user.findUnique({ where: { email } });
+    let user =
+      (invite.userId ? await tx.user.findUnique({ where: { id: invite.userId } }) : null) ??
+      (await tx.user.findUnique({ where: { email } }));
+
     if (!user) {
+      if (isStaffInvite) {
+        throw new AuthError("Invitation is invalid", "NOT_FOUND", 404);
+      }
       user = await tx.user.create({
         data: {
           email,
@@ -1050,7 +1063,11 @@ export async function acceptTradeInvitation(raw: unknown) {
         },
       });
     } else {
-      if (user.actorType === "INTERNAL") {
+      if (isStaffInvite) {
+        if (user.actorType !== "INTERNAL") {
+          throw new AuthError("This invitation cannot be accepted", "FORBIDDEN", 403);
+        }
+      } else if (user.actorType === "INTERNAL") {
         throw new AuthError("This invitation cannot be accepted", "FORBIDDEN", 403);
       }
       user = await tx.user.update({
@@ -1082,21 +1099,23 @@ export async function acceptTradeInvitation(raw: unknown) {
       });
     }
 
-    await tx.companyUser.upsert({
-      where: { companyId_userId: { companyId: invite.companyId, userId: user.id } },
-      create: {
-        companyId: invite.companyId,
-        userId: user.id,
-        role: invite.role,
-        status: "ACTIVE",
-        isDefault: true,
-      },
-      update: {
-        role: invite.role,
-        status: "ACTIVE",
-        isDefault: true,
-      },
-    });
+    if (!isStaffInvite && invite.companyId && invite.role) {
+      await tx.companyUser.upsert({
+        where: { companyId_userId: { companyId: invite.companyId, userId: user.id } },
+        create: {
+          companyId: invite.companyId,
+          userId: user.id,
+          role: invite.role,
+          status: "ACTIVE",
+          isDefault: true,
+        },
+        update: {
+          role: invite.role,
+          status: "ACTIVE",
+          isDefault: true,
+        },
+      });
+    }
 
     await tx.userInvitation.update({
       where: { id: invite.id },
@@ -1107,41 +1126,60 @@ export async function acceptTradeInvitation(raw: unknown) {
       },
     });
 
-    return { userId: user.id, companyId: invite.companyId, email };
+    // Revoke any other pending invites for this user/email.
+    await tx.userInvitation.updateMany({
+      where: {
+        id: { not: invite.id },
+        status: "PENDING",
+        OR: [{ userId: user.id }, { email }],
+      },
+      data: { status: "REVOKED" },
+    });
+
+    return {
+      userId: user.id,
+      companyId: invite.companyId,
+      email,
+      kind: invite.kind,
+      actorType: user.actorType,
+    };
   });
 
   await recordAuditEvent({
     action: "invitation.accepted",
     entityType: "UserInvitation",
     entityId: invite.id,
-    companyId: result.companyId,
+    ...(result.companyId ? { companyId: result.companyId } : {}),
     targetUserId: result.userId,
-    metadata: { email: result.email },
+    metadata: { email: result.email, kind: result.kind },
   });
 
-  try {
-    const company = await prisma.company.findUnique({
-      where: { id: result.companyId },
-      select: { name: true },
-    });
-    const { sendTradeAccountActivatedEmail } = await import("@/server/email/transactional");
-    await sendTradeAccountActivatedEmail({
-      userId: result.userId,
-      companyId: result.companyId,
-      contactEmail: result.email,
-      contactName: result.email,
-      companyName: company?.name ?? "your company",
-    });
-  } catch {
-    /* email failure must not roll back activation */
+  if (!isStaffInvite && result.companyId) {
+    try {
+      const company = await prisma.company.findUnique({
+        where: { id: result.companyId },
+        select: { name: true },
+      });
+      const { sendTradeAccountActivatedEmail } = await import("@/server/email/transactional");
+      await sendTradeAccountActivatedEmail({
+        userId: result.userId,
+        companyId: result.companyId,
+        contactEmail: result.email,
+        contactName: result.email,
+        companyName: company?.name ?? "your company",
+      });
+    } catch {
+      /* email failure must not roll back activation */
+    }
   }
 
   return {
     userId: result.userId,
     companyId: result.companyId,
     email: result.email,
-    loginPath: "/login",
-    portalPath: "/portal",
+    kind: result.kind,
+    loginPath: result.actorType === "INTERNAL" ? "/admin" : "/login",
+    portalPath: result.actorType === "INTERNAL" ? "/admin" : "/portal",
   };
 }
 
@@ -1153,7 +1191,12 @@ export async function getInvitationPreview(token: string) {
   });
   if (!invite) return null;
   if (invite.status !== "PENDING") {
-    return { status: invite.status, expired: invite.status === "EXPIRED", email: invite.email };
+    return {
+      status: invite.status,
+      expired: invite.status === "EXPIRED",
+      email: invite.email,
+      kind: invite.kind,
+    };
   }
   const expired = invite.expiresAt.getTime() < Date.now();
   if (expired) {
@@ -1161,13 +1204,22 @@ export async function getInvitationPreview(token: string) {
       where: { id: invite.id },
       data: { status: "EXPIRED" },
     });
-    return { status: "EXPIRED" as const, expired: true, email: invite.email };
+    return {
+      status: "EXPIRED" as const,
+      expired: true,
+      email: invite.email,
+      kind: invite.kind,
+    };
   }
   return {
     status: invite.status,
     expired: false,
     email: invite.email,
-    companyName: invite.company.tradingName || invite.company.name,
+    kind: invite.kind,
+    companyName: invite.company
+      ? invite.company.tradingName || invite.company.name
+      : undefined,
+    roleLabel: invite.systemRoleKey ?? invite.role ?? undefined,
     expiresAt: invite.expiresAt.toISOString(),
   };
 }

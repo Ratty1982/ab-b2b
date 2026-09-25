@@ -146,10 +146,28 @@ function createAuth() {
       },
       session: {
         create: {
+          before: async (session) => {
+            const user = await prisma.user.findUnique({
+              where: { id: session.userId },
+              select: { status: true },
+            });
+            if (!user || user.status === "DISABLED") {
+              throw new Error("Account is disabled");
+            }
+            return { data: session };
+          },
           after: async (session) => {
+            const user = await prisma.user.findUnique({
+              where: { id: session.userId },
+              select: { status: true },
+            });
+            if (!user || user.status === "DISABLED") return;
             await prisma.user.update({
               where: { id: session.userId },
-              data: { lastLoginAt: new Date(), status: "ACTIVE" },
+              data: {
+                lastLoginAt: new Date(),
+                ...(user.status === "INVITED" ? { status: "ACTIVE" as const } : {}),
+              },
             });
           },
         },

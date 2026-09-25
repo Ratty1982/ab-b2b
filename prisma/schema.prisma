@@ -56,6 +56,12 @@ enum InvitationStatus {
   REVOKED
 }
 
+/// Distinguishes company portal invites from admin-created staff invitations.
+enum InvitationKind {
+  COMPANY_USER
+  STAFF_USER
+}
+
 enum CmsPageStatus {
   DRAFT
   PUBLISHED
@@ -187,6 +193,7 @@ enum TransactionalEmailPurpose {
   TRADE_APPLICATION_REJECTED
   TRADE_ACCOUNT_ACTIVATED
   COMPANY_USER_INVITED
+  USER_INVITATION
   PASSWORD_RESET
   MOTORSPORT_PARTNERSHIP_INTERNAL
   EMAIL_TEST
@@ -316,6 +323,7 @@ model User {
   companyUsers       CompanyUser[]
   userRoles          UserRole[]
   salesRep           SalesRep?
+  invitations        UserInvitation[]  @relation("InvitationUser")
   assignedTasks      Task[]            @relation("TaskAssignee")
   createdTasks       Task[]            @relation("TaskCreator")
   activities         Activity[]
@@ -575,9 +583,16 @@ model Address {
 /// Portal / company-user invitation foundation (email delivery is optional later).
 model UserInvitation {
   id              String            @id @default(cuid())
-  companyId       String
+  kind            InvitationKind    @default(COMPANY_USER)
+  /// Required for COMPANY_USER invites; null for STAFF_USER.
+  companyId       String?
+  /// Pre-created User for STAFF_USER (and optional for company invites).
+  userId          String?
   email           String
-  role            CompanyUserRole   @default(TRADE_BUYER)
+  /// Company portal role — set for COMPANY_USER only.
+  role            CompanyUserRole?
+  /// System role key snapshot for STAFF_USER invites (display only; UserRole is authoritative).
+  systemRoleKey   String?
   status          InvitationStatus  @default(PENDING)
   /// SHA-256 hex of the opaque invite token (never store raw token)
   tokenHash       String            @unique
@@ -590,11 +605,14 @@ model UserInvitation {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?    @relation("InvitationUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([companyId, status])
+  @@index([userId, status])
   @@index([email])
   @@index([expiresAt])
+  @@index([kind, status])
 }
 
 model SalesRep {
@@ -671,7 +689,7 @@ model TradeApplication {
 
   company    Company?  @relation(fields: [companyId], references: [id])
   assignedRep SalesRep? @relation(fields: [assignedRepId], references: [id])
-  reviewedBy User?     @relation("ApplicationReviewer", fields: [reviewedById], references: [id])
+  reviewedBy User?     @relation("ApplicationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   documents  Document[]
 
   @@index([status, submittedAt])
@@ -843,7 +861,7 @@ model ProductImportJob {
   updatedAt         DateTime            @updatedAt
   appliedAt         DateTime?
 
-  uploadedBy User @relation(fields: [uploadedById], references: [id])
+  uploadedBy User @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
 
   @@index([createdAt])
   @@index([uploadedById])
@@ -1523,9 +1541,10 @@ model AuditEvent {
   userAgent    String?
   createdAt    DateTime @default(now())
 
-  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id])
-  targetUser  User?    @relation("AuditTarget", fields: [targetUserId], references: [id])
-  company     Company? @relation(fields: [companyId], references: [id])
+  /// SetNull so disposable users can be hard-deleted without destroying audit rows.
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  targetUser  User?    @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
   @@index([entityType, entityId])
   @@index([actorUserId, createdAt])

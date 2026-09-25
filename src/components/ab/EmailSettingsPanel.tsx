@@ -85,6 +85,8 @@ function purposeLabel(purpose: string): string {
       return "Test Email";
     case "PASSWORD_RESET":
       return "Password Reset";
+    case "USER_INVITATION":
+      return "User Invitation";
     case "COMPANY_USER_INVITED":
       return "Portal Invite";
     case "MOTORSPORT_PARTNERSHIP_INTERNAL":
@@ -665,6 +667,9 @@ export function EmailSettingsPanel() {
               <option value="TRADE_APPLICATION_INTERNAL_NOTIFICATION">Application Internal</option>
               <option value="TRADE_APPLICATION_APPROVED">Application Approved</option>
               <option value="EMAIL_TEST">Test Email</option>
+              <option value="PASSWORD_RESET">Password Reset</option>
+              <option value="USER_INVITATION">User Invitation</option>
+              <option value="COMPANY_USER_INVITED">Portal Invite</option>
             </select>
           </div>
         </div>
