@@ -11,6 +11,7 @@ import {
   EXISTING_ACCOUNT_CLAIMS,
   HOW_HEARD_OPTIONS,
 } from "@/domain/trade-application";
+import { DEFAULT_TRADE_PRICE_HELP, DEFAULT_TRADE_PRICE_LABEL } from "@/domain/default-trade-price";
 import { ROUTES } from "@/lib/app-nav";
 import {
   approveTradeApplicationFn,
@@ -690,11 +691,12 @@ function ApplicationsPage() {
                   </Field>
                   <Field label="Price list">
                     <select className={inputClass} value={priceListId} onChange={(e) => setPriceListId(e.target.value)}>
-                      <option value="">Assign later</option>
+                      <option value="">{DEFAULT_TRADE_PRICE_LABEL}</option>
                       {priceLists.map((p) => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
+                    <p className="mt-1 text-[12px] text-steel">{DEFAULT_TRADE_PRICE_HELP}</p>
                   </Field>
                   <Field label="Payment terms">
                     <input className={inputClass} placeholder="e.g. 30 days" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />

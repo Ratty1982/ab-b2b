@@ -363,6 +363,7 @@ export async function createCompany(actorUserId: string, raw: unknown) {
           (hasPermission(profile, "credit.edit") || hasPermission(profile, "admin.access"))
             ? input.creditLimit
             : null,
+        // null = Default Trade Price (ProductVariant.tradePrice) until sales assigns a list.
         priceListId: input.priceListId ?? null,
         externalRef: emptyToNull(input.externalRef),
       },

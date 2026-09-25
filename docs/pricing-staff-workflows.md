@@ -6,6 +6,19 @@ Operational guide for Automotive Brands staff. The Phase 4A resolver contract in
 Permissions: **pricing.view** inspects commercial data. **pricing.edit** mutates it.
 Trade customers never access `/admin/pricing` or these services.
 
+## New accounts — Default Trade Price
+
+When a trade account is created (admin create customer or application approval),
+it starts on **Default Trade Price** (`Company.priceListId = null` → catalogue
+`ProductVariant.tradePrice`).
+
+Sales then change commercial terms as needed:
+
+1. Assign a named **price list** on the customer Commercial tab (or from a price-list workspace).
+2. And/or add **customer-specific prices** per product line on the same tab.
+
+`PriceList.isDefault` is a UI label only — it is **not** auto-assigned to new companies.
+
 ## Price lists
 
 Catalogue → **Price Lists** (`/admin/pricing`).

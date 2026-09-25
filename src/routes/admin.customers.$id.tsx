@@ -7,6 +7,11 @@ import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
+import {
+  companyPriceListLabel,
+  DEFAULT_TRADE_PRICE_HELP,
+  DEFAULT_TRADE_PRICE_LABEL,
+} from "@/domain/default-trade-price";
 import { ROUTES } from "@/lib/app-nav";
 import {
   createAddressFn,
@@ -199,7 +204,10 @@ function CustomerWorkspace() {
               <h2 className="font-display text-lg uppercase">Commercial snapshot</h2>
               <dl className="mt-4 grid gap-3 text-[13px]">
                 <Row label="Salesperson" value={company.salesperson?.name} />
-                <Row label="Price list" value={company.priceList?.name} />
+                <Row
+                  label="Price list"
+                  value={companyPriceListLabel(company.priceList?.name)}
+                />
                 <Row label="Payment terms" value={company.paymentTerms} />
                 <Row
                   label="Credit limit"
@@ -736,13 +744,14 @@ function CommercialEditor({
           className={inputClass}
           disabled={!permissions.canEditPricing}
         >
-          <option value="">None</option>
+          <option value="">{DEFAULT_TRADE_PRICE_LABEL}</option>
           {priceLists.map((p) => (
             <option key={p.id} value={p.id}>
               {p.code} — {p.name}
             </option>
           ))}
         </select>
+        <p className="mt-1 text-[12px] text-steel">{DEFAULT_TRADE_PRICE_HELP}</p>
       </Field>
       <Field label="Payment terms">
         <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} className={inputClass} disabled={!permissions.canEdit} />
@@ -1168,8 +1177,10 @@ function CustomerPricesEditor({
     <section>
       <h3 className="font-display text-lg font-semibold uppercase">Customer-specific prices</h3>
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
-        Assigned price list: {assignedPriceListName ?? "None"}. {rows.length} negotiated product price{rows.length === 1 ? "" : "s"}.
-        Promotions are catalogue-scoped, not company-specific.
+        Assigned price list: {assignedPriceListName ?? DEFAULT_TRADE_PRICE_LABEL}.{" "}
+        {rows.length} negotiated product price{rows.length === 1 ? "" : "s"}.
+        Sales can override individual lines below. Promotions are catalogue-scoped, not
+        company-specific.
       </p>
       {canEdit ? (
         <form

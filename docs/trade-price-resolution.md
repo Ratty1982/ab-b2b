@@ -35,7 +35,18 @@ RRP is not a trade source. It remains public catalogue information.
 
 1. **Customer-specific price** for `(companyId, variantId)` when `startsAt`/`endsAt` include `at` (open-ended if null).
 2. Else **assigned price-list item** for that variant (`Company.priceListId`). Unassigned companies do **not** inherit `PriceList.isDefault`.
-3. Else **base trade price**.
+3. Else **base trade price** (`ProductVariant.tradePrice` — **Default Trade Price**).
+
+### New accounts
+
+Every new trade account is created with `Company.priceListId = null`, so pricing
+starts on **Default Trade Price**. A salesperson can later:
+
+- assign a named **PriceList**, or
+- set **CustomerPrice** specials per product line
+
+on the customer Commercial tab. There is no settings-driven “default price group”
+that auto-assigns a named list.
 
 Then **quantity breaks** (not competing base prices):
 

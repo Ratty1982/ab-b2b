@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, type CompanyStatusKey } from "@/domain/company";
+import { DEFAULT_TRADE_PRICE_HELP, DEFAULT_TRADE_PRICE_LABEL } from "@/domain/default-trade-price";
 import {
   createCompanyFn,
   listCompaniesFn,
@@ -348,6 +349,11 @@ function CreateCustomerDrawer({
             ))}
           </select>
         </Field>
+        <div className="rounded-md border border-border/80 px-3 py-2.5 text-[12px] text-steel">
+          <span className="font-semibold text-foreground">{DEFAULT_TRADE_PRICE_LABEL}</span>
+          {" — "}
+          {DEFAULT_TRADE_PRICE_HELP}
+        </div>
         <button
           type="submit"
           disabled={saving || !name.trim()}

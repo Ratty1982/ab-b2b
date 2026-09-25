@@ -182,14 +182,16 @@ function AdminSettings() {
                 ))}
               </select>
             </Field>
-            <Field label="Default price group for new accounts">
-              <select className={inputClass} defaultValue="Trade C">
-                {["Trade List", "Trade A", "Trade B", "Trade C", "Distributor", "Buying Group"].map(
-                  (t) => (
-                    <option key={t}>{t}</option>
-                  ),
-                )}
-              </select>
+            <Field label="Default price for new accounts">
+              <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5 text-[13px]">
+                <p className="font-semibold">Default Trade Price</p>
+                <p className="mt-1 text-[12px] text-steel">
+                  Every new trade account starts on catalogue Default Trade Price
+                  (ProductVariant.tradePrice). A salesperson can later assign a named price list
+                  or set special prices per product on the customer Commercial tab. This is not
+                  configurable here.
+                </p>
+              </div>
             </Field>
             <Field label="VAT rate">
               <input className={inputClass} defaultValue="20%" />

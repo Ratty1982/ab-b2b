@@ -691,6 +691,7 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
         website: app.website,
         status: "ACTIVE",
         paymentTerms: input.paymentTerms ?? null,
+        // null = Default Trade Price until a salesperson assigns a named PriceList.
         priceListId: input.priceListId ?? null,
         primaryEmail: contactEmailLower,
         phone: contact.phone ?? null,
