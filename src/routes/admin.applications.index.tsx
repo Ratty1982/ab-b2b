@@ -852,7 +852,7 @@ function ApplicationsPage() {
                         <p className="mt-1 text-steel">
                           {status === "NONE"
                             ? "No activation email has been delivered yet."
-                            : "We couldn't deliver the activation email."}
+                            : "We couldn\u2019t deliver the activation email."}
                         </p>
                         {canResend ? (
                           <button
