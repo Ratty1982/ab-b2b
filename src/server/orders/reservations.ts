@@ -126,3 +126,36 @@ export async function reserveStockForOrder(
     });
   }
 }
+
+/**
+ * Release ACTIVE AB stock holds for an order (cancel / admin delete).
+ * Decrements Inventory.qtyReserved so effective sellable rises.
+ * Does NOT change qtyOnHand — Autopart Avail remains authoritative physical stock.
+ * Idempotent when no ACTIVE rows remain.
+ */
+export async function releaseStockForOrder(
+  tx: Prisma.TransactionClient,
+  input: { orderId: string },
+): Promise<{ releasedQuantity: number; reservationCount: number }> {
+  const active = await tx.orderStockReservation.findMany({
+    where: { orderId: input.orderId, status: "ACTIVE" },
+    orderBy: { inventoryId: "asc" },
+  });
+
+  let releasedQuantity = 0;
+  const now = new Date();
+
+  for (const res of active) {
+    await tx.orderStockReservation.update({
+      where: { id: res.id },
+      data: { status: "RELEASED", releasedAt: now },
+    });
+    await tx.inventory.update({
+      where: { id: res.inventoryId },
+      data: { qtyReserved: { decrement: res.quantity } },
+    });
+    releasedQuantity += res.quantity;
+  }
+
+  return { releasedQuantity, reservationCount: active.length };
+}

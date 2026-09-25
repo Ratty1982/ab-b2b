@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -6,6 +6,7 @@ import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
 import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import {
+  deleteAdminOrderFn,
   exportAutopartOrdersCsvFn,
   getAdminOrderFn,
   listOrderEmailsFn,
@@ -23,12 +24,14 @@ type EmailRow = Extract<Awaited<ReturnType<typeof listOrderEmailsFn>>, { ok: tru
 
 function AdminOrderDetailPage() {
   const { orderId } = Route.useParams();
+  const navigate = useNavigate();
   const [order, setOrder] = useState<Detail | null>(null);
   const [emails, setEmails] = useState<EmailRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const [orderResult, emailResult] = await Promise.all([
@@ -96,6 +99,32 @@ function AdminOrderDetailPage() {
     await load();
   }
 
+  async function onDeleteOrder() {
+    if (!order) return;
+    const exported =
+      order.autopartExportStatus === "EXPORTED"
+        ? "\n\nThis order was exported to Autopart. If it was already imported into MAM, delete or cancel it there separately."
+        : "";
+    const ok = window.confirm(
+      `Delete order ${order.orderNumber}?\n\nReserved stock for this order will be released back to available sellable stock.${exported}\n\nThis cannot be undone.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    const result = await deleteAdminOrderFn({ data: { orderId } });
+    setDeleting(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    const qty = result.data.releasedQuantity;
+    toast.success(
+      qty > 0
+        ? `Deleted ${result.data.orderNumber} — ${qty} unit(s) returned to available stock`
+        : `Deleted ${result.data.orderNumber}`,
+    );
+    void navigate({ to: ROUTES.adminOrders });
+  }
+
   if (error) {
     return (
       <div>
@@ -124,9 +153,21 @@ function AdminOrderDetailPage() {
         title={order.orderNumber}
         sub={order.companyName}
         actions={
-          <StatusBadge tone={customerOrderStatusTone(order.status)}>
-            {customerOrderStatusLabel(order.status)}
-          </StatusBadge>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={customerOrderStatusTone(order.status)}>
+              {customerOrderStatusLabel(order.status)}
+            </StatusBadge>
+            {order.status !== "DISPATCHED" && order.status !== "DELIVERED" ? (
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void onDeleteOrder()}
+                className="h-9 rounded-md border border-destructive/40 px-3 text-[11px] font-bold uppercase tracking-wide text-destructive hover:bg-destructive/10 disabled:opacity-50"
+              >
+                {deleting ? "Deleting…" : "Delete order"}
+              </button>
+            ) : null}
+          </div>
         }
       />
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">

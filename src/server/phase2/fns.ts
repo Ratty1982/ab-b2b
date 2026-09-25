@@ -1812,6 +1812,18 @@ export const getAdminOrderFn = createServerFn({ method: "GET" })
     }
   });
 
+export const deleteAdminOrderFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.deleteAdminOrder(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const previewAutopartOrderExportFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>

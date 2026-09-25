@@ -56,7 +56,7 @@ import {
   type PreviewCheckoutDraft,
 } from "@/domain/checkout";
 import { allocateOrderNumber } from "@/server/orders/order-number";
-import { reserveStockForOrder } from "@/server/orders/reservations";
+import { releaseStockForOrder, reserveStockForOrder } from "@/server/orders/reservations";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 
 export type CheckoutAddressSummary = {
@@ -1337,5 +1337,97 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       vatRate: moneyToString(parseMoney(String(item.vatRate)) ?? moneyZero(), 2),
       vatCode: item.vatCode,
     })),
+  };
+}
+
+/**
+ * Admin delete order: release ACTIVE stock holds (sellable returns), then remove the order.
+ * qtyOnHand is never incremented — Autopart Avail remains physical stock authority.
+ */
+export async function deleteAdminOrder(
+  userId: string,
+  orderId: string,
+): Promise<{
+  orderId: string;
+  orderNumber: string;
+  releasedQuantity: number;
+  reservationCount: number;
+}> {
+  const profile = await requireSystemPermission(userId, "orders.view");
+  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
+    throw new AuthError("You do not have permission to delete orders", "FORBIDDEN", 403);
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      companyId: true,
+      status: true,
+      autopartExportStatus: true,
+      _count: { select: { invoices: true } },
+    },
+  });
+  if (!order) {
+    throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+  }
+
+  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "sales.view_all_accounts")) {
+    const accessible = await getAccessibleCompanyIdsForSales(profile);
+    if (accessible !== "all" && !accessible.includes(order.companyId)) {
+      throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+    }
+  }
+
+  if (order.status === "DISPATCHED" || order.status === "DELIVERED") {
+    throw new AuthError(
+      "This order has already been despatched. Stock holds were released at despatch; delete is blocked to preserve fulfilment history.",
+      "ORDER_ALREADY_DESPATCHED",
+      400,
+    );
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const released = await releaseStockForOrder(tx, { orderId: order.id });
+
+    // Detach Autopart invoices (if any) so hard-delete is not blocked by FK.
+    if (order._count.invoices > 0) {
+      await tx.invoice.updateMany({
+        where: { orderId: order.id },
+        data: { orderId: null },
+      });
+    }
+
+    await tx.transactionalEmail.deleteMany({
+      where: { entityType: "Order", entityId: order.id },
+    });
+
+    await tx.order.delete({ where: { id: order.id } });
+
+    return released;
+  });
+
+  await recordAuditEvent({
+    action: "order.deleted",
+    entityType: "Order",
+    entityId: order.id,
+    actorUserId: userId,
+    companyId: order.companyId,
+    metadata: {
+      orderNumber: order.orderNumber,
+      previousStatus: order.status,
+      autopartExportStatus: order.autopartExportStatus,
+      releasedQuantity: result.releasedQuantity,
+      reservationCount: result.reservationCount,
+      qtyOnHandUnchanged: true,
+    },
+  });
+
+  return {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    releasedQuantity: result.releasedQuantity,
+    reservationCount: result.reservationCount,
   };
 }
