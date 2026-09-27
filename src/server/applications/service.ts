@@ -596,8 +596,118 @@ export async function requestApplicationMoreInfo(actorUserId: string, raw: unkno
 }
 
 /**
+ * Commercial trade approval activates the Company account.
+ * User / CompanyUser invite activation is a separate lifecycle and must not gate this.
+ */
+async function ensureCompanyActiveForTradeApproval(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+): Promise<{ id: string; status: string; repaired: boolean }> {
+  const company = await tx.company.findUnique({
+    where: { id: companyId },
+    select: { id: true, status: true },
+  });
+  if (!company) {
+    throw new AuthError("Company not found for trade application", "NOT_FOUND", 404);
+  }
+  if (company.status === "ACTIVE") {
+    return { id: company.id, status: company.status, repaired: false };
+  }
+  const updated = await tx.company.update({
+    where: { id: companyId },
+    data: { status: "ACTIVE" },
+    select: { id: true, status: true },
+  });
+  return { id: updated.id, status: updated.status, repaired: true };
+}
+
+/**
+ * Safe repair: APPROVED TradeApplication + linked Company still PROSPECT → ACTIVE.
+ * Does not touch unrelated CRM prospects (no approved application link).
+ */
+export async function repairApprovedTradeCompanyStatuses(actorUserId: string) {
+  await requireSystemPermission(actorUserId, "applications.approve");
+
+  const eligible = await prisma.tradeApplication.findMany({
+    where: {
+      status: "APPROVED",
+      companyId: { not: null },
+      company: { status: "PROSPECT" },
+    },
+    select: {
+      id: true,
+      reference: true,
+      companyId: true,
+      company: { select: { id: true, name: true, status: true } },
+    },
+  });
+
+  const repaired: Array<{
+    applicationId: string;
+    reference: string;
+    companyId: string;
+    companyName: string;
+    previousStatus: string;
+  }> = [];
+
+  for (const row of eligible) {
+    if (!row.companyId || !row.company) continue;
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.company.updateMany({
+        where: { id: row.companyId!, status: "PROSPECT" },
+        data: { status: "ACTIVE" },
+      });
+      if (result.count === 0) return false;
+      await tx.activity.create({
+        data: {
+          companyId: row.companyId!,
+          userId: actorUserId,
+          type: "SYSTEM",
+          subject: "Company activated from approved trade application",
+          body: `Repaired PROSPECT → ACTIVE for approved application ${row.reference}`,
+          metadata: {
+            action: "company.status_repaired_from_approved_application",
+            applicationId: row.id,
+            previousStatus: "PROSPECT",
+          },
+        },
+      });
+      return true;
+    });
+    if (!updated) continue;
+    repaired.push({
+      applicationId: row.id,
+      reference: row.reference,
+      companyId: row.companyId,
+      companyName: row.company.name,
+      previousStatus: "PROSPECT",
+    });
+    await recordAuditEvent({
+      action: "company.status_repaired_from_approved_application",
+      entityType: "Company",
+      entityId: row.companyId,
+      actorUserId,
+      companyId: row.companyId,
+      after: {
+        status: "ACTIVE",
+        previousStatus: "PROSPECT",
+        applicationId: row.id,
+        reference: row.reference,
+      },
+    });
+  }
+
+  return {
+    scanned: eligible.length,
+    repairedCount: repaired.length,
+    repaired,
+  };
+}
+
+/**
  * Idempotent approval: if already APPROVED with companyId, return existing links.
  * Never creates a second company for the same application.
+ * Sets Company.status = ACTIVE inside the approval transaction (not gated on invite activation).
  */
 export async function approveTradeApplication(actorUserId: string, raw: unknown) {
   const profile = await requireSystemPermission(actorUserId, "applications.approve");
@@ -611,6 +721,10 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
 
   // Idempotent fast-path before identity checks (membership may already be ACTIVE).
   if (preview.status === "APPROVED" && preview.companyId) {
+    // Self-heal legacy rows where approval linked a company but left it PROSPECT.
+    await prisma.$transaction(async (tx) => {
+      await ensureCompanyActiveForTradeApproval(tx, preview.companyId!);
+    });
     await recordAuditEvent({
       action: "application.approved",
       entityType: "TradeApplication",
@@ -660,6 +774,7 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     if (!app) throw new AuthError("Application not found", "NOT_FOUND", 404);
 
     if (app.status === "APPROVED" && app.companyId) {
+      await ensureCompanyActiveForTradeApproval(tx, app.companyId);
       return {
         app,
         companyId: app.companyId,
@@ -696,6 +811,8 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
 
     let company;
     try {
+      // Commercial approval → ACTIVE immediately (Company default is PROSPECT).
+      // Do not wait for invite / password activation.
       company = await tx.company.create({
         data: {
           name: app.companyName,
@@ -719,7 +836,10 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
             : {}),
         },
       });
+      await ensureCompanyActiveForTradeApproval(tx, company.id);
+      company = await tx.company.findUniqueOrThrow({ where: { id: company.id } });
     } catch (error) {
+      if (error instanceof AuthError) throw error;
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002" &&
@@ -1360,6 +1480,7 @@ export async function acceptTradeInvitation(raw: unknown) {
     }
 
     if (!isStaffInvite && invite.companyId && invite.role) {
+      // Activate membership / login only — Company commercial status was set at approval.
       await tx.companyUser.upsert({
         where: { companyId_userId: { companyId: invite.companyId, userId: user.id } },
         create: {

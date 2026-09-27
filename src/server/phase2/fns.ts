@@ -303,6 +303,19 @@ export const approveTradeApplicationFn = createServerFn({ method: "POST" })
     }
   });
 
+/** Safe backfill: APPROVED applications whose linked Company is still PROSPECT → ACTIVE. */
+export const repairApprovedTradeCompanyStatusesFn = createServerFn({ method: "POST" }).handler(
+  async () => {
+    try {
+      const userId = await requireUserId();
+      const result = await applications.repairApprovedTradeCompanyStatuses(userId);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  },
+);
+
 export const resendTradeApplicationActivationEmailFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
