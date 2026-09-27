@@ -120,20 +120,63 @@ Intended production windows:
 
 In-app scheduler (`src/server/orders/autopart-504c-scheduler.ts`) ticks every minute but **no-ops** while `enabled=false`. No Coolify cron required.
 
-## Dry-run / testing
+## Dry-run / testing (predictive)
 
-Admin upload:
+Admin → Settings → **Upload 504C test file** runs a **DRY_RUN**:
 
-- Parses file  
-- Shows AB matches, unmatched AB refs, duplicates, invoices, credits, non-AB counts  
-- Records a `DRY_RUN` import history row  
-- **Does not** mutate order status or send email  
+- Executes the same validation / match / eligibility decision logic as live apply  
+- Produces a **preview plan** (what **would** happen)  
+- Persists an `Autopart504cImportRun` with `status=DRY_RUN`, `isDryRun=true`, and diagnostics JSON  
+- **Never** creates `Invoice` rows, changes order status, consumes reservations, sends email, or writes live reconciliation audit actions  
+
+### Dry-run summary counters (WHAT WOULD HAPPEN)
+
+| Counter | Meaning |
+| --- | --- |
+| AB matches | AB invoice rows linked to an existing AB order |
+| Would create | Invoices that would be created |
+| Duplicates | Autopart document numbers already imported live |
+| Would despatch | Orders that would transition Processing → Despatched |
+| Issues | Unknown AB order, financial mismatch, status not eligible, invalid |
+
+Non-AB rows are counted as ignored — **not** issues.
+
+### Live import counters (WHAT DID HAPPEN)
+
+When the feed is later enabled, live runs use factual counters: invoices created, duplicates, orders despatched, emails queued. The UI labels dry-run columns as predictive (`would`) vs live completed actions.
+
+### Financial comparison (SDEL / delivery)
+
+Autopart 504C **Goods** includes the paid-delivery `SDEL` line.
+
+Correct Autopart net comparison:
+
+```text
+AB merchandise goods + AB delivery snapshot  ≈  504C Goods
+AB VAT snapshot                              ≈  504C VAT
+AB grand total snapshot                      ≈  504C Value
+```
+
+Example (proven AB-000003 / SS305967):
+
+```text
+AB:     goods 10.56 + delivery 5.95 = net 16.51 · VAT 3.30 · total 19.81
+504C:   Goods 16.51 · VAT 3.30 · Value 19.81
+```
+
+Do **not** compare 504C Goods only to merchandise goods (£10.56). Tolerance is ±1p. Financial mismatch is surfaced in dry-run diagnostics; live apply policy is unchanged (currently does not block on mismatch).
+
+### Result classifications
+
+`WOULD_CREATE` · `WOULD_DESPATCH` · `DUPLICATE` · `ALREADY_DESPATCHED` · `UNKNOWN_AB_ORDER` · `STATUS_NOT_ELIGIBLE` · `FINANCIAL_MISMATCH` · `CREDIT` · `INVALID` · `NON_AB`
+
+Import History **View** opens the stored plan for AB rows (document, type, account, amounts, result, fulfilment, email, financial comparison).
 
 ## Import run history
 
 Statuses: `SUCCESS` | `PARTIAL` | `FAILED` | `DRY_RUN`
 
-Diagnostics include rows read, AB references, matched, new invoices, duplicates, credits, unmatched AB refs, invalid rows, despatched count, email queue counts.
+Feed remains **not configured / automatic polling OFF** until Autopart completes report-email setup.
 
 ## Credits (deferred)
 

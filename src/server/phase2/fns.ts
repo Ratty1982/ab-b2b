@@ -2059,6 +2059,21 @@ export const listAutopart504cImportRunsFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getAutopart504cImportRunDetailFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504c");
+      return {
+        ok: true as const,
+        data: await feed.getAutopart504cImportRunDetail(userId, data.runId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 /** Live mailbox poll — blocked while feed is disabled (default). */
 export const pollAutopart504cMailboxFn = createServerFn({ method: "POST" }).handler(async () => {
   try {

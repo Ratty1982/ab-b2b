@@ -55,6 +55,54 @@ export const AUTOPART_504C_SEPARATOR =
   "--------- ---------- ----- ------- --------------------------- ------------ --------- --------- ----- -----------------------";
 
 
+/**
+ * Real-world regression fixture matching the proven MAM → 504C test:
+ * AB-000003 / SS305967 — goods (incl. SDEL) 16.51, VAT 3.30, value 19.81.
+ */
+export function buildAb000003RealWorld504cFixture(args?: {
+  orderNumber?: string;
+  document?: string;
+  account?: string;
+}): string {
+  const orderNumber = args?.orderNumber ?? "AB-000003";
+  const document = args?.document ?? "SS305967";
+  const account = args?.account ?? "AB001";
+  return [
+    "AUTOPART SYSTEM",
+    "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)",
+    "Page : 1",
+    "",
+    AUTOPART_504C_HEADER,
+    AUTOPART_504C_SEPARATOR,
+    format504cDataRow({
+      document,
+      date: "27/09/2026",
+      time: "15:40",
+      account,
+      customer: "EXAMPLE MOTOR FACTORS",
+      goods: "16.51",
+      vat: "3.30",
+      value: "19.81",
+      inits: "WR",
+      orderNumber,
+    }),
+    format504cDataRow({
+      document: "I555001",
+      date: "27/09/2026",
+      time: "13:05",
+      account: "AMZ01",
+      customer: "AMAZON EU SARL",
+      goods: "22.00",
+      vat: "4.40",
+      value: "26.40",
+      inits: "AZ",
+      orderNumber: "026-1234567-8901234",
+    }),
+    "",
+    "*** END OF REPORT ***",
+  ].join("\r\n");
+}
+
 export function buildAutopart504cSampleFixture(): string {
   const lines = [
     "AUTOPART SYSTEM",

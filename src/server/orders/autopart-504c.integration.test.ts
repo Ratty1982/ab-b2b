@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import {
+  buildAb000003RealWorld504cFixture,
   buildAutopart504cSampleFixture,
   format504cDataRow,
   AUTOPART_504C_HEADER,
@@ -14,10 +15,13 @@ import {
   applyAutopart504cFile,
   dryRunAutopart504cFile,
   getAutopart504cFeedSettings,
+  getAutopart504cImportRunDetail,
+  listAutopart504cImportRuns,
   pollAutopart504cMailboxNow,
   runAutopart504cScheduledPollIfEnabled,
   updateAutopart504cFeedSettings,
 } from "@/server/orders/autopart-504c";
+import { AuthError } from "@/server/rbac/guards";
 
 const prisma = new PrismaClient();
 let adminId = "";
@@ -356,5 +360,211 @@ describe("autopart 504C dry-run and apply", () => {
     expect(run.unmatchedAbRefs).toBe(1);
     expect(run.nonAbRows).toBeGreaterThanOrEqual(1);
     expect(run.status).toBe("PARTIAL");
+  });
+});
+
+describe("autopart 504C dry-run predictive diagnostics", () => {
+  it("AB-000003 real-world dry-run predicts create+despatch with zero mutations", async () => {
+    const abNumber = `AB-${String(940000 + (Date.now() % 50000)).padStart(6, "0")}`;
+    const document = `SS${String(Date.now()).slice(-6)}`;
+    const { order, reservation, inventory } = await createProcessingOrder(abNumber);
+
+    // Snapshots matching proven MAM import: goods 10.56 + SDEL 5.95 + VAT 3.30 = 19.81
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        subtotal: "10.56",
+        deliveryTotal: "5.95",
+        vatTotal: "3.30",
+        grandTotal: "19.81",
+      },
+    });
+    await prisma.orderItem.updateMany({
+      where: { orderId: order.id },
+      data: {
+        sku: "PMAPC500",
+        qty: 6,
+        unitPrice: "1.76",
+        customerUnitPrice: "1.76",
+        lineTotal: "10.56",
+      },
+    });
+
+    const preview = await dryRunAutopart504cFile(adminId, {
+      text: buildAb000003RealWorld504cFixture({ orderNumber: abNumber, document }),
+      filename: "ss305967-dry.txt",
+    });
+
+    expect(preview.summary.abMatches).toBe(1);
+    expect(preview.summary.wouldCreate).toBe(1);
+    expect(preview.summary.duplicates).toBe(0);
+    expect(preview.summary.wouldDespatch).toBe(1);
+    expect(preview.summary.issues).toBe(0);
+    expect(preview.summary.wouldSendEmail).toBe(1);
+    expect(preview.nonAbRows).toBeGreaterThanOrEqual(1);
+
+    const planRow = preview.plan.find((p) => p.documentNumber === document);
+    expect(planRow).toBeTruthy();
+    expect(planRow!.result).toBe("WOULD_DESPATCH");
+    expect(planRow!.wouldCreateInvoice).toBe(true);
+    expect(planRow!.wouldDespatch).toBe(true);
+    expect(planRow!.wouldSendEmail).toBe(true);
+    expect(planRow!.emailAction).toMatch(/ORDER_DESPATCHED/);
+    expect(planRow!.financial?.status).toBe("OK");
+    expect(planRow!.financial?.abNet).toBe("16.51");
+    expect(planRow!.financial?.c504Goods).toBe("16.51");
+    expect(planRow!.financial?.abDelivery).toBe("5.95");
+
+    // Zero business mutations
+    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(refreshed.status).toBe("CONFIRMED");
+    const res = await prisma.orderStockReservation.findUniqueOrThrow({
+      where: { id: reservation.id },
+    });
+    expect(res.status).toBe("ACTIVE");
+    const inv = await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
+    expect(inv.qtyReserved).toBe(5);
+    expect(inv.qtyOnHand).toBe(100);
+    expect(await prisma.invoice.count({ where: { externalRef: document } })).toBe(0);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: "ORDER_DESPATCHED" },
+      }),
+    ).toBe(0);
+
+    const history = await listAutopart504cImportRuns(adminId, 5);
+    const hist = history.find((r) => r.id === preview.runId);
+    expect(hist?.isDryRun).toBe(true);
+    expect(hist?.counterMode).toBe("PREVIEW");
+    expect(hist?.ordersMatched).toBe(1);
+    expect(hist?.newInvoices).toBe(1); // predictive would-create
+    expect(hist?.ordersDespatched).toBe(1); // predictive would-despatch
+    expect(hist?.issues).toBe(0);
+
+    const detail = await getAutopart504cImportRunDetail(adminId, preview.runId);
+    expect(detail.isDryRun).toBe(true);
+    expect(detail.plan[0]?.documentNumber).toBe(document);
+    expect(detail.plan[0]?.abOrderNumber).toBe(abNumber);
+    expect(detail.plan[0]?.goods).toBe("16.51");
+    expect(detail.plan[0]?.vat).toBe("3.30");
+    expect(detail.plan[0]?.value).toBe("19.81");
+  });
+
+  it("dry-run duplicate predicts no create/despatch", async () => {
+    const abNumber = `AB-${String(950000 + (Date.now() % 40000)).padStart(6, "0")}`;
+    const document = `SS${String(Date.now()).slice(-6)}`;
+    const { order } = await createProcessingOrder(abNumber);
+    await applyAutopart504cFile(adminId, {
+      text: reportForAbOrders([{ document, orderNumber: abNumber }]),
+      allowApply: true,
+    });
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe(
+      "DISPATCHED",
+    );
+
+    const preview = await dryRunAutopart504cFile(adminId, {
+      text: reportForAbOrders([{ document, orderNumber: abNumber }]),
+      filename: "dup-dry.txt",
+    });
+    expect(preview.summary.duplicates).toBe(1);
+    expect(preview.summary.wouldCreate).toBe(0);
+    expect(preview.summary.wouldDespatch).toBe(0);
+    expect(preview.plan[0]?.result).toBe("DUPLICATE");
+    expect(preview.plan[0]?.action).toMatch(/No action/i);
+  });
+
+  it("dry-run credit predicts no despatch", async () => {
+    const abNumber = `AB-${String(960000 + (Date.now() % 30000)).padStart(6, "0")}`;
+    const creditDoc = `C${String(Date.now()).slice(-6)}`;
+    await createProcessingOrder(abNumber);
+    const preview = await dryRunAutopart504cFile(adminId, {
+      text: reportForAbOrders([
+        { document: creditDoc, orderNumber: abNumber, credit: true },
+      ]),
+      filename: "credit-dry.txt",
+    });
+    const credit = preview.plan.find((p) => p.kind === "CREDIT");
+    expect(credit?.result).toBe("CREDIT");
+    expect(credit?.wouldDespatch).toBe(false);
+    expect(credit?.wouldSendEmail).toBe(false);
+    expect(credit?.emailAction).toMatch(/No despatch/i);
+  });
+
+  it("dry-run unknown AB order counts as issue; non-AB ignored", async () => {
+    const unknown = `AB-${String(970000 + (Date.now() % 20000)).padStart(6, "0")}`;
+    const preview = await dryRunAutopart504cFile(adminId, {
+      text: reportForAbOrders([
+        { document: `I${String(Date.now()).slice(-6)}`, orderNumber: unknown },
+      ]),
+      filename: "unknown-dry.txt",
+    });
+    expect(preview.summary.abMatches).toBe(0);
+    expect(preview.summary.issues).toBe(1);
+    expect(preview.summary.nonAbIgnored).toBeGreaterThanOrEqual(1);
+    expect(preview.plan.some((p) => p.result === "UNKNOWN_AB_ORDER")).toBe(true);
+    expect(preview.plan.every((p) => p.result !== "NON_AB")).toBe(true);
+  });
+
+  it("dry-run financial mismatch includes delivery and still predicts live create", async () => {
+    const abNumber = `AB-${String(980000 + (Date.now() % 15000)).padStart(6, "0")}`;
+    const document = `I${String(Date.now()).slice(-6)}`;
+    const { order } = await createProcessingOrder(abNumber);
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        subtotal: "10.56",
+        deliveryTotal: "5.95",
+        vatTotal: "3.30",
+        grandTotal: "19.81",
+      },
+    });
+
+    const preview = await dryRunAutopart504cFile(adminId, {
+      text: reportForAbOrders([
+        {
+          document,
+          orderNumber: abNumber,
+          goods: "16.40",
+          vat: "3.30",
+          value: "19.70",
+        },
+      ]),
+      filename: "mismatch-dry.txt",
+    });
+    const row = preview.plan.find((p) => p.documentNumber === document)!;
+    expect(row.result).toBe("FINANCIAL_MISMATCH");
+    expect(row.financial?.status).toBe("MISMATCH");
+    expect(row.financial?.abNet).toBe("16.51");
+    expect(row.financial?.abDelivery).toBe("5.95");
+    expect(row.wouldCreateInvoice).toBe(true);
+    expect(row.wouldDespatch).toBe(true);
+    expect(preview.summary.issues).toBe(1);
+    expect(preview.summary.wouldCreate).toBe(1);
+  });
+
+  it("live counters remain actual completed actions after apply", async () => {
+    const abNumber = `AB-${String(990000 + (Date.now() % 10000)).padStart(6, "0")}`;
+    const document = `I${String(Date.now()).slice(-6)}`;
+    await createProcessingOrder(abNumber);
+    const run = await applyAutopart504cFile(adminId, {
+      text: reportForAbOrders([{ document, orderNumber: abNumber }]),
+      allowApply: true,
+    });
+    expect(run.isDryRun).toBe(false);
+    expect(run.newInvoices).toBeGreaterThanOrEqual(1);
+    expect(run.ordersDespatched).toBe(1);
+
+    const history = await listAutopart504cImportRuns(adminId, 10);
+    const hist = history.find((r) => r.id === run.id);
+    expect(hist?.counterMode).toBe("ACTUAL");
+    expect(hist?.isDryRun).toBe(false);
+    expect(hist?.ordersDespatched).toBe(1);
+  });
+
+  it("import run detail requires 504C admin permission", async () => {
+    const outsider = await ensureUser(`504c-outsider-${Date.now()}@ab.test`, []);
+    await expect(getAutopart504cImportRunDetail(outsider, "cjld2cjxh0000qzrmn831i7rn")).rejects.toBeInstanceOf(
+      AuthError,
+    );
   });
 });
