@@ -37,6 +37,9 @@ export const PERMISSIONS = [
   "quotes.edit",
   "quotes.send",
   "quotes.accept",
+  "quotes.override_price",
+  "quotes.accept_on_behalf",
+  "quotes.convert",
 
   "invoices.view",
 

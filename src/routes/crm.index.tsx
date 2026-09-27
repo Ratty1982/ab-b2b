@@ -323,7 +323,7 @@ function OpportunityDrawer({
           </button>
           <Link
             to="/sales/quotes/new"
-            search={{ customer: customer?.id ?? "abc-motor-factors" }}
+            search={{ companyId: customer?.id ?? "" }}
             className="inline-flex h-11 items-center rounded-md border border-border px-5 text-[13px] font-semibold"
           >
             Create quote

@@ -1,9 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { PanelHeader, Metric } from "@/components/ab/AppShell";
+import { useCallback, useEffect, useState } from "react";
+import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
-import { gbp, gbp0 } from "@/lib/data";
-import { quotes, quoteTotal } from "@/lib/crm-data";
+import { inputClass } from "@/components/ab/Drawer";
+import { ROUTES } from "@/lib/app-nav";
+import { formatDate } from "@/lib/datetime";
+import { formatQuoteDateOnlyUk, QUOTE_STATUS_LABEL, type QuoteStatusKey } from "@/domain/quote";
+import { listStaffQuotesFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/sales/quotes/")({
   head: () => ({
@@ -12,55 +15,83 @@ export const Route = createFileRoute("/sales/quotes/")({
       {
         name: "description",
         content:
-          "Every trade quote in one place: drafts, sent, viewed, accepted, rejected and expired, with follow-up actions.",
+          "Every trade quote in one place: drafts, sent, viewed, accepted, declined, expired and converted.",
       },
-      { property: "og:title", content: "Quotes — Sales Portal" },
-      { property: "og:description", content: "Trade quote workflow from draft to accepted order." },
     ],
   }),
   component: QuotesList,
 });
 
-const filters = ["All", "Draft", "Sent", "Viewed", "Accepted", "Rejected", "Expired"] as const;
+const FILTERS = [
+  "ALL",
+  "DRAFT",
+  "SENT",
+  "VIEWED",
+  "ACCEPTED",
+  "DECLINED",
+  "EXPIRED",
+  "CONVERTED",
+] as const;
 
-export function quoteTone(status: string) {
-  if (status === "Accepted") return "good" as const;
-  if (status === "Rejected" || status === "Expired") return "bad" as const;
-  if (status === "Draft") return "neutral" as const;
+type Row = Extract<Awaited<ReturnType<typeof listStaffQuotesFn>>, { ok: true }>["data"]["items"][number];
+
+function quoteTone(status: string) {
+  if (status === "CONVERTED" || status === "ACCEPTED") return "good" as const;
+  if (status === "DECLINED" || status === "REJECTED" || status === "EXPIRED" || status === "CANCELLED")
+    return "bad" as const;
+  if (status === "DRAFT") return "neutral" as const;
   return "brand" as const;
 }
 
 function QuotesList() {
-  const [filter, setFilter] = useState<(typeof filters)[number]>("All");
-  const rows = quotes.filter((q) => filter === "All" || q.status === filter);
-  const open = quotes.filter((q) => ["Sent", "Viewed"].includes(q.status));
-  const accepted = quotes.filter((q) => q.status === "Accepted");
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<Row[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const result = await listStaffQuotesFn({
+      data: {
+        page: 1,
+        pageSize: 50,
+        q: q.trim() || undefined,
+        status: filter === "ALL" ? undefined : filter,
+      },
+    });
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    setRows(result.data.items);
+    setTotal(result.data.total);
+  }, [filter, q]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   return (
     <div>
       <PanelHeader
         title="Quotes"
-        sub="Draft, send, chase and convert trade quotes"
+        sub="Draft, send and convert trade quotations"
         actions={
           <Link
-            to="/sales/quotes/new"
-            search={{ customer: "abc-motor-factors" }}
+            to={ROUTES.salesQuotesNew}
             className="inline-flex h-10 items-center rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
           >
-            Create quote
+            New quote
           </Link>
         }
       />
 
-      <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Open quote value" value={gbp0(open.reduce((s, q) => s + quoteTotal(q), 0))} tone="brand" hint={`${open.length} awaiting decision`} />
-        <Metric label="Accepted this month" value={gbp0(accepted.reduce((s, q) => s + quoteTotal(q), 0))} tone="good" hint={`${accepted.length} converted to orders`} />
-        <Metric label="Conversion rate" value="41%" hint="Rolling 90 days" />
-        <Metric label="Expiring within 7 days" value="2" tone="warn" hint="Chase before they lapse" />
-      </div>
-
-      <div className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
-        {filters.map((f) => (
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
+        {FILTERS.map((f) => (
           <button
             key={f}
             type="button"
@@ -72,62 +103,73 @@ function QuotesList() {
                 : "border-border text-steel hover:text-foreground"
             }`}
           >
-            {f}
+            {f === "ALL" ? "All" : QUOTE_STATUS_LABEL[f as QuoteStatusKey] ?? f}
           </button>
         ))}
+        <input
+          className={`${inputClass} ml-auto max-w-xs`}
+          placeholder="Search quote no, company, PO…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
       </div>
 
       <div className="p-4 sm:p-6">
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[900px] text-[13px]">
-            <thead>
-              <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
-                <th className="px-3 py-2 font-semibold">Quote</th>
-                <th className="px-3 py-2 font-semibold">Company</th>
-                <th className="px-3 py-2 font-semibold">Contact</th>
-                <th className="px-3 py-2 font-semibold">Owner</th>
-                <th className="px-3 py-2 font-semibold">Created</th>
-                <th className="px-3 py-2 font-semibold">Expires</th>
-                <th className="px-3 py-2 font-semibold">Status</th>
-                <th className="px-3 py-2 text-right font-semibold">Value</th>
-                <th className="px-3 py-2 text-right font-semibold">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((q, i) => (
-                <tr key={q.id} className={`border-b border-border/60 last:border-0 ${i % 2 ? "bg-surface/30" : ""}`}>
-                  <td className="num px-3 py-2.5 font-medium text-primary">
-                    <Link to="/quote/$id" params={{ id: q.id }}>
-                      {q.id}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2.5 font-medium">{q.company}</td>
-                  <td className="px-3 py-2.5 text-steel">{q.contact}</td>
-                  <td className="px-3 py-2.5 text-steel">{q.owner}</td>
-                  <td className="px-3 py-2.5 text-steel">{q.created}</td>
-                  <td className="px-3 py-2.5 text-steel">{q.expires}</td>
-                  <td className="px-3 py-2.5">
-                    <StatusBadge tone={quoteTone(q.status)}>{q.status}</StatusBadge>
-                  </td>
-                  <td className="num px-3 py-2.5 text-right font-semibold">{gbp(quoteTotal(q))}</td>
-                  <td className="px-3 py-2.5 text-right">
-                    <Link
-                      to="/quote/$id"
-                      params={{ id: q.id }}
-                      className="text-[12px] font-semibold text-primary hover:underline"
-                    >
-                      {q.status === "Accepted" ? "View order" : q.status === "Draft" ? "Continue" : "Chase"}
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {rows.length === 0 ? (
-          <p className="mt-4 rounded-lg border border-dashed border-border p-10 text-center text-[13px] text-steel">
-            No quotes with this status.
-          </p>
+        {error ? <p className="mb-4 text-sm text-bad">{error}</p> : null}
+        {loading ? <p className="text-[13px] text-steel">Loading quotes…</p> : null}
+        {!loading && rows.length === 0 ? (
+          <p className="text-[13px] text-steel">No quotations match this filter.</p>
+        ) : null}
+        {rows.length > 0 ? (
+          <>
+            <p className="mb-3 text-[12px] text-steel">{total} quotation{total === 1 ? "" : "s"}</p>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-[13px]">
+                <thead>
+                  <tr className="border-b border-border text-[11px] uppercase tracking-wide text-steel">
+                    <th className="py-2 pr-3 font-semibold">Quote</th>
+                    <th className="py-2 pr-3 font-semibold">Date</th>
+                    <th className="py-2 pr-3 font-semibold">Company</th>
+                    <th className="py-2 pr-3 font-semibold">Sales Rep</th>
+                    <th className="py-2 pr-3 font-semibold">Status</th>
+                    <th className="py-2 pr-3 font-semibold">Valid until</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Net</th>
+                    <th className="py-2 pr-3 font-semibold text-right">VAT</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Total</th>
+                    <th className="py-2 font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.id} className="border-b border-border/60">
+                      <td className="py-3 pr-3 font-semibold">{row.quoteNumber}</td>
+                      <td className="py-3 pr-3 text-steel">{formatDate(row.createdAt) ?? "—"}</td>
+                      <td className="py-3 pr-3">{row.company?.name ?? "—"}</td>
+                      <td className="py-3 pr-3 text-steel">{row.salesRepName ?? "—"}</td>
+                      <td className="py-3 pr-3">
+                        <StatusBadge tone={quoteTone(row.status)}>{row.statusLabel}</StatusBadge>
+                      </td>
+                      <td className="py-3 pr-3 text-steel">
+                        {formatQuoteDateOnlyUk(row.validUntil)}
+                      </td>
+                      <td className="py-3 pr-3 text-right">£{row.subtotal}</td>
+                      <td className="py-3 pr-3 text-right">£{row.vatTotal}</td>
+                      <td className="py-3 pr-3 text-right font-semibold">£{row.grandTotal}</td>
+                      <td className="py-3">
+                        <Link
+                          to="/sales/quotes/$quoteId"
+                          params={{ quoteId: row.id }}
+                          className="font-semibold text-primary hover:underline"
+                        >
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : null}
       </div>
     </div>

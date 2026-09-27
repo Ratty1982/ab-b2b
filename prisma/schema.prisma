@@ -193,6 +193,8 @@ enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
   ORDER_DESPATCHED
+  QUOTE_SENT
+  QUOTE_DECLINED_INTERNAL
   TRADE_APPLICATION_RECEIVED
   TRADE_APPLICATION_INTERNAL_NOTIFICATION
   TRADE_APPLICATION_MORE_INFO
@@ -225,9 +227,14 @@ enum QuoteStatus {
   SENT
   VIEWED
   ACCEPTED
+  /// Customer declined (preferred over legacy REJECTED)
+  DECLINED
+  /// Legacy synonym — prefer DECLINED for new writes
   REJECTED
   EXPIRED
   CANCELLED
+  /// Accepted quote successfully became an Order
+  CONVERTED
 }
 
 enum InvoiceStatus {
@@ -1271,6 +1278,9 @@ model Order {
   autopartExportBatchId String?
   /// How many times a CSV was generated for this order (first export + re-exports).
   autopartExportCount  Int @default(0)
+  /// When placed from an accepted quote — commercial prices come from the quote snapshot.
+  sourceQuoteId       String?
+  sourceQuoteNumber   String?
   placedAt        DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -1281,12 +1291,14 @@ model Order {
   reservations OrderStockReservation[]
   autopartExportedBy User? @relation("OrderAutopartExporter", fields: [autopartExportedByUserId], references: [id], onDelete: SetNull)
   autopartExportBatch AutopartOrderExportBatch? @relation(fields: [autopartExportBatchId], references: [id], onDelete: SetNull)
+  sourceQuote  Quote?                  @relation("OrdersFromQuote", fields: [sourceQuoteId], references: [id], onDelete: SetNull)
 
   @@index([companyId, placedAt])
   @@index([status])
   @@index([poNumber])
   @@index([autopartExportStatus])
   @@index([autopartExportBatchId])
+  @@index([sourceQuoteId])
 }
 
 /// Durable metadata for an Autopart CSV download batch (no CSV body stored).
@@ -1401,41 +1413,98 @@ model OrderNumberSequence {
   nextValue Int    @default(1)
 }
 
+/// Race-safe quote number allocator (QT-000001…).
+model QuoteNumberSequence {
+  id        String @id @default("default")
+  nextValue Int    @default(1)
+}
+
 model Quote {
   id           String      @id @default(cuid())
   quoteNumber  String      @unique
   companyId    String
   status       QuoteStatus @default(DRAFT)
   currency     String      @default("GBP")
+  /// Goods net ex VAT (snapshot).
   subtotal     Decimal     @db.Decimal(12, 2)
+  deliveryTotal Decimal    @db.Decimal(12, 2) @default(0)
   vatTotal     Decimal     @db.Decimal(12, 2)
   grandTotal   Decimal     @db.Decimal(12, 2)
+  /// Validity end date (date-only semantics — store UTC noon for the calendar day).
   expiresAt    DateTime?
+  /// Legacy free-text notes — prefer customerNotes / internalNotes.
   notes        String?
+  customerNotes String?
+  internalNotes String?
+  poNumber     String?
+  contactId    String?
+  contactSnapshot Json?
+  deliveryAddressId String?
+  deliveryAddress Json?
+  salesRepIdSnapshot   String?
+  salesRepCodeSnapshot String?
+  salesRepNameSnapshot String?
+  paymentTermsSnapshot String?
   createdById  String?
   publicToken  String?     @unique
   sentAt       DateTime?
+  sentById     String?
+  firstViewedAt DateTime?
   acceptedAt   DateTime?
+  acceptedByUserId String?
+  acceptedByStaffId String?
+  acceptanceNote String?
+  declinedAt   DateTime?
+  declineReason String?
+  convertedAt  DateTime?
+  convertedOrderId String? @unique
+  deliveryOverridden Boolean @default(false)
+  deliveryOverrideById String?
+  revisionOfQuoteId String?
+  /// Idempotency for customer/staff acceptance → order conversion.
+  acceptIdempotencyKey String? @unique
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   company Company     @relation(fields: [companyId], references: [id])
   items   QuoteItem[]
+  orders  Order[]     @relation("OrdersFromQuote")
 
   @@index([companyId, status])
+  @@index([status, expiresAt])
+  @@index([createdById])
 }
 
 model QuoteItem {
   id          String  @id @default(cuid())
   quoteId     String
   variantId   String?
+  productId   String?
   sku         String
   name        String
   qty         Int
+  /// Quoted commercial unit price ex VAT (4dp) — may be overridden.
   unitPrice   Decimal @db.Decimal(12, 4)
+  /// Normal resolved unit price before quote override (4dp).
+  normalUnitPrice Decimal @db.Decimal(12, 4)
+  /// Quoted customer sell unit (2dp HALF-UP).
+  customerUnitPrice Decimal @db.Decimal(12, 2)
+  /// Normal resolved customer sell unit before override (2dp).
+  normalCustomerUnitPrice Decimal @db.Decimal(12, 2)
+  priceOverride Boolean @default(false)
+  priceOverrideById String?
   discountPct Decimal @default(0) @db.Decimal(5, 2)
   vatRate     Decimal @db.Decimal(5, 2)
+  vatCode     String?
   lineTotal   Decimal @db.Decimal(12, 2)
+  lineVat     Decimal @db.Decimal(12, 2) @default(0)
+  lineGross   Decimal @db.Decimal(12, 2) @default(0)
+  caseQty     Int?
+  orderingMode String?
+  priceSource String?
+  quantityBreakId String?
+  promotionId String?
+  sortOrder   Int     @default(0)
 
   quote   Quote           @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   variant ProductVariant? @relation(fields: [variantId], references: [id])

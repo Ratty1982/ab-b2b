@@ -75,11 +75,14 @@ import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
 import { Route as PortalOrdersIndexRouteImport } from './routes/portal.orders.index'
 import { Route as PortalOrdersOrderIdRouteImport } from './routes/portal.orders.$orderId'
+import { Route as PortalQuotesIndexRouteImport } from './routes/portal.quotes.index'
+import { Route as PortalQuotesQuoteIdRouteImport } from './routes/portal.quotes.$quoteId'
 import { Route as ProductsCategorySlugRouteImport } from './routes/products.category.$slug'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
 import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
+import { Route as SalesQuotesQuoteIdRouteImport } from './routes/sales.quotes.$quoteId'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
@@ -417,6 +420,16 @@ const PortalOrdersOrderIdRoute = PortalOrdersOrderIdRouteImport.update({
   path: '/$orderId',
   getParentRoute: () => PortalOrdersRoute,
 } as any)
+const PortalQuotesIndexRoute = PortalQuotesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PortalQuotesRoute,
+} as any)
+const PortalQuotesQuoteIdRoute = PortalQuotesQuoteIdRouteImport.update({
+  id: '/$quoteId',
+  path: '/$quoteId',
+  getParentRoute: () => PortalQuotesRoute,
+} as any)
 const ProductsCategorySlugRoute = ProductsCategorySlugRouteImport.update({
   id: '/products/category/$slug',
   path: '/products/category/$slug',
@@ -440,6 +453,11 @@ const SalesOrderIdRoute = SalesOrderIdRouteImport.update({
 const SalesQuotesIndexRoute = SalesQuotesIndexRouteImport.update({
   id: '/quotes/',
   path: '/quotes/',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesQuotesQuoteIdRoute = SalesQuotesQuoteIdRouteImport.update({
+  id: '/quotes/$quoteId',
+  path: '/quotes/$quoteId',
   getParentRoute: () => SalesRoute,
 } as any)
 const SalesQuotesNewRoute = SalesQuotesNewRouteImport.update({
@@ -512,7 +530,7 @@ export interface FileRoutesByFullPath {
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRouteWithChildren
   '/portal/quick-order': typeof PortalQuickOrderRoute
-  '/portal/quotes': typeof PortalQuotesRoute
+  '/portal/quotes': typeof PortalQuotesRouteWithChildren
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -536,9 +554,11 @@ export interface FileRoutesByFullPath {
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
+  '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
@@ -547,6 +567,7 @@ export interface FileRoutesByFullPath {
   '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
   '/portal/orders/': typeof PortalOrdersIndexRoute
+  '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -582,7 +603,6 @@ export interface FileRoutesByTo {
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
-  '/portal/quotes': typeof PortalQuotesRoute
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -604,9 +624,11 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/admin/applications': typeof AdminApplicationsIndexRoute
   '/admin/content': typeof AdminContentIndexRoute
@@ -615,6 +637,7 @@ export interface FileRoutesByTo {
   '/admin/pricing': typeof AdminPricingIndexRoute
   '/admin/products': typeof AdminProductsIndexRoute
   '/portal/orders': typeof PortalOrdersIndexRoute
+  '/portal/quotes': typeof PortalQuotesIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -660,7 +683,7 @@ export interface FileRoutesById {
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRouteWithChildren
   '/portal/quick-order': typeof PortalQuickOrderRoute
-  '/portal/quotes': typeof PortalQuotesRoute
+  '/portal/quotes': typeof PortalQuotesRouteWithChildren
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -684,9 +707,11 @@ export interface FileRoutesById {
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
+  '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/order/$id': typeof SalesOrderIdRoute
+  '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
@@ -695,6 +720,7 @@ export interface FileRoutesById {
   '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
   '/portal/orders/': typeof PortalOrdersIndexRoute
+  '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -765,9 +791,11 @@ export interface FileRouteTypes {
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
     | '/portal/orders/$orderId'
+    | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
+    | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/admin/applications/'
     | '/admin/content/'
@@ -776,6 +804,7 @@ export interface FileRouteTypes {
     | '/admin/pricing/'
     | '/admin/products/'
     | '/portal/orders/'
+    | '/portal/quotes/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
@@ -811,7 +840,6 @@ export interface FileRouteTypes {
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/quick-order'
-    | '/portal/quotes'
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
@@ -833,9 +861,11 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
+    | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/admin/applications'
     | '/admin/content'
@@ -844,6 +874,7 @@ export interface FileRouteTypes {
     | '/admin/pricing'
     | '/admin/products'
     | '/portal/orders'
+    | '/portal/quotes'
     | '/sales/customers'
     | '/sales/quotes'
     | '/admin/content/$slug/preview'
@@ -912,9 +943,11 @@ export interface FileRouteTypes {
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
     | '/portal/orders/$orderId'
+    | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
     | '/sales/order/$id'
+    | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/admin/applications/'
     | '/admin/content/'
@@ -923,6 +956,7 @@ export interface FileRouteTypes {
     | '/admin/pricing/'
     | '/admin/products/'
     | '/portal/orders/'
+    | '/portal/quotes/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/admin/content/$slug/preview'
@@ -1426,6 +1460,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalOrdersOrderIdRouteImport
       parentRoute: typeof PortalOrdersRoute
     }
+    '/portal/quotes/': {
+      id: '/portal/quotes/'
+      path: '/'
+      fullPath: '/portal/quotes/'
+      preLoaderRoute: typeof PortalQuotesIndexRouteImport
+      parentRoute: typeof PortalQuotesRoute
+    }
+    '/portal/quotes/$quoteId': {
+      id: '/portal/quotes/$quoteId'
+      path: '/$quoteId'
+      fullPath: '/portal/quotes/$quoteId'
+      preLoaderRoute: typeof PortalQuotesQuoteIdRouteImport
+      parentRoute: typeof PortalQuotesRoute
+    }
     '/products/category/$slug': {
       id: '/products/category/$slug'
       path: '/products/category/$slug'
@@ -1459,6 +1507,13 @@ declare module '@tanstack/react-router' {
       path: '/quotes'
       fullPath: '/sales/quotes/'
       preLoaderRoute: typeof SalesQuotesIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/quotes/$quoteId': {
+      id: '/sales/quotes/$quoteId'
+      path: '/quotes/$quoteId'
+      fullPath: '/sales/quotes/$quoteId'
+      preLoaderRoute: typeof SalesQuotesQuoteIdRouteImport
       parentRoute: typeof SalesRoute
     }
     '/sales/quotes/new': {
@@ -1667,6 +1722,20 @@ const PortalOrdersRouteWithChildren = PortalOrdersRoute._addFileChildren(
   PortalOrdersRouteChildren,
 )
 
+interface PortalQuotesRouteChildren {
+  PortalQuotesQuoteIdRoute: typeof PortalQuotesQuoteIdRoute
+  PortalQuotesIndexRoute: typeof PortalQuotesIndexRoute
+}
+
+const PortalQuotesRouteChildren: PortalQuotesRouteChildren = {
+  PortalQuotesQuoteIdRoute: PortalQuotesQuoteIdRoute,
+  PortalQuotesIndexRoute: PortalQuotesIndexRoute,
+}
+
+const PortalQuotesRouteWithChildren = PortalQuotesRoute._addFileChildren(
+  PortalQuotesRouteChildren,
+)
+
 interface PortalRouteChildren {
   PortalBasketRoute: typeof PortalBasketRoute
   PortalCheckoutRoute: typeof PortalCheckoutRoute
@@ -1674,7 +1743,7 @@ interface PortalRouteChildren {
   PortalInvoicesRoute: typeof PortalInvoicesRoute
   PortalOrdersRoute: typeof PortalOrdersRouteWithChildren
   PortalQuickOrderRoute: typeof PortalQuickOrderRoute
-  PortalQuotesRoute: typeof PortalQuotesRoute
+  PortalQuotesRoute: typeof PortalQuotesRouteWithChildren
   PortalSupportRoute: typeof PortalSupportRoute
   PortalUsersRoute: typeof PortalUsersRoute
   PortalIndexRoute: typeof PortalIndexRoute
@@ -1687,7 +1756,7 @@ const PortalRouteChildren: PortalRouteChildren = {
   PortalInvoicesRoute: PortalInvoicesRoute,
   PortalOrdersRoute: PortalOrdersRouteWithChildren,
   PortalQuickOrderRoute: PortalQuickOrderRoute,
-  PortalQuotesRoute: PortalQuotesRoute,
+  PortalQuotesRoute: PortalQuotesRouteWithChildren,
   PortalSupportRoute: PortalSupportRoute,
   PortalUsersRoute: PortalUsersRoute,
   PortalIndexRoute: PortalIndexRoute,
@@ -1700,6 +1769,7 @@ interface SalesRouteChildren {
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
   SalesOrderIdRoute: typeof SalesOrderIdRoute
+  SalesQuotesQuoteIdRoute: typeof SalesQuotesQuoteIdRoute
   SalesQuotesNewRoute: typeof SalesQuotesNewRoute
   SalesCustomersIndexRoute: typeof SalesCustomersIndexRoute
   SalesQuotesIndexRoute: typeof SalesQuotesIndexRoute
@@ -1709,6 +1779,7 @@ const SalesRouteChildren: SalesRouteChildren = {
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
   SalesOrderIdRoute: SalesOrderIdRoute,
+  SalesQuotesQuoteIdRoute: SalesQuotesQuoteIdRoute,
   SalesQuotesNewRoute: SalesQuotesNewRoute,
   SalesCustomersIndexRoute: SalesCustomersIndexRoute,
   SalesQuotesIndexRoute: SalesQuotesIndexRoute,

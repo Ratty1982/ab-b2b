@@ -1,14 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { PortalComingSoon } from "@/components/ab/PortalComingSoon";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
+/**
+ * Layout for /portal/quotes and /portal/quotes/$quoteId.
+ * List lives on the index route. Parent MUST render <Outlet />.
+ */
 export const Route = createFileRoute("/portal/quotes")({
-  head: () => ({
-    meta: [{ title: "Quotes — Automotive Brands Trade Portal" }],
-  }),
-  component: () => (
-    <PortalComingSoon
-      title="Quotes"
-      description="Trade quotes are not available in the portal yet. Place orders through Shop or Basket for now."
-    />
-  ),
+  component: PortalQuotesLayout,
 });
+
+function PortalQuotesLayout() {
+  return <Outlet />;
+}

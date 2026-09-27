@@ -146,8 +146,8 @@ describe("canonical navigation contract", () => {
     expect(ids).toContain("portal-shop");
     expect(ids).toContain("portal-basket");
     expect(ids).toContain("portal-orders");
+    expect(ids).toContain("portal-quotes");
     expect(ids).toContain("portal-support");
-    expect(ids).not.toContain("portal-quotes");
     expect(ids).not.toContain("portal-invoices");
     expect(ids).not.toContain("portal-favourites");
     expect(ids).not.toContain("portal-downloads");

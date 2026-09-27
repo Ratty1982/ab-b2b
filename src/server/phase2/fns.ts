@@ -2088,4 +2088,181 @@ export const pollAutopart504cMailboxFn = createServerFn({ method: "POST" }).hand
   }
 });
 
+/* ─── Production B2B Quotes ─────────────────────────────────────────────── */
+
+export const listStaffQuotesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.listQuotesForStaff(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getStaffQuoteFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.getQuoteForStaff(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getQuoteCompanyContextFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return {
+        ok: true as const,
+        data: await quotes.getCompanyQuoteContext(userId, data.companyId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchQuoteProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string; q: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return {
+        ok: true as const,
+        data: await quotes.searchQuoteProducts(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createQuoteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.createQuote(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateQuoteDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.updateQuoteDraft(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const sendQuoteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.sendQuote(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const duplicateQuoteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.duplicateQuote(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const acceptQuoteOnBehalfFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.acceptQuoteOnBehalf(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listQuoteEmailsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { quoteId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return {
+        ok: true as const,
+        data: await quotes.listQuoteEmailsForStaff(userId, data.quoteId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPortalQuotesFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const quotes = await import("@/server/quotes/service");
+    return { ok: true as const, data: await quotes.listQuotesForPortal(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getPortalQuoteFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.getQuoteForPortal(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const acceptPortalQuoteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.acceptQuoteAsCustomer(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const declinePortalQuoteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.declineQuote(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

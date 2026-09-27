@@ -42,6 +42,7 @@ export const ROUTES = {
   salesCustomer: (id: string) => `/sales/customers/${id}` as const,
   salesQuotes: "/sales/quotes",
   salesQuotesNew: "/sales/quotes/new",
+  salesQuote: (id: string) => `/sales/quotes/${id}` as const,
 
   crm: "/crm",
   crmApplications: "/crm/applications",
@@ -55,6 +56,7 @@ export const ROUTES = {
   portalOrder: (id: string) => `/portal/orders/${id}` as const,
   portalOrderConfirmation: (id: string) => `/portal/orders/${id}/confirmation` as const,
   portalQuotes: "/portal/quotes",
+  portalQuote: (id: string) => `/portal/quotes/${id}` as const,
   portalInvoices: "/portal/invoices",
   portalFavourites: "/portal/favourites",
   portalUsers: "/portal/users",
@@ -515,7 +517,7 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         icon: "file-text",
         to: ROUTES.portalQuotes,
         permission: "quotes.view",
-        implemented: false,
+        implemented: true,
       },
       {
         id: "portal-invoices",
