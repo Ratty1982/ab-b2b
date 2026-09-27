@@ -1,5 +1,9 @@
 import type { HomepageBrand, HomepageCategory, HomepageProduct } from "@/domain/homepage";
 import { resolveFeaturedBrandCards, type FeaturedBrandCard } from "@/domain/featured-brands";
+import {
+  homepageBrandLogoSrc,
+  orderHomepageBrandPresentation,
+} from "@/domain/homepage-brand-logos";
 import { cmsMediaDisplaySrc } from "@/lib/cms-media";
 
 export type ResolvedHomepageBrand = FeaturedBrandCard & {
@@ -57,21 +61,26 @@ export function resolveHomepageBrands(
         name: db.name || card.heading || card.slug,
         description: card.description || db.description || db.tagline || "",
         publicDescription: db.description ?? db.tagline ?? null,
-        logoSrc: cmsMediaDisplaySrc(card.logo) ?? db.logoSrc ?? null,
+        logoSrc: homepageBrandLogoSrc(
+          card.slug,
+          cmsMediaDisplaySrc(card.logo) ?? db.logoSrc,
+        ),
         href: card.href || `/brands/${db.slug}`,
       };
     });
-  if (resolved.length) return resolved;
-  return brands.map((brand) => ({
-    slug: brand.slug,
-    heading: brand.name,
-    name: brand.name,
-    description: brand.description || brand.tagline || "",
-    publicDescription: brand.description ?? brand.tagline ?? null,
-    href: `/brands/${brand.slug}`,
-    enabled: true,
-    logoSrc: brand.logoSrc,
-  }));
+  if (resolved.length) return orderHomepageBrandPresentation(resolved);
+  return orderHomepageBrandPresentation(
+    brands.map((brand) => ({
+      slug: brand.slug,
+      heading: brand.name,
+      name: brand.name,
+      description: brand.description || brand.tagline || "",
+      publicDescription: brand.description ?? brand.tagline ?? null,
+      href: `/brands/${brand.slug}`,
+      enabled: true,
+      logoSrc: homepageBrandLogoSrc(brand.slug, brand.logoSrc),
+    })),
+  );
 }
 
 function slugFromHref(href: string): string | null {

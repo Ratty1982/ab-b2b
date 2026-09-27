@@ -77,7 +77,7 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
     case "BRAND_LOGO_STRIP":
       return {
         heading: "Our brands",
-        brandSlugs: ["power-maxed", "steel-seal"],
+        brandSlugs: ["steel-seal", "power-maxed"],
         spacing: "standard",
       };
     case "TRADE_CTA":

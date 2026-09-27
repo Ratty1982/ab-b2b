@@ -187,39 +187,35 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
             {featuredBrandsIntro(c) ? (
               <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-steel">{featuredBrandsIntro(c)}</p>
             ) : null}
-            <div className="mt-8 grid gap-px border border-border bg-border lg:grid-cols-2">
-              {list.map((brand, i) => {
+            <div className="mt-8 grid gap-4 md:grid-cols-2">
+              {list.map((brand) => {
                 const logoSrc = cmsMediaDisplaySrc(brand.logo);
-                const logoAlt = brand.logo?.alt || `${brand.heading} logo`;
+                const logoAlt = brand.logo?.alt || brand.heading;
                 const href = brand.href || `/brands/${brand.slug}`;
                 return (
                   <a
                     key={brand.slug}
                     href={href}
-                    className={cn(
-                      "group grid gap-4 bg-surface/70 p-6 transition-colors hover:bg-surface sm:grid-cols-[minmax(0,1fr)_140px]",
-                      i === 0 && "lg:col-span-2 sm:grid-cols-[minmax(0,1fr)_220px]",
-                    )}
+                    className="group flex flex-col gap-4 rounded-lg border border-border/80 bg-surface/70 p-6 transition-colors hover:bg-surface"
+                    aria-label={`Shop ${brand.heading}`}
                   >
-                    <div className="min-w-0">
-                      <h3 className="font-display text-2xl font-semibold uppercase">{brand.heading}</h3>
-                      {brand.description ? (
-                        <p className="mt-2 max-w-md text-[13px] text-steel">{brand.description}</p>
-                      ) : null}
-                    </div>
-                    <div className="flex items-center justify-center rounded-md border border-border/70 bg-white p-4">
+                    <div className="flex min-h-[4.5rem] items-center">
                       {logoSrc ? (
                         <img
                           src={logoSrc}
                           alt={logoAlt}
-                          className={cn("max-h-16 w-full", mediaContainClass, i === 0 && "max-h-24")}
+                          className={cn("h-12 w-auto max-w-[200px]", mediaContainClass)}
                         />
                       ) : (
-                        <div className="text-center text-[11px] font-semibold uppercase tracking-wide text-steel">
-                          Logo not set
-                        </div>
+                        <h3 className="font-display text-2xl font-semibold uppercase">{brand.heading}</h3>
                       )}
                     </div>
+                    {brand.description ? (
+                      <p className="max-w-md text-[13px] text-steel">{brand.description}</p>
+                    ) : null}
+                    <span className="mt-auto text-[12px] font-bold uppercase tracking-wide text-primary">
+                      Shop {brand.heading} →
+                    </span>
                   </a>
                 );
               })}

@@ -9,12 +9,14 @@ import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { featuredBrandsIntro } from "@/domain/featured-brands";
 import type { HomepageProduct, HomepageSection, PublicHomepageData } from "@/domain/homepage";
+import { homepageBrandLogoSrc } from "@/domain/homepage-brand-logos";
 import {
   lookupProduct,
   productHref,
   productsForSkus,
   resolveHomepageBrands,
   resolveHomepageCategories,
+  type ResolvedHomepageBrand,
 } from "@/domain/homepage-resolve";
 import { cmsFocalStyle, cmsImageFitClass, cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { gbp } from "@/lib/data";
@@ -93,6 +95,36 @@ function RangeCard({ product }: { product: HomepageProduct }) {
   );
 }
 
+function HeroBrandLogos({ brands }: { brands: ResolvedHomepageBrand[] }) {
+  if (!brands.length) return null;
+  return (
+    <ul className="mt-8 flex flex-wrap items-center gap-6 sm:gap-8" data-homepage="hero-brands">
+      {brands.map((brand) => {
+        const logoSrc = homepageBrandLogoSrc(brand.slug, brand.logoSrc);
+        if (!logoSrc) return null;
+        return (
+          <li key={brand.slug}>
+            <a
+              href={brand.href}
+              className="inline-flex items-center transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+              aria-label={`Shop ${brand.name}`}
+            >
+              <img
+                src={logoSrc}
+                alt={brand.name}
+                width={brand.slug === "steel-seal" ? 180 : 160}
+                height={brand.slug === "steel-seal" ? 83 : 87}
+                className="h-9 w-auto max-w-[140px] object-contain object-left sm:h-11 sm:max-w-[168px]"
+                decoding="async"
+              />
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function HeroSection({
   config,
   brands,
@@ -106,7 +138,29 @@ function HeroSection({
   const media = mediaObj(config);
   const heroSrc = cmsMediaDisplaySrc(media) || heroFallback;
   const callout = lookupProduct(productsBySku, config["calloutSku"]);
-  const names = brands.length ? brands.map((b) => b.name) : [];
+  const heroBrands = resolveHomepageBrands(
+    {
+      brandSlugs: ["steel-seal", "power-maxed"],
+      displayCount: 2,
+      brandCards: [
+        {
+          slug: "steel-seal",
+          heading: "Steel Seal",
+          description: "",
+          href: "/brands/steel-seal",
+          enabled: true,
+        },
+        {
+          slug: "power-maxed",
+          heading: "Power Maxed",
+          description: "",
+          href: "/brands/power-maxed",
+          enabled: true,
+        },
+      ],
+    },
+    brands,
+  );
   const signedIn = session.signedIn;
   const accountLinks = publicHeaderAccountLinks(session);
   const portalHref = accountLinks.find((l) => l.key === "trade-portal" || l.key === "my-account")?.to ?? "/portal";
@@ -123,7 +177,7 @@ function HeroSection({
       <div className="mx-auto grid max-w-[1400px] items-center gap-10 px-4 py-14 sm:px-6 lg:grid-cols-12 lg:px-10 lg:py-20">
         <div className="lg:col-span-6">
           <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary">
-            {str(config, "eyebrow", "POWER MAXED + STEEL SEAL")}
+            {str(config, "eyebrow", "STEEL SEAL + POWER MAXED")}
           </div>
           <h1 className="mt-5 whitespace-pre-line font-display text-[40px] font-semibold uppercase leading-[0.92] tracking-tight sm:text-[64px] xl:text-[76px]">
             {str(config, "headline", "AUTOMOTIVE PRODUCTS\nBUILT FOR THE TRADE")}
@@ -160,15 +214,7 @@ function HeroSection({
               </a>
             ) : null}
           </div>
-          {names.length ? (
-            <ul className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px] text-steel">
-              {names.map((name) => (
-                <li key={name} className="font-display text-sm uppercase tracking-wide text-foreground">
-                  {name}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          <HeroBrandLogos brands={heroBrands} />
         </div>
         <div className="lg:col-span-6">
           <div className="relative overflow-hidden rounded-xl bg-surface/40 outline outline-1 -outline-offset-1 outline-border/60">
@@ -231,41 +277,42 @@ function BrandsSection({
             <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-steel">{featuredBrandsIntro(config)}</p>
           ) : null}
         </div>
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          {cards.map((brand) => (
-            <a
-              key={brand.slug}
-              href={brand.href}
-              className="group grid gap-5 rounded-lg border border-border/80 bg-surface/40 p-6 transition-colors hover:border-primary/50 hover:bg-surface/70 sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center"
-            >
-              <div className="min-w-0">
-                <h3 className="font-display text-2xl font-semibold uppercase leading-none sm:text-3xl">
-                  {brand.heading}
-                </h3>
-                <p className="mt-3 max-w-md text-[14px] leading-relaxed text-steel">{brand.description}</p>
-                <span className="mt-5 inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-primary">
-                  Shop {brand.heading}
+        <div className="mt-8 grid gap-4 md:grid-cols-2" data-homepage="our-brands">
+          {cards.map((brand) => {
+            const logoSrc = homepageBrandLogoSrc(brand.slug, brand.logoSrc);
+            return (
+              <a
+                key={brand.slug}
+                href={brand.href}
+                className="group flex flex-col gap-5 rounded-lg border border-border/80 bg-surface/40 p-6 transition-colors hover:border-primary/50 hover:bg-surface/70"
+                aria-label={`Shop ${brand.name}`}
+              >
+                <div className="flex min-h-[4.5rem] items-center sm:min-h-[5.25rem]">
+                  {logoSrc ? (
+                    <img
+                      src={logoSrc}
+                      alt={brand.name}
+                      width={brand.slug === "steel-seal" ? 220 : 200}
+                      height={brand.slug === "steel-seal" ? 101 : 109}
+                      className="h-12 w-auto max-w-[200px] object-contain object-left sm:h-14 sm:max-w-[220px]"
+                      decoding="async"
+                    />
+                  ) : (
+                    <h3 className="font-display text-2xl font-semibold uppercase leading-none sm:text-3xl">
+                      {brand.heading}
+                    </h3>
+                  )}
+                </div>
+                {brand.description ? (
+                  <p className="max-w-md text-[14px] leading-relaxed text-steel">{brand.description}</p>
+                ) : null}
+                <span className="mt-auto inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-primary">
+                  Shop {brand.name}
                   <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-1" aria-hidden />
                 </span>
-              </div>
-              <div className="grid h-28 place-items-center self-stretch rounded-md bg-white p-4 sm:h-36">
-                {brand.logoSrc ? (
-                  <img
-                    src={brand.logoSrc}
-                    alt={`${brand.heading} logo`}
-                    className={cn("max-h-full max-w-full", mediaContainClass)}
-                  />
-                ) : (
-                  <span className="font-display text-2xl font-bold text-ink">
-                    {brand.name
-                      .split(" ")
-                      .map((w) => w[0])
-                      .join("")}
-                  </span>
-                )}
-              </div>
-            </a>
-          ))}
+              </a>
+            );
+          })}
         </div>
       </div>
     </section>

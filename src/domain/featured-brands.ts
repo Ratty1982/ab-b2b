@@ -8,7 +8,7 @@ import {
 export const DEFAULT_FEATURED_BRANDS_HEADING = "TWO BRANDS. ONE TRADE SUPPLIER.";
 
 export const DEFAULT_FEATURED_BRANDS_INTRO =
-  "Power Maxed and Steel Seal — professional automotive products supplied to trade customers across the UK from one account.";
+  "Steel Seal and Power Maxed — professional automotive products supplied to trade customers across the UK from one account.";
 
 export type FeaturedBrandCard = {
   slug: string;
@@ -22,18 +22,18 @@ export type FeaturedBrandCard = {
 /** Initial homepage marketing copy. Stored in CMS config so it can be edited later. */
 export const DEFAULT_FEATURED_BRAND_CARDS: FeaturedBrandCard[] = [
   {
+    slug: "steel-seal",
+    heading: "Steel Seal",
+    description: "Head gasket repair and cooling-system repair products.",
+    href: "/brands/steel-seal",
+    enabled: true,
+  },
+  {
     slug: "power-maxed",
     heading: "Power Maxed",
     description:
       "Professional valeting, cleaning, workshop and vehicle maintenance products.",
     href: "/brands/power-maxed",
-    enabled: true,
-  },
-  {
-    slug: "steel-seal",
-    heading: "Steel Seal",
-    description: "Head gasket repair and cooling-system repair products.",
-    href: "/brands/steel-seal",
     enabled: true,
   },
   {

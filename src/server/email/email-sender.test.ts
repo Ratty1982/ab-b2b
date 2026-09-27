@@ -141,7 +141,7 @@ describe("branded transactional email shell", () => {
   it("exposes absolute brand logo helpers under APP_URL", () => {
     expect(brandLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/ab-logo\.jpg$/);
     expect(powerMaxedLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/power-maxed-logo\.png$/);
-    expect(steelSealLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/steel-seal-logo\.jpg$/);
+    expect(steelSealLogoUrl()).toMatch(/^https?:\/\/.+\/brand\/steel-seal-logo\.png$/);
     // Relative filesystem paths must never be used in email HTML
     expect(brandLogoUrl()).not.toMatch(/^\.\.?\/|^\/workspace/);
     expect(powerMaxedLogoUrl()).not.toMatch(/^\.\.?\/|^\/workspace/);

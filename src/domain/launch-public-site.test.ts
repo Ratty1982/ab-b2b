@@ -37,7 +37,7 @@ describe("homepage launch seed", () => {
     const sections = defaultHomepageSections();
     const byType = Object.fromEntries(sections.map((s) => [s.type, s]));
 
-    expect(byType["HERO"]?.config["eyebrow"]).toMatch(/POWER MAXED/i);
+    expect(byType["HERO"]?.config["eyebrow"]).toMatch(/STEEL SEAL \+ POWER MAXED/i);
     expect(String(byType["HERO"]?.config["headline"])).toMatch(/BUILT FOR THE TRADE/i);
     expect(byType["HERO"]?.config["ctaLabel"]).toBe("Shop Products");
     expect(byType["HERO"]?.config["ctaHref"]).toBe("/products");
@@ -49,7 +49,7 @@ describe("homepage launch seed", () => {
       slug: string;
       enabled: boolean;
     }>;
-    expect(cards.filter((c) => c.enabled).map((c) => c.slug)).toEqual(["power-maxed", "steel-seal"]);
+    expect(cards.filter((c) => c.enabled).map((c) => c.slug)).toEqual(["steel-seal", "power-maxed"]);
 
     expect(byType["CATEGORY_GRID"]?.config["ctaLabel"]).toMatch(/View all products/i);
     expect(byType["FEATURED_PRODUCTS"]?.config["heading"]).toMatch(/Featured products/i);
@@ -83,7 +83,9 @@ describe("homepage launch seed", () => {
         logoSrc: null,
       },
     ]);
-    expect(resolved.map((b) => b.slug)).toEqual(["power-maxed", "steel-seal"]);
+    expect(resolved.map((b) => b.slug)).toEqual(["steel-seal", "power-maxed"]);
     expect(resolved.every((b) => !["street-rhino", "kidzmotion"].includes(b.slug))).toBe(true);
+    expect(resolved[0]?.logoSrc).toBe("/brand/steel-seal-logo.png");
+    expect(resolved[1]?.logoSrc).toBe("/brand/power-maxed-logo.png");
   });
 });

@@ -37,7 +37,7 @@ export function powerMaxedLogoUrl(): string {
 
 /** Supporting Steel Seal mark — static public asset for email clients. */
 export function steelSealLogoUrl(): string {
-  return `${appBaseUrl()}/brand/steel-seal-logo.jpg`;
+  return `${appBaseUrl()}/brand/steel-seal-logo.png`;
 }
 
 export function publicSiteUrl(): string {

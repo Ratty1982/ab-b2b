@@ -22,7 +22,7 @@ describe("featured brands CMS copy", () => {
     expect(cfg["intro"]).toBe(DEFAULT_FEATURED_BRANDS_INTRO);
     const cards = resolveFeaturedBrandCards(cfg);
     expect(cards).toHaveLength(2);
-    expect(cards.map((c) => c.slug)).toEqual(["power-maxed", "steel-seal"]);
+    expect(cards.map((c) => c.slug)).toEqual(["steel-seal", "power-maxed"]);
     expect(cards.find((c) => c.slug === "power-maxed")?.description).toMatch(/valeting|cleaning|workshop/i);
     expect(cards.find((c) => c.slug === "steel-seal")?.description).toMatch(/head gasket/i);
     expect(DEFAULT_FEATURED_BRAND_CARDS.find((c) => c.slug === "kidzmotion")?.enabled).toBe(false);
@@ -80,7 +80,9 @@ describe("featured brands CMS copy", () => {
     expect(power?.enabled).toBe(true);
     expect(steel?.enabled).toBe(true);
     expect(rhino?.enabled).toBe(false);
-    expect(power?.description).toBe(DEFAULT_FEATURED_BRAND_CARDS[0]?.description);
+    expect(power?.description).toBe(
+      DEFAULT_FEATURED_BRAND_CARDS.find((c) => c.slug === "power-maxed")?.description,
+    );
     expect(power?.logo?.mediaId).toBe("cms-logo-1");
     expect(power?.description).not.toBe(brands.find((b) => b.slug === "power-maxed")?.blurb);
     expect(featuredBrandsIntro({ heading: "TWO BRANDS. ONE TRADE SUPPLIER." })).toBe(

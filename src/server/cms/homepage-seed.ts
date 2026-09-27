@@ -4,7 +4,7 @@ import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
 import { HOMEPAGE_MOTORSPORT_DEFAULTS } from "@/domain/motorsport";
 
 /** Bumps when launch marketing copy must refresh published CMS seed content. */
-export const HOMEPAGE_LAUNCH_CONTENT_KEY = "motorsport-feature-v1";
+export const HOMEPAGE_LAUNCH_CONTENT_KEY = "brand-presentation-v2";
 
 export const CANONICAL_HOMEPAGE_SECTION_TYPES: CmsSectionTypeKey[] = [
   "HERO",
@@ -30,7 +30,7 @@ export function defaultHomepageSections(): Array<{
       type: "HERO",
       config: {
         contentKey: HOMEPAGE_LAUNCH_CONTENT_KEY,
-        eyebrow: "POWER MAXED + STEEL SEAL",
+        eyebrow: "STEEL SEAL + POWER MAXED",
         headline: "AUTOMOTIVE PRODUCTS\nBUILT FOR THE TRADE",
         supporting:
           "Professional automotive products supplied to trade customers across the UK.",
