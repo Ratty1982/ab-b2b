@@ -17,6 +17,13 @@ import { moneyToString, parseMoney, type Money } from "@/domain/money";
 export const AUTOPART_EXPORT_SOURCE = "Automotive Brands B2B";
 
 /**
+ * Autopart/MAM delivery part number. Paid delivery is exported as this order line
+ * (qty 1 @ snapshotted delivery net). The CSV Shipping column is always 0.00 for
+ * AB — MAM ignores order-level Shipping as carriage.
+ */
+export const AUTOPART_DELIVERY_SKU = "SDEL";
+
+/**
  * Autopart-compatible headers — same names/order as AlphaOps ORDER_EXPORT_CSV_HEADERS
  * (confirmed on alphaops origin/main).
  */
@@ -251,6 +258,45 @@ export function resolveShippingName(
   return companyName.trim();
 }
 
+/**
+ * True when the order's snapshotted delivery net is positive and must be
+ * represented as an Autopart SDEL line (not as the CSV Shipping column).
+ */
+export function orderHasPaidDeliverySnapshot(deliveryTotal: string): boolean {
+  return moneyToCents(formatAutopartExportMoney(deliveryTotal)) > 0;
+}
+
+/**
+ * Product lines plus optional SDEL delivery line for CSV export.
+ * Uses historical Order.deliveryTotal only — never re-runs free-delivery rules.
+ */
+export function buildAutopartExportLines(order: AutopartExportOrderInput): AutopartExportOrderItem[] {
+  const lines = order.items.map((item) => ({
+    sku: item.sku,
+    qty: item.qty,
+    lineTotal: formatAutopartExportMoney(item.lineTotal),
+    customerUnitPrice: formatAutopartExportMoney(item.customerUnitPrice),
+  }));
+  if (!orderHasPaidDeliverySnapshot(order.deliveryTotal)) {
+    return lines;
+  }
+  const deliveryNet = formatAutopartExportMoney(order.deliveryTotal);
+  lines.push({
+    sku: AUTOPART_DELIVERY_SKU,
+    qty: 1,
+    lineTotal: deliveryNet,
+    customerUnitPrice: deliveryNet,
+  });
+  return lines;
+}
+
+/** CSV data-row count for an order (product lines + SDEL when paid delivery). */
+export function countAutopartCsvLinesForOrder(order: AutopartExportOrderInput): number {
+  const n = order.items.length;
+  const sdel = orderHasPaidDeliverySnapshot(order.deliveryTotal) ? 1 : 0;
+  return Math.max(1, n + sdel);
+}
+
 export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): AutopartCsvRow[] {
   const delivery = order.deliveryAddress;
   const contact = order.contact;
@@ -264,7 +310,12 @@ export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): A
   const mam = order.autopartCustomerCodeSnapshot.trim();
   const source = AUTOPART_EXPORT_SOURCE;
 
-  const orderShipping = formatAutopartExportMoney(order.deliveryTotal);
+  /**
+   * MAM Incoming Purchase Orders does not treat the CSV Shipping column as
+   * carriage. Paid delivery is an SDEL product line; Shipping is always 0.00
+   * so carriage is never double-counted.
+   */
+  const orderShipping = "0.00";
   const orderTax = formatAutopartExportMoney(order.vatTotal);
   const orderTotal = formatAutopartExportMoney(order.grandTotal);
   const paymentAmount1 = orderTotal;
@@ -285,14 +336,16 @@ export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): A
     "MAM Account": mam,
   } as const;
 
-  if (order.items.length === 0) {
+  const exportItems = buildAutopartExportLines(order);
+
+  if (exportItems.length === 0) {
     return [
       {
         ...common,
         "Supplier SKU": "",
         Quantity: "0",
         "Sub Total": "0.00",
-        Shipping: orderShipping,
+        Shipping: "0.00",
         VAT: orderTax,
         Total: orderTotal,
         Price: "0.00",
@@ -301,14 +354,14 @@ export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): A
     ];
   }
 
-  const apportioned = buildOrderLineApportionment(order.items, {
+  const apportioned = buildOrderLineApportionment(exportItems, {
     orderShipping,
     orderTax,
     orderTotal,
     paymentAmount1,
   });
 
-  return order.items.map((item, index) => {
+  return exportItems.map((item, index) => {
     const fin = resolveLineFinancials(item, index, apportioned);
     return {
       ...common,

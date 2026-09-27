@@ -75,15 +75,45 @@ The proven Autopart import contract has no dedicated Customer PO column in this 
 | Shipping Name | delivery `contactName` → contact name → company name |
 | Shipping Address 1–Country | `Order.deliveryAddress` snapshot |
 | Email / Phone | `Order.contactSnapshot` (phone Excel-safe) |
-| Supplier SKU | `OrderItem.sku` snapshot (no fuzzy match) |
-| Quantity | `OrderItem.qty` |
-| Sub Total | `OrderItem.lineTotal` (goods net) |
-| Shipping / VAT / Total / Payment Amount 1 | Order-level snapshots apportioned by qty (largest remainder) |
-| Price | `OrderItem.customerUnitPrice` (AB mapping; not AlphaOps total÷qty) |
+| Supplier SKU | `OrderItem.sku` snapshot, or `SDEL` for paid delivery |
+| Quantity | `OrderItem.qty`, or `1` for SDEL |
+| Sub Total | Goods line net, or delivery net for SDEL |
+| Shipping | Always `0.00` (see Delivery / SDEL below) |
+| VAT / Total / Payment Amount 1 | Order-level snapshots apportioned by qty across product + SDEL lines (largest remainder) |
+| Price | `OrderItem.customerUnitPrice`, or delivery net for SDEL |
 | Source | `Automotive Brands B2B` |
 | MAM Account | `Order.autopartCustomerCodeSnapshot` only |
 
 Never resolve live Company Autopart code, claimed TradeApplication values, or recalculate today's prices / delivery threshold.
+
+## Delivery / SDEL (MAM carriage)
+
+**Autopart/MAM Incoming Purchase Orders does not consume AB’s order-level CSV `Shipping` column as carriage.**
+
+Real MAM import testing (e.g. AB-000003) showed goods imported correctly while a `Shipping = 5.95` field was ignored, so VAT/gross under-stated delivery.
+
+Paid delivery is therefore represented as an **additional order line**:
+
+| Field | Value |
+| --- | --- |
+| Supplier SKU | `SDEL` |
+| Quantity | `1` |
+| Price / Sub Total | snapshotted `Order.deliveryTotal` (net) |
+
+Rules:
+
+- `deliveryTotal` snapshot **> 0** → emit one `SDEL` row  
+- `deliveryTotal` snapshot **= 0.00** (free delivery) → **no** `SDEL` row  
+- Do **not** re-run the £150 free-delivery rule at export time — use the historical snapshot only  
+- The CSV `Shipping` column is always `0.00` so carriage is **not** double-counted as SDEL + Shipping  
+
+Example (AB-000003):
+
+```text
+PMAPC500 × 6 @ £1.76  → net £10.56
+SDEL     × 1 @ £5.95  → net £5.95
+Net £16.51 + VAT £3.30 = Gross £19.81
+```
 
 ## MAM Account
 
@@ -93,19 +123,19 @@ Missing snapshot → **BLOCK EXPORT**. Never substitute company name, email, cus
 
 ## One row per line
 
-Multi-line orders produce one CSV row per `OrderItem`, sharing order header fields and MAM Account.
+Multi-line orders produce one CSV row per `OrderItem`, plus one `SDEL` row when delivery snapshot is paid. All rows share order header fields and MAM Account.
 
 ## Financial apportionment
 
-Order-level `deliveryTotal`, `vatTotal`, and `grandTotal` are split across lines by quantity weights using largest-remainder penny allocation so:
+Order-level `vatTotal` and `grandTotal` are split across **product + SDEL** lines by quantity weights using largest-remainder penny allocation so:
 
-- `sum(Sub Total) = goods net`
-- `sum(Shipping) = delivery net`
-- `sum(VAT) = order VAT`
+- `sum(Sub Total) = goods net + delivery net` (SDEL carries delivery)
+- `sum(Shipping) = 0.00` (carriage is SDEL, not Shipping)
+- `sum(VAT) = order VAT` (authoritative snapshot — not recalculated at 20%)
 - `sum(Total) = order gross`
 - `sum(Payment Amount 1) = order gross`
 
-Delivery uses the historical order snapshot (do not re-run the £150 free-delivery rule at export time).
+Zero/exempt VAT orders still export `SDEL` when delivery snapshot is paid; VAT columns remain `0.00` from the snapshot.
 
 ## Eligibility
 

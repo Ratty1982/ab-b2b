@@ -198,19 +198,47 @@ describe("autopart order CSV export service", () => {
 
     const result = await exportAutopartOrdersCsv(adminId, [order.id]);
     expect(result.orderCount).toBe(1);
-    expect(result.lineCount).toBe(1);
+    expect(result.lineCount).toBe(2); // product + SDEL paid delivery
     expect(result.filename).toContain(order.orderNumber);
     expect(result.headers).toEqual([...AUTOPART_ORDER_CSV_HEADERS]);
     expect(result.csv.split("\n")[0]).toContain("External Reference");
     expect(result.csv).toContain(order.orderNumber);
     expect(result.csv).toContain("PMML500SC40");
+    expect(result.csv).toContain("SDEL");
     expect(result.csv).toContain(AUTOPART_EXPORT_SOURCE);
     expect(result.csv).toContain(`MAM${stamp}`);
     expect(result.csv).toContain("44.28");
     expect(result.csv).toContain("5.95");
-    expect(result.csv).toContain("10.05");
-    expect(result.csv).toContain("60.28");
     expect(result.csv).toContain("3.69");
+    const { buildAutopartCsvRowsForOrder, sumMoneyStrings } = await import(
+      "@/domain/autopart-order-export"
+    );
+    const exported = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: { items: true, company: { select: { name: true } } },
+    });
+    const rows = buildAutopartCsvRowsForOrder({
+      orderNumber: exported.orderNumber,
+      orderDate: exported.placedAt ?? exported.createdAt,
+      companyName: exported.company.name,
+      deliveryAddress: exported.deliveryAddress as never,
+      contact: exported.contactSnapshot as never,
+      autopartCustomerCodeSnapshot: exported.autopartCustomerCodeSnapshot!,
+      subtotal: String(exported.subtotal),
+      deliveryTotal: String(exported.deliveryTotal),
+      vatTotal: String(exported.vatTotal),
+      grandTotal: String(exported.grandTotal),
+      items: exported.items.map((it) => ({
+        sku: it.sku,
+        qty: it.qty,
+        lineTotal: String(it.lineTotal),
+        customerUnitPrice: String(it.customerUnitPrice),
+      })),
+    });
+    expect(sumMoneyStrings(rows.map((r) => r.VAT))).toBe("10.05");
+    expect(sumMoneyStrings(rows.map((r) => r.Total))).toBe("60.28");
+    expect(sumMoneyStrings(rows.map((r) => r.Shipping))).toBe("0.00");
+    expect(sumMoneyStrings(rows.map((r) => r["Sub Total"]))).toBe("50.23");
 
     const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
     expect(refreshed.autopartExportStatus).toBe("EXPORTED");
@@ -304,15 +332,21 @@ describe("autopart order CSV export service", () => {
 
     const first = await exportAutopartOrdersCsv(adminId, [a.order.id, b.order.id]);
     expect(first.orderCount).toBe(2);
-    expect(first.lineCount).toBe(3);
+    // a: 1 product + SDEL; b: 2 products, free delivery → no SDEL
+    expect(first.lineCount).toBe(4);
     expect(first.csv).toContain(a.order.orderNumber);
     expect(first.csv).toContain(b.order.orderNumber);
-    expect(first.csv).toContain("0.00"); // free delivery shipping share possible
+    expect(first.csv).toContain("SDEL");
+    // Free-delivery order must not emit SDEL for its lines only — paid order still has SDEL.
+    // Count SDEL occurrences: one (order a only).
+    expect(first.csv.split("SDEL").length - 1).toBe(1);
 
     await expect(exportAutopartOrdersCsv(adminId, [a.order.id])).rejects.toThrow(/re-export/i);
 
     const re = await exportAutopartOrdersCsv(adminId, [a.order.id], { confirmReexport: true });
     expect(re.isReexport).toBe(true);
+    expect(re.csv).toContain("SDEL");
+    expect(re.csv).toContain(a.order.orderNumber);
     const after = await prisma.order.findUniqueOrThrow({ where: { id: a.order.id } });
     expect(after.autopartExportCount).toBe(2);
     expect(after.status).toBe("CONFIRMED"); // re-export stays Processing
@@ -321,11 +355,68 @@ describe("autopart order CSV export service", () => {
       where: { entityId: a.order.id, action: "order.autopart_reexport" },
     });
     expect(reAudits.length).toBeGreaterThan(0);
+    const reMeta = reAudits[0]?.metadata as Record<string, unknown> | null;
+    expect(reMeta?.["apcInvoked"]).toBe(false);
 
     const emails = await prisma.transactionalEmail.findMany({
       where: { entityId: a.order.id, purpose: "ORDER_DESPATCHED" },
     });
     expect(emails).toHaveLength(0);
+  });
+
+  it("AB-000003-equivalent paid delivery exports SDEL and reconciles", async () => {
+    const stamp = Date.now();
+    const { order } = await createEligibleOrder({
+      orderNumber: `AB-000003-${stamp}`,
+      mam: `MAM003${stamp}`,
+      items: [{ sku: "PMAPC500", qty: 6, lineTotal: "10.56", unit: "1.76" }],
+    });
+    // Force historical snapshot totals matching the real MAM test order
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        subtotal: "10.56",
+        deliveryTotal: "5.95",
+        vatTotal: "3.30",
+        grandTotal: "19.81",
+      },
+    });
+
+    const result = await exportAutopartOrdersCsv(adminId, [order.id]);
+    expect(result.lineCount).toBe(2);
+    expect(result.csv).toContain("PMAPC500");
+    expect(result.csv).toContain("SDEL");
+    expect(result.csv).toContain(order.orderNumber);
+    expect(result.csv).not.toMatch(/PO\d+/);
+
+    const { buildAutopartCsvRowsForOrder } = await import("@/domain/autopart-order-export");
+    const { sumMoneyStrings } = await import("@/domain/autopart-order-export");
+    const refreshed = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: { items: true, company: { select: { name: true } } },
+    });
+    const rows = buildAutopartCsvRowsForOrder({
+      orderNumber: refreshed.orderNumber,
+      orderDate: refreshed.placedAt ?? refreshed.createdAt,
+      companyName: refreshed.company.name,
+      deliveryAddress: refreshed.deliveryAddress as never,
+      contact: refreshed.contactSnapshot as never,
+      autopartCustomerCodeSnapshot: refreshed.autopartCustomerCodeSnapshot!,
+      subtotal: "10.56",
+      deliveryTotal: "5.95",
+      vatTotal: "3.30",
+      grandTotal: "19.81",
+      items: refreshed.items.map((it) => ({
+        sku: it.sku,
+        qty: it.qty,
+        lineTotal: String(it.lineTotal),
+        customerUnitPrice: String(it.customerUnitPrice),
+      })),
+    });
+    expect(sumMoneyStrings(rows.map((r) => r["Sub Total"]))).toBe("16.51");
+    expect(sumMoneyStrings(rows.map((r) => r.VAT))).toBe("3.30");
+    expect(sumMoneyStrings(rows.map((r) => r.Total))).toBe("19.81");
+    expect(sumMoneyStrings(rows.map((r) => r.Shipping))).toBe("0.00");
   });
 
   it("denies export for staff without orders.edit / admin.access", async () => {

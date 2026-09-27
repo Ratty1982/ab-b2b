@@ -14,6 +14,8 @@ import {
   AUTOPART_ORDER_CSV_HEADERS,
   buildAutopartExportFilename,
   buildAutopartOrdersCsv,
+  countAutopartCsvLinesForOrder,
+  orderHasPaidDeliverySnapshot,
   type AutopartExportContactSnapshot,
   type AutopartExportDeliverySnapshot,
   type AutopartExportOrderInput,
@@ -100,7 +102,9 @@ function assessOrder(
     previouslyExportedByName: order.autopartExportedBy?.name ?? order.autopartExportedBy?.email ?? null,
     autopartAccountLinked: order.autopartAccountLinked,
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot,
-    lineCount: order.items.length,
+    lineCount:
+      order.items.length +
+      (orderHasPaidDeliverySnapshot(money2(order.deliveryTotal)) ? 1 : 0),
   };
 
   const block = (
@@ -348,7 +352,7 @@ export async function exportAutopartOrdersCsv(
 
   const inputs = uniqueOrders.map(toExportInput);
   const csv = buildAutopartOrdersCsv(inputs);
-  const lineCount = inputs.reduce((n, o) => n + Math.max(1, o.items.length), 0);
+  const lineCount = inputs.reduce((n, o) => n + countAutopartCsvLinesForOrder(o), 0);
   const now = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
