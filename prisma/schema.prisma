@@ -1873,6 +1873,8 @@ model TeamMember {
   email         String?
   /// Public telephone only — never copied from User automatically.
   phone         String?
+  /// Public mobile only — never copied from User automatically.
+  mobile        String?
   linkedInUrl   String?
   sortOrder     Int      @default(0)
   /// Defaults hidden until staff explicitly publish.

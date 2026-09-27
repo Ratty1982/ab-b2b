@@ -7,6 +7,10 @@ import { prisma } from "@/infra/database/client";
 import { AuthError, requireAuthenticatedUser, requireCompanyPermission } from "@/server/rbac/guards";
 import { getBasketSummary } from "@/server/basket/service";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
+import {
+  resolveAccountManagerForCompany,
+  resolveGeneralTradeContact,
+} from "@/server/sales/account-manager";
 
 const OPEN_ORDER_STATUSES = [
   "SUBMITTED",
@@ -41,17 +45,6 @@ async function requireTradePortalCompany(userId: string) {
       creditLimit: true,
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
-      assignments: {
-        where: { isPrimary: true },
-        take: 1,
-        include: {
-          salesRep: {
-            include: {
-              user: { select: { id: true, name: true, email: true, status: true } },
-            },
-          },
-        },
-      },
     },
   });
   if (!company) {
@@ -115,16 +108,10 @@ export async function getPortalDashboard(userId: string) {
     getBasketSummary(userId),
   ]);
 
-  const assignment = company.assignments[0] ?? null;
-  const repUser = assignment?.salesRep.user ?? null;
-  const accountManager =
-    repUser && repUser.status === "ACTIVE"
-      ? {
-          name: repUser.name?.trim() || repUser.email,
-          email: repUser.email,
-          code: assignment!.salesRep.code,
-        }
-      : null;
+  const [accountManager, generalContact] = await Promise.all([
+    resolveAccountManagerForCompany(company.id),
+    resolveGeneralTradeContact(),
+  ]);
 
   const autopartVerified = Boolean(
     company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt,
@@ -168,8 +155,10 @@ export async function getPortalDashboard(userId: string) {
     openOrders: openOrders.map(mapOrderRow),
     recentOrders: recentOrders.map(mapOrderRow),
     accountManager,
+    /** Fallback when no SalesRep is assigned — configured reply-to/from only. */
+    generalContact,
     features: {
-      quotes: false,
+      quotes: true,
       invoices: false,
       favourites: false,
       reorder: false,
@@ -188,6 +177,7 @@ export async function getPortalSupportContact(userId: string) {
   return {
     companyName: dash.company.name,
     accountManager: dash.accountManager,
+    generalContact: dash.generalContact,
     paymentTerms: dash.company.paymentTerms,
     autopartCustomerCode: dash.company.autopartCustomerCode,
   };

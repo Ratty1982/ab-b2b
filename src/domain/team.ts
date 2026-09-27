@@ -111,10 +111,11 @@ export function teamMemberHasPublicContact(input: {
   isContactable?: boolean;
   email?: string | null;
   phone?: string | null;
+  mobile?: string | null;
   linkedInUrl?: string | null;
 }): boolean {
   if (!input.isContactable) return false;
-  return Boolean(input.email || input.phone || input.linkedInUrl);
+  return Boolean(input.email || input.phone || input.mobile || input.linkedInUrl);
 }
 
 function emptyToNull(value: string | null | undefined): string | null {
@@ -163,6 +164,7 @@ export const teamMemberUpsertSchema = z.object({
   bio: z.string().trim().max(1200).optional().nullable(),
   email: optionalEmail,
   phone: z.string().trim().max(40).optional().nullable(),
+  mobile: z.string().trim().max(40).optional().nullable(),
   linkedInUrl: optionalUrl,
   sortOrder: z.number().int().min(0).max(10_000).default(0),
   isPublic: z.boolean().default(false),
@@ -193,6 +195,7 @@ export function normalizeTeamMemberInput(input: TeamMemberUpsertInput) {
     bio: emptyToNull(input.bio ?? null),
     email: emptyToNull(input.email ?? null),
     phone: emptyToNull(input.phone ?? null),
+    mobile: emptyToNull(input.mobile ?? null),
     linkedInUrl: emptyToNull(input.linkedInUrl ?? null),
     photoAlt: emptyToNull(input.photoAlt ?? null),
     departmentId: input.departmentId || null,

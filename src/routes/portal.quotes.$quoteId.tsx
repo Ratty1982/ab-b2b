@@ -172,7 +172,42 @@ function PortalQuoteDetail() {
             </div>
             <div>
               <dt className="text-steel">Prepared by</dt>
-              <dd>{quote.salesRepName || "Automotive Brands"}</dd>
+              <dd>
+                {quote.accountManager ? (
+                  <>
+                    <span className="font-semibold">{quote.accountManager.name}</span>
+                    <span className="block text-[12px] text-steel">
+                      {quote.accountManager.jobTitle}
+                    </span>
+                    {quote.accountManager.email ? (
+                      <a
+                        href={quote.accountManager.mailtoHref ?? undefined}
+                        className="block text-[12px] text-primary hover:underline"
+                      >
+                        {quote.accountManager.email}
+                      </a>
+                    ) : null}
+                    {quote.accountManager.phone ? (
+                      <a
+                        href={quote.accountManager.telHref ?? undefined}
+                        className="block text-[12px] text-primary hover:underline"
+                      >
+                        {quote.accountManager.phone}
+                      </a>
+                    ) : null}
+                    {quote.accountManager.mobile ? (
+                      <a
+                        href={quote.accountManager.mobileTelHref ?? undefined}
+                        className="block text-[12px] text-primary hover:underline"
+                      >
+                        {quote.accountManager.mobile}
+                      </a>
+                    ) : null}
+                  </>
+                ) : (
+                  quote.salesRepName || "Automotive Brands"
+                )}
+              </dd>
             </div>
             <div>
               <dt className="text-steel">Issued</dt>

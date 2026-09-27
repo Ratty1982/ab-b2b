@@ -921,7 +921,22 @@ export async function listQuotesForPortal(userId: string) {
 }
 
 export async function getQuoteForPortal(userId: string, quoteId: string) {
-  return markQuoteViewedByCustomer(userId, quoteId);
+  const quote = await markQuoteViewedByCustomer(userId, quoteId);
+  const { resolveAccountManagerForCompany, resolveAccountManagerForSalesRep } = await import(
+    "@/server/sales/account-manager"
+  );
+  // Prefer live company assignment; fall back to snapshotted sales rep id.
+  let accountManager = await resolveAccountManagerForCompany(quote.companyId);
+  if (!accountManager) {
+    const raw = await prisma.quote.findUnique({
+      where: { id: quoteId },
+      select: { salesRepIdSnapshot: true },
+    });
+    if (raw?.salesRepIdSnapshot) {
+      accountManager = await resolveAccountManagerForSalesRep(raw.salesRepIdSnapshot);
+    }
+  }
+  return { ...quote, accountManager };
 }
 
 export async function declineQuote(userId: string, raw: unknown) {

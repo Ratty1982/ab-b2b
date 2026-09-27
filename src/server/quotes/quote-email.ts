@@ -55,7 +55,31 @@ export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Prom
   const portalUrl = `${appBaseUrl()}/portal/quotes/${quote.id}`;
   const validUntil = formatValidUntil(quote.expiresAt);
   const total = formatGbp(String(quote.grandTotal));
-  const salesRep = quote.salesRepNameSnapshot?.trim() || null;
+
+  const { resolveAccountManagerForCompany, resolveAccountManagerForSalesRep } = await import(
+    "@/server/sales/account-manager"
+  );
+  let am =
+    (await resolveAccountManagerForCompany(quote.companyId)) ??
+    (quote.salesRepIdSnapshot
+      ? await resolveAccountManagerForSalesRep(quote.salesRepIdSnapshot)
+      : null);
+  const preparedByName = am?.name || quote.salesRepNameSnapshot?.trim() || null;
+  const preparedByLines: string[] = [];
+  if (preparedByName) {
+    preparedByLines.push(`Prepared by: ${preparedByName}`);
+    if (am?.jobTitle) preparedByLines.push(am.jobTitle);
+    if (am?.email) preparedByLines.push(am.email);
+    if (am?.phone) preparedByLines.push(am.phone);
+    if (am?.mobile) preparedByLines.push(am.mobile);
+  }
+  const preparedByHtml = preparedByName
+    ? `<br/><strong>Prepared by:</strong> ${escapeEmailHtml(preparedByName)}${
+        am?.jobTitle ? ` — ${escapeEmailHtml(am.jobTitle)}` : ""
+      }${am?.email ? `<br/>${escapeEmailHtml(am.email)}` : ""}${
+        am?.phone ? `<br/>${escapeEmailHtml(am.phone)}` : ""
+      }${am?.mobile ? `<br/>${escapeEmailHtml(am.mobile)}` : ""}`
+    : "";
 
   const subject = `Your Automotive Brands quotation ${quote.quoteNumber}`;
   const text = [
@@ -65,7 +89,7 @@ export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Prom
     "",
     `Valid until: ${validUntil}`,
     `Total (inc VAT): £${total} ${quote.currency}`,
-    salesRep ? `Prepared by: ${salesRep}` : "",
+    ...preparedByLines,
     "",
     `VIEW QUOTE: ${portalUrl}`,
     "",
@@ -82,7 +106,7 @@ export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Prom
 <p style="margin:0 0 16px;">Please find your Automotive Brands quotation <strong>${escapeEmailHtml(quote.quoteNumber)}</strong> for <strong>${escapeEmailHtml(quote.company.name)}</strong>.</p>
 <p style="margin:0 0 8px;"><strong>Valid until:</strong> ${escapeEmailHtml(validUntil)}<br/>
 <strong>Total (inc VAT):</strong> £${escapeEmailHtml(total)} ${escapeEmailHtml(quote.currency)}
-${salesRep ? `<br/><strong>Prepared by:</strong> ${escapeEmailHtml(salesRep)}` : ""}</p>
+${preparedByHtml}</p>
 <p style="margin:16px 0 0;">Open the quotation in your trade portal to accept or decline.</p>`;
 
   const html = renderTransactionalEmailShell({

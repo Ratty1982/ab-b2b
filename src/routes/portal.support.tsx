@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Mail } from "lucide-react";
+import { Mail, Phone, Smartphone } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { getPortalSupportContactFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
@@ -8,6 +8,7 @@ import {
   ACCOUNT_MANAGER_HOURS,
   ACCOUNT_MANAGER_HOURS_LINES,
 } from "@/domain/account-manager-hours";
+import type { AccountManagerPublic } from "@/server/sales/account-manager";
 
 export const Route = createFileRoute("/portal/support")({
   head: () => ({
@@ -24,7 +25,8 @@ export const Route = createFileRoute("/portal/support")({
 
 function Support() {
   const [companyName, setCompanyName] = useState<string | null>(null);
-  const [manager, setManager] = useState<{ name: string; email: string } | null>(null);
+  const [manager, setManager] = useState<AccountManagerPublic | null>(null);
+  const [generalMailto, setGeneralMailto] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,6 +38,7 @@ function Support() {
       }
       setCompanyName(r.data.companyName);
       setManager(r.data.accountManager);
+      setGeneralMailto(r.data.generalContact?.mailtoHref ?? null);
     })();
   }, []);
 
@@ -76,26 +79,79 @@ function Support() {
             <div className="text-[11px] uppercase tracking-[0.16em] text-steel">Account manager</div>
             {manager ? (
               <>
-                <div className="mt-1 font-display text-lg font-semibold uppercase">{manager.name}</div>
+                <div className="mt-2 flex items-start gap-3">
+                  {manager.photo ? (
+                    <img
+                      src={manager.photo.src}
+                      alt={manager.photo.alt}
+                      className="size-12 shrink-0 rounded-full object-cover"
+                      style={{ objectPosition: manager.photo.objectPosition }}
+                    />
+                  ) : (
+                    <div
+                      className="grid size-12 shrink-0 place-items-center rounded-full bg-ink font-display text-xs font-semibold"
+                      aria-hidden
+                    >
+                      {manager.initials}
+                    </div>
+                  )}
+                  <div>
+                    <div className="font-display text-lg font-semibold uppercase leading-tight">
+                      {manager.name}
+                    </div>
+                    <div className="text-[12px] text-steel">{manager.jobTitle}</div>
+                  </div>
+                </div>
                 <ul className="mt-3 space-y-1.5 text-[13px]">
-                  <li className="flex min-w-0 items-center gap-2">
-                    <Mail className="size-3.5 shrink-0 text-primary" aria-hidden />
-                    <a href={`mailto:${manager.email}`} className="truncate hover:underline">
-                      {manager.email}
-                    </a>
-                  </li>
+                  {manager.email ? (
+                    <li className="flex min-w-0 items-center gap-2">
+                      <Mail className="size-3.5 shrink-0 text-primary" aria-hidden />
+                      <a href={manager.mailtoHref ?? undefined} className="truncate hover:underline">
+                        {manager.email}
+                      </a>
+                    </li>
+                  ) : null}
+                  {manager.phone ? (
+                    <li className="flex min-w-0 items-center gap-2">
+                      <Phone className="size-3.5 shrink-0 text-primary" aria-hidden />
+                      <a href={manager.telHref ?? undefined} className="truncate hover:underline">
+                        {manager.phone}
+                      </a>
+                    </li>
+                  ) : null}
+                  {manager.mobile ? (
+                    <li className="flex min-w-0 items-center gap-2">
+                      <Smartphone className="size-3.5 shrink-0 text-primary" aria-hidden />
+                      <a
+                        href={manager.mobileTelHref ?? undefined}
+                        className="truncate hover:underline"
+                      >
+                        {manager.mobile}
+                      </a>
+                    </li>
+                  ) : null}
                 </ul>
-                <a
-                  href={`mailto:${manager.email}`}
-                  className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
-                >
-                  Email account manager
-                </a>
+                {manager.mailtoHref ? (
+                  <a
+                    href={manager.mailtoHref}
+                    className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
+                  >
+                    Contact account manager
+                  </a>
+                ) : null}
               </>
             ) : (
-              <p className="mt-2 text-[13px] text-steel">
-                No account manager is currently assigned to this company.
-              </p>
+              <>
+                <p className="mt-2 text-[13px] text-steel">Our trade team is here to help.</p>
+                {generalMailto ? (
+                  <a
+                    href={generalMailto}
+                    className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
+                  >
+                    Contact Automotive Brands
+                  </a>
+                ) : null}
+              </>
             )}
           </div>
           <div className="rounded-lg border border-border bg-surface/50 p-4 text-[13px]">

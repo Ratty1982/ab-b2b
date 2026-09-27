@@ -117,6 +117,16 @@ function TeamContactActions({
           Call
         </a>
       ) : null}
+      {member.mobile ? (
+        <a
+          href={`tel:${member.mobile.replace(/\s+/g, "")}`}
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-steel transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          aria-label={`Mobile ${member.displayName}`}
+        >
+          <Phone className="size-3.5 shrink-0" aria-hidden />
+          Mobile
+        </a>
+      ) : null}
       {member.linkedInUrl ? (
         <a
           href={member.linkedInUrl}

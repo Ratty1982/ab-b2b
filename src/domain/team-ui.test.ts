@@ -69,6 +69,7 @@ const baseMember: PublicTeamMember = {
   photo: null,
   email: "wayne@example.com",
   phone: "01234 000000",
+  mobile: null,
   linkedInUrl: "https://www.linkedin.com/in/example",
 };
 
@@ -225,6 +226,7 @@ describe("TeamMemberCard", () => {
       isContactable: false,
       email: null,
       phone: null,
+      mobile: null,
       linkedInUrl: null,
       bio: null,
     };

@@ -43,6 +43,7 @@ type MemberRow = {
   bio: string | null;
   email: string | null;
   phone: string | null;
+  mobile: string | null;
   linkedInUrl: string | null;
   sortOrder: number;
   isPublic: boolean;
@@ -72,6 +73,7 @@ function emptyMember(): MemberDraft {
     bio: "",
     email: "",
     phone: "",
+    mobile: "",
     linkedInUrl: "",
     sortOrder: 0,
     isPublic: false,
@@ -253,7 +255,7 @@ function AdminTeam() {
                         ) : !publicTeamJobTitle(m.jobTitle) ? (
                           <StatusBadge tone="warn">Placeholder title</StatusBadge>
                         ) : null}
-                        {m.isContactable && !m.email && !m.phone && !m.linkedInUrl ? (
+                        {m.isContactable && !m.email && !m.phone && !m.mobile && !m.linkedInUrl ? (
                           <StatusBadge tone="neutral">No public contact</StatusBadge>
                         ) : null}
                         {!m.isContactable ? (
@@ -360,6 +362,7 @@ function AdminTeam() {
                     bio: edit.bio || null,
                     email: edit.email || null,
                     phone: edit.phone || null,
+                    mobile: edit.mobile || null,
                     linkedInUrl: edit.linkedInUrl || null,
                     sortOrder: Number(edit.sortOrder) || 0,
                     isPublic: Boolean(edit.isPublic),
@@ -526,6 +529,15 @@ function AdminTeam() {
                     className={inputClass}
                     value={edit.phone ?? ""}
                     onChange={(e) => setEdit({ ...edit, phone: e.target.value })}
+                    placeholder="01234 567890"
+                  />
+                </Field>
+                <Field label="Public mobile">
+                  <input
+                    className={inputClass}
+                    value={edit.mobile ?? ""}
+                    onChange={(e) => setEdit({ ...edit, mobile: e.target.value })}
+                    placeholder="07123 456789"
                   />
                 </Field>
                 <Field label="LinkedIn URL">
@@ -537,7 +549,11 @@ function AdminTeam() {
                 </Field>
               </div>
             </div>
-            <Field label="Optional SalesRep link">
+            <Field label="SalesRep / Account Manager link">
+              <p className="mb-1 text-[11px] text-steel">
+                Link to a CRM SalesRep so Trade Portal customers see this profile as their account
+                manager (when public + contactable).
+              </p>
               <select
                 className={inputClass}
                 value={edit.salesRepId ?? ""}

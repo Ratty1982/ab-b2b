@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Mail, ShoppingCart, Zap } from "lucide-react";
+import { Mail, Phone, Smartphone, ShoppingCart, Zap } from "lucide-react";
 import { PanelHeader, Metric } from "@/components/ab/AppShell";
 import { OrderStatusBadge } from "@/components/ab/Badges";
 import { InstantText } from "@/components/ab/InstantText";
@@ -177,40 +177,94 @@ function Dashboard() {
             <SectionTitle title="Your account manager" />
             {data.accountManager ? (
               <div className="rounded-lg border border-border bg-surface/50 p-4">
-                <div className="font-display text-lg font-semibold uppercase">
-                  {data.accountManager.name}
-                </div>
-                <div className="text-[12px] text-steel">Account manager</div>
-                <ul className="mt-3 space-y-1.5 text-[13px]">
-                  <li className="flex min-w-0 items-center gap-2">
-                    <Mail className="size-3.5 shrink-0 text-primary" aria-hidden />
-                    <a
-                      href={`mailto:${data.accountManager.email}`}
-                      className="truncate hover:underline"
+                <div className="flex items-start gap-3">
+                  {data.accountManager.photo ? (
+                    <img
+                      src={data.accountManager.photo.src}
+                      alt={data.accountManager.photo.alt}
+                      className="size-14 shrink-0 rounded-full object-cover"
+                      style={{ objectPosition: data.accountManager.photo.objectPosition }}
+                    />
+                  ) : (
+                    <div
+                      className="grid size-14 shrink-0 place-items-center rounded-full bg-ink font-display text-sm font-semibold text-foreground"
+                      aria-hidden
                     >
-                      {data.accountManager.email}
-                    </a>
-                  </li>
+                      {data.accountManager.initials}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="font-display text-lg font-semibold uppercase leading-tight">
+                      {data.accountManager.name}
+                    </div>
+                    <div className="text-[12px] text-steel">{data.accountManager.jobTitle}</div>
+                  </div>
+                </div>
+                <ul className="mt-3 space-y-1.5 text-[13px]">
+                  {data.accountManager.email ? (
+                    <li className="flex min-w-0 items-center gap-2">
+                      <Mail className="size-3.5 shrink-0 text-primary" aria-hidden />
+                      <a
+                        href={data.accountManager.mailtoHref ?? `mailto:${data.accountManager.email}`}
+                        className="truncate hover:underline"
+                      >
+                        {data.accountManager.email}
+                      </a>
+                    </li>
+                  ) : null}
+                  {data.accountManager.phone ? (
+                    <li className="flex min-w-0 items-center gap-2">
+                      <Phone className="size-3.5 shrink-0 text-primary" aria-hidden />
+                      <a
+                        href={data.accountManager.telHref ?? undefined}
+                        className="truncate hover:underline"
+                      >
+                        {data.accountManager.phone}
+                      </a>
+                    </li>
+                  ) : null}
+                  {data.accountManager.mobile ? (
+                    <li className="flex min-w-0 items-center gap-2">
+                      <Smartphone className="size-3.5 shrink-0 text-primary" aria-hidden />
+                      <a
+                        href={data.accountManager.mobileTelHref ?? undefined}
+                        className="truncate hover:underline"
+                      >
+                        {data.accountManager.mobile}
+                      </a>
+                    </li>
+                  ) : null}
                 </ul>
-                <a
-                  href={`mailto:${data.accountManager.email}`}
-                  className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
-                >
-                  Contact account manager
-                </a>
+                {data.accountManager.mailtoHref ? (
+                  <a
+                    href={data.accountManager.mailtoHref}
+                    className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
+                  >
+                    Contact account manager
+                  </a>
+                ) : null}
               </div>
             ) : (
               <div className="rounded-lg border border-border bg-surface/50 p-4 text-[13px]">
                 <div className="font-display text-base font-semibold uppercase">
                   Your account manager
                 </div>
-                <p className="mt-2 text-steel">No account manager is currently assigned.</p>
-                <Link
-                  to={ROUTES.portalSupport}
-                  className="mt-4 inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-bold uppercase hover:border-steel"
-                >
-                  Contact support
-                </Link>
+                <p className="mt-2 text-steel">Our trade team is here to help.</p>
+                {data.generalContact.mailtoHref ? (
+                  <a
+                    href={data.generalContact.mailtoHref}
+                    className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
+                  >
+                    Contact Automotive Brands
+                  </a>
+                ) : (
+                  <Link
+                    to={ROUTES.portalSupport}
+                    className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-md border border-border px-4 text-[12px] font-bold uppercase hover:border-steel"
+                  >
+                    Contact support
+                  </Link>
+                )}
               </div>
             )}
           </div>

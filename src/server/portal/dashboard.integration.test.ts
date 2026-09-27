@@ -126,7 +126,8 @@ describe("getPortalDashboard", () => {
     expect(dash.recentOrders).toEqual([]);
     expect(dash.basket.lineCount).toBe(0);
     expect(dash.accountManager).toBeNull();
-    expect(dash.features.quotes).toBe(false);
+    expect(dash.generalContact).toBeTruthy();
+    expect(dash.features.quotes).toBe(true);
     expect(dash.features.invoices).toBe(false);
 
     const serialized = JSON.stringify(dash);
@@ -174,6 +175,10 @@ describe("getPortalDashboard", () => {
     let dash = await getPortalDashboard(buyerAId);
     expect(dash.accountManager?.name).toContain(`Live Rep ${suffix}`);
     expect(dash.accountManager?.email).toContain(`portal.dash.rep.${suffix}`);
+    expect(dash.accountManager?.jobTitle).toBe("Account Manager");
+    expect(dash.accountManager?.mailtoHref).toContain("mailto:");
+    expect(dash.accountManager?.phone).toBeNull();
+    expect(dash.accountManager?.mobile).toBeNull();
 
     await prisma.companyAssignment.deleteMany({ where: { companyId: companyAId } });
     dash = await getPortalDashboard(buyerAId);

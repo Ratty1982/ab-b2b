@@ -67,6 +67,13 @@ Default **30 calendar days**. Stored as date-only (UTC noon). Display `DD/MM/YYY
 
 Decline may notify the assigned sales rep via `QUOTE_DECLINED_INTERNAL`.
 
+## Account manager
+
+Customer-facing “Prepared by” / portal account manager details use the shared
+`resolveAccountManagerForCompany` / `resolveAccountManagerForSalesRep` helpers
+(`src/server/sales/account-manager.ts`). Public phone, mobile, and photo come
+from a linked Website → Team profile when public + contactable.
+
 ## Portal
 
 `Portal → Quotes` lists issued quotes for the authenticated company only.

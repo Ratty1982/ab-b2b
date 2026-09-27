@@ -99,6 +99,7 @@ function serializeAdminMember(
     bio: row.bio,
     email: row.email,
     phone: row.phone,
+    mobile: row.mobile,
     linkedInUrl: row.linkedInUrl,
     sortOrder: row.sortOrder,
     isPublic: row.isPublic,
@@ -155,12 +156,13 @@ function serializePublicMember(
       : null,
   };
   if (!row.isContactable) {
-    return { ...base, email: null, phone: null, linkedInUrl: null };
+    return { ...base, email: null, phone: null, mobile: null, linkedInUrl: null };
   }
   return {
     ...base,
     email: row.email,
     phone: row.phone,
+    mobile: row.mobile,
     linkedInUrl: row.linkedInUrl,
   };
 }
@@ -375,6 +377,7 @@ export async function upsertTeamMember(actorUserId: string, raw: unknown) {
     bio: input.bio,
     email: input.email,
     phone: input.phone,
+    mobile: input.mobile,
     linkedInUrl: input.linkedInUrl,
     sortOrder: input.sortOrder,
     isPublic: input.isPublic,
