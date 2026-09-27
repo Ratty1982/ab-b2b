@@ -1605,6 +1605,23 @@ export const clearCompanyAutopartCustomerCodeFn = createServerFn({ method: "POST
     }
   });
 
+export const linkAndVerifyCompanyAutopartCustomerCodeFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string; code: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { linkAndVerifyCompanyAutopartCustomerCode } = await import(
+        "@/server/companies/autopart-account"
+      );
+      return {
+        ok: true as const,
+        data: await linkAndVerifyCompanyAutopartCustomerCode(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getPublicTeamPageFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const team = await import("@/server/team/service");
@@ -1819,6 +1836,21 @@ export const deleteAdminOrderFn = createServerFn({ method: "POST" })
       const userId = await requireUserId();
       const orders = await import("@/server/orders/service");
       return { ok: true as const, data: await orders.deleteAdminOrder(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const repairOrderAutopartSnapshotFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return {
+        ok: true as const,
+        data: await orders.repairOrderAutopartCustomerCodeSnapshot(userId, data.orderId),
+      };
     } catch (e) {
       return toError(e);
     }

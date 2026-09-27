@@ -51,9 +51,16 @@ Legal pages (privacy / terms) are not yet published in CMS — the consent copy 
 | Field | Owner | Meaning |
 | --- | --- | --- |
 | `TradeApplication.claimedAutopartCustomerCode` | Applicant claim | Evidence for staff. **Never** grants pricing/orders/basket access. |
-| `Company.autopartCustomerCode` + verifiedAt/By | Staff after verify | Authoritative Autopart link (Phase 6A.5). |
+| `Company.autopartCustomerCode` + verifiedAt/By | Staff after explicit verify | Authoritative Autopart link for order snapshots / CSV. |
 
-Approval **does not** copy the claim onto the Company. Staff use the Customer Commercial tab: set → verify → change/clear with audit.
+On approval, staff may optionally:
+
+1. Enter / correct a **Verified Autopart customer code** (pre-filled from the claim for convenience)
+2. Tick **Confirm this Autopart account has been verified**
+
+Only then is `Company.autopartCustomerCode` set (with verifiedAt/By). Unticked = Company code stays null; the registration claim remains on the application.
+
+Already-approved applications with a claim but no company link show a **Claim not linked** discrepancy. Staff use Customer → Commercial → **Verify / link account** (no automatic backfill).
 
 ---
 
@@ -66,8 +73,9 @@ Staff can **Edit details** on open applications (submitted / under review / more
 Commercial setup before approve (optional unless business requires them):
 
 - Sales rep  
-- Price list  
+- Price list (defaults to Default Trade Price)  
 - Payment terms  
+- Verified Autopart customer code + explicit confirm checkbox  
 - Internal notes  
 
 Actions:

@@ -1431,3 +1431,105 @@ export async function deleteAdminOrder(
     reservationCount: result.reservationCount,
   };
 }
+
+/**
+ * Explicit staff repair: copy the company's current verified Autopart code onto
+ * an order that was placed without a snapshot. Never silent; never overwrites
+ * an existing snapshot; blocked after Autopart CSV export.
+ */
+export async function repairOrderAutopartCustomerCodeSnapshot(
+  userId: string,
+  orderId: string,
+): Promise<{
+  orderId: string;
+  orderNumber: string;
+  autopartCustomerCodeSnapshot: string;
+}> {
+  const profile = await requireSystemPermission(userId, "orders.view");
+  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
+    throw new AuthError("You do not have permission to repair order Autopart snapshots", "FORBIDDEN", 403);
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      companyId: true,
+      status: true,
+      autopartCustomerCodeSnapshot: true,
+      autopartAccountLinked: true,
+      autopartExportStatus: true,
+      company: {
+        select: {
+          autopartCustomerCode: true,
+          autopartCustomerCodeVerifiedAt: true,
+        },
+      },
+    },
+  });
+  if (!order) throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+
+  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "sales.view_all_accounts")) {
+    const accessible = await getAccessibleCompanyIdsForSales(profile);
+    if (accessible !== "all" && !accessible.includes(order.companyId)) {
+      throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+    }
+  }
+
+  if (order.autopartExportStatus === "EXPORTED") {
+    throw new AuthError(
+      "Cannot repair Autopart snapshot after the order has been exported to Autopart",
+      "ORDER_ALREADY_EXPORTED",
+      400,
+    );
+  }
+  if (order.autopartCustomerCodeSnapshot?.trim()) {
+    throw new AuthError(
+      "This order already has an Autopart account snapshot — historical snapshots are not overwritten",
+      "SNAPSHOT_ALREADY_SET",
+      400,
+    );
+  }
+
+  const code =
+    order.company.autopartCustomerCodeVerifiedAt && order.company.autopartCustomerCode?.trim()
+      ? order.company.autopartCustomerCode.trim()
+      : null;
+  if (!code) {
+    throw new AuthError(
+      "Company has no verified Autopart customer code to copy onto this order",
+      "AUTOPART_CODE_MISSING",
+      400,
+    );
+  }
+
+  const updated = await prisma.order.update({
+    where: { id: order.id },
+    data: {
+      autopartCustomerCodeSnapshot: code,
+      autopartAccountLinked: true,
+    },
+    select: { id: true, orderNumber: true, autopartCustomerCodeSnapshot: true },
+  });
+
+  await recordAuditEvent({
+    action: "order.autopart_snapshot_repaired",
+    entityType: "Order",
+    entityId: order.id,
+    actorUserId: userId,
+    companyId: order.companyId,
+    metadata: {
+      orderNumber: order.orderNumber,
+      previousSnapshot: null,
+      autopartCustomerCodeSnapshot: code,
+      source: "company.verified",
+    },
+  });
+
+  return {
+    orderId: updated.id,
+    orderNumber: updated.orderNumber,
+    autopartCustomerCodeSnapshot: updated.autopartCustomerCodeSnapshot!,
+  };
+}

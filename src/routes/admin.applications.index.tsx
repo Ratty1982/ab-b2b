@@ -214,6 +214,8 @@ function ApplicationsPage() {
   const [reviewNotes, setReviewNotes] = useState("");
   const [customerMessage, setCustomerMessage] = useState("");
   const [confirmExistingUserLink, setConfirmExistingUserLink] = useState(false);
+  const [verifiedAutopartCustomerCode, setVerifiedAutopartCustomerCode] = useState("");
+  const [confirmAutopartAccountVerified, setConfirmAutopartAccountVerified] = useState(false);
   const [approvalEmail, setApprovalEmail] = useState<ApprovalEmailResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -266,6 +268,8 @@ function ApplicationsPage() {
         setReviewNotes(next.reviewNotes ?? "");
         setCustomerMessage(next.customerMessage ?? "");
         setConfirmExistingUserLink(false);
+        setVerifiedAutopartCustomerCode(next.claimedAutopartCustomerCode ?? "");
+        setConfirmAutopartAccountVerified(false);
         setEditing(false);
         setEditForm(detailToEditForm(next));
       }
@@ -631,24 +635,35 @@ function ApplicationsPage() {
                     <Row label="Postcode" value={detail.tradingAddress?.postcode} />
                     <Row label="Country" value={detail.tradingAddress?.country} />
                   </ReviewBlock>
-                  <ReviewBlock title="Existing account">
+                  <ReviewBlock title="Existing Autopart account">
                     <Row label="Claim" value={detail.existingAccountClaim ?? "—"} />
                     {detail.claimedAutopartCustomerCode ? (
                       <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
                         <div className="text-[10px] font-semibold uppercase tracking-wide text-steel">
-                          Claimed Autopart account — UNVERIFIED
+                          Customer supplied — UNVERIFIED
                         </div>
                         <div className="num mt-1 font-semibold">{detail.claimedAutopartCustomerCode}</div>
                         <p className="mt-1 text-[12px] text-steel">
-                          Claim only. Verify and link on the customer Commercial tab after approval —
-                          never trust this value for pricing or access.
+                          Registration claim only. It does not become the company Autopart code unless
+                          you explicitly verify it below (or later on the customer record).
                         </p>
                       </div>
                     ) : (
-                      <p className="text-steel">No account number claimed.</p>
+                      <p className="text-steel">No Autopart account number claimed.</p>
                     )}
                     {detail.company?.autopartCustomerCode ? (
                       <Row label="Verified on company" value={detail.company.autopartCustomerCode} />
+                    ) : detail.status === "APPROVED" && detail.claimedAutopartCustomerCode ? (
+                      <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
+                        <div className="font-semibold uppercase tracking-wide text-warn">
+                          Claim not linked
+                        </div>
+                        <p className="mt-1">
+                          Customer claimed {detail.claimedAutopartCustomerCode} at signup, but the
+                          company has no verified Autopart code. Open the customer Commercial tab to
+                          verify / link.
+                        </p>
+                      </div>
                     ) : null}
                   </ReviewBlock>
                   <ReviewBlock title="Trade information">
@@ -701,6 +716,39 @@ function ApplicationsPage() {
                   <Field label="Payment terms">
                     <input className={inputClass} placeholder="e.g. 30 days" value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />
                   </Field>
+                  <div className="rounded-md border border-border bg-ink/20 px-3 py-3 space-y-3">
+                    <div>
+                      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                        Verified Autopart customer code
+                      </h4>
+                      <p className="mt-1 text-[12px] text-steel">
+                        Optional. Pre-filled from the customer claim when present — confirm only if
+                        you have verified the account in Autopart. Leave blank / unticked if not
+                        verified.
+                      </p>
+                    </div>
+                    <Field label="Verified Autopart customer code">
+                      <input
+                        className={inputClass}
+                        value={verifiedAutopartCustomerCode}
+                        onChange={(e) => setVerifiedAutopartCustomerCode(e.target.value)}
+                        placeholder={detail.claimedAutopartCustomerCode || "e.g. S19789"}
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <label className="flex items-start gap-2 text-[12px] text-steel">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 accent-primary"
+                        checked={confirmAutopartAccountVerified}
+                        onChange={(e) => setConfirmAutopartAccountVerified(e.target.checked)}
+                      />
+                      <span>
+                        Confirm this Autopart account has been verified — only then will it be linked
+                        on the new customer record.
+                      </span>
+                    </label>
+                  </div>
                   <Field label="Internal notes (required to reject)">
                     <textarea className={inputClass} rows={3} value={reviewNotes} onChange={(e) => setReviewNotes(e.target.value)} />
                   </Field>
@@ -973,6 +1021,8 @@ function ApplicationsPage() {
                             priceListId: priceListId || null,
                             paymentTerms: paymentTerms || null,
                             confirmExistingUserLink,
+                            verifiedAutopartCustomerCode: verifiedAutopartCustomerCode.trim() || null,
+                            confirmAutopartAccountVerified,
                           },
                         });
                         if (!r.ok) {

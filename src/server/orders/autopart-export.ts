@@ -127,7 +127,7 @@ function assessOrder(
   if (!order.autopartAccountLinked || !code) {
     return block(
       "MISSING_AUTOPART_SNAPSHOT",
-      "AUTOPART ACCOUNT REQUIRED — This order cannot be exported because it does not contain a verified Autopart customer account snapshot.",
+      "No verified Autopart customer account was linked when this order was placed.",
     );
   }
 

@@ -202,6 +202,73 @@ export async function verifyCompanyAutopartCustomerCode(actorUserId: string, raw
   return serializeAutopart(updated);
 }
 
+/**
+ * Set Autopart customer code and mark verified in one staff action.
+ * Used by approval verification and post-approval VERIFY / LINK.
+ */
+export async function linkAndVerifyCompanyAutopartCustomerCode(
+  actorUserId: string,
+  raw: unknown,
+) {
+  const input = z
+    .object({
+      companyId: z.string().cuid(),
+      code: z.string().max(80),
+    })
+    .parse(raw);
+  await assertCanEditCompanyCommercial(actorUserId, input.companyId);
+  const next = normalizeAutopartCustomerCode(input.code);
+  if (!next) {
+    throw new AuthError("Autopart customer code is required", "AUTOPART_CODE_MISSING", 400);
+  }
+
+  const before = await prisma.company.findUnique({
+    where: { id: input.companyId },
+    select: autopartSelect,
+  });
+  if (!before) throw new AuthError("Company not found", "NOT_FOUND", 404);
+
+  try {
+    const updated = await prisma.company.update({
+      where: { id: input.companyId },
+      data: {
+        autopartCustomerCode: next,
+        autopartCustomerCodeVerifiedAt: new Date(),
+        autopartCustomerCodeVerifiedById: actorUserId,
+      },
+      select: autopartSelect,
+    });
+
+    await recordAuditEvent({
+      action: "company.autopart_account.linked_verified",
+      entityType: "Company",
+      entityId: input.companyId,
+      actorUserId,
+      companyId: input.companyId,
+      before: {
+        autopartCustomerCode: before.autopartCustomerCode,
+        verifiedAt: before.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+      },
+      after: {
+        autopartCustomerCode: updated.autopartCustomerCode,
+        verifiedAt: updated.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+        verifiedById: actorUserId,
+      },
+    });
+
+    return serializeAutopart(updated);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AuthError(
+        "That Autopart customer code is already linked to another company",
+        "AUTOPART_CODE_DUPLICATE",
+        409,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function clearCompanyAutopartCustomerCode(actorUserId: string, raw: unknown) {
   return setCompanyAutopartCustomerCode(actorUserId, {
     companyId: companyIdSchema.parse(raw).companyId,

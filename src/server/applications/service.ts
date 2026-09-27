@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { hashPassword } from "better-auth/crypto";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -682,22 +682,57 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
     const contactEmailLower = (contact.email ?? "").toLowerCase();
     if (!contactEmailLower) throw new AuthError("Application missing contact email", "VALIDATION", 400);
 
-    const company = await tx.company.create({
-      data: {
-        name: app.companyName,
-        tradingName: app.tradingName,
-        companyNumber: app.companyNumber,
-        vatNumber: app.vatNumber,
-        website: app.website,
-        status: "ACTIVE",
-        paymentTerms: input.paymentTerms ?? null,
-        // null = Default Trade Price until a salesperson assigns a named PriceList.
-        priceListId: input.priceListId ?? null,
-        primaryEmail: contactEmailLower,
-        phone: contact.phone ?? null,
-        notes: app.notes,
-      },
-    });
+    // Explicit staff verification only — never trust registration claim alone.
+    const verifiedAutopartCode = input.confirmAutopartAccountVerified
+      ? normalizeAutopartCustomerCode(input.verifiedAutopartCustomerCode)
+      : null;
+    if (input.confirmAutopartAccountVerified && !verifiedAutopartCode) {
+      throw new AuthError(
+        "Enter the verified Autopart customer code, or untick verification",
+        "VALIDATION",
+        400,
+      );
+    }
+
+    let company;
+    try {
+      company = await tx.company.create({
+        data: {
+          name: app.companyName,
+          tradingName: app.tradingName,
+          companyNumber: app.companyNumber,
+          vatNumber: app.vatNumber,
+          website: app.website,
+          status: "ACTIVE",
+          paymentTerms: input.paymentTerms ?? null,
+          // null = Default Trade Price until a salesperson assigns a named PriceList.
+          priceListId: input.priceListId ?? null,
+          primaryEmail: contactEmailLower,
+          phone: contact.phone ?? null,
+          notes: app.notes,
+          ...(verifiedAutopartCode
+            ? {
+                autopartCustomerCode: verifiedAutopartCode,
+                autopartCustomerCodeVerifiedAt: new Date(),
+                autopartCustomerCodeVerifiedById: actorUserId,
+              }
+            : {}),
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        verifiedAutopartCode
+      ) {
+        throw new AuthError(
+          "That Autopart customer code is already linked to another company",
+          "AUTOPART_CODE_DUPLICATE",
+          409,
+        );
+      }
+      throw error;
+    }
 
     await tx.contact.create({
       data: {
@@ -861,6 +896,10 @@ export async function approveTradeApplication(actorUserId: string, raw: unknown)
       created: result.created,
       priceListId: input.priceListId ?? null,
       salesRepId: input.salesRepId ?? null,
+      autopartAccountVerified: Boolean(input.confirmAutopartAccountVerified),
+      verifiedAutopartCustomerCode: input.confirmAutopartAccountVerified
+        ? normalizeAutopartCustomerCode(input.verifiedAutopartCustomerCode)
+        : null,
       activationInitiated: Boolean(result.inviteToken),
       emailSent: dispatch.emailSent,
       emailStatus: dispatch.emailStatus,

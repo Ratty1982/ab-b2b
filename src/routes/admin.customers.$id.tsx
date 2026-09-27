@@ -21,6 +21,7 @@ import {
   deleteCustomerPriceFn,
   getCompanyWorkspaceFn,
   inviteCompanyUserFn,
+  linkAndVerifyCompanyAutopartCustomerCodeFn,
   listCompanyActivityFn,
   listCustomerPricesFn,
   listPriceListsFn,
@@ -113,7 +114,8 @@ function CustomerWorkspace() {
   }
   if (!data) return null;
 
-  const { company, permissions, contacts, addresses, users, invitations } = data;
+  const { company, permissions, contacts, addresses, users, invitations, registrationAutopartClaim } =
+    data;
 
   return (
     <div>
@@ -223,9 +225,13 @@ function CustomerWorkspace() {
                 <Row
                   label="Autopart account"
                   value={
-                    company.autopartAccount?.code
-                      ? `${company.autopartAccount.code}${company.autopartAccount.verified ? " (verified)" : " (unverified)"}`
-                      : null
+                    company.autopartAccount?.verified && company.autopartAccount?.code
+                      ? `${company.autopartAccount.code} (linked)`
+                      : company.autopartAccount?.code
+                        ? `${company.autopartAccount.code} (unverified)`
+                        : registrationAutopartClaim?.code
+                          ? `Not linked (claimed ${registrationAutopartClaim.code})`
+                          : "Not linked"
                   }
                 />
               </dl>
@@ -442,6 +448,7 @@ function CustomerWorkspace() {
             companyId={company.id}
             canEdit={permissions.canEdit}
             account={company.autopartAccount ?? { code: null, verified: false, verifiedAt: null, verifiedBy: null }}
+            registrationClaim={registrationAutopartClaim ?? null}
             onChanged={reload}
           />
           <CustomerPricesEditor
@@ -790,6 +797,7 @@ function AutopartAccountEditor({
   companyId,
   canEdit,
   account,
+  registrationClaim,
   onChanged,
 }: {
   companyId: string;
@@ -800,6 +808,13 @@ function AutopartAccountEditor({
     verifiedAt: string | null;
     verifiedBy: { id: string; name: string; email: string } | null;
   };
+  registrationClaim: {
+    code: string;
+    applicationId: string;
+    applicationReference: string;
+    status: string;
+    needsVerification: boolean;
+  } | null;
   onChanged: () => Promise<void>;
 }) {
   const [code, setCode] = useState(account.code ?? "");
@@ -809,31 +824,32 @@ function AutopartAccountEditor({
     setCode(account.code ?? "");
   }, [account.code]);
 
+  const linked = Boolean(account.code && account.verified);
+
   return (
     <section className="max-w-xl space-y-4 rounded-lg border border-border bg-surface/30 p-4 sm:p-5">
       <div>
-        <h3 className="font-display text-lg font-semibold uppercase">Autopart account</h3>
+        <h3 className="font-display text-lg font-semibold uppercase">Autopart</h3>
         <p className="mt-1 text-[13px] text-steel">
-          Verified Autopart customer/account code for future order handoff. This is an ERP
-          reference only — never a login or automatic account link from registration claims.
+          Verified Autopart customer/account code for order CSV export. Internal only — never shown
+          in the customer portal. Registration claims are untrusted until staff verifies them.
         </p>
       </div>
-      <Field label="Account code">
-        <input
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          className={inputClass}
-          disabled={!canEdit || saving}
-          placeholder="e.g. ABC001"
-          autoComplete="off"
-        />
-      </Field>
+
       <dl className="grid gap-2 text-[13px]">
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
-          <dt className="text-steel">Status</dt>
-          <dd>{account.verified ? "Verified" : account.code ? "Unverified" : "Not linked"}</dd>
+        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
+          <dt className="text-steel">Account status</dt>
+          <dd>
+            <StatusBadge tone={linked ? "good" : "warn"}>
+              {linked ? "Linked" : "Not linked"}
+            </StatusBadge>
+          </dd>
         </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
+          <dt className="text-steel">Customer code</dt>
+          <dd className="num">{account.code ?? "—"}</dd>
+        </div>
+        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
           <dt className="text-steel">Verified</dt>
           <dd>
             {account.verifiedAt ? (
@@ -843,11 +859,57 @@ function AutopartAccountEditor({
             )}
           </dd>
         </div>
-        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
           <dt className="text-steel">Verified by</dt>
           <dd>{account.verifiedBy?.name ?? "—"}</dd>
         </div>
       </dl>
+
+      {registrationClaim?.needsVerification ? (
+        <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-3 text-[13px]">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-warn">
+            Claimed during registration
+          </div>
+          <div className="num mt-1 font-semibold">{registrationClaim.code}</div>
+          <p className="mt-1 text-[12px] text-steel">
+            From {registrationClaim.applicationReference}. Not linked to this company yet.
+          </p>
+          {canEdit ? (
+            <button
+              type="button"
+              disabled={saving}
+              className="mt-3 h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+              onClick={() => {
+                setSaving(true);
+                void linkAndVerifyCompanyAutopartCustomerCodeFn({
+                  data: { companyId, code: registrationClaim.code },
+                }).then(async (r) => {
+                  setSaving(false);
+                  if (!r.ok) toast.error(r.error);
+                  else {
+                    toast.success("Autopart account verified and linked");
+                    setCode(registrationClaim.code);
+                    await onChanged();
+                  }
+                });
+              }}
+            >
+              {saving ? "Linking…" : "Verify / link account"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <Field label="Account code">
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          className={inputClass}
+          disabled={!canEdit || saving}
+          placeholder="e.g. S19789"
+          autoComplete="off"
+        />
+      </Field>
       {canEdit ? (
         <div className="flex flex-wrap gap-2">
           <button
@@ -876,6 +938,26 @@ function AutopartAccountEditor({
           </button>
           <button
             type="button"
+            disabled={saving || !code.trim()}
+            className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold disabled:opacity-50"
+            onClick={() => {
+              setSaving(true);
+              void linkAndVerifyCompanyAutopartCustomerCodeFn({
+                data: { companyId, code: code.trim() },
+              }).then(async (r) => {
+                setSaving(false);
+                if (!r.ok) toast.error(r.error);
+                else {
+                  toast.success("Autopart account verified and linked");
+                  await onChanged();
+                }
+              });
+            }}
+          >
+            Verify / link
+          </button>
+          <button
+            type="button"
             disabled={saving || !account.code}
             className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold disabled:opacity-50"
             onClick={() => {
@@ -890,7 +972,7 @@ function AutopartAccountEditor({
               });
             }}
           >
-            Verify
+            Re-verify current
           </button>
           <button
             type="button"

@@ -275,6 +275,20 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
   });
   if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
+  const signupApplication = await prisma.tradeApplication.findFirst({
+    where: {
+      companyId,
+      claimedAutopartCustomerCode: { not: null },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      reference: true,
+      claimedAutopartCustomerCode: true,
+      status: true,
+    },
+  });
+
   const canViewCredit =
     hasPermission(profile, "credit.view") || hasPermission(profile, "admin.access");
   const canEditCredit =
@@ -285,8 +299,22 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
     serialized.creditLimit = null;
   }
 
+  const claimedCode = signupApplication?.claimedAutopartCustomerCode?.trim() || null;
+  const verifiedLinked = Boolean(
+    serialized.autopartAccount.code && serialized.autopartAccount.verified,
+  );
+
   return {
     company: serialized,
+    registrationAutopartClaim: claimedCode
+      ? {
+          code: claimedCode,
+          applicationId: signupApplication!.id,
+          applicationReference: signupApplication!.reference,
+          status: signupApplication!.status,
+          needsVerification: !verifiedLinked,
+        }
+      : null,
     permissions: {
       canEdit: hasPermission(profile, "companies.edit") || hasPermission(profile, "admin.access"),
       canDelete:

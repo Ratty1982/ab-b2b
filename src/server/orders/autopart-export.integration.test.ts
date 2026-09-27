@@ -285,7 +285,7 @@ describe("autopart order CSV export service", () => {
     ]);
 
     await expect(exportAutopartOrdersCsv(adminId, [missing.order.id])).rejects.toThrow(
-      /AUTOPART ACCOUNT REQUIRED|Blocked/i,
+      /No verified Autopart customer account|Blocked/i,
     );
   });
 

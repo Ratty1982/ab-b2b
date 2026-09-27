@@ -118,19 +118,43 @@ export const tradeApplicationSubmitSchema = z
     }
   });
 
-export const tradeApplicationDecisionSchema = z.object({
-  id: z.string().cuid(),
-  reviewNotes: optionalText(4000),
-  customerMessage: optionalText(4000),
-  salesRepId: z.string().cuid().optional().nullable(),
-  priceListId: z.string().cuid().optional().nullable(),
-  paymentTerms: optionalText(120),
-  /**
-   * When the applicant email already belongs to another company or an
-   * internal user, staff must explicitly confirm linking.
-   */
-  confirmExistingUserLink: z.boolean().optional().default(false),
-});
+export const tradeApplicationDecisionSchema = z
+  .object({
+    id: z.string().cuid(),
+    reviewNotes: optionalText(4000),
+    customerMessage: optionalText(4000),
+    salesRepId: z.string().cuid().optional().nullable(),
+    priceListId: z.string().cuid().optional().nullable(),
+    paymentTerms: optionalText(120),
+    /**
+     * When the applicant email already belongs to another company or an
+     * internal user, staff must explicitly confirm linking.
+     */
+    confirmExistingUserLink: z.boolean().optional().default(false),
+    /**
+     * Staff-verified Autopart customer code to link on the new Company.
+     * Ignored unless confirmAutopartAccountVerified is true.
+     * Never auto-populated from the registration claim without explicit confirm.
+     */
+    verifiedAutopartCustomerCode: optionalText(80),
+    /**
+     * Admin must tick this to trust verifiedAutopartCustomerCode onto Company.
+     * Without it, Company.autopartCustomerCode stays null even if a claim exists.
+     */
+    confirmAutopartAccountVerified: z.boolean().optional().default(false),
+  })
+  .superRefine((value, ctx) => {
+    if (value.confirmAutopartAccountVerified) {
+      const code = value.verifiedAutopartCustomerCode?.trim();
+      if (!code) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["verifiedAutopartCustomerCode"],
+          message: "Enter the verified Autopart customer code, or untick verification",
+        });
+      }
+    }
+  });
 
 export const tradeApplicationMoreInfoSchema = z.object({
   id: z.string().cuid(),

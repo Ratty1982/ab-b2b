@@ -10,6 +10,7 @@ import {
   exportAutopartOrdersCsvFn,
   getAdminOrderFn,
   listOrderEmailsFn,
+  repairOrderAutopartSnapshotFn,
   retryTransactionalEmailFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
@@ -123,6 +124,23 @@ function AdminOrderDetailPage() {
         : `Deleted ${result.data.orderNumber}`,
     );
     void navigate({ to: ROUTES.adminOrders });
+  }
+
+  async function onRepairSnapshot() {
+    if (!order) return;
+    const ok = window.confirm(
+      `Copy the company's current verified Autopart customer code onto order ${order.orderNumber}?\n\nThis only applies when the order has no snapshot yet. Existing snapshots are never overwritten.`,
+    );
+    if (!ok) return;
+    setExporting(true);
+    const result = await repairOrderAutopartSnapshotFn({ data: { orderId } });
+    setExporting(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Snapshot set to ${result.data.autopartCustomerCodeSnapshot}`);
+    await load();
   }
 
   if (error) {
@@ -285,11 +303,23 @@ function AdminOrderDetailPage() {
           </dl>
           {!order.autopartAccountLinked || !order.autopartCustomerCodeSnapshot ? (
             <p className="mt-4 text-[13px] font-medium text-warn" role="status">
-              AUTOPART ACCOUNT REQUIRED — This order cannot be exported because it does not contain
-              a verified Autopart customer account snapshot.
+              No verified Autopart customer account was linked when this order was placed. CSV export
+              is blocked until an authorised repair copies the company&apos;s verified code onto this
+              order (historical snapshots are never changed silently).
             </p>
           ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
+            {(!order.autopartAccountLinked || !order.autopartCustomerCodeSnapshot) &&
+            order.autopartExportStatus !== "EXPORTED" ? (
+              <button
+                type="button"
+                disabled={exporting}
+                onClick={() => void onRepairSnapshot()}
+                className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase disabled:opacity-50"
+              >
+                Repair Autopart snapshot
+              </button>
+            ) : null}
             {order.autopartExportStatus === "EXPORTED" ? (
               <button
                 type="button"
