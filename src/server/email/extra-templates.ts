@@ -125,3 +125,61 @@ Submitted: ${escapeEmailHtml(input.submittedAtLabel)}
   });
   return { subject, text, html };
 }
+
+export function buildCallbackRequestInternalBodies(
+  input: {
+    customerName: string;
+    companyName: string;
+    email: string;
+    telephone: string;
+    accountLabel: string;
+    accountManagerName: string | null;
+    message: string;
+    submittedAtLabel: string;
+    ctaLabel: string;
+    ctaUrl: string;
+  },
+  footer?: EmailFooterMeta,
+): { subject: string; text: string; html: string } {
+  const company = input.companyName || "—";
+  const subject = `Request a callback — ${input.customerName}${input.companyName ? ` · ${input.companyName}` : ""}`;
+  const amLine = input.accountManagerName ?? "Trade team";
+  const text = `REQUEST A CALLBACK
+
+Customer: ${input.customerName}
+Company: ${company}
+Email: ${input.email || "—"}
+Telephone: ${input.telephone || "—"}
+Account: ${input.accountLabel}
+Account Manager: ${amLine}
+Submitted: ${input.submittedAtLabel}
+
+Message:
+${input.message}
+
+${input.ctaLabel}: ${input.ctaUrl}
+
+Automotive Brands`;
+
+  const bodyHtml = `
+<p style="margin:0 0 16px;"><strong>REQUEST A CALLBACK</strong></p>
+<p style="margin:0 0 12px;">
+Customer: ${escapeEmailHtml(input.customerName)}<br/>
+Company: ${escapeEmailHtml(company)}<br/>
+Email: ${escapeEmailHtml(input.email || "—")}<br/>
+Telephone: ${escapeEmailHtml(input.telephone || "—")}<br/>
+Account: ${escapeEmailHtml(input.accountLabel)}<br/>
+Account Manager: ${escapeEmailHtml(amLine)}<br/>
+Submitted: ${escapeEmailHtml(input.submittedAtLabel)}
+</p>
+<p style="margin:0 0 4px;"><strong>Message</strong></p>
+<p style="margin:0 0 12px;white-space:pre-wrap;">${escapeEmailHtml(input.message)}</p>`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Callback request — ${input.customerName}`,
+    bodyHtml,
+    cta: { label: input.ctaLabel, href: input.ctaUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
+  return { subject, text, html };
+}

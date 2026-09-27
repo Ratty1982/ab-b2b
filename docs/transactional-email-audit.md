@@ -29,9 +29,9 @@ bodies on every purpose.
 | Order placed | `ORDER_RECEIVED_INTERNAL` | Order notification recipients | After order commit | YES | Env fallback transitional |
 | Motorsport partnership enquiry | `MOTORSPORT_PARTNERSHIP_INTERNAL` | Motorsport enquiry recipients | Form submit → Lead | YES | Skipped if no recipients |
 | SMTP diagnostic | `EMAIL_TEST` | Admin-chosen | Settings → Send test email | YES | May bypass delivery toggle |
-| Contact page callback | — | — | Form submit | FUTURE | Stub UI (“does not send email yet”) |
+| Contact page callback | `CALLBACK_REQUEST_INTERNAL` | SalesRep + trade-application recipients (order recipients fallback) | Form submit → Activity/Task or Lead | YES | Email secondary; persistence authoritative |
 | Portal support message | — | — | Form submit | FUTURE | Mailto only |
-| Quote send / quote viewed | — | — | — | FUTURE | Mock UI; Prisma Quote unused by services |
+| Quote send | `QUOTE_SENT` | Quote contact | Staff send quote | YES | Branded shell; portal CTA |
 | Invoice email | — | — | — | FUTURE | Mock UI; Prisma Invoice unused |
 | CRM digests / marketing | — | — | — | FUTURE | Out of scope (transactional only) |
 | Email verification on signup | — | — | — | FUTURE | `requireEmailVerification: false`; trade uses activation |

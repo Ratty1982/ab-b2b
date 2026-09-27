@@ -18,6 +18,7 @@ import * as pricing from "@/server/pricing/service";
 import * as stock from "@/server/stock/service";
 import * as basket from "@/server/basket/service";
 import * as motorsport from "@/server/motorsport/service";
+import * as callback from "@/server/callback/service";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -229,6 +230,47 @@ export const submitMotorsportPartnershipEnquiryFn = createServerFn({ method: "PO
         };
       }
       return { ok: true as const, data: { leadId: result.leadId, duplicate: result.duplicate ?? false } };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCallbackPrefillFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await optionalUserId();
+    const data = await callback.getCallbackPrefill(userId);
+    return { ok: true as const, data };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const submitCallbackEnquiryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const headers = getRequestHeaders();
+      const ip =
+        headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
+      const userId = await optionalUserId();
+      const result = await callback.submitCallbackEnquiry(data, { ip, userId });
+      if (!result.ok) {
+        return {
+          ok: false as const,
+          error: result.error,
+          ...(result.fieldErrors ? { fieldErrors: result.fieldErrors } : {}),
+        };
+      }
+      return {
+        ok: true as const,
+        data: {
+          enquiryId: result.enquiryId,
+          kind: result.kind,
+          duplicate: result.duplicate ?? false,
+          accountManagerName: result.accountManagerName,
+          customerFirstName: result.customerFirstName,
+        },
+      };
     } catch (e) {
       return toError(e);
     }

@@ -34,6 +34,7 @@ import {
   isTransactionalEmailEnabled,
 } from "@/server/email/settings";
 import {
+  buildCallbackRequestInternalBodies,
   buildCompanyUserInviteBodies,
   buildMotorsportEnquiryInternalBodies,
   buildPasswordResetBodies,
@@ -689,6 +690,118 @@ export async function sendMotorsportEnquiryInternalEmails(leadId: string): Promi
       entityType: "Lead",
       entityId: lead.id,
       idempotencyKey: `MOTORSPORT_PARTNERSHIP_INTERNAL:${lead.id}:${toEmail}`,
+    });
+    await safeAttempt(upsert.id);
+  }
+}
+
+/**
+ * Internal notification for Request a Callback.
+ * Recipients: assigned SalesRep (when present) + trade-application recipients.
+ * Empty recipient list → no-op (enquiry already persisted).
+ */
+export async function sendCallbackRequestInternalEmails(input: {
+  enquiryId: string;
+  entityType: "Activity" | "Lead";
+  salesRepEmail?: string | null;
+}): Promise<void> {
+  const tradeRecipients = await getTradeApplicationNotificationRecipients();
+  const recipientSet = new Set<string>();
+  const salesEmail = input.salesRepEmail?.trim().toLowerCase();
+  if (salesEmail && salesEmail.includes("@")) recipientSet.add(salesEmail);
+  for (const addr of tradeRecipients) recipientSet.add(addr);
+  if (recipientSet.size === 0) {
+    // Fall back to order notification recipients so production alerts still fire
+    // when only that list is configured.
+    for (const addr of await getOrderNotificationRecipients()) recipientSet.add(addr);
+  }
+  const recipients = [...recipientSet];
+  if (recipients.length === 0) return;
+
+  const footer = await getEmailFooterMeta();
+  const base = getServerEnv().APP_URL.replace(/\/$/, "");
+
+  let customerName = "—";
+  let companyName = "";
+  let email = "";
+  let telephone = "";
+  let accountLabel = "Prospect";
+  let accountManagerName: string | null = null;
+  let message = "";
+  let submittedAt = new Date();
+  let ctaLabel = "VIEW CRM ACTIVITY";
+  let ctaUrl = `${base}/admin/crm`;
+  let companyId: string | null = null;
+
+  if (input.entityType === "Activity") {
+    const activity = await prisma.activity.findUnique({ where: { id: input.enquiryId } });
+    if (!activity) return;
+    submittedAt = activity.occurredAt;
+    const meta = (activity.metadata ?? {}) as Record<string, unknown>;
+    customerName = typeof meta.name === "string" ? meta.name : "—";
+    companyName = typeof meta.companyName === "string" ? meta.companyName : "";
+    email = typeof meta.email === "string" ? meta.email : "";
+    telephone = typeof meta.telephone === "string" ? meta.telephone : "";
+    accountLabel =
+      meta.accountKind === "trade_customer" ? "Existing trade customer" : "Prospect";
+    accountManagerName =
+      typeof meta.accountManagerName === "string" ? meta.accountManagerName : null;
+    message = typeof meta.message === "string" ? meta.message : (activity.body ?? "");
+    companyId = activity.companyId;
+    if (companyId) {
+      ctaLabel = "VIEW CUSTOMER";
+      ctaUrl = `${base}/admin/customers/${companyId}`;
+    }
+  } else {
+    const lead = await prisma.lead.findUnique({ where: { id: input.enquiryId } });
+    if (!lead) return;
+    submittedAt = lead.createdAt;
+    customerName = lead.contactName ?? "—";
+    companyName = lead.companyName;
+    email = lead.email ?? "";
+    telephone = lead.phone ?? "";
+    accountLabel = "Prospect";
+    message = lead.notes ?? "";
+    companyId = lead.companyId;
+    if (companyId) {
+      ctaLabel = "VIEW CUSTOMER";
+      ctaUrl = `${base}/admin/customers/${companyId}`;
+    } else {
+      ctaLabel = "VIEW CRM ACTIVITY";
+      ctaUrl = `${base}/crm`;
+    }
+  }
+
+  const submittedAtLabel =
+    formatDateTime(submittedAt, { seconds: false, timeZoneName: true }) ??
+    submittedAt.toISOString();
+
+  const bodies = buildCallbackRequestInternalBodies(
+    {
+      customerName,
+      companyName,
+      email,
+      telephone,
+      accountLabel,
+      accountManagerName,
+      message: message.slice(0, 4000),
+      submittedAtLabel,
+      ctaLabel,
+      ctaUrl,
+    },
+    footer,
+  );
+
+  for (const toEmail of recipients) {
+    const upsert = await upsertPendingEmail({
+      purpose: "CALLBACK_REQUEST_INTERNAL",
+      toEmail,
+      subject: bodies.subject,
+      textBody: bodies.text,
+      htmlBody: bodies.html,
+      entityType: input.entityType,
+      entityId: input.enquiryId,
+      idempotencyKey: `CALLBACK_REQUEST_INTERNAL:${input.enquiryId}:${toEmail}`,
     });
     await safeAttempt(upsert.id);
   }

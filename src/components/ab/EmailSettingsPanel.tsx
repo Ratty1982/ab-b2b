@@ -93,6 +93,8 @@ function purposeLabel(purpose: string): string {
       return "Portal Invite";
     case "MOTORSPORT_PARTNERSHIP_INTERNAL":
       return "Motorsport Enquiry";
+    case "CALLBACK_REQUEST_INTERNAL":
+      return "Callback Request";
     default:
       return purpose;
   }
