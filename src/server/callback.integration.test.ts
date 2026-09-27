@@ -204,9 +204,9 @@ describe("authenticated callback submission", () => {
     expect(activity.body).toContain(`Please call about stock ${suffix}`);
 
     const meta = activity.metadata as Record<string, unknown>;
-    expect(meta.contactId).toBe(contactId);
-    expect(meta.salesRepId).toBe(salesRepId);
-    expect(meta.companyName).toBe("testy");
+    expect(meta["contactId"]).toBe(contactId);
+    expect(meta["salesRepId"]).toBe(salesRepId);
+    expect(meta["companyName"]).toBe("testy");
 
     const task = await prisma.task.findFirst({
       where: { companyId, title: "Call customer", description: { contains: suffix } },

@@ -270,10 +270,10 @@ async function findRecentAuthenticatedDuplicate(input: {
 
   for (const row of recent) {
     const meta = (row.metadata ?? {}) as Record<string, unknown>;
-    if (input.clientRequestId && meta.clientRequestId === input.clientRequestId) {
+    if (input.clientRequestId && meta["clientRequestId"] === input.clientRequestId) {
       return row.id;
     }
-    if (typeof meta.message === "string" && meta.message === input.message) {
+    if (typeof meta["message"] === "string" && meta["message"] === input.message) {
       return row.id;
     }
     if (row.body?.includes(input.message)) {

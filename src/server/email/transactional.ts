@@ -738,15 +738,15 @@ export async function sendCallbackRequestInternalEmails(input: {
     if (!activity) return;
     submittedAt = activity.occurredAt;
     const meta = (activity.metadata ?? {}) as Record<string, unknown>;
-    customerName = typeof meta.name === "string" ? meta.name : "—";
-    companyName = typeof meta.companyName === "string" ? meta.companyName : "";
-    email = typeof meta.email === "string" ? meta.email : "";
-    telephone = typeof meta.telephone === "string" ? meta.telephone : "";
+    customerName = typeof meta["name"] === "string" ? meta["name"] : "—";
+    companyName = typeof meta["companyName"] === "string" ? meta["companyName"] : "";
+    email = typeof meta["email"] === "string" ? meta["email"] : "";
+    telephone = typeof meta["telephone"] === "string" ? meta["telephone"] : "";
     accountLabel =
-      meta.accountKind === "trade_customer" ? "Existing trade customer" : "Prospect";
+      meta["accountKind"] === "trade_customer" ? "Existing trade customer" : "Prospect";
     accountManagerName =
-      typeof meta.accountManagerName === "string" ? meta.accountManagerName : null;
-    message = typeof meta.message === "string" ? meta.message : (activity.body ?? "");
+      typeof meta["accountManagerName"] === "string" ? meta["accountManagerName"] : null;
+    message = typeof meta["message"] === "string" ? meta["message"] : (activity.body ?? "");
     companyId = activity.companyId;
     if (companyId) {
       ctaLabel = "VIEW CUSTOMER";
