@@ -7,12 +7,14 @@ import { formatDate } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import {
+  deleteAdminOrdersFn,
   exportAutopartOrdersCsvFn,
   listAdminBackorderLinesFn,
   listAdminOrdersFn,
   previewAutopartOrderExportFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
+import { useSession } from "@/lib/session";
 
 type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
 type BackorderFilter = "ALL" | "CONTAINS" | "FULL";
@@ -56,6 +58,11 @@ function downloadCsv(filename: string, csv: string) {
 }
 
 function AdminOrdersPage() {
+  const session = useSession();
+  const canDeleteOrders =
+    session.signedIn &&
+    (session.user.navPermissions.includes("orders.edit") ||
+      session.user.navPermissions.includes("admin.access"));
   const search = Route.useSearch();
   const [rows, setRows] = useState<Row[]>([]);
   const [backorderLines, setBackorderLines] = useState<BackorderLine[]>([]);
@@ -67,6 +74,7 @@ function AdminOrdersPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
   const showBackorderOps = backorderFilter === "CONTAINS" || backorderFilter === "FULL";
 
@@ -128,6 +136,53 @@ function AdminOrdersPage() {
       for (const row of rows) next[row.id] = true;
     }
     setSelected(next);
+  }
+
+  async function onDeleteSelected() {
+    if (!canDeleteOrders || selectedIds.length === 0) return;
+    const selectedRows = rows.filter((r) => selectedIds.includes(r.id));
+    const blocked = selectedRows.filter(
+      (r) => r.status === "DISPATCHED" || r.status === "DELIVERED",
+    );
+    const deletable = selectedRows.filter(
+      (r) => r.status !== "DISPATCHED" && r.status !== "DELIVERED",
+    );
+    if (deletable.length === 0) {
+      toast.error("Despatched orders cannot be deleted");
+      return;
+    }
+    const numbers = deletable.map((r) => r.orderNumber).join(", ");
+    const warn =
+      blocked.length > 0
+        ? `\n\n${blocked.length} despatched order(s) will be skipped.`
+        : "";
+    const ok = window.confirm(
+      `Delete ${deletable.length} order(s)?\n\n${numbers}\n\nReserved stock will be released back to available sellable stock. This cannot be undone.${warn}`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    const result = await deleteAdminOrdersFn({
+      data: {
+        orderIds: deletable.map((r) => r.id),
+        confirmCount: deletable.length,
+      },
+    });
+    setDeleting(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    const released = result.data.deleted.reduce((sum, d) => sum + d.releasedQuantity, 0);
+    const skipNote =
+      result.data.skipped.length > 0
+        ? ` · ${result.data.skipped.length} skipped`
+        : "";
+    toast.success(
+      `Deleted ${result.data.deleted.length} order(s)${
+        released > 0 ? ` · ${released} unit(s) returned to stock` : ""
+      }${skipNote}`,
+    );
+    await load();
   }
 
   async function onExport(confirmReexport = false) {
@@ -262,6 +317,17 @@ function AdminOrdersPage() {
           >
             Re-export CSV
           </button>
+          {canDeleteOrders ? (
+            <button
+              type="button"
+              disabled={deleting || exporting || selectedIds.length === 0}
+              onClick={() => void onDeleteSelected()}
+              className="h-10 rounded-md border border-destructive/40 px-4 text-[12px] font-bold uppercase tracking-wide text-destructive hover:bg-destructive/10 disabled:opacity-50"
+              data-admin-action="delete-orders"
+            >
+              {deleting ? "Deleting…" : `Delete selected (${selectedIds.length})`}
+            </button>
+          ) : null}
         </div>
         {previewNote ? <p className="mb-3 text-[12px] text-steel">{previewNote}</p> : null}
         {loading ? <p className="text-[13px] text-steel">Loading…</p> : null}
@@ -372,7 +438,15 @@ function AdminOrdersPage() {
                         }
                       />
                     </td>
-                    <td className="num px-3 py-2 font-medium text-primary">{o.orderNumber}</td>
+                    <td className="num px-3 py-2 font-medium text-primary">
+                      <Link
+                        to="/admin/orders/$orderId"
+                        params={{ orderId: o.id }}
+                        className="hover:underline"
+                      >
+                        {o.orderNumber}
+                      </Link>
+                    </td>
                     <td className="px-3 py-2 text-steel">
                       {o.placedAt ? formatDate(o.placedAt) : "—"}
                     </td>

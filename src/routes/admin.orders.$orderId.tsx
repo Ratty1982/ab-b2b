@@ -15,6 +15,7 @@ import {
   retryTransactionalEmailFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
+import { useSession } from "@/lib/session";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -27,6 +28,11 @@ type EmailRow = Extract<Awaited<ReturnType<typeof listOrderEmailsFn>>, { ok: tru
 function AdminOrderDetailPage() {
   const { orderId } = Route.useParams();
   const navigate = useNavigate();
+  const session = useSession();
+  const canDeleteOrders =
+    session.signedIn &&
+    (session.user.navPermissions.includes("orders.edit") ||
+      session.user.navPermissions.includes("admin.access"));
   const [order, setOrder] = useState<Detail | null>(null);
   const [emails, setEmails] = useState<EmailRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -182,12 +188,15 @@ function AdminOrderDetailPage() {
             >
               {order.statusLabel}
             </StatusBadge>
-            {order.status !== "DISPATCHED" && order.status !== "DELIVERED" ? (
+            {canDeleteOrders &&
+            order.status !== "DISPATCHED" &&
+            order.status !== "DELIVERED" ? (
               <button
                 type="button"
                 disabled={deleting}
                 onClick={() => void onDeleteOrder()}
                 className="h-9 rounded-md border border-destructive/40 px-3 text-[11px] font-bold uppercase tracking-wide text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                data-admin-action="delete-order"
               >
                 {deleting ? "Deleting…" : "Delete order"}
               </button>

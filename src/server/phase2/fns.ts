@@ -2068,6 +2068,18 @@ export const deleteAdminOrderFn = createServerFn({ method: "POST" })
     }
   });
 
+export const deleteAdminOrdersFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.deleteAdminOrders(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const repairOrderAutopartSnapshotFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { orderId: string })
   .handler(async ({ data }) => {

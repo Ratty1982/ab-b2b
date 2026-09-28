@@ -11,6 +11,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import {
   AuthError,
@@ -1826,6 +1827,21 @@ export async function listAdminBackorderLines(
   return { items };
 }
 
+type DeleteAdminOrderResult = {
+  orderId: string;
+  orderNumber: string;
+  releasedQuantity: number;
+  reservationCount: number;
+};
+
+async function assertCanDeleteOrders(userId: string) {
+  const profile = await requireSystemPermission(userId, "orders.view");
+  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
+    throw new AuthError("You do not have permission to delete orders", "FORBIDDEN", 403);
+  }
+  return profile;
+}
+
 /**
  * Admin delete order: release ACTIVE stock holds (sellable returns), then remove the order.
  * qtyOnHand is never incremented — Autopart Avail remains physical stock authority.
@@ -1833,16 +1849,8 @@ export async function listAdminBackorderLines(
 export async function deleteAdminOrder(
   userId: string,
   orderId: string,
-): Promise<{
-  orderId: string;
-  orderNumber: string;
-  releasedQuantity: number;
-  reservationCount: number;
-}> {
-  const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
-    throw new AuthError("You do not have permission to delete orders", "FORBIDDEN", 403);
-  }
+): Promise<DeleteAdminOrderResult> {
+  const profile = await assertCanDeleteOrders(userId);
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
@@ -1852,6 +1860,7 @@ export async function deleteAdminOrder(
       companyId: true,
       status: true,
       autopartExportStatus: true,
+      sourceQuoteId: true,
       _count: { select: { invoices: true } },
     },
   });
@@ -1885,6 +1894,12 @@ export async function deleteAdminOrder(
       });
     }
 
+    // Soft quote link (convertedOrderId is not a Prisma FK) — clear when deleting.
+    await tx.quote.updateMany({
+      where: { convertedOrderId: order.id },
+      data: { convertedOrderId: null },
+    });
+
     await tx.transactionalEmail.deleteMany({
       where: { entityType: "Order", entityId: order.id },
     });
@@ -1916,6 +1931,67 @@ export async function deleteAdminOrder(
     releasedQuantity: result.releasedQuantity,
     reservationCount: result.reservationCount,
   };
+}
+
+/**
+ * Bulk admin delete with explicit confirmation of selected count.
+ * Skips already-despatched orders and reports them rather than failing the whole batch.
+ */
+export async function deleteAdminOrders(
+  userId: string,
+  raw: unknown,
+): Promise<{
+  deleted: DeleteAdminOrderResult[];
+  skipped: Array<{ orderId: string; orderNumber: string; reason: string }>;
+}> {
+  await assertCanDeleteOrders(userId);
+  const input = z
+    .object({
+      orderIds: z.array(z.string().cuid()).min(1).max(100),
+      confirmCount: z.number().int().positive(),
+    })
+    .parse(raw);
+
+  if (input.orderIds.length !== input.confirmCount) {
+    throw new AuthError(
+      `Confirm count mismatch (expected ${input.orderIds.length}, got ${input.confirmCount})`,
+      "CONFIRMATION_REQUIRED",
+      400,
+    );
+  }
+
+  const deleted: DeleteAdminOrderResult[] = [];
+  const skipped: Array<{ orderId: string; orderNumber: string; reason: string }> = [];
+
+  for (const orderId of input.orderIds) {
+    try {
+      deleted.push(await deleteAdminOrder(userId, orderId));
+    } catch (error) {
+      if (error instanceof AuthError) {
+        const row = await prisma.order.findUnique({
+          where: { id: orderId },
+          select: { orderNumber: true },
+        });
+        skipped.push({
+          orderId,
+          orderNumber: row?.orderNumber ?? orderId,
+          reason: error.message,
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (deleted.length === 0 && skipped.length > 0) {
+    throw new AuthError(
+      skipped.map((s) => `${s.orderNumber}: ${s.reason}`).join(" · "),
+      "DELETE_FAILED",
+      400,
+    );
+  }
+
+  return { deleted, skipped };
 }
 
 /**

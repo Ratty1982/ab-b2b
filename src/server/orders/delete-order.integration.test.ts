@@ -195,4 +195,35 @@ describe("deleteAdminOrder", () => {
       code: "FORBIDDEN",
     });
   });
+
+  it("bulk deletes with confirmation and clears quote conversion link", async () => {
+    const { deleteAdminOrders } = await import("@/server/orders/service");
+    const a = await createReservedOrder(`AB-${String(970000 + (Date.now() % 20000)).padStart(6, "0")}`);
+    const b = await createReservedOrder(`AB-${String(971000 + (Date.now() % 20000)).padStart(6, "0")}`);
+    const quote = await prisma.quote.create({
+      data: {
+        quoteNumber: `QT-DEL-${Date.now()}`,
+        companyId: a.company.id,
+        status: "ACCEPTED",
+        currency: "GBP",
+        subtotal: 10,
+        vatTotal: 2,
+        deliveryTotal: 0,
+        grandTotal: 12,
+        convertedOrderId: a.order.id,
+        convertedAt: new Date(),
+      },
+    });
+
+    const result = await deleteAdminOrders(adminId, {
+      orderIds: [a.order.id, b.order.id],
+      confirmCount: 2,
+    });
+    expect(result.deleted).toHaveLength(2);
+    expect(result.skipped).toHaveLength(0);
+    expect(await prisma.order.findUnique({ where: { id: a.order.id } })).toBeNull();
+    expect(await prisma.order.findUnique({ where: { id: b.order.id } })).toBeNull();
+    const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
+    expect(quoteAfter.convertedOrderId).toBeNull();
+  });
 });
