@@ -13,13 +13,25 @@ import {
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 
+type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
+
+function parseExportFilter(value: unknown): ExportFilter | undefined {
+  if (value === "READY" || value === "EXPORTED" || value === "BLOCKED" || value === "ALL") {
+    return value;
+  }
+  return undefined;
+}
+
 export const Route = createFileRoute("/admin/orders/")({
+  validateSearch: (search: Record<string, unknown>): { autopartExport?: ExportFilter } => {
+    const autopartExport = parseExportFilter(search["autopartExport"]);
+    return autopartExport ? { autopartExport } : {};
+  },
   head: () => ({ meta: [{ title: "Orders — Automotive Brands Admin" }] }),
   component: AdminOrdersPage,
 });
 
 type Row = Extract<Awaited<ReturnType<typeof listAdminOrdersFn>>, { ok: true }>["data"]["items"][number];
-type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
 
 function downloadCsv(filename: string, csv: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -32,14 +44,19 @@ function downloadCsv(filename: string, csv: string) {
 }
 
 function AdminOrdersPage() {
+  const search = Route.useSearch();
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState("");
-  const [exportFilter, setExportFilter] = useState<ExportFilter>("ALL");
+  const [exportFilter, setExportFilter] = useState<ExportFilter>(search.autopartExport ?? "ALL");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    setExportFilter(search.autopartExport ?? "ALL");
+  }, [search.autopartExport]);
 
   const load = useCallback(async () => {
     setLoading(true);

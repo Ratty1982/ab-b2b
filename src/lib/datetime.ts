@@ -119,3 +119,69 @@ export function formatLondonScheduleLabel(label: string, at: InstantInput): stri
   const zone = formatTimeZoneName(at);
   return zone ? `${label} ${zone}` : label;
 }
+
+/** Calendar Y/M/D in Europe/London for an instant. */
+export function londonCalendarDateParts(at: Date = new Date()): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const parts = londonParts(at, { day: "2-digit", month: "2-digit", year: "numeric" });
+  return {
+    year: Number(part(parts, "year")),
+    month: Number(part(parts, "month")),
+    day: Number(part(parts, "day")),
+  };
+}
+
+function londonOffsetMs(instant: Date): number {
+  const parts = londonParts(instant, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const asUtc = Date.UTC(
+    Number(part(parts, "year")),
+    Number(part(parts, "month")) - 1,
+    Number(part(parts, "day")),
+    Number(part(parts, "hour")),
+    Number(part(parts, "minute")),
+    Number(part(parts, "second")),
+  );
+  return asUtc - instant.getTime();
+}
+
+/** Convert a Europe/London wall-clock civil time to a UTC Date. */
+export function londonWallTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+): Date {
+  const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  let instant = new Date(wallAsUtc - londonOffsetMs(new Date(wallAsUtc)));
+  const adjusted = new Date(wallAsUtc - londonOffsetMs(instant));
+  if (adjusted.getTime() !== instant.getTime()) instant = adjusted;
+  return instant;
+}
+
+/** Inclusive start / exclusive end UTC bounds for the London calendar day containing `at`. */
+export function londonCalendarDayBounds(at: Date = new Date()): { start: Date; end: Date } {
+  const { year, month, day } = londonCalendarDateParts(at);
+  const start = londonWallTimeToUtc(year, month, day, 0, 0, 0);
+  const nextCivil = new Date(Date.UTC(year, month - 1, day + 1));
+  const end = londonWallTimeToUtc(
+    nextCivil.getUTCFullYear(),
+    nextCivil.getUTCMonth() + 1,
+    nextCivil.getUTCDate(),
+    0,
+    0,
+    0,
+  );
+  return { start, end };
+}

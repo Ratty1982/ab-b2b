@@ -8,6 +8,8 @@ import {
   formatTime,
   formatTimeZoneName,
   isCalendarDateOnly,
+  londonCalendarDayBounds,
+  londonWallTimeToUtc,
   parseInstant,
 } from "./datetime";
 
@@ -65,5 +67,20 @@ describe("Europe/London date/time formatter", () => {
     expect(formatDate("not-a-date")).toBeNull();
     expect(formatOperationalDateTime("")).toBeNull();
     expect(formatOperationalDateTime(null)).toBeNull();
+  });
+
+  it("computes Europe/London calendar day UTC bounds", () => {
+    const summerNoonUtc = new Date("2026-09-28T12:00:00.000Z");
+    const { start, end } = londonCalendarDayBounds(summerNoonUtc);
+    expect(formatDateTime(start, { seconds: true, timeZoneName: true })).toBe(
+      "28/09/2026, 00:00:00 BST",
+    );
+    expect(formatDateTime(end, { seconds: true, timeZoneName: true })).toBe(
+      "29/09/2026, 00:00:00 BST",
+    );
+    expect(end.getTime()).toBeGreaterThan(start.getTime());
+
+    const wall = londonWallTimeToUtc(2026, 9, 28, 9, 30, 0);
+    expect(formatDateTime(wall, { seconds: false })).toBe("28/09/2026, 09:30");
   });
 });

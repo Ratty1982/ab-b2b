@@ -190,6 +190,16 @@ export const listSalesRepsFn = createServerFn({ method: "GET" }).handler(async (
   }
 });
 
+export const getAdminDashboardFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const dash = await import("@/server/admin/dashboard");
+    return { ok: true as const, data: await dash.getAdminDashboard(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 export const listSalesRepProfilesFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();
