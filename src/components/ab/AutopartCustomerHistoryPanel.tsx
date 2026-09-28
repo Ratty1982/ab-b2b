@@ -230,7 +230,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             </div>
             <div>
               <dt className="text-steel">Products</dt>
-              <dd className="font-semibold">{workspace.topProducts.length}+</dd>
+              <dd className="font-semibold">{workspace.historic.productsPurchased}</dd>
             </div>
             <div>
               <dt className="text-steel">Last historic purchase</dt>
