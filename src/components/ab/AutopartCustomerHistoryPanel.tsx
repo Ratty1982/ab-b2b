@@ -108,7 +108,11 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         },
       });
       if (!r.ok) {
-        toast.error(r.error);
+        toast.error(
+          r.error ||
+            "Historic import failed. No completed import was recorded. You can retry this file pair.",
+        );
+        // Keep preview so the operator can retry without re-selecting files
         return;
       }
       toast.success("Historic Autopart data imported");
@@ -349,7 +353,12 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
           </button>
           <button
             type="button"
-            disabled={busy || !historyPreview?.canCommit}
+            disabled={
+              busy ||
+              confirmingHistory ||
+              !historyPreview?.canCommit ||
+              historyPreview?.priorImport?.status === "PROCESSING"
+            }
             onClick={() => void onConfirmHistory()}
             className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-40"
           >

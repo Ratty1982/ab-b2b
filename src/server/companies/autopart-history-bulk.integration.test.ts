@@ -216,6 +216,7 @@ describe("historic import bulk write path", () => {
     });
     const tiny561 = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
 ${code},I/SS1/1,BULK-SKU-A,Item,1,"10.00"
+${code},I/SS1/1,BULK-SKU-A,Dup adjacent,1,"10.00"
 `;
     const tinySlrb = `A/C,Type,Ref,Date,Tot Goods,Tot VAT,Total,Run Bal
 ${code},INV,SS1,06 Oct 14,10.00,2.00,12.00,12.00
@@ -245,6 +246,7 @@ ${code},INV,SS1,06 Oct 14,10.00,2.00,12.00,12.00
     expect(preview.canCommit).toBe(true);
     // FAILED prior must not surface as already-imported
     expect(preview.alreadyImported).toBe(false);
+    expect(preview.issues.some((i) => i.code === "PREVIOUS_ATTEMPT_FAILED")).toBe(true);
 
     const ok = await confirmAutopartHistoryImport(adminId, {
       companyId: company.id,
@@ -256,6 +258,8 @@ ${code},INV,SS1,06 Oct 14,10.00,2.00,12.00,12.00
       where: { id: ok.runId },
     });
     expect(run.status).toBe("COMMITTED");
+    // Adjacent duplicate Inv&Ln must upsert once (no ON CONFLICT twice error)
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: company.id } })).toBe(1);
   });
 
   it("surfaces friendly error (not raw Prisma) when confirm is blocked", async () => {

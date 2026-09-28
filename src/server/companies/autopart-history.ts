@@ -40,6 +40,158 @@ function dateOnlyToUtcNoon(dateOnly: string | null | undefined): Date | null {
   return new Date(`${dateOnly}T12:00:00.000Z`);
 }
 
+/** Active PROCESSING younger than this is treated as genuinely in-flight. */
+const HISTORIC_PROCESSING_STALE_MS = 15 * 60 * 1000;
+
+function formatUkDateTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function sqlDecimalOrNull(value: string | null | undefined): Prisma.Sql {
+  if (value == null) return Prisma.sql`NULL`;
+  const cleaned = value.trim();
+  if (!cleaned || !/^-?\d+(\.\d+)?$/.test(cleaned)) return Prisma.sql`NULL`;
+  return Prisma.sql`${cleaned}::decimal`;
+}
+
+/**
+ * Authoritative success for a historic file pair.
+ * COMMITTED alone is insufficient — older builds created COMMITTED before writes.
+ */
+export async function hasSuccessfulHistoricImport(input: {
+  companyId: string;
+  fileHash561l: string;
+  fileHashSlrb: string;
+}): Promise<{
+  id: string;
+  completedAt: Date;
+  rowsImported: number;
+  rowsUpdated: number;
+} | null> {
+  const candidates = await prisma.autopartCustomerImportRun.findMany({
+    where: {
+      companyId: input.companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "COMMITTED",
+      fileHash: input.fileHash561l,
+      fileHashSlrb: input.fileHashSlrb,
+      completedAt: { not: null },
+      dryRun: false,
+    },
+    orderBy: { completedAt: "desc" },
+    select: {
+      id: true,
+      completedAt: true,
+      rowsImported: true,
+      rowsUpdated: true,
+      diagnostics: true,
+    },
+  });
+
+  for (const run of candidates) {
+    if (!run.completedAt) continue;
+    const counters = (run.rowsImported ?? 0) + (run.rowsUpdated ?? 0);
+    if (counters > 0) {
+      return {
+        id: run.id,
+        completedAt: run.completedAt,
+        rowsImported: run.rowsImported,
+        rowsUpdated: run.rowsUpdated,
+      };
+    }
+    const [docs, lines] = await Promise.all([
+      prisma.autopartSalesDocument.count({
+        where: { companyId: input.companyId, importRunId: run.id },
+      }),
+      prisma.autopartSalesLine.count({
+        where: { companyId: input.companyId, importRunId: run.id },
+      }),
+    ]);
+    if (docs + lines > 0) {
+      return {
+        id: run.id,
+        completedAt: run.completedAt,
+        rowsImported: run.rowsImported,
+        rowsUpdated: run.rowsUpdated,
+      };
+    }
+    // Phantom COMMITTED (pre-fix create-before-write) — reclassify so retry is safe.
+    try {
+      await prisma.autopartCustomerImportRun.update({
+        where: { id: run.id },
+        data: {
+          status: "FAILED",
+          diagnostics: {
+            phantomCommitted: true,
+            failure: {
+              name: "PhantomCommittedRun",
+              message:
+                "Import run was marked COMMITTED without persisted historic rows; reclassified as FAILED for safe retry.",
+            },
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+    } catch (err) {
+      console.error("[ab:autopart-history-import] failed to repair phantom COMMITTED", {
+        runId: run.id,
+        err,
+      });
+    }
+  }
+  return null;
+}
+
+async function recoverStaleHistoricProcessing(companyId: string): Promise<number> {
+  const cutoff = new Date(Date.now() - HISTORIC_PROCESSING_STALE_MS);
+  const result = await prisma.autopartCustomerImportRun.updateMany({
+    where: {
+      companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "PROCESSING",
+      createdAt: { lt: cutoff },
+    },
+    data: {
+      status: "FAILED",
+      completedAt: new Date(),
+    },
+  });
+  return result.count;
+}
+
+async function findActiveHistoricProcessing(companyId: string) {
+  const cutoff = new Date(Date.now() - HISTORIC_PROCESSING_STALE_MS);
+  return prisma.autopartCustomerImportRun.findFirst({
+    where: {
+      companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "PROCESSING",
+      createdAt: { gte: cutoff },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, createdAt: true },
+  });
+}
+
+async function findLatestFailedHistoricImport(input: {
+  companyId: string;
+  fileHash561l: string;
+  fileHashSlrb: string;
+}) {
+  return prisma.autopartCustomerImportRun.findFirst({
+    where: {
+      companyId: input.companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "FAILED",
+      fileHash: input.fileHash561l,
+      fileHashSlrb: input.fileHashSlrb,
+      dryRun: false,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, completedAt: true, createdAt: true, diagnostics: true },
+  });
+}
+
 async function assertStaffCompanyAccess(actorUserId: string, companyId: string, permission: "companies.view" | "companies.edit" | "credit.view" | "credit.edit") {
   const profile = await requireSystemPermission(actorUserId, permission);
   if (profile.actorType === "TRADE") {
@@ -582,7 +734,14 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
       prisma.autopartSalesDocument.count({ where: { companyId } }),
       prisma.autopartCreditPosition.findUnique({ where: { companyId } }),
       prisma.autopartCustomerImportRun.findFirst({
-        where: { companyId, type: "HISTORY_561L_SLRB", status: "COMMITTED" },
+        where: {
+          companyId,
+          type: "HISTORY_561L_SLRB",
+          status: "COMMITTED",
+          completedAt: { not: null },
+          dryRun: false,
+          OR: [{ rowsImported: { gt: 0 } }, { rowsUpdated: { gt: 0 } }],
+        },
         orderBy: { completedAt: "desc" },
       }),
       prisma.autopartCustomerImportRun.findFirst({
@@ -882,20 +1041,40 @@ async function buildHistoryPreview(
 
   const hash561 = sha256(input.file561l);
   const hashSlrb = sha256(input.fileSlrb);
-  const prior = await prisma.autopartCustomerImportRun.findFirst({
-    where: {
-      companyId: input.companyId,
-      type: "HISTORY_561L_SLRB",
-      status: "COMMITTED",
-      fileHash: hash561,
-      fileHashSlrb: hashSlrb,
-    },
+
+  await recoverStaleHistoricProcessing(input.companyId);
+  const activeProcessing = await findActiveHistoricProcessing(input.companyId);
+  const prior = await hasSuccessfulHistoricImport({
+    companyId: input.companyId,
+    fileHash561l: hash561,
+    fileHashSlrb: hashSlrb,
   });
-  if (prior) {
+  const priorFailed = prior
+    ? null
+    : await findLatestFailedHistoricImport({
+        companyId: input.companyId,
+        fileHash561l: hash561,
+        fileHashSlrb: hashSlrb,
+      });
+
+  if (activeProcessing) {
+    issues.push({
+      severity: "BLOCKING",
+      code: "IMPORT_IN_PROGRESS",
+      message: "Import already in progress. Wait for it to finish, or retry if it was abandoned.",
+    });
+  } else if (prior) {
     issues.push({
       severity: "INFO",
       code: "ALREADY_IMPORTED",
-      message: "This exact file pair has already been imported. Re-confirm is idempotent.",
+      message: `This exact file pair was previously imported successfully on ${formatUkDateTime(prior.completedAt)}. Re-import is idempotent.`,
+    });
+  } else if (priorFailed) {
+    issues.push({
+      severity: "WARNING",
+      code: "PREVIOUS_ATTEMPT_FAILED",
+      message:
+        "Previous import attempt failed. No successful import exists for this file pair. Confirm Import will retry safely.",
     });
   }
 
@@ -979,6 +1158,25 @@ async function buildHistoryPreview(
     fileHash561l: hash561,
     fileHashSlrb: hashSlrb,
     alreadyImported: Boolean(prior),
+    priorImport: prior
+      ? {
+          status: "COMMITTED" as const,
+          runId: prior.id,
+          completedAt: prior.completedAt.toISOString(),
+        }
+      : priorFailed
+        ? {
+            status: "FAILED" as const,
+            runId: priorFailed.id,
+            completedAt: priorFailed.completedAt?.toISOString() ?? null,
+          }
+        : activeProcessing
+          ? {
+              status: "PROCESSING" as const,
+              runId: activeProcessing.id,
+              completedAt: null,
+            }
+          : null,
     report561l: {
       filename: input.filename561l ?? null,
       linesRead: parsed561.rows.length,
@@ -1147,10 +1345,6 @@ async function bulkUpsertHistoricDocuments(
           idByKey.set(docKey(d.documentType, d.documentReference), id);
         }
         const documentDate = d.documentDate == null ? Prisma.sql`NULL` : Prisma.sql`${d.documentDate}`;
-        const goodsNet = d.goodsNet == null ? Prisma.sql`NULL` : Prisma.sql`${d.goodsNet}::decimal`;
-        const vat = d.vat == null ? Prisma.sql`NULL` : Prisma.sql`${d.vat}::decimal`;
-        const grossTotal =
-          d.grossTotal == null ? Prisma.sql`NULL` : Prisma.sql`${d.grossTotal}::decimal`;
         return Prisma.sql`(
           ${id},
           ${d.companyId},
@@ -1158,9 +1352,9 @@ async function bulkUpsertHistoricDocuments(
           ${d.documentType}::"AutopartHistoricDocumentType",
           ${d.documentReference},
           ${documentDate},
-          ${goodsNet},
-          ${vat},
-          ${grossTotal},
+          ${sqlDecimalOrNull(d.goodsNet)},
+          ${sqlDecimalOrNull(d.vat)},
+          ${sqlDecimalOrNull(d.grossTotal)},
           ${d.source},
           ${d.importRunId},
           ${now},
@@ -1214,14 +1408,24 @@ async function bulkUpsertHistoricDocuments(
 /**
  * Bulk upsert historic sales lines via Postgres ON CONFLICT.
  */
+function dedupePreparedHistoricLines(lines: PreparedHistoricLine[]): PreparedHistoricLine[] {
+  // Last row wins — prevents Postgres "ON CONFLICT DO UPDATE cannot affect row a second time".
+  const byKey = new Map<string, PreparedHistoricLine>();
+  for (const line of lines) {
+    byKey.set(`${line.documentType}::${line.documentReference}::${line.lineNumber}`, line);
+  }
+  return [...byKey.values()];
+}
+
 async function bulkUpsertHistoricLines(
   lines: PreparedHistoricLine[],
   idByDocKey: Map<string, string>,
 ): Promise<{ inserted: number; updated: number }> {
-  if (!lines.length) return { inserted: 0, updated: 0 };
+  const uniqueLines = dedupePreparedHistoricLines(lines);
+  if (!uniqueLines.length) return { inserted: 0, updated: 0 };
 
-  const companyId = lines[0]!.companyId;
-  const refs = [...new Set(lines.map((l) => l.documentReference))];
+  const companyId = uniqueLines[0]!.companyId;
+  const refs = [...new Set(uniqueLines.map((l) => l.documentReference))];
   const existing = await prisma.autopartSalesLine.findMany({
     where: { companyId, documentReference: { in: refs } },
     select: {
@@ -1239,8 +1443,8 @@ async function bulkUpsertHistoricLines(
   let updated = 0;
   const now = new Date();
 
-  for (let i = 0; i < lines.length; i += HISTORY_UPSERT_CHUNK) {
-    const chunk = lines.slice(i, i + HISTORY_UPSERT_CHUNK);
+  for (let i = 0; i < uniqueLines.length; i += HISTORY_UPSERT_CHUNK) {
+    const chunk = uniqueLines.slice(i, i + HISTORY_UPSERT_CHUNK);
     const values = Prisma.join(
       chunk.map((l) => {
         const documentId = idByDocKey.get(docKey(l.documentType, l.documentReference)) ?? null;
@@ -1255,6 +1459,15 @@ async function bulkUpsertHistoricLines(
           l.matchedVariantId == null ? Prisma.sql`NULL` : Prisma.sql`${l.matchedVariantId}`;
         const rawInvSql =
           l.rawInvAndLn == null ? Prisma.sql`NULL` : Prisma.sql`${l.rawInvAndLn}`;
+        // units/salesNet are required — fall back to 0 when the source value is not numeric
+        const unitsFinal =
+          l.units && /^-?\d+(\.\d+)?$/.test(l.units.trim())
+            ? Prisma.sql`${l.units.trim()}::decimal`
+            : Prisma.sql`${"0"}::decimal`;
+        const salesFinal =
+          l.salesNet && /^-?\d+(\.\d+)?$/.test(l.salesNet.trim())
+            ? Prisma.sql`${l.salesNet.trim()}::decimal`
+            : Prisma.sql`${"0.00"}::decimal`;
         return Prisma.sql`(
           ${id},
           ${l.companyId},
@@ -1265,8 +1478,8 @@ async function bulkUpsertHistoricLines(
           ${l.lineNumber},
           ${l.sku},
           ${descriptionSql},
-          ${l.units}::decimal,
-          ${l.salesNet}::decimal,
+          ${unitsFinal},
+          ${salesFinal},
           ${matchedVariantSql},
           ${l.matchStatus}::"AutopartHistoricLineMatchStatus",
           ${rawInvSql},
@@ -1413,6 +1626,23 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
     });
   }
 
+  const previewSummary = {
+    fileHash561l: preview.fileHash561l,
+    fileHashSlrb: preview.fileHashSlrb,
+    canCommit: preview.canCommit,
+    accountMatch: preview.accountMatch,
+    report561l: preview.report561l,
+    reportSlrb: preview.reportSlrb,
+    matching: {
+      matchedDocuments: preview.matching.matchedDocuments,
+      unmatched561Documents: preview.matching.unmatched561Documents,
+      slrbDocumentsWithoutLines: preview.matching.slrbDocumentsWithoutLines,
+      linesWithDates: preview.matching.linesWithDates,
+      linesWithoutDates: preview.matching.linesWithoutDates,
+    },
+    products: preview.products,
+  };
+
   // ── Import run: PROCESSING (never COMMITTED before writes succeed) ─────────
   const run = await prisma.autopartCustomerImportRun.create({
     data: {
@@ -1430,7 +1660,7 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
       createdById: actorUserId,
       completedAt: null,
       issues: preview.issues as unknown as Prisma.InputJsonValue,
-      diagnostics: { preview } as unknown as Prisma.InputJsonValue,
+      diagnostics: { previewSummary } as unknown as Prisma.InputJsonValue,
     },
   });
 
@@ -1445,7 +1675,51 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
     const lineResult = await bulkUpsertHistoricLines(preparedLines, docResult.idByKey);
     imported = docResult.inserted + lineResult.inserted;
     updated = docResult.updated + lineResult.updated;
+  } catch (error) {
+    console.error("[ab:autopart-history-import] confirm failed", {
+      runId: run.id,
+      companyId: company.id,
+      error,
+    });
+    const failure =
+      error instanceof Error
+        ? { name: error.name, message: error.message }
+        : { message: "Unknown import failure" };
+    // Mark FAILED with root client — never reuse a closed transaction client
+    try {
+      await prisma.autopartCustomerImportRun.update({
+        where: { id: run.id },
+        data: {
+          status: "FAILED",
+          completedAt: new Date(),
+          diagnostics: {
+            previewSummary,
+            failure,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+    } catch (markErr) {
+      console.error("[ab:autopart-history-import] failed to mark run FAILED", markErr);
+    }
+    await recordAuditEvent({
+      action: "autopart.history_import_failed",
+      entityType: "Company",
+      entityId: company.id,
+      actorUserId,
+      companyId: company.id,
+      after: { runId: run.id, failure },
+    });
+    const detail = failure.message.replace(/\s+/g, " ").slice(0, 280);
+    throw new AuthError(
+      `Historic import failed. No completed import was recorded. You can retry this file pair. Detail: ${detail}`,
+      "IMPORT_FAILED",
+      500,
+    );
+  }
 
+  // Success finalisation — only after all authoritative writes completed.
+  // Do not mark FAILED if this step errors; rows are already persisted.
+  try {
     await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
       data: {
@@ -1457,69 +1731,42 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
         completedAt: new Date(),
       },
     });
-
-    await recordAuditEvent({
-      action: preview.alreadyImported
-        ? "autopart.history_reimported"
-        : "autopart.history_imported",
-      entityType: "Company",
-      entityId: company.id,
-      actorUserId,
-      companyId: company.id,
-      after: {
-        runId: run.id,
-        filename561l: input.filename561l ?? null,
-        filenameSlrb: input.filenameSlrb ?? null,
-        imported,
-        updated,
-        skipped,
-        documentCount: preparedDocs.size,
-        lineCount: preparedLines.length,
-      },
-    });
-  } catch (error) {
-    console.error("[ab:autopart-history-import] confirm failed", {
+  } catch (finalErr) {
+    console.error("[ab:autopart-history-import] writes succeeded but run finalisation failed", {
       runId: run.id,
       companyId: company.id,
-      error,
+      finalErr,
     });
-    // Mark FAILED with root client — never reuse a closed transaction client
-    try {
-      await prisma.autopartCustomerImportRun.update({
-        where: { id: run.id },
-        data: {
-          status: "FAILED",
-          completedAt: new Date(),
-          diagnostics: {
-            preview,
-            failure:
-              error instanceof Error
-                ? { name: error.name, message: error.message }
-                : { message: "Unknown import failure" },
-          } as unknown as Prisma.InputJsonValue,
-        },
-      });
-    } catch (markErr) {
-      console.error("[ab:autopart-history-import] failed to mark run FAILED", markErr);
-    }
-    try {
-      await recordAuditEvent({
-        action: "autopart.history_import_failed",
-        entityType: "Company",
-        entityId: company.id,
-        actorUserId,
-        companyId: company.id,
-        after: { runId: run.id },
-      });
-    } catch {
-      // audit must not hide the original failure
-    }
+    const detail =
+      finalErr instanceof Error
+        ? finalErr.message.replace(/\s+/g, " ").slice(0, 280)
+        : "Unknown finalisation failure";
     throw new AuthError(
-      "Historic import failed. No completed import was recorded. Your source files are unchanged and you can retry after the issue is resolved.",
-      "IMPORT_FAILED",
+      `Historic data was written but the import run could not be marked complete. Preview the same files — if they show as previously imported, retry is unnecessary. Detail: ${detail}`,
+      "IMPORT_FINALISE_FAILED",
       500,
     );
   }
+
+  await recordAuditEvent({
+    action: preview.alreadyImported
+      ? "autopart.history_reimported"
+      : "autopart.history_imported",
+    entityType: "Company",
+    entityId: company.id,
+    actorUserId,
+    companyId: company.id,
+    after: {
+      runId: run.id,
+      filename561l: input.filename561l ?? null,
+      filenameSlrb: input.filenameSlrb ?? null,
+      imported,
+      updated,
+      skipped,
+      documentCount: preparedDocs.size,
+      lineCount: preparedLines.length,
+    },
+  });
 
   return {
     runId: run.id,

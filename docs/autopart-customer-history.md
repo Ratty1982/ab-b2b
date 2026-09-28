@@ -116,11 +116,15 @@ row round-trips (that caused `Transaction not found` on large YORKMOTO-scale fil
 
 1. Parse / validate / resolve SKUs **outside** any write transaction  
 2. Create `AutopartCustomerImportRun` with status `PROCESSING`  
-3. Bulk upsert documents then lines (Postgres `INSERT … ON CONFLICT`, chunked)  
-4. Mark run `COMMITTED` only on full success; on failure mark `FAILED` with the root client  
+3. Bulk upsert documents then lines (Postgres `INSERT … ON CONFLICT`, chunked; duplicate line keys deduped)  
+4. Mark run `COMMITTED` only after all writes succeed (`completedAt` set); on write failure mark `FAILED` with the root client  
 
-File-hash “already imported” checks only `COMMITTED` runs — a `FAILED` / incomplete
-attempt is always retryable.
+Authoritative success (`hasSuccessfulHistoricImport`) requires `status = COMMITTED`,
+`completedAt != null`, and persisted row evidence (`rowsImported`/`rowsUpdated` > 0 or
+related documents/lines). Phantom `COMMITTED` rows from older create-before-write builds
+are reclassified to `FAILED` so Preview never reports “already imported” after a failed
+attempt. Active `PROCESSING` blocks confirm; stale `PROCESSING` (>15 minutes) is recovered
+to `FAILED` for safe retry.
 
 ## Idempotency
 
