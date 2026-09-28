@@ -4,8 +4,8 @@
  * AB is NOT the accounting system. Autopart/MAM remains authoritative for ledger.
  * Historic lines are NOT AB Orders. Credit position is a snapshot, not a ledger.
  */
-import { createHash } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { createHash, randomBytes } from "node:crypto";
+import { Prisma, type AutopartHistoricDocumentType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -1075,9 +1075,250 @@ const historyConfirmSchema = z.object({
   previewRunId: z.string().cuid().optional(),
 });
 
+const HISTORY_UPSERT_CHUNK = 250;
+
+function newImportRowId(): string {
+  return `c${randomBytes(16).toString("hex")}`;
+}
+
+type PreparedHistoricDocument = {
+  companyId: string;
+  autopartCustomerCode: string;
+  documentType: AutopartHistoricDocumentType;
+  documentReference: string;
+  documentDate: Date | null;
+  goodsNet: string | null;
+  vat: string | null;
+  grossTotal: string | null;
+  source: string;
+  importRunId: string;
+};
+
+type PreparedHistoricLine = {
+  companyId: string;
+  documentType: AutopartHistoricDocumentType;
+  documentReference: string;
+  lineNumber: number;
+  sku: string;
+  descriptionSnapshot: string | null;
+  units: string;
+  salesNet: string;
+  matchedVariantId: string | null;
+  matchStatus: "MATCHED" | "NOT_IN_AB_CATALOGUE";
+  rawInvAndLn: string | null;
+  source: string;
+  importRunId: string;
+  autopartCustomerCode: string;
+};
+
+function docKey(type: string, ref: string): string {
+  return `${type}::${ref}`;
+}
+
+/**
+ * Bulk upsert historic documents via Postgres ON CONFLICT.
+ * Short chunked statements — never one interactive transaction of thousands of awaits.
+ */
+async function bulkUpsertHistoricDocuments(
+  docs: PreparedHistoricDocument[],
+): Promise<{ inserted: number; updated: number; idByKey: Map<string, string> }> {
+  const idByKey = new Map<string, string>();
+  if (!docs.length) return { inserted: 0, updated: 0, idByKey };
+
+  // Preload existing so we can count insert vs update accurately
+  const refs = [...new Set(docs.map((d) => d.documentReference))];
+  const existing = await prisma.autopartSalesDocument.findMany({
+    where: { companyId: docs[0]!.companyId, documentReference: { in: refs } },
+    select: { id: true, documentType: true, documentReference: true },
+  });
+  const existingKeys = new Set(existing.map((e) => docKey(e.documentType, e.documentReference)));
+  for (const e of existing) idByKey.set(docKey(e.documentType, e.documentReference), e.id);
+
+  let inserted = 0;
+  let updated = 0;
+  const now = new Date();
+
+  for (let i = 0; i < docs.length; i += HISTORY_UPSERT_CHUNK) {
+    const chunk = docs.slice(i, i + HISTORY_UPSERT_CHUNK);
+    const values = Prisma.join(
+      chunk.map((d) => {
+        const id = idByKey.get(docKey(d.documentType, d.documentReference)) ?? newImportRowId();
+        if (!existingKeys.has(docKey(d.documentType, d.documentReference))) {
+          idByKey.set(docKey(d.documentType, d.documentReference), id);
+        }
+        const documentDate = d.documentDate == null ? Prisma.sql`NULL` : Prisma.sql`${d.documentDate}`;
+        const goodsNet = d.goodsNet == null ? Prisma.sql`NULL` : Prisma.sql`${d.goodsNet}::decimal`;
+        const vat = d.vat == null ? Prisma.sql`NULL` : Prisma.sql`${d.vat}::decimal`;
+        const grossTotal =
+          d.grossTotal == null ? Prisma.sql`NULL` : Prisma.sql`${d.grossTotal}::decimal`;
+        return Prisma.sql`(
+          ${id},
+          ${d.companyId},
+          ${d.autopartCustomerCode},
+          ${d.documentType}::"AutopartHistoricDocumentType",
+          ${d.documentReference},
+          ${documentDate},
+          ${goodsNet},
+          ${vat},
+          ${grossTotal},
+          ${d.source},
+          ${d.importRunId},
+          ${now},
+          ${now}
+        )`;
+      }),
+    );
+
+    await prisma.$executeRaw`
+      INSERT INTO "AutopartSalesDocument" (
+        "id", "companyId", "autopartCustomerCode", "documentType", "documentReference",
+        "documentDate", "goodsNet", "vat", "grossTotal", "source", "importRunId",
+        "createdAt", "updatedAt"
+      )
+      VALUES ${values}
+      ON CONFLICT ("companyId", "documentType", "documentReference") DO UPDATE SET
+        "autopartCustomerCode" = EXCLUDED."autopartCustomerCode",
+        "documentDate" = COALESCE(EXCLUDED."documentDate", "AutopartSalesDocument"."documentDate"),
+        "goodsNet" = COALESCE(EXCLUDED."goodsNet", "AutopartSalesDocument"."goodsNet"),
+        "vat" = COALESCE(EXCLUDED."vat", "AutopartSalesDocument"."vat"),
+        "grossTotal" = COALESCE(EXCLUDED."grossTotal", "AutopartSalesDocument"."grossTotal"),
+        "source" = CASE
+          WHEN EXCLUDED."source" = 'SLRB' THEN 'SLRB'
+          ELSE "AutopartSalesDocument"."source"
+        END,
+        "importRunId" = EXCLUDED."importRunId",
+        "updatedAt" = EXCLUDED."updatedAt"
+    `;
+
+    for (const d of chunk) {
+      if (existingKeys.has(docKey(d.documentType, d.documentReference))) updated += 1;
+      else {
+        inserted += 1;
+        existingKeys.add(docKey(d.documentType, d.documentReference));
+      }
+    }
+  }
+
+  // Refresh IDs (conflict path keeps existing ids)
+  const after = await prisma.autopartSalesDocument.findMany({
+    where: { companyId: docs[0]!.companyId, documentReference: { in: refs } },
+    select: { id: true, documentType: true, documentReference: true },
+  });
+  for (const row of after) {
+    idByKey.set(docKey(row.documentType, row.documentReference), row.id);
+  }
+
+  return { inserted, updated, idByKey };
+}
+
+/**
+ * Bulk upsert historic sales lines via Postgres ON CONFLICT.
+ */
+async function bulkUpsertHistoricLines(
+  lines: PreparedHistoricLine[],
+  idByDocKey: Map<string, string>,
+): Promise<{ inserted: number; updated: number }> {
+  if (!lines.length) return { inserted: 0, updated: 0 };
+
+  const companyId = lines[0]!.companyId;
+  const refs = [...new Set(lines.map((l) => l.documentReference))];
+  const existing = await prisma.autopartSalesLine.findMany({
+    where: { companyId, documentReference: { in: refs } },
+    select: {
+      id: true,
+      documentType: true,
+      documentReference: true,
+      lineNumber: true,
+    },
+  });
+  const existingKeys = new Set(
+    existing.map((e) => `${e.documentType}::${e.documentReference}::${e.lineNumber}`),
+  );
+
+  let inserted = 0;
+  let updated = 0;
+  const now = new Date();
+
+  for (let i = 0; i < lines.length; i += HISTORY_UPSERT_CHUNK) {
+    const chunk = lines.slice(i, i + HISTORY_UPSERT_CHUNK);
+    const values = Prisma.join(
+      chunk.map((l) => {
+        const documentId = idByDocKey.get(docKey(l.documentType, l.documentReference)) ?? null;
+        const id = newImportRowId();
+        const documentIdSql =
+          documentId == null ? Prisma.sql`NULL` : Prisma.sql`${documentId}`;
+        const descriptionSql =
+          l.descriptionSnapshot == null
+            ? Prisma.sql`NULL`
+            : Prisma.sql`${l.descriptionSnapshot}`;
+        const matchedVariantSql =
+          l.matchedVariantId == null ? Prisma.sql`NULL` : Prisma.sql`${l.matchedVariantId}`;
+        const rawInvSql =
+          l.rawInvAndLn == null ? Prisma.sql`NULL` : Prisma.sql`${l.rawInvAndLn}`;
+        return Prisma.sql`(
+          ${id},
+          ${l.companyId},
+          ${documentIdSql},
+          ${l.autopartCustomerCode},
+          ${l.documentType}::"AutopartHistoricDocumentType",
+          ${l.documentReference},
+          ${l.lineNumber},
+          ${l.sku},
+          ${descriptionSql},
+          ${l.units}::decimal,
+          ${l.salesNet}::decimal,
+          ${matchedVariantSql},
+          ${l.matchStatus}::"AutopartHistoricLineMatchStatus",
+          ${rawInvSql},
+          ${l.source},
+          ${l.importRunId},
+          ${now},
+          ${now}
+        )`;
+      }),
+    );
+
+    await prisma.$executeRaw`
+      INSERT INTO "AutopartSalesLine" (
+        "id", "companyId", "documentId", "autopartCustomerCode", "documentType",
+        "documentReference", "lineNumber", "sku", "descriptionSnapshot",
+        "units", "salesNet", "matchedVariantId", "matchStatus", "rawInvAndLn",
+        "source", "importRunId", "createdAt", "updatedAt"
+      )
+      VALUES ${values}
+      ON CONFLICT ("companyId", "documentType", "documentReference", "lineNumber") DO UPDATE SET
+        "documentId" = COALESCE(EXCLUDED."documentId", "AutopartSalesLine"."documentId"),
+        "autopartCustomerCode" = EXCLUDED."autopartCustomerCode",
+        "sku" = EXCLUDED."sku",
+        "descriptionSnapshot" = EXCLUDED."descriptionSnapshot",
+        "units" = EXCLUDED."units",
+        "salesNet" = EXCLUDED."salesNet",
+        "matchedVariantId" = EXCLUDED."matchedVariantId",
+        "matchStatus" = EXCLUDED."matchStatus",
+        "rawInvAndLn" = EXCLUDED."rawInvAndLn",
+        "source" = EXCLUDED."source",
+        "importRunId" = EXCLUDED."importRunId",
+        "updatedAt" = EXCLUDED."updatedAt"
+    `;
+
+    for (const l of chunk) {
+      const key = `${l.documentType}::${l.documentReference}::${l.lineNumber}`;
+      if (existingKeys.has(key)) updated += 1;
+      else {
+        inserted += 1;
+        existingKeys.add(key);
+      }
+    }
+  }
+
+  return { inserted, updated };
+}
+
 export async function confirmAutopartHistoryImport(actorUserId: string, raw: unknown) {
   await assertStaffCompanyAccess(actorUserId, (raw as { companyId: string }).companyId, "companies.edit");
   const input = historyConfirmSchema.parse(raw);
+
+  // ── Prepare outside any write transaction ──────────────────────────────────
   const preview = await buildHistoryPreview(actorUserId, input, { persistRun: false });
   if (!preview.canCommit) {
     throw new AuthError(
@@ -1092,13 +1333,92 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
   const parsed561 = parseAutopart561l(input.file561l);
   const parsedSlrb = parseAutopartSlrb(input.fileSlrb);
   const slrbByRef = new Map(parsedSlrb.documents.map((d) => [d.documentReference!, d]));
+
+  // Bulk SKU resolution once (never per-line)
   const skuMap = await resolveSkuMap(parsed561.lines.map((l) => l.partNumber!).filter(Boolean));
 
+  const preparedDocs = new Map<string, PreparedHistoricDocument>();
+  for (const doc of parsedSlrb.documents) {
+    if (!doc.documentReference) continue;
+    const type = doc.documentType as AutopartHistoricDocumentType;
+    preparedDocs.set(docKey(type, doc.documentReference), {
+      companyId: company.id,
+      autopartCustomerCode: verifiedCode,
+      documentType: type,
+      documentReference: doc.documentReference,
+      documentDate: dateOnlyToUtcNoon(doc.documentDate),
+      goodsNet: doc.goodsNet,
+      vat: doc.vat,
+      grossTotal: doc.grossTotal,
+      source: "SLRB",
+      importRunId: "", // filled after run create
+    });
+  }
+
+  const preparedLines: PreparedHistoricLine[] = [];
+  let skipped = 0;
+  for (const line of parsed561.lines) {
+    if (!line.documentReference || !line.sourceLineNumber || !line.partNumber) {
+      skipped += 1;
+      continue;
+    }
+    const documentType = (
+      line.documentType === "CREDIT" ? "CREDIT" : "INVOICE"
+    ) as AutopartHistoricDocumentType;
+    const slrb = slrbByRef.get(line.documentReference);
+    const key = docKey(documentType, line.documentReference);
+    if (!preparedDocs.has(key)) {
+      preparedDocs.set(key, {
+        companyId: company.id,
+        autopartCustomerCode: verifiedCode,
+        documentType,
+        documentReference: line.documentReference,
+        documentDate: dateOnlyToUtcNoon(slrb?.documentDate ?? null),
+        goodsNet: slrb?.goodsNet ?? null,
+        vat: slrb?.vat ?? null,
+        grossTotal: slrb?.grossTotal ?? null,
+        source: slrb ? "SLRB" : "561L",
+        importRunId: "",
+      });
+    } else if (slrb) {
+      // Prefer SLRB header fields when both present
+      const existing = preparedDocs.get(key)!;
+      preparedDocs.set(key, {
+        ...existing,
+        documentDate: dateOnlyToUtcNoon(slrb.documentDate) ?? existing.documentDate,
+        goodsNet: slrb.goodsNet ?? existing.goodsNet,
+        vat: slrb.vat ?? existing.vat,
+        grossTotal: slrb.grossTotal ?? existing.grossTotal,
+        source: "SLRB",
+      });
+    }
+
+    const skuKey = line.partNumber.trim().toUpperCase();
+    const matchedVariantId = skuMap.get(skuKey) ?? null;
+    preparedLines.push({
+      companyId: company.id,
+      documentType,
+      documentReference: line.documentReference,
+      lineNumber: line.sourceLineNumber,
+      sku: line.partNumber.trim(),
+      descriptionSnapshot: line.description,
+      units: String(line.units ?? 0),
+      salesNet: line.salesNet ?? "0.00",
+      matchedVariantId,
+      matchStatus: matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
+      rawInvAndLn: line.rawInvAndLn,
+      source: "561L",
+      importRunId: "",
+      autopartCustomerCode: verifiedCode,
+    });
+  }
+
+  // ── Import run: PROCESSING (never COMMITTED before writes succeed) ─────────
   const run = await prisma.autopartCustomerImportRun.create({
     data: {
       companyId: company.id,
       type: "HISTORY_561L_SLRB",
-      status: "COMMITTED",
+      status: "PROCESSING",
       filename: input.filename561l ?? null,
       filenameSlrb: input.filenameSlrb ?? null,
       fileHash: preview.fileHash561l,
@@ -1108,170 +1428,98 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
       rowsValid: parsed561.lines.length,
       dryRun: false,
       createdById: actorUserId,
-      completedAt: new Date(),
+      completedAt: null,
       issues: preview.issues as unknown as Prisma.InputJsonValue,
       diagnostics: { preview } as unknown as Prisma.InputJsonValue,
     },
   });
 
+  for (const doc of preparedDocs.values()) doc.importRunId = run.id;
+  for (const line of preparedLines) line.importRunId = run.id;
+
   let imported = 0;
   let updated = 0;
-  let skipped = 0;
 
-  await prisma.$transaction(async (tx) => {
-    // Upsert SLRB documents first
-    for (const doc of parsedSlrb.documents) {
-      if (!doc.documentReference) continue;
-      const data = {
-        companyId: company.id,
-        autopartCustomerCode: verifiedCode,
-        documentType: doc.documentType,
-        documentReference: doc.documentReference,
-        documentDate: dateOnlyToUtcNoon(doc.documentDate),
-        goodsNet: doc.goodsNet,
-        vat: doc.vat,
-        grossTotal: doc.grossTotal,
-        source: "SLRB",
-        importRunId: run.id,
-      };
-      const existing = await tx.autopartSalesDocument.findUnique({
-        where: {
-          companyId_documentType_documentReference: {
-            companyId: company.id,
-            documentType: doc.documentType,
-            documentReference: doc.documentReference,
-          },
-        },
-      });
-      if (existing) {
-        await tx.autopartSalesDocument.update({ where: { id: existing.id }, data });
-        updated += 1;
-      } else {
-        await tx.autopartSalesDocument.create({ data });
-        imported += 1;
-      }
-    }
+  try {
+    const docResult = await bulkUpsertHistoricDocuments([...preparedDocs.values()]);
+    const lineResult = await bulkUpsertHistoricLines(preparedLines, docResult.idByKey);
+    imported = docResult.inserted + lineResult.inserted;
+    updated = docResult.updated + lineResult.updated;
 
-    // Ensure documents exist for 561L refs even when SLRB missing
-    for (const line of parsed561.lines) {
-      if (!line.documentReference || !line.sourceLineNumber || !line.partNumber) {
-        skipped += 1;
-        continue;
-      }
-      const slrb = slrbByRef.get(line.documentReference);
-      const documentType = (
-        line.documentType === "CREDIT" ? "CREDIT" : "INVOICE"
-      ) as "INVOICE" | "CREDIT";
-      let document = await tx.autopartSalesDocument.findUnique({
-        where: {
-          companyId_documentType_documentReference: {
-            companyId: company.id,
-            documentType,
-            documentReference: line.documentReference,
-          },
-        },
-      });
-      if (!document) {
-        document = await tx.autopartSalesDocument.create({
-          data: {
-            companyId: company.id,
-            autopartCustomerCode: verifiedCode,
-            documentType,
-            documentReference: line.documentReference,
-            documentDate: dateOnlyToUtcNoon(slrb?.documentDate ?? null),
-            goodsNet: slrb?.goodsNet ?? null,
-            vat: slrb?.vat ?? null,
-            grossTotal: slrb?.grossTotal ?? null,
-            source: slrb ? "SLRB" : "561L",
-            importRunId: run.id,
-          },
-        });
-        imported += 1;
-      } else if (slrb?.documentDate && !document.documentDate) {
-        await tx.autopartSalesDocument.update({
-          where: { id: document.id },
-          data: {
-            documentDate: dateOnlyToUtcNoon(slrb.documentDate),
-            goodsNet: slrb.goodsNet,
-            vat: slrb.vat,
-            grossTotal: slrb.grossTotal,
-            source: "SLRB",
-            importRunId: run.id,
-          },
-        });
-        updated += 1;
-      }
+    await prisma.autopartCustomerImportRun.update({
+      where: { id: run.id },
+      data: {
+        status: "COMMITTED",
+        rowsImported: imported,
+        rowsUpdated: updated,
+        rowsSkipped: skipped,
+        rowsUnmatched: preview.matching.unmatched561Documents,
+        completedAt: new Date(),
+      },
+    });
 
-      const skuKey = line.partNumber.trim().toUpperCase();
-      const matchedVariantId = skuMap.get(skuKey) ?? null;
-      const lineData = {
-        companyId: company.id,
-        documentId: document.id,
-        autopartCustomerCode: verifiedCode,
-        documentType,
-        documentReference: line.documentReference,
-        lineNumber: line.sourceLineNumber,
-        sku: line.partNumber.trim(),
-        descriptionSnapshot: line.description,
-        units: line.units ?? 0,
-        salesNet: line.salesNet ?? "0.00",
-        matchedVariantId,
-        matchStatus: matchedVariantId
-          ? ("MATCHED" as const)
-          : ("NOT_IN_AB_CATALOGUE" as const),
-        rawInvAndLn: line.rawInvAndLn,
-        source: "561L",
-        importRunId: run.id,
-      };
-
-      const existingLine = await tx.autopartSalesLine.findUnique({
-        where: {
-          companyId_documentType_documentReference_lineNumber: {
-            companyId: company.id,
-            documentType,
-            documentReference: line.documentReference,
-            lineNumber: line.sourceLineNumber,
-          },
-        },
-      });
-      if (existingLine) {
-        await tx.autopartSalesLine.update({ where: { id: existingLine.id }, data: lineData });
-        updated += 1;
-      } else {
-        await tx.autopartSalesLine.create({ data: lineData });
-        imported += 1;
-      }
-    }
-  });
-
-  await prisma.autopartCustomerImportRun.update({
-    where: { id: run.id },
-    data: {
-      rowsImported: imported,
-      rowsUpdated: updated,
-      rowsSkipped: skipped,
-      rowsUnmatched: preview.matching.unmatched561Documents,
-      completedAt: new Date(),
-    },
-  });
-
-  await recordAuditEvent({
-    action: preview.alreadyImported
-      ? "autopart.history_reimported"
-      : "autopart.history_imported",
-    entityType: "Company",
-    entityId: company.id,
-    actorUserId,
-    companyId: company.id,
-    after: {
+    await recordAuditEvent({
+      action: preview.alreadyImported
+        ? "autopart.history_reimported"
+        : "autopart.history_imported",
+      entityType: "Company",
+      entityId: company.id,
+      actorUserId,
+      companyId: company.id,
+      after: {
+        runId: run.id,
+        filename561l: input.filename561l ?? null,
+        filenameSlrb: input.filenameSlrb ?? null,
+        imported,
+        updated,
+        skipped,
+        documentCount: preparedDocs.size,
+        lineCount: preparedLines.length,
+      },
+    });
+  } catch (error) {
+    console.error("[ab:autopart-history-import] confirm failed", {
       runId: run.id,
-      filename561l: input.filename561l ?? null,
-      filenameSlrb: input.filenameSlrb ?? null,
-      imported,
-      updated,
-      skipped,
-    },
-  });
+      companyId: company.id,
+      error,
+    });
+    // Mark FAILED with root client — never reuse a closed transaction client
+    try {
+      await prisma.autopartCustomerImportRun.update({
+        where: { id: run.id },
+        data: {
+          status: "FAILED",
+          completedAt: new Date(),
+          diagnostics: {
+            preview,
+            failure:
+              error instanceof Error
+                ? { name: error.name, message: error.message }
+                : { message: "Unknown import failure" },
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+    } catch (markErr) {
+      console.error("[ab:autopart-history-import] failed to mark run FAILED", markErr);
+    }
+    try {
+      await recordAuditEvent({
+        action: "autopart.history_import_failed",
+        entityType: "Company",
+        entityId: company.id,
+        actorUserId,
+        companyId: company.id,
+        after: { runId: run.id },
+      });
+    } catch {
+      // audit must not hide the original failure
+    }
+    throw new AuthError(
+      "Historic import failed. No completed import was recorded. Your source files are unchanged and you can retry after the issue is resolved.",
+      "IMPORT_FAILED",
+      500,
+    );
+  }
 
   return {
     runId: run.id,

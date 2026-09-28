@@ -258,6 +258,8 @@ enum AutopartCustomerImportType {
 
 enum AutopartCustomerImportStatus {
   PREVIEWED
+  /// Confirm import in progress (not yet successful).
+  PROCESSING
   COMMITTED
   FAILED
   BLOCKED

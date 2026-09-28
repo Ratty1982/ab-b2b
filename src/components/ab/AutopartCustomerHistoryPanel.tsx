@@ -45,6 +45,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   const [historyPreview, setHistoryPreview] = useState<HistoryPreview | null>(null);
   const [creditPreview, setCreditPreview] = useState<CreditPreview | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmingHistory, setConfirmingHistory] = useState(false);
   const [alias, setAlias] = useState("");
   const [aliasNote, setAliasNote] = useState("");
 
@@ -91,27 +92,32 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   }
 
   async function onConfirmHistory() {
-    if (!file561 || !fileSlrb || !historyPreview?.canCommit) return;
+    if (!file561 || !fileSlrb || !historyPreview?.canCommit || busy || confirmingHistory) return;
     setBusy(true);
-    const [t561, tSlrb] = await Promise.all([readFileText(file561), readFileText(fileSlrb)]);
-    const r = await confirmAutopartHistoryImportFn({
-      data: {
-        companyId,
-        file561l: t561!,
-        fileSlrb: tSlrb!,
-        filename561l: file561.name,
-        filenameSlrb: fileSlrb.name,
-        previewRunId: historyPreview.runId ?? undefined,
-      },
-    });
-    setBusy(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
+    setConfirmingHistory(true);
+    try {
+      const [t561, tSlrb] = await Promise.all([readFileText(file561), readFileText(fileSlrb)]);
+      const r = await confirmAutopartHistoryImportFn({
+        data: {
+          companyId,
+          file561l: t561!,
+          fileSlrb: tSlrb!,
+          filename561l: file561.name,
+          filenameSlrb: fileSlrb.name,
+          previewRunId: historyPreview.runId ?? undefined,
+        },
+      });
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      toast.success("Historic Autopart data imported");
+      setHistoryPreview(null);
+      setWorkspace(r.data.workspace);
+    } finally {
+      setConfirmingHistory(false);
+      setBusy(false);
     }
-    toast.success("Historic Autopart data imported");
-    setHistoryPreview(null);
-    setWorkspace(r.data.workspace);
   }
 
   async function onPreviewCredit() {
@@ -347,7 +353,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             onClick={() => void onConfirmHistory()}
             className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-40"
           >
-            Confirm import
+            {confirmingHistory ? "Importing…" : "Confirm import"}
           </button>
         </div>
         {historyPreview ? (

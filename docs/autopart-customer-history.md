@@ -109,6 +109,19 @@ Account validation is **source-aware** (not a flat set of equivalent codes):
 
 Do **not** create AB `Order` / `OrderItem` / `Invoice` rows for historic Autopart transactions.
 
+## Confirm import write path
+
+Confirm does **not** hold one interactive Prisma `$transaction` across thousands of
+row round-trips (that caused `Transaction not found` on large YORKMOTO-scale files).
+
+1. Parse / validate / resolve SKUs **outside** any write transaction  
+2. Create `AutopartCustomerImportRun` with status `PROCESSING`  
+3. Bulk upsert documents then lines (Postgres `INSERT … ON CONFLICT`, chunked)  
+4. Mark run `COMMITTED` only on full success; on failure mark `FAILED` with the root client  
+
+File-hash “already imported” checks only `COMMITTED` runs — a `FAILED` / incomplete
+attempt is always retryable.
+
 ## Idempotency
 
 Stable unique keys:
@@ -117,7 +130,7 @@ Stable unique keys:
 - Line: `(companyId, documentType, documentReference, lineNumber)`
 - Credit: upsert by `companyId`
 
-Re-import updates safely; does not duplicate spend/units. Exact file-hash matches warn “already imported”.
+Re-import updates safely; does not duplicate spend/units. Exact file-hash matches warn “already imported” only after a successful `COMMITTED` run.
 
 ## Credit display precedence
 
