@@ -233,6 +233,10 @@ describe("Phase 6B checkout order creation", () => {
     const variant = await prisma.productVariant.findFirstOrThrow({
       where: { productId: product.id },
     });
+    await prisma.productVariant.update({
+      where: { id: variant.id },
+      data: { backorderPolicy: "DENY" },
+    });
     await seedStock(variant.id, 7);
 
     const { company, address } = await seedCompanyWithAddress(`FP Co ${sku}`);

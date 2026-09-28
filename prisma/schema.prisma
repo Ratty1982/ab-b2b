@@ -130,10 +130,17 @@ enum StockStatus {
   OUT_OF_STOCK
 }
 
-/// Controlled trade backorder policy on ProductVariant (SKU). Default DENY — opt-in only.
+/// SKU backorder policy. INHERIT uses TradeOrderingSettings.defaultBackorderPolicy.
 enum BackorderPolicy {
-  DENY
+  INHERIT
   ALLOW
+  DENY
+}
+
+/// Effective/global backorder decision (never INHERIT).
+enum EffectiveBackorderPolicy {
+  ALLOW
+  DENY
 }
 
 enum ProductStatus {
@@ -877,8 +884,8 @@ model ProductVariant {
   externalRef    String?  @unique
   isDefault      Boolean  @default(true)
   isActive       Boolean  @default(true)
-  /// DENY (default): stock limits apply. ALLOW: customers may order beyond effective sellable.
-  backorderPolicy BackorderPolicy @default(DENY)
+  /// INHERIT (default): use global trade ordering setting. ALLOW/DENY override per SKU.
+  backorderPolicy BackorderPolicy @default(INHERIT)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -1104,6 +1111,15 @@ model StockScheduleWindow {
 
 /// Outbound transactional email settings (Admin → Settings → Email).
 /// SMTP password is write-only: stored AES-256-GCM encrypted; never returned to clients.
+/// Singleton trade ordering defaults (backorders, etc.).
+model TradeOrderingSettings {
+  id                     String                   @id @default("singleton")
+  /// Global default when ProductVariant.backorderPolicy is INHERIT.
+  defaultBackorderPolicy EffectiveBackorderPolicy @default(ALLOW)
+  updatedByUserId        String?
+  updatedAt              DateTime                 @updatedAt
+}
+
 model EmailSettings {
   id                           String       @id @default("singleton")
   enabled                      Boolean      @default(false)

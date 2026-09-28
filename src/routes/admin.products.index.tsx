@@ -6,6 +6,7 @@ import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { gbp } from "@/lib/data";
 import { ROUTES } from "@/lib/app-nav";
 import {
+  bulkUpdateBackorderPolicyFn,
   createCatalogueProductFn,
   exportCatalogueProductsFn,
   listCatalogueBrandsFn,
@@ -73,6 +74,8 @@ function AdminProducts() {
     (session.user.navPermissions.includes("products.export") ||
       session.user.navPermissions.includes("products.edit"));
   const canImport = session.signedIn && session.user.navPermissions.includes("products.import");
+  const canEdit =
+    session.signedIn && session.user.navPermissions.includes("products.edit");
 
   const [items, setItems] = useState<ProductRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -93,6 +96,10 @@ function AdminProducts() {
   const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPolicy, setBulkPolicy] = useState<"INHERIT" | "ALLOW" | "DENY" | "">("");
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 250);
@@ -130,12 +137,52 @@ function AdminProducts() {
     }
     if (brandRows.ok) setBrands(brandRows.data);
     if (catRows.ok) setCategories(catRows.data);
+    setSelectedIds(new Set());
     setLoading(false);
   }, [debouncedQ, brandId, categoryId, status, tradeVisible, featured, stock, sort, page]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => {
+      if (prev.size === items.length) return new Set();
+      return new Set(items.map((p) => p.id));
+    });
+  }
+
+  async function applyBulkBackorderPolicy() {
+    if (!bulkPolicy || selectedIds.size === 0) return;
+    setBulkSaving(true);
+    const productIds = [...selectedIds];
+    const result = await bulkUpdateBackorderPolicyFn({
+      data: {
+        productIds,
+        backorderPolicy: bulkPolicy,
+        confirmSkuCount: productIds.length,
+      },
+    });
+    setBulkSaving(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Updated backorder policy on ${result.data.updated} SKU(s)`);
+    setBulkConfirmOpen(false);
+    setBulkPolicy("");
+    setSelectedIds(new Set());
+    await load();
+  }
 
   async function exportCsv(filtered: boolean) {
     const r = await exportCatalogueProductsFn({
@@ -261,6 +308,38 @@ function AdminProducts() {
           <div className="rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm">{error}</div>
         ) : null}
 
+        {canEdit && selectedIds.size > 0 ? (
+          <div
+            className="flex flex-col gap-3 rounded-lg border border-border bg-surface/40 p-3 sm:flex-row sm:items-end"
+            data-admin-section="bulk-backorders"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-steel">
+                Backorders · {selectedIds.size} selected
+              </p>
+              <select
+                className={`${inputClass} mt-2 max-w-xs`}
+                value={bulkPolicy}
+                onChange={(e) => setBulkPolicy(e.target.value as typeof bulkPolicy)}
+                aria-label="Bulk backorder policy"
+              >
+                <option value="">Choose policy…</option>
+                <option value="INHERIT">Use global setting</option>
+                <option value="ALLOW">Allow</option>
+                <option value="DENY">Do not allow</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              disabled={!bulkPolicy}
+              onClick={() => setBulkConfirmOpen(true)}
+              className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase tracking-wide text-primary-foreground disabled:opacity-40"
+            >
+              Apply to selected
+            </button>
+          </div>
+        ) : null}
+
         <div className="grid gap-3 md:hidden">
           {loading ? <p className="text-[13px] text-steel">Loading catalogue…</p> : null}
           {!loading && items.length === 0 ? (
@@ -293,6 +372,16 @@ function AdminProducts() {
           <table className="w-full min-w-[960px] text-[13px]">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
+                {canEdit ? (
+                  <th className="px-3 py-2 font-semibold">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all on page"
+                      checked={items.length > 0 && selectedIds.size === items.length}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                ) : null}
                 <th className="px-3 py-2 font-semibold">Image</th>
                 <th className="px-3 py-2 font-semibold">SKU</th>
                 <th className="px-3 py-2 font-semibold">Product</th>
@@ -308,12 +397,22 @@ function AdminProducts() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={11} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
+                <tr><td colSpan={canEdit ? 12 : 11} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={11} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
+                <tr><td colSpan={canEdit ? 12 : 11} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
               ) : (
                 items.map((p, i) => (
                   <tr key={p.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
+                    {canEdit ? (
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${p.sku}`}
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleSelected(p.id)}
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-3 py-2">
                       <CatalogueMedia src={p.imageSrc} className="size-10 rounded border border-border" />
                     </td>
@@ -367,6 +466,53 @@ function AdminProducts() {
         categories={categories}
         onClose={() => setAddOpen(false)}
       />
+
+      <Drawer
+        open={bulkConfirmOpen}
+        onClose={() => (bulkSaving ? undefined : setBulkConfirmOpen(false))}
+        title="Confirm backorder update"
+        sub="This updates the selected catalogue SKUs."
+      >
+        <div className="space-y-4 text-[13px]">
+          <p>
+            Apply backorder policy{" "}
+            <strong>
+              {bulkPolicy === "INHERIT"
+                ? "Use global setting"
+                : bulkPolicy === "ALLOW"
+                  ? "Allow"
+                  : "Do not allow"}
+            </strong>{" "}
+            to <strong>{selectedIds.size}</strong> SKU
+            {selectedIds.size === 1 ? "" : "s"}?
+          </p>
+          <p className="text-steel">
+            Affected SKUs:{" "}
+            {items
+              .filter((p) => selectedIds.has(p.id))
+              .map((p) => p.sku)
+              .join(", ")}
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={bulkSaving}
+              onClick={() => setBulkConfirmOpen(false)}
+              className="h-10 flex-1 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={bulkSaving}
+              onClick={() => void applyBulkBackorderPolicy()}
+              className="h-10 flex-1 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+            >
+              {bulkSaving ? "Updating…" : `Confirm ${selectedIds.size} SKU(s)`}
+            </button>
+          </div>
+        </div>
+      </Drawer>
     </div>
   );
 }

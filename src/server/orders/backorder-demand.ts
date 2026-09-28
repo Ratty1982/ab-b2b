@@ -4,7 +4,8 @@
  */
 
 import { prisma } from "@/infra/database/client";
-import { OUTSTANDING_BACKORDER_ORDER_STATUSES } from "@/domain/backorder";
+import { OUTSTANDING_BACKORDER_ORDER_STATUSES, resolveBackorderPolicy } from "@/domain/backorder";
+import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { AUTOPART_WAREHOUSE_CODE, getEffectiveSellableQuantity } from "@/domain/stock";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
@@ -63,6 +64,7 @@ export async function getOutstandingBackorderDemand(input?: {
     },
   });
   const byId = new Map(variants.map((v) => [v.id, v]));
+  const globalBackorderPolicy = await getGlobalBackorderPolicy();
 
   return groups
     .map((g) => {
@@ -83,7 +85,10 @@ export async function getOutstandingBackorderDemand(input?: {
         autopartAvail: inv?.qtyOnHand ?? null,
         abReserved: inv?.qtyReserved ?? null,
         effectiveAvailable: effective,
-        backorderPolicy: v?.backorderPolicy === "ALLOW" ? ("ALLOW" as const) : ("DENY" as const),
+        backorderPolicy: resolveBackorderPolicy({
+          globalPolicy: globalBackorderPolicy,
+          variantPolicy: v?.backorderPolicy,
+        }),
         openOrderLineCount: g._count._all,
       };
     })

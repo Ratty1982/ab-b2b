@@ -15,6 +15,9 @@ import { allocateOrderNumber } from "@/server/orders/order-number";
 import { reserveStockForOrder } from "@/server/orders/reservations";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
+import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
+import { trustedSellableForOrdering } from "@/server/ordering/policy";
+import { resolveBackorderPolicy } from "@/domain/backorder";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 import {
   addCalendarDaysDateOnly,
@@ -184,9 +187,18 @@ async function buildQuoteLines(
     }
 
     const stock = stockMap.get(variant.id) ?? null;
-    const sellable = stock?.sellableQty ?? 0;
-    const backorderPolicy = stock?.backorderPolicy === "ALLOW" || variant.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
-    const orderableByStock = stock ? isOrderableByStockPolicy(stock, backorderPolicy) : backorderPolicy === "ALLOW";
+    const globalBackorderPolicy = await getGlobalBackorderPolicy();
+    const backorderPolicy = resolveBackorderPolicy({
+      globalPolicy: globalBackorderPolicy,
+      variantPolicy: variant.backorderPolicy,
+    });
+    const sellable = trustedSellableForOrdering({
+      sellableQty: stock?.sellableQty ?? 0,
+      stale: stock?.stale ?? true,
+    });
+    const orderableByStock = stock
+      ? isOrderableByStockPolicy(stock, backorderPolicy)
+      : backorderPolicy === "ALLOW";
     const ordering = resolveCustomerOrdering({
       caseQty: variant.caseQty,
       minimumOrderQty: variant.minOrderQty,

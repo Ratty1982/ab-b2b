@@ -286,11 +286,13 @@ describe("SalesRep create and company assignment", () => {
   let otherCompanyId = "";
 
   beforeAll(async () => {
+    // Name sorts early so the user remains inside listLinkableUsersForSalesRep's take:500
+    // window even when the shared test database has many INTERNAL users.
     secondUserId = await ensureUser(
       `sr.second.${suffix}@automotivebrands.co.uk`,
       ["SALES_REPRESENTATIVE"],
       "INTERNAL",
-      "Second Rep",
+      `AAA Linkable ${suffix}`,
     );
     // ensureUser may have triggered role create without SalesRep depending on path —
     // remove any auto SalesRep so createSalesRep can link cleanly.
@@ -309,7 +311,7 @@ describe("SalesRep create and company assignment", () => {
 
     const created = await createSalesRep(adminId, {
       userId: secondUserId,
-      displayName: "Second Rep",
+      displayName: `AAA Linkable ${suffix}`,
       jobTitle: "Account Manager",
       businessEmail: `second.${suffix}@automotivebrands.co.uk`,
       phone: "0161 123 4567",

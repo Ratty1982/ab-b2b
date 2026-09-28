@@ -155,8 +155,8 @@ export const productWorkspaceSchema = z.object({
   caseQty: z.coerce.number().int().min(1).max(10_000).optional().nullable(),
   minimumOrderQty: z.coerce.number().int().min(1).max(10_000).optional(),
   orderIncrement: z.coerce.number().int().min(1).max(10_000).optional(),
-  /** DENY (default) | ALLOW — controlled trade backorders. */
-  backorderPolicy: z.enum(["DENY", "ALLOW"]).optional(),
+  /** INHERIT (default) | ALLOW | DENY — SKU override; INHERIT uses global setting. */
+  backorderPolicy: z.enum(["INHERIT", "DENY", "ALLOW"]).optional(),
   unit: z.string().trim().min(1).max(16).optional(),
   weightKg: z.coerce.number().nonnegative().max(10_000).optional().nullable(),
   lengthMm: z.coerce.number().nonnegative().max(100_000).optional().nullable(),

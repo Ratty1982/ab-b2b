@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateOrderLineQuantities,
-  DEFAULT_BACKORDER_POLICY,
-  isBackorderAllowed,
+  DEFAULT_GLOBAL_BACKORDER_POLICY,
+  isEffectiveBackorderAllowed,
   orderContainsBackorder,
   orderIsFullyBackordered,
   presentLineBackorder,
@@ -11,12 +11,12 @@ import {
 } from "@/domain/backorder";
 
 describe("backorder policy defaults", () => {
-  it("defaults to DENY", () => {
-    expect(DEFAULT_BACKORDER_POLICY).toBe("DENY");
-    expect(isBackorderAllowed("DENY")).toBe(false);
-    expect(isBackorderAllowed(null)).toBe(false);
-    expect(isBackorderAllowed(undefined)).toBe(false);
-    expect(isBackorderAllowed("ALLOW")).toBe(true);
+  it("global default is ALLOW; effective helper only accepts ALLOW|DENY", () => {
+    expect(DEFAULT_GLOBAL_BACKORDER_POLICY).toBe("ALLOW");
+    expect(isEffectiveBackorderAllowed("DENY")).toBe(false);
+    expect(isEffectiveBackorderAllowed(null)).toBe(false);
+    expect(isEffectiveBackorderAllowed(undefined)).toBe(false);
+    expect(isEffectiveBackorderAllowed("ALLOW")).toBe(true);
   });
 });
 

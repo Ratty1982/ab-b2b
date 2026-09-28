@@ -43,7 +43,8 @@ export function CatalogueListQuickOrder({
     return () => window.clearTimeout(t);
   }, [justAdded]);
 
-  const outOfStock = availability === "out";
+  // Zero stock + effective ALLOW uses availability "backorder" — still orderable.
+  const outOfStock = availability === "out" && !panel.backordersAllowed && !panel.orderable;
   const noPrice =
     !panel.orderable &&
     !panel.insufficientFullCase &&
@@ -60,7 +61,7 @@ export function CatalogueListQuickOrder({
     );
   }
 
-  if (panel.insufficientFullCase && !panel.isFinalPartCase) {
+  if (panel.insufficientFullCase && !panel.isFinalPartCase && !panel.backordersAllowed) {
     return (
       <div className="max-w-[11rem] text-[11px] leading-snug text-warn" data-catalogue-order="insufficient-case">
         Insufficient stock for full case

@@ -24,16 +24,19 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { getBasket } from "@/server/basket/service";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
+import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
+import { trustedSellableForOrdering } from "@/server/ordering/policy";
 import {
   allocateOrderLineQuantities,
-  isBackorderAllowed,
+  isEffectiveBackorderAllowed,
+  resolveBackorderPolicy,
   orderContainsBackorder,
   orderIsFullyBackordered,
   presentOrderItemBackorder,
   BACKORDER_CHECKOUT_BODY,
   BACKORDER_CHECKOUT_HEADING,
   BACKORDER_CUSTOMER_NOTICE,
-  type BackorderPolicyValue,
+  type EffectiveBackorderPolicy,
 } from "@/domain/backorder";
 import { publicAvailabilityForOrderLine } from "@/domain/availability";
 import {
@@ -580,7 +583,10 @@ async function resolveCheckoutLines(
   }
 
   const variantIds = basket.items.map((i) => i.variantId);
-  const stockMap = await loadStockByVariantIds(variantIds);
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds(variantIds),
+    getGlobalBackorderPolicy(),
+  ]);
 
   const qtyGroups = new Map<number, typeof basket.items>();
   for (const item of basket.items) {
@@ -619,14 +625,19 @@ async function resolveCheckoutLines(
     const variant = item.variant;
     const product = variant.product;
     const stock = stockMap.get(variant.id);
-    const sellableQty = stock?.sellableQty ?? 0;
     const stale = stock?.stale ?? true;
-    const availability = stock?.availability ?? null;
-    const backorderPolicy: BackorderPolicyValue =
-      variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
+    const backorderPolicy = resolveBackorderPolicy({
+      globalPolicy: globalBackorderPolicy,
+      variantPolicy: variant.backorderPolicy,
+    });
+    const rawSellable = stock?.sellableQty ?? 0;
+    const sellableQty = trustedSellableForOrdering({ sellableQty: rawSellable, stale });
     const orderableByStockPolicy = stock
-      ? isOrderableByStockPolicy({ sellableQty, stale, availability }, backorderPolicy)
-      : isBackorderAllowed(backorderPolicy);
+      ? isOrderableByStockPolicy(
+          { sellableQty: rawSellable, stale, availability: stock.availability },
+          backorderPolicy,
+        )
+      : isEffectiveBackorderAllowed(backorderPolicy);
     const resolution = priceByVariant.get(variant.id) ?? null;
     const hasPrice = Boolean(
       resolution && resolution.source !== "NONE" && resolution.unitPriceExVat,
@@ -721,7 +732,7 @@ async function resolveCheckoutLines(
       issueMessage: checkoutIssueMessage(issue),
       availableQtyAtOrder: allocation.availableQtyAtOrder,
       backorderQtyAtOrder: allocation.backorderQtyAtOrder,
-      backordersAllowed: isBackorderAllowed(backorderPolicy),
+      backordersAllowed: isEffectiveBackorderAllowed(backorderPolicy),
     });
   }
 

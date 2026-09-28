@@ -43,10 +43,53 @@ import type { PublicAvailability } from "@/domain/availability";
 import { publicAvailabilityForOrderLine } from "@/domain/availability";
 import {
   allocateOrderLineQuantities,
-  isBackorderAllowed,
-  type BackorderPolicyValue,
+  isEffectiveBackorderAllowed,
+  resolveBackorderPolicy,
+  type EffectiveBackorderPolicy,
 } from "@/domain/backorder";
+import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
+import { trustedSellableForOrdering } from "@/server/ordering/policy";
 import type { TradePriceResolution } from "@/domain/trade-price-resolution";
+
+
+type BackorderPolicyValue = EffectiveBackorderPolicy;
+
+function resolveLineOrderingStock(input: {
+  variantPolicy: string | null | undefined;
+  stock: { sellableQty: number; stale: boolean; availability: import("@/domain/availability").PublicAvailability | null; backorderPolicy?: EffectiveBackorderPolicy } | undefined;
+  globalPolicy: EffectiveBackorderPolicy;
+}): {
+  backorderPolicy: EffectiveBackorderPolicy;
+  sellableQty: number;
+  orderableByStockPolicy: boolean;
+} {
+  // When callers omit variantPolicy, trust stock's already-resolved effective policy.
+  const backorderPolicy =
+    input.variantPolicy !== undefined
+      ? resolveBackorderPolicy({
+          globalPolicy: input.globalPolicy,
+          variantPolicy: input.variantPolicy,
+        })
+      : (input.stock?.backorderPolicy ??
+        resolveBackorderPolicy({
+          globalPolicy: input.globalPolicy,
+          variantPolicy: "INHERIT",
+        }));
+  const rawSellable = input.stock?.sellableQty ?? 0;
+  const stale = input.stock?.stale ?? true;
+  const sellableQty = trustedSellableForOrdering({ sellableQty: rawSellable, stale });
+  const orderableByStockPolicy = input.stock
+    ? isOrderableByStockPolicy(
+        {
+          sellableQty: rawSellable,
+          stale,
+          availability: input.stock.availability,
+        },
+        backorderPolicy,
+      )
+    : isEffectiveBackorderAllowed(backorderPolicy);
+  return { backorderPolicy, sellableQty, orderableByStockPolicy };
+}
 
 const variantIdSchema = z.object({
   variantId: z.string().cuid(),
@@ -399,7 +442,10 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
   });
 
   const variantIds = items.map((item) => item.variantId);
-  const stockMap = await loadStockByVariantIds(variantIds);
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds(variantIds),
+    getGlobalBackorderPolicy(),
+  ]);
 
   const qtyGroups = new Map<number, typeof items>();
   for (const item of items) {
@@ -436,16 +482,14 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     const variant = item.variant;
     const product = variant.product;
     const stock = stockMap.get(variant.id);
-    const sellableQty = stock?.sellableQty ?? 0;
     const stale = stock?.stale ?? true;
-    const availability = stock?.availability ?? null;
     const resolution = priceByVariant.get(variant.id) ?? null;
     const money = lineTotalsFromResolution(resolution, item.qty);
-    const backorderPolicy: BackorderPolicyValue =
-      variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
-    const orderableByStockPolicy = stock
-      ? isOrderableByStockPolicy({ sellableQty, stale, availability }, backorderPolicy)
-      : isBackorderAllowed(backorderPolicy);
+    const { backorderPolicy, sellableQty, orderableByStockPolicy } = resolveLineOrderingStock({
+      variantPolicy: variant.backorderPolicy,
+      stock,
+      globalPolicy: globalBackorderPolicy,
+    });
     const issue = assessBasketLineQuantity({
       quantity: item.qty,
       caseQty: variant.caseQty,
@@ -491,7 +535,7 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     const lineAvailability = publicAvailabilityForOrderLine({
       sellableQty,
       orderedQty: item.qty,
-      backorderAllowed: isBackorderAllowed(backorderPolicy),
+      backorderAllowed: isEffectiveBackorderAllowed(backorderPolicy),
       stale,
     });
     lines.push({
@@ -523,7 +567,7 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
           availableQty: split.availableQtyAtOrder,
           backorderQty: split.backorderQtyAtOrder,
         }) : null,
-      backordersAllowed: isBackorderAllowed(backorderPolicy),
+      backordersAllowed: isEffectiveBackorderAllowed(backorderPolicy),
       issue,
       issueMessage: basketLineIssueMessage(issue),
       canIncrement: issue === "VALID" && canIncrementQuantity(stepInput),
@@ -630,18 +674,16 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
     throw new AuthError("This product is not available for ordering", "PRODUCT_UNAVAILABLE", 400);
   }
 
-  const stockMap = await loadStockByVariantIds([variant.id]);
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds([variant.id]),
+    getGlobalBackorderPolicy(),
+  ]);
   const stock = stockMap.get(variant.id);
-  const sellableQty = stock?.sellableQty ?? 0;
-  const backorderPolicy: BackorderPolicyValue =
-    variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
-  const orderableByStockPolicy = stock
-    ? isOrderableByStockPolicy({
-        sellableQty,
-        stale: stock.stale,
-        availability: stock.availability,
-      }, backorderPolicy)
-    : isBackorderAllowed(backorderPolicy);
+  const { backorderPolicy, sellableQty, orderableByStockPolicy } = resolveLineOrderingStock({
+    variantPolicy: variant.backorderPolicy,
+    stock,
+    globalPolicy: globalBackorderPolicy,
+  });
 
   const basket = await getOrCreateOpenBasket(ctx);
   const existing = await prisma.basketItem.findUnique({
@@ -713,23 +755,22 @@ export async function updateBasketItem(userId: string, raw: unknown): Promise<Pu
     throw new AuthError("Basket item not found", "BASKET_ITEM_NOT_FOUND", 404);
   }
 
-  const stockMap = await loadStockByVariantIds([item.variantId]);
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds([item.variantId]),
+    getGlobalBackorderPolicy(),
+  ]);
   const stock = stockMap.get(item.variantId);
-  const sellableQty = stock?.sellableQty ?? 0;
-  const backorderPolicy: BackorderPolicyValue =
-    item.variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
+  const { backorderPolicy, sellableQty, orderableByStockPolicy } = resolveLineOrderingStock({
+    variantPolicy: item.variant.backorderPolicy,
+    stock,
+    globalPolicy: globalBackorderPolicy,
+  });
   const validated = validateOrderQuantity({
     requestedQuantity: input.quantity,
     caseQty: item.variant.caseQty,
     minimumOrderQty: item.variant.minOrderQty,
     sellableQty,
-    orderableByStockPolicy: stock
-      ? isOrderableByStockPolicy({
-          sellableQty,
-          stale: stock.stale,
-          availability: stock.availability,
-        }, backorderPolicy)
-      : isBackorderAllowed(backorderPolicy),
+    orderableByStockPolicy,
     backorderPolicy,
   });
   if (!validated.ok) {
@@ -850,18 +891,16 @@ export async function getProductOrderingPanel(
     };
   }
 
-  const stockMap = await loadStockByVariantIds([variant.id]);
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds([variant.id]),
+    getGlobalBackorderPolicy(),
+  ]);
   const stock = stockMap.get(variant.id);
-  const sellableQty = stock?.sellableQty ?? 0;
-  const backorderPolicy: BackorderPolicyValue =
-    variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
-  const orderableByStockPolicy = stock
-    ? isOrderableByStockPolicy({
-        sellableQty,
-        stale: stock.stale,
-        availability: stock.availability,
-      }, backorderPolicy)
-    : isBackorderAllowed(backorderPolicy);
+  const { backorderPolicy, sellableQty, orderableByStockPolicy } = resolveLineOrderingStock({
+    variantPolicy: variant.backorderPolicy,
+    stock,
+    globalPolicy: globalBackorderPolicy,
+  });
   const ordering = resolveCustomerOrdering({
     caseQty: rules.caseQty,
     minimumOrderQty: rules.minimumOrderQty,
@@ -979,18 +1018,16 @@ export async function previewProductOrderQuantity(
 
   const ctx = await requireMutableBasketContext(userId);
   const variant = await loadOrderableVariant(input.variantId);
-  const stockMap = await loadStockByVariantIds([variant.id]);
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds([variant.id]),
+    getGlobalBackorderPolicy(),
+  ]);
   const stock = stockMap.get(variant.id);
-  const sellableQty = stock?.sellableQty ?? 0;
-  const backorderPolicy: BackorderPolicyValue =
-    variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
-  const orderableByStockPolicy = stock
-    ? isOrderableByStockPolicy({
-        sellableQty,
-        stale: stock.stale,
-        availability: stock.availability,
-      }, backorderPolicy)
-    : isBackorderAllowed(backorderPolicy);
+  const { backorderPolicy, sellableQty, orderableByStockPolicy } = resolveLineOrderingStock({
+    variantPolicy: variant.backorderPolicy,
+    stock,
+    globalPolicy: globalBackorderPolicy,
+  });
   const validated = validateOrderQuantity({
     requestedQuantity: input.quantity,
     caseQty: variant.caseQty,
@@ -1108,7 +1145,7 @@ export type CatalogueOrderingVariantInput = {
   vatCode: string;
   caseQty: number | null;
   minOrderQty: number | null;
-  backorderPolicy?: "DENY" | "ALLOW" | null;
+  backorderPolicy?: "DENY" | "ALLOW" | "INHERIT" | null;
   product: {
     status: string;
     isActive: boolean;
@@ -1140,7 +1177,10 @@ export async function getCatalogueOrderingPanels(
     return out;
   }
 
-  const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
+  const [stockMap, globalBackorderPolicy] = await Promise.all([
+    loadStockByVariantIds(variants.map((v) => v.id)),
+    getGlobalBackorderPolicy(),
+  ]);
   const pricing = pricingInputFromContext(ctx);
 
   // First pass: classify orderable candidates and collect default quantities for pricing.
@@ -1178,16 +1218,11 @@ export async function getCatalogueOrderingPanels(
     }
 
     const stock = stockMap.get(variant.id);
-    const sellableQty = stock?.sellableQty ?? 0;
-    const backorderPolicy: BackorderPolicyValue =
-      variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
-    const orderableByStockPolicy = stock
-      ? isOrderableByStockPolicy({
-          sellableQty,
-          stale: stock.stale,
-          availability: stock.availability,
-        }, backorderPolicy)
-      : isBackorderAllowed(backorderPolicy);
+    const { backorderPolicy, sellableQty, orderableByStockPolicy } = resolveLineOrderingStock({
+      variantPolicy: variant.backorderPolicy,
+      stock,
+      globalPolicy: globalBackorderPolicy,
+    });
     const ordering = resolveCustomerOrdering({
       caseQty: rules.caseQty,
       minimumOrderQty: rules.minimumOrderQty,

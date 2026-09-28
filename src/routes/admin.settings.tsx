@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
+import { TradeOrderingSettingsPanel } from "@/components/ab/TradeOrderingSettingsPanel";
 import { Autopart504cFeedPanel } from "@/components/ab/Autopart504cFeedPanel";
 import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
@@ -168,6 +169,8 @@ function AdminSettings() {
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <TradeTestingPanel />
 
+        <TradeOrderingSettingsPanel />
+
         <EmailSettingsPanel />
 
         <Autopart504cFeedPanel />
@@ -217,7 +220,6 @@ function AdminSettings() {
               ["Hold orders that exceed credit limit for review", true],
               ["Allow card payment for pro-forma accounts", true],
               ["Show live stock quantities to trade customers", true],
-              ["Allow back orders on out-of-stock lines", false],
             ].map(([label, on]) => (
               <li
                 key={String(label)}

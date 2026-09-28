@@ -85,7 +85,6 @@ type ProductDraft = {
   caseQty: string;
   minimumOrderQty: string;
   orderIncrement: string;
-  backorderAllowed: boolean;
   unit: string;
   weightKg: string;
   lengthMm: string;
@@ -124,7 +123,6 @@ function draftFromProduct(product: Workspace): ProductDraft {
     caseQty: String(product.caseQty ?? ""),
     minimumOrderQty: String(product.minimumOrderQty),
     orderIncrement: String(product.orderIncrement),
-    backorderAllowed: product.backorderPolicy === "ALLOW",
     unit: product.unit,
     weightKg: String(product.weightKg ?? ""),
     lengthMm: String(product.lengthMm ?? ""),
@@ -220,7 +218,6 @@ function ProductWorkspace() {
         vat: draft.vat,
         packQty: Number(draft.packQty),
         caseQty: optionalNumber(draft.caseQty),
-        backorderPolicy: draft.backorderAllowed ? "ALLOW" : "DENY",
         minimumOrderQty: Number(draft.minimumOrderQty),
         orderIncrement: Number(draft.orderIncrement),
         unit: draft.unit,
@@ -324,7 +321,7 @@ function ProductWorkspace() {
           ) : null}
         </div>
         <div hidden={tab !== "Inventory"}>
-          <InventoryPanel product={product} />
+          <InventoryPanel product={product} onSaved={refreshMedia} />
         </div>
         <div hidden={tab !== "Variants"}>
           <VariantsForm product={product} onSaved={refreshMedia} />
@@ -604,31 +601,46 @@ function CommercialForm({
   );
 }
 
-function InventoryPanel({ product }: { product: Workspace }) {
-  const [backorderAllowed, setBackorderAllowed] = useState(product.backorderPolicy === "ALLOW");
+function InventoryPanel({
+  product,
+  onSaved,
+}: {
+  product: Workspace;
+  onSaved: () => Promise<void>;
+}) {
+  type Policy = "INHERIT" | "ALLOW" | "DENY";
+  const [policy, setPolicy] = useState<Policy>(
+    (product.backorderPolicy as Policy) ?? "INHERIT",
+  );
   const [savingPolicy, setSavingPolicy] = useState(false);
   useEffect(() => {
-    setBackorderAllowed(product.backorderPolicy === "ALLOW");
+    setPolicy((product.backorderPolicy as Policy) ?? "INHERIT");
   }, [product.backorderPolicy, product.id]);
 
-  async function saveBackorderPolicy(next: boolean) {
+  const effective =
+    product.effectiveBackorderPolicy ??
+    (policy === "ALLOW" ? "ALLOW" : policy === "DENY" ? "DENY" : product.globalBackorderPolicy ?? "ALLOW");
+
+  async function saveBackorderPolicy(next: Policy) {
+    const previous = policy;
     setSavingPolicy(true);
-    setBackorderAllowed(next);
+    setPolicy(next);
     try {
       const result = await updateCatalogueProductFn({
         data: {
           id: product.id,
-          backorderPolicy: next ? "ALLOW" : "DENY",
+          backorderPolicy: next,
         },
       });
       if (!result.ok) {
-        setBackorderAllowed(!next);
+        setPolicy(previous);
         toast.error(result.error ?? "Could not update backorders");
       } else {
-        toast.success(next ? "Backorders enabled for this SKU" : "Backorders disabled for this SKU");
+        toast.success("Backorder policy updated");
+        await onSaved();
       }
     } catch (e) {
-      setBackorderAllowed(!next);
+      setPolicy(previous);
       toast.error(e instanceof Error ? e.message : "Could not update backorders");
     } finally {
       setSavingPolicy(false);
@@ -637,24 +649,32 @@ function InventoryPanel({ product }: { product: Workspace }) {
 
   return (
     <div className="space-y-4">
-      <div className="max-w-xl rounded-lg border border-border p-4">
+      <div className="max-w-xl rounded-lg border border-border p-4" data-admin-section="backorders">
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">Backorders</p>
-        <label className="mt-3 flex items-start gap-3 text-[13px]">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={backorderAllowed}
+        <Field label="Backorders" htmlFor="ws-backorder-policy">
+          <select
+            id="ws-backorder-policy"
+            className={inputClass}
             disabled={savingPolicy}
-            onChange={(e) => void saveBackorderPolicy(e.target.checked)}
-          />
-          <span>
-            <span className="font-semibold">Allow customers to order when stock is unavailable</span>
-            <span className="mt-1 block text-steel">
-              Allows trade customers to order this SKU when available stock is insufficient.
-              Any unfulfilled quantity will be recorded as backordered.
-            </span>
-          </span>
-        </label>
+            value={policy}
+            onChange={(e) => void saveBackorderPolicy(e.target.value as Policy)}
+          >
+            <option value="INHERIT">Use global setting</option>
+            <option value="ALLOW">Allow</option>
+            <option value="DENY">Do not allow</option>
+          </select>
+        </Field>
+        <p className="mt-3 text-[13px]" data-effective-backorder={effective}>
+          <span className="font-semibold">Effective policy:</span>{" "}
+          {effective === "ALLOW" ? "Allowed" : "Not allowed"}
+          {policy === "INHERIT" ? (
+            <span className="ml-1 text-steel">(from global default)</span>
+          ) : null}
+        </p>
+        <p className="mt-2 text-[12px] text-steel">
+          When allowed, trade customers can order this SKU when stock is unavailable. Unfulfilled
+          quantity is recorded as backordered. Does not change Autopart Avail or create stock.
+        </p>
       </div>
 
       {!product.inventory.length ? (
@@ -694,7 +714,7 @@ function InventoryPanel({ product }: { product: Workspace }) {
                     <td className="num px-3 py-2 text-right font-semibold">
                       {row.sellableQty ?? "—"}
                     </td>
-                    <td className="px-3 py-2">{backorderAllowed ? "Yes" : "No"}</td>
+                    <td className="px-3 py-2">{effective === "ALLOW" ? "Yes" : "No"}</td>
                     <td className="px-3 py-2">
                       <InternalStockDisplay qty={null} availability={row.customerAvailability} stale={row.stale} className="justify-start" />
                       {row.customerAvailability ? (

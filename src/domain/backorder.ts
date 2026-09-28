@@ -2,18 +2,65 @@
  * Phase 6C — controlled trade backorders.
  *
  * Authority:
- * - ProductVariant.backorderPolicy (DENY default, admin opt-in)
+ * - TradeOrderingSettings.defaultBackorderPolicy (global; production default ALLOW)
+ * - ProductVariant.backorderPolicy INHERIT | ALLOW | DENY
+ * - resolveBackorderPolicy() is the single effective-policy helper
  * - Allocation snapshots on OrderItem (historical; never recompute from live stock)
  * - AB reservations reserve ONLY available sellable units
  *
  * Autopart CSV still exports the full ordered quantity.
  */
 
-export type BackorderPolicyValue = "DENY" | "ALLOW";
+/** Stored on ProductVariant. */
+export type VariantBackorderPolicy = "INHERIT" | "ALLOW" | "DENY";
 
-export const DEFAULT_BACKORDER_POLICY: BackorderPolicyValue = "DENY";
+/** Global setting and resolved effective decision. */
+export type EffectiveBackorderPolicy = "ALLOW" | "DENY";
 
-export function isBackorderAllowed(policy: BackorderPolicyValue | null | undefined): boolean {
+/** @deprecated Prefer VariantBackorderPolicy / EffectiveBackorderPolicy. */
+export type BackorderPolicyValue = EffectiveBackorderPolicy;
+
+/** Global production default when settings row is missing. */
+export const DEFAULT_GLOBAL_BACKORDER_POLICY: EffectiveBackorderPolicy = "ALLOW";
+
+/** Variant column default. */
+export const DEFAULT_VARIANT_BACKORDER_POLICY: VariantBackorderPolicy = "INHERIT";
+
+/**
+ * @deprecated Use DEFAULT_GLOBAL_BACKORDER_POLICY / resolveBackorderPolicy.
+ * Kept as ALLOW so omitted policy no longer silently blocks ordering.
+ */
+export const DEFAULT_BACKORDER_POLICY: EffectiveBackorderPolicy = DEFAULT_GLOBAL_BACKORDER_POLICY;
+
+/**
+ * Single authoritative effective-policy resolver.
+ * variant ALLOW/DENY win; INHERIT (or null/unknown) uses global.
+ */
+export function resolveBackorderPolicy(input: {
+  globalPolicy?: EffectiveBackorderPolicy | null | undefined;
+  variantPolicy?: VariantBackorderPolicy | string | null | undefined;
+}): EffectiveBackorderPolicy {
+  const variant = String(input.variantPolicy ?? "INHERIT").toUpperCase();
+  if (variant === "ALLOW") return "ALLOW";
+  if (variant === "DENY") return "DENY";
+  // INHERIT or legacy/unknown → global (default ALLOW for AB production).
+  return input.globalPolicy === "DENY" ? "DENY" : "ALLOW";
+}
+
+export function isBackorderAllowed(
+  policy: EffectiveBackorderPolicy | VariantBackorderPolicy | null | undefined,
+): boolean {
+  if (policy === "ALLOW") return true;
+  if (policy === "DENY") return false;
+  // INHERIT / null without global context — treat as allowed only via resolveBackorderPolicy.
+  // Callers must resolve first; this returns false for INHERIT to avoid silent wrong ALLOW
+  // when global was not loaded. Prefer resolveBackorderPolicy + isBackorderAllowed(effective).
+  return false;
+}
+
+export function isEffectiveBackorderAllowed(
+  policy: EffectiveBackorderPolicy | null | undefined,
+): boolean {
   return policy === "ALLOW";
 }
 
@@ -99,12 +146,19 @@ export function orderContainsBackorder(
 }
 
 export function orderIsFullyBackordered(
-  items: Array<{ qty: number; backorderQtyAtOrder?: number | null; availableQtyAtOrder?: number | null }>,
+  items: Array<{
+    qty: number;
+    backorderQtyAtOrder?: number | null;
+    availableQtyAtOrder?: number | null;
+  }>,
 ): boolean {
   if (!items.length) return false;
   return items.every((i) => {
     const p = presentOrderItemBackorder(i);
-    return p.fullyBackordered || (p.orderedQty > 0 && p.availableQty === 0 && p.backorderQty === p.orderedQty);
+    return (
+      p.fullyBackordered ||
+      (p.orderedQty > 0 && p.availableQty === 0 && p.backorderQty === p.orderedQty)
+    );
   });
 }
 
@@ -118,7 +172,7 @@ export const BACKORDER_CHECKOUT_BODY =
   "Some items in this order are not currently available from stock and will be supplied when stock becomes available.";
 
 export const BACKORDER_PDP_EXPLANATION =
-  "This item is currently out of stock but can still be ordered. It will be supplied when stock becomes available.";
+  "This item is currently awaiting stock but can still be ordered. It will be supplied when stock becomes available.";
 
 export const BACKORDER_AVAILABILITY_COPY =
   "Available to order. This item will be supplied when stock becomes available.";
@@ -152,3 +206,18 @@ export const OUTSTANDING_BACKORDER_ORDER_STATUSES = [
   "PARTIALLY_DESPATCHED",
   "ON_HOLD",
 ] as const;
+
+export function effectiveBackorderPolicyLabel(policy: EffectiveBackorderPolicy): string {
+  return policy === "ALLOW" ? "Allowed" : "Not allowed";
+}
+
+export function variantBackorderPolicyLabel(policy: VariantBackorderPolicy): string {
+  switch (policy) {
+    case "ALLOW":
+      return "Allow";
+    case "DENY":
+      return "Do not allow";
+    default:
+      return "Use global setting";
+  }
+}

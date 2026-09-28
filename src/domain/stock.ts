@@ -42,7 +42,7 @@ export type VariantStock = {
   syncedAt: string | null;
   source: typeof AUTOPART_FEED_SOURCE;
   sourceAvailRaw: string | null;
-  /** Variant backorder policy — DENY by default. */
+  /** Effective backorder policy after global/variant resolution (ALLOW|DENY). */
   backorderPolicy: "DENY" | "ALLOW";
 };
 

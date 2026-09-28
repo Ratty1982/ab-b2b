@@ -1049,6 +1049,9 @@ export async function loadStockByVariantIds(variantIds: string[], now = new Date
   if (!variantIds.length) return out;
   const warehouse = await prisma.warehouse.findUnique({ where: { code: AUTOPART_WAREHOUSE_CODE } });
   const freshness = await stockFreshness(now);
+  const { getGlobalBackorderPolicy } = await import("@/server/ordering/settings");
+  const { resolveBackorderPolicy } = await import("@/domain/backorder");
+  const globalPolicy = await getGlobalBackorderPolicy();
   const rows = warehouse
     ? await prisma.inventory.findMany({
         where: { warehouseId: warehouse.id, variantId: { in: variantIds } },
@@ -1060,14 +1063,19 @@ export async function loadStockByVariantIds(variantIds: string[], now = new Date
       autopartAvail: row.qtyOnHand,
       reservedQty: row.qtyReserved,
     });
-    const backorderPolicy = row.variant.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
+    const backorderPolicy = resolveBackorderPolicy({
+      globalPolicy,
+      variantPolicy: row.variant.backorderPolicy,
+    });
+    // Stale positive stock is not advertised as trusted available (treat as 0 for bands).
+    const bandSellable = freshness.stale && sellable > 0 ? 0 : sellable;
     out.set(row.variantId, {
       variantId: row.variantId,
       sku: row.variant.sku,
       sellableQty: sellable,
       reservedQty: row.qtyReserved,
       availability: customerAvailabilityForStock({
-        sellableQty: sellable,
+        sellableQty: bandSellable,
         stale: freshness.stale,
         backorderAllowed: backorderPolicy === "ALLOW",
       }),

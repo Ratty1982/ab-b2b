@@ -134,7 +134,7 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
             <AvailabilityBadge availability={product.availability} />
             {product.availability === "backorder" ? (
               <p className="mt-2 max-w-xl text-[13px] text-steel">
-                This item is currently out of stock but can still be ordered. It will be
+                This item is currently awaiting stock but can still be ordered. It will be
                 supplied when stock becomes available.
               </p>
             ) : null}

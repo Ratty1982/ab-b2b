@@ -9,10 +9,11 @@
  * This overrides MOQ. Do not use ProductVariant.orderIncrement.
  * Do not allow part-cases while at least one complete case remains.
  *
- * BACKORDERS (Phase 6C): when ProductVariant.backorderPolicy = ALLOW, case
- * multiples (and the final-part-case exception) remain; stock no longer caps
- * the maximum orderable quantity. Allocation/reservation split available vs
- * backordered units at place-order time.
+ * BACKORDERS (Phase 6C): when the *effective* backorder policy is ALLOW
+ * (global default or SKU override), case multiples (and the final-part-case
+ * exception) remain; stock no longer caps the maximum orderable quantity.
+ * Callers must pass the resolved effective policy (ALLOW|DENY), never INHERIT.
+ * Allocation/reservation split available vs backordered units at place-order.
  */
 
 import {
@@ -21,8 +22,14 @@ import {
   isValidCustomerOrderQuantity,
   minimumCustomerOrderQuantity,
 } from "@/domain/case-ordering";
-import { isBackorderAllowed, type BackorderPolicyValue } from "@/domain/backorder";
+import {
+  isEffectiveBackorderAllowed,
+  type EffectiveBackorderPolicy,
+} from "@/domain/backorder";
 import { getSellableQuantity, type VariantStock } from "@/domain/stock";
+
+/** Effective ALLOW|DENY only — resolve via resolveBackorderPolicy before calling. */
+type BackorderPolicyValue = EffectiveBackorderPolicy;
 
 export type BasketLineIssue =
   | "VALID"
@@ -167,9 +174,11 @@ export function resolveCustomerOrdering(input: {
     });
   }
 
-  const backordersAllowed = isBackorderAllowed(input.backorderPolicy);
+  const backordersAllowed = isEffectiveBackorderAllowed(input.backorderPolicy);
 
   if (input.orderableByStockPolicy === false) {
+    // Stale/untrusted positive stock: callers should pass trusted sellable=0 and
+    // orderableByStockPolicy=true when effective policy is ALLOW so backorders proceed.
     return notOrderableState({
       caseQty: rules.caseQty,
       reason: "STOCK_POLICY",
@@ -562,7 +571,7 @@ export function assessBasketLineQuantity(input: {
   // never silently rewrite the line. (Backorder ALLOW still requires case multiples
   // once a full case of stock is present — except the final-part band path.)
   const sellable = getSellableQuantity({ sellableQty: input.sellableQty });
-  const backordersAllowed = isBackorderAllowed(input.backorderPolicy);
+  const backordersAllowed = isEffectiveBackorderAllowed(input.backorderPolicy);
   if (
     input.orderableByStockPolicy !== false &&
     sellable >= rules.caseQty &&
@@ -634,16 +643,21 @@ export function basketLineIssueMessage(issue: BasketLineIssue): string | null {
 
 /**
  * Stock policy for ordering.
- * - Stale positive stock is not orderable (matches Phase 5 public hide).
- * - Zero stock is orderable only when backorderPolicy = ALLOW.
+ * - Stale positive stock is never trusted as available allocation.
+ * - When effective policy is ALLOW, ordering may proceed as a full backorder
+ *   (callers must pass trusted sellable qty = 0 for stale rows).
+ * - Zero stock is orderable only when effective backorderPolicy = ALLOW.
  */
 export function isOrderableByStockPolicy(
   stock: Pick<VariantStock, "sellableQty" | "stale" | "availability">,
   backorderPolicy?: BackorderPolicyValue | null,
 ): boolean {
-  if (stock.stale && stock.sellableQty > 0) return false;
+  const allowBackorder = isEffectiveBackorderAllowed(backorderPolicy);
+  if (stock.stale && stock.sellableQty > 0) {
+    return allowBackorder;
+  }
   if (stock.sellableQty > 0) return true;
-  return isBackorderAllowed(backorderPolicy);
+  return allowBackorder;
 }
 
 /** Presentation copy for final-part-case Trade Ordering (authenticated only). */

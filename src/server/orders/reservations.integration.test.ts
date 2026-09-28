@@ -141,8 +141,13 @@ async function seedOrderableVariant(prefix: string, opts: { trade: number; caseQ
   const variant = await prisma.productVariant.findFirstOrThrow({
     where: { productId: product.id },
   });
+  // Reservation concurrency / final-part-case fixtures require stock-capped (DENY) behaviour.
+  await prisma.productVariant.update({
+    where: { id: variant.id },
+    data: { backorderPolicy: "DENY" },
+  });
   await seedStock(variant.id, opts.avail);
-  return { sku, product, variant };
+  return { sku, product, variant: { ...variant, backorderPolicy: "DENY" as const } };
 }
 
 beforeAll(async () => {

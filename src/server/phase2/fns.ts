@@ -916,6 +916,45 @@ export const updateCatalogueProductFn = createServerFn({ method: "POST" })
     }
   });
 
+export const bulkUpdateBackorderPolicyFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await catalogueProducts.bulkUpdateBackorderPolicy(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getTradeOrderingSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const settings = await import("@/server/ordering/settings");
+    return { ok: true as const, data: await settings.getTradeOrderingSettingsForActor(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const saveTradeOrderingSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { allowBackordersByDefault?: boolean })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const settings = await import("@/server/ordering/settings");
+      return {
+        ok: true as const,
+        data: await settings.updateTradeOrderingSettings(userId, {
+          allowBackordersByDefault: Boolean(data?.allowBackordersByDefault),
+        }),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const previewProductContentJsonFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { productId: string; jsonText: string })
   .handler(async ({ data }) => {

@@ -13,8 +13,8 @@ import {
   publicAvailabilityFromStock,
 } from "@/domain/availability";
 
-describe("backorder policy — product defaults", () => {
-  it("DENY is the conservative default (omit policy)", () => {
+describe("backorder policy — effective policy required", () => {
+  it("omitted effective policy blocks zero stock (callers must resolve first)", () => {
     expect(resolveCustomerOrdering({ caseQty: 12, sellableQty: 0 }).mode).toBe("NOT_ORDERABLE");
     expect(
       validateOrderQuantity({ requestedQuantity: 12, caseQty: 12, sellableQty: 0 }).ok,
@@ -161,11 +161,15 @@ describe("backorder ordering scenarios", () => {
     ).toBe("QUANTITY_UNAVAILABLE");
   });
 
-  it("stock policy — zero stock orderable only when ALLOW", () => {
+  it("stock policy — zero stock orderable only when ALLOW; stale+ALLOW may backorder", () => {
     const stock = { sellableQty: 0, stale: false, availability: "out" as const };
     expect(isOrderableByStockPolicy(stock, "DENY")).toBe(false);
     expect(isOrderableByStockPolicy(stock, "ALLOW")).toBe(true);
+    // Stale positive stock is untrusted; ALLOW still permits ordering as backorder.
     expect(isOrderableByStockPolicy({ sellableQty: 10, stale: true, availability: null }, "ALLOW")).toBe(
+      true,
+    );
+    expect(isOrderableByStockPolicy({ sellableQty: 10, stale: true, availability: null }, "DENY")).toBe(
       false,
     );
   });

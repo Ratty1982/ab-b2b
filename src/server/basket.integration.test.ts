@@ -62,6 +62,14 @@ async function ensureTradeBuyer(email: string, companyId: string) {
   return userId;
 }
 
+
+async function denyBackorders(variantId: string) {
+  await prisma.productVariant.update({
+    where: { id: variantId },
+    data: { backorderPolicy: "DENY" },
+  });
+}
+
 async function seedStock(variantId: string, avail: number) {
   const warehouse = await prisma.warehouse.upsert({
     where: { code: "AUTOPART" },
@@ -130,6 +138,7 @@ describe("Phase 6A basket ordering", () => {
       active: true,
     });
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await denyBackorders(variant.id);
     await seedStock(variant.id, 36);
 
     const company = await prisma.company.create({
@@ -217,6 +226,7 @@ describe("Phase 6A basket ordering", () => {
       active: true,
     });
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
+    await denyBackorders(variant.id);
     await seedStock(variant.id, 48);
 
     const company = await prisma.company.create({ data: { name: `RV ${sku}`, status: "ACTIVE" } });
@@ -257,7 +267,7 @@ describe("Phase 6A basket ordering", () => {
     const variant = await prisma.productVariant.findFirstOrThrow({ where: { productId: product.id } });
     await prisma.productVariant.update({
       where: { id: variant.id },
-      data: { minOrderQty: 24 },
+      data: { minOrderQty: 24, backorderPolicy: "DENY" },
     });
     await seedStock(variant.id, 7);
 
@@ -546,6 +556,10 @@ describe("catalogue list batch ordering panels", () => {
       where: { id: vMoq.id },
       data: { minOrderQty: 10 },
     });
+    await Promise.all([
+      denyBackorders(vOos.id),
+      denyBackorders(vShort.id),
+    ]);
 
     await seedStock(v12.id, 120);
     await seedStock(v1.id, 40);
@@ -591,6 +605,7 @@ describe("catalogue list batch ordering panels", () => {
         vatCode: vOos.vatCode,
         caseQty: vOos.caseQty,
         minOrderQty: vOos.minOrderQty,
+        backorderPolicy: "DENY" as const,
         product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
       },
       {
@@ -600,6 +615,7 @@ describe("catalogue list batch ordering panels", () => {
         vatCode: vShort.vatCode,
         caseQty: vShort.caseQty,
         minOrderQty: vShort.minOrderQty,
+        backorderPolicy: "DENY" as const,
         product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
       },
     ]);
