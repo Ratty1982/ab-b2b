@@ -272,8 +272,8 @@ export function detectFixedWidthLayout(
 export function sliceFixedWidthCells(
   line: string,
   columns: FixedWidthColumn[],
-): Record<string, string> {
-  const out: Record<string, string> = {};
+): { [key: string]: string | undefined } {
+  const out: { [key: string]: string | undefined } = {};
   const padded = line.length >= (columns[columns.length - 1]?.start ?? 0) ? line : line.padEnd(200);
   for (const col of columns) {
     const raw = col.end != null ? padded.slice(col.start, col.end) : padded.slice(col.start);

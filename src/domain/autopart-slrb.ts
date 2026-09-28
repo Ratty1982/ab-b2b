@@ -345,24 +345,24 @@ export function parseAutopartSlrb(text: string): AutopartSlrbParseResult {
 
     if (fixedColumns) {
       const sliced = sliceFixedWidthCells(rawLine, fixedColumns);
-      let accountRaw = sliced.account ?? "";
+      let accountRaw = sliced["account"] ?? "";
       if (!accountRaw.trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-      if ((sliced.account ?? "").trim()) lastAccountRaw = sliced.account!;
+      if ((sliced["account"] ?? "").trim()) lastAccountRaw = sliced["account"]!;
       const joined = rawLine.toUpperCase();
-      if (joined.includes("TOTAL") && !(sliced.ref ?? "").trim()) {
+      if (joined.includes("TOTAL") && !(sliced["ref"] ?? "").trim()) {
         rows.push(meta(lineNumberInFile, "TOTAL"));
         continue;
       }
       const row = buildRow({
         lineNumberInFile,
         accountRaw,
-        typeRaw: sliced.type ?? null,
-        refRaw: sliced.ref ?? null,
-        dateRaw: sliced.date ?? null,
-        goodsRaw: sliced.goods ?? null,
-        vatRaw: sliced.vat ?? null,
-        totalRaw: sliced.total ?? null,
-        runBalRaw: sliced.runBal ?? null,
+        typeRaw: sliced["type"] ?? null,
+        refRaw: sliced["ref"] ?? null,
+        dateRaw: sliced["date"] ?? null,
+        goodsRaw: sliced["goods"] ?? null,
+        vatRaw: sliced["vat"] ?? null,
+        totalRaw: sliced["total"] ?? null,
+        runBalRaw: sliced["runBal"] ?? null,
       });
       if (
         (row.classification === "DOCUMENT" || row.classification === "LEDGER") &&

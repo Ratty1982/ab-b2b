@@ -373,10 +373,10 @@ export function parseAutopart561l(text: string): Autopart561lParseResult {
     // Fixed-width body
     if (fixedColumns) {
       const sliced = sliceFixedWidthCells(rawLine, fixedColumns);
-      let accountRaw = sliced.account ?? "";
+      let accountRaw = sliced["account"] ?? "";
       if (!accountRaw.trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-      if ((sliced.account ?? "").trim()) lastAccountRaw = sliced.account!;
-      const invLnRaw = sliced.invLn ?? "";
+      if ((sliced["account"] ?? "").trim()) lastAccountRaw = sliced["account"]!;
+      const invLnRaw = sliced["invLn"] ?? "";
       if (looksLikeTotalRow([rawLine], invLnRaw)) {
         rows.push({
           ...blankRow(lineNumberInFile),
@@ -389,10 +389,10 @@ export function parseAutopart561l(text: string): Autopart561lParseResult {
         lineNumberInFile,
         accountRaw,
         invLnRaw,
-        partRaw: sliced.part ?? null,
-        descriptionRaw: sliced.description ?? null,
-        unitsRaw: sliced.units ?? null,
-        salesRaw: sliced.sales ?? null,
+        partRaw: sliced["part"] ?? null,
+        descriptionRaw: sliced["description"] ?? null,
+        unitsRaw: sliced["units"] ?? null,
+        salesRaw: sliced["sales"] ?? null,
       });
       // Only valid LINE accounts enter detectedAccounts
       if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
