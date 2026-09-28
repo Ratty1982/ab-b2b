@@ -222,11 +222,19 @@ function OrdersAttention({ data }: { data: Dashboard }) {
     },
     {
       key: "backorder",
-      title: "Backordered orders",
+      title: "Backorders",
       count: data.ordersAttention.backorderedOrders.count,
       items: [],
-      empty: "No orders currently contain backordered quantities.",
+      empty: "No orders currently contain outstanding backordered quantities.",
       href: `${ROUTES.adminOrders}?backorders=CONTAINS`,
+      detail:
+        data.ordersAttention.backorderedOrders.count > 0
+          ? `${data.ordersAttention.backorderedOrders.units} units · ${data.ordersAttention.backorderedOrders.skusAffected} SKUs${
+              data.ordersAttention.backorderedOrders.stockNowAvailableSkus > 0
+                ? ` · ${data.ordersAttention.backorderedOrders.stockNowAvailableSkus} with stock now available`
+                : ""
+            }`
+          : null,
     },
   ];
 
@@ -253,6 +261,9 @@ function OrdersAttention({ data }: { data: Dashboard }) {
                 View
               </a>
             </div>
+            {"detail" in section && section.detail ? (
+              <p className="border-b border-border/60 px-3 py-2 text-[12px] text-steel">{section.detail}</p>
+            ) : null}
             {section.items.length === 0 ? (
               <p className="px-3 py-3 text-[13px] text-steel">{section.empty}</p>
             ) : (

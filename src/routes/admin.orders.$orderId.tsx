@@ -5,7 +5,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
-import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
+import { customerOrderStatusTone } from "@/domain/order-status";
 import {
   deleteAdminOrderFn,
   exportAutopartOrdersCsvFn,
@@ -165,6 +165,7 @@ function AdminOrderDetailPage() {
   const customerEmail = emails.find((e) => e.purpose === "ORDER_RECEIVED");
   const internalEmail = emails.find((e) => e.purpose === "ORDER_RECEIVED_INTERNAL");
   const despatchEmail = emails.find((e) => e.purpose === "ORDER_DESPATCHED");
+  const partDespatchEmail = emails.find((e) => e.purpose === "ORDER_PART_DESPATCHED");
 
   return (
     <div>
@@ -173,8 +174,13 @@ function AdminOrderDetailPage() {
         sub={order.companyName}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge tone={customerOrderStatusTone(order.status)}>
-              {customerOrderStatusLabel(order.status)}
+            <StatusBadge
+              tone={customerOrderStatusTone(order.status, {
+                hasBackorderItems: order.hasBackorderItems,
+                hasOutstandingBackorder: order.hasOutstandingBackorder,
+              })}
+            >
+              {order.statusLabel}
             </StatusBadge>
             {order.status !== "DISPATCHED" && order.status !== "DELIVERED" ? (
               <button
@@ -299,8 +305,18 @@ function AdminOrderDetailPage() {
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Customer fulfilment</dt>
-              <dd>{customerOrderStatusLabel(order.status)}</dd>
+              <dd>{order.statusLabel}</dd>
             </div>
+            {order.hasOutstandingBackorder ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Outstanding backorder</dt>
+                <dd className="font-semibold text-warn">
+                  {order.outstandingBackorderUnits > 0
+                    ? `${order.outstandingBackorderUnits} units`
+                    : "Yes"}
+                </dd>
+              </div>
+            ) : null}
           </dl>
           {!order.autopartAccountLinked || !order.autopartCustomerCodeSnapshot ? (
             <p className="mt-4 text-[13px] font-medium text-warn" role="status">
@@ -370,6 +386,14 @@ function AdminOrderDetailPage() {
                 : {})}
             />
             <EmailStatusCard
+              label="Part despatch (ORDER_PART_DESPATCHED)"
+              row={partDespatchEmail}
+              retrying={retryingId === partDespatchEmail?.id}
+              {...(partDespatchEmail
+                ? { onRetry: () => void onRetry(partDespatchEmail.id) }
+                : {})}
+            />
+            <EmailStatusCard
               label="Despatch (ORDER_DESPATCHED)"
               row={despatchEmail}
               retrying={retryingId === despatchEmail?.id}
@@ -383,7 +407,7 @@ function AdminOrderDetailPage() {
 
       <div className="px-4 pb-8 sm:px-6">
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[960px] text-[13px]">
+          <table className="w-full min-w-[1080px] text-[13px]">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
                 <th className="px-3 py-2">SKU</th>
@@ -391,6 +415,8 @@ function AdminOrderDetailPage() {
                 <th className="px-3 py-2 text-right">Ordered</th>
                 <th className="px-3 py-2 text-right">Available at order</th>
                 <th className="px-3 py-2 text-right">Backordered</th>
+                <th className="px-3 py-2 text-right">Despatched</th>
+                <th className="px-3 py-2 text-right">Outstanding</th>
                 <th className="px-3 py-2 text-right">Sell unit</th>
                 <th className="px-3 py-2 text-right">Commercial 4dp</th>
                 <th className="px-3 py-2">Source</th>
@@ -404,8 +430,14 @@ function AdminOrderDetailPage() {
                   priceSource?: string | null;
                   availableQtyAtOrder?: number | null;
                   backorderQtyAtOrder?: number;
+                  despatchedQty?: number;
+                  fulfilment?: {
+                    outstandingBackorderQty: number | null;
+                    lineStatusLabel: string;
+                  };
                 };
                 const backordered = (adminItem.backorderQtyAtOrder ?? 0) > 0;
+                const outstanding = adminItem.fulfilment?.outstandingBackorderQty;
                 return (
                 <tr
                   key={item.id}
@@ -420,8 +452,10 @@ function AdminOrderDetailPage() {
                     {item.orderingMode ? (
                       <span className="ml-2 text-[11px] uppercase text-steel">{item.orderingMode}</span>
                     ) : null}
-                    {backordered ? (
-                      <span className="ml-2 text-[10px] font-semibold uppercase text-warn">Backorder</span>
+                    {adminItem.fulfilment?.lineStatusLabel ? (
+                      <span className="ml-2 text-[10px] font-semibold uppercase text-warn">
+                        {adminItem.fulfilment.lineStatusLabel}
+                      </span>
                     ) : null}
                   </td>
                   <td className="num px-3 py-2 text-right">{item.qty}</td>
@@ -430,6 +464,12 @@ function AdminOrderDetailPage() {
                   </td>
                   <td className={cn("num px-3 py-2 text-right", backordered && "font-semibold text-warn")}>
                     {adminItem.backorderQtyAtOrder ?? 0}
+                  </td>
+                  <td className="num px-3 py-2 text-right">
+                    {(adminItem.despatchedQty ?? 0) > 0 ? adminItem.despatchedQty : "—"}
+                  </td>
+                  <td className="num px-3 py-2 text-right">
+                    {outstanding != null ? outstanding : backordered ? adminItem.backorderQtyAtOrder : "—"}
                   </td>
                   <td className="num px-3 py-2 text-right">£{item.customerUnitPrice}</td>
                   <td className="num px-3 py-2 text-right text-steel">
@@ -443,6 +483,25 @@ function AdminOrderDetailPage() {
             </tbody>
           </table>
         </div>
+        {order.fulfilmentTimeline.length > 0 ? (
+          <section className="mt-8 max-w-xl">
+            <h2 className="font-display text-base font-semibold uppercase">Fulfilment history</h2>
+            <ol className="mt-3 space-y-3 border-l border-border pl-4">
+              {order.fulfilmentTimeline.map((ev) => (
+                <li key={ev.id} className="relative text-[13px]">
+                  <span className="absolute -left-[1.3rem] top-1.5 size-2 rounded-full bg-primary" />
+                  <div className="text-[11px] uppercase tracking-wide text-steel">
+                    {formatDateTime(ev.occurredAt)}
+                  </div>
+                  <div className="mt-0.5 font-medium">{ev.summary}</div>
+                  {ev.limitation ? (
+                    <p className="mt-1 text-[12px] text-steel">{ev.limitation}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
         <Link
           to={ROUTES.adminOrders}
           className="mt-6 inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-bold uppercase"

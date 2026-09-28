@@ -31,6 +31,11 @@ import {
 import { parseMoney, moneyToString } from "@/domain/money";
 import { AUTOPART_504C_SCHEDULE_LABEL } from "@/domain/autopart-504c-schedule";
 import { enqueueOrderDespatchedEmail } from "@/server/orders/despatch-email";
+import { enqueueOrderPartDespatchedEmail } from "@/server/orders/part-despatch-email";
+import {
+  FULFILMENT_LINE_QTY_LIMITATION,
+  recordFulfilmentEvent,
+} from "@/server/orders/fulfilment";
 import { shouldPartialDespatchFrom504c } from "@/domain/backorder";
 
 export type Autopart504cFeedPublicSettings = {
@@ -353,11 +358,11 @@ async function planInvoiceRow(row: Autopart504cRow): Promise<Autopart504cPlanRow
   });
 
   const statusLabel = orderStatusLabel(order.status);
-  const alreadyDespatched =
-    order.status === "DISPATCHED" ||
-    order.status === "DELIVERED" ||
+  const alreadyDespatched = order.status === "DISPATCHED" || order.status === "DELIVERED";
+  const processing =
+    order.status === "CONFIRMED" ||
+    order.status === "PICKING" ||
     order.status === "PARTIALLY_DESPATCHED";
-  const processing = order.status === "CONFIRMED" || order.status === "PICKING";
   const canReconcile = processing || alreadyDespatched;
 
   if (!canReconcile) {
@@ -678,7 +683,6 @@ export async function applyAutopart504cFile(
   let unmatchedAbRefs = 0;
   let emailsQueued = 0;
   const unmatched: string[] = [];
-  const despatchedOrderIds: string[] = [];
 
   const run = await prisma.autopart504cImportRun.create({
     data: {
@@ -752,8 +756,13 @@ export async function applyAutopart504cFile(
       ordersMatched += 1;
       const order = await prisma.order.findUniqueOrThrow({ where: { id: assessment.orderId! } });
 
+      const emailActions: Array<
+        | { kind: "FULL"; orderId: string; remainingAfterBackorder: boolean }
+        | { kind: "PART"; orderId: string; invoiceExternalRef: string }
+      > = [];
+
       await prisma.$transaction(async (tx) => {
-        await tx.invoice.create({
+        const invoice = await tx.invoice.create({
           data: {
             invoiceNumber: `AP-INV-${row.documentNumber}`,
             companyId: order.companyId,
@@ -775,20 +784,36 @@ export async function applyAutopart504cFile(
           },
         });
 
-        if (order.status === "CONFIRMED" || order.status === "PICKING") {
-          const items = await tx.orderItem.findMany({
-            where: { orderId: order.id },
-            select: { backorderQtyAtOrder: true },
-          });
-          const partial = shouldPartialDespatchFrom504c({ items });
-          const nextStatus = partial ? "PARTIALLY_DESPATCHED" : "DISPATCHED";
-          await tx.order.update({
-            where: { id: order.id },
-            data: { status: nextStatus },
-          });
+        await recordFulfilmentEvent(tx, {
+          orderId: order.id,
+          kind: "INVOICE_LINKED",
+          summary: `Invoice ${row.documentNumber} linked to your order`,
+          source: "AUTOPART_504C",
+          invoiceId: invoice.id,
+          lineQuantitiesKnown: false,
+          limitation: FULFILMENT_LINE_QTY_LIMITATION,
+          metadata: {
+            documentNumber: row.documentNumber,
+            goods: row.goods,
+            value: row.value,
+          },
+        });
 
-          // Consume AB reservations (release hold). Do NOT mutate qtyOnHand —
-          // Autopart Avail sync remains authoritative physical stock.
+        const eligible =
+          order.status === "CONFIRMED" ||
+          order.status === "PICKING" ||
+          order.status === "PARTIALLY_DESPATCHED";
+
+        if (!eligible) return;
+
+        const items = await tx.orderItem.findMany({
+          where: { orderId: order.id },
+          select: { id: true, qty: true, backorderQtyAtOrder: true, despatchedQty: true },
+        });
+        const hasKnownBackorder = shouldPartialDespatchFrom504c({ items });
+
+        // Consume AB reservations on first processing→despatch evidence.
+        if (order.status === "CONFIRMED" || order.status === "PICKING") {
           const active = await tx.orderStockReservation.findMany({
             where: { orderId: order.id, status: "ACTIVE" },
           });
@@ -802,33 +827,124 @@ export async function applyAutopart504cFile(
               data: { qtyReserved: { decrement: res.quantity } },
             });
           }
+        }
 
-          // Full despatch email only when no known backorder remains.
-          if (!partial) {
-            despatchedOrderIds.push(order.id);
-            ordersDespatched += 1;
+        // Multiple invoices: check cumulative financial completion (504C has no line qty).
+        // Load invoices including the one just created.
+        const allInvoices = await tx.invoice.findMany({
+          where: { orderId: order.id, autopartDocumentKind: "INVOICE" },
+          select: { subtotal: true, vatTotal: true, grandTotal: true },
+        });
+        const orderRow = await tx.order.findUniqueOrThrow({
+          where: { id: order.id },
+          select: { subtotal: true, deliveryTotal: true, vatTotal: true, grandTotal: true },
+        });
+        const { compareAbOrderTo504cFinancials, money2OrNull } = await import(
+          "@/domain/autopart-504c-plan"
+        );
+        const { moneyToString, moneyZero, parseMoney, addMoney } = await import("@/domain/money");
+        let goods = moneyZero();
+        let vat = moneyZero();
+        let value = moneyZero();
+        for (const inv of allInvoices) {
+          goods = addMoney(goods, parseMoney(String(inv.subtotal)) ?? moneyZero());
+          vat = addMoney(vat, parseMoney(String(inv.vatTotal)) ?? moneyZero());
+          value = addMoney(value, parseMoney(String(inv.grandTotal)) ?? moneyZero());
+        }
+        const financial = compareAbOrderTo504cFinancials({
+          abGoods: moneyToString(parseMoney(String(orderRow.subtotal)) ?? moneyZero(), 2),
+          abDelivery: moneyToString(parseMoney(String(orderRow.deliveryTotal)) ?? moneyZero(), 2),
+          abVat: moneyToString(parseMoney(String(orderRow.vatTotal)) ?? moneyZero(), 2),
+          abTotal: moneyToString(parseMoney(String(orderRow.grandTotal)) ?? moneyZero(), 2),
+          c504Goods: moneyToString(goods, 2),
+          c504Vat: moneyToString(vat, 2),
+          c504Value: moneyToString(value, 2),
+        });
+        const financiallyComplete = financial.status === "OK";
+
+        if (!hasKnownBackorder || financiallyComplete) {
+          // Full despatch — only set line despatchedQty when completing fully (entire order).
+          for (const item of items) {
+            await tx.orderItem.update({
+              where: { id: item.id },
+              data: { despatchedQty: item.qty },
+            });
           }
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: "DISPATCHED" },
+          });
+          await recordFulfilmentEvent(tx, {
+            orderId: order.id,
+            kind: "DESPATCHED",
+            summary: hasKnownBackorder
+              ? "Remaining items on your order have been despatched"
+              : "Your order has been despatched",
+            source: "AUTOPART_504C",
+            invoiceId: invoice.id,
+            lineQuantitiesKnown: true,
+            limitation: null,
+          });
+          emailActions.push({
+            kind: "FULL",
+            orderId: order.id,
+            remainingAfterBackorder: hasKnownBackorder,
+          });
+          ordersDespatched += 1;
+        } else {
+          // Partial — do NOT invent line despatched quantities from 504C totals.
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: "PARTIALLY_DESPATCHED" },
+          });
+          await recordFulfilmentEvent(tx, {
+            orderId: order.id,
+            kind: "PART_DESPATCHED",
+            summary: "Part of your order has been despatched; some items remain on backorder",
+            source: "AUTOPART_504C",
+            invoiceId: invoice.id,
+            lineQuantitiesKnown: false,
+            limitation: FULFILMENT_LINE_QTY_LIMITATION,
+          });
+          emailActions.push({
+            kind: "PART",
+            orderId: order.id,
+            invoiceExternalRef: row.documentNumber,
+          });
         }
       });
 
-      newInvoices += 1;
-    }
-
-    for (const orderId of despatchedOrderIds) {
-      try {
-        await enqueueOrderDespatchedEmail(orderId);
-        emailsQueued += 1;
-      } catch (err) {
-        await recordAuditEvent({
-          action: "order.despatch_email_failed",
-          entityType: "Order",
-          entityId: orderId,
-          actorUserId: userId,
-          metadata: {
-            error: err instanceof Error ? err.message : "unknown",
-          },
-        });
+      for (const action of emailActions) {
+        try {
+          if (action.kind === "FULL") {
+            await enqueueOrderDespatchedEmail(action.orderId, {
+              remainingAfterBackorder: action.remainingAfterBackorder,
+            });
+          } else {
+            await enqueueOrderPartDespatchedEmail({
+              orderId: action.orderId,
+              invoiceExternalRef: action.invoiceExternalRef,
+              lineQuantitiesKnown: false,
+            });
+          }
+          emailsQueued += 1;
+        } catch (err) {
+          await recordAuditEvent({
+            action:
+              action.kind === "FULL"
+                ? "order.despatch_email_failed"
+                : "order.part_despatch_email_failed",
+            entityType: "Order",
+            entityId: action.orderId,
+            actorUserId: userId,
+            metadata: {
+              error: err instanceof Error ? err.message : "unknown",
+            },
+          });
+        }
       }
+
+      newInvoices += 1;
     }
 
     const status =

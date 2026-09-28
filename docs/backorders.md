@@ -78,15 +78,67 @@ CSV **Quantity** = full ordered qty (`OrderItem.qty`), never the AB allocation a
 
 SDEL remains a single order-level delivery line when paid delivery applies. No duplicate SDEL for backordered quantity.
 
-## 504C / despatch safety
+## Order item fulfilment fields
 
-504C is order-level financial evidence only. When an order has known `backorderQtyAtOrder > 0`:
+| Field | Meaning |
+| --- | --- |
+| `availableQtyAtOrder` | Historical sellable allocation at placement |
+| `backorderQtyAtOrder` | Historical backorder at placement (immutable) |
+| `despatchedQty` | Cumulative units with **authoritative line-level** despatch evidence only |
 
-- Status becomes **`PARTIALLY_DESPATCHED`**, not full `DISPATCHED`
-- Full `ORDER_DESPATCHED` email is not sent for that transition
-- Limitation: AB does not invent line-level fulfilment certainty from 504C
+Never invent `despatchedQty` from Autopart Avail, CSV export, or 504C order totals alone.
 
-Simple (non-backorder) orders keep the previous Processing → Despatched behaviour.
+## Fulfilment timeline
+
+`OrderFulfilmentEvent` records customer-safe history only when backed by real evidence:
+
+| Kind | Source |
+| --- | --- |
+| `ORDER_RECEIVED` | Order placement |
+| `EXPORTED_FOR_PROCESSING` | Successful Autopart CSV export (Processing) |
+| `INVOICE_LINKED` | 504C invoice linked |
+| `PART_DESPATCHED` | Partial fulfilment evidence |
+| `DESPATCHED` | Full fulfilment evidence |
+
+Never manufacture timeline events. Export ≠ Picked. Stock feed ≠ Despatched.
+
+## 504C capability matrix
+
+| Capability | Supported by 504C today? |
+| --- | --- |
+| Full-order despatch (no backorder / financially complete) | Yes — order-level invoice totals |
+| Partial-order despatch (known backorder) | Conservatively — mark `PARTIALLY_DESPATCHED` |
+| Line-level despatched quantities | **No** — 504C has no SKU lines |
+| Exact remaining backorder quantity after partial invoice | **No** — cannot invent from totals |
+
+### Future Autopart integration requirement
+
+AB needs an additional Autopart report/feed that provides **line-level** fulfilment quantities (SKU + qty despatched per AB order / invoice) before customer portal can show exact Despatched / Outstanding splits after a partial 504C invoice.
+
+Until then:
+
+- Placement snapshots (`availableQtyAtOrder` / `backorderQtyAtOrder`) remain accurate
+- Partial 504C → `PARTIALLY_DESPATCHED` + `ORDER_PART_DESPATCHED` (no invented SKU qty)
+- Cumulative invoices that financially complete the AB order → full `DISPATCHED` + `ORDER_DESPATCHED`
+- Multiple Autopart invoices may link to one AB order (`externalRef` / document number remains unique)
+
+## Customer portal
+
+- Dashboard **Backorders** summary only when outstanding backorders exist
+- Order history filters: All / Open / Backorders
+- Order detail: Ordered / Allocated / Despatched / Backordered + fulfilment timeline
+- Labels: Received, Processing, Backordered, Part Backordered, Part Despatched, Despatched
+- No PICKED without warehouse-picked signal (not currently available)
+
+## Transactional emails
+
+| Purpose | When |
+| --- | --- |
+| `ORDER_RECEIVED` | Placement — includes backorder quantities + “do not reorder” copy |
+| `ORDER_PART_DESPATCHED` | Authoritative partial despatch (idempotent per invoice) |
+| `ORDER_DESPATCHED` | Full / remaining despatch (idempotent per order) |
+
+All fulfilment emails are post-commit, idempotent, recorded, and retryable. Email failure never rolls back order/fulfilment/invoice state.
 
 ## Customer status wording
 
@@ -94,21 +146,21 @@ Simple (non-backorder) orders keep the previous Processing → Despatched behavi
 | --- | --- |
 | SUBMITTED | Received |
 | CONFIRMED / PICKING (no BO) | Processing |
-| CONFIRMED / PICKING (with BO) | Part Backordered |
+| CONFIRMED / PICKING (fully BO) | Backordered |
+| CONFIRMED / PICKING (part BO) | Part Backordered |
 | PARTIALLY_DESPATCHED | Part Despatched |
 | DISPATCHED | Despatched |
-
-Fully backordered after export may show “Processing — Backordered items” until authoritative fulfilment arrives.
 
 ## New stock arrives
 
 231PO3NEW updates do **not** change historical `backorderQtyAtOrder`.  
-Stock available ≠ warehouse despatched — never auto-send despatched from stock alone.
+Stock available ≠ warehouse despatched — never auto-send despatched from stock alone.  
+Internal admin may show **Stock now available** against outstanding demand; customers still see Processing / Backordered until fulfilment evidence.
 
 ## Admin reporting
 
-- Orders list filter: Backorders → All / Contains / Fully backordered + badge
-- Dashboard: **Backordered orders** count → filtered orders list
+- Dashboard **Backorders**: orders, units, SKUs affected, stock-now-available SKUs
+- Orders list filter: Backorders → Contains / Fully + line-level ops table
 - Product Inventory: Autopart Avail, AB Reserved, Effective Available, Backorders Allowed
 - Outstanding demand helper: `getOutstandingBackorderDemand` (no auto POs)
 

@@ -134,8 +134,13 @@ export type AdminDashboardPayload = {
     readyForExport: { count: number; items: AdminDashboardOrderRow[] };
     processing: { count: number; items: AdminDashboardOrderRow[] };
     exportBlocked: { count: number; items: AdminDashboardOrderRow[] };
-    /** Orders with any line backorderQtyAtOrder > 0 (real count). */
-    backorderedOrders: { count: number };
+    /** Outstanding backorder operational metrics (real records only). */
+    backorderedOrders: {
+      count: number;
+      units: number;
+      skusAffected: number;
+      stockNowAvailableSkus: number;
+    };
   };
   applications: {
     submitted: number;
@@ -524,15 +529,65 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       : Promise.resolve(null),
   ]);
 
-  const backorderedOrdersCount = canSeeOrders
-    ? await prisma.order.count({
-        where: {
-          ...orderScope,
-          status: { notIn: ["DRAFT", "CANCELLED", "DELIVERED"] },
-          items: { some: { backorderQtyAtOrder: { gt: 0 } } },
-        },
-      })
-    : 0;
+  const backorderMetrics = canSeeOrders
+    ? await (async () => {
+        const lines = await prisma.orderItem.findMany({
+          where: {
+            backorderQtyAtOrder: { gt: 0 },
+            order: {
+              ...orderScope,
+              status: {
+                in: ["SUBMITTED", "CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "ON_HOLD"],
+              },
+            },
+          },
+          select: {
+            qty: true,
+            availableQtyAtOrder: true,
+            backorderQtyAtOrder: true,
+            despatchedQty: true,
+            sku: true,
+            variantId: true,
+            orderId: true,
+          },
+          take: 2000,
+        });
+        const orderIds = new Set<string>();
+        const skus = new Set<string>();
+        let units = 0;
+        const variantIds = new Set<string>();
+        for (const line of lines) {
+          const outstanding =
+            line.despatchedQty > 0
+              ? Math.max(0, line.qty - line.despatchedQty)
+              : line.backorderQtyAtOrder;
+          if (outstanding <= 0) continue;
+          orderIds.add(line.orderId);
+          skus.add(line.sku);
+          units += outstanding;
+          if (line.variantId) variantIds.add(line.variantId);
+        }
+        let stockNowAvailableSkus = 0;
+        if (variantIds.size > 0) {
+          const { AUTOPART_WAREHOUSE_CODE } = await import("@/domain/stock");
+          const inv = await prisma.inventory.findMany({
+            where: {
+              variantId: { in: [...variantIds] },
+              warehouse: { code: AUTOPART_WAREHOUSE_CODE },
+              qtyOnHand: { gt: 0 },
+            },
+            select: { variantId: true },
+          });
+          stockNowAvailableSkus = new Set(inv.map((i) => i.variantId)).size;
+        }
+        return {
+          count: orderIds.size,
+          units,
+          skusAffected: skus.size,
+          stockNowAvailableSkus,
+        };
+      })()
+    : { count: 0, units: 0, skusAffected: 0, stockNowAvailableSkus: 0 };
 
   const orderValue = decimalSumToMoneyString(ordersTodayAgg._sum.grandTotal);
   const openQuotesCount = canSeeQuotes ? quoteDraft + quoteSentViewed : null;
@@ -692,7 +747,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       readyForExport: { count: readyCount, items: readyItems.map(mapOrderRow) },
       processing: { count: processingCount, items: processingItems.map(mapOrderRow) },
       exportBlocked: { count: blockedCount, items: blockedItems.map(mapOrderRow) },
-      backorderedOrders: { count: backorderedOrdersCount },
+      backorderedOrders: backorderMetrics,
     },
     applications: {
       submitted: appSubmitted,

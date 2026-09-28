@@ -1,10 +1,13 @@
 /**
  * ORDER_DESPATCHED transactional email.
- * Sent on first PROCESSING → DESPATCHED transition from 504C invoice reconciliation.
+ * Sent on authoritative full despatch (504C financial completion / line evidence).
  * Failures must not roll back invoice/status — callers catch and record for retry.
  */
 
-import { buildOrderDespatchedCustomerBodies } from "@/server/orders/email";
+import {
+  buildOrderDespatchedCustomerBodies,
+  buildOrderRemainingDespatchedCustomerBodies,
+} from "@/server/orders/email";
 import {
   loadOrderEmailSnapshot,
   safeAttemptDetailed,
@@ -16,7 +19,10 @@ import { getEmailFooterMeta } from "@/server/email/settings";
  * Queue + attempt ORDER_DESPATCHED for an order.
  * Idempotent via upsertPendingEmail key ORDER_DESPATCHED:{orderId}.
  */
-export async function enqueueOrderDespatchedEmail(orderId: string): Promise<{
+export async function enqueueOrderDespatchedEmail(
+  orderId: string,
+  opts?: { remainingAfterBackorder?: boolean },
+): Promise<{
   queued: boolean;
   sent: boolean;
   emailId: string | null;
@@ -33,7 +39,9 @@ export async function enqueueOrderDespatchedEmail(orderId: string): Promise<{
   }
 
   const footer = await getEmailFooterMeta();
-  const bodies = buildOrderDespatchedCustomerBodies(snapshot, footer);
+  const bodies = opts?.remainingAfterBackorder
+    ? buildOrderRemainingDespatchedCustomerBodies(snapshot, footer)
+    : buildOrderDespatchedCustomerBodies(snapshot, footer);
   const upsert = await upsertPendingEmail({
     purpose: "ORDER_DESPATCHED",
     toEmail: snapshot.contact.email,

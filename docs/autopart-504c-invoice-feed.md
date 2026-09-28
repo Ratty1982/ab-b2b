@@ -84,11 +84,24 @@ Uses the existing `Invoice` model with Autopart fields:
 
 ## Despatch transition
 
-Valid Autopart **INVOICE** for an AB order in Processing (`CONFIRMED` / `PICKING`):
+Valid Autopart **INVOICE** for an AB order in Processing (`CONFIRMED` / `PICKING` / `PARTIALLY_DESPATCHED`):
 
-- Persist invoice  
-- `PROCESSING` → `DESPATCHED` (`DISPATCHED`)  
-- Enqueue `ORDER_DESPATCHED` once (idempotent key `ORDER_DESPATCHED:{orderId}`)  
+- Persist invoice (multiple invoices may link to one AB order)  
+- Record `OrderFulfilmentEvent` (`INVOICE_LINKED` + part/full despatch)  
+- **No known backorder / cumulative invoices financially complete** → `DISPATCHED` + `ORDER_DESPATCHED`  
+- **Known backorder and not financially complete** → `PARTIALLY_DESPATCHED` + `ORDER_PART_DESPATCHED` (idempotent per invoice document)  
+- Do **not** invent line `despatchedQty` from 504C totals alone  
+
+### What 504C can and cannot prove
+
+| Question | 504C alone |
+| --- | --- |
+| Full-order despatch (simple order / financial completion) | Yes |
+| Partial-order despatch (backordered order, invoice exists) | Conservative yes → Part Despatched |
+| Exact SKU despatched quantities | **No** |
+| Exact remaining backorder quantity after partial invoice | **No** |
+
+**Future Autopart requirement:** a line-level fulfilment feed (SKU + qty per AB order/invoice) is required before AB can update customer-facing Despatched / Outstanding quantities from Autopart evidence. See also `docs/backorders.md`.
 
 Safeguards:
 
@@ -97,6 +110,7 @@ Safeguards:
 - Duplicate document numbers → ignore (harmless)  
 - Repeated 13:00 / 16:00 overlapping files are expected and must be idempotent  
 - Email failure does **not** roll back invoice or status  
+- Financial totals alone must not invent SKU quantities
 
 ## Stock reservations
 
@@ -184,6 +198,8 @@ Parser recognises credits. Future credit handling (returns, financial adjustment
 
 ## Customer portal
 
-Customers see Received / Processing / Despatched only.
+Customers see friendly lifecycle labels only:
 
-Never expose: CSV, MAM, Autopart, 504C, import runs, batch IDs, or internal invoice reconciliation details.
+Received · Processing · Backordered · Part Backordered · Part Despatched · Despatched
+
+Never expose: CSV, MAM, Autopart, 504C, import runs, batch IDs, PICKED (without warehouse signal), or internal invoice reconciliation details.

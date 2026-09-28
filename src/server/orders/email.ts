@@ -75,14 +75,23 @@ function formatDelivery(order: OrderEmailSnapshot): string {
 function itemsPlain(order: OrderEmailSnapshot, mode: "customer" | "internal" = "customer"): string {
   return order.items
     .map((item) => {
-      const base = `- ${item.sku} ${item.name} × ${item.qty} @ £${formatGbp(item.customerUnitPrice)} = £${formatGbp(item.lineTotal)}`;
       const bo = item.backorderQtyAtOrder ?? 0;
-      if (bo <= 0) return base;
+      const avail = item.availableQtyAtOrder ?? Math.max(0, item.qty - bo);
       if (mode === "internal") {
-        const avail = item.availableQtyAtOrder ?? Math.max(0, item.qty - bo);
-        return `${base}\n  Ordered: ${item.qty} · Available: ${avail} · Backorder: ${bo}`;
+        return (
+          `- ${item.sku} ${item.name}\n` +
+          `  Ordered: ${item.qty} · Available: ${avail} · Backorder: ${bo} @ £${formatGbp(item.customerUnitPrice)} = £${formatGbp(item.lineTotal)}`
+        );
       }
-      return `${base}\n  ${bo} currently on backorder`;
+      if (bo <= 0) {
+        return `- ${item.name}\n  Qty: ${item.qty}\n  Available`;
+      }
+      return (
+        `- ${item.name}\n` +
+        `  Qty: ${item.qty}\n` +
+        `  ${avail} available\n` +
+        `  ${bo} on backorder`
+      );
     })
     .join("\n");
 }
@@ -172,7 +181,12 @@ export function buildOrderReceivedCustomerBodies(
     `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
     ...(order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0)
-      ? ["Backordered items will be supplied when stock becomes available.", ""]
+      ? [
+          "BACKORDER INFORMATION",
+          "Some items on your order are currently awaiting stock. You do not need to place another order for these items. They will remain on your order and will be supplied when available.",
+          "Backordered items will be supplied when stock becomes available.",
+          "",
+        ]
       : []),
     "Your order has been received and is pending processing.",
     "This confirmation does not mean the order has been despatched.",
@@ -193,7 +207,11 @@ export function buildOrderReceivedCustomerBodies(
 ${orderSummaryTableHtml(order)}
 ${
   order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0)
-    ? `<p style="margin:0 0 12px;padding:12px;background:#fff7ed;border:1px solid #fdba74;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#9a3412;">Backordered items will be supplied when stock becomes available.</p>`
+    ? `<div style="margin:0 0 16px;padding:14px;background:#fff7ed;border:1px solid #fdba74;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#9a3412;">
+<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"><strong>Backorder information</strong></p>
+<p style="margin:0 0 8px;">Some items on your order are currently awaiting stock. You do not need to place another order for these items. They will remain on your order and will be supplied when available.</p>
+<p style="margin:0;">Backordered items will be supplied when stock becomes available.</p>
+</div>`
     : ""
 }
 <p style="margin:0 0 8px;">Your order has been received and is pending processing.<br/>
@@ -264,6 +282,142 @@ ${orderSummaryTableHtml(order)}
     preheader: `New B2B order ${order.orderNumber}`,
     bodyHtml,
     cta: { label: "View order", href: order.adminOrderUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
+
+  return { subject, text, html };
+}
+
+
+/**
+ * Partial despatch notification.
+ * When line quantities are unknown (504C order-level only), do not invent SKU despatch qty.
+ */
+export function buildOrderPartDespatchedCustomerBodies(
+  order: OrderEmailSnapshot,
+  opts: { lineQuantitiesKnown: boolean; footer?: EmailFooterMeta },
+): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const subject = `Part of your Automotive Brands order ${order.orderNumber} has been despatched`;
+  const backorderItems = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) > 0);
+  const availableItems = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) <= 0);
+
+  const despatchedBlock = opts.lineQuantitiesKnown
+    ? order.items
+        .filter((i) => (i.availableQtyAtOrder ?? 0) > 0 || (i.backorderQtyAtOrder ?? 0) < i.qty)
+        .map((i) => {
+          const despatched = Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
+          return despatched > 0 ? `${despatched} × ${i.name}` : null;
+        })
+        .filter(Boolean)
+        .join("\n")
+    : availableItems.map((i) => `${i.qty} × ${i.name}`).join("\n") ||
+      "Part of this order (exact line quantities will be confirmed on your order detail).";
+
+  const stillBackorderBlock = backorderItems
+    .map((i) => `${i.backorderQtyAtOrder} × ${i.name}`)
+    .join("\n");
+
+  const text = [
+    `Hello ${order.contact.name},`,
+    "",
+    `Part of your Automotive Brands order ${order.orderNumber} has been despatched.`,
+    "",
+    "DESPATCHED",
+    despatchedBlock || "—",
+    "",
+    ...(stillBackorderBlock
+      ? ["STILL ON BACKORDER", stillBackorderBlock, ""]
+      : []),
+    "We'll keep any remaining items on backorder and update you when they are despatched.",
+    "You do not need to place another order for these items.",
+    "",
+    ...(opts.lineQuantitiesKnown
+      ? []
+      : [
+          "Note: Autopart invoice confirmation is order-level. Exact SKU despatch quantities will appear on your order detail when confirmed.",
+          "",
+        ]),
+    `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
+    "",
+    "Automotive Brands",
+    "https://automotivebrands.co.uk",
+  ].join("\n");
+
+  const bodyHtml = `
+<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
+<p style="margin:0 0 16px;">Part of your Automotive Brands order <strong>${escapeEmailHtml(order.orderNumber)}</strong> has been despatched.</p>
+<p style="margin:16px 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;"><strong>Despatched</strong></p>
+<p style="margin:0 0 16px;white-space:pre-line;">${escapeEmailHtml(despatchedBlock || "—")}</p>
+${
+  stillBackorderBlock
+    ? `<p style="margin:16px 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#9a3412;"><strong>Still on backorder</strong></p>
+<p style="margin:0 0 16px;white-space:pre-line;">${escapeEmailHtml(stillBackorderBlock)}</p>`
+    : ""
+}
+<p style="margin:0 0 8px;">We'll keep any remaining items on backorder and update you when they are despatched. You do not need to place another order for these items.</p>
+${
+  opts.lineQuantitiesKnown
+    ? ""
+    : `<p style="margin:12px 0 8px;font-size:13px;color:#5c6578;">Autopart invoice confirmation is order-level. Exact SKU despatch quantities will appear on your order detail when confirmed.</p>`
+}`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Part of order ${order.orderNumber} despatched`,
+    bodyHtml,
+    cta: { label: "View your order", href: order.portalOrderUrl },
+    footer: opts.footer ?? { fromName: "Automotive Brands" },
+  });
+
+  return { subject, text, html };
+}
+
+/**
+ * Final despatch after remaining backorder fulfilled.
+ */
+export function buildOrderRemainingDespatchedCustomerBodies(
+  order: OrderEmailSnapshot,
+  footer?: EmailFooterMeta,
+): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const subject = `Your remaining Automotive Brands order ${order.orderNumber} has been despatched`;
+  const remaining = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) > 0);
+  const lines =
+    remaining.length > 0
+      ? remaining.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`).join("\n")
+      : itemsPlain(order, "customer");
+
+  const text = [
+    `Hello ${order.contact.name},`,
+    "",
+    `The remaining items from your order ${order.orderNumber} have now been despatched.`,
+    "",
+    lines,
+    "",
+    "Your order is now fully despatched.",
+    "",
+    `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
+    "",
+    "Automotive Brands",
+    "https://automotivebrands.co.uk",
+  ].join("\n");
+
+  const bodyHtml = `
+<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
+<p style="margin:0 0 16px;">The remaining items from your order <strong>${escapeEmailHtml(order.orderNumber)}</strong> have now been despatched.</p>
+<p style="margin:0 0 16px;white-space:pre-line;">${escapeEmailHtml(lines)}</p>
+<p style="margin:0 0 8px;">Your order is now fully despatched.</p>`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Remaining items on ${order.orderNumber} despatched`,
+    bodyHtml,
+    cta: { label: "View your order", href: order.portalOrderUrl },
     footer: footer ?? { fromName: "Automotive Brands" },
   });
 

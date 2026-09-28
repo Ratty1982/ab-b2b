@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import {
   exportAutopartOrdersCsvFn,
+  listAdminBackorderLinesFn,
   listAdminOrdersFn,
   previewAutopartOrderExportFn,
 } from "@/server/phase2/fns";
@@ -15,6 +16,10 @@ import { toast } from "sonner";
 
 type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
 type BackorderFilter = "ALL" | "CONTAINS" | "FULL";
+type BackorderLine = Extract<
+  Awaited<ReturnType<typeof listAdminBackorderLinesFn>>,
+  { ok: true }
+>["data"]["items"][number];
 
 function parseExportFilter(value: unknown): ExportFilter | undefined {
   if (value === "READY" || value === "EXPORTED" || value === "BLOCKED" || value === "ALL") {
@@ -53,14 +58,17 @@ function downloadCsv(filename: string, csv: string) {
 function AdminOrdersPage() {
   const search = Route.useSearch();
   const [rows, setRows] = useState<Row[]>([]);
+  const [backorderLines, setBackorderLines] = useState<BackorderLine[]>([]);
   const [q, setQ] = useState("");
   const [exportFilter, setExportFilter] = useState<ExportFilter>(search.autopartExport ?? "ALL");
   const [backorderFilter, setBackorderFilter] = useState<BackorderFilter>(search.backorders ?? "ALL");
+  const [stockNowOnly, setStockNowOnly] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
+  const showBackorderOps = backorderFilter === "CONTAINS" || backorderFilter === "FULL";
 
   useEffect(() => {
     setExportFilter(search.autopartExport ?? "ALL");
@@ -78,8 +86,8 @@ function AdminOrdersPage() {
         backorders: backorderFilter,
       },
     });
-    setLoading(false);
     if (!result.ok) {
+      setLoading(false);
       setError(result.error);
       return;
     }
@@ -87,7 +95,23 @@ function AdminOrdersPage() {
     setRows(result.data.items);
     setSelected({});
     setPreviewNote(null);
-  }, [q, exportFilter, backorderFilter]);
+
+    if (backorderFilter === "CONTAINS" || backorderFilter === "FULL") {
+      const lines = await listAdminBackorderLinesFn({
+        data: {
+          q: q || undefined,
+          stockNowAvailable: stockNowOnly || undefined,
+          fullyBackordered: backorderFilter === "FULL" || undefined,
+          partBackordered: undefined,
+        },
+      });
+      if (lines.ok) setBackorderLines(lines.data.items);
+      else setBackorderLines([]);
+    } else {
+      setBackorderLines([]);
+    }
+    setLoading(false);
+  }, [q, exportFilter, backorderFilter, stockNowOnly]);
 
   useEffect(() => {
     void load();
@@ -212,6 +236,16 @@ function AdminOrdersPage() {
               <option value="FULL">Fully backordered</option>
             </select>
           </label>
+          {showBackorderOps ? (
+            <label className="flex h-10 items-center gap-2 text-[12px] text-steel">
+              <input
+                type="checkbox"
+                checked={stockNowOnly}
+                onChange={(e) => setStockNowOnly(e.target.checked)}
+              />
+              Stock now available
+            </label>
+          ) : null}
           <button
             type="button"
             disabled={exporting || selectedIds.length === 0}
@@ -231,6 +265,73 @@ function AdminOrdersPage() {
         </div>
         {previewNote ? <p className="mb-3 text-[12px] text-steel">{previewNote}</p> : null}
         {loading ? <p className="text-[13px] text-steel">Loading…</p> : null}
+        {showBackorderOps && !loading && backorderLines.length > 0 ? (
+          <div className="mb-6">
+            <h2 className="mb-2 font-display text-base font-semibold uppercase">
+              Outstanding backorder lines
+            </h2>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[1100px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
+                    <th className="px-3 py-2">Order</th>
+                    <th className="px-3 py-2">Customer</th>
+                    <th className="px-3 py-2">SKU</th>
+                    <th className="px-3 py-2">Product</th>
+                    <th className="px-3 py-2 text-right">Ordered</th>
+                    <th className="px-3 py-2 text-right">Avail at order</th>
+                    <th className="px-3 py-2 text-right">Outstanding</th>
+                    <th className="px-3 py-2 text-right">Autopart avail</th>
+                    <th className="px-3 py-2">Order date</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Account manager</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backorderLines.map((line, i) => (
+                    <tr
+                      key={`${line.orderId}-${line.sku}-${i}`}
+                      className={cn("border-b border-border/60", i % 2 && "bg-surface/30")}
+                    >
+                      <td className="num px-3 py-2">
+                        <Link
+                          to="/admin/orders/$orderId"
+                          params={{ orderId: line.orderId }}
+                          className="font-medium text-primary"
+                        >
+                          {line.orderNumber}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2">{line.companyName}</td>
+                      <td className="num px-3 py-2 text-steel">{line.sku}</td>
+                      <td className="px-3 py-2">{line.productName}</td>
+                      <td className="num px-3 py-2 text-right">{line.orderedQty}</td>
+                      <td className="num px-3 py-2 text-right">
+                        {line.availableQtyAtOrder ?? "—"}
+                      </td>
+                      <td className="num px-3 py-2 text-right font-semibold text-warn">
+                        {line.outstandingBackorderQty}
+                      </td>
+                      <td className="num px-3 py-2 text-right">
+                        {line.currentAutopartAvail ?? "—"}
+                        {line.stockNowAvailable ? (
+                          <span className="ml-1 text-[10px] uppercase text-good">Stock now</span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 text-steel">
+                        {line.orderDate ? formatDate(line.orderDate) : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <StatusBadge tone="warn">{line.statusLabel}</StatusBadge>
+                      </td>
+                      <td className="px-3 py-2 text-steel">{line.salesRepName || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
         {!loading && rows.length === 0 ? (
           <p className="text-[13px] text-steel">No orders found.</p>
         ) : null}

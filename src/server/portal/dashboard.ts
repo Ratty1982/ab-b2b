@@ -8,6 +8,11 @@ import { AuthError, requireAuthenticatedUser, requireCompanyPermission } from "@
 import { getBasketSummary } from "@/server/basket/service";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
 import {
+  summariseCustomerOrderFulfilment,
+  backorderUnitsLabel,
+} from "@/domain/customer-fulfilment";
+import { orderIsFullyBackordered } from "@/domain/backorder";
+import {
   resolveAccountManagerForCompany,
   resolveGeneralTradeContact,
 } from "@/server/sales/account-manager";
@@ -16,6 +21,7 @@ const OPEN_ORDER_STATUSES = [
   "SUBMITTED",
   "CONFIRMED",
   "PICKING",
+  "PARTIALLY_DESPATCHED",
   "DISPATCHED",
   "ON_HOLD",
 ] as const;
@@ -64,7 +70,24 @@ function mapOrderRow(row: {
   grandTotal: unknown;
   currency: string;
   _count: { items: number };
+  items: Array<{
+    qty: number;
+    availableQtyAtOrder: number | null;
+    backorderQtyAtOrder: number;
+    despatchedQty: number;
+  }>;
 }) {
+  const fulfilment = summariseCustomerOrderFulfilment({
+    status: row.status,
+    items: row.items,
+  });
+  const fullyBackordered = orderIsFullyBackordered(row.items);
+  const hint =
+    fulfilment.hasOutstandingBackorder && fulfilment.outstandingBackorderUnits > 0
+      ? backorderUnitsLabel(fulfilment.outstandingBackorderUnits)
+      : fulfilment.hasOutstandingBackorder
+        ? "Items awaiting stock"
+        : null;
   return {
     id: row.id,
     orderNumber: row.orderNumber,
@@ -74,6 +97,13 @@ function mapOrderRow(row: {
     grandTotal: moneyToString(parseMoney(String(row.grandTotal)) ?? moneyZero(), 2),
     currency: row.currency,
     lineCount: row._count.items,
+    hasBackorderItems: fulfilment.hasBackorderAtPlacement,
+    hasOutstandingBackorder: fulfilment.hasOutstandingBackorder,
+    outstandingBackorderUnits: fulfilment.outstandingBackorderUnits,
+    fullyBackordered,
+    statusLabel: fulfilment.orderStatusLabel,
+    statusBadge: fulfilment.orderStatusBadge,
+    backorderHint: hint,
   };
 }
 
@@ -89,24 +119,61 @@ export async function getPortalDashboard(userId: string) {
     companyId: company.id,
     status: { in: [...OPEN_ORDER_STATUSES] },
   };
+  const orderInclude = {
+    _count: { select: { items: true } },
+    items: {
+      select: {
+        qty: true,
+        availableQtyAtOrder: true,
+        backorderQtyAtOrder: true,
+        despatchedQty: true,
+      },
+    },
+  } as const;
 
-  const [openOrders, recentOrders, openOrderCount, totalOrderCount, basket] = await Promise.all([
-    prisma.order.findMany({
-      where: openWhere,
-      orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
-      take: 10,
-      include: { _count: { select: { items: true } } },
-    }),
-    prisma.order.findMany({
-      where: orderWhere,
-      orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
-      take: 5,
-      include: { _count: { select: { items: true } } },
-    }),
-    prisma.order.count({ where: openWhere }),
-    prisma.order.count({ where: orderWhere }),
-    getBasketSummary(userId),
-  ]);
+  const [openOrders, recentOrders, openOrderCount, totalOrderCount, basket, backorderCandidates] =
+    await Promise.all([
+      prisma.order.findMany({
+        where: openWhere,
+        orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+        take: 10,
+        include: orderInclude,
+      }),
+      prisma.order.findMany({
+        where: orderWhere,
+        orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+        take: 5,
+        include: orderInclude,
+      }),
+      prisma.order.count({ where: openWhere }),
+      prisma.order.count({ where: orderWhere }),
+      getBasketSummary(userId),
+      prisma.order.findMany({
+        where: {
+          companyId: company.id,
+          status: {
+            in: ["SUBMITTED", "CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "ON_HOLD"],
+          },
+          OR: [
+            { status: "PARTIALLY_DESPATCHED" },
+            { items: { some: { backorderQtyAtOrder: { gt: 0 } } } },
+          ],
+        },
+        select: {
+          id: true,
+          status: true,
+          items: {
+            select: {
+              qty: true,
+              availableQtyAtOrder: true,
+              backorderQtyAtOrder: true,
+              despatchedQty: true,
+            },
+          },
+        },
+        take: 100,
+      }),
+    ]);
 
   const [accountManager, generalContact] = await Promise.all([
     resolveAccountManagerForCompany(company.id),
@@ -126,6 +193,18 @@ export async function getPortalDashboard(userId: string) {
           typeof (company.creditLimit as { toNumber: () => number }).toNumber === "function"
         ? (company.creditLimit as { toNumber: () => number }).toNumber()
         : Number(company.creditLimit);
+
+  let backorderOrderCount = 0;
+  let backorderUnitCount = 0;
+  for (const order of backorderCandidates) {
+    const summary = summariseCustomerOrderFulfilment({
+      status: order.status,
+      items: order.items,
+    });
+    if (!summary.hasOutstandingBackorder) continue;
+    backorderOrderCount += 1;
+    backorderUnitCount += summary.outstandingBackorderUnits;
+  }
 
   return {
     company: {
@@ -154,6 +233,18 @@ export async function getPortalDashboard(userId: string) {
     totalOrderCount,
     openOrders: openOrders.map(mapOrderRow),
     recentOrders: recentOrders.map(mapOrderRow),
+    /** Omitted from UI when null — never show an empty permanent Backorders card. */
+    backorders:
+      backorderOrderCount > 0
+        ? {
+            orderCount: backorderOrderCount,
+            unitCount: backorderUnitCount,
+            summary:
+              backorderUnitCount > 0
+                ? `${backorderUnitCount} unit${backorderUnitCount === 1 ? "" : "s"} awaiting stock across ${backorderOrderCount} order${backorderOrderCount === 1 ? "" : "s"}`
+                : `${backorderOrderCount} order${backorderOrderCount === 1 ? "" : "s"} have items awaiting stock`,
+          }
+        : null,
     accountManager,
     /** Fallback when no SalesRep is assigned — configured reply-to/from only. */
     generalContact,

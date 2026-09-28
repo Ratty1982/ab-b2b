@@ -1912,12 +1912,39 @@ export const placeOrderFn = createServerFn({ method: "POST" })
   });
 
 export const listPortalOrdersFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { page?: number; pageSize?: number } | undefined)
+  .inputValidator(
+    (data: unknown) =>
+      data as
+        | { page?: number; pageSize?: number; filter?: "ALL" | "OPEN" | "BACKORDERS" }
+        | undefined,
+  )
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
       const orders = await import("@/server/orders/service");
       return { ok: true as const, data: await orders.listPortalOrders(userId, data ?? {}) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listAdminBackorderLinesFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as
+        | {
+            q?: string;
+            stockNowAvailable?: boolean;
+            fullyBackordered?: boolean;
+            partBackordered?: boolean;
+          }
+        | undefined,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const orders = await import("@/server/orders/service");
+      return { ok: true as const, data: await orders.listAdminBackorderLines(userId, data ?? {}) };
     } catch (e) {
       return toError(e);
     }

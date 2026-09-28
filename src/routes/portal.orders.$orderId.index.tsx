@@ -3,8 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
-import { formatDateTime } from "@/lib/datetime";
-import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 import { getPortalOrderFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/portal/orders/$orderId/")({
@@ -15,6 +14,23 @@ export const Route = createFileRoute("/portal/orders/$orderId/")({
 });
 
 type Detail = Extract<Awaited<ReturnType<typeof getPortalOrderFn>>, { ok: true }>["data"];
+
+function statusTone(badge: Detail["statusBadge"]) {
+  switch (badge) {
+    case "BACKORDERED":
+    case "PART_BACKORDERED":
+    case "PART_DESPATCHED":
+      return "warn" as const;
+    case "DESPATCHED":
+      return "info" as const;
+    case "PROCESSING":
+      return "brand" as const;
+    case "RECEIVED":
+      return "good" as const;
+    default:
+      return "neutral" as const;
+  }
+}
 
 function PortalOrderDetailPage() {
   const { orderId } = Route.useParams();
@@ -65,11 +81,20 @@ function PortalOrderDetailPage() {
         title={order.orderNumber}
         sub={order.placedAt ? formatDateTime(order.placedAt) ?? "Order detail" : "Order detail"}
         actions={
-          <StatusBadge tone={customerOrderStatusTone(order.status, { hasBackorderItems: order.hasBackorderItems })}>
-            {customerOrderStatusLabel(order.status, { hasBackorderItems: order.hasBackorderItems })}
-          </StatusBadge>
+          <StatusBadge tone={statusTone(order.statusBadge)}>{order.statusLabel}</StatusBadge>
         }
       />
+      {order.hasOutstandingBackorder ? (
+        <div className="mx-4 mt-4 rounded-lg border border-cyan/40 bg-cyan/5 px-4 py-3 text-[13px] text-steel sm:mx-6">
+          Items on this order are awaiting stock. You do not need to place another order — they
+          remain on this order until supplied.
+        </div>
+      ) : null}
+      {order.lineQuantitiesLimitation ? (
+        <div className="mx-4 mt-3 rounded-lg border border-border px-4 py-3 text-[12px] text-steel sm:mx-6">
+          {order.lineQuantitiesLimitation}
+        </div>
+      ) : null}
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border p-5">
           <h2 className="font-display text-base font-semibold uppercase">Delivery</h2>
@@ -135,36 +160,69 @@ function PortalOrderDetailPage() {
 
       <div className="px-4 pb-8 sm:px-6">
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[720px] text-[13px]">
+          <table className="w-full min-w-[820px] text-[13px]">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
-                <th className="px-3 py-2">SKU</th>
                 <th className="px-3 py-2">Product</th>
-                <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2 text-right">Unit ex VAT</th>
+                <th className="px-3 py-2 text-right">Ordered</th>
+                <th className="px-3 py-2 text-right">Allocated</th>
+                <th className="px-3 py-2 text-right">Despatched</th>
+                <th className="px-3 py-2 text-right">Backordered</th>
+                <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2 text-right">Line net</th>
               </tr>
             </thead>
             <tbody>
-              {order.items.map((item) => (
-                <tr key={item.id} className="border-b border-border/60">
-                  <td className="num px-3 py-2.5 text-steel">{item.sku}</td>
-                  <td className="px-3 py-2.5">
-                    {item.name}
-                    {item.orderingMode === "FINAL_PART_CASE" ? (
-                      <span className="ml-2 text-[11px] uppercase text-steel">Final part case</span>
-                    ) : null}
-                    {(item.backorderQtyAtOrder ?? 0) > 0 ? (
-                      <p className="mt-1 text-[12px] text-cyan">
-                        {item.availableQtyAtOrder ?? 0} allocated from stock · {item.backorderQtyAtOrder} backordered
-                      </p>
-                    ) : null}
-                  </td>
-                  <td className="num px-3 py-2.5 text-right">{item.qty}</td>
-                  <td className="num px-3 py-2.5 text-right">£{item.customerUnitPrice}</td>
-                  <td className="num px-3 py-2.5 text-right font-semibold">£{item.lineTotal}</td>
-                </tr>
-              ))}
+              {order.items.map((item) => {
+                const f = item.fulfilment;
+                const showDespatched = f.despatchedQty != null;
+                const showOutstanding = f.outstandingBackorderQty != null;
+                return (
+                  <tr key={item.id} className="border-b border-border/60">
+                    <td className="px-3 py-2.5">
+                      <div className="font-medium">{item.name}</div>
+                      <div className="num text-[12px] text-steel">{item.sku}</div>
+                      {item.orderingMode === "FINAL_PART_CASE" ? (
+                        <span className="mt-1 inline-block text-[11px] uppercase text-steel">
+                          Final part case
+                        </span>
+                      ) : null}
+                      {f.limitation ? (
+                        <p className="mt-1 text-[11px] text-steel">{f.limitation}</p>
+                      ) : null}
+                    </td>
+                    <td className="num px-3 py-2.5 text-right">{f.orderedQty}</td>
+                    <td className="num px-3 py-2.5 text-right">
+                      {f.allocatedAtOrder != null ? f.allocatedAtOrder : "—"}
+                    </td>
+                    <td className="num px-3 py-2.5 text-right">
+                      {showDespatched ? f.despatchedQty : "—"}
+                    </td>
+                    <td className="num px-3 py-2.5 text-right">
+                      {showOutstanding
+                        ? f.outstandingBackorderQty
+                        : f.backorderedAtOrder > 0
+                          ? f.backorderedAtOrder
+                          : "—"}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <StatusBadge
+                        tone={
+                          f.lineStatusLabel.includes("Backorder") ||
+                          f.lineStatusLabel.includes("Part")
+                            ? "warn"
+                            : f.lineStatusLabel === "Despatched"
+                              ? "info"
+                              : "neutral"
+                        }
+                      >
+                        {f.lineStatusLabel}
+                      </StatusBadge>
+                    </td>
+                    <td className="num px-3 py-2.5 text-right font-semibold">£{item.lineTotal}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -188,6 +246,27 @@ function PortalOrderDetailPage() {
             <dd className="num">£{order.grandTotal}</dd>
           </div>
         </dl>
+
+        {order.fulfilmentTimeline.length > 0 ? (
+          <section className="mt-8 max-w-xl">
+            <h2 className="font-display text-base font-semibold uppercase">Fulfilment history</h2>
+            <ol className="mt-3 space-y-3 border-l border-border pl-4">
+              {order.fulfilmentTimeline.map((ev) => (
+                <li key={ev.id} className="relative text-[13px]">
+                  <span className="absolute -left-[1.3rem] top-1.5 size-2 rounded-full bg-primary" />
+                  <div className="text-[11px] uppercase tracking-wide text-steel">
+                    {formatDate(ev.occurredAt)}
+                  </div>
+                  <div className="mt-0.5 font-medium">{ev.summary}</div>
+                  {ev.limitation ? (
+                    <p className="mt-1 text-[12px] text-steel">{ev.limitation}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
             to={ROUTES.portalOrders}
@@ -200,6 +279,12 @@ function PortalOrderDetailPage() {
             className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
           >
             Continue shopping
+          </Link>
+          <Link
+            to={ROUTES.portalSupport}
+            className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-bold uppercase"
+          >
+            Your account manager
           </Link>
         </div>
       </div>

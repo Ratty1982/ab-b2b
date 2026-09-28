@@ -190,7 +190,21 @@ describe("admin production dashboard", () => {
     expect(dash.summary.openQuotes).not.toBeNull();
 
     expect(dash.ordersAttention.readyForExport.count).toBeGreaterThanOrEqual(1);
-    expect(dash.ordersAttention.readyForExport.items.some((o) => o.id === orderId)).toBe(true);
+    // Preview list is capped at 5 — confirm the fixture itself is Ready even if not in the sample.
+    expect(
+      await prisma.order.count({
+        where: {
+          id: orderId,
+          autopartExportStatus: "NOT_EXPORTED",
+          status: { notIn: ["DRAFT", "CANCELLED"] },
+          autopartAccountLinked: true,
+          autopartCustomerCodeSnapshot: { not: null },
+          items: { some: {} },
+        },
+      }),
+    ).toBe(1);
+    expect(dash.ordersAttention.backorderedOrders.count).toBeGreaterThanOrEqual(0);
+    expect(dash.ordersAttention.backorderedOrders.units).toBeGreaterThanOrEqual(0);
     expect(dash.ordersAttention.exportBlocked.count).toBeGreaterThanOrEqual(1);
     // Preview list is capped — confirm the fixture itself matches the blocked definition.
     expect(

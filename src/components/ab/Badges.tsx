@@ -81,10 +81,25 @@ const orderTone: Record<string, Tone> = {
   Expired: "neutral",
 };
 
-export function OrderStatusBadge({ status }: { status: string }) {
+export function OrderStatusBadge({
+  status,
+  hasBackorderItems,
+  fullyBackordered,
+  hasOutstandingBackorder,
+}: {
+  status: string;
+  hasBackorderItems?: boolean;
+  fullyBackordered?: boolean;
+  hasOutstandingBackorder?: boolean;
+}) {
+  const opts = {
+    ...(hasBackorderItems != null ? { hasBackorderItems } : {}),
+    ...(fullyBackordered != null ? { fullyBackordered } : {}),
+    ...(hasOutstandingBackorder != null ? { hasOutstandingBackorder } : {}),
+  };
   return (
-    <StatusBadge tone={customerOrderStatusTone(status)}>
-      {customerOrderStatusLabel(status)}
+    <StatusBadge tone={customerOrderStatusTone(status, opts)}>
+      {customerOrderStatusLabel(status, opts)}
     </StatusBadge>
   );
 }

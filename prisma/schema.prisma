@@ -197,9 +197,20 @@ enum StockReservationStatus {
   CONSUMED
 }
 
+/// Customer-visible fulfilment timeline — only store events backed by real data.
+enum OrderFulfilmentEventKind {
+  ORDER_RECEIVED
+  EXPORTED_FOR_PROCESSING
+  INVOICE_LINKED
+  PART_DESPATCHED
+  DESPATCHED
+  NOTE
+}
+
 enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
+  ORDER_PART_DESPATCHED
   ORDER_DESPATCHED
   QUOTE_SENT
   QUOTE_DECLINED_INTERNAL
@@ -1320,6 +1331,7 @@ model Order {
   items        OrderItem[]
   invoices     Invoice[]
   reservations OrderStockReservation[]
+  fulfilmentEvents OrderFulfilmentEvent[]
   autopartExportedBy User? @relation("OrderAutopartExporter", fields: [autopartExportedByUserId], references: [id], onDelete: SetNull)
   autopartExportBatch AutopartOrderExportBatch? @relation(fields: [autopartExportBatchId], references: [id], onDelete: SetNull)
   sourceQuote  Quote?                  @relation("OrdersFromQuote", fields: [sourceQuoteId], references: [id], onDelete: SetNull)
@@ -1330,6 +1342,30 @@ model Order {
   @@index([autopartExportStatus])
   @@index([autopartExportBatchId])
   @@index([sourceQuoteId])
+}
+
+/// Authoritative fulfilment timeline for customer portal (never invent events).
+model OrderFulfilmentEvent {
+  id                  String                   @id @default(cuid())
+  orderId             String
+  kind                OrderFulfilmentEventKind
+  occurredAt          DateTime                 @default(now())
+  /// Customer-safe summary (no Autopart/MAM jargon).
+  summary             String
+  /// ORDER_PLACE | AUTOPART_EXPORT | AUTOPART_504C | MANUAL
+  source              String
+  invoiceId           String?
+  /// True only when line-level quantities were known for this event.
+  lineQuantitiesKnown Boolean                  @default(false)
+  /// Explicit limitation when 504C/order-level evidence cannot identify SKU quantities.
+  limitation          String?
+  metadata            Json?
+  createdAt           DateTime                 @default(now())
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, occurredAt])
 }
 
 /// Durable metadata for an Autopart CSV download batch (no CSV body stored).
@@ -1434,6 +1470,8 @@ model OrderItem {
   availableQtyAtOrder Int?
   /// Units beyond availableQtyAtOrder at placement (historical snapshot). Never recompute from live stock.
   backorderQtyAtOrder Int @default(0)
+  /// Cumulative units authoritatively despatched (line-level evidence only — never invent from stock/504C totals).
+  despatchedQty Int @default(0)
 
   order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant ProductVariant? @relation(fields: [variantId], references: [id])
@@ -1441,6 +1479,7 @@ model OrderItem {
   @@index([orderId])
   @@index([sku])
   @@index([backorderQtyAtOrder])
+  @@index([despatchedQty])
 }
 
 /// Race-safe Automotive Brands order number allocator (AB-000001…).
@@ -1574,6 +1613,7 @@ model Invoice {
 
   company Company @relation(fields: [companyId], references: [id])
   order   Order?  @relation(fields: [orderId], references: [id])
+  fulfilmentEvents OrderFulfilmentEvent[]
   autopartImportRun Autopart504cImportRun? @relation(fields: [autopartImportRunId], references: [id], onDelete: SetNull)
 
   @@index([companyId, status])

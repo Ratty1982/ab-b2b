@@ -13,8 +13,10 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
   buildOrderDespatchedCustomerBodies,
+  buildOrderPartDespatchedCustomerBodies,
   buildOrderReceivedCustomerBodies,
   buildOrderReceivedInternalBodies,
+  buildOrderRemainingDespatchedCustomerBodies,
   type OrderEmailSnapshot,
 } from "@/server/orders/email";
 import {
@@ -1060,7 +1062,23 @@ export async function retryTransactionalEmail(
       textBody = bodies.text;
       htmlBody = bodies.html;
     } else if (row.purpose === "ORDER_DESPATCHED") {
-      const bodies = buildOrderDespatchedCustomerBodies(snapshot, footer);
+      const remaining =
+        snapshot.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0) &&
+        (row.subject.includes("remaining") ||
+          snapshot.status === "DISPATCHED" ||
+          snapshot.status === "DELIVERED");
+      const bodies = remaining
+        ? buildOrderRemainingDespatchedCustomerBodies(snapshot, footer)
+        : buildOrderDespatchedCustomerBodies(snapshot, footer);
+      subject = bodies.subject;
+      textBody = bodies.text;
+      htmlBody = bodies.html;
+      toEmail = snapshot.contact.email || row.toEmail;
+    } else if (row.purpose === "ORDER_PART_DESPATCHED") {
+      const bodies = buildOrderPartDespatchedCustomerBodies(snapshot, {
+        lineQuantitiesKnown: false,
+        footer,
+      });
       subject = bodies.subject;
       textBody = bodies.text;
       htmlBody = bodies.html;

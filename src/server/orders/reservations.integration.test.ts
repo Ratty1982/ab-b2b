@@ -447,10 +447,11 @@ describe("Phase 6B order emails", () => {
     });
     expect(emails).toHaveLength(1);
     expect(emails[0]!.status).toBe("FAILED");
-    expect(emails[0]!.textBody).toContain("3.25");
+    // Snapshot totals (8 × £3.25) — customer line copy no longer repeats unit price per SKU.
+    expect(emails[0]!.textBody).toContain("26.00");
     expect(emails[0]!.idempotencyKey).toBe(`ORDER_RECEIVED:${first.order.id}`);
 
-    // Change live trade price — retry must still use snapshot 3.25.
+    // Change live trade price — retry must still use snapshot totals, not live 9.99.
     await prisma.productVariant.update({
       where: { id: variant.id },
       data: { tradePrice: 9.99 },
@@ -461,7 +462,7 @@ describe("Phase 6B order emails", () => {
     const afterRetry = await prisma.transactionalEmail.findUniqueOrThrow({
       where: { id: emails[0]!.id },
     });
-    expect(afterRetry.textBody).toContain("3.25");
+    expect(afterRetry.textBody).toContain("26.00");
     expect(afterRetry.textBody).not.toContain("9.99");
 
     // Idempotent double place — still one customer email.

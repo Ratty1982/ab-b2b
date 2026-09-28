@@ -157,10 +157,10 @@ describe("deleteAdminOrder", () => {
     expect(result.releasedQuantity).toBe(12);
     expect(result.reservationCount).toBe(1);
 
-    await expect(prisma.order.findUnique({ where: { id: order.id } })).resolves.toBeNull();
-    await expect(
-      prisma.orderStockReservation.findUnique({ where: { id: reservation.id } }),
-    ).resolves.toBeNull();
+    expect(await prisma.order.findUnique({ where: { id: order.id } })).toBeNull();
+    expect(
+      await prisma.orderStockReservation.findUnique({ where: { id: reservation.id } }),
+    ).toBeNull();
 
     const after = await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
     expect(after.qtyOnHand).toBe(100);
@@ -185,7 +185,7 @@ describe("deleteAdminOrder", () => {
     await expect(deleteAdminOrder(adminId, order.id)).rejects.toMatchObject({
       code: "ORDER_ALREADY_DESPATCHED",
     });
-    await expect(prisma.order.findUnique({ where: { id: order.id } })).resolves.toBeTruthy();
+    expect(await prisma.order.findUnique({ where: { id: order.id } })).toBeTruthy();
   });
 
   it("denies staff without orders.edit", async () => {

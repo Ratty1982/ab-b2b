@@ -151,6 +151,25 @@ function Dashboard() {
             </div>
           </div>
 
+          {data.backorders ? (
+            <div className="rounded-lg border border-cyan/40 bg-cyan/5 p-5">
+              <h2 className="font-display text-lg font-semibold uppercase tracking-tight text-cyan">
+                Backorders
+              </h2>
+              <p className="mt-2 max-w-xl text-[13px] text-steel">{data.backorders.summary}</p>
+              <p className="mt-1 text-[12px] text-steel">
+                You do not need to place another order for these items.
+              </p>
+              <Link
+                to="/portal/orders"
+                search={{ filter: "BACKORDERS" }}
+                className="mt-4 inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+              >
+                View backorders
+              </Link>
+            </div>
+          ) : null}
+
           <div>
             <SectionTitle title="Open orders" href={ROUTES.portalOrders} linkLabel="All orders" />
             <OrderTable
@@ -346,7 +365,17 @@ function OrderTable({
               </td>
               <td className="num px-3 py-2 text-right">{o.lineCount}</td>
               <td className="px-3 py-2">
-                <OrderStatusBadge status={o.status} />
+                <div className="flex flex-col gap-1">
+                  <OrderStatusBadge
+                    status={o.status}
+                    hasBackorderItems={o.hasBackorderItems}
+                    fullyBackordered={o.fullyBackordered}
+                    hasOutstandingBackorder={o.hasOutstandingBackorder}
+                  />
+                  {o.backorderHint ? (
+                    <span className="text-[11px] text-cyan">{o.backorderHint}</span>
+                  ) : null}
+                </div>
               </td>
               <td className="num px-3 py-2 text-right font-semibold">{gbp(o.grandTotal)}</td>
             </tr>

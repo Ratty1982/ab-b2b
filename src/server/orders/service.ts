@@ -69,6 +69,12 @@ import {
 } from "@/domain/checkout";
 import { allocateOrderNumber } from "@/server/orders/order-number";
 import { releaseStockForOrder, reserveStockForOrder } from "@/server/orders/reservations";
+import { recordFulfilmentEvent } from "@/server/orders/fulfilment";
+import {
+  presentCustomerLineFulfilment,
+  summariseCustomerOrderFulfilment,
+  backorderUnitsLabel,
+} from "@/domain/customer-fulfilment";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 
 export type CheckoutAddressSummary = {
@@ -178,7 +184,7 @@ export type PlaceOrderResult =
   | { ok: true; order: PublicOrderConfirmation }
   | { ok: false; code: "REVIEW_REQUIRED"; lines: CheckoutReviewLine[]; review: CheckoutReview };
 
-export type PortalOrderListItem = {
+export type OrderListItemBase = {
   id: string;
   orderNumber: string;
   status: string;
@@ -189,9 +195,31 @@ export type PortalOrderListItem = {
   lineCount: number;
 };
 
+export type PortalOrderListItem = OrderListItemBase & {
+  hasBackorderItems: boolean;
+  hasOutstandingBackorder: boolean;
+  outstandingBackorderUnits: number;
+  fullyBackordered: boolean;
+  statusLabel: string;
+  statusBadge:
+    | "BACKORDERED"
+    | "PART_BACKORDERED"
+    | "PART_DESPATCHED"
+    | "DESPATCHED"
+    | "PROCESSING"
+    | "RECEIVED"
+    | "OTHER";
+  backorderHint: string | null;
+};
+
 export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"> & {
   status: string;
   hasBackorderItems: boolean;
+  hasOutstandingBackorder: boolean;
+  outstandingBackorderUnits: number;
+  statusLabel: string;
+  statusBadge: PortalOrderListItem["statusBadge"];
+  lineQuantitiesLimitation: string | null;
   items: Array<{
     id: string;
     sku: string;
@@ -205,10 +233,29 @@ export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"
     caseQty: number | null;
     availableQtyAtOrder: number | null;
     backorderQtyAtOrder: number;
+    despatchedQty: number;
+    fulfilment: {
+      orderedQty: number;
+      allocatedAtOrder: number | null;
+      backorderedAtOrder: number;
+      despatchedQty: number | null;
+      outstandingBackorderQty: number | null;
+      lineStatusLabel: string;
+      despatchQuantitiesKnown: boolean;
+      limitation: string | null;
+    };
+  }>;
+  fulfilmentTimeline: Array<{
+    id: string;
+    kind: string;
+    occurredAt: string;
+    summary: string;
+    lineQuantitiesKnown: boolean;
+    limitation: string | null;
   }>;
 };
 
-export type AdminOrderListItem = PortalOrderListItem & {
+export type AdminOrderListItem = OrderListItemBase & {
   companyName: string;
   salesRepName: string | null;
   autopartAccountLinked: boolean;
@@ -249,6 +296,24 @@ export type AdminOrderDetail = PortalOrderDetail & {
       vatCode: string | null;
     }
   >;
+};
+
+export type AdminBackorderLineRow = {
+  orderId: string;
+  orderNumber: string;
+  orderDate: string | null;
+  status: string;
+  statusLabel: string;
+  companyId: string;
+  companyName: string;
+  salesRepName: string | null;
+  sku: string;
+  productName: string;
+  orderedQty: number;
+  availableQtyAtOrder: number | null;
+  outstandingBackorderQty: number;
+  currentAutopartAvail: number | null;
+  stockNowAvailable: boolean;
 };
 
 type ResolvedLine = {
@@ -1069,6 +1134,21 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       })),
     });
 
+    const backorderUnits = order.items.reduce(
+      (sum, item) => sum + (item.backorderQtyAtOrder ?? 0),
+      0,
+    );
+    await recordFulfilmentEvent(tx, {
+      orderId: order.id,
+      kind: "ORDER_RECEIVED",
+      summary:
+        backorderUnits > 0
+          ? `Order received · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
+          : "Order received",
+      source: "ORDER_PLACE",
+      lineQuantitiesKnown: true,
+    });
+
     await tx.basket.update({
       where: { id: openBasket.id },
       data: { status: "CONVERTED" },
@@ -1142,42 +1222,126 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
   return { ok: true, order: confirmation };
 }
 
+function mapPortalOrderListItem(row: {
+  id: string;
+  orderNumber: string;
+  status: string;
+  placedAt: Date | null;
+  poNumber: string | null;
+  grandTotal: unknown;
+  currency: string;
+  _count: { items: number };
+  items: Array<{
+    qty: number;
+    availableQtyAtOrder: number | null;
+    backorderQtyAtOrder: number;
+    despatchedQty: number;
+  }>;
+}): PortalOrderListItem {
+  const fulfilment = summariseCustomerOrderFulfilment({
+    status: row.status,
+    items: row.items,
+  });
+  const fullyBackordered = orderIsFullyBackordered(row.items);
+  const hint =
+    fulfilment.hasOutstandingBackorder && fulfilment.outstandingBackorderUnits > 0
+      ? backorderUnitsLabel(fulfilment.outstandingBackorderUnits)
+      : fulfilment.hasOutstandingBackorder
+        ? "Items awaiting stock"
+        : null;
+  return {
+    id: row.id,
+    orderNumber: row.orderNumber,
+    status: row.status,
+    placedAt: row.placedAt?.toISOString() ?? null,
+    poNumber: row.poNumber,
+    grandTotal: moneyToString(parseMoney(String(row.grandTotal)) ?? moneyZero(), 2),
+    currency: row.currency,
+    lineCount: row._count.items,
+    hasBackorderItems: fulfilment.hasBackorderAtPlacement,
+    hasOutstandingBackorder: fulfilment.hasOutstandingBackorder,
+    outstandingBackorderUnits: fulfilment.outstandingBackorderUnits,
+    fullyBackordered,
+    statusLabel: fulfilment.orderStatusLabel,
+    statusBadge: fulfilment.orderStatusBadge,
+    backorderHint: hint,
+  };
+}
+
 export async function listPortalOrders(
   userId: string,
-  raw?: { page?: number; pageSize?: number },
+  raw?: {
+    page?: number;
+    pageSize?: number;
+    /** Customer history filter. */
+    filter?: "ALL" | "OPEN" | "BACKORDERS";
+  },
 ): Promise<{ items: PortalOrderListItem[]; total: number; page: number; pageSize: number }> {
   const { company } = await requireTradeCheckoutCompany(userId);
   await requireCompanyPermission(userId, company.id, "orders.view");
 
   const page = Math.max(1, raw?.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, raw?.pageSize ?? 25));
-  const where = { companyId: company.id, status: { not: "DRAFT" as const } };
+  const filter = raw?.filter ?? "ALL";
 
+  const baseWhere: Prisma.OrderWhereInput = {
+    companyId: company.id,
+    ...(filter === "OPEN" || filter === "BACKORDERS"
+      ? {
+          status: {
+            in: ["SUBMITTED", "CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "ON_HOLD"],
+          },
+        }
+      : { status: { not: "DRAFT" as const } }),
+    ...(filter === "BACKORDERS"
+      ? {
+          OR: [
+            { status: "PARTIALLY_DESPATCHED" as const },
+            { items: { some: { backorderQtyAtOrder: { gt: 0 } } } },
+          ],
+        }
+      : {}),
+  };
+
+  // BACKORDERS may need in-memory refine (outstanding vs historical placement only).
   const [total, rows] = await prisma.$transaction([
-    prisma.order.count({ where }),
+    prisma.order.count({ where: baseWhere }),
     prisma.order.findMany({
-      where,
+      where: baseWhere,
       orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: { _count: { select: { items: true } } },
+      skip: filter === "BACKORDERS" ? 0 : (page - 1) * pageSize,
+      take: filter === "BACKORDERS" ? 200 : pageSize,
+      include: {
+        _count: { select: { items: true } },
+        items: {
+          select: {
+            qty: true,
+            availableQtyAtOrder: true,
+            backorderQtyAtOrder: true,
+            despatchedQty: true,
+          },
+        },
+      },
     }),
   ]);
+
+  let items = rows.map(mapPortalOrderListItem);
+  if (filter === "BACKORDERS") {
+    items = items.filter((row) => row.hasOutstandingBackorder);
+    const start = (page - 1) * pageSize;
+    return {
+      total: items.length,
+      page,
+      pageSize,
+      items: items.slice(start, start + pageSize),
+    };
+  }
 
   return {
     total,
     page,
     pageSize,
-    items: rows.map((row) => ({
-      id: row.id,
-      orderNumber: row.orderNumber,
-      status: row.status,
-      placedAt: row.placedAt?.toISOString() ?? null,
-      poNumber: row.poNumber,
-      grandTotal: moneyToString(parseMoney(String(row.grandTotal)) ?? moneyZero(), 2),
-      currency: row.currency,
-      lineCount: row._count.items,
-    })),
+    items,
   };
 }
 
@@ -1187,33 +1351,74 @@ export async function getPortalOrder(userId: string, orderId: string): Promise<P
 
   const order = await prisma.order.findFirst({
     where: { id: orderId, companyId: company.id },
-    include: { items: true },
+    include: {
+      items: true,
+      fulfilmentEvents: { orderBy: { occurredAt: "asc" } },
+    },
   });
   if (!order) {
     throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
   }
 
   const base = toConfirmation(order, company.name);
+  const summary = summariseCustomerOrderFulfilment({
+    status: order.status,
+    items: order.items,
+  });
   return {
     ...base,
     status: order.status,
     hasBackorderItems: orderContainsBackorder(order.items),
-    items: order.items.map((item) => ({
-      id: item.id,
-      sku: item.sku,
-      name: item.name,
-      qty: item.qty,
-      customerUnitPrice: moneyToString(
-        parseMoney(String(item.customerUnitPrice)) ?? moneyZero(),
-        2,
-      ),
-      lineTotal: moneyToString(parseMoney(String(item.lineTotal)) ?? moneyZero(), 2),
-      lineVat: moneyToString(parseMoney(String(item.lineVat)) ?? moneyZero(), 2),
-      lineGross: moneyToString(parseMoney(String(item.lineGross)) ?? moneyZero(), 2),
-      orderingMode: item.orderingMode,
-      caseQty: item.caseQty,
-      availableQtyAtOrder: item.availableQtyAtOrder,
-      backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+    hasOutstandingBackorder: summary.hasOutstandingBackorder,
+    outstandingBackorderUnits: summary.outstandingBackorderUnits,
+    statusLabel: summary.orderStatusLabel,
+    statusBadge: summary.orderStatusBadge,
+    lineQuantitiesLimitation: summary.lineQuantitiesLimitation,
+    items: order.items.map((item) => {
+      const fulfilment = presentCustomerLineFulfilment({
+        qty: item.qty,
+        availableQtyAtOrder: item.availableQtyAtOrder,
+        backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+        despatchedQty: item.despatchedQty ?? 0,
+        orderPartDespatchedWithoutLineQty: order.status === "PARTIALLY_DESPATCHED",
+        orderFullyDespatched: order.status === "DISPATCHED" || order.status === "DELIVERED",
+      });
+      return {
+        id: item.id,
+        sku: item.sku,
+        name: item.name,
+        qty: item.qty,
+        customerUnitPrice: moneyToString(
+          parseMoney(String(item.customerUnitPrice)) ?? moneyZero(),
+          2,
+        ),
+        lineTotal: moneyToString(parseMoney(String(item.lineTotal)) ?? moneyZero(), 2),
+        lineVat: moneyToString(parseMoney(String(item.lineVat)) ?? moneyZero(), 2),
+        lineGross: moneyToString(parseMoney(String(item.lineGross)) ?? moneyZero(), 2),
+        orderingMode: item.orderingMode,
+        caseQty: item.caseQty,
+        availableQtyAtOrder: item.availableQtyAtOrder,
+        backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+        despatchedQty: item.despatchedQty ?? 0,
+        fulfilment: {
+          orderedQty: fulfilment.orderedQty,
+          allocatedAtOrder: fulfilment.allocatedAtOrder,
+          backorderedAtOrder: fulfilment.backorderedAtOrder,
+          despatchedQty: fulfilment.despatchedQty,
+          outstandingBackorderQty: fulfilment.outstandingBackorderQty,
+          lineStatusLabel: fulfilment.lineStatusLabel,
+          despatchQuantitiesKnown: fulfilment.despatchQuantitiesKnown,
+          limitation: fulfilment.limitation,
+        },
+      };
+    }),
+    fulfilmentTimeline: order.fulfilmentEvents.map((ev) => ({
+      id: ev.id,
+      kind: ev.kind,
+      occurredAt: ev.occurredAt.toISOString(),
+      summary: ev.summary,
+      lineQuantitiesKnown: ev.lineQuantitiesKnown,
+      limitation: ev.limitation,
     })),
   };
 }
@@ -1377,6 +1582,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     where: { id: orderId },
     include: {
       items: true,
+      fulfilmentEvents: { orderBy: { occurredAt: "asc" } },
       company: { select: { id: true, name: true } },
       autopartExportedBy: { select: { name: true, email: true } },
       autopartExportBatch: { select: { id: true, reference: true, filename: true, createdAt: true } },
@@ -1394,6 +1600,10 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
   }
 
   const base = toConfirmation(order, order.company.name);
+  const summary = summariseCustomerOrderFulfilment({
+    status: order.status,
+    items: order.items,
+  });
   return {
     ...base,
     status: order.status,
@@ -1417,28 +1627,192 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     deliveryMethodLabel: order.deliveryMethodLabel,
     basketId: order.basketId,
     hasBackorderItems: orderContainsBackorder(order.items),
-    items: order.items.map((item) => ({
-      id: item.id,
-      sku: item.sku,
-      name: item.name,
-      qty: item.qty,
-      customerUnitPrice: moneyToString(
-        parseMoney(String(item.customerUnitPrice)) ?? moneyZero(),
-        2,
-      ),
-      unitPrice: moneyToString(parseMoney(String(item.unitPrice)) ?? moneyZero(), 4),
-      lineTotal: moneyToString(parseMoney(String(item.lineTotal)) ?? moneyZero(), 2),
-      lineVat: moneyToString(parseMoney(String(item.lineVat)) ?? moneyZero(), 2),
-      lineGross: moneyToString(parseMoney(String(item.lineGross)) ?? moneyZero(), 2),
-      orderingMode: item.orderingMode,
-      caseQty: item.caseQty,
-      priceSource: item.priceSource,
-      vatRate: moneyToString(parseMoney(String(item.vatRate)) ?? moneyZero(), 2),
-      vatCode: item.vatCode,
-      availableQtyAtOrder: item.availableQtyAtOrder,
-      backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+    hasOutstandingBackorder: summary.hasOutstandingBackorder,
+    outstandingBackorderUnits: summary.outstandingBackorderUnits,
+    statusLabel: summary.orderStatusLabel,
+    statusBadge: summary.orderStatusBadge,
+    lineQuantitiesLimitation: summary.lineQuantitiesLimitation,
+    items: order.items.map((item) => {
+      const fulfilment = presentCustomerLineFulfilment({
+        qty: item.qty,
+        availableQtyAtOrder: item.availableQtyAtOrder,
+        backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+        despatchedQty: item.despatchedQty ?? 0,
+        orderPartDespatchedWithoutLineQty: order.status === "PARTIALLY_DESPATCHED",
+        orderFullyDespatched: order.status === "DISPATCHED" || order.status === "DELIVERED",
+      });
+      return {
+        id: item.id,
+        sku: item.sku,
+        name: item.name,
+        qty: item.qty,
+        customerUnitPrice: moneyToString(
+          parseMoney(String(item.customerUnitPrice)) ?? moneyZero(),
+          2,
+        ),
+        unitPrice: moneyToString(parseMoney(String(item.unitPrice)) ?? moneyZero(), 4),
+        lineTotal: moneyToString(parseMoney(String(item.lineTotal)) ?? moneyZero(), 2),
+        lineVat: moneyToString(parseMoney(String(item.lineVat)) ?? moneyZero(), 2),
+        lineGross: moneyToString(parseMoney(String(item.lineGross)) ?? moneyZero(), 2),
+        orderingMode: item.orderingMode,
+        caseQty: item.caseQty,
+        priceSource: item.priceSource,
+        vatRate: moneyToString(parseMoney(String(item.vatRate)) ?? moneyZero(), 2),
+        vatCode: item.vatCode,
+        availableQtyAtOrder: item.availableQtyAtOrder,
+        backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+        despatchedQty: item.despatchedQty ?? 0,
+        fulfilment: {
+          orderedQty: fulfilment.orderedQty,
+          allocatedAtOrder: fulfilment.allocatedAtOrder,
+          backorderedAtOrder: fulfilment.backorderedAtOrder,
+          despatchedQty: fulfilment.despatchedQty,
+          outstandingBackorderQty: fulfilment.outstandingBackorderQty,
+          lineStatusLabel: fulfilment.lineStatusLabel,
+          despatchQuantitiesKnown: fulfilment.despatchQuantitiesKnown,
+          limitation: fulfilment.limitation,
+        },
+      };
+    }),
+    fulfilmentTimeline: order.fulfilmentEvents.map((ev) => ({
+      id: ev.id,
+      kind: ev.kind,
+      occurredAt: ev.occurredAt.toISOString(),
+      summary: ev.summary,
+      lineQuantitiesKnown: ev.lineQuantitiesKnown,
+      limitation: ev.limitation,
     })),
   };
+}
+
+/**
+ * Line-level outstanding backorder operational view (Sales → Orders → Backorders).
+ */
+export async function listAdminBackorderLines(
+  userId: string,
+  raw?: {
+    q?: string;
+    stockNowAvailable?: boolean;
+    fullyBackordered?: boolean;
+    partBackordered?: boolean;
+  },
+): Promise<{ items: AdminBackorderLineRow[] }> {
+  const profile = await requireSystemPermission(userId, "orders.view");
+  const accessible = await getAccessibleCompanyIdsForSales(profile);
+  const companyFilter = accessible === "all" ? {} : { companyId: { in: accessible } };
+
+  const rows = await prisma.orderItem.findMany({
+    where: {
+      backorderQtyAtOrder: { gt: 0 },
+      order: {
+        ...companyFilter,
+        status: {
+          in: ["SUBMITTED", "CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "ON_HOLD"],
+        },
+        ...(raw?.q?.trim()
+          ? {
+              OR: [
+                { orderNumber: { contains: raw.q.trim(), mode: "insensitive" as const } },
+                { company: { name: { contains: raw.q.trim(), mode: "insensitive" as const } } },
+                { items: { some: { sku: { contains: raw.q.trim(), mode: "insensitive" as const } } } },
+              ],
+            }
+          : {}),
+      },
+    },
+    select: {
+      sku: true,
+      name: true,
+      qty: true,
+      availableQtyAtOrder: true,
+      backorderQtyAtOrder: true,
+      despatchedQty: true,
+      variantId: true,
+      order: {
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+          placedAt: true,
+          createdAt: true,
+          salesRepNameSnapshot: true,
+          company: { select: { id: true, name: true } },
+        },
+      },
+    },
+    orderBy: [{ order: { placedAt: "desc" } }],
+    take: 500,
+  });
+
+  const variantIds = [...new Set(rows.map((r) => r.variantId).filter(Boolean))] as string[];
+  const { AUTOPART_WAREHOUSE_CODE } = await import("@/domain/stock");
+  const inventories = variantIds.length
+    ? await prisma.inventory.findMany({
+        where: {
+          variantId: { in: variantIds },
+          warehouse: { code: AUTOPART_WAREHOUSE_CODE },
+        },
+        select: { variantId: true, qtyOnHand: true },
+      })
+    : [];
+  const availByVariant = new Map(inventories.map((i) => [i.variantId, i.qtyOnHand]));
+
+  const items: AdminBackorderLineRow[] = [];
+  for (const row of rows) {
+    const fulfilment = presentCustomerLineFulfilment({
+      qty: row.qty,
+      availableQtyAtOrder: row.availableQtyAtOrder,
+      backorderQtyAtOrder: row.backorderQtyAtOrder,
+      despatchedQty: row.despatchedQty,
+      orderPartDespatchedWithoutLineQty: row.order.status === "PARTIALLY_DESPATCHED",
+    });
+    const outstanding =
+      fulfilment.outstandingBackorderQty ??
+      (fulfilment.backorderedAtOrder > 0 ? fulfilment.backorderedAtOrder : 0);
+    if (outstanding <= 0 && row.order.status !== "PARTIALLY_DESPATCHED") continue;
+
+    const avail = row.variantId != null ? (availByVariant.get(row.variantId) ?? null) : null;
+    const stockNowAvailable = avail != null && avail > 0 && outstanding > 0;
+    const fullyBo =
+      (row.availableQtyAtOrder ?? 0) <= 0 && (row.backorderQtyAtOrder ?? 0) >= row.qty;
+    const partBo = !fullyBo && (row.backorderQtyAtOrder ?? 0) > 0;
+
+    if (raw?.stockNowAvailable && !stockNowAvailable) continue;
+    if (raw?.fullyBackordered && !fullyBo) continue;
+    if (raw?.partBackordered && !partBo) continue;
+
+    const summary = summariseCustomerOrderFulfilment({
+      status: row.order.status,
+      items: [
+        {
+          qty: row.qty,
+          availableQtyAtOrder: row.availableQtyAtOrder,
+          backorderQtyAtOrder: row.backorderQtyAtOrder,
+          despatchedQty: row.despatchedQty,
+        },
+      ],
+    });
+
+    items.push({
+      orderId: row.order.id,
+      orderNumber: row.order.orderNumber,
+      orderDate: (row.order.placedAt ?? row.order.createdAt).toISOString(),
+      status: row.order.status,
+      statusLabel: summary.orderStatusLabel,
+      companyId: row.order.company.id,
+      companyName: row.order.company.name,
+      salesRepName: row.order.salesRepNameSnapshot,
+      sku: row.sku,
+      productName: row.name,
+      orderedQty: row.qty,
+      availableQtyAtOrder: row.availableQtyAtOrder,
+      outstandingBackorderQty: outstanding || row.backorderQtyAtOrder,
+      currentAutopartAvail: avail,
+      stockNowAvailable,
+    });
+  }
+
+  return { items };
 }
 
 /**

@@ -4,10 +4,17 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate } from "@/lib/datetime";
-import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
+import { cn } from "@/lib/utils";
 import { listPortalOrdersFn } from "@/server/phase2/fns";
 
+type OrderFilter = "ALL" | "OPEN" | "BACKORDERS";
+
 export const Route = createFileRoute("/portal/orders/")({
+  validateSearch: (search: Record<string, unknown>): { filter?: OrderFilter } => {
+    const f = search["filter"];
+    if (f === "OPEN" || f === "BACKORDERS" || f === "ALL") return { filter: f };
+    return {};
+  },
   head: () => ({
     meta: [
       { title: "Order History — Automotive Brands Trade Portal" },
@@ -23,13 +30,15 @@ export const Route = createFileRoute("/portal/orders/")({
 type Row = Extract<Awaited<ReturnType<typeof listPortalOrdersFn>>, { ok: true }>["data"]["items"][number];
 
 function OrdersPage() {
+  const search = Route.useSearch();
+  const filter: OrderFilter = search.filter ?? "ALL";
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const result = await listPortalOrdersFn({ data: { page: 1, pageSize: 50 } });
+    const result = await listPortalOrdersFn({ data: { page: 1, pageSize: 50, filter } });
     setLoading(false);
     if (!result.ok) {
       setError(result.error);
@@ -37,7 +46,7 @@ function OrdersPage() {
     }
     setError(null);
     setRows(result.data.items);
-  }, []);
+  }, [filter]);
 
   useEffect(() => {
     void load();
@@ -47,17 +56,46 @@ function OrdersPage() {
     <div>
       <PanelHeader title="Orders" sub="Orders placed on your trade account" />
       <div className="p-4 sm:p-6">
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(
+            [
+              ["ALL", "All orders"],
+              ["OPEN", "Open orders"],
+              ["BACKORDERS", "Backorders"],
+            ] as const
+          ).map(([value, label]) => (
+            <Link
+              key={value}
+              to="/portal/orders"
+              search={value === "ALL" ? {} : { filter: value }}
+              className={cn(
+                "inline-flex h-9 items-center rounded-md border px-3 text-[11px] font-bold uppercase tracking-wide",
+                filter === value
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border hover:border-steel",
+              )}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
         {error ? <p className="mb-4 text-sm text-bad">{error}</p> : null}
         {loading ? <p className="text-[13px] text-steel">Loading orders…</p> : null}
         {!loading && rows.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
-            <p className="font-display text-lg font-semibold uppercase">No orders yet</p>
-            <p className="mt-2 text-[13px] text-steel">Place an order from your basket to see it here.</p>
+            <p className="font-display text-lg font-semibold uppercase">
+              {filter === "BACKORDERS" ? "No outstanding backorders" : "No orders yet"}
+            </p>
+            <p className="mt-2 text-[13px] text-steel">
+              {filter === "BACKORDERS"
+                ? "You have no orders with items still awaiting stock."
+                : "Place an order from your basket to see it here."}
+            </p>
             <Link
-              to={ROUTES.portalBasket}
+              to={filter === "BACKORDERS" ? ROUTES.portalOrders : ROUTES.portalBasket}
               className="mt-5 inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
             >
-              Go to basket
+              {filter === "BACKORDERS" ? "View all orders" : "Go to basket"}
             </Link>
           </div>
         ) : null}
@@ -86,9 +124,28 @@ function OrdersPage() {
                     </td>
                     <td className="px-3 py-2.5 text-steel">{o.poNumber || "—"}</td>
                     <td className="px-3 py-2.5">
-                      <StatusBadge tone={customerOrderStatusTone(o.status)}>
-                        {customerOrderStatusLabel(o.status)}
-                      </StatusBadge>
+                      <div className="flex flex-col gap-1">
+                        <StatusBadge
+                          tone={
+                            o.statusBadge === "BACKORDERED" ||
+                            o.statusBadge === "PART_BACKORDERED" ||
+                            o.statusBadge === "PART_DESPATCHED"
+                              ? "warn"
+                              : o.statusBadge === "DESPATCHED"
+                                ? "info"
+                                : o.statusBadge === "PROCESSING"
+                                  ? "brand"
+                                  : o.statusBadge === "RECEIVED"
+                                    ? "good"
+                                    : "neutral"
+                          }
+                        >
+                          {o.statusLabel}
+                        </StatusBadge>
+                        {o.backorderHint ? (
+                          <span className="text-[11px] text-cyan">{o.backorderHint}</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="num px-3 py-2.5 text-right font-semibold">£{o.grandTotal}</td>
                     <td className="px-3 py-2.5">

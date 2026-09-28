@@ -21,6 +21,7 @@ import {
   type AutopartExportOrderInput,
 } from "@/domain/autopart-order-export";
 import { moneyToString, parseMoney, moneyZero } from "@/domain/money";
+import { recordFulfilmentEvent } from "@/server/orders/fulfilment";
 
 export type AutopartExportBlockReason =
   | "CANCELLED"
@@ -385,6 +386,7 @@ export async function exportAutopartOrdersCsv(
     for (const order of uniqueOrders) {
       // Successful Autopart CSV handoff → customer-facing PROCESSING (CONFIRMED).
       // Do not overwrite later fulfilment states; do not touch reservations; no APC.
+      // Export is NOT proof of picking or despatch.
       const nextStatus =
         order.status === "SUBMITTED" ? ("CONFIRMED" as const) : undefined;
       await tx.order.update({
@@ -398,6 +400,15 @@ export async function exportAutopartOrdersCsv(
           ...(nextStatus ? { status: nextStatus } : {}),
         },
       });
+      if (nextStatus === "CONFIRMED") {
+        await recordFulfilmentEvent(tx, {
+          orderId: order.id,
+          kind: "EXPORTED_FOR_PROCESSING",
+          summary: "Sent for processing",
+          source: "AUTOPART_EXPORT",
+          occurredAt: now,
+        });
+      }
     }
 
     return { batch, filename, reference };
