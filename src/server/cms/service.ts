@@ -483,27 +483,17 @@ function sectionContentKey(config: unknown): string | null {
   return typeof key === "string" ? key : null;
 }
 
-function preserveMedia(
-  next: Record<string, unknown>,
-  previous: unknown,
-): Record<string, unknown> {
-  if (!previous || typeof previous !== "object") return next;
-  const prev = previous as Record<string, unknown>;
-  const prevMedia = prev["media"];
-  if (!prevMedia || typeof prevMedia !== "object") return next;
-  const nextMedia =
-    next["media"] && typeof next["media"] === "object"
-      ? (next["media"] as Record<string, unknown>)
-      : {};
-  return {
-    ...next,
-    media: { ...nextMedia, ...prevMedia },
-  };
-}
-
 /**
- * Refresh published/draft homepage seed when launch marketing content key drifts.
- * Preserves uploaded media refs so Website Builder imagery is not wiped.
+ * Soft homepage launch sync.
+ *
+ * IMPORTANT: Never replace Website Builder section configs with seed defaults.
+ * Bumping HOMEPAGE_LAUNCH_CONTENT_KEY must not wipe live/draft copy, brand cards,
+ * product SKUs, CTAs, or other editor fields. Media is likewise left untouched.
+ *
+ * Safe actions only:
+ * - stamp contentKey onto existing configs when it drifts
+ * - keep RESOURCES / NEWS disabled for launch
+ * - never overwrite seoTitle / metaDescription once a page already exists
  */
 async function refreshHomepageLaunchContent(
   prismaClient: typeof prisma,
@@ -515,8 +505,6 @@ async function refreshHomepageLaunchContent(
       id: true,
       publishedVersionId: true,
       draftVersionId: true,
-      seoTitle: true,
-      metaDescription: true,
     },
   });
   if (!page) return;
@@ -524,95 +512,36 @@ async function refreshHomepageLaunchContent(
   const versionIds = [
     ...new Set([page.publishedVersionId, page.draftVersionId].filter(Boolean) as string[]),
   ];
-  const defaults = defaultHomepageSections();
-  const defaultByType = new Map(defaults.map((section) => [section.type, section]));
-
-  const seoTitle = "Automotive Brands — Automotive products built for the trade";
-  const metaDescription =
-    "Trade supply of Power Maxed and Steel Seal to UK motor factors, workshops, retailers and distributors. Open a trade account for account pricing and case ordering.";
 
   for (const versionId of versionIds) {
     const existing = await prismaClient.cmsSection.findMany({
       where: { versionId },
       orderBy: { sortOrder: "asc" },
     });
-    const needsRefresh = existing.some((row) => {
-      if (!defaultByType.has(row.type as CmsSectionTypeKey)) return false;
-      return sectionContentKey(row.config) !== HOMEPAGE_LAUNCH_CONTENT_KEY;
-    });
-    if (!needsRefresh && existing.length >= defaults.length) {
-      // Still enforce RESOURCES/NEWS disabled for launch if present.
-      for (const row of existing) {
-        if ((row.type === "RESOURCES" || row.type === "NEWS") && row.enabled) {
-          await prismaClient.cmsSection.update({
-            where: { id: row.id },
-            data: { enabled: false },
-          });
-        }
+
+    for (const row of existing) {
+      const cfg =
+        row.config && typeof row.config === "object"
+          ? ({ ...(row.config as Record<string, unknown>) } as Record<string, unknown>)
+          : {};
+      const keyDrifted = sectionContentKey(cfg) !== HOMEPAGE_LAUNCH_CONTENT_KEY;
+      const shouldDisable =
+        (row.type === "RESOURCES" || row.type === "NEWS") && row.enabled;
+
+      if (!keyDrifted && !shouldDisable) continue;
+
+      if (keyDrifted) {
+        cfg["contentKey"] = HOMEPAGE_LAUNCH_CONTENT_KEY;
       }
-      continue;
-    }
 
-    const byType = new Map(existing.map((row) => [row.type, row]));
-    const merged: Array<{
-      id?: string;
-      type: CmsSectionType;
-      config: Prisma.InputJsonValue;
-      enabled: boolean;
-    }> = [];
-
-    for (const section of defaults) {
-      const current = byType.get(section.type as CmsSectionType);
-      const nextConfig = preserveMedia(section.config, current?.config);
-      merged.push({
-        ...(current ? { id: current.id } : {}),
-        type: section.type as CmsSectionType,
-        config: nextConfig as Prisma.InputJsonValue,
-        enabled: section.enabled !== false,
-      });
-      if (current) byType.delete(section.type as CmsSectionType);
-    }
-    for (const leftover of byType.values()) {
-      merged.push({
-        id: leftover.id,
-        type: leftover.type,
-        config: leftover.config as Prisma.InputJsonValue,
-        enabled: leftover.type === "RESOURCES" || leftover.type === "NEWS" ? false : leftover.enabled,
+      await prismaClient.cmsSection.update({
+        where: { id: row.id },
+        data: {
+          ...(keyDrifted ? { config: cfg as Prisma.InputJsonValue } : {}),
+          ...(shouldDisable ? { enabled: false } : {}),
+        },
       });
     }
-
-    await prismaClient.$transaction(async (tx) => {
-      for (const [index, row] of merged.entries()) {
-        if (row.id) {
-          await tx.cmsSection.update({
-            where: { id: row.id },
-            data: {
-              sortOrder: index,
-              config: row.config,
-              enabled: row.enabled,
-              type: row.type,
-            },
-          });
-        } else {
-          await tx.cmsSection.create({
-            data: {
-              versionId,
-              type: row.type,
-              config: row.config,
-              enabled: row.enabled,
-              sortOrder: index,
-            },
-          });
-        }
-      }
-    });
-  }
-
-  if (page.seoTitle !== seoTitle || page.metaDescription !== metaDescription) {
-    await prismaClient.cmsPage.update({
-      where: { id: pageId },
-      data: { seoTitle, metaDescription },
-    });
   }
 }
 

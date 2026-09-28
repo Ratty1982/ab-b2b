@@ -429,6 +429,84 @@ describe("CMS draft vs published", () => {
     expect(afterHeadline).toBe(draftHeadlineB);
   });
 
+  it("does not wipe saved homepage copy when bootstrap content key drifts", async () => {
+    const customHeadline = `Live editor headline ${Date.now()}`;
+    const customIntro = `Live brands intro ${Date.now()}`;
+    await saveCmsDraftSections(adminId, "home", [
+      {
+        type: "HERO",
+        enabled: true,
+        config: {
+          contentKey: "legacy-editor-content",
+          headline: customHeadline,
+          supporting: "Custom supporting copy must survive bootstrap",
+          ctaLabel: "Shop Products",
+          ctaHref: "/products",
+          eyebrow: "CUSTOM EYEBROW",
+        },
+      },
+      {
+        type: "FEATURED_BRANDS",
+        enabled: true,
+        config: {
+          contentKey: "legacy-editor-content",
+          heading: "CUSTOM BRANDS HEADING",
+          intro: customIntro,
+          brandSlugs: ["steel-seal", "power-maxed"],
+          brandCards: [
+            {
+              slug: "steel-seal",
+              heading: "Steel Seal",
+              description: "Custom Steel Seal description",
+              href: "/brands/steel-seal",
+              enabled: true,
+            },
+            {
+              slug: "power-maxed",
+              heading: "Power Maxed",
+              description: "Custom Power Maxed description",
+              href: "/brands/power-maxed",
+              enabled: true,
+            },
+          ],
+          displayCount: 2,
+        },
+      },
+      {
+        type: "TRADE_CTA",
+        enabled: true,
+        config: {
+          contentKey: "legacy-editor-content",
+          headline: "Custom trade CTA",
+          ctaLabel: "Open a Trade Account",
+          ctaHref: "/register",
+        },
+      },
+    ]);
+    await publishCmsPage(adminId, "home", "Preserve custom homepage before content-key bootstrap");
+
+    await bootstrapHomepageCms(prisma);
+
+    const published = await getPublishedHomepage();
+    const hero = published?.sections.find((s) => s.type === "HERO");
+    const brands = published?.sections.find((s) => s.type === "FEATURED_BRANDS");
+    const heroCfg = (hero?.config ?? {}) as Record<string, unknown>;
+    const brandsCfg = (brands?.config ?? {}) as Record<string, unknown>;
+
+    expect(heroCfg["headline"]).toBe(customHeadline);
+    expect(heroCfg["eyebrow"]).toBe("CUSTOM EYEBROW");
+    expect(heroCfg["supporting"]).toBe("Custom supporting copy must survive bootstrap");
+    expect(brandsCfg["heading"]).toBe("CUSTOM BRANDS HEADING");
+    expect(brandsCfg["intro"]).toBe(customIntro);
+    expect(brandsCfg["brandCards"]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ slug: "steel-seal", description: "Custom Steel Seal description" }),
+      ]),
+    );
+    // Soft sync may stamp the launch content key, but must not reset copy.
+    expect(heroCfg["contentKey"]).toBeTruthy();
+  });
+
   it("saves and publishes editor-shaped homepage sections including string counts", async () => {
     const headline = `Editor publish ${Date.now()}`;
     await saveCmsDraftSections(adminId, "home", [
