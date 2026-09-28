@@ -1,5 +1,5 @@
 /**
- * Operations → Sales Team — customer-facing SalesRep profile administration.
+ * Operations → Sales Team — production SalesRep management.
  * Does not manage User authentication (login, roles, passwords).
  */
 import { ZodError } from "zod";
@@ -10,7 +10,10 @@ import { hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   defaultSalesRepJobTitle,
+  salesRepAssignCompanySchema,
+  salesRepCreateSchema,
   salesRepProfileUpdateSchema,
+  salesRepUnassignCompanySchema,
   telHrefFromPhone,
 } from "@/domain/sales-rep-profile";
 import {
@@ -40,6 +43,18 @@ async function requireSalesTeamEdit(actorUserId: string) {
   return requireSystemPermission(actorUserId, "users.manage");
 }
 
+function parseOrThrow<T>(schema: { parse: (raw: unknown) => T }, raw: unknown): T {
+  try {
+    return schema.parse(raw);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      const first = error.issues[0];
+      throw new AuthError(first?.message || "Invalid input", "VALIDATION", 400);
+    }
+    throw error;
+  }
+}
+
 export type SalesRepAdminListItem = {
   id: string;
   code: string | null;
@@ -53,10 +68,29 @@ export type SalesRepAdminListItem = {
   resolvedName: string;
   resolvedJobTitle: string;
   resolvedEmail: string | null;
-  user: { id: string; name: string | null; email: string; status: string };
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+    status: string;
+    roleLabels: string[];
+  };
   photoSrc: string | null;
+  /** Active companies with a CompanyAssignment to this SalesRep. */
+  customerCount: number;
   assignmentCount: number;
+  openCallbackTasks: number;
+  openQuotes: number;
   linkedTeamMember: { id: string; isPublic: boolean } | null;
+};
+
+export type AssignedCompanyRow = {
+  assignmentId: string;
+  companyId: string;
+  companyName: string;
+  accountNumber: string | null;
+  status: string;
+  isPrimary: boolean;
 };
 
 export type SalesRepAdminDetail = SalesRepAdminListItem & {
@@ -66,9 +100,48 @@ export type SalesRepAdminDetail = SalesRepAdminListItem & {
   photoFocalY: number;
   emailFallbackHint: string;
   customerPreview: AccountManagerPublic | null;
+  assignments: AssignedCompanyRow[];
 };
 
-function mapListItem(rep: {
+export type LinkableUserOption = {
+  id: string;
+  name: string | null;
+  email: string;
+  status: string;
+  roleLabels: string[];
+};
+
+export type CompanySearchOption = {
+  id: string;
+  name: string;
+  accountNumber: string | null;
+  status: string;
+  primarySalesRepId: string | null;
+  primarySalesRepName: string | null;
+};
+
+const salesRepListInclude = {
+  user: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      status: true,
+      userRoles: { select: { role: { select: { key: true, name: true } } } },
+    },
+  },
+  photoMedia: { select: { id: true } },
+  publicTeamProfile: { select: { id: true, isPublic: true } },
+  assignments: {
+    select: {
+      id: true,
+      isPrimary: true,
+      company: { select: { id: true, name: true, accountNumber: true, status: true } },
+    },
+  },
+} as const;
+
+type RepListRow = {
   id: string;
   code: string | null;
   active: boolean;
@@ -79,16 +152,36 @@ function mapListItem(rep: {
   phone: string | null;
   mobile: string | null;
   photoMediaId: string | null;
-  user: { id: string; name: string | null; email: string; status: string };
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+    status: string;
+    userRoles: Array<{ role: { key: string; name: string } }>;
+  };
   photoMedia: { id: string } | null;
   publicTeamProfile: { id: string; isPublic: boolean } | null;
-  _count: { assignments: number };
-}): SalesRepAdminListItem {
+  assignments: Array<{
+    id: string;
+    isPrimary: boolean;
+    company: { id: string; name: string; accountNumber: string | null; status: string };
+  }>;
+};
+
+function roleLabels(user: RepListRow["user"]): string[] {
+  return user.userRoles.map((r) => r.role.name).filter(Boolean);
+}
+
+function mapListItem(
+  rep: RepListRow,
+  counts: { openCallbackTasks: number; openQuotes: number },
+): SalesRepAdminListItem {
   const resolvedName = rep.displayName?.trim() || rep.user.name?.trim() || rep.user.email;
   const resolvedEmail =
     rep.customerContactEnabled === false
       ? null
       : rep.businessEmail?.trim().toLowerCase() || rep.user.email.trim().toLowerCase();
+  const activeAssignments = rep.assignments.filter((a) => a.company.status === "ACTIVE");
   return {
     id: rep.id,
     code: rep.code,
@@ -102,27 +195,80 @@ function mapListItem(rep: {
     resolvedName,
     resolvedJobTitle: defaultSalesRepJobTitle(rep.jobTitle),
     resolvedEmail,
-    user: rep.user,
+    user: {
+      id: rep.user.id,
+      name: rep.user.name,
+      email: rep.user.email,
+      status: rep.user.status,
+      roleLabels: roleLabels(rep.user),
+    },
     photoSrc: rep.photoMedia ? cmsMediaPublicPath(rep.photoMedia.id) : null,
-    assignmentCount: rep._count.assignments,
+    customerCount: activeAssignments.length,
+    assignmentCount: rep.assignments.length,
+    openCallbackTasks: counts.openCallbackTasks,
+    openQuotes: counts.openQuotes,
     linkedTeamMember: rep.publicTeamProfile
       ? { id: rep.publicTeamProfile.id, isPublic: rep.publicTeamProfile.isPublic }
       : null,
   };
 }
 
+async function loadOperationalCounts(
+  reps: Array<{ id: string; userId: string }>,
+): Promise<Map<string, { openCallbackTasks: number; openQuotes: number }>> {
+  const map = new Map<string, { openCallbackTasks: number; openQuotes: number }>();
+  for (const r of reps) map.set(r.id, { openCallbackTasks: 0, openQuotes: 0 });
+  if (reps.length === 0) return map;
+
+  const userIds = reps.map((r) => r.userId);
+  const repIds = reps.map((r) => r.id);
+
+  const [callbackGroups, quoteGroups] = await Promise.all([
+    prisma.task.groupBy({
+      by: ["assigneeId"],
+      where: {
+        assigneeId: { in: userIds },
+        status: "OPEN",
+        title: "Call customer",
+      },
+      _count: { _all: true },
+    }),
+    prisma.quote.groupBy({
+      by: ["salesRepIdSnapshot"],
+      where: {
+        salesRepIdSnapshot: { in: repIds },
+        status: { in: ["DRAFT", "SENT", "VIEWED"] },
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const userToRep = new Map(reps.map((r) => [r.userId, r.id]));
+  for (const row of callbackGroups) {
+    if (!row.assigneeId) continue;
+    const repId = userToRep.get(row.assigneeId);
+    if (!repId) continue;
+    const cur = map.get(repId)!;
+    cur.openCallbackTasks = row._count._all;
+  }
+  for (const row of quoteGroups) {
+    if (!row.salesRepIdSnapshot) continue;
+    const cur = map.get(row.salesRepIdSnapshot);
+    if (!cur) continue;
+    cur.openQuotes = row._count._all;
+  }
+  return map;
+}
+
 export async function listSalesRepProfiles(actorUserId: string): Promise<SalesRepAdminListItem[]> {
   await requireSalesTeamView(actorUserId);
   const rows = await prisma.salesRep.findMany({
-    orderBy: [{ active: "desc" }, { code: "asc" }],
-    include: {
-      user: { select: { id: true, name: true, email: true, status: true } },
-      photoMedia: { select: { id: true } },
-      publicTeamProfile: { select: { id: true, isPublic: true } },
-      _count: { select: { assignments: true } },
-    },
+    include: salesRepListInclude,
   });
-  return rows.map(mapListItem);
+  const counts = await loadOperationalCounts(rows.map((r) => ({ id: r.id, userId: r.userId })));
+  const mapped = rows.map((rep) => mapListItem(rep, counts.get(rep.id) ?? { openCallbackTasks: 0, openQuotes: 0 }));
+  mapped.sort((a, b) => a.resolvedName.localeCompare(b.resolvedName, "en", { sensitivity: "base" }));
+  return mapped;
 }
 
 export async function getSalesRepProfile(
@@ -132,17 +278,24 @@ export async function getSalesRepProfile(
   await requireSalesTeamView(actorUserId);
   const rep = await prisma.salesRep.findUnique({
     where: { id: salesRepId },
-    include: {
-      user: { select: { id: true, name: true, email: true, status: true } },
-      photoMedia: { select: { id: true } },
-      publicTeamProfile: { select: { id: true, isPublic: true } },
-      _count: { select: { assignments: true } },
-    },
+    include: salesRepListInclude,
   });
   if (!rep) throw new AuthError("Sales representative not found", "NOT_FOUND", 404);
 
-  const base = mapListItem(rep);
+  const counts = await loadOperationalCounts([{ id: rep.id, userId: rep.userId }]);
+  const base = mapListItem(rep, counts.get(rep.id) ?? { openCallbackTasks: 0, openQuotes: 0 });
   const customerPreview = await resolveAccountManagerForSalesRep(rep.id);
+
+  const assignments: AssignedCompanyRow[] = [...rep.assignments]
+    .sort((a, b) => a.company.name.localeCompare(b.company.name, "en", { sensitivity: "base" }))
+    .map((a) => ({
+      assignmentId: a.id,
+      companyId: a.company.id,
+      companyName: a.company.name,
+      accountNumber: a.company.accountNumber,
+      status: a.company.status,
+      isPrimary: a.isPrimary,
+    }));
 
   return {
     ...base,
@@ -152,22 +305,113 @@ export async function getSalesRepProfile(
     photoFocalY: rep.photoFocalY,
     emailFallbackHint: `Falls back to login email ${rep.user.email} when business email is blank and customer contact is enabled.`,
     customerPreview,
+    assignments,
   };
+}
+
+export async function listLinkableUsersForSalesRep(
+  actorUserId: string,
+): Promise<LinkableUserOption[]> {
+  await requireSalesTeamEdit(actorUserId);
+  const rows = await prisma.user.findMany({
+    where: {
+      actorType: "INTERNAL",
+      salesRep: null,
+      status: { in: ["ACTIVE", "INVITED"] },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      status: true,
+      userRoles: { select: { role: { select: { name: true } } } },
+    },
+    orderBy: [{ name: "asc" }, { email: "asc" }],
+    take: 500,
+  });
+  return rows.map((u) => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    status: u.status,
+    roleLabels: u.userRoles.map((r) => r.role.name),
+  }));
+}
+
+export async function createSalesRep(actorUserId: string, raw: unknown): Promise<SalesRepAdminDetail> {
+  await requireSalesTeamEdit(actorUserId);
+  const input = parseOrThrow(salesRepCreateSchema, raw);
+
+  const user = await prisma.user.findUnique({
+    where: { id: input.userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      actorType: true,
+      status: true,
+      salesRep: { select: { id: true } },
+    },
+  });
+  if (!user || user.actorType !== "INTERNAL") {
+    throw new AuthError("Select an internal staff user", "VALIDATION", 400);
+  }
+  if (user.salesRep) {
+    throw new AuthError("That user already has a SalesRep profile", "VALIDATION", 400);
+  }
+
+  if (input.photoMediaId) {
+    const media = await prisma.cmsMedia.findUnique({
+      where: { id: input.photoMediaId },
+      select: { id: true },
+    });
+    if (!media) throw new AuthError("Profile photo not found", "VALIDATION", 400);
+  }
+
+  const codeBase =
+    user.email.split("@")[0]?.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12).toUpperCase() || "REP";
+  const code = `${codeBase}-${user.id.slice(-4).toUpperCase()}`;
+
+  const created = await prisma.salesRep.create({
+    data: {
+      userId: user.id,
+      code,
+      active: input.active ?? true,
+      customerContactEnabled: input.customerContactEnabled ?? true,
+      displayName: input.displayName ?? null,
+      jobTitle: input.jobTitle ?? null,
+      businessEmail: input.businessEmail ?? null,
+      phone: input.phone ?? null,
+      mobile: input.mobile ?? null,
+      photoMediaId: input.photoMediaId ?? null,
+      photoAlt: input.photoAlt ?? null,
+    },
+  });
+
+  await recordAuditEvent({
+    action: "sales_rep.created",
+    entityType: "SalesRep",
+    entityId: created.id,
+    actorUserId,
+    metadata: {
+      userId: user.id,
+      displayName: created.displayName,
+      jobTitle: created.jobTitle,
+      businessEmail: created.businessEmail,
+      phone: created.phone,
+      mobile: created.mobile,
+      customerContactEnabled: created.customerContactEnabled,
+      active: created.active,
+      photoMediaId: created.photoMediaId,
+    },
+  });
+
+  return getSalesRepProfile(actorUserId, created.id);
 }
 
 export async function updateSalesRepProfile(actorUserId: string, raw: unknown) {
   await requireSalesTeamEdit(actorUserId);
-
-  let input;
-  try {
-    input = salesRepProfileUpdateSchema.parse(raw);
-  } catch (error) {
-    if (error instanceof ZodError) {
-      const first = error.issues[0];
-      throw new AuthError(first?.message || "Invalid profile", "VALIDATION", 400);
-    }
-    throw error;
-  }
+  const input = parseOrThrow(salesRepProfileUpdateSchema, raw);
 
   const existing = await prisma.salesRep.findUnique({
     where: { id: input.id },
@@ -253,6 +497,213 @@ export async function updateSalesRepProfile(actorUserId: string, raw: unknown) {
   }
 
   return getSalesRepProfile(actorUserId, updated.id);
+}
+
+export async function searchCompaniesForSalesAssignment(
+  actorUserId: string,
+  q: string,
+): Promise<CompanySearchOption[]> {
+  await requireSalesTeamEdit(actorUserId);
+  const term = q.trim();
+  if (term.length < 2) return [];
+
+  const rows = await prisma.company.findMany({
+    where: {
+      status: { not: "CLOSED" },
+      OR: [
+        { name: { contains: term, mode: "insensitive" } },
+        { tradingName: { contains: term, mode: "insensitive" } },
+        { accountNumber: { contains: term, mode: "insensitive" } },
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      accountNumber: true,
+      status: true,
+      assignments: {
+        where: { isPrimary: true },
+        take: 1,
+        select: {
+          salesRepId: true,
+          salesRep: {
+            select: {
+              displayName: true,
+              user: { select: { name: true, email: true } },
+            },
+          },
+        },
+      },
+    },
+    orderBy: { name: "asc" },
+    take: 25,
+  });
+
+  return rows.map((c) => {
+    const primary = c.assignments[0];
+    const repName =
+      primary?.salesRep.displayName?.trim() ||
+      primary?.salesRep.user.name?.trim() ||
+      primary?.salesRep.user.email ||
+      null;
+    return {
+      id: c.id,
+      name: c.name,
+      accountNumber: c.accountNumber,
+      status: c.status,
+      primarySalesRepId: primary?.salesRepId ?? null,
+      primarySalesRepName: repName,
+    };
+  });
+}
+
+export async function assignCompanyToSalesRep(actorUserId: string, raw: unknown) {
+  await requireSalesTeamEdit(actorUserId);
+  const input = parseOrThrow(salesRepAssignCompanySchema, raw);
+
+  const [rep, company] = await Promise.all([
+    prisma.salesRep.findUnique({
+      where: { id: input.salesRepId },
+      select: {
+        id: true,
+        displayName: true,
+        user: { select: { name: true, email: true } },
+      },
+    }),
+    prisma.company.findUnique({
+      where: { id: input.companyId },
+      select: { id: true, name: true, status: true },
+    }),
+  ]);
+  if (!rep) throw new AuthError("Sales representative not found", "NOT_FOUND", 404);
+  if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
+
+  const existingPrimary = await prisma.companyAssignment.findFirst({
+    where: { companyId: company.id, isPrimary: true },
+    include: {
+      salesRep: {
+        select: {
+          id: true,
+          displayName: true,
+          user: { select: { name: true, email: true } },
+        },
+      },
+    },
+  });
+
+  const repLabel = rep.displayName?.trim() || rep.user.name?.trim() || rep.user.email;
+
+  if (existingPrimary?.salesRepId === rep.id) {
+    return getSalesRepProfile(actorUserId, rep.id);
+  }
+
+  if (existingPrimary) {
+    await prisma.$transaction([
+      prisma.companyAssignment.delete({ where: { id: existingPrimary.id } }),
+      prisma.companyAssignment.create({
+        data: { companyId: company.id, salesRepId: rep.id, isPrimary: true },
+      }),
+    ]);
+    const fromLabel =
+      existingPrimary.salesRep.displayName?.trim() ||
+      existingPrimary.salesRep.user.name?.trim() ||
+      existingPrimary.salesRep.user.email;
+    await recordAuditEvent({
+      action: "sales_rep.company_reassigned",
+      entityType: "CompanyAssignment",
+      entityId: company.id,
+      actorUserId,
+      companyId: company.id,
+      metadata: {
+        companyId: company.id,
+        companyName: company.name,
+        fromSalesRepId: existingPrimary.salesRepId,
+        fromSalesRepName: fromLabel,
+        toSalesRepId: rep.id,
+        toSalesRepName: repLabel,
+      },
+    });
+  } else {
+    const existingPair = await prisma.companyAssignment.findUnique({
+      where: {
+        companyId_salesRepId: { companyId: company.id, salesRepId: rep.id },
+      },
+    });
+    if (existingPair) {
+      await prisma.companyAssignment.update({
+        where: { id: existingPair.id },
+        data: { isPrimary: true },
+      });
+    } else {
+      await prisma.companyAssignment.create({
+        data: { companyId: company.id, salesRepId: rep.id, isPrimary: true },
+      });
+    }
+    await recordAuditEvent({
+      action: "sales_rep.company_assigned",
+      entityType: "CompanyAssignment",
+      entityId: company.id,
+      actorUserId,
+      companyId: company.id,
+      metadata: {
+        companyId: company.id,
+        companyName: company.name,
+        salesRepId: rep.id,
+        salesRepName: repLabel,
+      },
+    });
+  }
+
+  return getSalesRepProfile(actorUserId, rep.id);
+}
+
+export async function unassignCompanyFromSalesRep(actorUserId: string, raw: unknown) {
+  await requireSalesTeamEdit(actorUserId);
+  const input = parseOrThrow(salesRepUnassignCompanySchema, raw);
+
+  const assignment = await prisma.companyAssignment.findUnique({
+    where: {
+      companyId_salesRepId: {
+        companyId: input.companyId,
+        salesRepId: input.salesRepId,
+      },
+    },
+    include: {
+      company: { select: { id: true, name: true } },
+      salesRep: {
+        select: {
+          id: true,
+          displayName: true,
+          user: { select: { name: true, email: true } },
+        },
+      },
+    },
+  });
+  if (!assignment) throw new AuthError("Assignment not found", "NOT_FOUND", 404);
+
+  await prisma.companyAssignment.delete({ where: { id: assignment.id } });
+
+  const repLabel =
+    assignment.salesRep.displayName?.trim() ||
+    assignment.salesRep.user.name?.trim() ||
+    assignment.salesRep.user.email;
+
+  await recordAuditEvent({
+    action: "sales_rep.company_unassigned",
+    entityType: "CompanyAssignment",
+    entityId: assignment.company.id,
+    actorUserId,
+    companyId: assignment.company.id,
+    metadata: {
+      companyId: assignment.company.id,
+      companyName: assignment.company.name,
+      salesRepId: assignment.salesRep.id,
+      salesRepName: repLabel,
+      wasPrimary: assignment.isPrimary,
+    },
+  });
+
+  return getSalesRepProfile(actorUserId, assignment.salesRep.id);
 }
 
 /** Tiny helper exported for UI tests / previews. */

@@ -121,7 +121,7 @@ async function main() {
 
   const salesRep = await createCredentialUser({
     email: "sales.rep@example.invalid",
-    name: "James Whitfield",
+    name: "Luke Andrews",
     password,
     actorType: "INTERNAL",
     roleKeys: ["SALES_REPRESENTATIVE"],

@@ -75,7 +75,64 @@ export const salesRepProfileUpdateSchema = z.object({
 
 export type SalesRepProfileUpdateInput = z.infer<typeof salesRepProfileUpdateSchema>;
 
+/** Create SalesRep by linking an existing User (no login credentials invented). */
+export const salesRepCreateSchema = z.object({
+  userId: z.string().min(1),
+  displayName: optionalTrimmedString(120).nullish(),
+  jobTitle: optionalTrimmedString(120).nullish(),
+  businessEmail: optionalEmail.nullish(),
+  phone: optionalPhone.nullish(),
+  mobile: optionalPhone.nullish(),
+  customerContactEnabled: z.boolean().default(true),
+  active: z.boolean().default(true),
+  photoMediaId: optionalTrimmedString(64).nullish(),
+  photoAlt: optionalTrimmedString(200).nullish(),
+});
+
+export type SalesRepCreateInput = z.infer<typeof salesRepCreateSchema>;
+
+export const salesRepAssignCompanySchema = z.object({
+  salesRepId: z.string().min(1),
+  companyId: z.string().min(1),
+});
+
+export const salesRepUnassignCompanySchema = z.object({
+  salesRepId: z.string().min(1),
+  companyId: z.string().min(1),
+});
+
 export function defaultSalesRepJobTitle(jobTitle: string | null | undefined): string {
   const t = jobTitle?.trim();
   return t || "Account Manager";
 }
+
+/**
+ * Prototype Sales Manager Dashboard strings that must never be hard-coded into
+ * the production Sales Team route or fabricated into its API payloads.
+ */
+export const PROTOTYPE_SALES_TEAM_STRINGS = [
+  "James Whitfield",
+  "Priya Nayar",
+  "Dee Okafor",
+  "Mark Ellison",
+  "Mersey Motor Factors",
+  "Caldwell Commercials",
+  "Penrose Autoparts",
+  "OPP-2043",
+  "OPP-2041",
+  "OPP-2046",
+  "£244,250",
+  "£1,984,600",
+] as const;
+
+/** Fabricated companies / metrics / opportunity IDs — never legitimate SalesRep list output. */
+export const PROTOTYPE_SALES_TEAM_FABRICATIONS = [
+  "Mersey Motor Factors",
+  "Caldwell Commercials",
+  "Penrose Autoparts",
+  "OPP-2043",
+  "OPP-2041",
+  "OPP-2046",
+  "£244,250",
+  "£1,984,600",
+] as const;

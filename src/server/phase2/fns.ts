@@ -224,6 +224,67 @@ export const updateSalesRepProfileFn = createServerFn({ method: "POST" })
     }
   });
 
+export const createSalesRepFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/sales/service");
+      return { ok: true as const, data: await sales.createSalesRep(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listLinkableUsersForSalesRepFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const sales = await import("@/server/sales/service");
+    return { ok: true as const, data: await sales.listLinkableUsersForSalesRep(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const searchCompaniesForSalesAssignmentFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/sales/service");
+      return {
+        ok: true as const,
+        data: await sales.searchCompaniesForSalesAssignment(userId, data?.q ?? ""),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const assignCompanyToSalesRepFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/sales/service");
+      return { ok: true as const, data: await sales.assignCompanyToSalesRep(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const unassignCompanyFromSalesRepFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/sales/service");
+      return { ok: true as const, data: await sales.unassignCompanyFromSalesRep(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPriceListsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

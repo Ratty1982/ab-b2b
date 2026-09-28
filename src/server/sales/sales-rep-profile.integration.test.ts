@@ -7,12 +7,22 @@ import {
   resolveSalesRepAssignmentRoute,
 } from "@/server/sales/account-manager";
 import {
+  assignCompanyToSalesRep,
+  createSalesRep,
   getSalesRepProfile,
+  listLinkableUsersForSalesRep,
   listSalesRepProfiles,
+  unassignCompanyFromSalesRep,
   updateSalesRepProfile,
 } from "@/server/sales/service";
 import { AuthError } from "@/server/rbac/guards";
 import { getPortalDashboard } from "@/server/portal/dashboard";
+import {
+  PROTOTYPE_SALES_TEAM_FABRICATIONS,
+  PROTOTYPE_SALES_TEAM_STRINGS,
+} from "@/domain/sales-rep-profile";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const prisma = new PrismaClient();
 const suffix = Date.now().toString(36);
@@ -258,5 +268,160 @@ describe("account manager resolver with SalesRep profile", () => {
     expect(dash.accountManager?.mobileTelHref).toBe("tel:+447123456789");
     expect(JSON.stringify(dash.accountManager)).not.toContain(salesRepId);
     expect(JSON.stringify(dash.accountManager)).not.toContain("customerContactEnabled");
+  });
+
+  it("preserves existing CompanyAssignment → Luke Andrews account manager", async () => {
+    const am = await resolveAccountManagerForCompany(companyId);
+    expect(am?.name).toBe("Luke Andrews");
+    expect(am?.jobTitle).toBe("Account Manager");
+    const detail = await getSalesRepProfile(adminId, salesRepId);
+    expect(detail.assignments.some((a) => a.companyId === companyId && a.isPrimary)).toBe(true);
+    expect(detail.customerCount).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("SalesRep create and company assignment", () => {
+  let secondUserId = "";
+  let secondRepId = "";
+  let otherCompanyId = "";
+
+  beforeAll(async () => {
+    secondUserId = await ensureUser(
+      `sr.second.${suffix}@automotivebrands.co.uk`,
+      ["SALES_REPRESENTATIVE"],
+      "INTERNAL",
+      "Second Rep",
+    );
+    // ensureUser may have triggered role create without SalesRep depending on path —
+    // remove any auto SalesRep so createSalesRep can link cleanly.
+    await prisma.salesRep.deleteMany({ where: { userId: secondUserId } });
+
+    const other = await prisma.company.create({
+      data: { name: `SR Other Co ${suffix}`, status: "ACTIVE" },
+    });
+    otherCompanyId = other.id;
+  });
+
+  it("lists linkable users and creates a SalesRep linked to User", async () => {
+    const linkable = await listLinkableUsersForSalesRep(adminId);
+    expect(linkable.some((u) => u.id === secondUserId)).toBe(true);
+    expect(linkable.some((u) => u.id === salesRepUserId)).toBe(false);
+
+    const created = await createSalesRep(adminId, {
+      userId: secondUserId,
+      displayName: "Second Rep",
+      jobTitle: "Account Manager",
+      businessEmail: `second.${suffix}@automotivebrands.co.uk`,
+      phone: "0161 123 4567",
+      mobile: "+44 7700 900123",
+      customerContactEnabled: true,
+      active: true,
+    });
+    secondRepId = created.id;
+    expect(created.user.id).toBe(secondUserId);
+    expect(created.phone).toBe("0161 123 4567");
+    expect(created.mobile).toBe("+44 7700 900123");
+    expect(created.customerCount).toBe(0);
+
+    const audit = await prisma.auditEvent.findFirst({
+      where: { action: "sales_rep.created", entityId: secondRepId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit?.actorUserId).toBe(adminId);
+
+    await expect(
+      createSalesRep(adminId, { userId: secondUserId, customerContactEnabled: true, active: true }),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("assigns, reassigns and unassigns companies with audit", async () => {
+    const assigned = await assignCompanyToSalesRep(adminId, {
+      salesRepId: secondRepId,
+      companyId: otherCompanyId,
+    });
+    expect(assigned.assignments.some((a) => a.companyId === otherCompanyId)).toBe(true);
+    expect(assigned.customerCount).toBe(1);
+
+    const reassigned = await assignCompanyToSalesRep(adminId, {
+      salesRepId: salesRepId,
+      companyId: otherCompanyId,
+    });
+    expect(reassigned.assignments.some((a) => a.companyId === otherCompanyId)).toBe(true);
+
+    const secondAfter = await getSalesRepProfile(adminId, secondRepId);
+    expect(secondAfter.assignments.some((a) => a.companyId === otherCompanyId)).toBe(false);
+
+    const reaudit = await prisma.auditEvent.findFirst({
+      where: { action: "sales_rep.company_reassigned", companyId: otherCompanyId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(reaudit?.actorUserId).toBe(adminId);
+
+    await unassignCompanyFromSalesRep(adminId, {
+      salesRepId: salesRepId,
+      companyId: otherCompanyId,
+    });
+    const afterUnassign = await getSalesRepProfile(adminId, salesRepId);
+    expect(afterUnassign.assignments.some((a) => a.companyId === otherCompanyId)).toBe(false);
+
+    // Original Luke assignment must still be intact
+    const luke = await getSalesRepProfile(adminId, salesRepId);
+    expect(luke.assignments.some((a) => a.companyId === companyId)).toBe(true);
+    const am = await resolveAccountManagerForCompany(companyId);
+    expect(am?.name).toBe("Luke Andrews");
+  });
+
+  it("blocks buyers from create/assign and sales managers from edit mutations", async () => {
+    await expect(
+      createSalesRep(buyerId, { userId: secondUserId, customerContactEnabled: true, active: true }),
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      assignCompanyToSalesRep(salesViewerId, {
+        salesRepId: salesRepId,
+        companyId: otherCompanyId,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+});
+
+describe("Sales Team production output has no prototype demo data", () => {
+  it("list/detail API payloads never include fabricated demo metrics or companies", async () => {
+    // Ensure legacy seed demo name is not left as James Whitfield on the shared login.
+    await prisma.user.updateMany({
+      where: { email: "sales.rep@example.invalid", name: "James Whitfield" },
+      data: { name: "Luke Andrews" },
+    });
+
+    const list = await listSalesRepProfiles(adminId);
+    const detail = await getSalesRepProfile(adminId, salesRepId);
+    const blob = JSON.stringify({ list, detail });
+    for (const banned of PROTOTYPE_SALES_TEAM_FABRICATIONS) {
+      expect(blob).not.toContain(banned);
+    }
+    // List rows are operational SalesRep records — not the old salesTeam metric shape.
+    for (const row of list) {
+      expect(row).not.toHaveProperty("mtd");
+      expect(row).not.toHaveProperty("target");
+      expect(row).not.toHaveProperty("pipeline");
+      expect(row).not.toHaveProperty("conversion");
+      expect(typeof row.customerCount).toBe("number");
+    }
+    expect(list.some((r) => r.id === salesRepId)).toBe(true);
+    expect(detail.assignments.some((a) => a.companyId === companyId)).toBe(true);
+  });
+
+  it("Sales Team route source does not import demo crm-data or hard-code prototype reps", () => {
+    const source = readFileSync(join(process.cwd(), "src/routes/crm.manager.tsx"), "utf8");
+    expect(source).not.toContain("crm-data");
+    expect(source).not.toContain("salesTeam");
+    expect(source).not.toContain("managerTotals");
+    expect(source).not.toContain("monthlySales");
+    expect(source).not.toContain("salesByBrand");
+    for (const banned of PROTOTYPE_SALES_TEAM_STRINGS) {
+      expect(source).not.toContain(banned);
+    }
+    expect(source).toContain("listSalesRepProfilesFn");
+    expect(source).toContain("Add sales representative");
+    expect(source).toContain("No sales representatives");
   });
 });

@@ -318,6 +318,10 @@ export const accountInsights: Insight[] = [
   },
 ];
 
+/**
+ * @deprecated Prototype filter options for the CRM opportunities page only.
+ * Operations → Sales Team must never render this. Production reps come from SalesRep.
+ */
 export const salesTeam = [
   { name: "James Whitfield", region: "Midlands", mtd: 68420, target: 95000, pipeline: 84640, quotes: 6, conversion: 41, accounts: 62 },
   { name: "Priya Nayar", region: "North West", mtd: 81250, target: 90000, pipeline: 61300, quotes: 9, conversion: 48, accounts: 71 },
