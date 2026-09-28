@@ -134,6 +134,8 @@ export type AdminDashboardPayload = {
     readyForExport: { count: number; items: AdminDashboardOrderRow[] };
     processing: { count: number; items: AdminDashboardOrderRow[] };
     exportBlocked: { count: number; items: AdminDashboardOrderRow[] };
+    creditHold: { count: number; items: AdminDashboardOrderRow[] };
+    creditReview: { count: number; items: AdminDashboardOrderRow[] };
     /** Outstanding backorder operational metrics (real records only). */
     backorderedOrders: {
       count: number;
@@ -259,6 +261,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     ...orderScope,
     autopartExportStatus: "NOT_EXPORTED",
     status: { notIn: ["DRAFT", "CANCELLED"] },
+    creditStatus: { in: ["APPROVED", "NOT_REQUIRED"] },
     autopartAccountLinked: true,
     autopartCustomerCodeSnapshot: { not: null },
     items: { some: {} },
@@ -272,7 +275,20 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       { autopartAccountLinked: false },
       { autopartCustomerCodeSnapshot: null },
       { items: { none: {} } },
+      { creditStatus: { in: ["HOLD", "REVIEW_REQUIRED"] } },
     ],
+  };
+
+  const creditHoldWhere: Prisma.OrderWhereInput = {
+    ...orderScope,
+    creditStatus: "HOLD",
+    status: { notIn: ["DRAFT", "CANCELLED"] },
+  };
+
+  const creditReviewWhere: Prisma.OrderWhereInput = {
+    ...orderScope,
+    creditStatus: "REVIEW_REQUIRED",
+    status: { notIn: ["DRAFT", "CANCELLED"] },
   };
 
   const processingWhere: Prisma.OrderWhereInput = {
@@ -694,6 +710,59 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       severity: "action",
     });
   }
+  const [creditHoldCount, creditReviewCount, creditHoldItems, creditReviewItems] = canSeeOrders
+    ? await Promise.all([
+        prisma.order.count({ where: creditHoldWhere }),
+        prisma.order.count({ where: creditReviewWhere }),
+        prisma.order.findMany({
+          where: creditHoldWhere,
+          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+          take: 5,
+          select: {
+            id: true,
+            orderNumber: true,
+            status: true,
+            placedAt: true,
+            grandTotal: true,
+            autopartExportStatus: true,
+            company: { select: { name: true } },
+          },
+        }),
+        prisma.order.findMany({
+          where: creditReviewWhere,
+          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+          take: 5,
+          select: {
+            id: true,
+            orderNumber: true,
+            status: true,
+            placedAt: true,
+            grandTotal: true,
+            autopartExportStatus: true,
+            company: { select: { name: true } },
+          },
+        }),
+      ])
+    : [0, 0, [] as typeof readyItems, [] as typeof readyItems];
+
+  if (creditHoldCount > 0) {
+    needsAttention.push({
+      id: "credit-hold",
+      label: "Credit Hold",
+      count: creditHoldCount,
+      href: `${ROUTES.adminOrders}?credit=HOLD`,
+      severity: "action",
+    });
+  }
+  if (creditReviewCount > 0) {
+    needsAttention.push({
+      id: "credit-review",
+      label: "Credit Review",
+      count: creditReviewCount,
+      href: `${ROUTES.adminOrders}?credit=REVIEW`,
+      severity: "action",
+    });
+  }
   if (readyCount > 0) {
     needsAttention.push({
       id: "export-ready",
@@ -767,6 +836,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       readyForExport: { count: readyCount, items: readyItems.map(mapOrderRow) },
       processing: { count: processingCount, items: processingItems.map(mapOrderRow) },
       exportBlocked: { count: blockedCount, items: blockedItems.map(mapOrderRow) },
+      creditHold: { count: creditHoldCount, items: creditHoldItems.map(mapOrderRow) },
+      creditReview: { count: creditReviewCount, items: creditReviewItems.map(mapOrderRow) },
       backorderedOrders: backorderMetrics,
     },
     applications: {

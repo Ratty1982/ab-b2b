@@ -67,6 +67,28 @@ function OrderConfirmationPage() {
           this confirmation does not mean the order has been despatched.
         </p>
 
+        {order.creditStatus === "HOLD" ? (
+          <div className="mt-6 rounded-lg border border-warn/40 bg-warn/10 p-4 text-[14px]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-warn">
+              Credit approval required
+            </p>
+            <p className="mt-2 text-steel">
+              This order exceeds the currently available credit on your account. Our team will
+              review it before processing.
+            </p>
+          </div>
+        ) : null}
+        {order.creditStatus === "REVIEW_REQUIRED" ? (
+          <div className="mt-6 rounded-lg border border-border bg-surface/40 p-4 text-[14px]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-steel">
+              Account review required
+            </p>
+            <p className="mt-2 text-steel">
+              Our team will review your account before the order is processed.
+            </p>
+          </div>
+        ) : null}
+
         <dl className="mt-8 space-y-2 rounded-lg border border-border bg-surface/30 p-5 text-[14px]">
           <div className="flex justify-between gap-3">
             <dt className="text-steel">Your reference</dt>

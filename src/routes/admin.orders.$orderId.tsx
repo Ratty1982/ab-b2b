@@ -11,11 +11,13 @@ import {
   exportAutopartOrdersCsvFn,
   getAdminOrderFn,
   listOrderEmailsFn,
+  releaseOrderCreditHoldFn,
   repairOrderAutopartSnapshotFn,
   retryTransactionalEmailFn,
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
+import { adminCreditLabel } from "@/domain/order-credit";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -40,6 +42,9 @@ function AdminOrderDetailPage() {
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [releaseNote, setReleaseNote] = useState("");
+  const [releasing, setReleasing] = useState(false);
+  const [showRelease, setShowRelease] = useState(false);
 
   const load = useCallback(async () => {
     const [orderResult, emailResult] = await Promise.all([
@@ -289,6 +294,180 @@ function AdminOrderDetailPage() {
           ) : null}
         </section>
         <section className="rounded-lg border border-border p-5 lg:col-span-2">
+          <h2 className="font-display text-base font-semibold uppercase">Credit control</h2>
+          <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2">
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Status</dt>
+              <dd className="font-semibold">
+                {adminCreditLabel(order.creditControl.creditStatus)}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Reason</dt>
+              <dd>{order.creditControl.creditDecisionReason || "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Credit limit</dt>
+              <dd className="num">
+                {order.creditControl.creditLimitAtOrder
+                  ? `£${order.creditControl.creditLimitAtOrder}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Autopart exposure</dt>
+              <dd className="num">
+                {order.creditControl.autopartExposureAtOrder
+                  ? `£${order.creditControl.autopartExposureAtOrder}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Pending AB exposure</dt>
+              <dd className="num">
+                {order.creditControl.pendingAbExposureAtOrder
+                  ? `£${order.creditControl.pendingAbExposureAtOrder}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Effective available</dt>
+              <dd className="num">
+                {order.creditControl.effectiveAvailableCreditAtOrder
+                  ? `£${order.creditControl.effectiveAvailableCreditAtOrder}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Order requirement</dt>
+              <dd className="num">
+                {order.creditControl.orderCreditRequirement
+                  ? `£${order.creditControl.orderCreditRequirement}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Over by</dt>
+              <dd className="num font-semibold text-bad">
+                {order.creditControl.creditOverBy
+                  ? `£${order.creditControl.creditOverBy}`
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">Checked</dt>
+              <dd>
+                {order.creditControl.creditCheckedAt
+                  ? formatDateTime(order.creditControl.creditCheckedAt)
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-steel">407P100 snapshot</dt>
+              <dd>
+                {order.creditControl.creditSourceImportedAt
+                  ? formatDateTime(order.creditControl.creditSourceImportedAt)
+                  : "—"}
+              </dd>
+            </div>
+            {order.creditControl.creditApprovedAt ? (
+              <>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-steel">Released by</dt>
+                  <dd>{order.creditControl.creditApprovedByName || "—"}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-steel">Released</dt>
+                  <dd>{formatDateTime(order.creditControl.creditApprovedAt)}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-steel">Approval note</dt>
+                  <dd className="mt-1">{order.creditControl.creditApprovalNote || "—"}</dd>
+                </div>
+              </>
+            ) : null}
+          </dl>
+          {order.creditControl.canRelease ? (
+            <div className="mt-4">
+              {!showRelease ? (
+                <button
+                  type="button"
+                  onClick={() => setShowRelease(true)}
+                  className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+                >
+                  {order.creditControl.creditStatus === "HOLD"
+                    ? "Approve credit & release order"
+                    : "Approve & release order"}
+                </button>
+              ) : (
+                <div className="rounded-md border border-border bg-surface/40 p-4">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-steel">
+                    Approve credit &amp; release order
+                  </p>
+                  <p className="mt-2 text-[13px]">
+                    Order {order.orderNumber}
+                    {order.creditControl.creditOverBy
+                      ? ` · £${order.creditControl.creditOverBy} over currently available credit`
+                      : ""}
+                  </p>
+                  <label className="mt-3 grid gap-1 text-[11px] font-semibold uppercase text-steel">
+                    Approval note
+                    <textarea
+                      value={releaseNote}
+                      onChange={(e) => setReleaseNote(e.target.value)}
+                      rows={3}
+                      className="rounded-md border border-border bg-background px-3 py-2 text-[13px] font-normal normal-case text-foreground"
+                      placeholder="Why this order is released for processing"
+                    />
+                  </label>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={releasing}
+                      onClick={() => setShowRelease(false)}
+                      className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={releasing || releaseNote.trim().length < 1}
+                      onClick={() => {
+                        void (async () => {
+                          setReleasing(true);
+                          const r = await releaseOrderCreditHoldFn({
+                            data: { orderId: order.id, note: releaseNote.trim() },
+                          });
+                          setReleasing(false);
+                          if (!r.ok) {
+                            toast.error(r.error);
+                            return;
+                          }
+                          toast.success("Credit approved — order released for Autopart export");
+                          setShowRelease(false);
+                          setReleaseNote("");
+                          await load();
+                        })();
+                      }}
+                      className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+                    >
+                      {releasing ? "Releasing…" : "Approve & release"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+          {(order.creditControl.creditStatus === "HOLD" ||
+            order.creditControl.creditStatus === "REVIEW_REQUIRED") &&
+          !order.creditControl.canRelease ? (
+            <p className="mt-3 text-[12px] text-steel">
+              Autopart export is blocked until an authorised user releases credit.
+            </p>
+          ) : null}
+        </section>
+
+        <section className="rounded-lg border border-border p-5 lg:col-span-2">
           <h2 className="font-display text-base font-semibold uppercase">Autopart</h2>
           <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2">
             <div className="flex justify-between gap-3">
@@ -376,11 +555,22 @@ function AdminOrderDetailPage() {
             ) : (
               <button
                 type="button"
-                disabled={exporting || !order.autopartAccountLinked}
+                disabled={
+                  exporting ||
+                  !order.autopartAccountLinked ||
+                  order.creditControl.creditStatus === "HOLD" ||
+                  order.creditControl.creditStatus === "REVIEW_REQUIRED"
+                }
                 onClick={() => void onExportCsv(false)}
                 className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
               >
-                {exporting ? "Exporting…" : "Export to Autopart CSV"}
+                {exporting
+                  ? "Exporting…"
+                  : order.creditControl.creditStatus === "HOLD"
+                    ? "Not ready — Credit Hold"
+                    : order.creditControl.creditStatus === "REVIEW_REQUIRED"
+                      ? "Not ready — Account Review"
+                      : "Export to Autopart CSV"}
               </button>
             )}
           </div>

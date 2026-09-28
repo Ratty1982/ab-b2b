@@ -185,6 +185,10 @@ export type PublicOrderConfirmation = {
   /** Present when created from an accepted quotation. */
   sourceQuoteId: string | null;
   sourceQuoteNumber: string | null;
+  /** Trade credit control (separate from fulfilment status). */
+  creditStatus: "NOT_REQUIRED" | "APPROVED" | "HOLD" | "REVIEW_REQUIRED";
+  creditDecisionReason: string | null;
+  creditOverBy: string | null;
 };
 
 export type PlaceOrderResult =
@@ -217,6 +221,8 @@ export type PortalOrderListItem = OrderListItemBase & {
     | "RECEIVED"
     | "OTHER";
   backorderHint: string | null;
+  creditStatus: "NOT_REQUIRED" | "APPROVED" | "HOLD" | "REVIEW_REQUIRED";
+  creditHint: string | null;
 };
 
 export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"> & {
@@ -275,6 +281,8 @@ export type AdminOrderListItem = OrderListItemBase & {
   autopartExportFilter: "READY" | "EXPORTED" | "BLOCKED";
   containsBackorder: boolean;
   fullyBackordered: boolean;
+  creditStatus: "NOT_REQUIRED" | "APPROVED" | "HOLD" | "REVIEW_REQUIRED";
+  creditOverBy: string | null;
 };
 
 export type AdminOrderDetail = PortalOrderDetail & {
@@ -295,6 +303,24 @@ export type AdminOrderDetail = PortalOrderDetail & {
   salesRepNameSnapshot: string | null;
   deliveryMethodLabel: string | null;
   basketId: string | null;
+  creditControl: {
+    creditStatus: "NOT_REQUIRED" | "APPROVED" | "HOLD" | "REVIEW_REQUIRED";
+    creditDecisionReason: string | null;
+    creditLimitAtOrder: string | null;
+    autopartExposureAtOrder: string | null;
+    importedAvailableCreditAtOrder: string | null;
+    pendingAbExposureAtOrder: string | null;
+    effectiveAvailableCreditAtOrder: string | null;
+    orderCreditRequirement: string | null;
+    creditOverBy: string | null;
+    creditCheckedAt: string | null;
+    creditSourceImportedAt: string | null;
+    creditApprovedAt: string | null;
+    creditApprovedByName: string | null;
+    creditApprovalNote: string | null;
+    previousCreditStatus: string | null;
+    canRelease: boolean;
+  };
   items: Array<
     PortalOrderDetail["items"][number] & {
       unitPrice: string;
@@ -390,7 +416,7 @@ function checkoutIssueMessage(issue: CheckoutLineIssue): string | null {
   }
 }
 
-async function requireTradeCheckoutCompany(userId: string): Promise<{
+export async function requireTradeCheckoutCompany(userId: string): Promise<{
   profile: Awaited<ReturnType<typeof requireAuthenticatedUser>>;
   company: {
     id: string;
@@ -924,6 +950,9 @@ function toConfirmation(
     externalRef: string | null;
     sourceQuoteId?: string | null;
     sourceQuoteNumber?: string | null;
+    creditStatus?: string | null;
+    creditDecisionReason?: string | null;
+    creditOverBy?: { toString(): string } | string | null;
     items: Array<{
       id?: string;
       sku: string;
@@ -947,6 +976,7 @@ function toConfirmation(
     order.contactSnapshot && typeof order.contactSnapshot === "object"
       ? (order.contactSnapshot as ContactSnapshot)
       : null;
+  const creditStatus = (order.creditStatus ?? "NOT_REQUIRED") as PublicOrderConfirmation["creditStatus"];
 
   return {
     id: order.id,
@@ -980,6 +1010,12 @@ function toConfirmation(
     externalRef: null,
     sourceQuoteId: order.sourceQuoteId ?? null,
     sourceQuoteNumber: order.sourceQuoteNumber ?? null,
+    creditStatus,
+    creditDecisionReason: order.creditDecisionReason ?? null,
+    creditOverBy:
+      order.creditOverBy != null
+        ? moneyToString(parseMoney(String(order.creditOverBy)) ?? moneyZero(), 2)
+        : null,
   };
 }
 
@@ -1065,7 +1101,17 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
   // Authoritative delivery + VAT recalculated server-side immediately before commit.
   const totals = sumValidTotals(lines, company.taxStatus);
 
+  const {
+    lockCompanyForCredit,
+    evaluateOrderCredit,
+    creditFieldsForCreate,
+    auditCreditDecision,
+  } = await import("@/server/orders/credit-control");
+
   const created = await prisma.$transaction(async (tx) => {
+    // Serialize credit evaluation + create per company (concurrent checkouts).
+    await lockCompanyForCredit(tx, company.id);
+
     // Re-check idempotency inside the transaction.
     const again = await tx.order.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
@@ -1081,6 +1127,14 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     if (!openBasket) {
       throw new AuthError("Basket is no longer available", "BASKET_NOT_FOUND", 404);
     }
+
+    const creditDecision = await evaluateOrderCredit(tx, {
+      companyId: company.id,
+      grandTotal: totals.grandTotal,
+      paymentTerms: company.paymentTerms,
+      hasVerifiedAutopartAccount: Boolean(verifiedCode),
+    });
+    const creditFields = creditFieldsForCreate(creditDecision);
 
     const orderNumber = await allocateOrderNumber(tx);
     const placedAt = new Date();
@@ -1112,6 +1166,7 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
         idempotencyKey: input.idempotencyKey,
         // Phase 6B: never set externalRef (Autopart handoff is Phase 6C).
         externalRef: null,
+        ...creditFields,
         placedAt,
         items: {
           create: lines.map((line) => ({
@@ -1173,7 +1228,7 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       data: { status: "CONVERTED" },
     });
 
-    return { kind: "created" as const, order };
+    return { kind: "created" as const, order, creditDecision };
   });
 
   if (created.kind === "existing") {
@@ -1194,6 +1249,7 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     after: {
       orderNumber: created.order.orderNumber,
       status: "SUBMITTED",
+      creditStatus: created.creditDecision.creditStatus,
       grandTotal: confirmation.grandTotal,
       lineCount: confirmation.lineCount,
       // Autopart ERP side effects remain false; AB reservation is local.
@@ -1209,6 +1265,13 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     actorUserId: userId,
     companyId: company.id,
     after: { orderId: created.order.id, orderNumber: created.order.orderNumber },
+  });
+  await auditCreditDecision({
+    actorUserId: userId,
+    companyId: company.id,
+    orderId: created.order.id,
+    orderNumber: created.order.orderNumber,
+    decision: created.creditDecision,
   });
 
   // Email after commit — failures must not roll back the order.
@@ -1249,6 +1312,7 @@ function mapPortalOrderListItem(row: {
   poNumber: string | null;
   grandTotal: unknown;
   currency: string;
+  creditStatus?: string | null;
   _count: { items: number };
   items: Array<{
     qty: number;
@@ -1268,6 +1332,14 @@ function mapPortalOrderListItem(row: {
       : fulfilment.hasOutstandingBackorder
         ? "Items awaiting stock"
         : null;
+  const creditStatus = (row.creditStatus ??
+    "NOT_REQUIRED") as PortalOrderListItem["creditStatus"];
+  const creditHint =
+    creditStatus === "HOLD"
+      ? "Credit approval required"
+      : creditStatus === "REVIEW_REQUIRED"
+        ? "Account review required"
+        : null;
   return {
     id: row.id,
     orderNumber: row.orderNumber,
@@ -1284,6 +1356,8 @@ function mapPortalOrderListItem(row: {
     statusLabel: fulfilment.orderStatusLabel,
     statusBadge: fulfilment.orderStatusBadge,
     backorderHint: hint,
+    creditStatus,
+    creditHint,
   };
 }
 
@@ -1453,6 +1527,8 @@ export async function listAdminOrders(
     autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
     /** Backorder list filter. */
     backorders?: "ALL" | "CONTAINS" | "FULL";
+    /** Credit control list filter. */
+    credit?: "ALL" | "HOLD" | "REVIEW";
   },
 ): Promise<{ items: AdminOrderListItem[]; total: number; page: number; pageSize: number }> {
   const profile = await requireSystemPermission(userId, "orders.view");
@@ -1478,6 +1554,7 @@ export async function listAdminOrders(
   const q = raw?.q?.trim();
   const exportFilter = raw?.autopartExport ?? "ALL";
   const backorderFilter = raw?.backorders ?? "ALL";
+  const creditFilter = raw?.credit ?? "ALL";
 
   const where: Prisma.OrderWhereInput = {
     ...companyFilter,
@@ -1498,6 +1575,7 @@ export async function listAdminOrders(
         ? {
             autopartExportStatus: "NOT_EXPORTED",
             status: { notIn: ["DRAFT", "CANCELLED"] },
+            creditStatus: { in: ["APPROVED", "NOT_REQUIRED"] },
             autopartAccountLinked: true,
             autopartCustomerCodeSnapshot: { not: null },
             items: { some: {} },
@@ -1509,10 +1587,16 @@ export async function listAdminOrders(
                 { autopartAccountLinked: false },
                 { autopartCustomerCodeSnapshot: null },
                 { items: { none: {} } },
+                { creditStatus: { in: ["HOLD", "REVIEW_REQUIRED"] } },
               ],
               autopartExportStatus: "NOT_EXPORTED",
             }
           : {}),
+    ...(creditFilter === "HOLD"
+      ? { creditStatus: "HOLD" }
+      : creditFilter === "REVIEW"
+        ? { creditStatus: "REVIEW_REQUIRED" }
+        : {}),
     ...(backorderFilter === "CONTAINS"
       ? { items: { some: { backorderQtyAtOrder: { gt: 0 } } } }
       : backorderFilter === "FULL"
@@ -1559,10 +1643,13 @@ export async function listAdminOrders(
     pageSize,
     items: rows.map((row) => {
       const linked = row.autopartAccountLinked && Boolean(row.autopartCustomerCodeSnapshot?.trim());
+      const creditBlocked =
+        row.creditStatus === "HOLD" || row.creditStatus === "REVIEW_REQUIRED";
       const blocked =
         row.status === "CANCELLED" ||
         row._count.items === 0 ||
-        !linked;
+        !linked ||
+        creditBlocked;
       const autopartExportFilter: AdminOrderListItem["autopartExportFilter"] =
         row.autopartExportStatus === "EXPORTED"
           ? "EXPORTED"
@@ -1589,6 +1676,11 @@ export async function listAdminOrders(
         autopartExportFilter,
         containsBackorder: orderContainsBackorder(row.items),
         fullyBackordered: orderIsFullyBackordered(row.items),
+        creditStatus: row.creditStatus,
+        creditOverBy:
+          row.creditOverBy != null
+            ? moneyToString(parseMoney(String(row.creditOverBy)) ?? moneyZero(), 2)
+            : null,
       };
     }),
   };
@@ -1605,6 +1697,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       company: { select: { id: true, name: true } },
       autopartExportedBy: { select: { name: true, email: true } },
       autopartExportBatch: { select: { id: true, reference: true, filename: true, createdAt: true } },
+      creditApprovedBy: { select: { name: true, email: true } },
     },
   });
   if (!order) {
@@ -1623,6 +1716,8 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     status: order.status,
     items: order.items,
   });
+  const moneyOrNull = (v: unknown) =>
+    v != null ? moneyToString(parseMoney(String(v)) ?? moneyZero(), 2) : null;
   return {
     ...base,
     status: order.status,
@@ -1645,6 +1740,27 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     salesRepNameSnapshot: order.salesRepNameSnapshot,
     deliveryMethodLabel: order.deliveryMethodLabel,
     basketId: order.basketId,
+    creditControl: {
+      creditStatus: order.creditStatus,
+      creditDecisionReason: order.creditDecisionReason,
+      creditLimitAtOrder: moneyOrNull(order.creditLimitAtOrder),
+      autopartExposureAtOrder: moneyOrNull(order.autopartExposureAtOrder),
+      importedAvailableCreditAtOrder: moneyOrNull(order.importedAvailableCreditAtOrder),
+      pendingAbExposureAtOrder: moneyOrNull(order.pendingAbExposureAtOrder),
+      effectiveAvailableCreditAtOrder: moneyOrNull(order.effectiveAvailableCreditAtOrder),
+      orderCreditRequirement: moneyOrNull(order.orderCreditRequirement),
+      creditOverBy: moneyOrNull(order.creditOverBy),
+      creditCheckedAt: order.creditCheckedAt?.toISOString() ?? null,
+      creditSourceImportedAt: order.creditSourceImportedAt?.toISOString() ?? null,
+      creditApprovedAt: order.creditApprovedAt?.toISOString() ?? null,
+      creditApprovedByName:
+        order.creditApprovedBy?.name ?? order.creditApprovedBy?.email ?? null,
+      creditApprovalNote: order.creditApprovalNote,
+      previousCreditStatus: order.previousCreditStatus,
+      canRelease:
+        (order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED") &&
+        hasPermission(profile, "orders.credit.approve"),
+    },
     hasBackorderItems: orderContainsBackorder(order.items),
     hasOutstandingBackorder: summary.hasOutstandingBackorder,
     outstandingBackorderUnits: summary.outstandingBackorderUnits,

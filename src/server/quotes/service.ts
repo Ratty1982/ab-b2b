@@ -1325,7 +1325,17 @@ async function convertQuoteToOrder(input: {
     });
   }
 
+  const {
+    lockCompanyForCredit,
+    evaluateOrderCredit,
+    creditFieldsForCreate,
+    auditCreditDecision,
+  } = await import("@/server/orders/credit-control");
+
   const created = await prisma.$transaction(async (tx) => {
+    // Serialize credit evaluation with other checkouts for this company.
+    await lockCompanyForCredit(tx, quote.companyId);
+
     // Claim the quote atomically so concurrent accepts cannot both convert.
     const claim = await tx.quote.updateMany({
       where: {
@@ -1381,6 +1391,14 @@ async function convertQuoteToOrder(input: {
       return { kind: "existing" as const, order: existingOrder };
     }
 
+    const creditDecision = await evaluateOrderCredit(tx, {
+      companyId: quote.companyId,
+      grandTotal: quote.grandTotal,
+      paymentTerms: quote.paymentTermsSnapshot ?? quote.company.paymentTerms,
+      hasVerifiedAutopartAccount: Boolean(verifiedCode),
+    });
+    const creditFields = creditFieldsForCreate(creditDecision);
+
     const orderNumber = await allocateOrderNumber(tx);
     const placedAt = new Date();
     const order = await tx.order.create({
@@ -1408,6 +1426,7 @@ async function convertQuoteToOrder(input: {
         sourceQuoteId: quote.id,
         sourceQuoteNumber: quote.quoteNumber,
         idempotencyKey: `quote-accept:${input.idempotencyKey}`,
+        ...creditFields,
         placedAt,
         items: {
           create: quote.items.map((item) => {
@@ -1480,7 +1499,7 @@ async function convertQuoteToOrder(input: {
       },
     });
 
-    return { kind: "created" as const, order };
+    return { kind: "created" as const, order, creditDecision };
   });
 
   if (created.kind === "existing") {
@@ -1524,10 +1543,18 @@ async function convertQuoteToOrder(input: {
     after: {
       orderNumber: created.order.orderNumber,
       status: "SUBMITTED",
+      creditStatus: created.creditDecision.creditStatus,
       sourceQuoteNumber: quote.quoteNumber,
       autopartSideEffects: false,
       abReservation: true,
     },
+  });
+  await auditCreditDecision({
+    actorUserId: input.actorUserId,
+    companyId: quote.companyId,
+    orderId: created.order.id,
+    orderNumber: created.order.orderNumber,
+    decision: created.creditDecision,
   });
 
   // AFTER COMMIT — same ORDER_RECEIVED / ORDER_RECEIVED_INTERNAL path as checkout.

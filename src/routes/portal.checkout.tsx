@@ -10,6 +10,7 @@ import {
   getCheckoutContextFn,
   placeOrderFn,
   previewCheckoutFn,
+  previewOrderCreditFn,
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/portal/checkout")({
@@ -53,6 +54,11 @@ function CheckoutPage() {
   const [deliveryInstructions, setDeliveryInstructions] = useState("");
   const [placing, setPlacing] = useState(false);
   const [idempotencyKey] = useState(newIdempotencyKey);
+  const [creditPreview, setCreditPreview] = useState<{
+    creditStatus: string;
+    effectiveAvailableCredit: string | null;
+    orderCreditRequirement: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const result = await getCheckoutContextFn();
@@ -237,6 +243,31 @@ function CheckoutPage() {
     currency: "GBP" as const,
   };
   const blocking = review?.hasBlockingIssues ?? ctx.basket.hasBlockingIssues;
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const r = await previewOrderCreditFn({
+        data: {
+          grandTotal: totals.grandTotal,
+          paymentTerms: ctx.paymentTerms,
+        },
+      });
+      if (cancelled) return;
+      if (r.ok) {
+        setCreditPreview({
+          creditStatus: r.data.creditStatus,
+          effectiveAvailableCredit: r.data.effectiveAvailableCredit,
+          orderCreditRequirement: r.data.orderCreditRequirement,
+        });
+      } else {
+        setCreditPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [totals.grandTotal, ctx.paymentTerms]);
 
   return (
     <div>
@@ -483,6 +514,23 @@ function CheckoutPage() {
             ) : (
               <p className="mt-3 text-[12px] text-steel">Payment terms: as agreed on your trade account</p>
             )}
+            {creditPreview?.creditStatus === "HOLD" &&
+            creditPreview.effectiveAvailableCredit != null ? (
+              <div className="mt-4 rounded-md border border-warn/40 bg-warn/10 p-3 text-[13px]">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-warn">
+                  Account credit
+                </p>
+                <p className="mt-1 text-steel">
+                  Available: £{creditPreview.effectiveAvailableCredit}
+                  <br />
+                  Order total: £{creditPreview.orderCreditRequirement}
+                </p>
+                <p className="mt-2 text-steel">
+                  This order exceeds your currently available account credit. You can still place
+                  the order; it will be sent to our team for credit approval.
+                </p>
+              </div>
+            ) : null}
             {blocking ? (
               <p className="mt-4 text-[13px] font-medium text-warn" role="status">
                 Resolve review issues before placing the order.

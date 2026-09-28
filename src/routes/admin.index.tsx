@@ -197,6 +197,22 @@ function NeedsAttention({
 function OrdersAttention({ data }: { data: Dashboard }) {
   const sections = [
     {
+      key: "credit-hold",
+      title: "Credit Hold",
+      count: data.ordersAttention.creditHold.count,
+      items: data.ordersAttention.creditHold.items,
+      empty: "No orders on credit hold.",
+      href: `${ROUTES.adminOrders}?credit=HOLD`,
+    },
+    {
+      key: "credit-review",
+      title: "Credit Review",
+      count: data.ordersAttention.creditReview.count,
+      items: data.ordersAttention.creditReview.items,
+      empty: "No orders awaiting account credit review.",
+      href: `${ROUTES.adminOrders}?credit=REVIEW`,
+    },
+    {
       key: "ready",
       title: "Ready for Autopart export",
       count: data.ordersAttention.readyForExport.count,

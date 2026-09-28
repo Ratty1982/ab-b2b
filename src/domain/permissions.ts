@@ -31,6 +31,7 @@ export const PERMISSIONS = [
   "orders.create",
   "orders.edit",
   "orders.place_for_customer",
+  "orders.credit.approve",
 
   "quotes.view",
   "quotes.create",

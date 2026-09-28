@@ -103,6 +103,8 @@ When a trusted 407P100 snapshot exists, portal **Account credit** uses the impor
 
 Freshness: `CURRENT` | `STALE` (>7 days) | `NOT_AVAILABLE`. Europe/London DD/MM/YYYY HH:mm.
 
+Historic 561L/SLRB data is **not** a financial ledger and must **never** drive current credit decisions. Operational credit control (holds, pending AB exposure, Autopart export gating) is documented in `docs/credit-control.md`.
+
 ## Portal
 
 - Dashboard: Account credit panel when snapshot exists; otherwise “not currently available”
