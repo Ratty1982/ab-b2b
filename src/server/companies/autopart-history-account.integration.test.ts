@@ -142,14 +142,23 @@ YORKMOT,3494.75,0,0,0,0,0,3494.75,5000.00
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const fixtureDir = resolve(import.meta.dirname, "../../domain/fixtures");
-    const file561 = readFileSync(resolve(fixtureDir, "autopart-561l-native.txt"), "utf8");
-    const fileSlrb = readFileSync(resolve(fixtureDir, "autopart-slrb-native.txt"), "utf8");
     const stamp = Date.now();
+    // Unique 8-char verified code; 7-char row form preserves native .Acct. width.
+    const verified = `RC${String(stamp).slice(-6)}`; // 8 chars
+    const rowAcct = verified.slice(0, 7);
+    expect(verified).toHaveLength(8);
+    expect(rowAcct).toHaveLength(7);
+    const file561 = readFileSync(resolve(fixtureDir, "autopart-561l-native.txt"), "utf8")
+      .replaceAll("YORKMOTO", verified)
+      .replaceAll("YORKMOT", rowAcct);
+    const fileSlrb = readFileSync(resolve(fixtureDir, "autopart-slrb-native.txt"), "utf8")
+      .replaceAll("YORKMOTO", verified)
+      .replaceAll("YORKMOT", rowAcct);
     const company = await prisma.company.create({
       data: {
         name: `RptCust ${stamp}`,
         status: "ACTIVE",
-        autopartCustomerCode: "YORKMOTO",
+        autopartCustomerCode: verified,
         autopartCustomerCodeVerifiedAt: new Date(),
         autopartCustomerCodeVerifiedById: adminId,
       },
@@ -162,8 +171,8 @@ YORKMOT,3494.75,0,0,0,0,0,3494.75,5000.00
       filenameSlrb: "SLRB.txt",
     });
     expect(preview.accountMatch.status).toBe("MATCHED_REPORT_CUSTOMER");
-    expect(preview.accountMatch.reportCustomer).toBe("YORKMOTO");
-    expect(preview.accountMatch.rowAccount).toBe("YORKMOT");
+    expect(preview.accountMatch.reportCustomer).toBe(verified);
+    expect(preview.accountMatch.rowAccount).toBe(rowAcct);
     expect(preview.canCommit).toBe(true);
     expect(preview.matching.matchedDocuments).toBeGreaterThanOrEqual(7);
     expect(preview.issues.some((i) => i.code === "ACCOUNT_ALIAS_REQUIRED")).toBe(false);
