@@ -432,6 +432,11 @@ function OrderTable({ rows }: { rows: Dashboard["recentOrders"] }) {
               <td className="px-3 py-2">{o.companyName}</td>
               <td className="px-3 py-2">
                 <StatusBadge tone="neutral">{o.statusLabel}</StatusBadge>
+                {"creditNowAvailable" in o && o.creditNowAvailable ? (
+                  <span className="mt-1 block text-[11px] font-semibold text-good">
+                    Credit now available
+                  </span>
+                ) : null}
               </td>
               <td className="num px-3 py-2 text-right font-semibold">{o.grandTotalLabel}</td>
             </tr>

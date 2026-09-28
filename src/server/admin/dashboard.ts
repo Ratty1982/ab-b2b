@@ -99,6 +99,9 @@ export type AdminDashboardOrderRow = {
   autopartExportStatus: string;
   autopartLabel: string;
   href: string;
+  /** Derived after newer 407P100 — order still HOLD/REVIEW until staff release. */
+  creditNowAvailable?: boolean;
+  creditHint?: string | null;
 };
 
 export type AdminDashboardApplicationRow = {
@@ -710,7 +713,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       severity: "action",
     });
   }
-  const [creditHoldCount, creditReviewCount, creditHoldItems, creditReviewItems] = canSeeOrders
+  const [creditHoldCount, creditReviewCount, creditHoldRaw, creditReviewRaw] = canSeeOrders
     ? await Promise.all([
         prisma.order.count({ where: creditHoldWhere }),
         prisma.order.count({ where: creditReviewWhere }),
@@ -725,7 +728,17 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
             placedAt: true,
             grandTotal: true,
             autopartExportStatus: true,
-            company: { select: { name: true } },
+            creditStatus: true,
+            paymentTermsSnapshot: true,
+            companyId: true,
+            company: {
+              select: {
+                name: true,
+                paymentTerms: true,
+                autopartCustomerCode: true,
+                autopartCustomerCodeVerifiedAt: true,
+              },
+            },
           },
         }),
         prisma.order.findMany({
@@ -739,25 +752,100 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
             placedAt: true,
             grandTotal: true,
             autopartExportStatus: true,
-            company: { select: { name: true } },
+            creditStatus: true,
+            paymentTermsSnapshot: true,
+            companyId: true,
+            company: {
+              select: {
+                name: true,
+                paymentTerms: true,
+                autopartCustomerCode: true,
+                autopartCustomerCodeVerifiedAt: true,
+              },
+            },
           },
         }),
       ])
-    : [0, 0, [] as typeof readyItems, [] as typeof readyItems];
+    : [0, 0, [], []];
+
+  type CreditAttentionRow = {
+    id: string;
+    orderNumber: string;
+    status: string;
+    placedAt: Date | null;
+    grandTotal: unknown;
+    autopartExportStatus: string;
+    creditStatus: string;
+    paymentTermsSnapshot: string | null;
+    companyId: string;
+    company: {
+      name: string;
+      paymentTerms: string | null;
+      autopartCustomerCode: string | null;
+      autopartCustomerCodeVerifiedAt: Date | null;
+    };
+  };
+
+  const { evaluateHeldOrderCreditNow } = await import("@/server/orders/credit-control");
+  async function withCreditHints(
+    items: CreditAttentionRow[],
+    status: "HOLD" | "REVIEW_REQUIRED",
+  ): Promise<AdminDashboardOrderRow[]> {
+    const mapped: AdminDashboardOrderRow[] = [];
+    for (const row of items) {
+      const base = mapOrderRow(row);
+      try {
+        const hint = await evaluateHeldOrderCreditNow({
+          orderId: row.id,
+          orderNumber: row.orderNumber,
+          companyId: row.companyId,
+          grandTotal: row.grandTotal,
+          paymentTerms: row.paymentTermsSnapshot ?? row.company.paymentTerms,
+          hasVerifiedAutopartAccount: Boolean(
+            row.company.autopartCustomerCode && row.company.autopartCustomerCodeVerifiedAt,
+          ),
+          currentCreditStatus: status,
+        });
+        mapped.push({
+          ...base,
+          creditNowAvailable: hint.creditNowAvailable,
+          creditHint: hint.message,
+        });
+      } catch {
+        mapped.push(base);
+      }
+    }
+    return mapped;
+  }
+
+  const creditHoldItems = canSeeOrders
+    ? await withCreditHints(creditHoldRaw as CreditAttentionRow[], "HOLD")
+    : [];
+  const creditReviewItems = canSeeOrders
+    ? await withCreditHints(creditReviewRaw as CreditAttentionRow[], "REVIEW_REQUIRED")
+    : [];
 
   if (creditHoldCount > 0) {
+    const available = creditHoldItems.filter((i) => i.creditNowAvailable).length;
     needsAttention.push({
       id: "credit-hold",
-      label: "Credit Hold",
+      label:
+        available > 0
+          ? `Credit Hold (${available} now available)`
+          : "Credit Hold",
       count: creditHoldCount,
       href: `${ROUTES.adminOrders}?credit=HOLD`,
       severity: "action",
     });
   }
   if (creditReviewCount > 0) {
+    const available = creditReviewItems.filter((i) => i.creditNowAvailable).length;
     needsAttention.push({
       id: "credit-review",
-      label: "Credit Review",
+      label:
+        available > 0
+          ? `Credit Review (${available} now available)`
+          : "Credit Review",
       count: creditReviewCount,
       href: `${ROUTES.adminOrders}?credit=REVIEW`,
       severity: "action",
@@ -836,8 +924,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       readyForExport: { count: readyCount, items: readyItems.map(mapOrderRow) },
       processing: { count: processingCount, items: processingItems.map(mapOrderRow) },
       exportBlocked: { count: blockedCount, items: blockedItems.map(mapOrderRow) },
-      creditHold: { count: creditHoldCount, items: creditHoldItems.map(mapOrderRow) },
-      creditReview: { count: creditReviewCount, items: creditReviewItems.map(mapOrderRow) },
+      creditHold: { count: creditHoldCount, items: creditHoldItems },
+      creditReview: { count: creditReviewCount, items: creditReviewItems },
       backorderedOrders: backorderMetrics,
     },
     applications: {

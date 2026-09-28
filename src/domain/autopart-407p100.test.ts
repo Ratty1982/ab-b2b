@@ -11,6 +11,10 @@ const kv = readFileSync(
   resolve(import.meta.dirname, "fixtures/autopart-407p100-kv.txt"),
   "utf8",
 );
+const bulkCsv = readFileSync(
+  resolve(import.meta.dirname, "fixtures/autopart-407p100-bulk-sample.csv"),
+  "utf8",
+);
 
 describe("parseAutopart407p100", () => {
   it("parses CSV regression example", () => {
@@ -25,6 +29,29 @@ describe("parseAutopart407p100", () => {
     expect(p.availableCreditRaw).toBe("1505.25");
     expect(p.availableCreditDisplay).toBe("1505.25");
     expect(p.overLimitBy).toBeNull();
+  });
+
+  it("parses real multi-row Customer / Cr Limit headers (YORKMOTO)", () => {
+    const result = parseAutopart407p100(bulkCsv);
+    expect(result.headerFound).toBe(true);
+    const york = result.positions.find((p) => p.accountCode === "YORKMOTO")!;
+    expect(york.customerName).toBe("YORK MOTOR FACTORS");
+    expect(york.invoices).toBe("3494.75");
+    expect(york.totalExposure).toBe("3494.75");
+    expect(york.creditLimit).toBe("5000.00");
+    expect(york.availableCreditRaw).toBe("1505.25");
+    expect(result.invalidRows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("uses Total as Used Credit when Picking is non-zero", () => {
+    const text = `Customer,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
+PICKING1,3000.00,500.00,0,0,0,0,3500.00,5000.00
+`;
+    const p = parseAutopart407p100(text).positions[0]!;
+    expect(p.invoices).toBe("3000.00");
+    expect(p.picking).toBe("500.00");
+    expect(p.totalExposure).toBe("3500.00");
+    expect(p.availableCreditRaw).toBe("1500.00");
   });
 
   it("parses key/value summary format", () => {

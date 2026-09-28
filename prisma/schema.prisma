@@ -252,6 +252,8 @@ enum AutopartHistoricLineMatchStatus {
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
   CREDIT_407P100
+  /// Multi-customer 407P100 bulk credit import (Settings → Autopart).
+  CREDIT_407P100_BULK
 }
 
 enum AutopartCustomerImportStatus {
@@ -1889,7 +1891,8 @@ model AutopartCreditPosition {
 
 model AutopartCustomerImportRun {
   id              String                       @id @default(cuid())
-  companyId       String
+  /// Null for multi-company bulk CREDIT_407P100_BULK runs.
+  companyId       String?
   type            AutopartCustomerImportType
   status          AutopartCustomerImportStatus
   filename        String?
@@ -1910,7 +1913,7 @@ model AutopartCustomerImportRun {
   createdAt       DateTime                     @default(now())
   completedAt     DateTime?
 
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdBy User?   @relation("AutopartCustomerImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
   documents AutopartSalesDocument[]
   lines     AutopartSalesLine[]
@@ -1918,6 +1921,7 @@ model AutopartCustomerImportRun {
 
   @@index([companyId, createdAt])
   @@index([companyId, type, status])
+  @@index([type, status, createdAt])
   @@index([fileHash])
 }
 

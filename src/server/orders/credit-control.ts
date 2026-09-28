@@ -343,4 +343,70 @@ export async function previewOrderCreditDecision(input: EvaluateOrderCreditInput
   });
 }
 
+/**
+ * Derived admin indicator after a newer 407P100 import.
+ * Does NOT mutate creditStatus or export — staff must still release.
+ */
+export type HeldOrderCreditHint = {
+  orderId: string;
+  orderNumber: string;
+  companyId: string;
+  currentCreditStatus: "HOLD" | "REVIEW_REQUIRED";
+  creditNowAvailable: boolean;
+  wouldApprove: boolean;
+  liveDecisionStatus: OrderCreditStatus;
+  liveDecisionReason: string;
+  effectiveAvailableCredit: string | null;
+  orderCreditRequirement: string | null;
+  overBy: string | null;
+  message: string | null;
+};
+
+export async function evaluateHeldOrderCreditNow(input: {
+  orderId: string;
+  orderNumber: string;
+  companyId: string;
+  grandTotal: unknown;
+  paymentTerms: string | null | undefined;
+  hasVerifiedAutopartAccount: boolean;
+  currentCreditStatus: "HOLD" | "REVIEW_REQUIRED";
+}): Promise<HeldOrderCreditHint> {
+  const decision = await previewOrderCreditDecision({
+    companyId: input.companyId,
+    grandTotal: input.grandTotal,
+    paymentTerms: input.paymentTerms,
+    hasVerifiedAutopartAccount: input.hasVerifiedAutopartAccount,
+    excludeOrderId: input.orderId,
+  });
+
+  const wouldApprove = decision.creditStatus === "APPROVED";
+  const creditNowAvailable = wouldApprove;
+  let message: string | null = null;
+  if (creditNowAvailable) {
+    message =
+      input.currentCreditStatus === "REVIEW_REQUIRED"
+        ? "Credit information now available — review and release"
+        : "Credit now available — review and release";
+  } else if (decision.overBy) {
+    message = `Still exceeds available credit by £${decision.overBy}`;
+  } else if (decision.creditStatus === "REVIEW_REQUIRED") {
+    message = "Credit still requires review";
+  }
+
+  return {
+    orderId: input.orderId,
+    orderNumber: input.orderNumber,
+    companyId: input.companyId,
+    currentCreditStatus: input.currentCreditStatus,
+    creditNowAvailable,
+    wouldApprove,
+    liveDecisionStatus: decision.creditStatus,
+    liveDecisionReason: decision.reason,
+    effectiveAvailableCredit: decision.effectiveAvailableCredit,
+    orderCreditRequirement: decision.orderCreditRequirement,
+    overBy: decision.overBy,
+    message,
+  };
+}
+
 export type { OrderCreditDecision, CreditFreshness };

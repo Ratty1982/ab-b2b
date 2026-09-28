@@ -123,15 +123,39 @@ Customer workspace → **Autopart** tab:
 - aliases
 - top purchased summary
 
+### Bulk 407P100 (Settings → Autopart)
+
+Admin → System → Settings → Autopart → **Customer credit**:
+
+1. Upload one multi-customer 407P100 CSV (manual mode)
+2. Dry-run preview (no writes)
+3. Confirm → transactional upsert of matched verified companies
+
+Matching (exact normalised only):
+
+- `Company.autopartCustomerCode` (staff-verified) → `MATCHED`
+- `AutopartCustomerAccountAlias` (staff-verified, company must also be verified) → `MATCHED_ALIAS`
+- No AB company → `NOT_IN_AB` (informational; does **not** fail import, create companies, or raise Needs Attention)
+- Same account twice in file → `DUPLICATE` (blocked for that account only)
+- Bad Total / Credit Limit → `INVALID` (blocked for that row only)
+
+Partial success is expected. `NOT_IN_AB` alone is healthy. Duplicates/invalid rows yield `SUCCESS_WITH_WARNINGS`.
+
+Change detection compares against the existing `AutopartCreditPosition`. Financially identical rows still refresh `sourceImportedAt` (freshness) on confirm. Exact file-hash re-upload of a committed bulk run is blocked with “already imported”.
+
+Import runs use `AutopartCustomerImportType.CREDIT_407P100_BULK` with `companyId = null` and summary counts on the run.
+
+Per-customer Autopart tab import remains available and shares `parseAutopart407p100`.
+
 ## Security / audit
 
-Company-scoped; IDOR-safe. Staff need `companies.edit` (history) / `credit.edit` or `companies.edit` (credit).
+Company-scoped; IDOR-safe. Staff need `companies.edit` (history) / `credit.edit` or `companies.edit` (credit). Bulk import requires `credit.edit` (or `settings.edit` / `admin.access`).
 
-Audited: alias verified, history previewed/imported/reimported, credit imported/updated. Raw financial files are not stored in audit JSON; import runs store hashes + counts.
+Audited: alias verified, history previewed/imported/reimported, credit imported/updated, `autopart.credit_bulk_imported`. Raw financial files are not stored in audit JSON; import runs store hashes + counts.
 
 ## Future automation boundary
 
-Manual admin upload only in this phase. The same parser/import services are designed so a later scheduled Autopart email ingestion for **407P100** can call them without duplicating business logic. Do not implement email polling here.
+Manual admin upload only in this phase. The same parser + `previewBulkAutopartCreditImport` / `confirmBulkAutopartCreditImport` services are the single path a later scheduled Autopart mailbox ingestion for **407P100** must call. Do not implement IMAP/email polling/scheduler here.
 
 561L/SLRB remain primarily onboarding/history.
 
@@ -139,6 +163,8 @@ Manual admin upload only in this phase. The same parser/import services are desi
 
 - `src/domain/autopart-561l.ts` / `autopart-slrb.ts` / `autopart-407p100.ts`
 - `src/server/companies/autopart-history.ts`
+- `src/server/companies/autopart-credit-bulk.ts`
 - `src/server/companies/autopart-credit-freshness.ts`
 - `src/components/ab/AutopartCustomerHistoryPanel.tsx`
+- `src/components/ab/AutopartBulkCreditImportPanel.tsx`
 - `docs/autopart-customer-history.md`

@@ -2607,6 +2607,40 @@ export const confirmAutopartCreditImportFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getBulkCreditImportStatusFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const bulk = await import("@/server/companies/autopart-credit-bulk");
+    return { ok: true as const, data: await bulk.getBulkCreditImportStatus(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const previewBulkAutopartCreditImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const bulk = await import("@/server/companies/autopart-credit-bulk");
+      return { ok: true as const, data: await bulk.previewBulkAutopartCreditImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmBulkAutopartCreditImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const bulk = await import("@/server/companies/autopart-credit-bulk");
+      return { ok: true as const, data: await bulk.confirmBulkAutopartCreditImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPortalHistoricPurchasesFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { q?: string; filter?: "ALL" | "AVAILABLE" | "UNAVAILABLE" } | undefined)
   .handler(async ({ data }) => {

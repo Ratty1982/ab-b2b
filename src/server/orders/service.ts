@@ -320,6 +320,10 @@ export type AdminOrderDetail = PortalOrderDetail & {
     creditApprovalNote: string | null;
     previousCreditStatus: string | null;
     canRelease: boolean;
+    /** Derived from live evaluateOrderCredit — does not change stored creditStatus. */
+    creditNowAvailable: boolean;
+    creditNowAvailableMessage: string | null;
+    liveEffectiveAvailableCredit: string | null;
   };
   items: Array<
     PortalOrderDetail["items"][number] & {
@@ -1740,27 +1744,52 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     salesRepNameSnapshot: order.salesRepNameSnapshot,
     deliveryMethodLabel: order.deliveryMethodLabel,
     basketId: order.basketId,
-    creditControl: {
-      creditStatus: order.creditStatus,
-      creditDecisionReason: order.creditDecisionReason,
-      creditLimitAtOrder: moneyOrNull(order.creditLimitAtOrder),
-      autopartExposureAtOrder: moneyOrNull(order.autopartExposureAtOrder),
-      importedAvailableCreditAtOrder: moneyOrNull(order.importedAvailableCreditAtOrder),
-      pendingAbExposureAtOrder: moneyOrNull(order.pendingAbExposureAtOrder),
-      effectiveAvailableCreditAtOrder: moneyOrNull(order.effectiveAvailableCreditAtOrder),
-      orderCreditRequirement: moneyOrNull(order.orderCreditRequirement),
-      creditOverBy: moneyOrNull(order.creditOverBy),
-      creditCheckedAt: order.creditCheckedAt?.toISOString() ?? null,
-      creditSourceImportedAt: order.creditSourceImportedAt?.toISOString() ?? null,
-      creditApprovedAt: order.creditApprovedAt?.toISOString() ?? null,
-      creditApprovedByName:
-        order.creditApprovedBy?.name ?? order.creditApprovedBy?.email ?? null,
-      creditApprovalNote: order.creditApprovalNote,
-      previousCreditStatus: order.previousCreditStatus,
-      canRelease:
-        (order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED") &&
-        hasPermission(profile, "orders.credit.approve"),
-    },
+    creditControl: await (async () => {
+      let creditNowAvailable = false;
+      let creditNowAvailableMessage: string | null = null;
+      let liveEffectiveAvailableCredit: string | null = null;
+      if (order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED") {
+        const { evaluateHeldOrderCreditNow } = await import("@/server/orders/credit-control");
+        const hint = await evaluateHeldOrderCreditNow({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          companyId: order.companyId,
+          grandTotal: order.grandTotal,
+          paymentTerms: order.paymentTermsSnapshot,
+          hasVerifiedAutopartAccount: Boolean(
+            order.autopartAccountLinked || order.autopartCustomerCodeSnapshot,
+          ),
+          currentCreditStatus: order.creditStatus,
+        });
+        creditNowAvailable = hint.creditNowAvailable;
+        creditNowAvailableMessage = hint.message;
+        liveEffectiveAvailableCredit = hint.effectiveAvailableCredit;
+      }
+      return {
+        creditStatus: order.creditStatus,
+        creditDecisionReason: order.creditDecisionReason,
+        creditLimitAtOrder: moneyOrNull(order.creditLimitAtOrder),
+        autopartExposureAtOrder: moneyOrNull(order.autopartExposureAtOrder),
+        importedAvailableCreditAtOrder: moneyOrNull(order.importedAvailableCreditAtOrder),
+        pendingAbExposureAtOrder: moneyOrNull(order.pendingAbExposureAtOrder),
+        effectiveAvailableCreditAtOrder: moneyOrNull(order.effectiveAvailableCreditAtOrder),
+        orderCreditRequirement: moneyOrNull(order.orderCreditRequirement),
+        creditOverBy: moneyOrNull(order.creditOverBy),
+        creditCheckedAt: order.creditCheckedAt?.toISOString() ?? null,
+        creditSourceImportedAt: order.creditSourceImportedAt?.toISOString() ?? null,
+        creditApprovedAt: order.creditApprovedAt?.toISOString() ?? null,
+        creditApprovedByName:
+          order.creditApprovedBy?.name ?? order.creditApprovedBy?.email ?? null,
+        creditApprovalNote: order.creditApprovalNote,
+        previousCreditStatus: order.previousCreditStatus,
+        canRelease:
+          (order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED") &&
+          hasPermission(profile, "orders.credit.approve"),
+        creditNowAvailable,
+        creditNowAvailableMessage,
+        liveEffectiveAvailableCredit,
+      };
+    })(),
     hasBackorderItems: orderContainsBackorder(order.items),
     hasOutstandingBackorder: summary.hasOutstandingBackorder,
     outstandingBackorderUnits: summary.outstandingBackorderUnits,

@@ -102,6 +102,23 @@ Rule used:
 
 **Limitation:** `sourceImportedAt` is the AB import time of the report, not necessarily Autopart’s internal report generation time. Documented as conservative for this manual-import phase.
 
+### Bulk manual import interaction
+
+Central bulk import (Settings → Autopart → Customer credit) upserts `AutopartCreditPosition` via the same authority model. `evaluateOrderCredit` immediately uses the new snapshot — no duplicate credit math in the importer.
+
+Pending AB exposure continues to use the rule above (imported available minus qualifying pending APPROVED exposure). Imported 407P100 values are never adjusted for AB orders.
+
+### Held / review orders after import
+
+After a successful bulk (or per-customer) 407P100 import, existing `HOLD` / `REVIEW_REQUIRED` orders are **not** auto-released and **not** auto-exported.
+
+Admin derives a live indicator via `evaluateHeldOrderCreditNow`:
+
+- If the order would now `APPROVE` under current credit → show **Credit now available — review and release** (or for previous missing data: **Credit information now available — review and release**)
+- Stored `creditStatus` remains `HOLD` / `REVIEW_REQUIRED` until staff with `orders.credit.approve` releases it
+
+Dashboard Credit Hold / Credit Review attention lists surface the same positive indicator where useful.
+
 ## Concurrency
 
 Credit evaluation + order create run inside an interactive transaction after `SELECT … FOR UPDATE` on the company row, so two concurrent checkouts cannot both auto-approve against the same available capacity.
@@ -121,11 +138,12 @@ Quote commercial snapshots stay authoritative. Credit is evaluated **at conversi
 ## Freshness
 
 Same as Autopart history phase: `CURRENT` | `STALE` (&gt;7 days) | `NOT_AVAILABLE`.  
-Scheduled 407P100 ingestion is **out of scope** here.
+Scheduled 407P100 ingestion is **out of scope** here — future automation must call the bulk import service in `src/server/companies/autopart-credit-bulk.ts`.
 
 ## Key modules
 
 - `src/domain/order-credit.ts`
 - `src/server/orders/credit-control.ts`
+- `src/server/companies/autopart-credit-bulk.ts`
 - `docs/credit-control.md`
 - Related: `docs/autopart-customer-history.md`

@@ -295,6 +295,24 @@ function AdminOrderDetailPage() {
         </section>
         <section className="rounded-lg border border-border p-5 lg:col-span-2">
           <h2 className="font-display text-base font-semibold uppercase">Credit control</h2>
+          {order.creditControl.creditNowAvailable ? (
+            <div className="mt-3 rounded-md border border-good/40 bg-good/10 px-3 py-2 text-[13px]">
+              <p className="font-semibold text-good">
+                {order.creditControl.creditNowAvailableMessage ??
+                  "Credit now available — review and release"}
+              </p>
+              {order.creditControl.liveEffectiveAvailableCredit ? (
+                <p className="mt-1 text-steel">
+                  Live effective available: £{order.creditControl.liveEffectiveAvailableCredit}
+                  {order.creditControl.orderCreditRequirement
+                    ? ` · Order requirement: £${order.creditControl.orderCreditRequirement}`
+                    : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : order.creditControl.creditNowAvailableMessage ? (
+            <p className="mt-3 text-[13px] text-steel">{order.creditControl.creditNowAvailableMessage}</p>
+          ) : null}
           <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2">
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Status</dt>
