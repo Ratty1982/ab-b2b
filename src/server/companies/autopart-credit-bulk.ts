@@ -478,7 +478,10 @@ export async function buildBulkCreditPreview(input: {
 export async function previewBulkAutopartCreditImport(actorUserId: string, raw: unknown) {
   await assertCanBulkImportCredit(actorUserId);
   const input = previewSchema.parse(raw);
-  const preview = await buildBulkCreditPreview(input);
+  const preview = await buildBulkCreditPreview({
+    file407: input.file407,
+    filename: input.filename ?? null,
+  });
 
   const run = await prisma.autopartCustomerImportRun.create({
     data: {
@@ -523,7 +526,10 @@ export async function previewBulkAutopartCreditImport(actorUserId: string, raw: 
 export async function confirmBulkAutopartCreditImport(actorUserId: string, raw: unknown) {
   await assertCanBulkImportCredit(actorUserId);
   const input = previewSchema.parse(raw);
-  const preview = await buildBulkCreditPreview(input);
+  const preview = await buildBulkCreditPreview({
+    file407: input.file407,
+    filename: input.filename ?? null,
+  });
 
   if (preview.alreadyImported) {
     throw new AuthError(
