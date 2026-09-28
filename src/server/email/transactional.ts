@@ -128,6 +128,8 @@ export async function loadOrderEmailSnapshot(orderId: string): Promise<OrderEmai
       customerUnitPrice: moneyStr(item.customerUnitPrice),
       lineTotal: moneyStr(item.lineTotal),
       orderingMode: item.orderingMode,
+      availableQtyAtOrder: item.availableQtyAtOrder,
+      backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
     })),
     autopartAccountLinked: order.autopartAccountLinked,
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot,

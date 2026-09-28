@@ -85,6 +85,7 @@ type ProductDraft = {
   caseQty: string;
   minimumOrderQty: string;
   orderIncrement: string;
+  backorderAllowed: boolean;
   unit: string;
   weightKg: string;
   lengthMm: string;
@@ -123,6 +124,7 @@ function draftFromProduct(product: Workspace): ProductDraft {
     caseQty: String(product.caseQty ?? ""),
     minimumOrderQty: String(product.minimumOrderQty),
     orderIncrement: String(product.orderIncrement),
+    backorderAllowed: product.backorderPolicy === "ALLOW",
     unit: product.unit,
     weightKg: String(product.weightKg ?? ""),
     lengthMm: String(product.lengthMm ?? ""),
@@ -218,6 +220,7 @@ function ProductWorkspace() {
         vat: draft.vat,
         packQty: Number(draft.packQty),
         caseQty: optionalNumber(draft.caseQty),
+        backorderPolicy: draft.backorderAllowed ? "ALLOW" : "DENY",
         minimumOrderQty: Number(draft.minimumOrderQty),
         orderIncrement: Number(draft.orderIncrement),
         unit: draft.unit,
@@ -602,64 +605,117 @@ function CommercialForm({
 }
 
 function InventoryPanel({ product }: { product: Workspace }) {
-  if (!product.inventory.length) {
-    return (
-      <div className="max-w-xl rounded-lg border border-dashed border-border p-6">
-        <p className="font-semibold">No Autopart stock recorded</p>
-        <p className="mt-2 text-[13px] text-steel">
-          Sellable quantity comes from Autopart 231PO3NEW Avail minus ACTIVE Automotive Brands
-          order reservations. Nothing is invented here until a successful sync.
-        </p>
-      </div>
-    );
+  const [backorderAllowed, setBackorderAllowed] = useState(product.backorderPolicy === "ALLOW");
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  useEffect(() => {
+    setBackorderAllowed(product.backorderPolicy === "ALLOW");
+  }, [product.backorderPolicy, product.id]);
+
+  async function saveBackorderPolicy(next: boolean) {
+    setSavingPolicy(true);
+    setBackorderAllowed(next);
+    try {
+      const result = await updateCatalogueProductFn({
+        data: {
+          id: product.id,
+          backorderPolicy: next ? "ALLOW" : "DENY",
+        },
+      });
+      if (!result.ok) {
+        setBackorderAllowed(!next);
+        toast.error(result.error ?? "Could not update backorders");
+      } else {
+        toast.success(next ? "Backorders enabled for this SKU" : "Backorders disabled for this SKU");
+      }
+    } catch (e) {
+      setBackorderAllowed(!next);
+      toast.error(e instanceof Error ? e.message : "Could not update backorders");
+    } finally {
+      setSavingPolicy(false);
+    }
   }
+
   return (
-    <div className="space-y-3">
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
-              <th className="px-3 py-2">SKU</th>
-              <th className="px-3 py-2">Source</th>
-              <th className="px-3 py-2 text-right">Autopart Avail</th>
-              <th className="px-3 py-2 text-right">AB Reserved</th>
-              <th className="px-3 py-2 text-right">Effective Sellable</th>
-              <th className="px-3 py-2">Customer status</th>
-              <th className="px-3 py-2">Last sync</th>
-            </tr>
-          </thead>
-          <tbody>
-            {product.inventory.map((row) => (
-              <tr key={`${row.variantSku}-${row.warehouseCode}`} className="border-b border-border/60">
-                <td className="num px-3 py-2">{row.variantSku}</td>
-                <td className="px-3 py-2">
-                  {row.source === "231PO3NEW" ? "Autopart 231PO3NEW" : row.warehouse}
-                  {row.stale ? <span className="ml-2 text-[10px] font-semibold uppercase text-warn">Stale</span> : null}
-                </td>
-                <td className="num px-3 py-2 text-right">{row.qtyOnHand ?? "—"}</td>
-                <td className="num px-3 py-2 text-right">{row.qtyReserved ?? "—"}</td>
-                <td className="num px-3 py-2 text-right font-semibold">
-                  {row.sellableQty ?? "—"}
-                </td>
-                <td className="px-3 py-2">
-                  <InternalStockDisplay qty={null} availability={row.customerAvailability} stale={row.stale} className="justify-start" />
-                  {row.customerAvailability ? (
-                    <span className="sr-only">{PUBLIC_AVAILABILITY_LABEL[row.customerAvailability]}</span>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2 text-steel">
-                  <InstantText value={row.externalSyncedAt} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="space-y-4">
+      <div className="max-w-xl rounded-lg border border-border p-4">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">Backorders</p>
+        <label className="mt-3 flex items-start gap-3 text-[13px]">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={backorderAllowed}
+            disabled={savingPolicy}
+            onChange={(e) => void saveBackorderPolicy(e.target.checked)}
+          />
+          <span>
+            <span className="font-semibold">Allow customers to order when stock is unavailable</span>
+            <span className="mt-1 block text-steel">
+              Allows trade customers to order this SKU when available stock is insufficient.
+              Any unfulfilled quantity will be recorded as backordered.
+            </span>
+          </span>
+        </label>
       </div>
-      <p className="text-[12px] text-steel">
-        Autopart Avail is the latest feed figure. AB Reserved is the sum of ACTIVE order holds.
-        Effective sellable = max(0, Avail − reserved). Sync never resets reserved. Customers see
-        only IN STOCK / LOW STOCK / OUT OF STOCK.
-      </p>
+
+      {!product.inventory.length ? (
+        <div className="max-w-xl rounded-lg border border-dashed border-border p-6">
+          <p className="font-semibold">No Autopart stock recorded</p>
+          <p className="mt-2 text-[13px] text-steel">
+            Sellable quantity comes from Autopart 231PO3NEW Avail minus ACTIVE Automotive Brands
+            order reservations. Nothing is invented here until a successful sync.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
+                  <th className="px-3 py-2">SKU</th>
+                  <th className="px-3 py-2">Source</th>
+                  <th className="px-3 py-2 text-right">Autopart Avail</th>
+                  <th className="px-3 py-2 text-right">AB Reserved</th>
+                  <th className="px-3 py-2 text-right">Effective Available</th>
+                  <th className="px-3 py-2">Backorders Allowed</th>
+                  <th className="px-3 py-2">Customer status</th>
+                  <th className="px-3 py-2">Last sync</th>
+                </tr>
+              </thead>
+              <tbody>
+                {product.inventory.map((row) => (
+                  <tr key={`${row.variantSku}-${row.warehouseCode}`} className="border-b border-border/60">
+                    <td className="num px-3 py-2">{row.variantSku}</td>
+                    <td className="px-3 py-2">
+                      {row.source === "231PO3NEW" ? "Autopart 231PO3NEW" : row.warehouse}
+                      {row.stale ? <span className="ml-2 text-[10px] font-semibold uppercase text-warn">Stale</span> : null}
+                    </td>
+                    <td className="num px-3 py-2 text-right">{row.qtyOnHand ?? "—"}</td>
+                    <td className="num px-3 py-2 text-right">{row.qtyReserved ?? "—"}</td>
+                    <td className="num px-3 py-2 text-right font-semibold">
+                      {row.sellableQty ?? "—"}
+                    </td>
+                    <td className="px-3 py-2">{backorderAllowed ? "Yes" : "No"}</td>
+                    <td className="px-3 py-2">
+                      <InternalStockDisplay qty={null} availability={row.customerAvailability} stale={row.stale} className="justify-start" />
+                      {row.customerAvailability ? (
+                        <span className="sr-only">{PUBLIC_AVAILABILITY_LABEL[row.customerAvailability]}</span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-steel">
+                      <InstantText value={row.externalSyncedAt} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[12px] text-steel">
+            Autopart Avail is the latest feed figure. AB Reserved is the sum of ACTIVE order holds.
+            Effective available = max(0, Avail − reserved). Outstanding AB backorder demand is calculated
+            from open order lines and is internal only. Customers never see exact inventory quantities.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

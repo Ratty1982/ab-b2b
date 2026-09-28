@@ -1037,7 +1037,7 @@ export async function loadStockByVariantIds(variantIds: string[], now = new Date
   const rows = warehouse
     ? await prisma.inventory.findMany({
         where: { warehouseId: warehouse.id, variantId: { in: variantIds } },
-        include: { variant: { select: { sku: true } } },
+        include: { variant: { select: { sku: true, backorderPolicy: true } } },
       })
     : [];
   for (const row of rows) {
@@ -1045,16 +1045,22 @@ export async function loadStockByVariantIds(variantIds: string[], now = new Date
       autopartAvail: row.qtyOnHand,
       reservedQty: row.qtyReserved,
     });
+    const backorderPolicy = row.variant.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
     out.set(row.variantId, {
       variantId: row.variantId,
       sku: row.variant.sku,
       sellableQty: sellable,
       reservedQty: row.qtyReserved,
-      availability: customerAvailabilityForStock({ sellableQty: sellable, stale: freshness.stale }),
+      availability: customerAvailabilityForStock({
+        sellableQty: sellable,
+        stale: freshness.stale,
+        backorderAllowed: backorderPolicy === "ALLOW",
+      }),
       stale: freshness.stale,
       syncedAt: row.externalSyncedAt?.toISOString() ?? null,
       source: AUTOPART_FEED_SOURCE,
       sourceAvailRaw: row.sourceAvailRaw,
+      backorderPolicy,
     });
   }
   return out;

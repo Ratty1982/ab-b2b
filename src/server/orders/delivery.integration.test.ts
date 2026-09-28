@@ -184,6 +184,8 @@ describe("trade delivery on placeOrder", () => {
           customerUnitPrice: "25.72",
           lineTotal: "25.72",
           orderingMode: "CASE",
+          availableQtyAtOrder: 1,
+          backorderQtyAtOrder: 0,
         },
       ],
       autopartAccountLinked: false,

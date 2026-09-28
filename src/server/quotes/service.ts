@@ -185,12 +185,14 @@ async function buildQuoteLines(
 
     const stock = stockMap.get(variant.id) ?? null;
     const sellable = stock?.sellableQty ?? 0;
-    const orderableByStock = stock ? isOrderableByStockPolicy(stock) : false;
+    const backorderPolicy = stock?.backorderPolicy === "ALLOW" || variant.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
+    const orderableByStock = stock ? isOrderableByStockPolicy(stock, backorderPolicy) : backorderPolicy === "ALLOW";
     const ordering = resolveCustomerOrdering({
       caseQty: variant.caseQty,
       minimumOrderQty: variant.minOrderQty,
       sellableQty: sellable,
       orderableByStockPolicy: orderableByStock,
+      backorderPolicy,
     });
     const qtyIssue = assessBasketLineQuantity({
       quantity: input.qty,
@@ -201,6 +203,7 @@ async function buildQuoteLines(
       tradeVisible: variant.product.isTradeVisible,
       orderableByStockPolicy: orderableByStock,
       hasTradePrice: true,
+      backorderPolicy,
     });
     if (qtyIssue !== "VALID") {
       throw new AuthError(

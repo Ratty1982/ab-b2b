@@ -194,6 +194,8 @@ describe("branded transactional email shell", () => {
             customerUnitPrice: "2.50",
             lineTotal: "10.00",
             orderingMode: "CASE",
+            availableQtyAtOrder: 4,
+            backorderQtyAtOrder: 0,
           },
         ],
         autopartAccountLinked: false,

@@ -25,6 +25,18 @@ import { getBasket } from "@/server/basket/service";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
 import {
+  allocateOrderLineQuantities,
+  isBackorderAllowed,
+  orderContainsBackorder,
+  orderIsFullyBackordered,
+  presentOrderItemBackorder,
+  BACKORDER_CHECKOUT_BODY,
+  BACKORDER_CHECKOUT_HEADING,
+  BACKORDER_CUSTOMER_NOTICE,
+  type BackorderPolicyValue,
+} from "@/domain/backorder";
+import { publicAvailabilityForOrderLine } from "@/domain/availability";
+import {
   addMoney,
   applyVatInc,
   customerLineNetExVat,
@@ -101,12 +113,17 @@ export type CheckoutReviewLine = {
   issue: CheckoutLineIssue;
   issueMessage: string | null;
   priceSource: string | null;
+  availableQtyAtOrder: number;
+  backorderQtyAtOrder: number;
+  backordersAllowed: boolean;
 };
 
 export type CheckoutReview = {
   companyId: string;
   companyName: string;
   lines: CheckoutReviewLine[];
+  hasBackorderItems: boolean;
+  backorderNotice: { heading: string; body: string } | null;
   totals: {
     subtotal: string;
     vatTotal: string;
@@ -174,6 +191,7 @@ export type PortalOrderListItem = {
 
 export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"> & {
   status: string;
+  hasBackorderItems: boolean;
   items: Array<{
     id: string;
     sku: string;
@@ -185,6 +203,8 @@ export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"
     lineGross: string;
     orderingMode: string | null;
     caseQty: number | null;
+    availableQtyAtOrder: number | null;
+    backorderQtyAtOrder: number;
   }>;
 };
 
@@ -199,6 +219,8 @@ export type AdminOrderListItem = PortalOrderListItem & {
   deliveryTotal: string;
   /** Coarse Autopart readiness for list filters. */
   autopartExportFilter: "READY" | "EXPORTED" | "BLOCKED";
+  containsBackorder: boolean;
+  fullyBackordered: boolean;
 };
 
 export type AdminOrderDetail = PortalOrderDetail & {
@@ -249,6 +271,9 @@ type ResolvedLine = {
   promotionId: string | null;
   issue: CheckoutLineIssue;
   issueMessage: string | null;
+  availableQtyAtOrder: number;
+  backorderQtyAtOrder: number;
+  backordersAllowed: boolean;
 };
 
 function mapBasketIssueToCheckout(issue: BasketLineIssue): CheckoutLineIssue {
@@ -532,9 +557,11 @@ async function resolveCheckoutLines(
     const sellableQty = stock?.sellableQty ?? 0;
     const stale = stock?.stale ?? true;
     const availability = stock?.availability ?? null;
+    const backorderPolicy: BackorderPolicyValue =
+      variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
     const orderableByStockPolicy = stock
-      ? isOrderableByStockPolicy({ sellableQty, stale, availability })
-      : false;
+      ? isOrderableByStockPolicy({ sellableQty, stale, availability }, backorderPolicy)
+      : isBackorderAllowed(backorderPolicy);
     const resolution = priceByVariant.get(variant.id) ?? null;
     const hasPrice = Boolean(
       resolution && resolution.source !== "NONE" && resolution.unitPriceExVat,
@@ -549,6 +576,7 @@ async function resolveCheckoutLines(
       tradeVisible: product.isTradeVisible,
       orderableByStockPolicy,
       hasTradePrice: hasPrice,
+      backorderPolicy,
     });
 
     let issue = mapBasketIssueToCheckout(basketIssue);
@@ -557,6 +585,11 @@ async function resolveCheckoutLines(
       minimumOrderQty: variant.minOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
+    });
+    const allocation = allocateOrderLineQuantities({
+      orderedQty: item.qty,
+      sellableQty,
     });
 
     let commercialUnit4dp = "0.0000";
@@ -621,6 +654,9 @@ async function resolveCheckoutLines(
       promotionId,
       issue,
       issueMessage: checkoutIssueMessage(issue),
+      availableQtyAtOrder: allocation.availableQtyAtOrder,
+      backorderQtyAtOrder: allocation.backorderQtyAtOrder,
+      backordersAllowed: isBackorderAllowed(backorderPolicy),
     });
   }
 
@@ -643,7 +679,25 @@ function linesToReviewLines(lines: ResolvedLine[]): CheckoutReviewLine[] {
     issue: line.issue,
     issueMessage: line.issueMessage,
     priceSource: line.priceSource === "NONE" ? null : line.priceSource,
+    availableQtyAtOrder: line.availableQtyAtOrder,
+    backorderQtyAtOrder: line.backorderQtyAtOrder,
+    backordersAllowed: line.backordersAllowed,
   }));
+}
+
+function backorderNoticeFromLines(lines: ResolvedLine[]): {
+  hasBackorderItems: boolean;
+  backorderNotice: { heading: string; body: string } | null;
+} {
+  const hasBackorderItems = lines.some(
+    (l) => l.issue === "VALID" && l.backorderQtyAtOrder > 0,
+  );
+  return {
+    hasBackorderItems,
+    backorderNotice: hasBackorderItems
+      ? { heading: BACKORDER_CHECKOUT_HEADING, body: BACKORDER_CHECKOUT_BODY }
+      : null,
+  };
 }
 
 function sumValidTotals(
@@ -753,12 +807,15 @@ export async function previewCheckout(
   const contact = buildContactSnapshot(user, draft.contact);
   const poNumber = draft.poNumber ?? draft.customerReference ?? null;
 
+  const backorderMeta = backorderNoticeFromLines(lines);
   return {
     companyId: company.id,
     companyName: company.name,
     lines: linesToReviewLines(lines),
     totals: sumValidTotals(lines, company.taxStatus),
     hasBlockingIssues: hasBlocking(lines),
+    hasBackorderItems: backorderMeta.hasBackorderItems,
+    backorderNotice: backorderMeta.backorderNotice,
     deliveryAddress,
     contact,
     paymentTerms: company.paymentTerms,
@@ -883,12 +940,15 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     } catch {
       deliveryAddress = null;
     }
+    const backorderMeta = backorderNoticeFromLines(lines);
     const review: CheckoutReview = {
       companyId: company.id,
       companyName: company.name,
       lines: linesToReviewLines(lines),
       totals: sumValidTotals(lines, company.taxStatus),
       hasBlockingIssues: true,
+      hasBackorderItems: backorderMeta.hasBackorderItems,
+      backorderNotice: backorderMeta.backorderNotice,
       deliveryAddress,
       contact: buildContactSnapshot(user, input.contact),
       paymentTerms: company.paymentTerms,
@@ -989,6 +1049,8 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
             priceSource: line.priceSource,
             quantityBreakId: line.quantityBreakId,
             promotionId: line.promotionId,
+            availableQtyAtOrder: line.availableQtyAtOrder,
+            backorderQtyAtOrder: line.backorderQtyAtOrder,
           })),
         },
       },
@@ -1002,7 +1064,8 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
       lines: order.items.map((item) => ({
         orderItemId: item.id,
         variantId: item.variantId!,
-        quantity: item.qty,
+        // Reserve ONLY available allocation — never backordered units.
+        quantity: item.availableQtyAtOrder ?? 0,
       })),
     });
 
@@ -1134,6 +1197,7 @@ export async function getPortalOrder(userId: string, orderId: string): Promise<P
   return {
     ...base,
     status: order.status,
+    hasBackorderItems: orderContainsBackorder(order.items),
     items: order.items.map((item) => ({
       id: item.id,
       sku: item.sku,
@@ -1148,6 +1212,8 @@ export async function getPortalOrder(userId: string, orderId: string): Promise<P
       lineGross: moneyToString(parseMoney(String(item.lineGross)) ?? moneyZero(), 2),
       orderingMode: item.orderingMode,
       caseQty: item.caseQty,
+      availableQtyAtOrder: item.availableQtyAtOrder,
+      backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
     })),
   };
 }
@@ -1161,6 +1227,8 @@ export async function listAdminOrders(
     q?: string;
     /** Autopart export list filter. */
     autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
+    /** Backorder list filter. */
+    backorders?: "ALL" | "CONTAINS" | "FULL";
   },
 ): Promise<{ items: AdminOrderListItem[]; total: number; page: number; pageSize: number }> {
   const profile = await requireSystemPermission(userId, "orders.view");
@@ -1185,6 +1253,7 @@ export async function listAdminOrders(
 
   const q = raw?.q?.trim();
   const exportFilter = raw?.autopartExport ?? "ALL";
+  const backorderFilter = raw?.backorders ?? "ALL";
 
   const where: Prisma.OrderWhereInput = {
     ...companyFilter,
@@ -1220,6 +1289,29 @@ export async function listAdminOrders(
               autopartExportStatus: "NOT_EXPORTED",
             }
           : {}),
+    ...(backorderFilter === "CONTAINS"
+      ? { items: { some: { backorderQtyAtOrder: { gt: 0 } } } }
+      : backorderFilter === "FULL"
+        ? {
+            items: { some: {} },
+            AND: [
+              { items: { every: { backorderQtyAtOrder: { gt: 0 } } } },
+              // Fully backordered: every line has backorder and available at order is 0 or null-with-full-backorder
+              {
+                NOT: {
+                  items: {
+                    some: {
+                      OR: [
+                        { backorderQtyAtOrder: { lte: 0 } },
+                        { availableQtyAtOrder: { gt: 0 } },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
   };
 
   const [total, rows] = await prisma.$transaction([
@@ -1229,7 +1321,11 @@ export async function listAdminOrders(
       orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: { _count: { select: { items: true } }, company: { select: { name: true } } },
+      include: {
+        _count: { select: { items: true } },
+        company: { select: { name: true } },
+        items: { select: { qty: true, availableQtyAtOrder: true, backorderQtyAtOrder: true } },
+      },
     }),
   ]);
 
@@ -1267,6 +1363,8 @@ export async function listAdminOrders(
         autopartExportStatus: row.autopartExportStatus,
         autopartCustomerCodeSnapshot: row.autopartCustomerCodeSnapshot,
         autopartExportFilter,
+        containsBackorder: orderContainsBackorder(row.items),
+        fullyBackordered: orderIsFullyBackordered(row.items),
       };
     }),
   };
@@ -1318,6 +1416,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     salesRepNameSnapshot: order.salesRepNameSnapshot,
     deliveryMethodLabel: order.deliveryMethodLabel,
     basketId: order.basketId,
+    hasBackorderItems: orderContainsBackorder(order.items),
     items: order.items.map((item) => ({
       id: item.id,
       sku: item.sku,
@@ -1336,6 +1435,8 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       priceSource: item.priceSource,
       vatRate: moneyToString(parseMoney(String(item.vatRate)) ?? moneyZero(), 2),
       vatCode: item.vatCode,
+      availableQtyAtOrder: item.availableQtyAtOrder,
+      backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
     })),
   };
 }

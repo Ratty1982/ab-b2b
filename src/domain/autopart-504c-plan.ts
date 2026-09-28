@@ -171,6 +171,7 @@ export function orderStatusLabel(status: string | null | undefined): string | nu
   if (!status) return null;
   if (status === "SUBMITTED") return "Received";
   if (status === "CONFIRMED" || status === "PICKING") return "Processing";
+  if (status === "PARTIALLY_DESPATCHED") return "Part Despatched";
   if (status === "DISPATCHED" || status === "DELIVERED") return "Despatched";
   if (status === "CANCELLED") return "Cancelled";
   return status;

@@ -65,8 +65,8 @@ function PortalOrderDetailPage() {
         title={order.orderNumber}
         sub={order.placedAt ? formatDateTime(order.placedAt) ?? "Order detail" : "Order detail"}
         actions={
-          <StatusBadge tone={customerOrderStatusTone(order.status)}>
-            {customerOrderStatusLabel(order.status)}
+          <StatusBadge tone={customerOrderStatusTone(order.status, { hasBackorderItems: order.hasBackorderItems })}>
+            {customerOrderStatusLabel(order.status, { hasBackorderItems: order.hasBackorderItems })}
           </StatusBadge>
         }
       />
@@ -153,6 +153,11 @@ function PortalOrderDetailPage() {
                     {item.name}
                     {item.orderingMode === "FINAL_PART_CASE" ? (
                       <span className="ml-2 text-[11px] uppercase text-steel">Final part case</span>
+                    ) : null}
+                    {(item.backorderQtyAtOrder ?? 0) > 0 ? (
+                      <p className="mt-1 text-[12px] text-cyan">
+                        {item.availableQtyAtOrder ?? 0} allocated from stock · {item.backorderQtyAtOrder} backordered
+                      </p>
                     ) : null}
                   </td>
                   <td className="num px-3 py-2.5 text-right">{item.qty}</td>

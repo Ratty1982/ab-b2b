@@ -3,18 +3,34 @@
  *
  * RECEIVED  → SUBMITTED
  * PROCESSING → CONFIRMED | PICKING
+ * PART_BACKORDERED → processing with known backorder quantities (customer copy)
+ * PART_DESPATCHED → PARTIALLY_DESPATCHED
  * DESPATCHED → DISPATCHED
  */
 
-export type CustomerOrderLifecycle = "RECEIVED" | "PROCESSING" | "DESPATCHED" | "CANCELLED" | "ON_HOLD" | "DELIVERED" | "OTHER";
+export type CustomerOrderLifecycle =
+  | "RECEIVED"
+  | "PROCESSING"
+  | "PART_BACKORDERED"
+  | "PART_DESPATCHED"
+  | "DESPATCHED"
+  | "CANCELLED"
+  | "ON_HOLD"
+  | "DELIVERED"
+  | "OTHER";
 
-export function customerOrderLifecycle(status: string): CustomerOrderLifecycle {
+export function customerOrderLifecycle(
+  status: string,
+  opts?: { hasBackorderItems?: boolean },
+): CustomerOrderLifecycle {
   switch (status) {
     case "SUBMITTED":
       return "RECEIVED";
     case "CONFIRMED":
     case "PICKING":
-      return "PROCESSING";
+      return opts?.hasBackorderItems ? "PART_BACKORDERED" : "PROCESSING";
+    case "PARTIALLY_DESPATCHED":
+      return "PART_DESPATCHED";
     case "DISPATCHED":
       return "DESPATCHED";
     case "DELIVERED":
@@ -28,12 +44,19 @@ export function customerOrderLifecycle(status: string): CustomerOrderLifecycle {
   }
 }
 
-export function customerOrderStatusLabel(status: string): string {
-  switch (customerOrderLifecycle(status)) {
+export function customerOrderStatusLabel(
+  status: string,
+  opts?: { hasBackorderItems?: boolean },
+): string {
+  switch (customerOrderLifecycle(status, opts)) {
     case "RECEIVED":
       return "Received";
     case "PROCESSING":
-      return "Processing";
+      return opts?.hasBackorderItems ? "Processing — Backordered items" : "Processing";
+    case "PART_BACKORDERED":
+      return "Part Backordered";
+    case "PART_DESPATCHED":
+      return "Part Despatched";
     case "DESPATCHED":
       return "Despatched";
     case "DELIVERED":
@@ -49,12 +72,17 @@ export function customerOrderStatusLabel(status: string): string {
 
 export function customerOrderStatusTone(
   status: string,
+  opts?: { hasBackorderItems?: boolean },
 ): "good" | "warn" | "bad" | "info" | "neutral" | "brand" {
-  switch (customerOrderLifecycle(status)) {
+  switch (customerOrderLifecycle(status, opts)) {
     case "RECEIVED":
       return "good";
     case "PROCESSING":
       return "brand";
+    case "PART_BACKORDERED":
+      return "warn";
+    case "PART_DESPATCHED":
+      return "warn";
     case "DESPATCHED":
       return "info";
     case "DELIVERED":

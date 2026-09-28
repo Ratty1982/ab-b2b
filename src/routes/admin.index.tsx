@@ -220,6 +220,14 @@ function OrdersAttention({ data }: { data: Dashboard }) {
       empty: "No export-blocked orders.",
       href: `${ROUTES.adminOrders}?autopartExport=BLOCKED`,
     },
+    {
+      key: "backorder",
+      title: "Backordered orders",
+      count: data.ordersAttention.backorderedOrders.count,
+      items: [],
+      empty: "No orders currently contain backordered quantities.",
+      href: `${ROUTES.adminOrders}?backorders=CONTAINS`,
+    },
   ];
 
   return (

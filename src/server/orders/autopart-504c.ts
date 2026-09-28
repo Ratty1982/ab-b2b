@@ -31,6 +31,7 @@ import {
 import { parseMoney, moneyToString } from "@/domain/money";
 import { AUTOPART_504C_SCHEDULE_LABEL } from "@/domain/autopart-504c-schedule";
 import { enqueueOrderDespatchedEmail } from "@/server/orders/despatch-email";
+import { shouldPartialDespatchFrom504c } from "@/domain/backorder";
 
 export type Autopart504cFeedPublicSettings = {
   enabled: boolean;
@@ -222,6 +223,7 @@ async function assessInvoiceRow(
   const canReconcile =
     order.status === "CONFIRMED" ||
     order.status === "PICKING" ||
+    order.status === "PARTIALLY_DESPATCHED" ||
     order.status === "DISPATCHED" ||
     order.status === "DELIVERED";
 
@@ -317,6 +319,7 @@ async function planInvoiceRow(row: Autopart504cRow): Promise<Autopart504cPlanRow
       deliveryTotal: true,
       vatTotal: true,
       grandTotal: true,
+      items: { select: { backorderQtyAtOrder: true } },
     },
   });
 
@@ -350,7 +353,10 @@ async function planInvoiceRow(row: Autopart504cRow): Promise<Autopart504cPlanRow
   });
 
   const statusLabel = orderStatusLabel(order.status);
-  const alreadyDespatched = order.status === "DISPATCHED" || order.status === "DELIVERED";
+  const alreadyDespatched =
+    order.status === "DISPATCHED" ||
+    order.status === "DELIVERED" ||
+    order.status === "PARTIALLY_DESPATCHED";
   const processing = order.status === "CONFIRMED" || order.status === "PICKING";
   const canReconcile = processing || alreadyDespatched;
 
@@ -374,19 +380,29 @@ async function planInvoiceRow(row: Autopart504cRow): Promise<Autopart504cPlanRow
     });
   }
 
-  const wouldDespatch = processing;
-  const wouldSendEmail = wouldDespatch;
+  const hasKnownBackorder = shouldPartialDespatchFrom504c({
+    items: order.items,
+    expectedGoodsNet: Number(moneyOrZero(String(order.subtotal))) + Number(moneyOrZero(String(order.deliveryTotal))),
+    invoiceGoods: row.goods != null ? Number(row.goods) : null,
+  });
+  // Full despatch email only when we would move to DISPATCHED (not partial).
+  const wouldFullDespatch = processing && !hasKnownBackorder;
+  const wouldPartialDespatch = processing && hasKnownBackorder;
+  const wouldDespatch = wouldFullDespatch; // plan field = full despatch for summary compatibility
+  const wouldSendEmail = wouldFullDespatch;
   const financialIssue = financial.status === "MISMATCH";
 
   // Live apply currently does not block on financial mismatch — dry-run still predicts create/despatch
   // but surfaces FINANCIAL_MISMATCH as the primary classification when amounts disagree.
   const result: Autopart504cPlanResult = financialIssue
     ? "FINANCIAL_MISMATCH"
-    : wouldDespatch
+    : wouldFullDespatch
       ? "WOULD_DESPATCH"
-      : alreadyDespatched
-        ? "ALREADY_DESPATCHED"
-        : "WOULD_CREATE";
+      : wouldPartialDespatch
+        ? "WOULD_CREATE"
+        : alreadyDespatched
+          ? "ALREADY_DESPATCHED"
+          : "WOULD_CREATE";
 
   return withResult(base, {
     result,
@@ -394,17 +410,29 @@ async function planInvoiceRow(row: Autopart504cRow): Promise<Autopart504cPlanRow
     orderStatus: order.status,
     orderStatusLabel: statusLabel,
     wouldCreateInvoice: true,
-    wouldDespatch,
+    wouldDespatch: wouldFullDespatch,
     wouldSendEmail,
     fulfilmentFrom: statusLabel,
-    fulfilmentTo: wouldDespatch ? "Despatched" : statusLabel,
-    emailAction: wouldSendEmail ? "Would send ORDER_DESPATCHED" : "No despatch email",
-    action: wouldDespatch
+    fulfilmentTo: wouldFullDespatch
+      ? "Despatched"
+      : wouldPartialDespatch
+        ? "Part Despatched"
+        : statusLabel,
+    emailAction: wouldSendEmail
+      ? "Would send ORDER_DESPATCHED"
+      : wouldPartialDespatch
+        ? "No full despatch email (known backorder — Part Despatched)"
+        : "No despatch email",
+    action: wouldFullDespatch
       ? "Would create invoice and transition to Despatched"
-      : "Would create invoice",
-    livePolicyNote: financialIssue
-      ? "Live importer currently does not block on financial mismatch — amounts are flagged here for review."
-      : null,
+      : wouldPartialDespatch
+        ? "Would create invoice and transition to Part Despatched (known backorder)"
+        : "Would create invoice",
+    livePolicyNote: hasKnownBackorder
+      ? "Order has known backordered quantity. 504C is order-level only — AB marks PARTIALLY_DESPATCHED, not full Despatched."
+      : financialIssue
+        ? "Live importer currently does not block on financial mismatch — amounts are flagged here for review."
+        : null,
     financial,
     abOrderNumber,
   });
@@ -748,9 +776,15 @@ export async function applyAutopart504cFile(
         });
 
         if (order.status === "CONFIRMED" || order.status === "PICKING") {
+          const items = await tx.orderItem.findMany({
+            where: { orderId: order.id },
+            select: { backorderQtyAtOrder: true },
+          });
+          const partial = shouldPartialDespatchFrom504c({ items });
+          const nextStatus = partial ? "PARTIALLY_DESPATCHED" : "DISPATCHED";
           await tx.order.update({
             where: { id: order.id },
-            data: { status: "DISPATCHED" },
+            data: { status: nextStatus },
           });
 
           // Consume AB reservations (release hold). Do NOT mutate qtyOnHand —
@@ -769,8 +803,11 @@ export async function applyAutopart504cFile(
             });
           }
 
-          despatchedOrderIds.push(order.id);
-          ordersDespatched += 1;
+          // Full despatch email only when no known backorder remains.
+          if (!partial) {
+            despatchedOrderIds.push(order.id);
+            ordersDespatched += 1;
+          }
         }
       });
 

@@ -8,7 +8,8 @@
  * qtyReserved = sum of ACTIVE AB OrderStockReservation quantities.
  * effective sellable = max(0, qtyOnHand - qtyReserved).
  *
- * Phase 6C will reconcile RELEASED / CONSUMED against Autopart handoff.
+ * Phase 6C: reserve ONLY available sellable units. Backordered quantity is
+ * never reserved. Zero-stock backorder lines create no reservation row.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -18,6 +19,7 @@ import { AuthError } from "@/server/rbac/guards";
 export type ReserveStockLine = {
   orderItemId: string;
   variantId: string;
+  /** Units to reserve (available allocation only — never backorder qty). */
   quantity: number;
 };
 
@@ -25,6 +27,8 @@ export type ReserveStockLine = {
  * Lock AUTOPART inventory rows and hold stock for a newly created order.
  * Must run inside the same interactive transaction as order+item create,
  * before basket conversion.
+ *
+ * Lines with quantity 0 are skipped (full backorder — no AB hold).
  */
 export async function reserveStockForOrder(
   tx: Prisma.TransactionClient,
@@ -56,9 +60,12 @@ export async function reserveStockForOrder(
 
   for (const line of lines) {
     const qty = Math.trunc(line.quantity);
-    if (!Number.isFinite(qty) || qty < 1) {
+    if (!Number.isFinite(qty) || qty < 0) {
       throw new AuthError("Invalid reservation quantity", "RESERVE_QTY_INVALID", 400);
     }
+    // Full backorder — nothing to reserve against Autopart Avail.
+    if (qty === 0) continue;
+
     if (!line.variantId) {
       throw new AuthError("Variant required for stock reservation", "RESERVE_VARIANT", 400);
     }

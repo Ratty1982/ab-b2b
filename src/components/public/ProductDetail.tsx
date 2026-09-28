@@ -132,6 +132,12 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
         {product.availability ? (
           <div className="mt-3" data-product-availability={product.availability}>
             <AvailabilityBadge availability={product.availability} />
+            {product.availability === "backorder" ? (
+              <p className="mt-2 max-w-xl text-[13px] text-steel">
+                This item is currently out of stock but can still be ordered. It will be
+                supplied when stock becomes available.
+              </p>
+            ) : null}
           </div>
         ) : null}
         <div className="mt-4" data-product-unit-price>

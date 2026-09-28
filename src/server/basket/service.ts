@@ -25,6 +25,7 @@ import {
 } from "@/domain/trade-delivery";
 import {
   assessBasketLineQuantity,
+  basketBackorderMessage,
   basketLineIssueMessage,
   canDecrementQuantity,
   canIncrementQuantity,
@@ -39,6 +40,12 @@ import {
 } from "@/domain/ordering";
 import { publicTradeOrderingCopy } from "@/domain/case-ordering";
 import type { PublicAvailability } from "@/domain/availability";
+import { publicAvailabilityForOrderLine } from "@/domain/availability";
+import {
+  allocateOrderLineQuantities,
+  isBackorderAllowed,
+  type BackorderPolicyValue,
+} from "@/domain/backorder";
 import type { TradePriceResolution } from "@/domain/trade-price-resolution";
 
 const variantIdSchema = z.object({
@@ -87,6 +94,12 @@ export type PublicBasketLine = {
   lineVat: string | null;
   lineGross: string | null;
   availability: PublicAvailability | null;
+  /** Units available from current sellable at basket view (authenticated). */
+  availableQty: number;
+  /** Units that would be backordered at current sellable. */
+  backorderQty: number;
+  backorderMessage: string | null;
+  backordersAllowed: boolean;
   issue: BasketLineIssue;
   issueMessage: string | null;
   canIncrement: boolean;
@@ -151,6 +164,7 @@ export type ProductOrderingPanel = {
   insufficientFullCase: boolean;
   /** True when 0 < sellable < caseQty and final-part-case ordering is active. */
   isFinalPartCase: boolean;
+  backordersAllowed: boolean;
   /**
    * Exact remaining sellable — only set in FINAL_PART_CASE for order-eligible
    * authenticated actors. Never populate for anonymous responses.
@@ -427,9 +441,11 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
     const availability = stock?.availability ?? null;
     const resolution = priceByVariant.get(variant.id) ?? null;
     const money = lineTotalsFromResolution(resolution, item.qty);
+    const backorderPolicy: BackorderPolicyValue =
+      variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
     const orderableByStockPolicy = stock
-      ? isOrderableByStockPolicy({ sellableQty, stale, availability })
-      : false;
+      ? isOrderableByStockPolicy({ sellableQty, stale, availability }, backorderPolicy)
+      : isBackorderAllowed(backorderPolicy);
     const issue = assessBasketLineQuantity({
       quantity: item.qty,
       caseQty: variant.caseQty,
@@ -439,6 +455,7 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       tradeVisible: product.isTradeVisible,
       orderableByStockPolicy,
       hasTradePrice: money.hasPrice,
+      backorderPolicy,
     });
     if (issue !== "VALID") hasBlockingIssues = true;
     const ordering = resolveCustomerOrdering({
@@ -446,6 +463,7 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       minimumOrderQty: variant.minOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     });
     const rules = getOrderingRules({ caseQty: variant.caseQty, minimumOrderQty: variant.minOrderQty });
     const caseQty = rules.orderable ? rules.caseQty : null;
@@ -467,7 +485,15 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       minimumOrderQty: variant.minOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     };
+    const split = allocateOrderLineQuantities({ orderedQty: item.qty, sellableQty });
+    const lineAvailability = publicAvailabilityForOrderLine({
+      sellableQty,
+      orderedQty: item.qty,
+      backorderAllowed: isBackorderAllowed(backorderPolicy),
+      stale,
+    });
     lines.push({
       id: item.id,
       variantId: variant.id,
@@ -489,7 +515,15 @@ async function hydrateBasket(basketId: string, ctx: BasketContext): Promise<Publ
       lineNetDisplay: money.lineNetDisplay,
       lineVat: money.lineVat,
       lineGross: money.lineGross,
-      availability,
+      availability: lineAvailability,
+      availableQty: split.availableQtyAtOrder,
+      backorderQty: split.backorderQtyAtOrder,
+      backorderMessage:
+        issue === "VALID" ? basketBackorderMessage({
+          availableQty: split.availableQtyAtOrder,
+          backorderQty: split.backorderQtyAtOrder,
+        }) : null,
+      backordersAllowed: isBackorderAllowed(backorderPolicy),
       issue,
       issueMessage: basketLineIssueMessage(issue),
       canIncrement: issue === "VALID" && canIncrementQuantity(stepInput),
@@ -599,13 +633,15 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
   const stockMap = await loadStockByVariantIds([variant.id]);
   const stock = stockMap.get(variant.id);
   const sellableQty = stock?.sellableQty ?? 0;
+  const backorderPolicy: BackorderPolicyValue =
+    variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
   const orderableByStockPolicy = stock
     ? isOrderableByStockPolicy({
         sellableQty,
         stale: stock.stale,
         availability: stock.availability,
-      })
-    : false;
+      }, backorderPolicy)
+    : isBackorderAllowed(backorderPolicy);
 
   const basket = await getOrCreateOpenBasket(ctx);
   const existing = await prisma.basketItem.findUnique({
@@ -619,6 +655,7 @@ export async function addToBasket(userId: string, raw: unknown): Promise<PublicB
     minimumOrderQty: variant.minOrderQty,
     sellableQty,
     orderableByStockPolicy,
+    backorderPolicy,
   });
   if (!validated.ok) {
     throw new AuthError(validated.message, validated.code, 400);
@@ -679,6 +716,8 @@ export async function updateBasketItem(userId: string, raw: unknown): Promise<Pu
   const stockMap = await loadStockByVariantIds([item.variantId]);
   const stock = stockMap.get(item.variantId);
   const sellableQty = stock?.sellableQty ?? 0;
+  const backorderPolicy: BackorderPolicyValue =
+    item.variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
   const validated = validateOrderQuantity({
     requestedQuantity: input.quantity,
     caseQty: item.variant.caseQty,
@@ -689,8 +728,9 @@ export async function updateBasketItem(userId: string, raw: unknown): Promise<Pu
           sellableQty,
           stale: stock.stale,
           availability: stock.availability,
-        })
-      : false,
+        }, backorderPolicy)
+      : isBackorderAllowed(backorderPolicy),
+    backorderPolicy,
   });
   if (!validated.ok) {
     throw new AuthError(validated.message, validated.code, 400);
@@ -768,6 +808,7 @@ export async function getProductOrderingPanel(
     insufficientFullCase: false,
     isFinalPartCase: false,
     remainingQty: null,
+    backordersAllowed: false,
   };
   if (!userId) return empty;
 
@@ -812,18 +853,21 @@ export async function getProductOrderingPanel(
   const stockMap = await loadStockByVariantIds([variant.id]);
   const stock = stockMap.get(variant.id);
   const sellableQty = stock?.sellableQty ?? 0;
+  const backorderPolicy: BackorderPolicyValue =
+    variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
   const orderableByStockPolicy = stock
     ? isOrderableByStockPolicy({
         sellableQty,
         stale: stock.stale,
         availability: stock.availability,
-      })
-    : false;
+      }, backorderPolicy)
+    : isBackorderAllowed(backorderPolicy);
   const ordering = resolveCustomerOrdering({
     caseQty: rules.caseQty,
     minimumOrderQty: rules.minimumOrderQty,
     sellableQty,
     orderableByStockPolicy,
+    backorderPolicy,
   });
 
   if (ordering.mode === "NOT_ORDERABLE") {
@@ -847,6 +891,7 @@ export async function getProductOrderingPanel(
       insufficientFullCase: true,
       isFinalPartCase: false,
       remainingQty: null,
+      backordersAllowed: false,
     };
   }
 
@@ -905,6 +950,7 @@ export async function getProductOrderingPanel(
       minimumOrderQty: rules.minimumOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     }),
     canDecrement: canDecrementQuantity({
       currentQuantity: quantity,
@@ -912,11 +958,13 @@ export async function getProductOrderingPanel(
       minimumOrderQty: rules.minimumOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     }),
     canAdd: true,
     insufficientFullCase: false,
     isFinalPartCase: ordering.isFinalPartCase,
     remainingQty: ordering.remainingSellable,
+    backordersAllowed: ordering.backordersAllowed,
   };
 }
 
@@ -934,19 +982,22 @@ export async function previewProductOrderQuantity(
   const stockMap = await loadStockByVariantIds([variant.id]);
   const stock = stockMap.get(variant.id);
   const sellableQty = stock?.sellableQty ?? 0;
+  const backorderPolicy: BackorderPolicyValue =
+    variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
   const orderableByStockPolicy = stock
     ? isOrderableByStockPolicy({
         sellableQty,
         stale: stock.stale,
         availability: stock.availability,
-      })
-    : false;
+      }, backorderPolicy)
+    : isBackorderAllowed(backorderPolicy);
   const validated = validateOrderQuantity({
     requestedQuantity: input.quantity,
     caseQty: variant.caseQty,
     minimumOrderQty: variant.minOrderQty,
     sellableQty,
     orderableByStockPolicy,
+    backorderPolicy,
   });
   if (!validated.ok) {
     return {
@@ -959,6 +1010,7 @@ export async function previewProductOrderQuantity(
       insufficientFullCase: validated.code === "INSUFFICIENT_FULL_CASE",
       isFinalPartCase: false,
       remainingQty: null,
+      backordersAllowed: false,
     };
   }
 
@@ -983,6 +1035,7 @@ export async function previewProductOrderQuantity(
     minimumOrderQty: variant.minOrderQty,
     sellableQty,
     orderableByStockPolicy,
+    backorderPolicy,
   });
   return {
     ...panel,
@@ -999,6 +1052,7 @@ export async function previewProductOrderQuantity(
       minimumOrderQty: variant.minOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     }),
     canDecrement: canDecrementQuantity({
       currentQuantity: input.quantity,
@@ -1006,6 +1060,7 @@ export async function previewProductOrderQuantity(
       minimumOrderQty: variant.minOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     }),
     canAdd: money.hasPrice,
     insufficientFullCase: false,
@@ -1013,6 +1068,7 @@ export async function previewProductOrderQuantity(
     remainingQty: ordering.remainingSellable,
     quantityStep: ordering.step,
     minimumQuantity: ordering.minimumQuantity,
+    backordersAllowed: ordering.backordersAllowed,
     reason: null,
     orderable: true,
   };
@@ -1042,6 +1098,7 @@ const emptyOrderingPanel = (reason: string | null = null): ProductOrderingPanel 
   insufficientFullCase: false,
   isFinalPartCase: false,
   remainingQty: null,
+  backordersAllowed: false,
 });
 
 export type CatalogueOrderingVariantInput = {
@@ -1051,6 +1108,7 @@ export type CatalogueOrderingVariantInput = {
   vatCode: string;
   caseQty: number | null;
   minOrderQty: number | null;
+  backorderPolicy?: "DENY" | "ALLOW" | null;
   product: {
     status: string;
     isActive: boolean;
@@ -1094,6 +1152,7 @@ export async function getCatalogueOrderingPanels(
     sellableQty: number;
     quantity: number;
     ordering: ReturnType<typeof resolveCustomerOrdering>;
+    backorderPolicy: BackorderPolicyValue;
     orderableByStockPolicy: boolean;
   };
   const candidates: Candidate[] = [];
@@ -1120,18 +1179,21 @@ export async function getCatalogueOrderingPanels(
 
     const stock = stockMap.get(variant.id);
     const sellableQty = stock?.sellableQty ?? 0;
+    const backorderPolicy: BackorderPolicyValue =
+      variant.backorderPolicy === "ALLOW" || stock?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY";
     const orderableByStockPolicy = stock
       ? isOrderableByStockPolicy({
           sellableQty,
           stale: stock.stale,
           availability: stock.availability,
-        })
-      : false;
+        }, backorderPolicy)
+      : isBackorderAllowed(backorderPolicy);
     const ordering = resolveCustomerOrdering({
       caseQty: rules.caseQty,
       minimumOrderQty: rules.minimumOrderQty,
       sellableQty,
       orderableByStockPolicy,
+      backorderPolicy,
     });
 
     if (ordering.mode === "NOT_ORDERABLE") {
@@ -1155,6 +1217,7 @@ export async function getCatalogueOrderingPanels(
         insufficientFullCase: true,
         isFinalPartCase: false,
         remainingQty: null,
+        backordersAllowed: false,
       });
       continue;
     }
@@ -1173,6 +1236,7 @@ export async function getCatalogueOrderingPanels(
       quantity: ordering.defaultQuantity!,
       ordering,
       orderableByStockPolicy,
+      backorderPolicy,
     });
   }
 
@@ -1231,6 +1295,7 @@ export async function getCatalogueOrderingPanels(
           minimumOrderQty: candidate.variant.minOrderQty,
           sellableQty: candidate.sellableQty,
           orderableByStockPolicy: candidate.orderableByStockPolicy,
+          backorderPolicy: candidate.backorderPolicy,
         }),
         canDecrement: canDecrementQuantity({
           currentQuantity: quantity,
@@ -1238,11 +1303,13 @@ export async function getCatalogueOrderingPanels(
           minimumOrderQty: candidate.variant.minOrderQty,
           sellableQty: candidate.sellableQty,
           orderableByStockPolicy: candidate.orderableByStockPolicy,
+          backorderPolicy: candidate.backorderPolicy,
         }),
         canAdd: true,
         insufficientFullCase: false,
         isFinalPartCase: candidate.ordering.isFinalPartCase,
         remainingQty: candidate.ordering.remainingSellable,
+        backordersAllowed: candidate.ordering.backordersAllowed,
       });
     }
   }

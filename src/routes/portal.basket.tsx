@@ -143,6 +143,11 @@ function BasketPage() {
                     {line.issueMessage}
                   </p>
                 ) : null}
+                {line.backorderMessage ? (
+                  <p className="text-[13px] text-cyan" role="status">
+                    {line.backorderMessage}
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-steel">Quantity</p>

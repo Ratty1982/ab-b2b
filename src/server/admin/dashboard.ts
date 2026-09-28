@@ -134,6 +134,8 @@ export type AdminDashboardPayload = {
     readyForExport: { count: number; items: AdminDashboardOrderRow[] };
     processing: { count: number; items: AdminDashboardOrderRow[] };
     exportBlocked: { count: number; items: AdminDashboardOrderRow[] };
+    /** Orders with any line backorderQtyAtOrder > 0 (real count). */
+    backorderedOrders: { count: number };
   };
   applications: {
     submitted: number;
@@ -522,6 +524,16 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       : Promise.resolve(null),
   ]);
 
+  const backorderedOrdersCount = canSeeOrders
+    ? await prisma.order.count({
+        where: {
+          ...orderScope,
+          status: { notIn: ["DRAFT", "CANCELLED", "DELIVERED"] },
+          items: { some: { backorderQtyAtOrder: { gt: 0 } } },
+        },
+      })
+    : 0;
+
   const orderValue = decimalSumToMoneyString(ordersTodayAgg._sum.grandTotal);
   const openQuotesCount = canSeeQuotes ? quoteDraft + quoteSentViewed : null;
 
@@ -680,6 +692,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       readyForExport: { count: readyCount, items: readyItems.map(mapOrderRow) },
       processing: { count: processingCount, items: processingItems.map(mapOrderRow) },
       exportBlocked: { count: blockedCount, items: blockedItems.map(mapOrderRow) },
+      backorderedOrders: { count: backorderedOrdersCount },
     },
     applications: {
       submitted: appSubmitted,

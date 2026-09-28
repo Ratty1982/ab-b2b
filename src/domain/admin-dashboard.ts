@@ -7,6 +7,7 @@ export const DASHBOARD_OPEN_ORDER_STATUSES = [
   "SUBMITTED",
   "CONFIRMED",
   "PICKING",
+  "PARTIALLY_DESPATCHED",
   "DISPATCHED",
   "ON_HOLD",
 ] as const;

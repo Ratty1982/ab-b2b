@@ -1964,6 +1964,7 @@ export const listAdminOrdersFn = createServerFn({ method: "GET" })
             companyId?: string;
             q?: string;
             autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
+            backorders?: "ALL" | "CONTAINS" | "FULL";
           }
         | undefined,
   )

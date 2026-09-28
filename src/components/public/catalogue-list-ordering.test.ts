@@ -68,6 +68,7 @@ const orderableCase: ProductOrderingPanel = {
   insufficientFullCase: false,
   isFinalPartCase: false,
   remainingQty: null,
+      backordersAllowed: false,
 };
 
 const orderableSingle: ProductOrderingPanel = {
@@ -179,6 +180,7 @@ describe("catalogue list quick ordering presentation", () => {
           insufficientFullCase: true,
           isFinalPartCase: false,
           remainingQty: null,
+      backordersAllowed: false,
           reason: "Insufficient stock for a full case",
         },
       }),

@@ -52,7 +52,7 @@ type ProductRow = {
   rrp: number | null;
   stockLabel: string;
   stockQty: number | null;
-  availability: "in" | "low" | "out" | null;
+  availability: import("@/domain/availability").PublicAvailability | null;
   imageSrc: string | null;
   updatedAt: string;
 };

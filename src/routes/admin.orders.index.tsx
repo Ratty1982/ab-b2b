@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 
 type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
+type BackorderFilter = "ALL" | "CONTAINS" | "FULL";
 
 function parseExportFilter(value: unknown): ExportFilter | undefined {
   if (value === "READY" || value === "EXPORTED" || value === "BLOCKED" || value === "ALL") {
@@ -23,9 +24,15 @@ function parseExportFilter(value: unknown): ExportFilter | undefined {
 }
 
 export const Route = createFileRoute("/admin/orders/")({
-  validateSearch: (search: Record<string, unknown>): { autopartExport?: ExportFilter } => {
+  validateSearch: (search: Record<string, unknown>): { autopartExport?: ExportFilter; backorders?: BackorderFilter } => {
     const autopartExport = parseExportFilter(search["autopartExport"]);
-    return autopartExport ? { autopartExport } : {};
+    const bo = search["backorders"];
+    const backorders =
+      bo === "ALL" || bo === "CONTAINS" || bo === "FULL" ? (bo as BackorderFilter) : undefined;
+    return {
+      ...(autopartExport ? { autopartExport } : {}),
+      ...(backorders ? { backorders } : {}),
+    };
   },
   head: () => ({ meta: [{ title: "Orders — Automotive Brands Admin" }] }),
   component: AdminOrdersPage,
@@ -48,6 +55,7 @@ function AdminOrdersPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState("");
   const [exportFilter, setExportFilter] = useState<ExportFilter>(search.autopartExport ?? "ALL");
+  const [backorderFilter, setBackorderFilter] = useState<BackorderFilter>(search.backorders ?? "ALL");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,7 +64,8 @@ function AdminOrdersPage() {
 
   useEffect(() => {
     setExportFilter(search.autopartExport ?? "ALL");
-  }, [search.autopartExport]);
+    setBackorderFilter(search.backorders ?? "ALL");
+  }, [search.autopartExport, search.backorders]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +75,7 @@ function AdminOrdersPage() {
         pageSize: 50,
         q: q || undefined,
         autopartExport: exportFilter,
+        backorders: backorderFilter,
       },
     });
     setLoading(false);
@@ -77,7 +87,7 @@ function AdminOrdersPage() {
     setRows(result.data.items);
     setSelected({});
     setPreviewNote(null);
-  }, [q, exportFilter]);
+  }, [q, exportFilter, backorderFilter]);
 
   useEffect(() => {
     void load();
@@ -190,6 +200,18 @@ function AdminOrdersPage() {
               <option value="BLOCKED">Blocked</option>
             </select>
           </label>
+          <label className="grid gap-1 text-[11px] font-semibold uppercase text-steel">
+            Backorders
+            <select
+              value={backorderFilter}
+              onChange={(e) => setBackorderFilter(e.target.value as BackorderFilter)}
+              className={cn(inputClass, "min-w-[11rem]")}
+            >
+              <option value="ALL">All</option>
+              <option value="CONTAINS">Contains backorder</option>
+              <option value="FULL">Fully backordered</option>
+            </select>
+          </label>
           <button
             type="button"
             disabled={exporting || selectedIds.length === 0}
@@ -256,9 +278,14 @@ function AdminOrdersPage() {
                     <td className="px-3 py-2">{o.companyName}</td>
                     <td className="px-3 py-2 text-steel">{o.poNumber || "—"}</td>
                     <td className="px-3 py-2">
-                      <StatusBadge tone={customerOrderStatusTone(o.status)}>
-                        {customerOrderStatusLabel(o.status)}
-                      </StatusBadge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusBadge tone={customerOrderStatusTone(o.status, { hasBackorderItems: o.containsBackorder })}>
+                          {customerOrderStatusLabel(o.status, { hasBackorderItems: o.containsBackorder })}
+                        </StatusBadge>
+                        {o.containsBackorder ? (
+                          <StatusBadge tone="warn">{o.fullyBackordered ? "Full backorder" : "Backorder"}</StatusBadge>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="num px-3 py-2 text-right font-semibold">£{o.grandTotal}</td>
                     <td className="px-3 py-2 text-[12px] text-steel">

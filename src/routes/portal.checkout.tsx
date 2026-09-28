@@ -217,7 +217,13 @@ function CheckoutPage() {
       orderingMode: (l.isFinalPartCase ? "FINAL_PART_CASE" : "CASE") as
         | "CASE"
         | "FINAL_PART_CASE",
+      availableQtyAtOrder: l.availableQty,
+      backorderQtyAtOrder: l.backorderQty,
+      backordersAllowed: l.backordersAllowed,
     }));
+  const showBackorderNotice =
+    review?.hasBackorderItems ||
+    ctx.basket.lines.some((l) => l.backorderQty > 0);
   const totals = review?.totals ?? {
     subtotal: ctx.basket.totals.netDisplay,
     vatTotal: ctx.basket.delivery.vatWithDeliveryDisplay,
@@ -390,6 +396,17 @@ function CheckoutPage() {
 
             <section className="rounded-lg border border-border bg-surface/30 p-5">
               <h2 className="font-display text-lg font-semibold uppercase">Order review</h2>
+              {(review?.hasBackorderItems && review.backorderNotice) || showBackorderNotice ? (
+                <div className="mt-4 rounded-md border border-warn/40 bg-warn/10 p-3 text-[13px]" role="status">
+                  <p className="font-semibold uppercase tracking-wide text-warn">
+                    {review?.backorderNotice?.heading ?? "BACKORDER ITEMS"}
+                  </p>
+                  <p className="mt-1 text-steel">
+                    {review?.backorderNotice?.body ??
+                      "Some items in this order are not currently available from stock and will be supplied when stock becomes available."}
+                  </p>
+                </div>
+              ) : null}
               <ul className="mt-4 divide-y divide-border/60">
                 {lines.map((line) => (
                   <li
@@ -402,6 +419,12 @@ function CheckoutPage() {
                         {line.sku} · Qty {line.quantity}
                         {line.orderingMode === "FINAL_PART_CASE" ? " · Final part case" : ""}
                       </p>
+                      {"backorderQtyAtOrder" in line && (line as { backorderQtyAtOrder?: number }).backorderQtyAtOrder ? (
+                        <p className="mt-1 text-cyan">
+                          {(line as { availableQtyAtOrder?: number }).availableQtyAtOrder ?? 0} allocated from stock ·{" "}
+                          {(line as { backorderQtyAtOrder: number }).backorderQtyAtOrder} backordered
+                        </p>
+                      ) : null}
                       {line.issue !== "VALID" && line.issueMessage ? (
                         <p className="mt-1 font-medium text-warn">{line.issueMessage}</p>
                       ) : null}

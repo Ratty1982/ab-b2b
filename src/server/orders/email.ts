@@ -18,6 +18,8 @@ export type OrderEmailLine = {
   customerUnitPrice: string;
   lineTotal: string;
   orderingMode: string | null;
+  availableQtyAtOrder: number | null;
+  backorderQtyAtOrder: number;
 };
 
 export type OrderEmailSnapshot = {
@@ -70,12 +72,18 @@ function formatDelivery(order: OrderEmailSnapshot): string {
   return parts.join(", ");
 }
 
-function itemsPlain(order: OrderEmailSnapshot): string {
+function itemsPlain(order: OrderEmailSnapshot, mode: "customer" | "internal" = "customer"): string {
   return order.items
-    .map(
-      (item) =>
-        `- ${item.sku} ${item.name} × ${item.qty} @ £${formatGbp(item.customerUnitPrice)} = £${formatGbp(item.lineTotal)}`,
-    )
+    .map((item) => {
+      const base = `- ${item.sku} ${item.name} × ${item.qty} @ £${formatGbp(item.customerUnitPrice)} = £${formatGbp(item.lineTotal)}`;
+      const bo = item.backorderQtyAtOrder ?? 0;
+      if (bo <= 0) return base;
+      if (mode === "internal") {
+        const avail = item.availableQtyAtOrder ?? Math.max(0, item.qty - bo);
+        return `${base}\n  Ordered: ${item.qty} · Available: ${avail} · Backorder: ${bo}`;
+      }
+      return `${base}\n  ${bo} currently on backorder`;
+    })
     .join("\n");
 }
 
@@ -87,6 +95,11 @@ function orderSummaryTableHtml(order: OrderEmailSnapshot): string {
   <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;vertical-align:top;">
     <strong>${escapeEmailHtml(item.name)}</strong><br/>
     <span style="font-family:Consolas,monospace;font-size:12px;color:#5c6578;">${escapeEmailHtml(item.sku)}</span>
+    ${
+      (item.backorderQtyAtOrder ?? 0) > 0
+        ? `<br/><span style="font-size:12px;color:#b45309;">${item.backorderQtyAtOrder} currently on backorder</span>`
+        : ""
+    }
   </td>
   <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">${item.qty}</td>
   <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">£${escapeEmailHtml(formatGbp(item.customerUnitPrice))}</td>
@@ -151,13 +164,16 @@ export function buildOrderReceivedCustomerBodies(
     `Delivery address: ${delivery}`,
     "",
     "Items:",
-    itemsPlain(order),
+    itemsPlain(order, "customer"),
     "",
     `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
     `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
     `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
     `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
+    ...(order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0)
+      ? ["Backordered items will be supplied when stock becomes available.", ""]
+      : []),
     "Your order has been received and is pending processing.",
     "This confirmation does not mean the order has been despatched.",
     "",
@@ -175,6 +191,11 @@ export function buildOrderReceivedCustomerBodies(
 <p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}<br/>
 <strong>Delivery address:</strong> ${escapeEmailHtml(delivery)}</p>
 ${orderSummaryTableHtml(order)}
+${
+  order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0)
+    ? `<p style="margin:0 0 12px;padding:12px;background:#fff7ed;border:1px solid #fdba74;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#9a3412;">Backordered items will be supplied when stock becomes available.</p>`
+    : ""
+}
 <p style="margin:0 0 8px;">Your order has been received and is pending processing.<br/>
 This confirmation does not mean the order has been despatched.</p>`;
 
@@ -213,7 +234,7 @@ export function buildOrderReceivedInternalBodies(
     `Sales rep: ${salesRep}`,
     "",
     "Items:",
-    itemsPlain(order),
+    itemsPlain(order, "internal"),
     "",
     `Subtotal: £${formatGbp(order.subtotal)}`,
     `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)}`}`,

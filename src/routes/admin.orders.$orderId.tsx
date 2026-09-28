@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -387,7 +388,9 @@ function AdminOrderDetailPage() {
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
                 <th className="px-3 py-2">SKU</th>
                 <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2 text-right">Qty</th>
+                <th className="px-3 py-2 text-right">Ordered</th>
+                <th className="px-3 py-2 text-right">Available at order</th>
+                <th className="px-3 py-2 text-right">Backordered</th>
                 <th className="px-3 py-2 text-right">Sell unit</th>
                 <th className="px-3 py-2 text-right">Commercial 4dp</th>
                 <th className="px-3 py-2">Source</th>
@@ -399,17 +402,35 @@ function AdminOrderDetailPage() {
                 const adminItem = item as typeof item & {
                   unitPrice?: string;
                   priceSource?: string | null;
+                  availableQtyAtOrder?: number | null;
+                  backorderQtyAtOrder?: number;
                 };
+                const backordered = (adminItem.backorderQtyAtOrder ?? 0) > 0;
                 return (
-                <tr key={item.id} className="border-b border-border/60">
+                <tr
+                  key={item.id}
+                  className={cn(
+                    "border-b border-border/60",
+                    backordered && "bg-warn/5",
+                  )}
+                >
                   <td className="num px-3 py-2">{item.sku}</td>
                   <td className="px-3 py-2">
                     {item.name}
                     {item.orderingMode ? (
                       <span className="ml-2 text-[11px] uppercase text-steel">{item.orderingMode}</span>
                     ) : null}
+                    {backordered ? (
+                      <span className="ml-2 text-[10px] font-semibold uppercase text-warn">Backorder</span>
+                    ) : null}
                   </td>
                   <td className="num px-3 py-2 text-right">{item.qty}</td>
+                  <td className="num px-3 py-2 text-right">
+                    {adminItem.availableQtyAtOrder ?? "—"}
+                  </td>
+                  <td className={cn("num px-3 py-2 text-right", backordered && "font-semibold text-warn")}>
+                    {adminItem.backorderQtyAtOrder ?? 0}
+                  </td>
                   <td className="num px-3 py-2 text-right">£{item.customerUnitPrice}</td>
                   <td className="num px-3 py-2 text-right text-steel">
                     £{adminItem.unitPrice ?? item.customerUnitPrice}

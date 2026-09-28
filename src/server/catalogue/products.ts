@@ -178,7 +178,11 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       : null;
     const hasInv = Boolean(variant?.inventory.length);
     const availability = hasInv
-      ? customerAvailabilityForStock({ sellableQty: sellable ?? 0, stale: freshness.stale })
+      ? customerAvailabilityForStock({
+          sellableQty: sellable ?? 0,
+          stale: freshness.stale,
+          backorderAllowed: variant?.backorderPolicy === "ALLOW",
+        })
       : null;
     const parentName = row.category?.parent?.name;
     return {
@@ -199,11 +203,15 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
           ? "In Stock"
           : availability === "low"
             ? "Low Stock"
-            : availability === "out"
-              ? "Out of Stock"
-              : freshness.stale
-                ? "Stale"
-                : "Unknown"
+            : availability === "backorder"
+              ? "Available to Backorder"
+              : availability === "partial"
+                ? "Partially Available"
+                : availability === "out"
+                  ? "Out of Stock"
+                  : freshness.stale
+                    ? "Stale"
+                    : "Unknown"
         : "Not synced",
       availability,
       imageSrc: row.media[0]?.mediaId ? cmsMediaPublicPath(row.media[0].mediaId) : null,
@@ -353,6 +361,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
     caseQty: variant?.caseQty ?? null,
     minimumOrderQty: variant?.minOrderQty ?? 1,
     orderIncrement: variant?.orderIncrement ?? 1,
+    backorderPolicy: variant?.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY",
     unit: variant?.unit ?? "EA",
     weightKg: moneyNumber(variant?.weightKg),
     lengthMm: moneyNumber(variant?.lengthMm),
@@ -386,7 +395,12 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
           qtyReserved: canSeeQty ? inv.qtyReserved : null,
           sellableQty: canSeeQty ? sellable : null,
           sourceAvailRaw: canSeeQty ? inv.sourceAvailRaw : null,
-          customerAvailability: customerAvailabilityForStock({ sellableQty: sellable, stale: freshness.stale }),
+          customerAvailability: customerAvailabilityForStock({
+            sellableQty: sellable,
+            stale: freshness.stale,
+            backorderAllowed: v.backorderPolicy === "ALLOW",
+          }),
+          backorderPolicy: v.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY",
           stale: freshness.stale,
           status: inv.status,
           source: inv.warehouse.code === "AUTOPART" ? AUTOPART_FEED_SOURCE : inv.warehouse.name,
@@ -482,6 +496,7 @@ export async function updateProductWorkspace(actorUserId: string, raw: unknown) 
         ...(input.caseQty !== undefined ? { caseQty: input.caseQty } : {}),
         ...(input.minimumOrderQty !== undefined ? { minOrderQty: input.minimumOrderQty } : {}),
         ...(input.orderIncrement !== undefined ? { orderIncrement: input.orderIncrement } : {}),
+        ...(input.backorderPolicy !== undefined ? { backorderPolicy: input.backorderPolicy } : {}),
         ...(input.unit !== undefined ? { unit: input.unit } : {}),
         ...(input.weightKg !== undefined ? { weightKg: input.weightKg } : {}),
         ...(input.lengthMm !== undefined ? { lengthMm: input.lengthMm } : {}),
@@ -813,6 +828,7 @@ function toPublicCard(
       vatCode: string;
       caseQty?: number | null;
       minOrderQty?: number | null;
+      backorderPolicy?: "DENY" | "ALLOW" | null;
       isDefault: boolean;
       createdAt: Date;
       inventory: Array<{ qtyOnHand: number; qtyReserved?: number }>;
@@ -848,7 +864,13 @@ function toPublicCard(
         tradePrice: variant?.tradePrice,
         rrp: variant?.rrp,
       }),
-    availability: hasInv ? customerAvailabilityForStock({ sellableQty: qty ?? 0, stale }) : null,
+    availability: hasInv
+      ? customerAvailabilityForStock({
+          sellableQty: qty ?? 0,
+          stale,
+          backorderAllowed: variant?.backorderPolicy === "ALLOW",
+        })
+      : null,
     isNew: row.isNew,
     isFeatured: row.isFeatured,
     variantId: variant?.id ?? null,
@@ -968,6 +990,7 @@ export async function listPublicProducts(input: {
         vatCode: variant.vatCode,
         caseQty: variant.caseQty,
         minOrderQty: variant.minOrderQty,
+        backorderPolicy: (variant.backorderPolicy === "ALLOW" ? "ALLOW" : "DENY") as "ALLOW" | "DENY",
         product: {
           status: row.status,
           isActive: row.isActive,

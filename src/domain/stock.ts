@@ -42,6 +42,8 @@ export type VariantStock = {
   syncedAt: string | null;
   source: typeof AUTOPART_FEED_SOURCE;
   sourceAvailRaw: string | null;
+  /** Variant backorder policy — DENY by default. */
+  backorderPolicy: "DENY" | "ALLOW";
 };
 
 /**
@@ -64,11 +66,13 @@ export function customerAvailabilityForStock(input: {
   sellableQty: number | null;
   stale: boolean;
   unknown?: boolean;
+  backorderAllowed?: boolean;
 }): PublicAvailability | null {
   return publicAvailabilityFromStock({
     sellableQty: input.sellableQty,
     stale: input.stale,
     unknown: input.unknown ?? false,
+    ...(input.backorderAllowed !== undefined ? { backorderAllowed: input.backorderAllowed } : {}),
   });
 }
 
@@ -120,6 +124,8 @@ export function stockAvailabilityBand(qty: number): PublicAvailability {
 export function stockAvailabilityBandLabel(band: PublicAvailability): string {
   if (band === "in") return "IN STOCK";
   if (band === "low") return "LOW STOCK";
+  if (band === "backorder") return "AVAILABLE TO BACKORDER";
+  if (band === "partial") return "PARTIALLY AVAILABLE";
   return "OUT OF STOCK";
 }
 

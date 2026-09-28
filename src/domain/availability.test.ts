@@ -17,6 +17,7 @@ describe("public availability contract", () => {
     expect(PUBLIC_AVAILABILITY_LABEL.in).toBe("In Stock");
     expect(PUBLIC_AVAILABILITY_LABEL.low).toBe("Low Stock");
     expect(PUBLIC_AVAILABILITY_LABEL.out).toBe("Out of Stock");
+    expect(PUBLIC_AVAILABILITY_LABEL.backorder).toBe("Available to Backorder");
   });
 
   it("does not present stale positive stock as in/low stock", () => {
@@ -24,5 +25,16 @@ describe("public availability contract", () => {
     expect(publicAvailabilityFromStock({ sellableQty: 0, stale: true, unknown: false })).toBe("out");
     expect(publicAvailabilityFromStock({ sellableQty: 8, stale: false, unknown: false })).toBe("low");
     expect(publicAvailabilityFromStock({ sellableQty: 10, stale: false, unknown: true })).toBeNull();
+  });
+
+  it("maps zero stock with backorders allowed to Available to Backorder", () => {
+    expect(
+      publicAvailabilityFromStock({
+        sellableQty: 0,
+        stale: false,
+        unknown: false,
+        backorderAllowed: true,
+      }),
+    ).toBe("backorder");
   });
 });
