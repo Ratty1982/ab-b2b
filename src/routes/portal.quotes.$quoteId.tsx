@@ -272,6 +272,26 @@ function PortalQuoteDetail() {
           </section>
         ) : null}
 
+        {quote.status === "EXPIRED" ? (
+          <section className="rounded-lg border border-bad/40 bg-bad/5 p-4 print:hidden">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-bad">
+              Quote expired
+            </p>
+            <p className="mt-2 text-[14px] text-steel">
+              This quotation expired on {formatQuoteDateOnlyUk(quote.validUntil)}. Please contact
+              your account manager if you would like an updated quotation.
+            </p>
+            {quote.accountManager?.primaryContactHref ? (
+              <a
+                href={quote.accountManager.primaryContactHref}
+                className="mt-4 inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+              >
+                Contact {quote.accountManager.name}
+              </a>
+            ) : null}
+          </section>
+        ) : null}
+
         {quote.canCustomerAccept ? (
           <section className="space-y-3 rounded-lg border border-border p-4 print:hidden">
             <div className="flex flex-col gap-2 sm:flex-row">
