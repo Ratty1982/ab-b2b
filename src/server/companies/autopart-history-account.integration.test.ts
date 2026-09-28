@@ -138,6 +138,37 @@ YORKMOT,3494.75,0,0,0,0,0,3494.75,5000.00
     expect(parsed.detectedAccounts.every((d) => accepted.has(d))).toBe(false);
   });
 
+  it("MATCHED_REPORT_CUSTOMER when Start Customer equals verified (no alias)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const fixtureDir = resolve(import.meta.dirname, "../../domain/fixtures");
+    const file561 = readFileSync(resolve(fixtureDir, "autopart-561l-native.txt"), "utf8");
+    const fileSlrb = readFileSync(resolve(fixtureDir, "autopart-slrb-native.txt"), "utf8");
+    const stamp = Date.now();
+    const company = await prisma.company.create({
+      data: {
+        name: `RptCust ${stamp}`,
+        status: "ACTIVE",
+        autopartCustomerCode: "YORKMOTO",
+        autopartCustomerCodeVerifiedAt: new Date(),
+        autopartCustomerCodeVerifiedById: adminId,
+      },
+    });
+    const preview = await previewAutopartHistoryImport(adminId, {
+      companyId: company.id,
+      file561l: file561,
+      fileSlrb: fileSlrb,
+      filename561l: "561L.txt",
+      filenameSlrb: "SLRB.txt",
+    });
+    expect(preview.accountMatch.status).toBe("MATCHED_REPORT_CUSTOMER");
+    expect(preview.accountMatch.reportCustomer).toBe("YORKMOTO");
+    expect(preview.accountMatch.rowAccount).toBe("YORKMOT");
+    expect(preview.canCommit).toBe(true);
+    expect(preview.matching.matchedDocuments).toBeGreaterThanOrEqual(7);
+    expect(preview.issues.some((i) => i.code === "ACCOUNT_ALIAS_REQUIRED")).toBe(false);
+  });
+
   it("preview allows import with truncated match; alias path still works", async () => {
     const stamp = Date.now();
     const verified = `HP${String(stamp).slice(-5)}O`;

@@ -1,26 +1,56 @@
 /**
  * Autopart 561L — historic product-level sales/credit lines.
- * Native content-based parser (CSV / tab / report text) — no LLM guessing.
- * Filename/extension is never used for format detection.
+ *
+ * Native printed layout (confirmed against real Autopart output):
+ *
+ *   .Acct. Inv & Ln    Part Number   Description              Units     Sales
+ *   YORKMOTC/SC500093/127113         Red 13ml Threadlocker       -1     -8.98
+ *
+ * Critical:
+ * - `.Acct.` is exactly 7 characters. Inv & Ln begins immediately after — no
+ *   required whitespace. YORKMOT + C/SC500093/1 + 27113 may be adjacent.
+ * - Column starts come from the printed header labels, not whitespace splits.
+ * - Account codes come ONLY from the Acct field on DATA_LINE rows (or the
+ *   report `[Start Customer …]` selection parameter — never from titles).
+ * - Document type comes from Inv & Ln (`I/` / `C/`), never from signed money.
  */
 import {
   autopartMoneyToGbp2,
-  detectFixedWidthLayout,
   extractAutopartAccountCode,
+  extractReportCustomerSelection,
   headerKey,
+  isPlausibleAutopartAccountCode,
   normaliseReportLines,
   parseAutopartMoney,
-  sliceFixedWidthCells,
   splitAutopartReportCells,
   splitCsvLine,
-  type FixedWidthColumn,
 } from "@/domain/autopart-report-money";
+
+export { extractReportCustomerSelection };
 
 export type Autopart561lDocumentType = "INVOICE" | "CREDIT" | "UNKNOWN";
 
+/** Structural row kinds for printed Autopart reports. */
+export type Autopart561lRowKind =
+  | "REPORT_TITLE"
+  | "PAGE_HEADER"
+  | "COLUMN_HEADER"
+  | "CUSTOMER_HEADER"
+  | "SELECTION_PARAM"
+  | "DATA_LINE"
+  | "CONTINUATION_LINE"
+  | "SUBTOTAL"
+  | "TOTAL"
+  | "FOOTER"
+  | "BLANK"
+  | "UNKNOWN"
+  | "MALFORMED";
+
 export type Autopart561lLine = {
   lineNumberInFile: number;
+  rowKind: Autopart561lRowKind;
   accountCode: string | null;
+  customerName: string | null;
   rawInvAndLn: string;
   documentType: Autopart561lDocumentType;
   documentReference: string | null;
@@ -30,8 +60,19 @@ export type Autopart561lLine = {
   units: number | null;
   /** Signed sales net as GBP 2dp string (credits typically negative when source is signed). */
   salesNet: string | null;
+  /** @deprecated use rowKind — kept for existing callers expecting LINE/HEADER/… */
   classification: "LINE" | "HEADER" | "TOTAL" | "BLANK" | "MALFORMED";
   issue: string | null;
+};
+
+export type Autopart561lColumnLayout = {
+  account: { start: number; end: number };
+  invLn: { start: number; end: number };
+  part: { start: number; end: number };
+  description: { start: number; end: number };
+  units: { start: number; end: number };
+  sales: { start: number; end: number | null };
+  accountFieldWidth: number;
 };
 
 export type Autopart561lParseResult = {
@@ -43,11 +84,20 @@ export type Autopart561lParseResult = {
   malformedRows: number;
   blankRows: number;
   detectedAccounts: string[];
+  /** `[Start Customer XXX]` from report selection parameters. */
+  reportStartCustomer: string | null;
+  reportEndCustomer: string | null;
   headerFound: boolean;
-  /** Confirmed account field width from fixed-width layout, else null. */
+  /** Confirmed printed account width (native layout = 7). */
   accountFieldWidth: number | null;
-  layout: "CSV" | "FIXED_WIDTH" | "SPACED" | "POSITIONAL" | null;
+  layout: "CSV" | "NATIVE_FIXED" | "POSITIONAL" | null;
+  columnLayout: Autopart561lColumnLayout | null;
   errors: string[];
+  diagnostics: {
+    uniqueDocumentRefs: string[];
+    uniqueInvoiceRefs: string[];
+    uniqueCreditRefs: string[];
+  };
 };
 
 const HEADER_ALIASES: Record<string, string> = {
@@ -70,17 +120,12 @@ const HEADER_ALIASES: Record<string, string> = {
   amount: "sales",
 };
 
-const FIXED_WIDTH_LABELS = [
-  { key: "account", patterns: [/\bAcct\.?\b/i, /\bAccount\b/i, /\bA\/C\b/i] },
-  { key: "invLn", patterns: [/\bInv\s*&\s*Ln\b/i, /\bInv\s*\/?\s*Ln\b/i, /\bInvoice\s*Line\b/i] },
-  { key: "part", patterns: [/\bPart\s*Number\b/i, /\bPart\s*No\.?\b/i] },
-  { key: "description", patterns: [/\bDescription\b/i, /\bDesc\.?\b/i] },
-  { key: "units", patterns: [/\bUnits\b/i, /\bQty\b/i] },
-  { key: "sales", patterns: [/\bSales\b/i, /\bValue\b/i, /\bAmount\b/i] },
-];
+const INV_LN_RE = /^([IC])\/([A-Za-z0-9][A-Za-z0-9._-]*)\/(\d+)$/i;
+const START_CUSTOMER_RE = /\[\s*Start\s+Customer\s+/i;
+const END_CUSTOMER_RE = /\[\s*End\s+Customer\s+/i;
 
 /**
- * Normalise Inv & Ln identities such as I/SS306008/1 or C/SS100818/2.
+ * Normalise Inv & Ln identities such as I/SS306008/1 or C/SC500093/1.
  * Does not guess malformed values.
  */
 export function parseInvAndLn(raw: string | null | undefined): {
@@ -100,7 +145,7 @@ export function parseInvAndLn(raw: string | null | undefined): {
     };
   }
   const t = String(raw).trim();
-  const m = t.match(/^([IC])\/([^/]+)\/(\d+)$/i);
+  const m = t.match(INV_LN_RE);
   if (!m) {
     return {
       documentType: "UNKNOWN",
@@ -140,15 +185,6 @@ function parseUnits(raw: string | null | undefined): number | null {
   return n;
 }
 
-function looksLike561lHeaderLine(raw: string): boolean {
-  const u = raw.toUpperCase();
-  const hasAcct = /\bACCT\.?\b/.test(u) || /\bACCOUNT\b/.test(u) || /\bA\/C\b/.test(u);
-  const hasInv = /INV\s*&\s*LN/.test(u) || /INV\s*\/?\s*LN/.test(u) || /INVOICE\s*LINE/.test(u);
-  const hasPart = /PART\s*NUMBER/.test(u) || /PART\s*NO/.test(u);
-  const hasSales = /\bSALES\b/.test(u) || /\bVALUE\b/.test(u);
-  return hasAcct && hasInv && hasPart && hasSales;
-}
-
 function mapHeader(cells: string[]): {
   account: number;
   invLn: number;
@@ -180,43 +216,136 @@ function cellAt(cells: string[], idx: number | undefined): string | null {
   return cells[idx] ?? null;
 }
 
-function looksLikeTotalRow(cells: string[], invLnRaw: string): boolean {
-  const joined = cells.join(" ").toUpperCase();
-  if (joined.includes("TOTAL") && !/^(I|C)\//i.test(invLnRaw)) {
-    return true;
-  }
-  return false;
+function looksLikeColumnHeader(raw: string): boolean {
+  const u = raw.toUpperCase();
+  const hasAcct = /\.?\bACCT\.?\b/.test(u) || /\bACCOUNT\b/.test(u) || /\bA\/C\b/.test(u);
+  const hasInv = /INV\s*&\s*LN/.test(u) || /INV\s*\/?\s*LN/.test(u) || /INVOICE\s*LINE/.test(u);
+  const hasPart = /PART\s*NUMBER/.test(u) || /PART\s*NO/.test(u);
+  const hasSales = /\bSALES\b/.test(u) || /\bVALUE\b/.test(u);
+  return hasAcct && hasInv && hasPart && hasSales;
 }
 
-/** Space-separated 561L data row: Acct Inv&Ln Part Description… Units Sales */
-function parseSpaced561lDataRow(raw: string): {
-  account: string;
-  invLn: string;
-  part: string;
-  description: string;
-  units: string;
-  sales: string;
-} | null {
-  const m = raw
-    .trim()
-    .match(
-      /^(\S+)\s+([IC]\/\S+)\s+(\S+)\s+(.+?)\s+(-?\d+(?:\.\d+)?)\s+([£(+-]?[\d,().]+(?:\s*CR)?)\s*$/i,
-    );
-  if (!m) return null;
+/**
+ * Derive fixed column starts from a native 561L header line such as:
+ * `.Acct. Inv & Ln    Part Number   Description              Units     Sales`
+ *
+ * Rejects CSV/delimited headers (commas/tabs). Requires multi-space padding
+ * typical of printed Autopart reports.
+ */
+export function detectNative561lLayout(headerLine: string): Autopart561lColumnLayout | null {
+  if (!looksLikeColumnHeader(headerLine)) return null;
+  if (headerLine.includes(",") || headerLine.includes("\t") || headerLine.includes(";")) {
+    return null;
+  }
+  // Printed reports pad columns with 2+ spaces between some labels
+  if (!/\s{2,}/.test(headerLine)) return null;
+
+  const acct = headerLine.search(/\.Acct\.|\bAcct\.?/i);
+  const inv = headerLine.search(/Inv\s*&\s*Ln/i);
+  const part = headerLine.search(/Part\s*Number/i);
+  const desc = headerLine.search(/Description/i);
+  const units = headerLine.search(/\bUnits\b/i);
+  const sales = headerLine.search(/\bSales\b/i);
+  if (acct < 0 || inv < 0 || part < 0 || desc < 0 || units < 0 || sales < 0) return null;
+  if (!(acct < inv && inv < part && part < desc && desc < units && units < sales)) return null;
+
+  const accountFieldWidth = inv - acct;
+  // Real Autopart 561L uses a 7-character .Acct. field; allow 6–8 for close variants.
+  if (accountFieldWidth < 6 || accountFieldWidth > 8) return null;
+
   return {
-    account: m[1]!,
-    invLn: m[2]!,
-    part: m[3]!,
-    description: m[4]!.trim(),
-    units: m[5]!,
-    sales: m[6]!,
+    account: { start: acct, end: inv },
+    invLn: { start: inv, end: part },
+    part: { start: part, end: desc },
+    description: { start: desc, end: units },
+    units: { start: units, end: sales },
+    sales: { start: sales, end: null },
+    accountFieldWidth,
   };
 }
 
-function blankRow(lineNumberInFile: number): Autopart561lLine {
+function sliceCol(line: string, start: number, end: number | null): string {
+  const padded = line.length < start ? line.padEnd(start) : line;
+  if (end == null) return padded.slice(start);
+  // Pad only when the line is short of this column — never shift existing chars
+  const src = padded.length < end ? padded.padEnd(end) : padded;
+  return src.slice(start, end);
+}
+
+/**
+ * Parse one native fixed-width 561L data row using layout from the column header.
+ * Account is ALWAYS characters [account.start, account.end) — never whitespace-tokenised.
+ */
+export function parseNative561lDataLine(
+  raw: string,
+  layout: Autopart561lColumnLayout,
+): {
+  accountRaw: string;
+  invLnRaw: string;
+  partRaw: string;
+  descriptionRaw: string;
+  unitsRaw: string;
+  salesRaw: string;
+} | null {
+  if (raw.length < layout.invLn.start + 5) return null;
+  const accountRaw = sliceCol(raw, layout.account.start, layout.account.end);
+  const invLnRaw = sliceCol(raw, layout.invLn.start, layout.invLn.end).trim();
+  // Inv & Ln must look like I/…/n or C/…/n (may be left-aligned within its field)
+  if (!INV_LN_RE.test(invLnRaw)) return null;
+  return {
+    accountRaw,
+    invLnRaw,
+    partRaw: sliceCol(raw, layout.part.start, layout.part.end).trim(),
+    descriptionRaw: sliceCol(raw, layout.description.start, layout.description.end).trim(),
+    unitsRaw: sliceCol(raw, layout.units.start, layout.units.end).trim(),
+    salesRaw: sliceCol(raw, layout.sales.start, layout.sales.end).trim(),
+  };
+}
+
+function looksLikeReportTitle(raw: string): boolean {
+  const u = raw.trim().toUpperCase();
+  if (!u) return false;
+  if (/^561L\b/.test(u)) return true;
+  if (/\b561L\b/.test(u)) return true;
+  if (/CUSTOMER\s+SALES\s+FOR\s+PART\s+NUMBERS/i.test(u)) return true;
+  if (/^END OF REPORT/.test(u)) return true;
+  return false;
+}
+
+function looksLikePageHeader(raw: string): boolean {
+  const u = raw.trim().toUpperCase();
+  if (/^PAGE\s+\d+/.test(u)) return true;
+  if (/\bPAGE\s+\d+\s+OF\s+\d+\b/.test(u)) return true;
+  if (/^-{3,}$/.test(u) || /^={3,}$/.test(u) || /^\.{3,}$/.test(u)) return true;
+  if (START_CUSTOMER_RE.test(raw) || END_CUSTOMER_RE.test(raw)) return true;
+  return false;
+}
+
+function looksLikeTotal(raw: string): boolean {
+  const u = raw.trim().toUpperCase();
+  if (!u) return false;
+  if (/[IC]\//i.test(u)) return false;
+  return (
+    /^(GRAND\s+)?TOTALS?\b/.test(u) ||
+    /\bSUB[- ]?TOTALS?\b/.test(u) ||
+    /^ACCOUNT\s+TOTAL\b/.test(u)
+  );
+}
+
+function toLegacyClassification(kind: Autopart561lRowKind): Autopart561lLine["classification"] {
+  if (kind === "DATA_LINE" || kind === "CONTINUATION_LINE") return "LINE";
+  if (kind === "BLANK") return "BLANK";
+  if (kind === "TOTAL" || kind === "SUBTOTAL") return "TOTAL";
+  if (kind === "MALFORMED") return "MALFORMED";
+  return "HEADER";
+}
+
+function blankRow(lineNumberInFile: number, kind: Autopart561lRowKind = "BLANK"): Autopart561lLine {
   return {
     lineNumberInFile,
+    rowKind: kind,
     accountCode: null,
+    customerName: null,
     rawInvAndLn: "",
     documentType: "UNKNOWN",
     documentReference: null,
@@ -225,22 +354,21 @@ function blankRow(lineNumberInFile: number): Autopart561lLine {
     description: null,
     units: null,
     salesNet: null,
-    classification: "BLANK",
+    classification: toLegacyClassification(kind),
     issue: null,
   };
 }
 
-function buildLine(input: {
+function buildDataLine(input: {
   lineNumberInFile: number;
-  accountRaw: string | null;
+  rowKind: "DATA_LINE" | "CONTINUATION_LINE";
+  accountCode: string | null;
   invLnRaw: string;
   partRaw: string | null;
   descriptionRaw: string | null;
   unitsRaw: string | null;
   salesRaw: string | null;
 }): Autopart561lLine {
-  // Account ONLY from the account field — never scan other cells.
-  const accountCode = extractAutopartAccountCode(input.accountRaw);
   const identity = parseInvAndLn(input.invLnRaw);
   const partNumber = (input.partRaw ?? "").trim() || null;
   const description = (input.descriptionRaw ?? "").trim() || null;
@@ -248,6 +376,7 @@ function buildLine(input: {
   const salesMoney = parseAutopartMoney(input.salesRaw);
 
   let salesNet: string | null = salesMoney ? autopartMoneyToGbp2(salesMoney) : null;
+  // Credit identity forces negative storage when source amount is unsigned positive
   if (identity.documentType === "CREDIT" && salesMoney && salesMoney.minor > 0n) {
     salesNet = autopartMoneyToGbp2({ minor: -salesMoney.minor });
   }
@@ -256,6 +385,7 @@ function buildLine(input: {
     signedUnits = -units;
   }
 
+  const accountCode = input.accountCode;
   const ok =
     identity.ok &&
     Boolean(accountCode) &&
@@ -265,7 +395,9 @@ function buildLine(input: {
 
   return {
     lineNumberInFile: input.lineNumberInFile,
+    rowKind: ok ? input.rowKind : "MALFORMED",
     accountCode,
+    customerName: null,
     rawInvAndLn: input.invLnRaw,
     documentType: identity.documentType,
     documentReference: identity.documentReference,
@@ -278,38 +410,51 @@ function buildLine(input: {
     issue: ok
       ? null
       : identity.issue ||
-        (!accountCode
-          ? input.accountRaw?.trim()
-            ? "Invalid account field (not an Autopart customer code)"
-            : "Missing account"
-          : null) ||
+        (!accountCode ? "Missing account (blank Acct field with no carry-forward)" : null) ||
         (!partNumber ? "Missing part number" : null) ||
         (units == null ? "Invalid units" : null) ||
         (salesNet == null ? "Invalid sales value" : null),
   };
 }
 
-export function parseAutopart561l(text: string): Autopart561lParseResult {
-  const lines = normaliseReportLines(text);
-  const errors: string[] = [];
-  const rows: Autopart561lLine[] = [];
-  type ColMap = {
-    account: number;
-    invLn: number;
-    part: number;
-    description?: number;
-    units?: number;
-    sales: number;
-  };
+function fileLooksDelimited(text: string): boolean {
+  const sample = normaliseReportLines(text).slice(0, 40);
+  let commaRows = 0;
+  let nativeHits = 0;
+  for (const line of sample) {
+    if (!line.trim()) continue;
+    if (detectNative561lLayout(line)) {
+      nativeHits += 1;
+      continue;
+    }
+    const cells = splitCsvLine(line);
+    if (cells.length >= 5 && mapHeader(cells)) return true;
+    if (cells.length >= 6 && INV_LN_RE.test((cells[1] ?? "").trim())) commaRows += 1;
+  }
+  if (nativeHits > 0) return false;
+  return commaRows >= 2;
+}
 
-  let headerFound = false;
-  let colMap: ColMap | null = null;
-  let fixedColumns: FixedWidthColumn[] | null = null;
-  let accountFieldWidth: number | null = null;
-  let layout: Autopart561lParseResult["layout"] = null;
+export function parseAutopart561l(text: string): Autopart561lParseResult {
+  const selection = extractReportCustomerSelection(text);
+  if (fileLooksDelimited(text)) {
+    return parseDelimited561l(text, selection);
+  }
+  return parseNativeFixed561l(text, selection);
+}
+
+function parseDelimited561l(
+  text: string,
+  selection: { startCustomer: string | null; endCustomer: string | null },
+): Autopart561lParseResult {
+  const lines = normaliseReportLines(text);
+  const rows: Autopart561lLine[] = [];
+  const errors: string[] = [];
   const accounts = new Set<string>();
-  /** Carry forward only when the account *field* is blank on continuation lines. */
-  let lastAccountRaw: string | null = null;
+  let headerFound = false;
+  let colMap: ReturnType<typeof mapHeader> = null;
+  let lastAccount: string | null = null;
+  let layout: Autopart561lParseResult["layout"] = "CSV";
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i] ?? "";
@@ -318,159 +463,159 @@ export function parseAutopart561l(text: string): Autopart561lParseResult {
       rows.push(blankRow(lineNumberInFile));
       continue;
     }
-    const upper = rawLine.trim().toUpperCase();
-    if (
-      (upper.includes("561L") && !looksLike561lHeaderLine(rawLine)) ||
-      upper.startsWith("END OF REPORT") ||
-      upper.startsWith("PAGE ") ||
-      /^[-_=.\s]+$/.test(rawLine.trim())
-    ) {
-      rows.push({
-        ...blankRow(lineNumberInFile),
-        classification: "HEADER",
-      });
+    if (looksLikeReportTitle(rawLine)) {
+      rows.push(blankRow(lineNumberInFile, "REPORT_TITLE"));
+      continue;
+    }
+    if (looksLikePageHeader(rawLine)) {
+      rows.push(
+        blankRow(
+          lineNumberInFile,
+          START_CUSTOMER_RE.test(rawLine) || END_CUSTOMER_RE.test(rawLine)
+            ? "SELECTION_PARAM"
+            : "PAGE_HEADER",
+        ),
+      );
       continue;
     }
 
-    // Header detection — content based. Prefer fixed-width when labels sit on one
-    // padded report line (multi-space CSV-style splits collapse Description).
+    const cells = splitAutopartReportCells(rawLine);
     if (!headerFound) {
-      if (looksLike561lHeaderLine(rawLine) && !rawLine.includes(",")) {
-        const fw = detectFixedWidthLayout(rawLine, FIXED_WIDTH_LABELS);
-        if (
-          fw &&
-          fw.columns.some((c) => c.key === "account") &&
-          fw.columns.some((c) => c.key === "invLn") &&
-          fw.columns.some((c) => c.key === "part") &&
-          fw.columns.some((c) => c.key === "sales")
-        ) {
-          headerFound = true;
-          fixedColumns = fw.columns;
-          accountFieldWidth = fw.accountFieldWidth;
-          layout = "FIXED_WIDTH";
-          rows.push({ ...blankRow(lineNumberInFile), classification: "HEADER" });
-          continue;
-        }
-      }
-      const cells = splitAutopartReportCells(rawLine);
       const mapped = mapHeader(cells.length >= 4 ? cells : splitCsvLine(rawLine));
       if (mapped) {
         headerFound = true;
         colMap = mapped;
-        layout = rawLine.includes(",") || rawLine.includes("\t") ? "CSV" : "SPACED";
-        rows.push({ ...blankRow(lineNumberInFile), classification: "HEADER" });
-        continue;
-      }
-      if (looksLike561lHeaderLine(rawLine)) {
-        // Header keywords present but columns not sliced — use spaced regex rows
-        headerFound = true;
-        layout = "SPACED";
-        rows.push({ ...blankRow(lineNumberInFile), classification: "HEADER" });
+        rows.push(blankRow(lineNumberInFile, "COLUMN_HEADER"));
         continue;
       }
     }
 
-    // Fixed-width body
-    if (fixedColumns) {
-      const sliced = sliceFixedWidthCells(rawLine, fixedColumns);
-      let accountRaw = sliced["account"] ?? "";
-      if (!accountRaw.trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-      if ((sliced["account"] ?? "").trim()) lastAccountRaw = sliced["account"]!;
-      const invLnRaw = sliced["invLn"] ?? "";
-      if (looksLikeTotalRow([rawLine], invLnRaw)) {
-        rows.push({
-          ...blankRow(lineNumberInFile),
-          description: rawLine.trim().slice(0, 120),
-          classification: "TOTAL",
-        });
-        continue;
-      }
-      const row = buildLine({
-        lineNumberInFile,
-        accountRaw,
-        invLnRaw,
-        partRaw: sliced["part"] ?? null,
-        descriptionRaw: sliced["description"] ?? null,
-        unitsRaw: sliced["units"] ?? null,
-        salesRaw: sliced["sales"] ?? null,
-      });
-      // Only valid LINE accounts enter detectedAccounts
-      if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
-      rows.push(row);
-      continue;
-    }
-
-    // Delimited / spaced cell body
-    if (colMap) {
-      const cells = splitAutopartReportCells(rawLine);
-      // If multi-space split collapsed description into part (missing sales col), use regex.
-      const salesCell = cellAt(cells, colMap.sales);
-      if (salesCell == null || salesCell === "") {
-        const spaced = parseSpaced561lDataRow(rawLine);
-        if (spaced) {
-          let accountRaw = spaced.account;
-          if (!accountRaw.trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-          if (spaced.account.trim()) lastAccountRaw = spaced.account;
-          const row = buildLine({
-            lineNumberInFile,
-            accountRaw,
-            invLnRaw: spaced.invLn,
-            partRaw: spaced.part,
-            descriptionRaw: spaced.description,
-            unitsRaw: spaced.units,
-            salesRaw: spaced.sales,
-          });
-          if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
-          rows.push(row);
-          continue;
-        }
-      }
-      let accountRaw = cellAt(cells, colMap.account);
-      if (!(accountRaw ?? "").trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-      if ((cellAt(cells, colMap.account) ?? "").trim()) {
-        lastAccountRaw = cellAt(cells, colMap.account);
-      }
-      const invLnRaw = cellAt(cells, colMap.invLn) ?? "";
-      if (looksLikeTotalRow(cells, invLnRaw)) {
-        rows.push({
-          ...blankRow(lineNumberInFile),
-          description: cells.join(" ").slice(0, 120),
-          classification: "TOTAL",
-        });
-        continue;
-      }
-      const row = buildLine({
-        lineNumberInFile,
-        accountRaw,
-        invLnRaw,
-        partRaw: cellAt(cells, colMap.part),
-        descriptionRaw: cellAt(cells, colMap.description),
-        unitsRaw: cellAt(cells, colMap.units),
-        salesRaw: cellAt(cells, colMap.sales),
-      });
-      if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
-      rows.push(row);
-      continue;
-    }
-
-    // Positional CSV fallback once we see Inv&Ln in column 1
-    {
-      const cells = splitAutopartReportCells(rawLine);
-      if (cells.length >= 6 && /^(I|C)\//i.test(cells[1] ?? "")) {
+    if (!colMap) {
+      if (cells.length >= 6 && INV_LN_RE.test((cells[1] ?? "").trim())) {
         colMap = { account: 0, invLn: 1, part: 2, description: 3, units: 4, sales: 5 };
         headerFound = true;
-        layout = layout ?? "POSITIONAL";
-        let accountRaw = cells[0] ?? "";
-        if (!accountRaw.trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-        if ((cells[0] ?? "").trim()) lastAccountRaw = cells[0]!;
-        const row = buildLine({
+        layout = "POSITIONAL";
+      } else {
+        rows.push({
+          ...blankRow(lineNumberInFile, "MALFORMED"),
+          issue: "No 561L header recognised before data row",
+        });
+        continue;
+      }
+    }
+
+    const invLnRaw = cellAt(cells, colMap.invLn) ?? "";
+    if (looksLikeTotal(rawLine) && !INV_LN_RE.test(invLnRaw.trim())) {
+      rows.push(blankRow(lineNumberInFile, "TOTAL"));
+      continue;
+    }
+
+    const accountRaw = cellAt(cells, colMap.account);
+    let accountCode = extractAutopartAccountCode(accountRaw);
+    let rowKind: "DATA_LINE" | "CONTINUATION_LINE" = "DATA_LINE";
+    if (!accountCode) {
+      accountCode = lastAccount;
+      rowKind = "CONTINUATION_LINE";
+    } else {
+      lastAccount = accountCode;
+    }
+
+    const row = buildDataLine({
+      lineNumberInFile,
+      rowKind,
+      accountCode,
+      invLnRaw,
+      partRaw: cellAt(cells, colMap.part),
+      descriptionRaw: cellAt(cells, colMap.description),
+      unitsRaw: cellAt(cells, colMap.units),
+      salesRaw: cellAt(cells, colMap.sales),
+    });
+    if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
+    rows.push(row);
+  }
+
+  return finalise(rows, accounts, selection, headerFound, null, layout, null, errors);
+}
+
+function parseNativeFixed561l(
+  text: string,
+  selection: { startCustomer: string | null; endCustomer: string | null },
+): Autopart561lParseResult {
+  const lines = normaliseReportLines(text);
+  const rows: Autopart561lLine[] = [];
+  const errors: string[] = [];
+  const accounts = new Set<string>();
+  let headerFound = false;
+  let columnLayout: Autopart561lColumnLayout | null = null;
+  let lastAccount: string | null = null;
+  const layout: Autopart561lParseResult["layout"] = "NATIVE_FIXED";
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i] ?? "";
+    const lineNumberInFile = i + 1;
+    if (!rawLine.trim()) {
+      rows.push(blankRow(lineNumberInFile));
+      continue;
+    }
+
+    if (looksLikeReportTitle(rawLine)) {
+      rows.push(blankRow(lineNumberInFile, "REPORT_TITLE"));
+      continue;
+    }
+
+    if (START_CUSTOMER_RE.test(rawLine) || END_CUSTOMER_RE.test(rawLine)) {
+      // Selection parameters may share a line with other page chrome
+      rows.push(blankRow(lineNumberInFile, "SELECTION_PARAM"));
+      // Do not reset lastAccount — page chrome repeats mid-customer
+      continue;
+    }
+
+    if (looksLikePageHeader(rawLine)) {
+      rows.push(blankRow(lineNumberInFile, "PAGE_HEADER"));
+      continue;
+    }
+
+    const detected = detectNative561lLayout(rawLine);
+    if (detected) {
+      headerFound = true;
+      columnLayout = detected;
+      rows.push(blankRow(lineNumberInFile, "COLUMN_HEADER"));
+      continue;
+    }
+
+    if (looksLikeColumnHeader(rawLine)) {
+      headerFound = true;
+      rows.push(blankRow(lineNumberInFile, "COLUMN_HEADER"));
+      continue;
+    }
+
+    if (looksLikeTotal(rawLine)) {
+      rows.push(blankRow(lineNumberInFile, /SUB/.test(rawLine.toUpperCase()) ? "SUBTOTAL" : "TOTAL"));
+      continue;
+    }
+
+    if (columnLayout) {
+      const parsed = parseNative561lDataLine(rawLine, columnLayout);
+      if (parsed) {
+        let accountCode = extractAutopartAccountCode(parsed.accountRaw.trim());
+        // Defensive: never accept multi-token / garbage from a mis-sliced field
+        if (accountCode && !isPlausibleAutopartAccountCode(accountCode)) accountCode = null;
+        let rowKind: "DATA_LINE" | "CONTINUATION_LINE" = "DATA_LINE";
+        if (!accountCode) {
+          accountCode = lastAccount;
+          rowKind = "CONTINUATION_LINE";
+        } else {
+          lastAccount = accountCode;
+        }
+        const row = buildDataLine({
           lineNumberInFile,
-          accountRaw,
-          invLnRaw: cells[1] ?? "",
-          partRaw: cells[2] ?? null,
-          descriptionRaw: cells[3] ?? null,
-          unitsRaw: cells[4] ?? null,
-          salesRaw: cells[5] ?? null,
+          rowKind,
+          accountCode,
+          invLnRaw: parsed.invLnRaw,
+          partRaw: parsed.partRaw,
+          descriptionRaw: parsed.descriptionRaw,
+          unitsRaw: parsed.unitsRaw,
+          salesRaw: parsed.salesRaw,
         });
         if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
         rows.push(row);
@@ -478,46 +623,11 @@ export function parseAutopart561l(text: string): Autopart561lParseResult {
       }
     }
 
-    // Spaced regex body (report .txt without recoverable column map)
-    const spaced = parseSpaced561lDataRow(rawLine);
-    if (spaced) {
-      headerFound = true;
-      layout = layout ?? "SPACED";
-      let accountRaw = spaced.account;
-      if (!accountRaw.trim() && lastAccountRaw) accountRaw = lastAccountRaw;
-      if (spaced.account.trim()) lastAccountRaw = spaced.account;
-      const row = buildLine({
-        lineNumberInFile,
-        accountRaw,
-        invLnRaw: spaced.invLn,
-        partRaw: spaced.part,
-        descriptionRaw: spaced.description,
-        unitsRaw: spaced.units,
-        salesRaw: spaced.sales,
-      });
-      if (row.classification === "LINE" && row.accountCode) accounts.add(row.accountCode);
-      rows.push(row);
-      continue;
-    }
-
     rows.push({
-      ...blankRow(lineNumberInFile),
-      classification: "MALFORMED",
-      issue: headerFound
-        ? "Unrecognised 561L data row"
-        : "No 561L header recognised before data row",
+      ...blankRow(lineNumberInFile, "UNKNOWN"),
+      issue: "Unrecognised 561L row (ignored for account detection)",
+      classification: "HEADER",
     });
-  }
-
-  // Confirmed truncation width = consistent printed account length in this report.
-  // Prefer content length over padded fixed-width column span (spaces are not account chars).
-  if (accounts.size > 0) {
-    const lengths = [...accounts].map((a) => a.length);
-    const max = Math.max(...lengths);
-    const min = Math.min(...lengths);
-    if (max === min && max >= 4 && max <= 12) {
-      accountFieldWidth = max;
-    }
   }
 
   if (!headerFound) {
@@ -526,7 +636,56 @@ export function parseAutopart561l(text: string): Autopart561lParseResult {
     );
   }
 
+  return finalise(
+    rows,
+    accounts,
+    selection,
+    headerFound,
+    columnLayout?.accountFieldWidth ?? null,
+    layout,
+    columnLayout,
+    errors,
+  );
+}
+
+function finalise(
+  rows: Autopart561lLine[],
+  accounts: Set<string>,
+  selection: { startCustomer: string | null; endCustomer: string | null },
+  headerFound: boolean,
+  accountFieldWidth: number | null,
+  layout: Autopart561lParseResult["layout"],
+  columnLayout: Autopart561lColumnLayout | null,
+  errors: string[],
+): Autopart561lParseResult {
   const dataLines = rows.filter((r) => r.classification === "LINE");
+  let width = accountFieldWidth;
+  if (width == null && accounts.size > 0) {
+    const lengths = [...accounts].map((a) => a.length);
+    const max = Math.max(...lengths);
+    const min = Math.min(...lengths);
+    if (max === min && max >= 4 && max <= 12) width = max;
+  }
+  const uniqueDocumentRefs = [
+    ...new Set(dataLines.map((l) => l.documentReference).filter(Boolean) as string[]),
+  ].sort();
+  const uniqueInvoiceRefs = [
+    ...new Set(
+      dataLines
+        .filter((l) => l.documentType === "INVOICE")
+        .map((l) => l.documentReference)
+        .filter(Boolean) as string[],
+    ),
+  ].sort();
+  const uniqueCreditRefs = [
+    ...new Set(
+      dataLines
+        .filter((l) => l.documentType === "CREDIT")
+        .map((l) => l.documentReference)
+        .filter(Boolean) as string[],
+    ),
+  ].sort();
+
   return {
     report: "561L",
     rows,
@@ -536,9 +695,42 @@ export function parseAutopart561l(text: string): Autopart561lParseResult {
     malformedRows: rows.filter((r) => r.classification === "MALFORMED").length,
     blankRows: rows.filter((r) => r.classification === "BLANK").length,
     detectedAccounts: [...accounts].sort(),
+    reportStartCustomer: selection.startCustomer,
+    reportEndCustomer: selection.endCustomer,
     headerFound,
-    accountFieldWidth,
+    accountFieldWidth: width,
     layout,
+    columnLayout,
     errors,
+    diagnostics: { uniqueDocumentRefs, uniqueInvoiceRefs, uniqueCreditRefs },
   };
+}
+
+/** Test/dev diagnostic — selected rows only; never log full customer reports in production. */
+export function diagnose561lRows(
+  result: Autopart561lParseResult,
+  opts?: { limit?: number; kinds?: Autopart561lRowKind[] },
+): Array<{
+  lineNumberInFile: number;
+  rowKind: Autopart561lRowKind;
+  accountCode: string | null;
+  documentReference: string | null;
+  partNumber: string | null;
+  units: number | null;
+  salesNet: string | null;
+}> {
+  const limit = opts?.limit ?? 50;
+  const kinds = opts?.kinds;
+  return result.rows
+    .filter((r) => !kinds || kinds.includes(r.rowKind))
+    .slice(0, limit)
+    .map((r) => ({
+      lineNumberInFile: r.lineNumberInFile,
+      rowKind: r.rowKind,
+      accountCode: r.accountCode,
+      documentReference: r.documentReference,
+      partNumber: r.partNumber,
+      units: r.units,
+      salesNet: r.salesNet,
+    }));
 }

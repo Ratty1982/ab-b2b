@@ -1,0 +1,16 @@
+CUSTOMER SALES FOR PART NUMBERS BY INVOICE LINE (561L)
+[Start Customer YORKMOTO] [End Customer ALL]
+.Acct. Inv & Ln    Part Number   Description              Units     Sales
+YORKMOTC/SC500093/127113         Red 13ml Threadlocker       -1     -8.98
+YORKMOTC/SC500117/127113         Red 13ml Threadlocker       -1     -8.98
+YORKMOTC/SC501239/1SS            Steel Seal Head Gasket       -2    -51.90
+YORKMOTC/SC501700/1SS            Steel Seal Head Gasket       -1    -16.38
+YORKMOTI/SS100818/1SS            Steel Seal Head Gasket       24    622.80
+YORKMOTI/SS100818/2PMCSEAL       Coolant Seal                 12     60.48
+YORKMOTI/SS100900/1PMXLWHEELBRUSHWheel Brush Soft             6     30.00
+PAGE 2
+CUSTOMER SALES FOR PART NUMBERS BY INVOICE LINE (561L)
+[Start Customer YORKMOTO] [End Customer ALL]
+.Acct. Inv & Ln    Part Number   Description              Units     Sales
+YORKMOTI/SS100901/1OLD-SKU-GONE  Discontinued Product         6     30.00
+END OF REPORT

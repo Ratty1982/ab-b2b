@@ -54,9 +54,10 @@ describe("parseAutopart561l", () => {
   it("parses equivalent .txt report text without relying on extension", () => {
     const result = parseAutopart561l(sampleTxt);
     expect(result.headerFound).toBe(true);
+    expect(result.layout).toBe("NATIVE_FIXED");
     expect(result.detectedAccounts).toEqual(["YORKMOT"]);
-    expect(result.invoiceLines).toBeGreaterThanOrEqual(3);
-    expect(result.creditLines).toBeGreaterThanOrEqual(1);
+    expect(result.invoiceLines).toBe(3);
+    expect(result.creditLines).toBe(4);
     expect(result.accountFieldWidth).toBe(7);
     expect(result.lines.some((l) => l.documentReference === "SS306009")).toBe(true);
   });

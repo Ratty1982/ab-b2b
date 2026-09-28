@@ -39,9 +39,11 @@ describe("parseAutopartSlrb", () => {
   it("parses equivalent .txt report text", () => {
     const result = parseAutopartSlrb(sampleTxt);
     expect(result.headerFound).toBe(true);
+    expect(result.layout).toBe("NATIVE_FIXED");
     expect(result.detectedAccounts).toEqual(["YORKMOT"]);
-    expect(result.invoiceDocuments).toBeGreaterThanOrEqual(3);
-    expect(result.creditDocuments).toBeGreaterThanOrEqual(1);
+    expect(result.invoiceDocuments).toBe(3);
+    expect(result.creditDocuments).toBe(4);
+    expect(result.documents[0]?.customerName).toBe("YORK MOTOR FACTORS");
     expect(result.accountFieldWidth).toBe(7);
   });
 

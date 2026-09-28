@@ -350,14 +350,24 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         </div>
         {historyPreview ? (
           <div className="mt-4 space-y-3 rounded-md border border-border/70 bg-surface/40 p-3 text-[12px]">
-            <dl className="grid gap-2 sm:grid-cols-3">
+            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
-                  Account shown in report
+                  Report customer
                 </dt>
                 <dd className="mt-0.5 font-semibold num">
-                  {historyPreview.accountMatch?.sourceAccount ??
-                    historyPreview.sourceAccount ??
+                  {historyPreview.accountMatch?.reportCustomer ??
+                    historyPreview.reportCustomer ??
+                    "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
+                  561L row account
+                </dt>
+                <dd className="mt-0.5 font-semibold num">
+                  {historyPreview.accountMatch?.rowAccount ??
+                    historyPreview.rowAccount561l ??
                     "—"}
                 </dd>
               </div>
@@ -376,22 +386,44 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                   Status
                 </dt>
                 <dd className="mt-0.5 font-semibold">
-                  {historyPreview.accountMatch?.status === "MATCHED_TRUNCATED"
-                    ? "Matched — Autopart report uses shortened account code"
-                    : historyPreview.accountMatch?.status === "MATCHED_ALIAS"
-                      ? "Matched via verified alias"
-                      : historyPreview.accountMatch?.status === "MATCHED"
-                        ? "Matched"
-                        : historyPreview.accountMatch?.status === "ALIAS_REQUIRED"
-                          ? "Account alias required"
-                          : historyPreview.accountMatch?.status === "AMBIGUOUS_TRUNCATED"
-                            ? "Ambiguous truncated account"
-                            : historyPreview.accountMatch?.ok
-                              ? "Matched"
-                              : "Mismatch"}
+                  {historyPreview.accountMatch?.status === "MATCHED_REPORT_CUSTOMER"
+                    ? "Matched"
+                    : historyPreview.accountMatch?.status === "MATCHED_TRUNCATED"
+                      ? "Matched — shortened report account"
+                      : historyPreview.accountMatch?.status === "MATCHED_ALIAS"
+                        ? "Matched via verified alias"
+                        : historyPreview.accountMatch?.status === "MATCHED"
+                          ? "Matched"
+                          : historyPreview.accountMatch?.status === "ALIAS_REQUIRED"
+                            ? "Account alias required"
+                            : historyPreview.accountMatch?.status === "MULTIPLE_ACCOUNTS"
+                              ? "Multiple accounts detected"
+                              : historyPreview.accountMatch?.status === "AMBIGUOUS_TRUNCATED"
+                                ? "Ambiguous truncated account"
+                                : historyPreview.accountMatch?.ok
+                                  ? "Matched"
+                                  : "Mismatch"}
                 </dd>
               </div>
             </dl>
+            {historyPreview.accountMatch?.status === "MATCHED_REPORT_CUSTOMER" &&
+            historyPreview.accountMatch.rowAccount &&
+            historyPreview.accountMatch.reportCustomer &&
+            historyPreview.accountMatch.rowAccount !==
+              historyPreview.accountMatch.reportCustomer ? (
+              <p className="text-[11px] text-steel">
+                561L uses a {historyPreview.accountMatch.accountFieldWidth ?? 7}-character
+                account field. The report itself was generated for{" "}
+                {historyPreview.accountMatch.reportCustomer}.
+              </p>
+            ) : null}
+            {historyPreview.accountMatch?.status === "MULTIPLE_ACCOUNTS" &&
+            historyPreview.accountMatch.multipleAccounts?.length ? (
+              <p className="text-[11px] text-bad">
+                Multiple accounts detected:{" "}
+                {historyPreview.accountMatch.multipleAccounts.join(", ")}
+              </p>
+            ) : null}
             {historyPreview.accountMatch?.status === "ALIAS_REQUIRED" &&
             historyPreview.accountMatch.suggestedAlias ? (
               <button

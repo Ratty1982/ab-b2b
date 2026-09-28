@@ -129,6 +129,8 @@ export function normaliseAccountToken(raw: string | null | undefined): string | 
 export function isPlausibleAutopartAccountCode(raw: string | null | undefined): boolean {
   const token = normaliseAccountToken(raw);
   if (!token) return false;
+  // Account codes are single tokens — never "YORKMOTO YORK MOTOR FACTORS"
+  if (/\s/.test(token)) return false;
   // Currency / accounting decoration
   if (/[£$€]/.test(token)) return false;
   if (/\(.*\)/.test(token)) return false;
@@ -141,7 +143,16 @@ export function isPlausibleAutopartAccountCode(raw: string | null | undefined): 
   if (!/[A-Z]/.test(token)) return false;
   // Reject tokens that are clearly Inv & Ln identities
   if (/^[IC]\/.+\/\d+$/i.test(token)) return false;
-  if (token.length > 32) return false;
+  // Typical Autopart account codes are short; reject long fragments from prose
+  if (token.length < 3 || token.length > 16) return false;
+  // Reject obvious report vocabulary mistaken for accounts
+  if (
+    /^(ACCT|ACCOUNT|PAGE|TOTAL|UNITS|SALES|DATE|TYPE|REF|GOODS|VAT|BALANCE|DESCRIPTION|PART|NUMBER|INVOICE|CREDIT|CUSTOMER|REPORT|END|OF)$/i.test(
+      token,
+    )
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -297,4 +308,35 @@ export function headerKey(raw: string): string {
     .replace(/[./]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const START_CUSTOMER_RE = /\[\s*Start\s+Customer\s+([A-Za-z0-9][A-Za-z0-9_-]*)\s*\]/i;
+const END_CUSTOMER_RE = /\[\s*End\s+Customer\s+([A-Za-z0-9][A-Za-z0-9_-]*)\s*\]/i;
+
+/**
+ * Parse Autopart selection parameters:
+ *   [Start Customer YORKMOTO] [End Customer ALL]
+ * "ALL" is a sentinel, not a customer account.
+ */
+export function extractReportCustomerSelection(text: string): {
+  startCustomer: string | null;
+  endCustomer: string | null;
+} {
+  let startCustomer: string | null = null;
+  let endCustomer: string | null = null;
+  for (const line of normaliseReportLines(text)) {
+    if (!startCustomer) {
+      const sm = line.match(START_CUSTOMER_RE);
+      if (sm) {
+        const code = extractAutopartAccountCode(sm[1]);
+        if (code) startCustomer = code;
+      }
+    }
+    const em = line.match(END_CUSTOMER_RE);
+    if (em) {
+      const code = extractAutopartAccountCode(em[1]);
+      if (code && code !== "ALL") endCustomer = code;
+    }
+  }
+  return { startCustomer, endCustomer };
 }

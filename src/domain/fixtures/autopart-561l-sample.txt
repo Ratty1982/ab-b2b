@@ -1,10 +1,10 @@
-561L Customer Sales Lines
-Acct.     Inv & Ln        Part Number  Description                       Units         Sales
-YORKMOT   I/SS306008/1    SS           Steel Seal Head Gasket Repair                 24                        622.80
-YORKMOT   I/SS306008/2    PMCSEAL      Coolant Seal                                  12                         60.48
-YORKMOT   C/SS100900/1    SS           Steel Seal Head Gasket Repair                  2                        -51.90
-YORKMOT   I/SS306009/1    OLD-SKU-GONE Discontinued Product                           6                         30.00
-YORKMOT   C/SS100901/1    SS           Credit units minus one                        -1                       -104.38
-YORKMOT   C/SS100902/1    PMCSEAL      Credit amount                                 -1                       -119.95
-YORKMOT   C/SS100903/1    SS           Small credit                                   1                        -16.38
+CUSTOMER SALES FOR PART NUMBERS BY INVOICE LINE (561L)
+.Acct. Inv & Ln    Part Number   Description              Units     Sales
+YORKMOTI/SS306008/1SS            Steel Seal Head Gasket           24622.80
+YORKMOTI/SS306008/2PMCSEAL       Coolant Seal                     1260.48
+YORKMOTC/SS100900/1SS            Steel Seal Head Gasket            2-51.90
+YORKMOTI/SS306009/1OLD-SKU-GONE  Discontinued Product              630.00
+YORKMOTC/SS100901/1SS            Credit units minus one           -1-104.38
+YORKMOTC/SS100902/1PMCSEAL       Credit amount                    -1-119.95
+YORKMOTC/SS100903/1SS            Small credit                      1-16.38
 END OF REPORT

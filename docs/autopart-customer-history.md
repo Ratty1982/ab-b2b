@@ -34,16 +34,28 @@ Native parsers only — no LLM parsing.
 
 ### 561L
 
-Fields: Acct., Inv & Ln, Part Number, Description, Units, Sales.
+Native printed layout (fixed-width). Header example:
 
-`I/SS306008/1` → type INVOICE, ref SS306008, line 1.  
-`C/...` → CREDIT. Malformed identities are skipped (no guessing).
+`.Acct. Inv & Ln    Part Number   Description              Units     Sales`
 
-Credits are stored with signed units/spend (negative) so net history is correct.
+`.Acct.` is **exactly 7 characters**. Inv & Ln begins immediately after — fields may
+touch with no whitespace, e.g. `YORKMOTC/SC500093/127113` → account `YORKMOT`,
+Inv & Ln `C/SC500093/1`, part `27113`.
+
+`I/…/n` → INVOICE, `C/…/n` → CREDIT (from Inv & Ln identity, never from signed money).
+Malformed identities are skipped (no guessing). Credits stored with signed units/spend.
+
+Report selection `[Start Customer YORKMOTO]` is the authoritative selected customer.
+The 7-character body account (`YORKMOT`) is the truncated row representation.
 
 ### SLRB
 
-Fields: A/C, Type, Ref, Date, Tot Goods, Tot VAT, Total, Run Bal.
+Native printed layout includes Name:
+
+`A/C        Name                               Sacct      Type Ref         Date …`
+
+A/C is the **full** account (`YORKMOTO`). Name is separate (`YORK MOTOR FACTORS`) —
+never concatenated into the account field.
 
 `INV` → INVOICE, `CRN` → CREDIT; payments/journals preserved as ledger/diagnostics.  
 Dates such as `06 Oct 14` → `2014-10-06` (date-only, no timezone shift).
@@ -69,8 +81,10 @@ Over-limit raw negatives are preserved (`availableCreditRaw`); UI may show £0 a
 - Account codes are read **only** from the report account column/field (never from Units/Sales/VAT/Run Bal).
 - Pure numeric / money values (e.g. `-104.38`, `-1`) are never treated as account codes.
 - Format detection is **content-based** (`.txt` and `.csv` both accepted; extension is irrelevant).
-- Exact match to verified code or staff-verified `AutopartCustomerAccountAlias` is preferred.
-- **561L / SLRB only:** when the parser confirms a truncated report account field width (consistent printed length / fixed-width layout), an unambiguous match of the report account to the first N characters of the company's verified code is accepted as `MATCHED_TRUNCATED` (e.g. report `YORKMOT`, verified `YORKMOTO`, width 7). If two verified AB accounts share that truncated form → `AMBIGUOUS_TRUNCATED` (blocked). This does **not** apply to 407P100.
+- Prefer `[Start Customer XXX]` report selection when present — exact match to verified code is `MATCHED_REPORT_CUSTOMER` (no alias required for `YORKMOT` row truncation when the report was generated for `YORKMOTO`).
+- Exact match to verified code or staff-verified `AutopartCustomerAccountAlias` is also accepted.
+- **561L only (fallback):** when the parser confirms the 7-character `.Acct.` field width and there is no report-customer header, an unambiguous match of the row account to the first N characters of the verified code is `MATCHED_TRUNCATED`. Ambiguous truncations across verified AB accounts → blocked. This does **not** apply to 407P100.
+- Multiple structurally valid customer accounts in a per-customer import → blocked (`MULTIPLE_ACCOUNTS`).
 - No general `startsWith` / fuzzy matching. Portal customers cannot upload reports.
 
 ## Matching rules

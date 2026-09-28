@@ -95,15 +95,22 @@ export type HistoricAccountMatchStatus =
   | "MATCHED"
   | "MATCHED_ALIAS"
   | "MATCHED_TRUNCATED"
+  | "MATCHED_REPORT_CUSTOMER"
   | "ALIAS_REQUIRED"
   | "AMBIGUOUS_TRUNCATED"
+  | "MULTIPLE_ACCOUNTS"
   | "MISMATCH"
   | "NO_ACCOUNT";
 
 /**
  * Resolve 561L/SLRB report account(s) against a verified company.
- * Truncation is allowed only when parsers confirmed an account field width
- * (fixed-width layout or consistent truncated codes in those report types).
+ *
+ * Preference order:
+ * 1. `[Start Customer XXX]` report selection — exact match to verified (no alias).
+ * 2. Exact verified / alias match on structurally extracted row accounts.
+ * 3. Truncation only when parsers confirmed account field width AND row account
+ *    is a clean prefix of verified (e.g. YORKMOT width 7 → YORKMOTO).
+ *
  * 407P100 must NOT use this helper.
  */
 export async function resolveHistoricReportAccountMatch(input: {
@@ -112,35 +119,123 @@ export async function resolveHistoricReportAccountMatch(input: {
   acceptedAccounts: Set<string>;
   detectedAccounts: string[];
   accountFieldWidth: number | null;
+  /** From `[Start Customer …]` on 561L and/or SLRB. */
+  reportStartCustomer?: string | null;
+  reportEndCustomer?: string | null;
+  /** 561L body-level row accounts only (e.g. YORKMOT). */
+  rowAccounts561l?: string[];
 }): Promise<{
   status: HistoricAccountMatchStatus;
   sourceAccount: string | null;
+  reportCustomer: string | null;
+  rowAccount: string | null;
   verifiedAccount: string | null;
   accountFieldWidth: number | null;
   ok: boolean;
   message: string | null;
   suggestedAlias: string | null;
+  multipleAccounts: string[];
 }> {
   const verified = input.verifiedCode ? normaliseAccountToken(input.verifiedCode) : null;
+  const reportCustomer = input.reportStartCustomer
+    ? normaliseAccountToken(input.reportStartCustomer)
+    : null;
+  const rowAccounts = [
+    ...new Set(
+      (input.rowAccounts561l ?? []).map((a) => normaliseAccountToken(a)).filter(Boolean),
+    ),
+  ] as string[];
   const detected = [
     ...new Set(input.detectedAccounts.map((a) => normaliseAccountToken(a)).filter(Boolean)),
   ] as string[];
-  const sourceAccount = detected.length === 1 ? detected[0]! : detected[0] ?? null;
+  const width = input.accountFieldWidth;
 
-  if (!detected.length) {
+  const empty = {
+    reportCustomer,
+    rowAccount: rowAccounts.length === 1 ? rowAccounts[0]! : rowAccounts[0] ?? null,
+    verifiedAccount: verified,
+    accountFieldWidth: width,
+    suggestedAlias: null as string | null,
+    multipleAccounts: [] as string[],
+  };
+
+  // Authoritative report selection customer (exact)
+  if (reportCustomer && verified && reportCustomer === verified) {
+    // Supporting check: 561L 7-char row accounts must be consistent truncations
+    const inconsistent = rowAccounts.filter(
+      (r) => !(width && r.length === width && verified.slice(0, width) === r) && r !== verified,
+    );
+    if (inconsistent.length) {
+      return {
+        status: "MISMATCH",
+        sourceAccount: reportCustomer,
+        ...empty,
+        ok: false,
+        message: `Report customer ${reportCustomer} matches verified account, but 561L row account(s) ${inconsistent.join(", ")} are inconsistent with the ${width ?? "N"}-character row representation.`,
+        multipleAccounts: inconsistent,
+      };
+    }
     return {
-      status: "NO_ACCOUNT",
-      sourceAccount: null,
-      verifiedAccount: verified,
-      accountFieldWidth: input.accountFieldWidth,
-      ok: false,
-      message: "No Autopart account codes detected in the uploaded reports.",
-      suggestedAlias: null,
+      status: "MATCHED_REPORT_CUSTOMER",
+      sourceAccount: reportCustomer,
+      ...empty,
+      ok: true,
+      message:
+        width && rowAccounts.length === 1 && rowAccounts[0] !== verified
+          ? `Matched — report generated for ${reportCustomer}. 561L uses a ${width}-character account field (${rowAccounts[0]}).`
+          : `Matched — report generated for verified Autopart account ${reportCustomer}.`,
     };
   }
 
+  if (reportCustomer && verified && reportCustomer !== verified) {
+    const acceptedReport = input.acceptedAccounts.has(reportCustomer);
+    if (acceptedReport) {
+      return {
+        status: "MATCHED_ALIAS",
+        sourceAccount: reportCustomer,
+        ...empty,
+        ok: true,
+        message: `Matched via verified account alias (report customer ${reportCustomer}).`,
+      };
+    }
+    return {
+      status: "ALIAS_REQUIRED",
+      sourceAccount: reportCustomer,
+      ...empty,
+      ok: false,
+      message: `Account alias required: report customer is ${reportCustomer}, verified account is ${verified}.`,
+      suggestedAlias: reportCustomer,
+    };
+  }
+
+  if (!detected.length && !reportCustomer) {
+    return {
+      status: "NO_ACCOUNT",
+      sourceAccount: null,
+      ...empty,
+      ok: false,
+      message: "No Autopart account codes detected in the uploaded reports.",
+    };
+  }
+
+  if (detected.length > 1) {
+    const allAccepted = detected.every((d) => input.acceptedAccounts.has(d));
+    if (!allAccepted) {
+      return {
+        status: "MULTIPLE_ACCOUNTS",
+        sourceAccount: null,
+        ...empty,
+        ok: false,
+        message: `Multiple accounts detected in report: ${detected.join(", ")}. Per-customer historic import expects a single customer.`,
+        multipleAccounts: detected,
+      };
+    }
+  }
+
+  const sourceAccount = detected.length === 1 ? detected[0]! : detected[0] ?? null;
+
   // Exact verified / alias match for every detected account
-  const exactOk = detected.every((d) => input.acceptedAccounts.has(d));
+  const exactOk = detected.length > 0 && detected.every((d) => input.acceptedAccounts.has(d));
   if (exactOk) {
     const viaAlias =
       Boolean(verified) &&
@@ -149,21 +244,17 @@ export async function resolveHistoricReportAccountMatch(input: {
     return {
       status: viaAlias ? "MATCHED_ALIAS" : "MATCHED",
       sourceAccount,
-      verifiedAccount: verified,
-      accountFieldWidth: input.accountFieldWidth,
+      ...empty,
       ok: true,
       message: viaAlias
         ? "Matched via verified account alias"
         : "Matched verified Autopart account",
-      suggestedAlias: null,
     };
   }
 
-  const width = input.accountFieldWidth;
   if (width && verified && detected.length === 1) {
     const reportAcct = detected[0]!;
     if (reportAcct.length === width && verified.slice(0, width) === reportAcct) {
-      // Unambiguous within verified AB accounts that share this truncated form
       const conflicts = await prisma.company.findMany({
         where: {
           id: { not: input.companyId },
@@ -180,32 +271,26 @@ export async function resolveHistoricReportAccountMatch(input: {
         return {
           status: "AMBIGUOUS_TRUNCATED",
           sourceAccount: reportAcct,
-          verifiedAccount: verified,
-          accountFieldWidth: width,
+          ...empty,
           ok: false,
           message: `Ambiguous truncated account ${reportAcct} — multiple verified Autopart accounts share this ${width}-character report form. Resolve manually (alias or account correction).`,
-          suggestedAlias: null,
         };
       }
       return {
         status: "MATCHED_TRUNCATED",
         sourceAccount: reportAcct,
-        verifiedAccount: verified,
-        accountFieldWidth: width,
+        ...empty,
         ok: true,
         message: `Matched — Autopart report uses shortened account code (${reportAcct} → ${verified})`,
-        suggestedAlias: null,
       };
     }
   }
 
-  // Clean single-account mismatch → alias required (not a spam of financial values)
   if (detected.length === 1 && verified && detected[0] !== verified) {
     return {
       status: "ALIAS_REQUIRED",
       sourceAccount: detected[0]!,
-      verifiedAccount: verified,
-      accountFieldWidth: width,
+      ...empty,
       ok: false,
       message: `Account alias required: report shows ${detected[0]}, verified account is ${verified}.`,
       suggestedAlias: detected[0]!,
@@ -215,11 +300,11 @@ export async function resolveHistoricReportAccountMatch(input: {
   return {
     status: "MISMATCH",
     sourceAccount,
-    verifiedAccount: verified,
-    accountFieldWidth: width,
+    ...empty,
     ok: false,
-    message: `Detected account(s) ${detected.join(", ")} do not match verified account ${verified ?? "—"}.`,
+    message: `Detected account(s) ${detected.join(", ") || "—"} do not match verified account ${verified ?? "—"}.`,
     suggestedAlias: detected.length === 1 ? detected[0]! : null,
+    multipleAccounts: detected.length > 1 ? detected : [],
   };
 }
 
@@ -490,15 +575,30 @@ async function buildHistoryPreview(
     ? await loadAcceptedAccounts(input.companyId, verifiedCode)
     : new Set<string>();
 
-  const detected = [...new Set([...parsed561.detectedAccounts, ...parsedSlrb.detectedAccounts])];
-  const accountFieldWidth =
-    parsed561.accountFieldWidth ?? parsedSlrb.accountFieldWidth ?? null;
+  const reportStartCustomer =
+    parsed561.reportStartCustomer ?? parsedSlrb.reportStartCustomer ?? null;
+  const reportEndCustomer =
+    parsed561.reportEndCustomer ?? parsedSlrb.reportEndCustomer ?? null;
+  // Prefer report selection customer; fall back to structurally extracted row accounts only.
+  const detected = [
+    ...new Set(
+      [
+        ...(reportStartCustomer ? [reportStartCustomer] : []),
+        ...parsed561.detectedAccounts,
+        ...parsedSlrb.detectedAccounts,
+      ].filter(Boolean),
+    ),
+  ] as string[];
+  const accountFieldWidth = parsed561.accountFieldWidth ?? null;
   const accountMatch = await resolveHistoricReportAccountMatch({
     companyId: input.companyId,
     verifiedCode,
     acceptedAccounts: accepted,
     detectedAccounts: detected,
     accountFieldWidth,
+    reportStartCustomer,
+    reportEndCustomer,
+    rowAccounts561l: parsed561.detectedAccounts,
   });
   if (!accountMatch.ok) {
     issues.push({
@@ -508,16 +608,24 @@ async function buildHistoryPreview(
           ? "ACCOUNT_ALIAS_REQUIRED"
           : accountMatch.status === "AMBIGUOUS_TRUNCATED"
             ? "ACCOUNT_AMBIGUOUS_TRUNCATED"
-            : accountMatch.status === "NO_ACCOUNT"
-              ? "NO_ACCOUNT"
-              : "ACCOUNT_MISMATCH",
+            : accountMatch.status === "MULTIPLE_ACCOUNTS"
+              ? "MULTIPLE_ACCOUNTS"
+              : accountMatch.status === "NO_ACCOUNT"
+                ? "NO_ACCOUNT"
+                : "ACCOUNT_MISMATCH",
       message: accountMatch.message ?? "Autopart account mismatch.",
     });
-  } else if (accountMatch.status === "MATCHED_TRUNCATED") {
+  } else if (
+    accountMatch.status === "MATCHED_TRUNCATED" ||
+    accountMatch.status === "MATCHED_REPORT_CUSTOMER"
+  ) {
     issues.push({
       severity: "INFO",
-      code: "ACCOUNT_TRUNCATED_MATCH",
-      message: accountMatch.message ?? "Matched truncated report account.",
+      code:
+        accountMatch.status === "MATCHED_REPORT_CUSTOMER"
+          ? "ACCOUNT_REPORT_CUSTOMER_MATCH"
+          : "ACCOUNT_TRUNCATED_MATCH",
+      message: accountMatch.message ?? "Matched report account.",
     });
   }
 
@@ -600,14 +708,22 @@ async function buildHistoryPreview(
     verifiedAccount: verifiedCode,
     /** Clean detected Autopart account codes only (never financial values). */
     detectedAccounts: detected,
+    reportCustomer: reportStartCustomer,
+    rowAccount561l:
+      parsed561.detectedAccounts.length === 1
+        ? parsed561.detectedAccounts[0]!
+        : parsed561.detectedAccounts[0] ?? null,
     sourceAccount: accountMatch.sourceAccount,
     accountMatch: {
       status: accountMatch.status,
       sourceAccount: accountMatch.sourceAccount,
+      reportCustomer: accountMatch.reportCustomer,
+      rowAccount: accountMatch.rowAccount,
       verifiedAccount: accountMatch.verifiedAccount,
       accountFieldWidth: accountMatch.accountFieldWidth,
       message: accountMatch.message,
       suggestedAlias: accountMatch.suggestedAlias,
+      multipleAccounts: accountMatch.multipleAccounts,
       ok: accountMatch.ok,
     },
     fileHash561l: hash561,
@@ -621,6 +737,10 @@ async function buildHistoryPreview(
       creditLines: parsed561.creditLines,
       malformed: parsed561.malformedRows,
       detectedAccounts: parsed561.detectedAccounts,
+      reportStartCustomer: parsed561.reportStartCustomer,
+      uniqueDocumentRefs: parsed561.diagnostics.uniqueDocumentRefs.length,
+      uniqueInvoiceRefs: parsed561.diagnostics.uniqueInvoiceRefs.length,
+      uniqueCreditRefs: parsed561.diagnostics.uniqueCreditRefs.length,
       layout: parsed561.layout,
       accountFieldWidth: parsed561.accountFieldWidth,
     },
@@ -632,6 +752,8 @@ async function buildHistoryPreview(
       ledgerRecords: parsedSlrb.ledgerRecords,
       malformed: parsedSlrb.malformedRows,
       detectedAccounts: parsedSlrb.detectedAccounts,
+      reportStartCustomer: parsedSlrb.reportStartCustomer,
+      uniqueDocumentRefs: parsedSlrb.diagnostics.uniqueDocumentRefs.length,
       layout: parsedSlrb.layout,
       accountFieldWidth: parsedSlrb.accountFieldWidth,
     },
@@ -641,6 +763,8 @@ async function buildHistoryPreview(
       slrbDocumentsWithoutLines: slrbWithoutLines,
       linesWithDates,
       linesWithoutDates,
+      refs561lOnly: [...lineRefs].filter((r) => !slrbByRef.has(r)).sort(),
+      refsSlrbOnly: [...slrbByRef.keys()].filter((r) => !lineRefs.has(r)).sort(),
     },
     products: {
       uniqueSkus: uniqueSkus.length,
