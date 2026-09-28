@@ -165,6 +165,15 @@ enum StockIssueKind {
   CONFLICT
 }
 
+/// Operational severity for StockSyncIssue diagnostics.
+/// IGNORED rows stay recorded for audit but do not drive dashboard health / PARTIAL.
+enum StockIssueSeverity {
+  IGNORED
+  WARNING
+  ACTION_REQUIRED
+  FATAL
+}
+
 enum BasketStatus {
   OPEN
   CONVERTED
@@ -1030,19 +1039,22 @@ model StockSyncChange {
 }
 
 model StockSyncIssue {
-  id          String         @id @default(cuid())
+  id          String              @id @default(cuid())
   runId       String
   kind        StockIssueKind
+  /// Operational severity — INVALID/DUPLICATE feed noise is IGNORED for dashboard health.
+  severity    StockIssueSeverity  @default(IGNORED)
   sku         String?
   description String?
   availRaw    String?
   message     String
   line        Int?
-  createdAt   DateTime       @default(now())
+  createdAt   DateTime            @default(now())
 
   run StockSyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId, kind])
+  @@index([runId, severity])
 }
 
 model StockFeedUnmatched {

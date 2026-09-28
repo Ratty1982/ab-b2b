@@ -438,7 +438,15 @@ function StockCard({ stock }: { stock: NonNullable<Dashboard["stock"]> }) {
         <Row label="Matched" value={String(stock.matched)} />
         <Row label="Updated" value={String(stock.updated)} />
         <Row label="Not in AB catalogue" value={String(stock.notInCatalogue)} />
-        <Row label="Issues" value={String(stock.issues)} />
+        {stock.ignoredRows > 0 ? (
+          <Row
+            label="Ignored rows"
+            value={<span className="text-steel">{String(stock.ignoredRows)}</span>}
+          />
+        ) : null}
+        {stock.actionableIssues > 0 ? (
+          <Row label="Actionable issues" value={String(stock.actionableIssues)} />
+        ) : null}
         <Row
           label="Status"
           value={

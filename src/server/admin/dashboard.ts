@@ -166,6 +166,11 @@ export type AdminDashboardPayload = {
     matched: number;
     updated: number;
     notInCatalogue: number;
+    /** Ignored INVALID/DUPLICATE diagnostics — informational only. */
+    ignoredRows: number;
+    /** Actionable/fatal issue count (CONFLICT, PARSE, …). Drives Needs Attention. */
+    actionableIssues: number;
+    /** @deprecated Use ignoredRows / actionableIssues. Kept as ignoredRows for older clients. */
     issues: number;
     statusLabel: "Healthy" | "Attention required" | "No sync yet";
     href: string;
@@ -603,6 +608,18 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     href: ROUTES.adminApplications,
   }));
 
+  const stockActionableIssues = stockSuccess
+    ? await prisma.stockSyncIssue.count({
+        where: {
+          runId: stockSuccess.id,
+          severity: { in: ["ACTION_REQUIRED", "FATAL", "WARNING"] },
+        },
+      })
+    : 0;
+  const stockIgnoredRows = stockSuccess
+    ? stockSuccess.invalid + stockSuccess.duplicates
+    : 0;
+
   const stock = stockSuccess
     ? {
         lastSuccessAt: stockSuccess.completedAt?.toISOString() ?? stockSuccess.startedAt.toISOString(),
@@ -612,12 +629,13 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
         matched: stockSuccess.matched,
         updated: stockSuccess.updated,
         notInCatalogue: stockSuccess.unmatched,
-        issues: stockSuccess.invalid + stockSuccess.duplicates,
+        ignoredRows: stockIgnoredRows,
+        actionableIssues: stockActionableIssues,
+        issues: stockIgnoredRows,
         statusLabel: stockHealthLabel({
           hasSuccess: true,
-          invalid: stockSuccess.invalid,
-          duplicates: stockSuccess.duplicates,
-          status: stockSuccess.status,
+          actionableIssueCount: stockActionableIssues,
+          status: stockSuccess.status === "FAILED" ? "FAILED" : "SUCCESS",
         }),
         href: ROUTES.adminStockSync,
       }
@@ -628,6 +646,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
           matched: 0,
           updated: 0,
           notInCatalogue: 0,
+          ignoredRows: 0,
+          actionableIssues: 0,
           issues: 0,
           statusLabel: "No sync yet" as const,
           href: ROUTES.adminStockSync,
@@ -710,11 +730,11 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       severity: "action",
     });
   }
-  if (stock && stock.issues > 0) {
+  if (stock && stock.actionableIssues > 0) {
     needsAttention.push({
       id: "stock-issues",
-      label: "Invalid/duplicate rows in latest stock sync",
-      count: stock.issues,
+      label: "Actionable issues in latest stock sync",
+      count: stock.actionableIssues,
       href: ROUTES.adminStockSync,
       severity: "action",
     });

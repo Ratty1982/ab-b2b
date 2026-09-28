@@ -84,14 +84,56 @@ export function isStockStale(lastSuccessAt: Date | null, now: Date, staleHours: 
 
 export const NOT_IN_AB_CATALOGUE_REASON = "Not in AB catalogue";
 
-/** Unmatched/non-catalogued Autopart SKUs are expected and never PARTIAL on their own. */
+export type StockIssueSeverityValue = "IGNORED" | "WARNING" | "ACTION_REQUIRED" | "FATAL";
+
+/**
+ * Operational severity for persisted StockSyncIssue rows.
+ * INVALID / DUPLICATE Autopart feed noise is retained for audit but IGNORED for health.
+ * Ambiguous catalogue matches (CONFLICT) remain actionable.
+ * PARSE failures are fatal for the feed.
+ */
+export function severityForStockIssueKind(
+  kind: "UNMATCHED" | "INVALID" | "DUPLICATE" | "PARSE" | "CONFLICT",
+): StockIssueSeverityValue {
+  switch (kind) {
+    case "INVALID":
+    case "DUPLICATE":
+    case "UNMATCHED":
+      return "IGNORED";
+    case "CONFLICT":
+      return "ACTION_REQUIRED";
+    case "PARSE":
+      return "FATAL";
+    default:
+      return "ACTION_REQUIRED";
+  }
+}
+
+export function isActionableStockIssueSeverity(severity: StockIssueSeverityValue): boolean {
+  return severity === "ACTION_REQUIRED" || severity === "FATAL" || severity === "WARNING";
+}
+
+/**
+ * Run outcome for operational import history.
+ * Ignored invalid/duplicate diagnostics alone → SUCCESS (still recorded on StockSyncIssue).
+ * Actionable row problems → PARTIAL. Zero usable rows → FAILED.
+ */
 export function stockSyncOutcome(input: {
   rowsRead: number;
-  invalid: number;
-  duplicates: number;
+  /** @deprecated Prefer actionableIssueCount — ignored for outcome when actionableIssueCount is set. */
+  invalid?: number;
+  /** @deprecated Prefer actionableIssueCount. */
+  duplicates?: number;
+  actionableIssueCount?: number;
+  fatalIssueCount?: number;
 }): "SUCCESS" | "PARTIAL" | "FAILED" {
   if (input.rowsRead === 0) return "FAILED";
-  if (input.invalid + input.duplicates > 0) return "PARTIAL";
+  if ((input.fatalIssueCount ?? 0) > 0) return "FAILED";
+  const actionable =
+    input.actionableIssueCount ??
+    // Legacy callers that still pass invalid/duplicates — treat CONFLICT-era callers via explicit actionable.
+    0;
+  if (actionable > 0) return "PARTIAL";
   return "SUCCESS";
 }
 
@@ -101,19 +143,26 @@ export function catalogueMatchSummary(input: {
   invalid: number;
   duplicates?: number;
 }): string {
+  const ignored = input.invalid + (input.duplicates ?? 0);
   const parts = [
     `Matched AB SKUs: ${input.matched}`,
     `Not in AB catalogue: ${input.unmatched}`,
-    `Invalid: ${input.invalid}`,
+    `Ignored rows: ${ignored}`,
   ];
-  if (input.duplicates) parts.push(`Duplicates: ${input.duplicates}`);
   return parts.join(". ");
 }
 
-export function stockAttentionSummary(invalid: number, duplicates: number): string | null {
+/** Actionable attention copy only — ignored invalid/duplicate feed noise returns null. */
+export function stockAttentionSummary(actionableIssueCount: number): string | null {
+  if (actionableIssueCount <= 0) return null;
+  return `${actionableIssueCount} row(s) need attention`;
+}
+
+/** @deprecated Use stockAttentionSummary(actionableIssueCount). */
+export function stockIgnoredDiagnosticsSummary(invalid: number, duplicates: number): string | null {
   const n = invalid + duplicates;
   if (!n) return null;
-  return `${n} row(s) need attention`;
+  return `${n} ignored row diagnostic(s)`;
 }
 
 /** Customer band from sellable qty at sync time (not stale-aware). Uses central thresholds. */

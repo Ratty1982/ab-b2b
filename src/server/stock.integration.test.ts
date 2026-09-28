@@ -135,13 +135,17 @@ describe("Phase 5 Autopart inventory integration", () => {
       trigger: "manual",
       actorUserId: adminId,
     });
-    expect(live.status).toBe("PARTIAL");
+    // Duplicate/invalid feed noise is recorded but IGNORED for run health → SUCCESS.
+    expect(live.status).toBe("SUCCESS");
     expect(live.unmatched).toBeGreaterThanOrEqual(1);
     expect(live.duplicates).toBeGreaterThanOrEqual(2);
-    expect(live.errorSummary).toMatch(/need attention/);
+    expect(live.errorSummary).toBeNull();
     const issues = await prisma.stockSyncIssue.findMany({ where: { runId: live.runId } });
     expect(issues.some((row) => row.kind === "UNMATCHED")).toBe(false);
     expect(issues.some((row) => row.kind === "DUPLICATE")).toBe(true);
+    expect(issues.filter((row) => row.kind === "DUPLICATE").every((row) => row.severity === "IGNORED")).toBe(
+      true,
+    );
 
     const variantHi = await prisma.productVariant.findUniqueOrThrow({ where: { sku: skus.hi } });
     const inventoryHi = await prisma.inventory.findFirst({ where: { variantId: variantHi.id } });
@@ -258,7 +262,11 @@ describe("Phase 5 Autopart inventory integration", () => {
       actorUserId: adminId,
     });
     expect(invalidRow.invalid).toBe(1);
-    expect(invalidRow.status).toBe("PARTIAL");
+    expect(invalidRow.status).toBe("SUCCESS");
+    const invalidIssues = await prisma.stockSyncIssue.findMany({ where: { runId: invalidRow.runId } });
+    expect(invalidIssues).toHaveLength(1);
+    expect(invalidIssues[0]!.kind).toBe("INVALID");
+    expect(invalidIssues[0]!.severity).toBe("IGNORED");
     const afterInvalid = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(afterInvalid.qtyOnHand).toBe(8);
   });
@@ -434,6 +442,38 @@ describe("Phase 5 Autopart inventory integration", () => {
     const manual = await pollImapNow(adminId, true);
     expect(manual.dryRun).toBe(true);
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(11);
+  });
+
+  it("keeps ignored INVALID/DUPLICATE diagnostics recorded but SUCCESS / non-actionable", async () => {
+    const stamp = Date.now();
+    const sku = `ST5IGN-${stamp}`;
+    await saveProduct(adminId, {
+      sku,
+      name: "Ignored diagnostic fixture",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const live = await applyStockFeed({
+      text: csv([`${sku},ok,12`, `${sku},dup,4`, `,missing,3`, `BAD-${stamp},bad,n/a`]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(live.status).toBe("SUCCESS");
+    expect(live.duplicates).toBeGreaterThanOrEqual(2);
+    expect(live.invalid).toBeGreaterThanOrEqual(1);
+    expect(live.errorSummary).toBeNull();
+    expect(live.summary).toMatch(/Ignored rows:/);
+    const issues = await prisma.stockSyncIssue.findMany({ where: { runId: live.runId } });
+    expect(issues.length).toBeGreaterThanOrEqual(3);
+    expect(issues.every((row) => row.severity === "IGNORED")).toBe(true);
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { sku } });
+    // Duplicate SKU → neither row applied.
+    expect(await prisma.inventory.findFirst({ where: { variantId: variant.id } })).toBeFalsy();
   });
 
   it("treats valid Autopart SKUs missing from AB as not-in-catalogue SUCCESS, not invalid", async () => {

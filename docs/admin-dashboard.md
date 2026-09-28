@@ -56,9 +56,12 @@ Draft / sent·viewed / expiring-soon (SENT|VIEWED with `expiresAt` within 7 days
 
 Latest **live** `StockSyncRun` with status SUCCESS or PARTIAL:
 
-- Matched / updated / not in AB catalogue (`unmatched`) / issues (`invalid` + `duplicates`)
+- Matched / updated / not in AB catalogue (`unmatched`)
+- Ignored rows (`invalid` + `duplicates`) — INVALID/DUPLICATE severity `IGNORED` (informational)
+- Actionable issues — only `ACTION_REQUIRED` / `FATAL` / `WARNING`
 - Unmatched catalogue SKUs are **not** treated as errors
-- Status: Healthy / Attention required / No sync yet
+- Status: Healthy / Attention required / No sync yet  
+  Ignored INVALID/DUPLICATE diagnostics alone keep Status **Healthy**
 
 ## 504C invoice / despatch
 
@@ -85,7 +88,7 @@ When `settings.view` is available: SMTP+sender configured flag, delivery enabled
 
 ## Needs attention
 
-Built only from genuine conditions (applications, export ready/blocked, callbacks, email failures, stock invalid/duplicate rows). 504C not-configured is severity `info`.
+Built only from genuine conditions (applications, export ready/blocked, callbacks, email failures, **actionable** stock-sync issues). Ignored INVALID/DUPLICATE Autopart row diagnostics do **not** create Needs Attention. 504C not-configured is severity `info`.
 
 ## RBAC / sales scope
 

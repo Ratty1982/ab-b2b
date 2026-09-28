@@ -511,7 +511,11 @@ function AutopartStockOps() {
             )}
             onClick={() => setTab(id)}
           >
-            {id === "history" ? "Sync history" : id === "unmatched" ? "Unmatched Autopart SKUs" : "Invalid rows"}
+            {id === "history"
+              ? "Sync history"
+              : id === "unmatched"
+                ? "Unmatched Autopart SKUs"
+                : "Row diagnostics"}
           </button>
         ))}
       </div>
@@ -825,8 +829,8 @@ function RunDetailPanel({
         <StatusCard label={dry ? "Would change" : "Updated"} value={(dry ? changed.total : selected.updated).toLocaleString("en-GB")} />
         <StatusCard label="Unchanged" value={selected.unchanged.toLocaleString("en-GB")} />
         <StatusCard label="Not in AB catalogue" value={selected.unmatched.toLocaleString("en-GB")} />
-        <StatusCard label="Invalid" value={selected.invalid.toLocaleString("en-GB")} />
-        <StatusCard label="Duplicates" value={selected.duplicates.toLocaleString("en-GB")} />
+        <StatusCard label="Ignored (invalid)" value={selected.invalid.toLocaleString("en-GB")} />
+        <StatusCard label="Ignored (duplicates)" value={selected.duplicates.toLocaleString("en-GB")} />
       </div>
       {stats.total > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -848,7 +852,7 @@ function RunDetailPanel({
             ["changed", dry ? `Would change (${changed.total})` : `Changed (${selected.updated})`],
             ["matched", `Matched (${selected.matched})`],
             ["unmatched", `Not in AB catalogue (${selected.unmatched})`],
-            ["invalid", `Invalid (${selected.invalid + selected.duplicates})`],
+            ["invalid", `Ignored diagnostics (${selected.invalid + selected.duplicates})`],
           ] as const
         ).map(([id, label]) => (
           <button

@@ -243,6 +243,12 @@ describe("admin production dashboard", () => {
     expect(dash.needsAttention.some((i) => i.id === "504c-not-configured" && i.severity === "info")).toBe(
       true,
     );
+    // Ignored INVALID/DUPLICATE diagnostics must never appear as Needs Attention.
+    expect(dash.needsAttention.some((i) => i.id === "stock-issues")).toBe(false);
+    if (dash.stock && dash.stock.statusLabel !== "No sync yet") {
+      expect(dash.stock.actionableIssues).toBe(0);
+      expect(dash.stock.statusLabel).toBe("Healthy");
+    }
   });
 
   it("denies trade buyers and does not include prototype strings", async () => {

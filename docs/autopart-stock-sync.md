@@ -81,7 +81,7 @@ Unmatched SKUs are not permanently ignored. If the product is added later with `
 
 ## Duplicate SKU policy
 
-Duplicate SKUs in one feed are **conflicts**. Every instance is skipped (not last-wins). Other SKUs still apply.
+Duplicate SKUs in one feed are skipped safely (not last-wins). Every duplicate instance is recorded as `StockSyncIssue` kind `DUPLICATE` with severity **`IGNORED`**. Other SKUs still apply. Duplicates do **not** make the run PARTIAL or trigger Admin Dashboard Needs Attention.
 
 **Difference from current AlphaOps:** AlphaOps keeps the highest Avail when the same SKU appears twice. AB does **not** adopt that in this phase. Revisit if live 231PO3NEW files contain duplicates.
 
@@ -91,7 +91,18 @@ Completeness of 231PO3NEW could not be proven without AlphaOps source. **Absence
 
 ## Invalid Avail
 
-Blank or non-numeric Avail → row `INVALID`. Previous quantity for that SKU is retained. Customers do not receive IN STOCK from malformed data.
+Blank or non-numeric Avail → row `INVALID`, severity **`IGNORED`**. Previous quantity for that SKU is retained. Customers do not receive IN STOCK from malformed data. Invalid rows stay in sync diagnostics but do **not** drive PARTIAL / Attention required when they are the only diagnostics.
+
+## Issue severity
+
+| Kind | Severity | Dashboard / run health |
+| --- | --- | --- |
+| `INVALID` / `DUPLICATE` | `IGNORED` | Recorded; SUCCESS; no Needs Attention |
+| Not in AB catalogue | *(unmatched counter)* | Informational; SUCCESS |
+| `CONFLICT` (ambiguous AB SKU) | `ACTION_REQUIRED` | PARTIAL; Needs Attention |
+| `PARSE` / feed failure | `FATAL` / FAILED run | Attention required |
+
+A run with **only** ignored diagnostics is **`SUCCESS`**.
 
 ## Negative Avail
 

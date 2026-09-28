@@ -8,9 +8,11 @@ import {
   internalStatusFromSellable,
   isStockStale,
   sellableQuantityFromAvail,
+  severityForStockIssueKind,
   skuMatchKey,
   stockAttentionSummary,
   stockAvailabilityTransitionLabel,
+  stockIgnoredDiagnosticsSummary,
   stockSyncOutcome,
   summariseStockQtyChanges,
 } from "@/domain/stock";
@@ -56,16 +58,27 @@ describe("authoritative stock vs public availability", () => {
     expect(isStockStale(null, now, 36)).toBe(false);
   });
 
-  it("treats valid Autopart SKUs absent from AB as SUCCESS, not PARTIAL", () => {
-    expect(stockSyncOutcome({ rowsRead: 12732, invalid: 0, duplicates: 0 })).toBe("SUCCESS");
-    expect(stockSyncOutcome({ rowsRead: 13200, invalid: 0, duplicates: 0 })).toBe("SUCCESS");
-    expect(stockSyncOutcome({ rowsRead: 500, invalid: 1, duplicates: 0 })).toBe("PARTIAL");
-    expect(stockSyncOutcome({ rowsRead: 10, invalid: 0, duplicates: 2 })).toBe("PARTIAL");
-    expect(stockSyncOutcome({ rowsRead: 0, invalid: 0, duplicates: 0 })).toBe("FAILED");
-    expect(stockAttentionSummary(0, 0)).toBeNull();
-    expect(stockAttentionSummary(1, 0)).toBe("1 row(s) need attention");
-    expect(catalogueMatchSummary({ matched: 468, unmatched: 12732, invalid: 0 })).toBe(
-      "Matched AB SKUs: 468. Not in AB catalogue: 12732. Invalid: 0",
+  it("classifies INVALID/DUPLICATE as IGNORED and CONFLICT/PARSE as actionable/fatal", () => {
+    expect(severityForStockIssueKind("INVALID")).toBe("IGNORED");
+    expect(severityForStockIssueKind("DUPLICATE")).toBe("IGNORED");
+    expect(severityForStockIssueKind("UNMATCHED")).toBe("IGNORED");
+    expect(severityForStockIssueKind("CONFLICT")).toBe("ACTION_REQUIRED");
+    expect(severityForStockIssueKind("PARSE")).toBe("FATAL");
+  });
+
+  it("treats ignored invalid/duplicate diagnostics as SUCCESS; unmatched never PARTIAL", () => {
+    expect(stockSyncOutcome({ rowsRead: 12732, actionableIssueCount: 0 })).toBe("SUCCESS");
+    expect(
+      stockSyncOutcome({ rowsRead: 13200, invalid: 69, duplicates: 0, actionableIssueCount: 0 }),
+    ).toBe("SUCCESS");
+    expect(stockSyncOutcome({ rowsRead: 500, actionableIssueCount: 1 })).toBe("PARTIAL");
+    expect(stockSyncOutcome({ rowsRead: 10, fatalIssueCount: 1 })).toBe("FAILED");
+    expect(stockSyncOutcome({ rowsRead: 0, actionableIssueCount: 0 })).toBe("FAILED");
+    expect(stockAttentionSummary(0)).toBeNull();
+    expect(stockAttentionSummary(1)).toBe("1 row(s) need attention");
+    expect(stockIgnoredDiagnosticsSummary(69, 0)).toBe("69 ignored row diagnostic(s)");
+    expect(catalogueMatchSummary({ matched: 146, unmatched: 12671, invalid: 69 })).toBe(
+      "Matched AB SKUs: 146. Not in AB catalogue: 12671. Ignored rows: 69",
     );
   });
 
@@ -83,7 +96,12 @@ describe("authoritative stock vs public availability", () => {
     expect(describeStockQtyChange(5, 0)?.newAvailability).toBe("out");
     expect(describeStockQtyChange(0, 50)?.newAvailability).toBe("in");
     const sameBand = describeStockQtyChange(36, 35);
-    expect(sameBand).toMatchObject({ previousQty: 36, newQty: 35, previousAvailability: "in", newAvailability: "in" });
+    expect(sameBand).toMatchObject({
+      previousQty: 36,
+      newQty: 35,
+      previousAvailability: "in",
+      newAvailability: "in",
+    });
     expect(stockAvailabilityTransitionLabel("in", "in")).toBe("IN STOCK");
     expect(
       summariseStockQtyChanges([

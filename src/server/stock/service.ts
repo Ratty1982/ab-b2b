@@ -17,6 +17,8 @@ import {
   NOT_IN_AB_CATALOGUE_REASON,
   sellableQuantityFromAvail,
   skuMatchKey,
+  isActionableStockIssueSeverity,
+  severityForStockIssueKind,
   stockAttentionSummary,
   stockAvailabilityTransitionLabel,
   stockSyncOutcome,
@@ -174,6 +176,7 @@ export async function applyStockFeed(input: {
     const toApply: ApplyRow[] = [];
     const issues: Array<{
       kind: StockIssueKind;
+      severity: "IGNORED" | "WARNING" | "ACTION_REQUIRED" | "FATAL";
       sku: string | null;
       description: string | null;
       availRaw: string | null;
@@ -185,14 +188,18 @@ export async function applyStockFeed(input: {
     let unmatched = 0;
     let invalid = 0;
     let duplicates = 0;
+    let actionableIssueCount = 0;
+    let fatalIssueCount = 0;
     const unmatchedFeed: Array<{ sku: string; description: string | null; availRaw: string | null }> = [];
     const matchedFeedSkus: string[] = [];
 
     for (const row of classified) {
       if (row.kind === "missing_sku" || row.kind === "invalid") {
         invalid += 1;
+        const severity = severityForStockIssueKind("INVALID");
         issues.push({
           kind: "INVALID",
+          severity,
           sku: row.row.sku || null,
           description: row.row.description,
           availRaw: row.row.availRaw,
@@ -203,8 +210,10 @@ export async function applyStockFeed(input: {
       }
       if (row.kind === "duplicate") {
         duplicates += 1;
+        const severity = severityForStockIssueKind("DUPLICATE");
         issues.push({
           kind: "DUPLICATE",
+          severity,
           sku: row.row.sku,
           description: row.row.description,
           availRaw: row.row.availRaw,
@@ -224,9 +233,13 @@ export async function applyStockFeed(input: {
         continue;
       }
       if (hits.length > 1) {
-        invalid += 1;
+        // Ambiguous AB catalogue match — actionable; do not count as ignored invalid feed noise.
+        const severity = severityForStockIssueKind("CONFLICT");
+        if (severity === "FATAL") fatalIssueCount += 1;
+        else if (isActionableStockIssueSeverity(severity)) actionableIssueCount += 1;
         issues.push({
           kind: "CONFLICT",
+          severity,
           sku: row.row.sku,
           description: row.row.description,
           availRaw: row.row.availRaw,
@@ -337,16 +350,18 @@ export async function applyStockFeed(input: {
 
     const finalStatus = stockSyncOutcome({
       rowsRead: parsed.rows.length,
-      invalid,
-      duplicates,
+      actionableIssueCount,
+      fatalIssueCount,
     }) as StockSyncStatus;
-    const errorSummary = stockAttentionSummary(invalid, duplicates);
+    // errorSummary is actionable attention only — ignored INVALID/DUPLICATE stay on counters + StockSyncIssue.
+    const errorSummary = stockAttentionSummary(actionableIssueCount + fatalIssueCount);
     const summary = catalogueMatchSummary({ matched, unmatched, invalid, duplicates });
 
     await prisma.stockSyncIssue.createMany({
       data: issues.slice(0, ISSUE_CAP).map((issue) => ({
         runId: run.id,
         kind: issue.kind,
+        severity: issue.severity,
         sku: issue.sku,
         description: issue.description,
         availRaw: issue.availRaw,

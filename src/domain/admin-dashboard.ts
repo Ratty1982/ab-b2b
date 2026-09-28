@@ -73,12 +73,19 @@ export function formatGbpIncVat(amount: string | null | undefined): string {
 
 export function stockHealthLabel(input: {
   hasSuccess: boolean;
-  invalid: number;
-  duplicates: number;
   status: string | null;
+  /** Actionable/fatal issue count — ignored INVALID/DUPLICATE diagnostics must not be included. */
+  actionableIssueCount?: number;
+  /**
+   * @deprecated Ignored for health. Prefer actionableIssueCount.
+   * Kept so older call sites compile until updated.
+   */
+  invalid?: number;
+  /** @deprecated Ignored for health. */
+  duplicates?: number;
 }): "Healthy" | "Attention required" | "No sync yet" {
   if (!input.hasSuccess) return "No sync yet";
   if (input.status === "FAILED") return "Attention required";
-  if (input.invalid + input.duplicates > 0) return "Attention required";
+  if ((input.actionableIssueCount ?? 0) > 0) return "Attention required";
   return "Healthy";
 }

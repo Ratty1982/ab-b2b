@@ -13,15 +13,28 @@ describe("admin dashboard helpers", () => {
     expect(formatGbpIncVat("0")).toBe("£0.00");
   });
 
-  it("classifies stock health without treating unmatched as issues", () => {
+  it("classifies stock health from actionable issues only — ignored diagnostics stay Healthy", () => {
     expect(
-      stockHealthLabel({ hasSuccess: true, invalid: 0, duplicates: 0, status: "SUCCESS" }),
+      stockHealthLabel({ hasSuccess: true, actionableIssueCount: 0, status: "SUCCESS" }),
+    ).toBe("Healthy");
+    // Historical PARTIAL with only ignored INVALID/DUPLICATE must not force Attention.
+    expect(
+      stockHealthLabel({
+        hasSuccess: true,
+        actionableIssueCount: 0,
+        invalid: 69,
+        duplicates: 0,
+        status: "PARTIAL",
+      }),
     ).toBe("Healthy");
     expect(
-      stockHealthLabel({ hasSuccess: true, invalid: 2, duplicates: 0, status: "PARTIAL" }),
+      stockHealthLabel({ hasSuccess: true, actionableIssueCount: 2, status: "PARTIAL" }),
     ).toBe("Attention required");
     expect(
-      stockHealthLabel({ hasSuccess: false, invalid: 0, duplicates: 0, status: null }),
+      stockHealthLabel({ hasSuccess: true, actionableIssueCount: 0, status: "FAILED" }),
+    ).toBe("Attention required");
+    expect(
+      stockHealthLabel({ hasSuccess: false, actionableIssueCount: 0, status: null }),
     ).toBe("No sync yet");
   });
 
