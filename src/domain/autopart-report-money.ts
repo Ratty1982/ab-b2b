@@ -122,6 +122,36 @@ export function normaliseAccountToken(raw: string | null | undefined): string | 
   return t.toUpperCase();
 }
 
+/**
+ * Defensive gate after column extraction — never treat money/qty as account IDs.
+ * Genuine Autopart codes may be alphanumeric; pure numeric / decimal / currency fail.
+ */
+export function isPlausibleAutopartAccountCode(raw: string | null | undefined): boolean {
+  const token = normaliseAccountToken(raw);
+  if (!token) return false;
+  // Currency / accounting decoration
+  if (/[£$€]/.test(token)) return false;
+  if (/\(.*\)/.test(token)) return false;
+  if (/(?:CR|DR)$/i.test(token) && /[\d.]/.test(token)) return false;
+  // Pure integer / decimal amounts (including negatives like -1, -104.38)
+  if (/^[+-]?\d+(?:\.\d+)?$/.test(token)) return false;
+  // Thousands-separated money: 1,234.56
+  if (/^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(token)) return false;
+  // Must contain at least one letter (Autopart customer codes are not pure digits)
+  if (!/[A-Z]/.test(token)) return false;
+  // Reject tokens that are clearly Inv & Ln identities
+  if (/^[IC]\/.+\/\d+$/i.test(token)) return false;
+  if (token.length > 32) return false;
+  return true;
+}
+
+/** Extract account only when the raw field is a plausible Autopart account code. */
+export function extractAutopartAccountCode(raw: string | null | undefined): string | null {
+  const token = normaliseAccountToken(raw);
+  if (!token || !isPlausibleAutopartAccountCode(token)) return null;
+  return token;
+}
+
 /** Minimal CSV line splitter — respects double-quoted fields. */
 export function splitCsvLine(line: string): string[] {
   const out: string[] = [];
@@ -150,6 +180,105 @@ export function splitCsvLine(line: string): string[] {
     }
   }
   out.push(cur.trim());
+  return out;
+}
+
+function splitOnChar(line: string, delimiter: string): string[] {
+  if (delimiter === ",") return splitCsvLine(line);
+  return line.split(delimiter).map((c) => c.trim());
+}
+
+/**
+ * Content-based cell split for Autopart report lines.
+ * Prefers comma CSV, then tab / semicolon, then multi-space (report text).
+ * Filename/extension is irrelevant — callers pass file text only.
+ */
+export function splitAutopartReportCells(line: string): string[] {
+  const raw = line.replace(/\t+$/g, "");
+  if (!raw.trim()) return [];
+
+  const comma = splitCsvLine(raw);
+  if (comma.length >= 3) return comma;
+
+  if (raw.includes("\t")) {
+    const tab = splitOnChar(raw, "\t").filter((c) => c.length > 0 || comma.length > 1);
+    if (tab.length >= 3) return tab;
+  }
+
+  if (raw.includes(";")) {
+    const semi = splitOnChar(raw, ";");
+    if (semi.length >= 3) return semi;
+  }
+
+  // Report-style: 2+ spaces between columns (keep single spaces inside description)
+  if (/\s{2,}/.test(raw)) {
+    const spaced = raw.trim().split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    if (spaced.length >= 3) return spaced;
+  }
+
+  return comma;
+}
+
+export type FixedWidthColumn = {
+  key: string;
+  start: number;
+  /** Exclusive end; null = to end of line. */
+  end: number | null;
+};
+
+/**
+ * Locate labelled columns on a fixed-width / space-padded header line.
+ * Returns column slices and the account field width when account is present.
+ */
+export function detectFixedWidthLayout(
+  headerLine: string,
+  labels: Array<{ key: string; patterns: RegExp[] }>,
+): { columns: FixedWidthColumn[]; accountFieldWidth: number | null } | null {
+  const found: Array<{ key: string; start: number; labelLength: number }> = [];
+  for (const label of labels) {
+    for (const pattern of label.patterns) {
+      const m = headerLine.match(pattern);
+      if (m && m.index != null) {
+        found.push({ key: label.key, start: m.index, labelLength: m[0].length });
+        break;
+      }
+    }
+  }
+  const keys = new Set(found.map((f) => f.key));
+  // Need at least the mandatory keys the caller cares about — require >= 3 hits
+  if (found.length < 3) return null;
+
+  found.sort((a, b) => a.start - b.start);
+  const columns: FixedWidthColumn[] = found.map((f, idx) => ({
+    key: f.key,
+    start: f.start,
+    end: idx + 1 < found.length ? found[idx + 1]!.start : null,
+  }));
+
+  let accountFieldWidth: number | null = null;
+  const acct = columns.find((c) => c.key === "account");
+  if (acct && acct.end != null) {
+    accountFieldWidth = Math.max(1, acct.end - acct.start);
+  } else if (acct) {
+    // Last column — width unknown from layout
+    accountFieldWidth = null;
+  }
+
+  // De-dupe preference: first occurrence wins (already sorted)
+  void keys;
+  return { columns, accountFieldWidth };
+}
+
+export function sliceFixedWidthCells(
+  line: string,
+  columns: FixedWidthColumn[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const padded = line.length >= (columns[columns.length - 1]?.start ?? 0) ? line : line.padEnd(200);
+  for (const col of columns) {
+    const raw = col.end != null ? padded.slice(col.start, col.end) : padded.slice(col.start);
+    out[col.key] = raw.trim();
+  }
   return out;
 }
 

@@ -66,9 +66,12 @@ Over-limit raw negatives are preserved (`availableCreditRaw`); UI may show £0 a
 ## Account validation
 
 - Imports require a **staff-verified** `Company.autopartCustomerCode`.
-- Detected report accounts must **exact-match** (case-insensitive, trimmed) the verified code.
-- Prefix matches (YORKMOT vs YORKMOTO) are **blocked** unless an explicit `AutopartCustomerAccountAlias` is staff-verified.
-- No fuzzy matching. Portal customers cannot upload reports.
+- Account codes are read **only** from the report account column/field (never from Units/Sales/VAT/Run Bal).
+- Pure numeric / money values (e.g. `-104.38`, `-1`) are never treated as account codes.
+- Format detection is **content-based** (`.txt` and `.csv` both accepted; extension is irrelevant).
+- Exact match to verified code or staff-verified `AutopartCustomerAccountAlias` is preferred.
+- **561L / SLRB only:** when the parser confirms a truncated report account field width (consistent printed length / fixed-width layout), an unambiguous match of the report account to the first N characters of the company's verified code is accepted as `MATCHED_TRUNCATED` (e.g. report `YORKMOT`, verified `YORKMOTO`, width 7). If two verified AB accounts share that truncated form → `AMBIGUOUS_TRUNCATED` (blocked). This does **not** apply to 407P100.
+- No general `startsWith` / fuzzy matching. Portal customers cannot upload reports.
 
 ## Matching rules
 

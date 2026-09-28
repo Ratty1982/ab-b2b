@@ -305,12 +305,13 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
       <section className="rounded-lg border border-border p-5">
         <h2 className="font-display text-base font-semibold uppercase">Import historic data</h2>
         <p className="mt-2 text-[12px] text-steel">
-          Upload 561L (lines) and SLRB (document dates). Dry-run first — no database writes until
-          confirm.
+          Upload 561L (lines) and SLRB (document dates). Format is detected from file content —
+          extension does not matter. Dry-run first — no database writes until confirm.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="text-[12px]">
-            561L file
+            561L report
+            <span className="mt-0.5 block text-[11px] text-steel">Accepted: .txt, .csv</span>
             <input
               type="file"
               accept=".csv,.txt,text/csv,text/plain"
@@ -319,7 +320,8 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             />
           </label>
           <label className="text-[12px]">
-            SLRB file
+            SLRB report
+            <span className="mt-0.5 block text-[11px] text-steel">Accepted: .txt, .csv</span>
             <input
               type="file"
               accept=".csv,.txt,text/csv,text/plain"
@@ -347,7 +349,86 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
           </button>
         </div>
         {historyPreview ? (
-          <div className="mt-4 space-y-2 rounded-md border border-border/70 bg-surface/40 p-3 text-[12px]">
+          <div className="mt-4 space-y-3 rounded-md border border-border/70 bg-surface/40 p-3 text-[12px]">
+            <dl className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
+                  Account shown in report
+                </dt>
+                <dd className="mt-0.5 font-semibold num">
+                  {historyPreview.accountMatch?.sourceAccount ??
+                    historyPreview.sourceAccount ??
+                    "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
+                  Autopart account
+                </dt>
+                <dd className="mt-0.5 font-semibold num">
+                  {historyPreview.accountMatch?.verifiedAccount ??
+                    historyPreview.verifiedAccount ??
+                    "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
+                  Status
+                </dt>
+                <dd className="mt-0.5 font-semibold">
+                  {historyPreview.accountMatch?.status === "MATCHED_TRUNCATED"
+                    ? "Matched — Autopart report uses shortened account code"
+                    : historyPreview.accountMatch?.status === "MATCHED_ALIAS"
+                      ? "Matched via verified alias"
+                      : historyPreview.accountMatch?.status === "MATCHED"
+                        ? "Matched"
+                        : historyPreview.accountMatch?.status === "ALIAS_REQUIRED"
+                          ? "Account alias required"
+                          : historyPreview.accountMatch?.status === "AMBIGUOUS_TRUNCATED"
+                            ? "Ambiguous truncated account"
+                            : historyPreview.accountMatch?.ok
+                              ? "Matched"
+                              : "Mismatch"}
+                </dd>
+              </div>
+            </dl>
+            {historyPreview.accountMatch?.status === "ALIAS_REQUIRED" &&
+            historyPreview.accountMatch.suggestedAlias ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setAlias(historyPreview.accountMatch!.suggestedAlias!);
+                  setAliasNote("Report account from 561L/SLRB");
+                  void (async () => {
+                    setBusy(true);
+                    const r = await verifyAutopartAccountAliasFn({
+                      data: {
+                        companyId,
+                        alias: historyPreview.accountMatch!.suggestedAlias!,
+                        note: "Report account from 561L/SLRB",
+                      },
+                    });
+                    setBusy(false);
+                    if (!r.ok) {
+                      toast.error(r.error);
+                      return;
+                    }
+                    toast.success(
+                      `Verified ${historyPreview.accountMatch!.suggestedAlias} as account alias`,
+                    );
+                    setWorkspace(r.data);
+                    setAlias("");
+                    setAliasNote("");
+                    // Re-run preview with same files if still selected
+                    if (file561 && fileSlrb) void onPreviewHistory();
+                  })();
+                }}
+                className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
+              >
+                Verify {historyPreview.accountMatch.suggestedAlias} as account alias
+              </button>
+            ) : null}
             <p>
               561L: {historyPreview.report561l.validLines} lines (
               {historyPreview.report561l.invoiceLines} inv / {historyPreview.report561l.creditLines}{" "}

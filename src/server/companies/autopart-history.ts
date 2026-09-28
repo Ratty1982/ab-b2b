@@ -91,6 +91,138 @@ function accountAllowed(detected: string[], accepted: Set<string>): {
   return { ok: unmatched.length === 0 && detected.length > 0, unmatched };
 }
 
+export type HistoricAccountMatchStatus =
+  | "MATCHED"
+  | "MATCHED_ALIAS"
+  | "MATCHED_TRUNCATED"
+  | "ALIAS_REQUIRED"
+  | "AMBIGUOUS_TRUNCATED"
+  | "MISMATCH"
+  | "NO_ACCOUNT";
+
+/**
+ * Resolve 561L/SLRB report account(s) against a verified company.
+ * Truncation is allowed only when parsers confirmed an account field width
+ * (fixed-width layout or consistent truncated codes in those report types).
+ * 407P100 must NOT use this helper.
+ */
+export async function resolveHistoricReportAccountMatch(input: {
+  companyId: string;
+  verifiedCode: string | null;
+  acceptedAccounts: Set<string>;
+  detectedAccounts: string[];
+  accountFieldWidth: number | null;
+}): Promise<{
+  status: HistoricAccountMatchStatus;
+  sourceAccount: string | null;
+  verifiedAccount: string | null;
+  accountFieldWidth: number | null;
+  ok: boolean;
+  message: string | null;
+  suggestedAlias: string | null;
+}> {
+  const verified = input.verifiedCode ? normaliseAccountToken(input.verifiedCode) : null;
+  const detected = [
+    ...new Set(input.detectedAccounts.map((a) => normaliseAccountToken(a)).filter(Boolean)),
+  ] as string[];
+  const sourceAccount = detected.length === 1 ? detected[0]! : detected[0] ?? null;
+
+  if (!detected.length) {
+    return {
+      status: "NO_ACCOUNT",
+      sourceAccount: null,
+      verifiedAccount: verified,
+      accountFieldWidth: input.accountFieldWidth,
+      ok: false,
+      message: "No Autopart account codes detected in the uploaded reports.",
+      suggestedAlias: null,
+    };
+  }
+
+  // Exact verified / alias match for every detected account
+  const exactOk = detected.every((d) => input.acceptedAccounts.has(d));
+  if (exactOk) {
+    const viaAlias =
+      Boolean(verified) &&
+      detected.some((d) => d !== verified) &&
+      detected.every((d) => input.acceptedAccounts.has(d));
+    return {
+      status: viaAlias ? "MATCHED_ALIAS" : "MATCHED",
+      sourceAccount,
+      verifiedAccount: verified,
+      accountFieldWidth: input.accountFieldWidth,
+      ok: true,
+      message: viaAlias
+        ? "Matched via verified account alias"
+        : "Matched verified Autopart account",
+      suggestedAlias: null,
+    };
+  }
+
+  const width = input.accountFieldWidth;
+  if (width && verified && detected.length === 1) {
+    const reportAcct = detected[0]!;
+    if (reportAcct.length === width && verified.slice(0, width) === reportAcct) {
+      // Unambiguous within verified AB accounts that share this truncated form
+      const conflicts = await prisma.company.findMany({
+        where: {
+          id: { not: input.companyId },
+          autopartCustomerCodeVerifiedAt: { not: null },
+          autopartCustomerCode: { not: null },
+        },
+        select: { id: true, autopartCustomerCode: true },
+      });
+      const ambiguous = conflicts.some((c) => {
+        const code = normaliseAccountToken(c.autopartCustomerCode);
+        return Boolean(code && code.length >= width && code.slice(0, width) === reportAcct);
+      });
+      if (ambiguous) {
+        return {
+          status: "AMBIGUOUS_TRUNCATED",
+          sourceAccount: reportAcct,
+          verifiedAccount: verified,
+          accountFieldWidth: width,
+          ok: false,
+          message: `Ambiguous truncated account ${reportAcct} — multiple verified Autopart accounts share this ${width}-character report form. Resolve manually (alias or account correction).`,
+          suggestedAlias: null,
+        };
+      }
+      return {
+        status: "MATCHED_TRUNCATED",
+        sourceAccount: reportAcct,
+        verifiedAccount: verified,
+        accountFieldWidth: width,
+        ok: true,
+        message: `Matched — Autopart report uses shortened account code (${reportAcct} → ${verified})`,
+        suggestedAlias: null,
+      };
+    }
+  }
+
+  // Clean single-account mismatch → alias required (not a spam of financial values)
+  if (detected.length === 1 && verified && detected[0] !== verified) {
+    return {
+      status: "ALIAS_REQUIRED",
+      sourceAccount: detected[0]!,
+      verifiedAccount: verified,
+      accountFieldWidth: width,
+      ok: false,
+      message: `Account alias required: report shows ${detected[0]}, verified account is ${verified}.`,
+      suggestedAlias: detected[0]!,
+    };
+  }
+
+  return {
+    status: "MISMATCH",
+    sourceAccount,
+    verifiedAccount: verified,
+    accountFieldWidth: width,
+    ok: false,
+    message: `Detected account(s) ${detected.join(", ")} do not match verified account ${verified ?? "—"}.`,
+    suggestedAlias: detected.length === 1 ? detected[0]! : null,
+  };
+}
+
 async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
   const cleaned = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
   const map = new Map<string, string>();
@@ -336,14 +468,18 @@ async function buildHistoryPreview(
     issues.push({
       severity: "BLOCKING",
       code: "UNRECOGNISED_561L",
-      message: "561L report format not recognised.",
+      message:
+        parsed561.errors[0] ??
+        "561L report format not recognised. Expected an Autopart 561L report containing: Acct / Inv & Ln / Part Number / Description / Units / Sales.",
     });
   }
   if (!parsedSlrb.headerFound) {
     issues.push({
       severity: "BLOCKING",
       code: "UNRECOGNISED_SLRB",
-      message: "SLRB report format not recognised.",
+      message:
+        parsedSlrb.errors[0] ??
+        "SLRB report format not recognised. Expected an Autopart SLRB report containing: A/C / Type / Ref / Date / Tot Goods / Tot VAT / Total / Run Bal.",
     });
   }
 
@@ -355,18 +491,33 @@ async function buildHistoryPreview(
     : new Set<string>();
 
   const detected = [...new Set([...parsed561.detectedAccounts, ...parsedSlrb.detectedAccounts])];
-  const accountCheck = accountAllowed(detected, accepted);
-  if (detected.length === 0) {
+  const accountFieldWidth =
+    parsed561.accountFieldWidth ?? parsedSlrb.accountFieldWidth ?? null;
+  const accountMatch = await resolveHistoricReportAccountMatch({
+    companyId: input.companyId,
+    verifiedCode,
+    acceptedAccounts: accepted,
+    detectedAccounts: detected,
+    accountFieldWidth,
+  });
+  if (!accountMatch.ok) {
     issues.push({
       severity: "BLOCKING",
-      code: "NO_ACCOUNT",
-      message: "No Autopart account codes detected in the uploaded reports.",
+      code:
+        accountMatch.status === "ALIAS_REQUIRED"
+          ? "ACCOUNT_ALIAS_REQUIRED"
+          : accountMatch.status === "AMBIGUOUS_TRUNCATED"
+            ? "ACCOUNT_AMBIGUOUS_TRUNCATED"
+            : accountMatch.status === "NO_ACCOUNT"
+              ? "NO_ACCOUNT"
+              : "ACCOUNT_MISMATCH",
+      message: accountMatch.message ?? "Autopart account mismatch.",
     });
-  } else if (!accountCheck.ok) {
+  } else if (accountMatch.status === "MATCHED_TRUNCATED") {
     issues.push({
-      severity: "BLOCKING",
-      code: "ACCOUNT_MISMATCH",
-      message: `Detected account(s) ${accountCheck.unmatched.join(", ")} do not match verified account ${verifiedCode ?? "—"}. Add an explicit verified alias if this is a known report alias.`,
+      severity: "INFO",
+      code: "ACCOUNT_TRUNCATED_MATCH",
+      message: accountMatch.message ?? "Matched truncated report account.",
     });
   }
 
@@ -447,7 +598,18 @@ async function buildHistoryPreview(
     companyId: company.id,
     companyName: company.name,
     verifiedAccount: verifiedCode,
+    /** Clean detected Autopart account codes only (never financial values). */
     detectedAccounts: detected,
+    sourceAccount: accountMatch.sourceAccount,
+    accountMatch: {
+      status: accountMatch.status,
+      sourceAccount: accountMatch.sourceAccount,
+      verifiedAccount: accountMatch.verifiedAccount,
+      accountFieldWidth: accountMatch.accountFieldWidth,
+      message: accountMatch.message,
+      suggestedAlias: accountMatch.suggestedAlias,
+      ok: accountMatch.ok,
+    },
     fileHash561l: hash561,
     fileHashSlrb: hashSlrb,
     alreadyImported: Boolean(prior),
@@ -459,6 +621,8 @@ async function buildHistoryPreview(
       creditLines: parsed561.creditLines,
       malformed: parsed561.malformedRows,
       detectedAccounts: parsed561.detectedAccounts,
+      layout: parsed561.layout,
+      accountFieldWidth: parsed561.accountFieldWidth,
     },
     reportSlrb: {
       filename: input.filenameSlrb ?? null,
@@ -468,6 +632,8 @@ async function buildHistoryPreview(
       ledgerRecords: parsedSlrb.ledgerRecords,
       malformed: parsedSlrb.malformedRows,
       detectedAccounts: parsedSlrb.detectedAccounts,
+      layout: parsedSlrb.layout,
+      accountFieldWidth: parsedSlrb.accountFieldWidth,
     },
     matching: {
       matchedDocuments: matchedDocs,
@@ -497,7 +663,7 @@ async function buildHistoryPreview(
         filenameSlrb: input.filenameSlrb ?? null,
         fileHash: hash561,
         fileHashSlrb: hashSlrb,
-        detectedAccount: detected.join(",") || null,
+        detectedAccount: accountMatch.sourceAccount,
         rowsRead: parsed561.rows.length + parsedSlrb.rows.length,
         rowsValid: parsed561.lines.length + parsedSlrb.documents.length,
         rowsUnmatched: unmatched561Docs + unmatchedSkus.length,

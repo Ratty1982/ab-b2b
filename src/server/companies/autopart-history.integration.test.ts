@@ -154,7 +154,11 @@ describe("Autopart history import", () => {
       filenameSlrb: "slrb.csv",
     });
     expect(wrong.canCommit).toBe(false);
-    expect(wrong.issues.some((i) => i.code === "ACCOUNT_MISMATCH")).toBe(true);
+    expect(
+      wrong.issues.some(
+        (i) => i.code === "ACCOUNT_MISMATCH" || i.code === "ACCOUNT_ALIAS_REQUIRED",
+      ),
+    ).toBe(true);
 
     await verifyAutopartAccountAlias(adminId, {
       companyId: companyAId,
