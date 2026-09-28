@@ -20,7 +20,6 @@ import {
 } from "@/domain/homepage-resolve";
 import { cmsFocalStyle, cmsImageFitClass, cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { gbp } from "@/lib/data";
-import { mediaContainClass } from "@/lib/media-presentation";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import heroFallback from "@/assets/hero-parts.jpg";
