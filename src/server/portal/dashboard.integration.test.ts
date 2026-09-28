@@ -121,6 +121,8 @@ describe("getPortalDashboard", () => {
     expect(dash.outstandingBalance).toBeNull();
     expect(dash.openQuotesValue).toBeNull();
     expect(dash.quotesRequiringAction).toEqual([]);
+    expect(dash.availableCredit).toBeNull();
+    expect(dash.creditFreshness).toBe("NOT_AVAILABLE");
     expect(dash.openOrderCount).toBe(0);
     expect(dash.totalOrderCount).toBe(0);
     expect(dash.openOrders).toEqual([]);

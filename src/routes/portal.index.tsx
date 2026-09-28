@@ -89,10 +89,11 @@ function Dashboard() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
         <QuickAction to={ROUTES.products} icon={ShoppingCart} label="Shop products" primary />
         <QuickAction to={ROUTES.portalBasket} icon={Zap} label="View basket" />
         <QuickAction to={ROUTES.portalOrders} icon={ShoppingCart} label="Order history" />
+        <QuickAction to={ROUTES.portalPurchases} icon={ShoppingCart} label="Previously purchased" />
       </div>
 
       <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
@@ -106,8 +107,28 @@ function Dashboard() {
           value={data.company.paymentTerms?.trim() || "Not set"}
           hint="Agreed trading terms"
         />
-        {data.creditLimit != null ? (
+        {data.creditLimit != null && data.availableCredit == null ? (
           <Metric label="Credit limit" value={gbp(data.creditLimit)} hint="As set on your account" />
+        ) : null}
+        {data.availableCredit != null ? (
+          <Metric
+            label="Available credit"
+            value={gbp(data.availableCredit)}
+            hint={
+              data.creditUpdatedAt
+                ? `Updated ${new Date(data.creditUpdatedAt).toLocaleString("en-GB", {
+                    timeZone: "Europe/London",
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  })}${data.creditFreshness === "STALE" ? " · not live" : ""}`
+                : "Autopart credit position"
+            }
+            tone={data.creditOverLimitBy ? "warn" : "good"}
+          />
         ) : null}
         <Metric
           label="Basket"
@@ -151,6 +172,68 @@ function Dashboard() {
               </Link>
             </div>
           </div>
+
+          {data.availableCredit != null ? (
+            <div className="rounded-lg border border-border bg-surface/40 p-5">
+              <h2 className="font-display text-lg font-semibold uppercase tracking-tight">
+                Account credit
+              </h2>
+              <dl className="mt-4 grid gap-3 text-[13px] sm:grid-cols-3">
+                <div>
+                  <dt className="text-steel">Credit limit</dt>
+                  <dd className="text-lg font-semibold">{gbp(data.creditLimit ?? 0)}</dd>
+                </div>
+                <div>
+                  <dt className="text-steel">Used credit</dt>
+                  <dd className="text-lg font-semibold">{gbp(data.usedCredit ?? 0)}</dd>
+                </div>
+                <div>
+                  <dt className="text-steel">Available credit</dt>
+                  <dd className="text-lg font-semibold">{gbp(data.availableCredit)}</dd>
+                </div>
+              </dl>
+              {data.creditOverLimitBy != null ? (
+                <p className="mt-3 text-[13px] text-warn">
+                  Account currently over credit limit by {gbp(data.creditOverLimitBy)}.
+                </p>
+              ) : null}
+              {data.creditLimit != null && data.creditLimit > 0 ? (
+                <div className="mt-4 h-2 overflow-hidden rounded bg-border">
+                  <div
+                    className="h-full bg-primary"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.max(0, ((data.usedCredit ?? 0) / data.creditLimit) * 100),
+                      )}%`,
+                    }}
+                  />
+                </div>
+              ) : null}
+              <p className="mt-3 text-[12px] text-steel">
+                {data.creditUpdatedAt
+                  ? `Updated ${new Date(data.creditUpdatedAt).toLocaleString("en-GB", {
+                      timeZone: "Europe/London",
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: false,
+                    })}${data.creditFreshness === "STALE" ? " · not a live balance" : ""}`
+                  : "Autopart credit position"}
+              </p>
+            </div>
+          ) : data.creditFreshness === "NOT_AVAILABLE" ? (
+            <div className="rounded-lg border border-dashed border-border p-5">
+              <h2 className="font-display text-lg font-semibold uppercase tracking-tight">
+                Account credit
+              </h2>
+              <p className="mt-2 text-[13px] text-steel">
+                Credit information not currently available.
+              </p>
+            </div>
+          ) : null}
 
           {data.quotesRequiringAction && data.quotesRequiringAction.length > 0 ? (
             <div className="rounded-lg border border-border bg-surface/40 p-5">

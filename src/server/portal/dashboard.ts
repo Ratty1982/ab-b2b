@@ -26,7 +26,7 @@ const OPEN_ORDER_STATUSES = [
   "ON_HOLD",
 ] as const;
 
-async function requireTradePortalCompany(userId: string) {
+export async function requireTradePortalCompany(userId: string) {
   const profile = await requireAuthenticatedUser(userId);
   if (profile.actorType !== "TRADE" && profile.actorType !== "INTERNAL") {
     throw new AuthError("Trade portal access required", "FORBIDDEN", 403);
@@ -194,16 +194,17 @@ export async function getPortalDashboard(userId: string) {
       }),
     ]);
 
-  const [accountManager, generalContact] = await Promise.all([
+  const [accountManager, generalContact, creditPosition] = await Promise.all([
     resolveAccountManagerForCompany(company.id),
     resolveGeneralTradeContact(),
+    prisma.autopartCreditPosition.findUnique({ where: { companyId: company.id } }),
   ]);
 
   const autopartVerified = Boolean(
     company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt,
   );
 
-  const creditLimit =
+  const companyCreditLimit =
     company.creditLimit == null
       ? null
       : typeof company.creditLimit === "object" &&
@@ -225,6 +226,26 @@ export async function getPortalDashboard(userId: string) {
     backorderUnitCount += summary.outstandingBackorderUnits;
   }
 
+  const { creditFreshnessFromImportedAt } = await import(
+    "@/server/companies/autopart-credit-freshness"
+  );
+  const creditSnapshot = creditPosition
+    ? (() => {
+        const limit = Number(creditPosition.creditLimit);
+        const used = Number(creditPosition.totalExposure);
+        const raw = Number(creditPosition.availableCreditRaw);
+        return {
+          creditLimit: limit,
+          usedCredit: used,
+          availableCreditRaw: raw,
+          availableCredit: raw < 0 ? 0 : raw,
+          overLimitBy: raw < 0 ? Math.abs(raw) : null,
+          freshness: creditFreshnessFromImportedAt(creditPosition.sourceImportedAt),
+          sourceImportedAt: creditPosition.sourceImportedAt.toISOString(),
+        };
+      })()
+    : null;
+
   return {
     company: {
       id: company.id,
@@ -237,10 +258,16 @@ export async function getPortalDashboard(userId: string) {
       autopartVerified,
     },
     membershipStatus: membership.status,
-    /** Authoritative credit limit when set; null hides the metric. No invented default. */
-    creditLimit: Number.isFinite(creditLimit) ? creditLimit : null,
-    /** Not available without accounting integration. */
-    availableCredit: null as null,
+    /**
+     * Display credit: prefer imported 407P100 snapshot when present.
+     * Company.creditLimit remains for legacy/admin fields but is not used to invent available credit.
+     */
+    creditLimit: creditSnapshot?.creditLimit ?? (Number.isFinite(companyCreditLimit) ? companyCreditLimit : null),
+    availableCredit: creditSnapshot ? creditSnapshot.availableCredit : null,
+    usedCredit: creditSnapshot?.usedCredit ?? null,
+    creditFreshness: creditSnapshot?.freshness ?? ("NOT_AVAILABLE" as const),
+    creditUpdatedAt: creditSnapshot?.sourceImportedAt ?? null,
+    creditOverLimitBy: creditSnapshot?.overLimitBy ?? null,
     outstandingBalance: null as null,
     openQuotesValue: null as null,
     /** Quotes awaiting customer accept/decline — omitted from UI when empty. */

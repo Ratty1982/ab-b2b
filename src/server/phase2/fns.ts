@@ -2491,4 +2491,91 @@ export const declinePortalQuoteFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getCompanyAutopartHistoryWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return {
+        ok: true as const,
+        data: await hist.getCompanyAutopartHistoryWorkspace(userId, data.companyId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const verifyAutopartAccountAliasFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return { ok: true as const, data: await hist.verifyAutopartAccountAlias(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewAutopartHistoryImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return { ok: true as const, data: await hist.previewAutopartHistoryImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmAutopartHistoryImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return { ok: true as const, data: await hist.confirmAutopartHistoryImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewAutopartCreditImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return { ok: true as const, data: await hist.previewAutopartCreditImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmAutopartCreditImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return { ok: true as const, data: await hist.confirmAutopartCreditImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPortalHistoricPurchasesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string; filter?: "ALL" | "AVAILABLE" | "UNAVAILABLE" } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return { ok: true as const, data: await hist.listPortalHistoricPurchases(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

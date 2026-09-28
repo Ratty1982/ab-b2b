@@ -47,6 +47,7 @@ import { Route as PortalCheckoutRouteImport } from './routes/portal.checkout'
 import { Route as PortalFavouritesRouteImport } from './routes/portal.favourites'
 import { Route as PortalInvoicesRouteImport } from './routes/portal.invoices'
 import { Route as PortalOrdersRouteImport } from './routes/portal.orders'
+import { Route as PortalPurchasesRouteImport } from './routes/portal.purchases'
 import { Route as PortalQuickOrderRouteImport } from './routes/portal.quick-order'
 import { Route as PortalQuotesRouteImport } from './routes/portal.quotes'
 import { Route as PortalSupportRouteImport } from './routes/portal.support'
@@ -278,6 +279,11 @@ const PortalInvoicesRoute = PortalInvoicesRouteImport.update({
 const PortalOrdersRoute = PortalOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
+  getParentRoute: () => PortalRoute,
+} as any)
+const PortalPurchasesRoute = PortalPurchasesRouteImport.update({
+  id: '/purchases',
+  path: '/purchases',
   getParentRoute: () => PortalRoute,
 } as any)
 const PortalQuickOrderRoute = PortalQuickOrderRouteImport.update({
@@ -529,6 +535,7 @@ export interface FileRoutesByFullPath {
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRouteWithChildren
+  '/portal/purchases': typeof PortalPurchasesRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
   '/portal/quotes': typeof PortalQuotesRouteWithChildren
   '/portal/support': typeof PortalSupportRoute
@@ -602,6 +609,7 @@ export interface FileRoutesByTo {
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
+  '/portal/purchases': typeof PortalPurchasesRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
@@ -682,6 +690,7 @@ export interface FileRoutesById {
   '/portal/favourites': typeof PortalFavouritesRoute
   '/portal/invoices': typeof PortalInvoicesRoute
   '/portal/orders': typeof PortalOrdersRouteWithChildren
+  '/portal/purchases': typeof PortalPurchasesRoute
   '/portal/quick-order': typeof PortalQuickOrderRoute
   '/portal/quotes': typeof PortalQuotesRouteWithChildren
   '/portal/support': typeof PortalSupportRoute
@@ -766,6 +775,7 @@ export interface FileRouteTypes {
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
+    | '/portal/purchases'
     | '/portal/quick-order'
     | '/portal/quotes'
     | '/portal/support'
@@ -839,6 +849,7 @@ export interface FileRouteTypes {
     | '/portal/checkout'
     | '/portal/favourites'
     | '/portal/invoices'
+    | '/portal/purchases'
     | '/portal/quick-order'
     | '/portal/support'
     | '/portal/users'
@@ -918,6 +929,7 @@ export interface FileRouteTypes {
     | '/portal/favourites'
     | '/portal/invoices'
     | '/portal/orders'
+    | '/portal/purchases'
     | '/portal/quick-order'
     | '/portal/quotes'
     | '/portal/support'
@@ -1262,6 +1274,13 @@ declare module '@tanstack/react-router' {
       path: '/orders'
       fullPath: '/portal/orders'
       preLoaderRoute: typeof PortalOrdersRouteImport
+      parentRoute: typeof PortalRoute
+    }
+    '/portal/purchases': {
+      id: '/portal/purchases'
+      path: '/purchases'
+      fullPath: '/portal/purchases'
+      preLoaderRoute: typeof PortalPurchasesRouteImport
       parentRoute: typeof PortalRoute
     }
     '/portal/quick-order': {
@@ -1742,6 +1761,7 @@ interface PortalRouteChildren {
   PortalFavouritesRoute: typeof PortalFavouritesRoute
   PortalInvoicesRoute: typeof PortalInvoicesRoute
   PortalOrdersRoute: typeof PortalOrdersRouteWithChildren
+  PortalPurchasesRoute: typeof PortalPurchasesRoute
   PortalQuickOrderRoute: typeof PortalQuickOrderRoute
   PortalQuotesRoute: typeof PortalQuotesRouteWithChildren
   PortalSupportRoute: typeof PortalSupportRoute
@@ -1755,6 +1775,7 @@ const PortalRouteChildren: PortalRouteChildren = {
   PortalFavouritesRoute: PortalFavouritesRoute,
   PortalInvoicesRoute: PortalInvoicesRoute,
   PortalOrdersRoute: PortalOrdersRouteWithChildren,
+  PortalPurchasesRoute: PortalPurchasesRoute,
   PortalQuickOrderRoute: PortalQuickOrderRoute,
   PortalQuotesRoute: PortalQuotesRouteWithChildren,
   PortalSupportRoute: PortalSupportRoute,

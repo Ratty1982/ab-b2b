@@ -51,7 +51,7 @@ Legal pages (privacy / terms) are not yet published in CMS — the consent copy 
 | Field | Owner | Meaning |
 | --- | --- | --- |
 | `TradeApplication.claimedAutopartCustomerCode` | Applicant claim | Evidence for staff. **Never** grants pricing/orders/basket access. |
-| `Company.autopartCustomerCode` + verifiedAt/By | Staff after explicit verify | Authoritative Autopart link for order snapshots / CSV. |
+| `Company.autopartCustomerCode` + verifiedAt/By | Staff after explicit verify | Authoritative Autopart link for order snapshots / CSV / historic import. |
 
 On approval, staff may optionally:
 
@@ -61,6 +61,15 @@ On approval, staff may optionally:
 Only then is `Company.autopartCustomerCode` set (with verifiedAt/By). Unticked = Company code stays null; the registration claim remains on the application.
 
 Already-approved applications with a claim but no company link show a **Claim not linked** discrepancy. Staff use Customer → Commercial → **Verify / link account** (no automatic backfill).
+
+### Existing Autopart customer vs new trade customer
+
+| Path | Historic 561L/SLRB | 407P100 credit |
+| --- | --- | --- |
+| **Existing Autopart customer** | Optional after staff verify — Admin → Customer → Autopart | Optional / later recurring |
+| **New trade customer** | Not required | Not required |
+
+Historic Autopart purchases are **not** imported as AB Orders. See `docs/autopart-customer-history.md`.
 
 ---
 

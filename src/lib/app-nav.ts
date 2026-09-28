@@ -57,6 +57,7 @@ export const ROUTES = {
   portalOrderConfirmation: (id: string) => `/portal/orders/${id}/confirmation` as const,
   portalQuotes: "/portal/quotes",
   portalQuote: (id: string) => `/portal/quotes/${id}` as const,
+  portalPurchases: "/portal/purchases",
   portalInvoices: "/portal/invoices",
   portalFavourites: "/portal/favourites",
   portalUsers: "/portal/users",
@@ -531,6 +532,14 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         to: ROUTES.portalInvoices,
         permission: "invoices.view",
         implemented: false,
+      },
+      {
+        id: "portal-purchases",
+        label: "Previously purchased",
+        icon: "package",
+        to: ROUTES.portalPurchases,
+        permission: "orders.view",
+        implemented: true,
       },
       {
         id: "portal-favourites",

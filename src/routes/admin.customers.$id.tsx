@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
+import { AutopartCustomerHistoryPanel } from "@/components/ab/AutopartCustomerHistoryPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
 import {
@@ -50,6 +51,7 @@ const tabs = [
   "Users",
   "Addresses",
   "Commercial",
+  "Autopart",
   "Activity",
   "Documents",
   "Orders",
@@ -459,6 +461,8 @@ function CustomerWorkspace() {
           <CommercialAuditList companyId={company.id} />
           </div>
         ) : null}
+
+        {tab === "Autopart" ? <AutopartCustomerHistoryPanel companyId={company.id} /> : null}
 
         {tab === "Activity" ? (
           <ul className="grid gap-2">

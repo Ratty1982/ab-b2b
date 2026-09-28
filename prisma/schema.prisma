@@ -223,6 +223,32 @@ enum OrderFulfilmentEventKind {
   NOTE
 }
 
+/// Historic Autopart document kinds (561L / SLRB). Not AB Orders.
+enum AutopartHistoricDocumentType {
+  INVOICE
+  CREDIT
+  PAYMENT
+  JOURNAL
+  UNKNOWN
+}
+
+enum AutopartHistoricLineMatchStatus {
+  MATCHED
+  NOT_IN_AB_CATALOGUE
+}
+
+enum AutopartCustomerImportType {
+  HISTORY_561L_SLRB
+  CREDIT_407P100
+}
+
+enum AutopartCustomerImportStatus {
+  PREVIEWED
+  COMMITTED
+  FAILED
+  BLOCKED
+}
+
 enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
@@ -400,6 +426,8 @@ model User {
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
+  autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
+  autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
   ownedLeads         Lead[]
   ownedOpportunities Opportunity[]
   sessions           AuthSession[]
@@ -575,6 +603,11 @@ model Company {
   documents       Document[]
   auditEvents     AuditEvent[]
   actingContexts  ActingContext[]
+  autopartAccountAliases AutopartCustomerAccountAlias[]
+  autopartSalesDocuments AutopartSalesDocument[]
+  autopartSalesLines     AutopartSalesLine[]
+  autopartCreditPosition AutopartCreditPosition?
+  autopartCustomerImportRuns AutopartCustomerImportRun[]
 
   @@index([status])
   @@index([name])
@@ -1711,6 +1744,148 @@ model Autopart504cImportRun {
 
   @@index([startedAt])
   @@index([status])
+  @@index([fileHash])
+}
+
+// ─── Autopart customer history / credit (NOT AB Orders / accounting ledger) ───
+
+/// Explicit staff-verified report account alias. Never fuzzy/prefix matching.
+model AutopartCustomerAccountAlias {
+  id        String   @id @default(cuid())
+  companyId String
+  /// Normalised uppercase exact alias (e.g. YORKMOTO when verified code is YORKMOT).
+  alias     String
+  verifiedById String
+  verifiedAt   DateTime @default(now())
+  note         String?
+  createdAt    DateTime @default(now())
+
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  verifiedBy User    @relation("AutopartAliasVerifier", fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, alias])
+  @@index([alias])
+}
+
+/// Historic Autopart sales/credit document header (from SLRB + 561L correlation).
+model AutopartSalesDocument {
+  id                   String                      @id @default(cuid())
+  companyId            String
+  autopartCustomerCode String
+  documentType         AutopartHistoricDocumentType
+  documentReference    String
+  /// Date-only stored as UTC noon for the calendar day when known.
+  documentDate         DateTime?
+  goodsNet             Decimal?                    @db.Decimal(12, 2)
+  vat                  Decimal?                    @db.Decimal(12, 2)
+  grossTotal           Decimal?                    @db.Decimal(12, 2)
+  source               String                      @default("SLRB")
+  importRunId          String?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+
+  company Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  lines   AutopartSalesLine[]
+  importRun AutopartCustomerImportRun? @relation(fields: [importRunId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, documentType, documentReference])
+  @@index([companyId, documentDate])
+  @@index([autopartCustomerCode])
+  @@index([documentReference])
+}
+
+/// Historic Autopart product line (561L). Not an OrderItem.
+model AutopartSalesLine {
+  id                   String                         @id @default(cuid())
+  companyId            String
+  documentId           String?
+  autopartCustomerCode String
+  documentType         AutopartHistoricDocumentType
+  documentReference    String
+  lineNumber           Int
+  sku                  String
+  descriptionSnapshot  String?
+  /// Signed units (credits negative when normalised).
+  units                Decimal                        @db.Decimal(12, 3)
+  /// Signed sales net (credits negative when normalised).
+  salesNet             Decimal                        @db.Decimal(12, 2)
+  matchedVariantId     String?
+  matchStatus          AutopartHistoricLineMatchStatus @default(NOT_IN_AB_CATALOGUE)
+  rawInvAndLn          String?
+  source               String                         @default("561L")
+  importRunId          String?
+  createdAt            DateTime                       @default(now())
+  updatedAt            DateTime                       @updatedAt
+
+  company  Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  document AutopartSalesDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  importRun AutopartCustomerImportRun? @relation(fields: [importRunId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, documentType, documentReference, lineNumber])
+  @@index([companyId, sku])
+  @@index([matchedVariantId])
+  @@index([autopartCustomerCode])
+  @@index([documentReference])
+}
+
+/// Current Autopart credit exposure snapshot from 407P100 (one per company).
+model AutopartCreditPosition {
+  companyId            String   @id
+  autopartCustomerCode String
+  invoices             Decimal  @db.Decimal(12, 2)
+  picking              Decimal  @db.Decimal(12, 2)
+  dropShip             Decimal  @db.Decimal(12, 2)
+  crossDock            Decimal  @db.Decimal(12, 2)
+  suspends             Decimal  @db.Decimal(12, 2)
+  unConsol             Decimal  @db.Decimal(12, 2)
+  totalExposure        Decimal  @db.Decimal(12, 2)
+  creditLimit          Decimal  @db.Decimal(12, 2)
+  /// Raw available = creditLimit - totalExposure (may be negative).
+  availableCreditRaw   Decimal  @db.Decimal(12, 2)
+  sourceReport         String   @default("407P100")
+  sourceImportedAt     DateTime
+  sourceImportRunId    String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  importRun AutopartCustomerImportRun? @relation(fields: [sourceImportRunId], references: [id], onDelete: SetNull)
+
+  @@index([autopartCustomerCode])
+  @@index([sourceImportedAt])
+}
+
+model AutopartCustomerImportRun {
+  id              String                       @id @default(cuid())
+  companyId       String
+  type            AutopartCustomerImportType
+  status          AutopartCustomerImportStatus
+  filename        String?
+  filenameSlrb    String?
+  fileHash        String?
+  fileHashSlrb    String?
+  detectedAccount String?
+  rowsRead        Int                          @default(0)
+  rowsValid       Int                          @default(0)
+  rowsImported    Int                          @default(0)
+  rowsUpdated     Int                          @default(0)
+  rowsSkipped     Int                          @default(0)
+  rowsUnmatched   Int                          @default(0)
+  issues          Json?
+  diagnostics     Json?
+  dryRun          Boolean                      @default(true)
+  createdById     String?
+  createdAt       DateTime                     @default(now())
+  completedAt     DateTime?
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("AutopartCustomerImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  documents AutopartSalesDocument[]
+  lines     AutopartSalesLine[]
+  creditPositions AutopartCreditPosition[]
+
+  @@index([companyId, createdAt])
+  @@index([companyId, type, status])
   @@index([fileHash])
 }
 
