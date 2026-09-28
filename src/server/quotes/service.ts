@@ -137,10 +137,12 @@ async function resolveContactSnapshotForConversion(quote: {
       ? ({ ...(quote.contactSnapshot as Record<string, unknown>) } as Record<string, unknown>)
       : ({} as Record<string, unknown>);
 
-  let email = typeof snap.email === "string" ? snap.email.trim().toLowerCase() : "";
-  let name = typeof snap.name === "string" ? snap.name.trim() : "";
+  let email = typeof snap["email"] === "string" ? snap["email"].trim().toLowerCase() : "";
+  let name = typeof snap["name"] === "string" ? snap["name"].trim() : "";
   let phone =
-    typeof snap.phone === "string" && snap.phone.trim() ? String(snap.phone).trim() : null;
+    typeof snap["phone"] === "string" && snap["phone"].trim()
+      ? String(snap["phone"]).trim()
+      : null;
 
   if ((!email || !name) && quote.contactId) {
     const contact = await prisma.contact.findUnique({ where: { id: quote.contactId } });

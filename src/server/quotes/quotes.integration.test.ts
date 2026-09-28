@@ -374,7 +374,7 @@ describe("Quote accept → order conversion", () => {
     });
     expect(customerEmails).toHaveLength(1);
     expect(customerEmails[0]!.idempotencyKey).toBe(`ORDER_RECEIVED:${order.id}`);
-    expect(customerEmails[0]!.toEmail).toBe(contact.email.toLowerCase());
+    expect(customerEmails[0]!.toEmail).toBe((contact.email ?? "").toLowerCase());
 
     const internalEmails = await prisma.transactionalEmail.findMany({
       where: { entityId: order.id, purpose: "ORDER_RECEIVED_INTERNAL" },
