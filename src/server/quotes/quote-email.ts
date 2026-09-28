@@ -56,29 +56,51 @@ export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Prom
   const validUntil = formatValidUntil(quote.expiresAt);
   const total = formatGbp(String(quote.grandTotal));
 
-  const { resolveAccountManagerForCompany, resolveAccountManagerForSalesRep } = await import(
-    "@/server/sales/account-manager"
-  );
-  let am =
-    (await resolveAccountManagerForCompany(quote.companyId)) ??
-    (quote.salesRepIdSnapshot
-      ? await resolveAccountManagerForSalesRep(quote.salesRepIdSnapshot)
-      : null);
-  const preparedByName = am?.name || quote.salesRepNameSnapshot?.trim() || null;
+  // Prefer historical prepared-by snapshot frozen at send; fall back to live AM.
+  const preparedSnap =
+    quote.preparedBySnapshot && typeof quote.preparedBySnapshot === "object"
+      ? (quote.preparedBySnapshot as {
+          name?: string | null;
+          jobTitle?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          mobile?: string | null;
+        })
+      : null;
+  let preparedByName = preparedSnap?.name?.trim() || quote.salesRepNameSnapshot?.trim() || null;
+  let preparedJobTitle = preparedSnap?.jobTitle?.trim() || null;
+  let preparedEmail = preparedSnap?.email?.trim() || null;
+  let preparedPhone = preparedSnap?.phone?.trim() || null;
+  let preparedMobile = preparedSnap?.mobile?.trim() || null;
+  if (!preparedByName || (!preparedEmail && !preparedPhone && !preparedJobTitle)) {
+    const { resolveAccountManagerForCompany, resolveAccountManagerForSalesRep } = await import(
+      "@/server/sales/account-manager"
+    );
+    const am =
+      (await resolveAccountManagerForCompany(quote.companyId)) ??
+      (quote.salesRepIdSnapshot
+        ? await resolveAccountManagerForSalesRep(quote.salesRepIdSnapshot)
+        : null);
+    preparedByName = preparedByName || am?.name || null;
+    preparedJobTitle = preparedJobTitle || am?.jobTitle || null;
+    preparedEmail = preparedEmail || am?.email || null;
+    preparedPhone = preparedPhone || am?.phone || null;
+    preparedMobile = preparedMobile || am?.mobile || null;
+  }
   const preparedByLines: string[] = [];
   if (preparedByName) {
     preparedByLines.push(`Prepared by: ${preparedByName}`);
-    if (am?.jobTitle) preparedByLines.push(am.jobTitle);
-    if (am?.email) preparedByLines.push(am.email);
-    if (am?.phone) preparedByLines.push(am.phone);
-    if (am?.mobile) preparedByLines.push(am.mobile);
+    if (preparedJobTitle) preparedByLines.push(preparedJobTitle);
+    if (preparedEmail) preparedByLines.push(preparedEmail);
+    if (preparedPhone) preparedByLines.push(preparedPhone);
+    if (preparedMobile) preparedByLines.push(preparedMobile);
   }
   const preparedByHtml = preparedByName
     ? `<br/><strong>Prepared by:</strong> ${escapeEmailHtml(preparedByName)}${
-        am?.jobTitle ? ` — ${escapeEmailHtml(am.jobTitle)}` : ""
-      }${am?.email ? `<br/>${escapeEmailHtml(am.email)}` : ""}${
-        am?.phone ? `<br/>${escapeEmailHtml(am.phone)}` : ""
-      }${am?.mobile ? `<br/>${escapeEmailHtml(am.mobile)}` : ""}`
+        preparedJobTitle ? ` — ${escapeEmailHtml(preparedJobTitle)}` : ""
+      }${preparedEmail ? `<br/>${escapeEmailHtml(preparedEmail)}` : ""}${
+        preparedPhone ? `<br/>${escapeEmailHtml(preparedPhone)}` : ""
+      }${preparedMobile ? `<br/>${escapeEmailHtml(preparedMobile)}` : ""}`
     : "";
 
   const subject = `Your Automotive Brands quotation ${quote.quoteNumber}`;

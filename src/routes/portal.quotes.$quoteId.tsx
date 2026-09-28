@@ -120,7 +120,8 @@ function PortalQuoteDetail() {
         <div className="mx-auto max-w-lg p-6 text-center">
           <p className="font-display text-2xl font-semibold uppercase">Quote accepted</p>
           <p className="mt-3 text-[14px] text-steel">
-            Converted to order <strong className="text-foreground">{orderNumber}</strong>
+            Thank you. Your quotation has been converted into order{" "}
+            <strong className="text-foreground">{orderNumber ?? "—"}</strong>.
           </p>
           {orderId ? (
             <Link

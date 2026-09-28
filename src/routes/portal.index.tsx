@@ -7,6 +7,7 @@ import { InstantText } from "@/components/ab/InstantText";
 import { getPortalDashboardFn } from "@/server/phase2/fns";
 import type { PortalDashboard } from "@/server/portal/dashboard";
 import { ROUTES } from "@/lib/app-nav";
+import { formatQuoteDateOnlyUk } from "@/domain/quote";
 
 export const Route = createFileRoute("/portal/")({
   head: () => ({
@@ -150,6 +151,40 @@ function Dashboard() {
               </Link>
             </div>
           </div>
+
+          {data.quotesRequiringAction && data.quotesRequiringAction.length > 0 ? (
+            <div className="rounded-lg border border-border bg-surface/40 p-5">
+              <h2 className="font-display text-lg font-semibold uppercase tracking-tight">
+                Quotes requiring action
+              </h2>
+              <ul className="mt-4 space-y-3">
+                {data.quotesRequiringAction.map((q) => (
+                  <li
+                    key={q.id}
+                    className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3 last:border-0 last:pb-0"
+                  >
+                    <div>
+                      <div className="font-semibold">{q.quoteNumber}</div>
+                      <div className="text-[12px] text-steel">
+                        {q.validUntil
+                          ? `Valid until ${formatQuoteDateOnlyUk(q.validUntil)}`
+                          : "Awaiting response"}
+                        {" · "}
+                        {gbp(q.grandTotal)}
+                      </div>
+                    </div>
+                    <Link
+                      to="/portal/quotes/$quoteId"
+                      params={{ quoteId: q.id }}
+                      className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-bold uppercase hover:border-steel"
+                    >
+                      View
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {data.backorders ? (
             <div className="rounded-lg border border-cyan/40 bg-cyan/5 p-5">

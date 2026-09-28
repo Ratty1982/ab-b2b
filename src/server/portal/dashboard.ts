@@ -131,7 +131,8 @@ export async function getPortalDashboard(userId: string) {
     },
   } as const;
 
-  const [openOrders, recentOrders, openOrderCount, totalOrderCount, basket, backorderCandidates] =
+  const now = new Date();
+  const [openOrders, recentOrders, openOrderCount, totalOrderCount, basket, backorderCandidates, actionQuotes] =
     await Promise.all([
       prisma.order.findMany({
         where: openWhere,
@@ -172,6 +173,24 @@ export async function getPortalDashboard(userId: string) {
           },
         },
         take: 100,
+      }),
+      prisma.quote.findMany({
+        where: {
+          companyId: company.id,
+          status: { in: ["SENT", "VIEWED"] },
+          convertedOrderId: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+        },
+        orderBy: [{ expiresAt: "asc" }, { sentAt: "desc" }],
+        take: 5,
+        select: {
+          id: true,
+          quoteNumber: true,
+          expiresAt: true,
+          grandTotal: true,
+          currency: true,
+          status: true,
+        },
       }),
     ]);
 
@@ -224,6 +243,20 @@ export async function getPortalDashboard(userId: string) {
     availableCredit: null as null,
     outstandingBalance: null as null,
     openQuotesValue: null as null,
+    /** Quotes awaiting customer accept/decline — omitted from UI when empty. */
+    quotesRequiringAction: actionQuotes.map((q) => ({
+      id: q.id,
+      quoteNumber: q.quoteNumber,
+      validUntil: q.expiresAt ? q.expiresAt.toISOString().slice(0, 10) : null,
+      grandTotal:
+        typeof q.grandTotal === "object" &&
+        q.grandTotal !== null &&
+        "toString" in q.grandTotal
+          ? String(q.grandTotal)
+          : String(q.grandTotal),
+      currency: q.currency,
+      status: q.status,
+    })),
     basket: {
       lineCount: basket.lineCount,
       unitCount: basket.unitCount,

@@ -13,11 +13,12 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { allocateQuoteNumber } from "@/server/quotes/quote-number";
 import { allocateOrderNumber } from "@/server/orders/order-number";
 import { reserveStockForOrder } from "@/server/orders/reservations";
+import { recordFulfilmentEvent } from "@/server/orders/fulfilment";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { trustedSellableForOrdering } from "@/server/ordering/policy";
-import { resolveBackorderPolicy } from "@/domain/backorder";
+import { allocateOrderLineQuantities, resolveBackorderPolicy } from "@/domain/backorder";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 import {
   addCalendarDaysDateOnly,
@@ -96,6 +97,69 @@ async function loadPrimarySalesRepSnapshot(companyId: string) {
     salesRepIdSnapshot: rep?.id ?? null,
     salesRepCodeSnapshot: rep?.code ?? null,
     salesRepNameSnapshot: rep?.user?.name ?? null,
+  };
+}
+
+type PreparedBySnapshot = {
+  name: string | null;
+  jobTitle: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  salesRepId: string | null;
+};
+
+async function buildPreparedBySnapshot(companyId: string, salesRepId?: string | null): Promise<PreparedBySnapshot> {
+  const { resolveAccountManagerForCompany, resolveAccountManagerForSalesRep } = await import(
+    "@/server/sales/account-manager"
+  );
+  const am =
+    (await resolveAccountManagerForCompany(companyId)) ??
+    (salesRepId ? await resolveAccountManagerForSalesRep(salesRepId) : null);
+  return {
+    name: am?.name ?? null,
+    jobTitle: am?.jobTitle ?? null,
+    email: am?.email ?? null,
+    phone: am?.phone ?? null,
+    mobile: am?.mobile ?? null,
+    salesRepId: salesRepId ?? null,
+  };
+}
+
+/** Ensure order contactSnapshot has a deliverable email (quote send may use company.primaryEmail). */
+async function resolveContactSnapshotForConversion(quote: {
+  contactId: string | null;
+  contactSnapshot: Prisma.JsonValue | null;
+  company: { primaryEmail: string | null };
+}): Promise<Prisma.InputJsonValue> {
+  const snap =
+    quote.contactSnapshot && typeof quote.contactSnapshot === "object"
+      ? ({ ...(quote.contactSnapshot as Record<string, unknown>) } as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+
+  let email = typeof snap.email === "string" ? snap.email.trim().toLowerCase() : "";
+  let name = typeof snap.name === "string" ? snap.name.trim() : "";
+  let phone =
+    typeof snap.phone === "string" && snap.phone.trim() ? String(snap.phone).trim() : null;
+
+  if ((!email || !name) && quote.contactId) {
+    const contact = await prisma.contact.findUnique({ where: { id: quote.contactId } });
+    if (contact) {
+      if (!email && contact.email) email = contact.email.trim().toLowerCase();
+      if (!name) name = `${contact.firstName} ${contact.lastName}`.trim();
+      if (!phone && contact.phone) phone = contact.phone;
+    }
+  }
+  if (!email && quote.company.primaryEmail) {
+    email = quote.company.primaryEmail.trim().toLowerCase();
+  }
+  if (!name) name = "Customer";
+
+  return {
+    ...snap,
+    name,
+    email: email || null,
+    phone,
   };
 }
 
@@ -343,10 +407,14 @@ function serializeQuote(
     deliveryAddress: Prisma.JsonValue | null;
     salesRepNameSnapshot: string | null;
     salesRepCodeSnapshot: string | null;
+    preparedBySnapshot?: Prisma.JsonValue | null;
     paymentTermsSnapshot: string | null;
     sentAt: Date | null;
     firstViewedAt: Date | null;
     acceptedAt: Date | null;
+    acceptedByUserId?: string | null;
+    acceptedByStaffId?: string | null;
+    acceptanceNote?: string | null;
     declinedAt: Date | null;
     declineReason: string | null;
     convertedAt: Date | null;
@@ -355,6 +423,8 @@ function serializeQuote(
     createdAt: Date;
     updatedAt: Date;
     company?: { id: string; name: string; status: string };
+    acceptedByUser?: { id: string; name: string | null; email: string } | null;
+    acceptedByStaff?: { id: string; name: string | null; email: string } | null;
     items?: Array<{
       id: string;
       variantId: string | null;
@@ -396,6 +466,24 @@ function serializeQuote(
     quote.deliveryAddress && typeof quote.deliveryAddress === "object"
       ? (quote.deliveryAddress as Record<string, string | null>)
       : null;
+  const preparedBy =
+    quote.preparedBySnapshot && typeof quote.preparedBySnapshot === "object"
+      ? (quote.preparedBySnapshot as PreparedBySnapshot)
+      : null;
+
+  const staffAccepted = Boolean(quote.acceptedByStaffId);
+  const acceptanceChannel = quote.acceptedAt
+    ? staffAccepted
+      ? ("STAFF_ON_BEHALF" as const)
+      : ("PORTAL" as const)
+    : null;
+  const acceptedByName = staffAccepted
+    ? quote.acceptedByStaff?.name?.trim() ||
+      quote.acceptedByStaff?.email ||
+      (quote.acceptedByStaffId ? "Staff" : null)
+    : quote.acceptedByUser?.name?.trim() ||
+      quote.acceptedByUser?.email ||
+      (quote.acceptedByUserId ? "Customer" : null);
 
   return {
     id: quote.id,
@@ -422,10 +510,42 @@ function serializeQuote(
     deliveryAddress,
     salesRepName: quote.salesRepNameSnapshot,
     salesRepCode: quote.salesRepCodeSnapshot,
+    preparedBy: preparedBy
+      ? {
+          name: preparedBy.name,
+          jobTitle: preparedBy.jobTitle,
+          email: preparedBy.email,
+          phone: preparedBy.phone,
+          mobile: preparedBy.mobile,
+        }
+      : quote.salesRepNameSnapshot
+        ? {
+            name: quote.salesRepNameSnapshot,
+            jobTitle: null,
+            email: null,
+            phone: null,
+            mobile: null,
+          }
+        : null,
     paymentTerms: quote.paymentTermsSnapshot,
     sentAt: quote.sentAt?.toISOString() ?? null,
     firstViewedAt: quote.firstViewedAt?.toISOString() ?? null,
     acceptedAt: quote.acceptedAt?.toISOString() ?? null,
+    acceptanceChannel,
+    acceptanceChannelLabel:
+      acceptanceChannel === "STAFF_ON_BEHALF"
+        ? "Staff on behalf"
+        : acceptanceChannel === "PORTAL"
+          ? "Portal"
+          : null,
+    acceptedByName: opts?.customerView
+      ? acceptanceChannel === "PORTAL"
+        ? "You"
+        : acceptanceChannel
+          ? "Automotive Brands"
+          : null
+      : acceptedByName,
+    acceptanceNote: opts?.customerView ? null : (quote.acceptanceNote ?? null),
     declinedAt: quote.declinedAt?.toISOString() ?? null,
     declineReason: quote.declineReason,
     convertedAt: quote.convertedAt?.toISOString() ?? null,
@@ -442,6 +562,7 @@ function serializeQuote(
       sku: it.sku,
       name: it.name,
       qty: it.qty,
+      /** Internal 4dp commercial unit — prefer customerUnitPrice for presentation. */
       unitPrice: money4(it.unitPrice),
       normalUnitPrice: money4(it.normalUnitPrice ?? it.unitPrice),
       customerUnitPrice: money2(it.customerUnitPrice ?? it.unitPrice),
@@ -457,6 +578,25 @@ function serializeQuote(
   };
 }
 
+async function loadAcceptanceActors(quote: {
+  acceptedByUserId: string | null;
+  acceptedByStaffId: string | null;
+}) {
+  const ids = [quote.acceptedByUserId, quote.acceptedByStaffId].filter(Boolean) as string[];
+  if (!ids.length) {
+    return { acceptedByUser: null, acceptedByStaff: null };
+  }
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, email: true },
+  });
+  const byId = new Map(users.map((u) => [u.id, u]));
+  return {
+    acceptedByUser: quote.acceptedByUserId ? byId.get(quote.acceptedByUserId) ?? null : null,
+    acceptedByStaff: quote.acceptedByStaffId ? byId.get(quote.acceptedByStaffId) ?? null : null,
+  };
+}
+
 const quoteInclude = {
   company: { select: { id: true, name: true, status: true } },
   items: { orderBy: { sortOrder: "asc" as const } },
@@ -469,6 +609,7 @@ export async function createQuote(actorUserId: string, raw: unknown) {
   await assertCompanyInSalesScope(actorUserId, input.companyId);
   const company = await loadCompanyForQuote(input.companyId);
   const salesRep = await loadPrimarySalesRepSnapshot(company.id);
+  const preparedBy = await buildPreparedBySnapshot(company.id, salesRep.salesRepIdSnapshot);
 
   let contactSnapshot: Prisma.InputJsonValue | null = null;
   if (input.contactId) {
@@ -560,6 +701,7 @@ export async function createQuote(actorUserId: string, raw: unknown) {
         salesRepIdSnapshot: salesRep.salesRepIdSnapshot,
         salesRepCodeSnapshot: salesRep.salesRepCodeSnapshot,
         salesRepNameSnapshot: salesRep.salesRepNameSnapshot,
+        preparedBySnapshot: preparedBy,
         paymentTermsSnapshot: company.paymentTerms,
         createdById: actorUserId,
       },
@@ -735,6 +877,20 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
       });
     }
 
+    let contactSnapshotUpdate: Prisma.InputJsonValue | undefined;
+    if (input.contactId !== undefined && input.contactId) {
+      const contact = await tx.contact.findFirst({
+        where: { id: input.contactId, companyId: company.id },
+      });
+      if (!contact) throw new AuthError("Contact not found", "NOT_FOUND", 404);
+      contactSnapshotUpdate = {
+        id: contact.id,
+        name: `${contact.firstName} ${contact.lastName}`.trim(),
+        email: contact.email,
+        phone: contact.phone,
+      };
+    }
+
     return tx.quote.update({
       where: { id: existing.id },
       data: {
@@ -749,6 +905,7 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
         ...(input.internalNotes !== undefined ? { internalNotes: input.internalNotes } : {}),
         ...(input.poNumber !== undefined ? { poNumber: input.poNumber } : {}),
         ...(input.contactId !== undefined ? { contactId: input.contactId } : {}),
+        ...(contactSnapshotUpdate ? { contactSnapshot: contactSnapshotUpdate } : {}),
       },
       include: quoteInclude,
     });
@@ -774,7 +931,8 @@ export async function getQuoteForStaff(actorUserId: string, quoteId: string) {
   });
   if (!quote) throw new AuthError("Quote not found", "NOT_FOUND", 404);
   await assertCompanyInSalesScope(actorUserId, quote.companyId);
-  return serializeQuote(quote);
+  const actors = await loadAcceptanceActors(quote);
+  return serializeQuote({ ...quote, ...actors });
 }
 
 export async function listQuotesForStaff(actorUserId: string, raw?: unknown) {
@@ -838,11 +996,24 @@ export async function sendQuote(actorUserId: string, raw: unknown) {
   });
   if (!quote) throw new AuthError("Quote not found", "NOT_FOUND", 404);
   await assertCompanyInSalesScope(actorUserId, quote.companyId);
-  if (quote.status !== "DRAFT" && quote.status !== "SENT") {
-    throw new AuthError("Only draft or sent quotes can be (re)sent", "CONFLICT", 409);
+  if (quote.status !== "DRAFT" && quote.status !== "SENT" && quote.status !== "VIEWED") {
+    throw new AuthError("Only draft, sent, or viewed quotes can be (re)sent", "CONFLICT", 409);
   }
   if (!quote.items.length) {
-    throw new AuthError("Add at least one product before sending", "VALIDATION", 400);
+    throw new AuthError(
+      "Add at least one valid product before sending this quotation.",
+      "VALIDATION",
+      400,
+    );
+  }
+  const goods = parseMoney(String(quote.subtotal)) ?? moneyZero();
+  const grand = parseMoney(String(quote.grandTotal)) ?? moneyZero();
+  if (goods.minor <= 0n || grand.minor <= 0n) {
+    throw new AuthError(
+      "Add at least one valid product before sending this quotation.",
+      "VALIDATION",
+      400,
+    );
   }
   if (!quote.expiresAt) {
     throw new AuthError("Set a validity date before sending", "VALIDATION", 400);
@@ -857,12 +1028,20 @@ export async function sendQuote(actorUserId: string, raw: unknown) {
     throw new AuthError("No recipient email on quote contact or company", "VALIDATION", 400);
   }
 
+  // Freeze prepared-by details at first send; resend keeps the historical snapshot.
+  const preparedBy =
+    quote.status === "DRAFT" || !quote.preparedBySnapshot
+      ? await buildPreparedBySnapshot(quote.companyId, quote.salesRepIdSnapshot)
+      : (quote.preparedBySnapshot as PreparedBySnapshot);
+
   const updated = await prisma.quote.update({
     where: { id: quote.id },
     data: {
+      // Resend must not reset VIEWED → SENT.
       status: quote.status === "DRAFT" ? "SENT" : quote.status,
       sentAt: quote.sentAt ?? new Date(),
       sentById: actorUserId,
+      preparedBySnapshot: preparedBy,
     },
     include: quoteInclude,
   });
@@ -1043,7 +1222,8 @@ async function convertQuoteToOrder(input: {
     throw new AuthError("Quote has no lines", "VALIDATION", 400);
   }
 
-  // Revalidate stock + case rules (prices stay from quote snapshots).
+  // Stock/backorder uses CURRENT live availability. Commercial prices stay on the quote snapshot.
+  // Case pack: honour the quoted quantity (valid when sent); do not rewrite for live caseQty changes.
   const variantIds = quote.items.map((i) => i.variantId).filter(Boolean) as string[];
   const variants = await prisma.productVariant.findMany({
     where: { id: { in: variantIds } },
@@ -1051,7 +1231,12 @@ async function convertQuoteToOrder(input: {
   });
   const byId = new Map(variants.map((v) => [v.id, v]));
   const stockMap = await loadStockByVariantIds(variantIds);
+  const globalBackorderPolicy = await getGlobalBackorderPolicy();
   const stockIssues: Array<{ sku: string; name: string; qty: number; available: number }> = [];
+  const allocations = new Map<
+    string,
+    { availableQtyAtOrder: number; backorderQtyAtOrder: number; reserveQty: number }
+  >();
 
   for (const item of quote.items) {
     if (!item.variantId) {
@@ -1064,26 +1249,51 @@ async function convertQuoteToOrder(input: {
       continue;
     }
     const stock = stockMap.get(item.variantId);
-    const sellable = sellableFromStock(stock);
-    const orderableByStock = stock ? isOrderableByStockPolicy(stock) : false;
+    const backorderPolicy = resolveBackorderPolicy({
+      globalPolicy: globalBackorderPolicy,
+      variantPolicy: variant.backorderPolicy,
+    });
+    const rawSellable = stock?.sellableQty ?? 0;
+    const sellable = trustedSellableForOrdering({
+      sellableQty: rawSellable,
+      stale: stock?.stale ?? true,
+    });
+    const orderableByStock = stock
+      ? isOrderableByStockPolicy(
+          { sellableQty: rawSellable, stale: stock.stale, availability: stock.availability },
+          backorderPolicy,
+        )
+      : backorderPolicy === "ALLOW";
+    // Validate against snapshotted case qty — live catalogue case pack must not rewrite the quote.
     const qtyIssue = assessBasketLineQuantity({
       quantity: item.qty,
-      caseQty: variant.caseQty,
+      caseQty: item.caseQty ?? variant.caseQty,
       minimumOrderQty: variant.minOrderQty,
       sellableQty: sellable,
       productActive: variant.product.isActive && variant.product.status === "ACTIVE",
       tradeVisible: true,
       orderableByStockPolicy: orderableByStock,
       hasTradePrice: true,
+      backorderPolicy,
     });
-    if (qtyIssue !== "VALID" || sellable < item.qty) {
+    if (qtyIssue !== "VALID") {
       stockIssues.push({
         sku: item.sku,
         name: item.name,
         qty: item.qty,
         available: sellable,
       });
+      continue;
     }
+    const split = allocateOrderLineQuantities({
+      orderedQty: item.qty,
+      sellableQty: sellable,
+    });
+    allocations.set(item.id, {
+      availableQtyAtOrder: split.availableQtyAtOrder,
+      backorderQtyAtOrder: split.backorderQtyAtOrder,
+      reserveQty: split.reserveQty,
+    });
   }
 
   if (stockIssues.length) {
@@ -1100,6 +1310,19 @@ async function convertQuoteToOrder(input: {
       ? quote.company.autopartCustomerCode
       : null;
 
+  // Align contact email with quote-send resolution so ORDER_RECEIVED is not silently skipped.
+  const contactSnapshot = await resolveContactSnapshotForConversion(quote);
+  const contactEmail =
+    typeof (contactSnapshot as { email?: unknown }).email === "string"
+      ? String((contactSnapshot as { email: string }).email).trim()
+      : "";
+  if (contactEmail) {
+    await prisma.quote.update({
+      where: { id: quote.id },
+      data: { contactSnapshot },
+    });
+  }
+
   const created = await prisma.$transaction(async (tx) => {
     // Claim the quote atomically so concurrent accepts cannot both convert.
     const claim = await tx.quote.updateMany({
@@ -1115,6 +1338,7 @@ async function convertQuoteToOrder(input: {
         acceptedByStaffId: input.staffAcceptance ? input.actorUserId : null,
         acceptanceNote: input.acceptanceNote ?? null,
         acceptIdempotencyKey: input.idempotencyKey,
+        ...(contactEmail ? { contactSnapshot } : {}),
       },
     });
 
@@ -1171,7 +1395,7 @@ async function convertQuoteToOrder(input: {
         deliveryTotal: quote.deliveryTotal,
         grandTotal: quote.grandTotal,
         deliveryAddress: quote.deliveryAddress as Prisma.InputJsonValue,
-        contactSnapshot: quote.contactSnapshot as Prisma.InputJsonValue,
+        contactSnapshot,
         paymentTermsSnapshot: quote.paymentTermsSnapshot,
         autopartCustomerCodeSnapshot: verifiedCode,
         autopartAccountLinked: Boolean(verifiedCode),
@@ -1184,31 +1408,41 @@ async function convertQuoteToOrder(input: {
         idempotencyKey: `quote-accept:${input.idempotencyKey}`,
         placedAt,
         items: {
-          create: quote.items.map((item) => ({
-            variantId: item.variantId,
-            productId: item.productId,
-            sku: item.sku,
-            name: item.name,
-            qty: item.qty,
-            unitPrice: item.unitPrice,
-            customerUnitPrice: item.customerUnitPrice,
-            discountPct: item.discountPct,
-            vatRate: item.vatRate,
-            vatCode: item.vatCode,
-            lineTotal: item.lineTotal,
-            lineVat: item.lineVat,
-            lineGross: item.lineGross,
-            caseQty: item.caseQty,
-            orderingMode: item.orderingMode,
-            priceSource: item.priceSource ?? "QUOTE",
-            quantityBreakId: item.quantityBreakId,
-            promotionId: item.promotionId,
-          })),
+          create: quote.items.map((item) => {
+            const alloc = allocations.get(item.id) ?? {
+              availableQtyAtOrder: item.qty,
+              backorderQtyAtOrder: 0,
+              reserveQty: item.qty,
+            };
+            return {
+              variantId: item.variantId,
+              productId: item.productId,
+              sku: item.sku,
+              name: item.name,
+              qty: item.qty,
+              unitPrice: item.unitPrice,
+              customerUnitPrice: item.customerUnitPrice,
+              discountPct: item.discountPct,
+              vatRate: item.vatRate,
+              vatCode: item.vatCode,
+              lineTotal: item.lineTotal,
+              lineVat: item.lineVat,
+              lineGross: item.lineGross,
+              caseQty: item.caseQty,
+              orderingMode: item.orderingMode,
+              priceSource: item.priceSource ?? "QUOTE",
+              quantityBreakId: item.quantityBreakId,
+              promotionId: item.promotionId,
+              availableQtyAtOrder: alloc.availableQtyAtOrder,
+              backorderQtyAtOrder: alloc.backorderQtyAtOrder,
+            };
+          }),
         },
       },
       include: { items: true },
     });
 
+    // Reserve ONLY currently sellable allocation — never backordered units.
     await reserveStockForOrder(tx, {
       orderId: order.id,
       lines: order.items
@@ -1216,8 +1450,23 @@ async function convertQuoteToOrder(input: {
         .map((item) => ({
           orderItemId: item.id,
           variantId: item.variantId!,
-          quantity: item.qty,
+          quantity: item.availableQtyAtOrder ?? 0,
         })),
+    });
+
+    const backorderUnits = order.items.reduce(
+      (sum, item) => sum + (item.backorderQtyAtOrder ?? 0),
+      0,
+    );
+    await recordFulfilmentEvent(tx, {
+      orderId: order.id,
+      kind: "ORDER_RECEIVED",
+      summary:
+        backorderUnits > 0
+          ? `Order received from quotation ${quote.quoteNumber} · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
+          : `Order received from quotation ${quote.quoteNumber}`,
+      source: "QUOTE_CONVERT",
+      lineQuantitiesKnown: true,
     });
 
     await tx.quote.update({
@@ -1240,6 +1489,18 @@ async function convertQuoteToOrder(input: {
     };
   }
 
+  await recordAuditEvent({
+    action: input.staffAcceptance ? "quote.accepted_on_behalf" : "quote.accepted",
+    entityType: "Quote",
+    entityId: quote.id,
+    actorUserId: input.actorUserId,
+    companyId: quote.companyId,
+    after: {
+      orderId: created.order.id,
+      orderNumber: created.order.orderNumber,
+      staffAcceptance: input.staffAcceptance,
+    },
+  });
   await recordAuditEvent({
     action: "quote.converted",
     entityType: "Quote",
@@ -1267,10 +1528,37 @@ async function convertQuoteToOrder(input: {
     },
   });
 
+  // AFTER COMMIT — same ORDER_RECEIVED / ORDER_RECEIVED_INTERNAL path as checkout.
+  // Failure must not roll back the converted quote or AB order.
   try {
-    await sendOrderEmailsAfterCommit(created.order.id);
-  } catch {
-    /* non-fatal */
+    const emailResult = await sendOrderEmailsAfterCommit(created.order.id);
+    if (!emailResult.customerOk) {
+      await recordAuditEvent({
+        action: "order.email_failed",
+        entityType: "Order",
+        entityId: created.order.id,
+        actorUserId: input.actorUserId,
+        companyId: quote.companyId,
+        metadata: {
+          detail: emailResult.detail ?? "send failed",
+          channel: "customer",
+          source: "quote_convert",
+        },
+      });
+    }
+  } catch (error) {
+    await recordAuditEvent({
+      action: "order.email_failed",
+      entityType: "Order",
+      entityId: created.order.id,
+      actorUserId: input.actorUserId,
+      companyId: quote.companyId,
+      metadata: {
+        detail: error instanceof Error ? error.message : "unknown",
+        channel: "customer",
+        source: "quote_convert",
+      },
+    });
   }
 
   return {
@@ -1298,7 +1586,11 @@ export async function acceptQuoteAsCustomer(userId: string, raw: unknown) {
       where: { id: input.id },
       include: quoteInclude,
     });
-    return { quote: serializeQuote(fresh, { customerView: true }), ...result };
+    const actors = await loadAcceptanceActors(fresh);
+    return {
+      quote: serializeQuote({ ...fresh, ...actors }, { customerView: true }),
+      ...result,
+    };
   } catch (error) {
     if (error instanceof AuthError && error.code === "QUOTE_STOCK_UNAVAILABLE") {
       throw error;
@@ -1325,7 +1617,8 @@ export async function acceptQuoteOnBehalf(actorUserId: string, raw: unknown) {
     where: { id: input.id },
     include: quoteInclude,
   });
-  return { quote: serializeQuote(fresh), ...result };
+  const actors = await loadAcceptanceActors(fresh);
+  return { quote: serializeQuote({ ...fresh, ...actors }), ...result };
 }
 
 export async function duplicateQuote(actorUserId: string, raw: unknown) {

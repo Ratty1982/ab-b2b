@@ -124,8 +124,8 @@ describe("branded transactional email shell", () => {
     expect(html).toContain(powerMaxedLogoUrl());
     expect(html).toContain(steelSealLogoUrl());
     expect(html).toContain('alt="Automotive Brands"');
-    expect(html).toContain('alt="Power Maxed"');
-    expect(html).toContain('alt="Steel Seal"');
+    // Supporting brands degrade as text when remote images are blocked.
+    expect(html).toContain("Power Maxed · Steel Seal");
     expect(html).toContain("automotivebrands.co.uk");
     expect(html).toContain("Automotive Brands");
     expect(html).toContain("orders@automotivebrands.co.uk");
@@ -202,6 +202,7 @@ describe("branded transactional email shell", () => {
         autopartCustomerCodeSnapshot: null,
         salesRepNameSnapshot: null,
         salesRepCodeSnapshot: null,
+        sourceQuoteNumber: null,
         portalOrderUrl: "https://example.com/portal/orders/ord1",
         adminOrderUrl: "https://example.com/admin/orders/ord1",
       },

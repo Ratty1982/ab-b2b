@@ -361,18 +361,39 @@ describe("Quote accept → order conversion", () => {
     expect(order.externalRef).toBeNull();
     expect(Number(order.items[0]!.unitPrice)).toBeCloseTo(3.5, 4);
     expect(Number(order.items[0]!.customerUnitPrice)).toBeCloseTo(3.5, 2);
+    expect(order.items[0]!.availableQtyAtOrder).toBe(12);
+    expect(order.items[0]!.backorderQtyAtOrder).toBe(0);
 
     const afterRes = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(afterRes.qtyOnHand).toBe(beforeRes.qtyOnHand);
     expect(afterRes.qtyReserved).toBe(12);
 
-    // Idempotent re-accept
+    // Standard ORDER_RECEIVED / INTERNAL after commit (same path as checkout)
+    const customerEmails = await prisma.transactionalEmail.findMany({
+      where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
+    });
+    expect(customerEmails).toHaveLength(1);
+    expect(customerEmails[0]!.idempotencyKey).toBe(`ORDER_RECEIVED:${order.id}`);
+    expect(customerEmails[0]!.toEmail).toBe(contact.email.toLowerCase());
+
+    const internalEmails = await prisma.transactionalEmail.findMany({
+      where: { entityId: order.id, purpose: "ORDER_RECEIVED_INTERNAL" },
+    });
+    // Internal may be 0 when ops recipients are unset in test env — never more than intended.
+    expect(internalEmails.length).toBeLessThanOrEqual(3);
+
+    // Idempotent re-accept — no second order, no second customer email
     const again = await acceptQuoteAsCustomer(buyerId, { id: draft.id, idempotencyKey: key });
     expect(again.alreadyConverted).toBe(true);
     expect(again.orderId).toBe(accepted.orderId);
 
     const orderCount = await prisma.order.count({ where: { sourceQuoteId: draft.id } });
     expect(orderCount).toBe(1);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
+      }),
+    ).toBe(1);
 
     // Different key after conversion returns the same order (no second order)
     const raced = await acceptQuoteAsCustomer(buyerId, {
@@ -382,11 +403,62 @@ describe("Quote accept → order conversion", () => {
     expect(raced.alreadyConverted).toBe(true);
     expect(raced.orderId).toBe(accepted.orderId);
     expect(await prisma.order.count({ where: { sourceQuoteId: draft.id } })).toBe(1);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
+      }),
+    ).toBe(1);
   });
 
-  it("rejects acceptance when stock is insufficient and does not partially create orders", async () => {
+  it("partial backorder at conversion keeps quoted price and reserves only available stock", async () => {
+    const sku = `QT-BO-${Date.now()}`;
+    const variant = await seedVariant(sku, 5, 12);
+    const { company, contact } = await seedCompany(`Quote BO Co ${sku}`);
+    const buyerId = await ensureTradeBuyer(`buyer-bo-${sku}@example.invalid`, company.id);
+
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      validUntil: "2099-12-31",
+    });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [{ variantId: variant.id, qty: 12, quotedUnitPrice: "5.0400" }],
+      validUntil: "2099-12-31",
+    });
+    await sendQuote(adminId, { id: draft.id });
+
+    await seedStock(variant.id, 5);
+
+    const accepted = await acceptQuoteAsCustomer(buyerId, {
+      id: draft.id,
+      idempotencyKey: `bo-${sku}`,
+    });
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: accepted.orderId },
+      include: { items: true },
+    });
+    expect(order.items[0]!.qty).toBe(12);
+    expect(Number(order.items[0]!.customerUnitPrice)).toBeCloseTo(5.04, 2);
+    expect(order.items[0]!.availableQtyAtOrder).toBe(5);
+    expect(order.items[0]!.backorderQtyAtOrder).toBe(7);
+
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv.qtyReserved).toBe(5);
+
+    const email = await prisma.transactionalEmail.findFirstOrThrow({
+      where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
+    });
+    expect(email.textBody).toContain("on backorder");
+  });
+
+  it("rejects acceptance when backorders are denied and stock is insufficient", async () => {
     const sku = `QT-ST-${Date.now()}`;
     const variant = await seedVariant(sku, 5, 12);
+    await prisma.productVariant.update({
+      where: { id: variant.id },
+      data: { backorderPolicy: "DENY" },
+    });
     const { company, contact } = await seedCompany(`Quote Stock Co ${sku}`);
     const buyerId = await ensureTradeBuyer(`buyer-st-${sku}@example.invalid`, company.id);
 
@@ -535,5 +607,100 @@ describe("Quote Autopart boundary", () => {
 
     const staffList = await listQuotesForStaff(adminId, { q: draft.quoteNumber });
     expect(staffList.items.some((q) => q.id === draft.id)).toBe(true);
+  });
+});
+
+describe("Quote send validation / empty draft", () => {
+  it("allows empty draft but blocks send when empty or £0", async () => {
+    const { company, contact } = await seedCompany(`Quote Empty ${Date.now()}`);
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      validUntil: "2099-12-31",
+    });
+    expect(draft.status).toBe("DRAFT");
+    expect(draft.grandTotal).toBe("0.00");
+
+    await expect(sendQuote(adminId, { id: draft.id })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+  });
+});
+
+describe("Quote regression — live QT commercial snapshot", () => {
+  it("accepts SS + PMCSEAL style quote with snapshotted commercials and one ORDER_RECEIVED", async () => {
+    const stamp = Date.now();
+    const ss = await seedVariant(`SS-${stamp}`, 25.95, 12);
+    const pmc = await seedVariant(`PMCSEAL-${stamp}`, 5.04, 12);
+    const { company, contact, address } = await seedCompany(`Quote Live ${stamp}`);
+    const buyerId = await ensureTradeBuyer(`buyer-live-${stamp}@example.invalid`, company.id);
+
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      deliveryAddressId: address.id,
+      poNumber: "testy01",
+      validUntil: "2099-12-31",
+      customerNotes: "Customer-facing note",
+      internalNotes: "INTERNAL ONLY — never leak",
+    });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [
+        { variantId: ss.id, qty: 24, quotedUnitPrice: "25.9500" },
+        { variantId: pmc.id, qty: 12, quotedUnitPrice: "5.0400" },
+      ],
+      deliveryTotalOverride: "0.00",
+      validUntil: "2099-12-31",
+    });
+
+    const staff = await getQuoteForStaff(adminId, draft.id);
+    expect(staff.subtotal).toBe("683.28");
+    expect(staff.deliveryTotal).toBe("0.00");
+    expect(staff.vatTotal).toBe("136.66");
+    expect(staff.grandTotal).toBe("819.94");
+    expect(staff.internalNotes).toContain("INTERNAL ONLY");
+
+    await sendQuote(adminId, { id: draft.id });
+    const portal = await getQuoteForPortal(buyerId, draft.id);
+    expect(portal.internalNotes).toBeNull();
+    expect(portal.customerNotes).toContain("Customer-facing");
+    expect(portal.grandTotal).toBe("819.94");
+
+    const accepted = await acceptQuoteAsCustomer(buyerId, {
+      id: draft.id,
+      idempotencyKey: `live-${stamp}`,
+    });
+    expect(accepted.alreadyConverted).toBe(false);
+
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: accepted.orderId },
+      include: { items: true },
+    });
+    expect(Number(order.subtotal)).toBeCloseTo(683.28, 2);
+    expect(Number(order.deliveryTotal)).toBeCloseTo(0, 2);
+    expect(Number(order.vatTotal)).toBeCloseTo(136.66, 2);
+    expect(Number(order.grandTotal)).toBeCloseTo(819.94, 2);
+    expect(order.sourceQuoteNumber).toBe(draft.quoteNumber);
+    expect(order.poNumber).toBe("testy01");
+
+    const emails = await prisma.transactionalEmail.findMany({
+      where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
+    });
+    expect(emails).toHaveLength(1);
+    expect(emails[0]!.textBody).toContain(order.orderNumber);
+    expect(emails[0]!.textBody).toContain(draft.quoteNumber);
+    expect(emails[0]!.textBody).not.toContain("INTERNAL ONLY");
+
+    await acceptQuoteAsCustomer(buyerId, {
+      id: draft.id,
+      idempotencyKey: `live-${stamp}-refresh`,
+    });
+    expect(await prisma.order.count({ where: { sourceQuoteId: draft.id } })).toBe(1);
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
+      }),
+    ).toBe(1);
   });
 });

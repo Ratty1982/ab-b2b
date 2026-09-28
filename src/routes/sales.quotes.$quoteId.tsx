@@ -337,6 +337,46 @@ function QuoteWorkspace() {
 
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[1fr_320px]">
         <div className="space-y-6">
+          {quote.status === "CONVERTED" || quote.convertedOrderId ? (
+            <section className="rounded-lg border border-good/40 bg-good/5 p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-good">
+                Converted to order
+              </p>
+              <p className="mt-2 font-display text-2xl font-semibold uppercase">
+                {quote.convertedOrderNumber ?? "Order created"}
+              </p>
+              <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2">
+                <div>
+                  <dt className="text-steel">Converted</dt>
+                  <dd>{quote.convertedAt ? formatDateTime(quote.convertedAt) : "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-steel">Accepted by</dt>
+                  <dd>{quote.acceptedByName || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-steel">Acceptance channel</dt>
+                  <dd>{quote.acceptanceChannelLabel || "—"}</dd>
+                </div>
+                {quote.acceptanceNote ? (
+                  <div className="sm:col-span-2">
+                    <dt className="text-steel">Confirmation note</dt>
+                    <dd>{quote.acceptanceNote}</dd>
+                  </div>
+                ) : null}
+              </dl>
+              {quote.convertedOrderId ? (
+                <Link
+                  to="/admin/orders/$orderId"
+                  params={{ orderId: quote.convertedOrderId }}
+                  className="mt-4 inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+                >
+                  View order
+                </Link>
+              ) : null}
+            </section>
+          ) : null}
+
           <section className="rounded-lg border border-border p-5">
             <h2 className="font-display text-base font-semibold uppercase">Customer & delivery</h2>
             {company ? (
@@ -504,7 +544,11 @@ function QuoteWorkspace() {
                           )}
                         </td>
                         <td className="py-2 pr-2 text-right text-steel">
-                          £{draft?.normalUnitPrice ?? item?.normalUnitPrice}
+                          £
+                          {item?.normalCustomerUnitPrice ??
+                            (draft?.normalUnitPrice
+                              ? Number(draft.normalUnitPrice).toFixed(2)
+                              : "—")}
                         </td>
                         <td className="py-2 pr-2 text-right">
                           {draft ? (

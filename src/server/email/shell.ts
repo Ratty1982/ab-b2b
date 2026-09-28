@@ -125,13 +125,16 @@ ${preheader}
                   <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;line-height:1.2;">
                     Automotive Brands
                   </div>
+                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.04em;color:#c5cad6;line-height:1.35;margin-top:4px;">
+                    Power Maxed · Steel Seal
+                  </div>
                   <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
                     <tr>
                       <td valign="middle" style="vertical-align:middle;padding-right:12px;">
-                        <img src="${escapeEmailHtml(powerMaxed)}" width="88" height="48" alt="Power Maxed" style="display:block;border:0;width:88px;height:auto;max-width:88px;max-height:48px;" />
+                        <img src="${escapeEmailHtml(powerMaxed)}" width="88" height="48" alt="" style="display:block;border:0;width:88px;height:auto;max-width:88px;max-height:48px;" />
                       </td>
                       <td valign="middle" style="vertical-align:middle;">
-                        <img src="${escapeEmailHtml(steelSeal)}" width="96" height="44" alt="Steel Seal" style="display:block;border:0;width:96px;height:auto;max-width:96px;max-height:44px;" />
+                        <img src="${escapeEmailHtml(steelSeal)}" width="96" height="44" alt="" style="display:block;border:0;width:96px;height:auto;max-width:96px;max-height:44px;" />
                       </td>
                     </tr>
                   </table>

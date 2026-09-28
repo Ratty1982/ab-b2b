@@ -192,6 +192,7 @@ describe("trade delivery on placeOrder", () => {
       autopartCustomerCodeSnapshot: null,
       salesRepNameSnapshot: null,
       salesRepCodeSnapshot: null,
+      sourceQuoteNumber: null,
       portalOrderUrl: "https://example.test/portal/orders/x",
       adminOrderUrl: "https://example.test/admin/orders/x",
     });

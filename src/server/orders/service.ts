@@ -182,6 +182,9 @@ export type PublicOrderConfirmation = {
   }>;
   /** Always null in Phase 6B — reserved for Autopart handoff. */
   externalRef: null;
+  /** Present when created from an accepted quotation. */
+  sourceQuoteId: string | null;
+  sourceQuoteNumber: string | null;
 };
 
 export type PlaceOrderResult =
@@ -919,6 +922,8 @@ function toConfirmation(
     paymentTermsSnapshot: string | null;
     deliveryInstructions: string | null;
     externalRef: string | null;
+    sourceQuoteId?: string | null;
+    sourceQuoteNumber?: string | null;
     items: Array<{
       id?: string;
       sku: string;
@@ -973,6 +978,8 @@ function toConfirmation(
       orderingMode: item.orderingMode,
     })),
     externalRef: null,
+    sourceQuoteId: order.sourceQuoteId ?? null,
+    sourceQuoteNumber: order.sourceQuoteNumber ?? null,
   };
 }
 

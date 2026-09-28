@@ -120,6 +120,7 @@ describe("getPortalDashboard", () => {
     expect(dash.availableCredit).toBeNull();
     expect(dash.outstandingBalance).toBeNull();
     expect(dash.openQuotesValue).toBeNull();
+    expect(dash.quotesRequiringAction).toEqual([]);
     expect(dash.openOrderCount).toBe(0);
     expect(dash.totalOrderCount).toBe(0);
     expect(dash.openOrders).toEqual([]);

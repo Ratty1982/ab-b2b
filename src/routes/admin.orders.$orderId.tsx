@@ -216,6 +216,24 @@ function AdminOrderDetailPage() {
               <dt className="text-steel">Customer reference</dt>
               <dd>{order.poNumber || "—"}</dd>
             </div>
+            {order.sourceQuoteNumber ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Source</dt>
+                <dd>
+                  {order.sourceQuoteId ? (
+                    <Link
+                      to="/sales/quotes/$quoteId"
+                      params={{ quoteId: order.sourceQuoteId }}
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      Quotation {order.sourceQuoteNumber}
+                    </Link>
+                  ) : (
+                    <>Quotation {order.sourceQuoteNumber}</>
+                  )}
+                </dd>
+              </div>
+            ) : null}
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Payment terms</dt>
               <dd>{order.paymentTerms || "—"}</dd>

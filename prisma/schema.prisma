@@ -1547,6 +1547,8 @@ model Quote {
   salesRepIdSnapshot   String?
   salesRepCodeSnapshot String?
   salesRepNameSnapshot String?
+  /// Historical prepared-by contact details (name/title/email/phone) for quote email/print.
+  preparedBySnapshot   Json?
   paymentTermsSnapshot String?
   createdById  String?
   publicToken  String?     @unique

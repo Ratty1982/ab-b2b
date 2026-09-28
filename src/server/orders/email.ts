@@ -50,6 +50,8 @@ export type OrderEmailSnapshot = {
   autopartCustomerCodeSnapshot: string | null;
   salesRepNameSnapshot: string | null;
   salesRepCodeSnapshot: string | null;
+  /** Present when the order was created from an accepted quotation. */
+  sourceQuoteNumber: string | null;
   portalOrderUrl: string;
   adminOrderUrl: string;
 };
@@ -161,6 +163,9 @@ export function buildOrderReceivedCustomerBodies(
   html: string;
 } {
   const ref = order.poNumber ? ` (your reference: ${order.poNumber})` : "";
+  const quoteLine = order.sourceQuoteNumber
+    ? `Created from quotation ${order.sourceQuoteNumber}`
+    : null;
   const delivery = formatDelivery(order);
   const subject = `We've received your Automotive Brands order ${order.orderNumber}`;
 
@@ -168,7 +173,7 @@ export function buildOrderReceivedCustomerBodies(
     `Hello ${order.contact.name},`,
     "",
     `We've received your Automotive Brands order ${order.orderNumber}${ref}.`,
-    "",
+    ...(quoteLine ? [quoteLine, ""] : [""]),
     `Company: ${order.companyName}`,
     `Delivery address: ${delivery}`,
     "",
@@ -202,6 +207,11 @@ export function buildOrderReceivedCustomerBodies(
   const bodyHtml = `
 <p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
 <p style="margin:0 0 16px;">We've received your Automotive Brands order <strong>${escapeEmailHtml(order.orderNumber)}</strong>${escapeEmailHtml(ref)}.</p>
+${
+  quoteLine
+    ? `<p style="margin:0 0 16px;">${escapeEmailHtml(quoteLine)}.</p>`
+    : ""
+}
 <p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}<br/>
 <strong>Delivery address:</strong> ${escapeEmailHtml(delivery)}</p>
 ${orderSummaryTableHtml(order)}
@@ -242,8 +252,13 @@ export function buildOrderReceivedInternalBodies(
       : "—";
   const codeSnap = order.autopartCustomerCodeSnapshot ?? "—";
 
+  const quoteOrigin = order.sourceQuoteNumber
+    ? `Created from quotation ${order.sourceQuoteNumber}`
+    : null;
+
   const text = [
     `Order ${order.orderNumber} received for ${order.companyName}.`,
+    ...(quoteOrigin ? [quoteOrigin] : []),
     `Contact: ${order.contact.name} <${order.contact.email}>`,
     `PO/reference: ${order.poNumber ?? "—"}`,
     `Payment terms: ${order.paymentTerms ?? "—"}`,
@@ -268,6 +283,7 @@ export function buildOrderReceivedInternalBodies(
   const bodyHtml = `
 <p style="margin:0 0 16px;">Order <strong>${escapeEmailHtml(order.orderNumber)}</strong> received for <strong>${escapeEmailHtml(order.companyName)}</strong>.</p>
 <p style="margin:0 0 12px;">
+${quoteOrigin ? `${escapeEmailHtml(quoteOrigin)}<br/>` : ""}
 Contact: ${escapeEmailHtml(order.contact.name)} &lt;${escapeEmailHtml(order.contact.email)}&gt;<br/>
 PO/reference: ${escapeEmailHtml(order.poNumber ?? "—")}<br/>
 Payment terms: ${escapeEmailHtml(order.paymentTerms ?? "—")}<br/>

@@ -138,6 +138,24 @@ function PortalOrderDetailPage() {
               <dt className="text-steel">Your reference</dt>
               <dd>{order.poNumber || "—"}</dd>
             </div>
+            {order.sourceQuoteNumber ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Created from</dt>
+                <dd>
+                  {order.sourceQuoteId ? (
+                    <Link
+                      to="/portal/quotes/$quoteId"
+                      params={{ quoteId: order.sourceQuoteId }}
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      Quotation {order.sourceQuoteNumber}
+                    </Link>
+                  ) : (
+                    <>Quotation {order.sourceQuoteNumber}</>
+                  )}
+                </dd>
+              </div>
+            ) : null}
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Contact</dt>
               <dd className="text-right">

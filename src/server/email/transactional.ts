@@ -137,6 +137,7 @@ export async function loadOrderEmailSnapshot(orderId: string): Promise<OrderEmai
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot,
     salesRepNameSnapshot: order.salesRepNameSnapshot,
     salesRepCodeSnapshot: order.salesRepCodeSnapshot,
+    sourceQuoteNumber: order.sourceQuoteNumber ?? null,
     portalOrderUrl: portalOrderUrl(order.id),
     adminOrderUrl: adminOrderUrl(order.id),
   };
