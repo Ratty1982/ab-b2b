@@ -21,18 +21,18 @@ function goodsVatAt20(goodsNet: string) {
 }
 
 describe("trade delivery charge", () => {
-  it("uses £150 goods ex VAT threshold and £5.95 carriage", () => {
-    expect(moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT, 2)).toBe("150.00");
+  it("uses £100 goods ex VAT threshold and £5.95 carriage", () => {
+    expect(moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT, 2)).toBe("100.00");
     expect(moneyToString(TRADE_DELIVERY_CHARGE_EX_VAT, 2)).toBe("5.95");
   });
 
   it.each([
     ["0.00", "5.95"],
     ["25.72", "5.95"],
-    ["149.98", "5.95"],
-    ["149.99", "5.95"],
-    ["150.00", "0.00"],
-    ["150.01", "0.00"],
+    ["99.98", "5.95"],
+    ["99.99", "5.95"],
+    ["100.00", "0.00"],
+    ["100.01", "0.00"],
     ["500.00", "0.00"],
   ] as const)("goods %s → delivery %s", (goods, delivery) => {
     expect(moneyToString(calculateTradeDeliveryNet(parseMoney(goods)!), 2)).toBe(delivery);
@@ -49,14 +49,14 @@ describe("trade delivery charge", () => {
     expect(moneyToString(shot.vatTotal, 2)).toBe("6.33");
     expect(moneyToString(shot.grandTotal, 2)).toBe("38.00");
     expect(shot.freeDelivery).toBe(false);
-    expect(moneyToString(shot.amountToFreeDelivery!, 2)).toBe("124.28");
+    expect(moneyToString(shot.amountToFreeDelivery!, 2)).toBe("74.28");
   });
 
-  it("gives FREE delivery at exactly £150.00 goods", () => {
-    const goods = parseMoney("150.00")!;
+  it("gives FREE delivery at exactly £100.00 goods", () => {
+    const goods = parseMoney("100.00")!;
     const totals = calculateTradeOrderTotals({
       goodsNet: goods,
-      goodsVat: goodsVatAt20("150.00"),
+      goodsVat: goodsVatAt20("100.00"),
       companyTaxStatus: "STANDARD",
     });
     expect(totals.freeDelivery).toBe(true);
@@ -67,10 +67,10 @@ describe("trade delivery charge", () => {
     expect(dto.deliveryTotal).toBe("0.00");
   });
 
-  it("charges delivery just below threshold (£149.99)", () => {
+  it("charges delivery just below threshold (£99.99)", () => {
     const totals = calculateTradeOrderTotals({
-      goodsNet: parseMoney("149.99")!,
-      goodsVat: goodsVatAt20("149.99"),
+      goodsNet: parseMoney("99.99")!,
+      goodsVat: goodsVatAt20("99.99"),
       companyTaxStatus: "STANDARD",
     });
     expect(moneyToString(totals.deliveryNet, 2)).toBe("5.95");
@@ -89,14 +89,14 @@ describe("trade delivery charge", () => {
     expect(moneyToString(totals.deliveryNet, 2)).toBe("5.95");
     expect(moneyToString(totals.vatTotal, 2)).toBe("10.05");
     expect(moneyToString(totals.grandTotal, 2)).toBe("60.28");
-    expect(moneyToString(totals.amountToFreeDelivery!, 2)).toBe("105.72");
-    expect(totals.progressPercent).toBe(29.52);
+    expect(moneyToString(totals.amountToFreeDelivery!, 2)).toBe("55.72");
+    expect(totals.progressPercent).toBe(44.28);
     expect(totals.freeDelivery).toBe(false);
 
     const dto = tradeDeliveryTotalsDto(totals);
-    expect(dto.thresholdExVat).toBe("150.00");
-    expect(dto.progressPercent).toBe(29.52);
-    expect(dto.amountToFreeDelivery).toBe("105.72");
+    expect(dto.thresholdExVat).toBe("100.00");
+    expect(dto.progressPercent).toBe(44.28);
+    expect(dto.amountToFreeDelivery).toBe("55.72");
     expect(dto.deliveryLabel).toBe("£5.95");
   });
 
@@ -108,7 +108,7 @@ describe("trade delivery charge", () => {
     });
     expect(totals.freeDelivery).toBe(true);
     expect(totals.progressPercent).toBe(100);
-    expect(freeDeliveryProgressPercent(parseMoney("150.00")!)).toBe(100);
+    expect(freeDeliveryProgressPercent(parseMoney("100.00")!)).toBe(100);
     expect(freeDeliveryProgressPercent(parseMoney("0.00")!)).toBe(0);
   });
 

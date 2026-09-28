@@ -45,8 +45,8 @@ Authoritative money precision: **4dp** commercial, **2dp** customer display (HAL
 
 Uses `calculateTradeOrderTotals`:
 
-- Goods ex VAT &lt; £150 → £5.95 delivery ex VAT  
-- Goods ex VAT ≥ £150 → FREE  
+- Goods ex VAT &lt; £100 → £5.95 delivery ex VAT  
+- Goods ex VAT ≥ £100 → FREE  
 
 VAT respects company tax status. Totals snapshotted on the quote. Delivery override (authorised) is audited and not silently recalculated after send.
 

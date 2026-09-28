@@ -74,7 +74,7 @@ afterAll(async () => {
 });
 
 describe("trade delivery on placeOrder", () => {
-  it("snapshots £5.95 delivery under £150 and FREE at/above £150", async () => {
+  it("snapshots £5.95 delivery under £100 and FREE at/above £100", async () => {
     const stamp = Date.now();
 
     // Under threshold: 1 case × £25.72 = £25.72 → delivery £5.95, VAT £6.33, gross £38.00
@@ -200,7 +200,7 @@ describe("trade delivery on placeOrder", () => {
     expect(email.html).toContain("£5.95");
     expect(email.html).not.toContain("Confirmed to your trade account terms");
 
-    // Free delivery: 6 × £25.72 = £154.32 ≥ £150
+    // Free delivery: 6 × £25.72 = £154.32 ≥ £100
     const company2 = await prisma.company.create({
       data: {
         name: `Deliv Free ${stamp}`,

@@ -104,7 +104,7 @@ Rules:
 
 - `deliveryTotal` snapshot **> 0** → emit one `SDEL` row  
 - `deliveryTotal` snapshot **= 0.00** (free delivery) → **no** `SDEL` row  
-- Do **not** re-run the £150 free-delivery rule at export time — use the historical snapshot only  
+- Do **not** re-run the £100 free-delivery rule at export time — use the historical snapshot only  
 - The CSV `Shipping` column is always `0.00` so carriage is **not** double-counted as SDEL + Shipping  
 
 Example (AB-000003):

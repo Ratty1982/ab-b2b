@@ -20,7 +20,7 @@ import {
 } from "@/domain/money";
 
 /** Free delivery when goods net (ex VAT) is at or above this amount. */
-export const TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT = parseMoney("150.00")!;
+export const TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT = parseMoney("100.00")!;
 
 /** Flat carriage when goods net is below the free-delivery threshold. */
 export const TRADE_DELIVERY_CHARGE_EX_VAT = parseMoney("5.95")!;
@@ -48,7 +48,7 @@ export function freeDeliveryProgressPercent(goodsNetExVat: Money): number {
   const threshold = TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT;
   if (threshold.minor <= 0n) return 100;
   if (goodsNetExVat.minor <= 0n) return 0;
-  // Two decimal places of percent: (goods * 10_000) / threshold → e.g. 2952 → 29.52
+  // Two decimal places of percent: (goods * 10_000) / threshold → e.g. 4428 → 44.28
   const scaled = (goodsNetExVat.minor * 10_000n) / threshold.minor;
   const capped = scaled > 10_000n ? 10_000n : scaled;
   return Number(capped) / 100;
@@ -56,7 +56,7 @@ export function freeDeliveryProgressPercent(goodsNetExVat: Money): number {
 
 /**
  * Delivery net ex VAT from goods subtotal ex VAT.
- * £0.00–£149.99 → £5.95; £150.00+ → £0.00.
+ * £0.00–£99.99 → £5.95; £100.00+ → £0.00.
  */
 export function calculateTradeDeliveryNet(goodsNetExVat: Money): Money {
   if (goodsNetExVat.minor < 0n) {

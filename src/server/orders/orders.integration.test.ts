@@ -183,7 +183,7 @@ describe("Phase 6B checkout order creation", () => {
     expect(result.order.items).toHaveLength(1);
     expect(result.order.items[0]!.qty).toBe(24);
     expect(result.order.items[0]!.orderingMode).toBe("CASE");
-    // 24 × £3.25 = £78.00 goods → £5.95 delivery (below £150)
+    // 24 × £3.25 = £78.00 goods → £5.95 delivery (below £100)
     expect(result.order.subtotal).toBe("78.00");
     expect(result.order.deliveryTotal).toBe("5.95");
     expect(Number(result.order.grandTotal)).toBeGreaterThan(Number(result.order.subtotal));

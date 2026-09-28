@@ -160,8 +160,8 @@ describe("Phase 6A basket ordering", () => {
     expect(first.totals.netDisplay).toBe("39.00");
     expect(first.delivery.deliveryNetDisplay).toBe("5.95");
     expect(first.delivery.freeDelivery).toBe(false);
-    expect(first.delivery.amountToFreeDeliveryDisplay).toBe("111.00");
-    expect(first.delivery.thresholdExVatDisplay).toBe("150.00");
+    expect(first.delivery.amountToFreeDeliveryDisplay).toBe("61.00");
+    expect(first.delivery.thresholdExVatDisplay).toBe("100.00");
     expect(first.delivery.progressPercent).toBeGreaterThan(0);
     expect(first.delivery.progressPercent).toBeLessThan(100);
 

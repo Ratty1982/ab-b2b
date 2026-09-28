@@ -188,7 +188,7 @@ describe("Quote numbering", () => {
 });
 
 describe("Quote draft / pricing / delivery / VAT", () => {
-  it("creates draft, resolves pricing, applies free delivery at £150+, snapshots override", async () => {
+  it("creates draft, resolves pricing, applies free delivery at £100+, snapshots override", async () => {
     const sku = `QT-PR-${Date.now()}`;
     const variant = await seedVariant(sku, 12.5, 12);
     const { company, contact, address } = await seedCompany(`Quote Price Co ${sku}`);
@@ -222,7 +222,7 @@ describe("Quote draft / pricing / delivery / VAT", () => {
     expect(withLines.deliveryTotal).toBe("5.95");
     expect(Number(withLines.vatTotal)).toBeGreaterThan(0);
 
-    // Raise to free delivery (≥ £150 goods)
+    // Raise to free delivery (≥ £100 goods)
     const freeDel = await updateQuoteDraft(adminId, {
       id: draft.id,
       lines: [{ variantId: variant.id, qty: 48, quotedUnitPrice: "3.5000" }],

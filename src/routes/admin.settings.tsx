@@ -203,10 +203,10 @@ function AdminSettings() {
               <input className={inputClass} defaultValue="£25.00" />
             </Field>
             <Field label="Free delivery threshold">
-              <input className={inputClass} defaultValue="£250.00" />
+              <input className={inputClass} defaultValue="£100.00" />
             </Field>
             <Field label="Standard carriage charge">
-              <input className={inputClass} defaultValue="£8.95" />
+              <input className={inputClass} defaultValue="£5.95" />
             </Field>
           </div>
         </section>
