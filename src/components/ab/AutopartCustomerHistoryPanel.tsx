@@ -262,7 +262,9 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
       <section className="rounded-lg border border-border p-5">
         <h2 className="font-display text-base font-semibold uppercase">Verified account aliases</h2>
         <p className="mt-2 text-[12px] text-steel">
-          Exact aliases only — never prefix matching (YORKMOT ≠ YORKMOTO unless explicitly verified).
+          Aliases are only required for genuine alternative Autopart account codes. Legacy
+          shortened account fields used by supported reports such as 561L are validated
+          automatically.
         </p>
         {workspace.aliases.length ? (
           <ul className="mt-3 space-y-1 text-[13px]">
@@ -350,7 +352,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         </div>
         {historyPreview ? (
           <div className="mt-4 space-y-3 rounded-md border border-border/70 bg-surface/40 p-3 text-[12px]">
-            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
                   Report customer
@@ -358,16 +360,8 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                 <dd className="mt-0.5 font-semibold num">
                   {historyPreview.accountMatch?.reportCustomer ??
                     historyPreview.reportCustomer ??
-                    "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[10px] font-semibold uppercase tracking-wide text-steel">
-                  561L row account
-                </dt>
-                <dd className="mt-0.5 font-semibold num">
-                  {historyPreview.accountMatch?.rowAccount ??
-                    historyPreview.rowAccount561l ??
+                    historyPreview.accountMatch?.slrbAccount ??
+                    historyPreview.slrbAccount ??
                     "—"}
                 </dd>
               </div>
@@ -386,35 +380,34 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                   Status
                 </dt>
                 <dd className="mt-0.5 font-semibold">
-                  {historyPreview.accountMatch?.status === "MATCHED_REPORT_CUSTOMER"
+                  {historyPreview.accountMatch?.status === "MATCHED_REPORT_CUSTOMER" ||
+                  historyPreview.accountMatch?.status === "MATCHED"
                     ? "Matched"
                     : historyPreview.accountMatch?.status === "MATCHED_TRUNCATED"
                       ? "Matched — shortened report account"
                       : historyPreview.accountMatch?.status === "MATCHED_ALIAS"
                         ? "Matched via verified alias"
-                        : historyPreview.accountMatch?.status === "MATCHED"
-                          ? "Matched"
-                          : historyPreview.accountMatch?.status === "ALIAS_REQUIRED"
-                            ? "Account alias required"
-                            : historyPreview.accountMatch?.status === "MULTIPLE_ACCOUNTS"
-                              ? "Multiple accounts detected"
-                              : historyPreview.accountMatch?.status === "AMBIGUOUS_TRUNCATED"
-                                ? "Ambiguous truncated account"
-                                : historyPreview.accountMatch?.ok
-                                  ? "Matched"
-                                  : "Mismatch"}
+                        : historyPreview.accountMatch?.status === "ALIAS_REQUIRED"
+                          ? "Account alias required"
+                          : historyPreview.accountMatch?.status === "MULTIPLE_ACCOUNTS"
+                            ? "Multiple accounts detected"
+                            : historyPreview.accountMatch?.status === "AMBIGUOUS_TRUNCATED"
+                              ? "Ambiguous truncated account"
+                              : historyPreview.accountMatch?.ok
+                                ? "Matched"
+                                : "Mismatch"}
                 </dd>
               </div>
             </dl>
-            {historyPreview.accountMatch?.status === "MATCHED_REPORT_CUSTOMER" &&
+            {historyPreview.accountMatch?.ok &&
             historyPreview.accountMatch.rowAccount &&
-            historyPreview.accountMatch.reportCustomer &&
+            historyPreview.accountMatch.verifiedAccount &&
             historyPreview.accountMatch.rowAccount !==
-              historyPreview.accountMatch.reportCustomer ? (
+              historyPreview.accountMatch.verifiedAccount ? (
               <p className="text-[11px] text-steel">
-                561L uses a {historyPreview.accountMatch.accountFieldWidth ?? 7}-character
-                account field. The report itself was generated for{" "}
-                {historyPreview.accountMatch.reportCustomer}.
+                561L account code {historyPreview.accountMatch.rowAccount} — 561L uses a
+                shortened {historyPreview.accountMatch.accountFieldWidth ?? 7}-character
+                account field.
               </p>
             ) : null}
             {historyPreview.accountMatch?.status === "MULTIPLE_ACCOUNTS" &&

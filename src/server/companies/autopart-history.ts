@@ -103,13 +103,99 @@ export type HistoricAccountMatchStatus =
   | "NO_ACCOUNT";
 
 /**
- * Resolve 561L/SLRB report account(s) against a verified company.
+ * Source-aware historic account identity.
+ * Do NOT flatten these into one set of equivalent full customer codes —
+ * 561L `.Acct.` is a legacy shortened representation of the same customer.
+ */
+export type HistoricAccountIdentity = {
+  /** `[Start Customer XXX]` from 561L and/or SLRB selection parameters. */
+  reportCustomer: string | null;
+  /** Body-level 561L `.Acct.` values (often 7-char, e.g. YORKMOT). */
+  rowAccounts561l: string[];
+  /** SLRB A/C values (full codes, e.g. YORKMOTO). */
+  accountsSlrb: string[];
+  /** Confirmed 561L account field width when known (native layout = 7). */
+  accountFieldWidth561l: number | null;
+};
+
+function uniqAccounts(codes: Array<string | null | undefined>): string[] {
+  return [
+    ...new Set(codes.map((a) => normaliseAccountToken(a)).filter(Boolean)),
+  ] as string[];
+}
+
+/** True when `short` is the expected N-char printed form of `full`. */
+function isShortAccountOf(short: string, full: string, width: number): boolean {
+  return short.length === width && full.length >= width && full.slice(0, width) === short;
+}
+
+/**
+ * Derive the expected 561L representation of a full account.
+ * Prefer parser-confirmed width; else infer from consistent row accounts that
+ * are a proper prefix of the full account (never blind global prefix matching).
+ */
+function expected561lForm(
+  fullAccount: string,
+  width: number | null,
+  rowAccounts: string[],
+): { width: number; expected: string } | null {
+  if (width != null && width >= 4 && width <= 12 && fullAccount.length >= width) {
+    return { width, expected: fullAccount.slice(0, width) };
+  }
+  if (rowAccounts.length === 0) return null;
+  const lengths = new Set(rowAccounts.map((r) => r.length));
+  if (lengths.size !== 1) return null;
+  const w = rowAccounts[0]!.length;
+  if (w < 4 || w > 12 || w >= fullAccount.length) return null;
+  if (!rowAccounts.every((r) => isShortAccountOf(r, fullAccount, w))) return null;
+  return { width: w, expected: fullAccount.slice(0, w) };
+}
+
+function rowAccountAcceptable(
+  row: string,
+  fullAccount: string,
+  acceptedAccounts: Set<string>,
+  width: number | null,
+  allRows: string[],
+): boolean {
+  if (row === fullAccount || acceptedAccounts.has(row)) return true;
+  const form = expected561lForm(fullAccount, width, allRows.length ? allRows : [row]);
+  if (form && isShortAccountOf(row, fullAccount, form.width)) return true;
+  // Also accept when parser width alone confirms the slice
+  if (width != null && isShortAccountOf(row, fullAccount, width)) return true;
+  return false;
+}
+
+async function truncatedFormAmbiguous(input: {
+  companyId: string;
+  truncated: string;
+  width: number;
+}): Promise<boolean> {
+  const conflicts = await prisma.company.findMany({
+    where: {
+      id: { not: input.companyId },
+      autopartCustomerCodeVerifiedAt: { not: null },
+      autopartCustomerCode: { not: null },
+    },
+    select: { autopartCustomerCode: true },
+  });
+  return conflicts.some((c) => {
+    const code = normaliseAccountToken(c.autopartCustomerCode);
+    return Boolean(
+      code && code.length >= input.width && code.slice(0, input.width) === input.truncated,
+    );
+  });
+}
+
+/**
+ * Resolve 561L/SLRB account identity against a verified company.
  *
- * Preference order:
- * 1. `[Start Customer XXX]` report selection — exact match to verified (no alias).
- * 2. Exact verified / alias match on structurally extracted row accounts.
- * 3. Truncation only when parsers confirmed account field width AND row account
- *    is a clean prefix of verified (e.g. YORKMOT width 7 → YORKMOTO).
+ * Source-aware rules (not a flat set of equivalent codes):
+ * - Report `[Start Customer]` and SLRB A/C are full account identities.
+ * - 561L `.Acct.` may be the legacy shortened form (e.g. YORKMOT for YORKMOTO)
+ *   and is validated as that representation — never requires an alias.
+ * - Truncation matching applies only to 561L (or legacy pairs with no full
+ *   identity). SLRB conflicting full codes still block.
  *
  * 407P100 must NOT use this helper.
  */
@@ -117,18 +203,21 @@ export async function resolveHistoricReportAccountMatch(input: {
   companyId: string;
   verifiedCode: string | null;
   acceptedAccounts: Set<string>;
-  detectedAccounts: string[];
-  accountFieldWidth: number | null;
-  /** From `[Start Customer …]` on 561L and/or SLRB. */
+  /** @deprecated Prefer identity.* — kept for older call sites/tests. */
+  detectedAccounts?: string[];
+  /** @deprecated Prefer identity.accountFieldWidth561l */
+  accountFieldWidth?: number | null;
   reportStartCustomer?: string | null;
   reportEndCustomer?: string | null;
-  /** 561L body-level row accounts only (e.g. YORKMOT). */
   rowAccounts561l?: string[];
+  accountsSlrb?: string[];
+  identity?: Partial<HistoricAccountIdentity>;
 }): Promise<{
   status: HistoricAccountMatchStatus;
   sourceAccount: string | null;
   reportCustomer: string | null;
   rowAccount: string | null;
+  slrbAccount: string | null;
   verifiedAccount: string | null;
   accountFieldWidth: number | null;
   ok: boolean;
@@ -137,174 +226,322 @@ export async function resolveHistoricReportAccountMatch(input: {
   multipleAccounts: string[];
 }> {
   const verified = input.verifiedCode ? normaliseAccountToken(input.verifiedCode) : null;
-  const reportCustomer = input.reportStartCustomer
-    ? normaliseAccountToken(input.reportStartCustomer)
-    : null;
-  const rowAccounts = [
-    ...new Set(
-      (input.rowAccounts561l ?? []).map((a) => normaliseAccountToken(a)).filter(Boolean),
-    ),
-  ] as string[];
-  const detected = [
-    ...new Set(input.detectedAccounts.map((a) => normaliseAccountToken(a)).filter(Boolean)),
-  ] as string[];
-  const width = input.accountFieldWidth;
+  const reportCustomer =
+    normaliseAccountToken(input.identity?.reportCustomer ?? input.reportStartCustomer) ?? null;
+  const rowAccounts = uniqAccounts([
+    ...(input.identity?.rowAccounts561l ?? input.rowAccounts561l ?? []),
+  ]);
+  const accountsSlrb = uniqAccounts([
+    ...(input.identity?.accountsSlrb ?? input.accountsSlrb ?? []),
+  ]);
+  // Legacy flat detectedAccounts: only used when source arrays were not provided
+  const legacyFlat = uniqAccounts(input.detectedAccounts ?? []);
+  const usedLegacyFlat =
+    rowAccounts.length === 0 &&
+    accountsSlrb.length === 0 &&
+    !reportCustomer &&
+    legacyFlat.length > 0;
+  const effectiveRows = usedLegacyFlat ? legacyFlat : rowAccounts;
+  const effectiveSlrb = usedLegacyFlat ? [] : accountsSlrb;
+  const width =
+    input.identity?.accountFieldWidth561l ?? input.accountFieldWidth ?? null;
 
-  const empty = {
+  const base = {
     reportCustomer,
-    rowAccount: rowAccounts.length === 1 ? rowAccounts[0]! : rowAccounts[0] ?? null,
+    rowAccount: effectiveRows.length === 1 ? effectiveRows[0]! : effectiveRows[0] ?? null,
+    slrbAccount: effectiveSlrb.length === 1 ? effectiveSlrb[0]! : effectiveSlrb[0] ?? null,
     verifiedAccount: verified,
     accountFieldWidth: width,
     suggestedAlias: null as string | null,
     multipleAccounts: [] as string[],
   };
 
-  // Authoritative report selection customer (exact)
-  if (reportCustomer && verified && reportCustomer === verified) {
-    // Supporting check: 561L 7-char row accounts must be consistent truncations
-    const inconsistent = rowAccounts.filter(
-      (r) => !(width && r.length === width && verified.slice(0, width) === r) && r !== verified,
-    );
-    if (inconsistent.length) {
-      return {
-        status: "MISMATCH",
-        sourceAccount: reportCustomer,
-        ...empty,
-        ok: false,
-        message: `Report customer ${reportCustomer} matches verified account, but 561L row account(s) ${inconsistent.join(", ")} are inconsistent with the ${width ?? "N"}-character row representation.`,
-        multipleAccounts: inconsistent,
-      };
-    }
+  const hasAny =
+    Boolean(reportCustomer) || effectiveRows.length > 0 || effectiveSlrb.length > 0;
+  if (!hasAny) {
     return {
-      status: "MATCHED_REPORT_CUSTOMER",
-      sourceAccount: reportCustomer,
-      ...empty,
-      ok: true,
-      message:
-        width && rowAccounts.length === 1 && rowAccounts[0] !== verified
-          ? `Matched — report generated for ${reportCustomer}. 561L uses a ${width}-character account field (${rowAccounts[0]}).`
-          : `Matched — report generated for verified Autopart account ${reportCustomer}.`,
+      status: "NO_ACCOUNT",
+      sourceAccount: null,
+      ...base,
+      ok: false,
+      message: "No Autopart account codes detected in the uploaded reports.",
     };
   }
 
-  if (reportCustomer && verified && reportCustomer !== verified) {
-    const acceptedReport = input.acceptedAccounts.has(reportCustomer);
-    if (acceptedReport) {
+  if (!verified) {
+    return {
+      status: "NO_ACCOUNT",
+      sourceAccount: reportCustomer ?? effectiveSlrb[0] ?? effectiveRows[0] ?? null,
+      ...base,
+      ok: false,
+      message: "Company Autopart account must be staff-verified before historic import.",
+    };
+  }
+
+  // Multiple distinct 561L row accounts that are not all the same shortened form
+  if (effectiveRows.length > 1) {
+    const form = expected561lForm(verified, width, effectiveRows);
+    const allOk = effectiveRows.every(
+      (r) =>
+        r === verified ||
+        input.acceptedAccounts.has(r) ||
+        (form != null && isShortAccountOf(r, verified, form.width)),
+    );
+    if (!allOk) {
       return {
-        status: "MATCHED_ALIAS",
-        sourceAccount: reportCustomer,
-        ...empty,
-        ok: true,
-        message: `Matched via verified account alias (report customer ${reportCustomer}).`,
+        status: "MULTIPLE_ACCOUNTS",
+        sourceAccount: null,
+        ...base,
+        ok: false,
+        message: `Multiple 561L row accounts detected: ${effectiveRows.join(", ")}. Per-customer historic import expects a single customer.`,
+        multipleAccounts: effectiveRows,
       };
     }
+  }
+
+  // Multiple distinct SLRB full accounts
+  if (effectiveSlrb.length > 1) {
+    const allAccepted = effectiveSlrb.every((a) => input.acceptedAccounts.has(a));
+    if (!allAccepted) {
+      return {
+        status: "MULTIPLE_ACCOUNTS",
+        sourceAccount: null,
+        ...base,
+        ok: false,
+        message: `Multiple SLRB accounts detected: ${effectiveSlrb.join(", ")}. Per-customer historic import expects a single customer.`,
+        multipleAccounts: effectiveSlrb,
+      };
+    }
+  }
+
+  // Report customer vs SLRB full-account conflict (both are full identities)
+  if (
+    reportCustomer &&
+    effectiveSlrb.length > 0 &&
+    effectiveSlrb.some((a) => a !== reportCustomer && !input.acceptedAccounts.has(a))
+  ) {
+    const foreign = effectiveSlrb.filter((a) => a !== reportCustomer);
+    return {
+      status: "MISMATCH",
+      sourceAccount: reportCustomer,
+      ...base,
+      ok: false,
+      message: `Report customer ${reportCustomer} conflicts with SLRB account(s) ${foreign.join(", ")}.`,
+      multipleAccounts: uniqAccounts([reportCustomer, ...effectiveSlrb]),
+    };
+  }
+
+  // ── Resolve against verified / aliases using FULL identity sources ─────────
+
+  const fullExact =
+    (reportCustomer && (reportCustomer === verified || input.acceptedAccounts.has(reportCustomer))) ||
+    effectiveSlrb.some((a) => a === verified || input.acceptedAccounts.has(a));
+
+  if (reportCustomer && reportCustomer !== verified && !input.acceptedAccounts.has(reportCustomer)) {
     return {
       status: "ALIAS_REQUIRED",
       sourceAccount: reportCustomer,
-      ...empty,
+      ...base,
       ok: false,
       message: `Account alias required: report customer is ${reportCustomer}, verified account is ${verified}.`,
       suggestedAlias: reportCustomer,
     };
   }
 
-  if (!detected.length && !reportCustomer) {
-    return {
-      status: "NO_ACCOUNT",
-      sourceAccount: null,
-      ...empty,
-      ok: false,
-      message: "No Autopart account codes detected in the uploaded reports.",
-    };
-  }
-
-  if (detected.length > 1) {
-    const allAccepted = detected.every((d) => input.acceptedAccounts.has(d));
-    if (!allAccepted) {
-      return {
-        status: "MULTIPLE_ACCOUNTS",
-        sourceAccount: null,
-        ...empty,
-        ok: false,
-        message: `Multiple accounts detected in report: ${detected.join(", ")}. Per-customer historic import expects a single customer.`,
-        multipleAccounts: detected,
-      };
+  // SLRB full account differs from verified while no report-customer match
+  if (!fullExact && effectiveSlrb.length === 1) {
+    const slrb = effectiveSlrb[0]!;
+    if (slrb !== verified && !input.acceptedAccounts.has(slrb)) {
+      // Legacy pair: SLRB also printed the 561L shortened form only
+      const form = expected561lForm(verified, width, effectiveRows.length ? effectiveRows : [slrb]);
+      const slrbIsShort =
+        form != null &&
+        isShortAccountOf(slrb, verified, form.width) &&
+        (effectiveRows.length === 0 ||
+          effectiveRows.every((r) => isShortAccountOf(r, verified, form.width)));
+      if (!slrbIsShort) {
+        return {
+          status: "ALIAS_REQUIRED",
+          sourceAccount: slrb,
+          ...base,
+          ok: false,
+          message: `Account alias required: SLRB account is ${slrb}, verified account is ${verified}.`,
+          suggestedAlias: slrb,
+        };
+      }
+      // fall through to truncated resolution below
     }
   }
 
-  const sourceAccount = detected.length === 1 ? detected[0]! : detected[0] ?? null;
-
-  // Exact verified / alias match for every detected account
-  const exactOk = detected.length > 0 && detected.every((d) => input.acceptedAccounts.has(d));
-  if (exactOk) {
+  if (fullExact) {
     const viaAlias =
-      Boolean(verified) &&
-      detected.some((d) => d !== verified) &&
-      detected.every((d) => input.acceptedAccounts.has(d));
+      (Boolean(reportCustomer) && reportCustomer !== verified && input.acceptedAccounts.has(reportCustomer!)) ||
+      effectiveSlrb.some((a) => a !== verified && input.acceptedAccounts.has(a));
+    const canonical =
+      reportCustomer && (reportCustomer === verified || input.acceptedAccounts.has(reportCustomer))
+        ? reportCustomer
+        : effectiveSlrb.find((a) => a === verified || input.acceptedAccounts.has(a)) ?? verified;
+
+    // 561L shortened rows must be the expected representation of canonical
+    const badRows = effectiveRows.filter(
+      (r) => !rowAccountAcceptable(r, canonical, input.acceptedAccounts, width, effectiveRows),
+    );
+    if (badRows.length) {
+      return {
+        status: "MISMATCH",
+        sourceAccount: canonical,
+        ...base,
+        ok: false,
+        message: `Full report account ${canonical} is valid, but 561L row account(s) ${badRows.join(", ")} are not the expected shortened representation.`,
+        multipleAccounts: badRows,
+      };
+    }
+
+    // SLRB must not introduce a foreign full account once canonical is known
+    const badSlrb = effectiveSlrb.filter(
+      (a) =>
+        a !== canonical &&
+        !input.acceptedAccounts.has(a) &&
+        !rowAccountAcceptable(a, canonical, input.acceptedAccounts, width, effectiveRows),
+    );
+    if (badSlrb.length) {
+      return {
+        status: "MISMATCH",
+        sourceAccount: canonical,
+        ...base,
+        ok: false,
+        message: `SLRB account(s) ${badSlrb.join(", ")} conflict with report customer ${canonical}.`,
+        multipleAccounts: badSlrb,
+      };
+    }
+
+    const form = expected561lForm(canonical, width, effectiveRows);
+    const shortened =
+      form != null &&
+      effectiveRows.length > 0 &&
+      effectiveRows.every((r) => isShortAccountOf(r, canonical, form.width));
+
+    if (viaAlias) {
+      return {
+        status: "MATCHED_ALIAS",
+        sourceAccount: canonical,
+        ...base,
+        accountFieldWidth: form?.width ?? width,
+        ok: true,
+        message: `Matched via verified account alias (${canonical}).`,
+      };
+    }
+    if (reportCustomer && reportCustomer === verified) {
+      return {
+        status: "MATCHED_REPORT_CUSTOMER",
+        sourceAccount: verified,
+        ...base,
+        accountFieldWidth: form?.width ?? width,
+        ok: true,
+        message: shortened
+          ? `Matched — report generated for ${verified}. 561L uses a ${form!.width}-character account field (${form!.expected}).`
+          : `Matched — report generated for verified Autopart account ${verified}.`,
+      };
+    }
     return {
-      status: viaAlias ? "MATCHED_ALIAS" : "MATCHED",
-      sourceAccount,
-      ...empty,
+      status: "MATCHED",
+      sourceAccount: verified,
+      ...base,
+      reportCustomer: reportCustomer ?? (effectiveSlrb.includes(verified) ? verified : null),
+      accountFieldWidth: form?.width ?? width,
       ok: true,
-      message: viaAlias
-        ? "Matched via verified account alias"
-        : "Matched verified Autopart account",
+      message: shortened
+        ? `Matched verified Autopart account ${verified}. 561L uses a shortened ${form!.width}-character account field (${form!.expected}).`
+        : `Matched verified Autopart account ${verified}.`,
     };
   }
 
-  if (width && verified && detected.length === 1) {
-    const reportAcct = detected[0]!;
-    if (reportAcct.length === width && verified.slice(0, width) === reportAcct) {
-      const conflicts = await prisma.company.findMany({
-        where: {
-          id: { not: input.companyId },
-          autopartCustomerCodeVerifiedAt: { not: null },
-          autopartCustomerCode: { not: null },
-        },
-        select: { id: true, autopartCustomerCode: true },
-      });
-      const ambiguous = conflicts.some((c) => {
-        const code = normaliseAccountToken(c.autopartCustomerCode);
-        return Boolean(code && code.length >= width && code.slice(0, width) === reportAcct);
+  // ── No full identity matched verified: 561L-only (or legacy short SLRB) truncation ──
+  const shortCandidates = uniqAccounts([
+    ...effectiveRows,
+    ...effectiveSlrb.filter((a) => {
+      const form = expected561lForm(verified, width, [a]);
+      return form != null && isShortAccountOf(a, verified, form.width);
+    }),
+  ]);
+
+  if (shortCandidates.length === 1 && verified) {
+    const reportAcct = shortCandidates[0]!;
+    const form = expected561lForm(verified, width, [reportAcct]);
+    if (form && isShortAccountOf(reportAcct, verified, form.width)) {
+      // Foreign SLRB full codes already handled above; only short/legacy remains
+      const ambiguous = await truncatedFormAmbiguous({
+        companyId: input.companyId,
+        truncated: reportAcct,
+        width: form.width,
       });
       if (ambiguous) {
         return {
           status: "AMBIGUOUS_TRUNCATED",
           sourceAccount: reportAcct,
-          ...empty,
+          ...base,
+          accountFieldWidth: form.width,
           ok: false,
-          message: `Ambiguous truncated account ${reportAcct} — multiple verified Autopart accounts share this ${width}-character report form. Resolve manually (alias or account correction).`,
+          message: `Ambiguous truncated account ${reportAcct} — multiple verified Autopart accounts share this ${form.width}-character report form. Resolve manually (alias or account correction).`,
         };
       }
       return {
         status: "MATCHED_TRUNCATED",
         sourceAccount: reportAcct,
-        ...empty,
+        ...base,
+        accountFieldWidth: form.width,
         ok: true,
         message: `Matched — Autopart report uses shortened account code (${reportAcct} → ${verified})`,
       };
     }
   }
 
-  if (detected.length === 1 && verified && detected[0] !== verified) {
+  // Single foreign full-looking code (legacy flat / SLRB) → alias required
+  const foreignFull = uniqAccounts([
+    ...(reportCustomer ? [reportCustomer] : []),
+    ...effectiveSlrb,
+    ...(usedLegacyFlat ? legacyFlat : []),
+  ]).filter((a) => a !== verified && !input.acceptedAccounts.has(a));
+
+  if (foreignFull.length === 1 && effectiveRows.every((r) => r === foreignFull[0])) {
     return {
       status: "ALIAS_REQUIRED",
-      sourceAccount: detected[0]!,
-      ...empty,
+      sourceAccount: foreignFull[0]!,
+      ...base,
       ok: false,
-      message: `Account alias required: report shows ${detected[0]}, verified account is ${verified}.`,
-      suggestedAlias: detected[0]!,
+      message: `Account alias required: report shows ${foreignFull[0]}, verified account is ${verified}.`,
+      suggestedAlias: foreignFull[0]!,
     };
   }
 
+  if (usedLegacyFlat && legacyFlat.length === 1 && legacyFlat[0] !== verified) {
+    const only = legacyFlat[0]!;
+    const form = expected561lForm(verified, width, [only]);
+    if (!(form && isShortAccountOf(only, verified, form.width))) {
+      return {
+        status: "ALIAS_REQUIRED",
+        sourceAccount: only,
+        ...base,
+        ok: false,
+        message: `Account alias required: report shows ${only}, verified account is ${verified}.`,
+        suggestedAlias: only,
+      };
+    }
+  }
+
+  const shown = uniqAccounts([
+    reportCustomer,
+    ...effectiveSlrb,
+    ...effectiveRows,
+  ]);
   return {
     status: "MISMATCH",
-    sourceAccount,
-    ...empty,
+    sourceAccount: shown[0] ?? null,
+    ...base,
     ok: false,
-    message: `Detected account(s) ${detected.join(", ") || "—"} do not match verified account ${verified ?? "—"}.`,
-    suggestedAlias: detected.length === 1 ? detected[0]! : null,
-    multipleAccounts: detected.length > 1 ? detected : [],
+    message: `Detected account(s) ${shown.join(", ") || "—"} do not match verified account ${verified}.`,
+    suggestedAlias: shown.length === 1 ? shown[0]! : null,
+    multipleAccounts: shown.length > 1 ? shown : [],
   };
 }
 
@@ -579,27 +816,35 @@ async function buildHistoryPreview(
     parsed561.reportStartCustomer ?? parsedSlrb.reportStartCustomer ?? null;
   const reportEndCustomer =
     parsed561.reportEndCustomer ?? parsedSlrb.reportEndCustomer ?? null;
-  // Prefer report selection customer; fall back to structurally extracted row accounts only.
-  const detected = [
-    ...new Set(
-      [
-        ...(reportStartCustomer ? [reportStartCustomer] : []),
-        ...parsed561.detectedAccounts,
-        ...parsedSlrb.detectedAccounts,
-      ].filter(Boolean),
-    ),
-  ] as string[];
-  const accountFieldWidth = parsed561.accountFieldWidth ?? null;
+  // Source-aware identity — do NOT flatten 561L short + SLRB full into one set.
+  const identity: HistoricAccountIdentity = {
+    reportCustomer: reportStartCustomer,
+    rowAccounts561l: parsed561.detectedAccounts,
+    accountsSlrb: parsedSlrb.detectedAccounts,
+    accountFieldWidth561l: parsed561.accountFieldWidth,
+  };
   const accountMatch = await resolveHistoricReportAccountMatch({
     companyId: input.companyId,
     verifiedCode,
     acceptedAccounts: accepted,
-    detectedAccounts: detected,
-    accountFieldWidth,
+    identity,
     reportStartCustomer,
     reportEndCustomer,
-    rowAccounts561l: parsed561.detectedAccounts,
+    rowAccounts561l: identity.rowAccounts561l,
+    accountsSlrb: identity.accountsSlrb,
+    accountFieldWidth: identity.accountFieldWidth561l,
   });
+  // Display set: full identities first, then 561L row form (informational).
+  const detected = [
+    ...new Set(
+      [
+        accountMatch.reportCustomer,
+        accountMatch.slrbAccount,
+        ...identity.accountsSlrb,
+        ...identity.rowAccounts561l,
+      ].filter(Boolean),
+    ),
+  ] as string[];
   if (!accountMatch.ok) {
     issues.push({
       severity: "BLOCKING",
@@ -617,14 +862,20 @@ async function buildHistoryPreview(
     });
   } else if (
     accountMatch.status === "MATCHED_TRUNCATED" ||
-    accountMatch.status === "MATCHED_REPORT_CUSTOMER"
+    accountMatch.status === "MATCHED_REPORT_CUSTOMER" ||
+    (accountMatch.status === "MATCHED" &&
+      accountMatch.rowAccount &&
+      accountMatch.verifiedAccount &&
+      accountMatch.rowAccount !== accountMatch.verifiedAccount)
   ) {
     issues.push({
       severity: "INFO",
       code:
         accountMatch.status === "MATCHED_REPORT_CUSTOMER"
           ? "ACCOUNT_REPORT_CUSTOMER_MATCH"
-          : "ACCOUNT_TRUNCATED_MATCH",
+          : accountMatch.status === "MATCHED_TRUNCATED"
+            ? "ACCOUNT_TRUNCATED_MATCH"
+            : "ACCOUNT_561L_SHORT_FIELD",
       message: accountMatch.message ?? "Matched report account.",
     });
   }
@@ -708,17 +959,16 @@ async function buildHistoryPreview(
     verifiedAccount: verifiedCode,
     /** Clean detected Autopart account codes only (never financial values). */
     detectedAccounts: detected,
-    reportCustomer: reportStartCustomer,
-    rowAccount561l:
-      parsed561.detectedAccounts.length === 1
-        ? parsed561.detectedAccounts[0]!
-        : parsed561.detectedAccounts[0] ?? null,
+    reportCustomer: accountMatch.reportCustomer ?? reportStartCustomer,
+    rowAccount561l: accountMatch.rowAccount,
+    slrbAccount: accountMatch.slrbAccount,
     sourceAccount: accountMatch.sourceAccount,
     accountMatch: {
       status: accountMatch.status,
       sourceAccount: accountMatch.sourceAccount,
       reportCustomer: accountMatch.reportCustomer,
       rowAccount: accountMatch.rowAccount,
+      slrbAccount: accountMatch.slrbAccount,
       verifiedAccount: accountMatch.verifiedAccount,
       accountFieldWidth: accountMatch.accountFieldWidth,
       message: accountMatch.message,

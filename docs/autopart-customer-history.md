@@ -81,11 +81,18 @@ Over-limit raw negatives are preserved (`availableCreditRaw`); UI may show £0 a
 - Account codes are read **only** from the report account column/field (never from Units/Sales/VAT/Run Bal).
 - Pure numeric / money values (e.g. `-104.38`, `-1`) are never treated as account codes.
 - Format detection is **content-based** (`.txt` and `.csv` both accepted; extension is irrelevant).
-- Prefer `[Start Customer XXX]` report selection when present — exact match to verified code is `MATCHED_REPORT_CUSTOMER` (no alias required for `YORKMOT` row truncation when the report was generated for `YORKMOTO`).
-- Exact match to verified code or staff-verified `AutopartCustomerAccountAlias` is also accepted.
-- **561L only (fallback):** when the parser confirms the 7-character `.Acct.` field width and there is no report-customer header, an unambiguous match of the row account to the first N characters of the verified code is `MATCHED_TRUNCATED`. Ambiguous truncations across verified AB accounts → blocked. This does **not** apply to 407P100.
-- Multiple structurally valid customer accounts in a per-customer import → blocked (`MULTIPLE_ACCOUNTS`).
-- No general `startsWith` / fuzzy matching. Portal customers cannot upload reports.
+Account validation is **source-aware** (not a flat set of equivalent codes):
+
+| Source | Semantics |
+|--------|-----------|
+| `[Start Customer XXX]` | Full report customer identity |
+| SLRB `A/C` | Full account (exact / alias) |
+| 561L `.Acct.` | May be the legacy shortened form (e.g. `YORKMOT` for `YORKMOTO`) — validated as that representation, **not** an alias |
+
+- `reportCustomer=YORKMOTO` + `SLRB=YORKMOTO` + `561L=YORKMOT` + verified `YORKMOTO` → **Matched** (no alias).
+- Conflicting SLRB full account (e.g. `OTHERACC`) → blocked.
+- **561L-only fallback:** unambiguous shortened form with no full identity → `MATCHED_TRUNCATED`. Ambiguous across verified AB accounts → blocked. Not used for 407P100.
+- Genuine alternative codes still use `AutopartCustomerAccountAlias`. No global prefix matching.
 
 ## Matching rules
 
