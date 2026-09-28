@@ -190,6 +190,40 @@ export const listSalesRepsFn = createServerFn({ method: "GET" }).handler(async (
   }
 });
 
+export const listSalesRepProfilesFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const sales = await import("@/server/sales/service");
+    return { ok: true as const, data: await sales.listSalesRepProfiles(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getSalesRepProfileFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/sales/service");
+      return { ok: true as const, data: await sales.getSalesRepProfile(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateSalesRepProfileFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/sales/service");
+      return { ok: true as const, data: await sales.updateSalesRepProfile(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPriceListsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

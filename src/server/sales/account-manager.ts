@@ -2,10 +2,10 @@
  * Authoritative customer Account Manager resolver.
  *
  * Source of truth: Company → primary CompanyAssignment → active SalesRep → User,
- * enriched by an optional public TeamMember profile (Website → Team) for
- * customer-facing job title, phone, mobile, and photo.
+ * using SalesRep customer-facing profile fields first, then optional linked
+ * TeamMember enrichment, then User email fallback.
  *
- * Never invents people. Never exposes internal IDs, Autopart data, or notes.
+ * Never invents people. Never exposes internal IDs, Autopart data, roles, or notes.
  */
 import { prisma } from "@/infra/database/client";
 import { cmsMediaPublicPath, cmsFocalStyle } from "@/lib/cms-media";
@@ -14,6 +14,7 @@ import {
   teamMemberDisplayName,
   teamMemberInitials,
 } from "@/domain/team";
+import { defaultSalesRepJobTitle, telHrefFromPhone } from "@/domain/sales-rep-profile";
 import { getEmailFooterMeta } from "@/server/email/settings";
 
 export type AccountManagerPhoto = {
@@ -30,13 +31,13 @@ export type AccountManagerPublic = {
   initials: string;
   /** Customer-facing job title, or "Account Manager". */
   jobTitle: string;
-  /** Contact email when available. */
+  /** Contact email when customer contact is enabled and available. */
   email: string | null;
-  /** Landline when configured on a contactable TeamMember profile. */
+  /** Landline when customer contact is enabled and configured. */
   phone: string | null;
-  /** Mobile when configured on a contactable TeamMember profile. */
+  /** Mobile when customer contact is enabled and configured. */
   mobile: string | null;
-  /** Profile photo from CMS media when configured. */
+  /** Profile photo when configured. */
   photo: AccountManagerPhoto | null;
   /** mailto: href when email present. */
   mailtoHref: string | null;
@@ -44,6 +45,10 @@ export type AccountManagerPublic = {
   telHref: string | null;
   /** tel: href for mobile when present. */
   mobileTelHref: string | null;
+  /** Preferred CTA: mailto, else landline tel, else mobile tel. */
+  primaryContactHref: string | null;
+  /** Label for primary CTA. */
+  primaryContactLabel: string | null;
 };
 
 export type GeneralTradeContact = {
@@ -51,12 +56,6 @@ export type GeneralTradeContact = {
   email: string | null;
   mailtoHref: string | null;
 };
-
-function telHref(raw: string | null | undefined): string | null {
-  if (!raw?.trim()) return null;
-  const digits = raw.replace(/[^\d+]/g, "");
-  return digits.length >= 7 ? `tel:${digits}` : null;
-}
 
 function mailtoHref(email: string | null | undefined): string | null {
   const e = email?.trim().toLowerCase();
@@ -70,8 +69,11 @@ function initialsFromName(name: string): string {
   return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
 }
 
-const salesRepAmInclude = {
-  user: { select: { name: true, email: true, status: true } },
+export const salesRepAmInclude = {
+  user: { select: { id: true, name: true, email: true, status: true } },
+  photoMedia: {
+    select: { id: true, altText: true, width: true, height: true },
+  },
   publicTeamProfile: {
     include: {
       photoMedia: {
@@ -82,8 +84,19 @@ const salesRepAmInclude = {
 } as const;
 
 type RepWithProfile = {
+  id: string;
   active: boolean;
-  user: { name: string | null; email: string; status: string };
+  displayName: string | null;
+  jobTitle: string | null;
+  businessEmail: string | null;
+  phone: string | null;
+  mobile: string | null;
+  customerContactEnabled: boolean;
+  photoAlt: string | null;
+  photoFocalX: number;
+  photoFocalY: number;
+  photoMedia: { id: string; altText: string | null } | null;
+  user: { id: string; name: string | null; email: string; status: string };
   publicTeamProfile: {
     isPublic: boolean;
     isContactable: boolean;
@@ -104,27 +117,53 @@ function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | nul
   if (!rep.active || rep.user.status !== "ACTIVE") return null;
 
   const profile = rep.publicTeamProfile;
-  const usePublic = Boolean(profile?.isPublic);
-  const contactable = Boolean(usePublic && profile?.isContactable);
+  const teamPublic = Boolean(profile?.isPublic);
+  const teamContactable = Boolean(teamPublic && profile?.isContactable);
+  const contactEnabled = rep.customerContactEnabled !== false;
 
+  const teamName =
+    teamPublic && profile ? teamMemberDisplayName(profile.firstName, profile.lastName) : null;
   const name =
-    usePublic && profile
-      ? teamMemberDisplayName(profile.firstName, profile.lastName)
-      : rep.user.name?.trim() || rep.user.email;
+    rep.displayName?.trim() || teamName || rep.user.name?.trim() || rep.user.email;
 
   const jobTitle =
-    (usePublic && profile ? publicTeamJobTitle(profile.jobTitle) : null) || "Account Manager";
+    rep.jobTitle?.trim() ||
+    (teamPublic && profile ? publicTeamJobTitle(profile.jobTitle) : null) ||
+    defaultSalesRepJobTitle(null);
 
-  const email =
-    contactable && profile?.email?.trim()
-      ? profile.email.trim().toLowerCase()
-      : rep.user.email.trim().toLowerCase();
+  let email: string | null = null;
+  let phone: string | null = null;
+  let mobile: string | null = null;
 
-  const phone = contactable && profile?.phone?.trim() ? profile.phone.trim() : null;
-  const mobile = contactable && profile?.mobile?.trim() ? profile.mobile.trim() : null;
+  if (contactEnabled) {
+    email =
+      (rep.businessEmail?.trim().toLowerCase() || null) ||
+      (teamContactable && profile?.email?.trim()
+        ? profile.email.trim().toLowerCase()
+        : null) ||
+      rep.user.email.trim().toLowerCase() ||
+      null;
+
+    phone =
+      (rep.phone?.trim() || null) ||
+      (teamContactable && profile?.phone?.trim() ? profile.phone.trim() : null);
+
+    mobile =
+      (rep.mobile?.trim() || null) ||
+      (teamContactable && profile?.mobile?.trim() ? profile.mobile.trim() : null);
+  }
 
   let photo: AccountManagerPhoto | null = null;
-  if (usePublic && profile?.photoMedia) {
+  if (rep.photoMedia) {
+    photo = {
+      src: cmsMediaPublicPath(rep.photoMedia.id),
+      alt: rep.photoAlt || rep.photoMedia.altText || name,
+      objectPosition: cmsFocalStyle({
+        focalX: rep.photoFocalX,
+        focalY: rep.photoFocalY,
+      }).objectPosition as string,
+    };
+  } else if (teamPublic && profile?.photoMedia) {
     photo = {
       src: cmsMediaPublicPath(profile.photoMedia.id),
       alt: profile.photoAlt || profile.photoMedia.altText || name,
@@ -135,20 +174,32 @@ function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | nul
     };
   }
 
+  const mail = mailtoHref(email);
+  const landline = telHrefFromPhone(phone);
+  const mobileTel = telHrefFromPhone(mobile);
+  const primaryContactHref = mail || landline || mobileTel;
+  const primaryContactLabel = mail
+    ? "Contact account manager"
+    : landline || mobileTel
+      ? "Call account manager"
+      : null;
+
   return {
     name,
     initials:
-      usePublic && profile
+      teamPublic && profile
         ? teamMemberInitials(profile.firstName, profile.lastName)
         : initialsFromName(name),
     jobTitle,
-    email: email || null,
+    email,
     phone,
     mobile,
     photo,
-    mailtoHref: mailtoHref(email),
-    telHref: telHref(phone),
-    mobileTelHref: telHref(mobile),
+    mailtoHref: mail,
+    telHref: landline,
+    mobileTelHref: mobileTel,
+    primaryContactHref,
+    primaryContactLabel,
   };
 }
 
@@ -182,6 +233,34 @@ export async function resolveAccountManagerForSalesRep(
   });
   if (!rep) return null;
   return mapRepToAccountManager(rep);
+}
+
+/**
+ * Internal routing helper for callbacks / notifications.
+ * Uses the same SalesRep assignment + contact email resolution as the portal card.
+ */
+export async function resolveSalesRepAssignmentRoute(companyId: string): Promise<{
+  salesRepId: string;
+  assigneeUserId: string;
+  accountManagerName: string;
+  notificationEmail: string | null;
+} | null> {
+  const assignment = await prisma.companyAssignment.findFirst({
+    where: { companyId, isPrimary: true },
+    include: {
+      salesRep: { include: salesRepAmInclude },
+    },
+  });
+  const rep = assignment?.salesRep;
+  if (!rep) return null;
+  const am = mapRepToAccountManager(rep);
+  if (!am) return null;
+  return {
+    salesRepId: rep.id,
+    assigneeUserId: rep.user.id,
+    accountManagerName: am.name,
+    notificationEmail: am.email,
+  };
 }
 
 /**

@@ -1,280 +1,522 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { PanelHeader, Metric } from "@/components/ab/AppShell";
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { Mail, Phone, Smartphone } from "lucide-react";
+import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
-import { Drawer } from "@/components/ab/Drawer";
-import { customers, gbp0, opportunities, pipelineStages } from "@/lib/data";
-import { managerTotals, monthlySales, salesByBrand, salesTeam, quotes, quoteTotal } from "@/lib/crm-data";
+import { MediaPicker } from "@/components/cms/MediaPicker";
 import { ROUTES } from "@/lib/app-nav";
+import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { cmsMediaPublicPath } from "@/lib/cms-media";
+import {
+  getSalesRepProfileFn,
+  listSalesRepProfilesFn,
+  updateSalesRepProfileFn,
+} from "@/server/phase2/fns";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/crm/manager")({
   head: () => ({
     meta: [
-      { title: "Sales Manager Dashboard — Automotive Brands CRM" },
+      { title: "Sales Team — Automotive Brands" },
       {
         name: "description",
         content:
-          "Management view of sales against target, performance by representative, pipeline by stage, quote conversion, new and lost accounts and at-risk customers.",
+          "Manage customer-facing SalesRep contact profiles: job title, business email, telephone, mobile and photo.",
       },
-      { property: "og:title", content: "Sales Manager Dashboard — Automotive Brands" },
-      {
-        property: "og:description",
-        content: "Team performance, pipeline and account health in one management view.",
-      },
+      { property: "og:title", content: "Sales Team — Automotive Brands" },
     ],
   }),
-  component: ManagerDashboard,
+  component: SalesTeamAdmin,
 });
 
-function ManagerDashboard() {
-  const [rep, setRep] = useState<(typeof salesTeam)[number] | null>(null);
-  const maxMonth = Math.max(...monthlySales.map((m) => m.value));
-  const atRisk = customers.filter((c) => c.risk === "At risk" || c.risk === "No recent order");
-  const pipelineByStage = pipelineStages.map((s) => ({
-    stage: s,
-    value: opportunities.filter((o) => o.stage === s).reduce((a, o) => a + o.value, 0),
-  }));
-  const maxStage = Math.max(...pipelineByStage.map((p) => p.value), 1);
-  const topOpps = [...opportunities]
-    .filter((o) => o.stage !== "Won" && o.stage !== "Lost")
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 6);
+type ListItem = {
+  id: string;
+  code: string | null;
+  active: boolean;
+  customerContactEnabled: boolean;
+  displayName: string | null;
+  jobTitle: string | null;
+  businessEmail: string | null;
+  phone: string | null;
+  mobile: string | null;
+  resolvedName: string;
+  resolvedJobTitle: string;
+  resolvedEmail: string | null;
+  user: { id: string; name: string | null; email: string; status: string };
+  photoSrc: string | null;
+  assignmentCount: number;
+  linkedTeamMember: { id: string; isPublic: boolean } | null;
+};
+
+type Detail = ListItem & {
+  photoMediaId: string | null;
+  photoAlt: string | null;
+  photoFocalX: number;
+  photoFocalY: number;
+  emailFallbackHint: string;
+  customerPreview: {
+    name: string;
+    initials: string;
+    jobTitle: string;
+    email: string | null;
+    phone: string | null;
+    mobile: string | null;
+    photo: { src: string; alt: string; objectPosition: string } | null;
+    mailtoHref: string | null;
+    telHref: string | null;
+    mobileTelHref: string | null;
+    primaryContactHref: string | null;
+    primaryContactLabel: string | null;
+  } | null;
+};
+
+function SalesTeamAdmin() {
+  const session = useSession();
+  const canEdit =
+    session.signedIn &&
+    (session.user.navPermissions.includes("users.manage") ||
+      session.user.navPermissions.includes("admin.access"));
+
+  const [rows, setRows] = useState<ListItem[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const [displayName, setDisplayName] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
+  const [businessEmail, setBusinessEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [customerContactEnabled, setCustomerContactEnabled] = useState(true);
+  const [active, setActive] = useState(true);
+  const [photoMediaId, setPhotoMediaId] = useState<string | null>(null);
+  const [photoAlt, setPhotoAlt] = useState("");
+
+  async function loadList() {
+    setLoading(true);
+    const result = await listSalesRepProfilesFn();
+    if (!result.ok) {
+      toast.error(result.error);
+      setLoading(false);
+      return;
+    }
+    setRows(result.data as ListItem[]);
+    if (!selectedId && result.data[0]) setSelectedId(result.data[0].id);
+    setLoading(false);
+  }
+
+  async function loadDetail(id: string) {
+    const result = await getSalesRepProfileFn({ data: { id } });
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    const d = result.data as Detail;
+    setDetail(d);
+    setDisplayName(d.displayName ?? "");
+    setJobTitle(d.jobTitle ?? "");
+    setBusinessEmail(d.businessEmail ?? "");
+    setPhone(d.phone ?? "");
+    setMobile(d.mobile ?? "");
+    setCustomerContactEnabled(d.customerContactEnabled);
+    setActive(d.active);
+    setPhotoMediaId(d.photoMediaId);
+    setPhotoAlt(d.photoAlt ?? "");
+  }
+
+  useEffect(() => {
+    void loadList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (selectedId) void loadDetail(selectedId);
+  }, [selectedId]);
+
+  async function onSave() {
+    if (!detail || !canEdit) return;
+    setSaving(true);
+    const result = await updateSalesRepProfileFn({
+      data: {
+        id: detail.id,
+        displayName,
+        jobTitle,
+        businessEmail,
+        phone,
+        mobile,
+        customerContactEnabled,
+        active,
+        photoMediaId,
+        photoAlt,
+      },
+    });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Sales profile saved");
+    setDetail(result.data as Detail);
+    await loadList();
+  }
+
+  const preview = detail?.customerPreview;
 
   return (
     <div>
       <PanelHeader
-        title="Sales Manager Dashboard"
-        sub="Team performance, pipeline health and account risk · September 2026"
+        title="Sales Team"
+        sub="Customer-facing SalesRep profiles for the Trade Portal, Quotes and callbacks"
         crumbs={[{ label: "Operations" }, { label: "Sales Team", to: ROUTES.crmManager }]}
       />
 
-      <div className="grid gap-px bg-border sm:grid-cols-3 lg:grid-cols-6">
-        <Metric
-          label="Sales MTD"
-          value={gbp0(managerTotals.mtd)}
-          tone="brand"
-          hint={`${Math.round((managerTotals.mtd / managerTotals.target) * 100)}% of ${gbp0(managerTotals.target)}`}
-        />
-        <Metric label="Sales YTD" value={gbp0(managerTotals.ytd)} hint="All representatives" />
-        <Metric
-          label="Pipeline"
-          value={gbp0(opportunities.reduce((s, o) => s + o.value, 0))}
-          hint={`${opportunities.length} opportunities`}
-        />
-        <Metric label="Quote conversion" value={`${managerTotals.conversion}%`} tone="good" hint="Rolling 90 days" />
-        <Metric label="New accounts" value={String(managerTotals.newAccounts)} hint="YTD" />
-        <Metric label="Lost / inactive" value={String(managerTotals.lostAccounts)} tone="warn" hint="No order in 120 days" />
-      </div>
-
-      <div className="grid gap-6 p-4 sm:p-6 xl:grid-cols-3">
-        <section className="space-y-6 xl:col-span-2">
-          <div>
-            <h2 className="mb-3 font-display text-lg font-semibold uppercase">Sales by representative</h2>
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full min-w-[820px] text-[13px]">
-                <thead>
-                  <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
-                    <th className="px-3 py-2 font-semibold">Representative</th>
-                    <th className="px-3 py-2 font-semibold">Region</th>
-                    <th className="px-3 py-2 text-right font-semibold">MTD</th>
-                    <th className="px-3 py-2 text-right font-semibold">Target</th>
-                    <th className="px-3 py-2 font-semibold">Against target</th>
-                    <th className="px-3 py-2 text-right font-semibold">Pipeline</th>
-                    <th className="px-3 py-2 text-right font-semibold">Open quotes</th>
-                    <th className="px-3 py-2 text-right font-semibold">Conversion</th>
-                    <th className="px-3 py-2 text-right font-semibold">Accounts</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {salesTeam.map((s, i) => {
-                    const pct = Math.round((s.mtd / s.target) * 100);
-                    return (
-                      <tr
-                        key={s.name}
-                        className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}
-                      >
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => setRep(s)}
-                            className="font-semibold text-primary hover:underline"
-                          >
-                            {s.name}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-steel">{s.region}</td>
-                        <td className="num px-3 py-2 text-right font-semibold">{gbp0(s.mtd)}</td>
-                        <td className="num px-3 py-2 text-right text-steel">{gbp0(s.target)}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-28 overflow-hidden rounded-full bg-surface">
-                              <div
-                                className={cn("h-full", pct >= 90 ? "bg-good" : pct >= 70 ? "bg-warn" : "bg-destructive")}
-                                style={{ width: `${Math.min(100, pct)}%` }}
-                              />
-                            </div>
-                            <span className="num text-[12px]">{pct}%</span>
-                          </div>
-                        </td>
-                        <td className="num px-3 py-2 text-right">{gbp0(s.pipeline)}</td>
-                        <td className="num px-3 py-2 text-right">{s.quotes}</td>
-                        <td className="num px-3 py-2 text-right">{s.conversion}%</td>
-                        <td className="num px-3 py-2 text-right">{s.accounts}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+      <div className="grid gap-0 border-t border-border lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="border-b border-border lg:border-b-0 lg:border-r">
+          <div className="border-b border-border px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-steel">
+            Representatives
           </div>
-
-          <div>
-            <h2 className="mb-3 font-display text-lg font-semibold uppercase">Sales — last 12 months</h2>
-            <div className="rounded-lg border border-border bg-surface/40 p-4">
-              <div className="flex h-40 items-end gap-2">
-                {monthlySales.map((m) => (
-                  <div key={m.month} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-                    <div
-                      className="w-full rounded-t-sm bg-primary/80"
-                      style={{ height: `${(m.value / maxMonth) * 100}%` }}
-                      aria-hidden
-                    />
-                    <span className="num truncate text-[10px] text-steel">{m.month}</span>
-                    <span className="sr-only">
-                      {m.month}: {gbp0(m.value)}
+          {loading ? (
+            <p className="p-4 text-sm text-steel">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="p-4 text-sm text-steel">
+              No SalesRep records yet. Assign the Sales Representative role in Operations → Users.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {rows.map((row) => (
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(row.id)}
+                    className={cn(
+                      "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface/60",
+                      selectedId === row.id && "bg-surface/80",
+                    )}
+                  >
+                    {row.photoSrc ? (
+                      <img
+                        src={row.photoSrc}
+                        alt=""
+                        className="size-10 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="grid size-10 shrink-0 place-items-center rounded-full bg-ink text-[11px] font-semibold">
+                        {row.resolvedName
+                          .split(/\s+/)
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .map((p) => p[0])
+                          .join("")
+                          .toUpperCase()}
+                      </div>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold">{row.resolvedName}</span>
+                      <span className="block truncate text-[11px] text-steel">
+                        {row.resolvedJobTitle}
+                        {row.code ? ` · ${row.code}` : ""}
+                      </span>
+                      <span className="mt-1 flex flex-wrap gap-1">
+                        <StatusBadge tone={row.active ? "good" : "neutral"}>
+                          {row.active ? "Active" : "Inactive"}
+                        </StatusBadge>
+                        {!row.customerContactEnabled ? (
+                          <StatusBadge tone="warn">Contact off</StatusBadge>
+                        ) : null}
+                      </span>
                     </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h2 className="mb-3 font-display text-lg font-semibold uppercase">Top opportunities</h2>
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full min-w-[720px] text-[13px]">
-                <tbody>
-                  {topOpps.map((o, i) => (
-                    <tr key={o.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
-                      <td className="num px-3 py-2.5 text-primary">{o.id}</td>
-                      <td className="px-3 py-2.5 font-medium">{o.company}</td>
-                      <td className="px-3 py-2.5 text-steel">{o.title}</td>
-                      <td className="px-3 py-2.5 text-steel">{o.owner}</td>
-                      <td className="px-3 py-2.5">
-                        <StatusBadge tone="neutral">{o.stage}</StatusBadge>
-                      </td>
-                      <td className="num px-3 py-2.5 text-right font-semibold">{gbp0(o.value)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        <aside className="space-y-6">
-          <Panel title="Pipeline by stage">
-            {pipelineByStage.map((p) => (
-              <li key={p.stage} className="px-3 py-2 text-[13px]">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  <span className="min-w-0 truncate">{p.stage}</span>
-                  <span className="num shrink-0 font-semibold">{gbp0(p.value)}</span>
-                </div>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
-                  <div className="h-full bg-cyan" style={{ width: `${(p.value / maxStage) * 100}%` }} />
-                </div>
-              </li>
-            ))}
-          </Panel>
-
-          <Panel title="Sales by brand">
-            {salesByBrand.map((b) => (
-              <li key={b.brand} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-3 py-2.5 text-[13px]">
-                <span className="min-w-0 truncate">{b.brand}</span>
-                <span className="num shrink-0 font-semibold">{gbp0(b.value)}</span>
-              </li>
-            ))}
-          </Panel>
-
-          <Panel title="At-risk customers">
-            {atRisk.map((c) => (
-              <li key={c.id} className="px-3 py-2.5 text-[13px]">
-                <Link to="/sales/customers/$id" params={{ id: c.id }} className="font-semibold text-primary">
-                  {c.company}
-                </Link>
-                <div className="num text-[11px] text-steel">
-                  {c.number} · last order {c.lastOrder} · {gbp0(c.ytd)} YTD
-                </div>
-              </li>
-            ))}
-          </Panel>
-
-          <Panel title="Quotes awaiting decision">
-            {quotes
-              .filter((q) => ["Sent", "Viewed"].includes(q.status))
-              .map((q) => (
-                <li key={q.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-3 py-2.5 text-[13px]">
-                  <span className="min-w-0 truncate">
-                    <Link to="/quote/$id" params={{ id: q.id }} className="num text-primary">
-                      {q.id}
-                    </Link>{" "}
-                    {q.company}
-                  </span>
-                  <span className="num shrink-0 font-semibold">{gbp0(quoteTotal(q))}</span>
+                  </button>
                 </li>
               ))}
-          </Panel>
+            </ul>
+          )}
         </aside>
+
+        <section className="min-w-0 p-4 sm:p-6">
+          {!detail ? (
+            <p className="text-sm text-steel">Select a sales representative.</p>
+          ) : (
+            <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="min-w-0 space-y-5">
+                <div>
+                  <h2 className="font-display text-2xl font-semibold uppercase tracking-tight">
+                    {detail.resolvedName}
+                  </h2>
+                  <p className="mt-1 text-[13px] text-steel">
+                    Linked user: {detail.user.name || detail.user.email} · {detail.user.email}
+                    {detail.code ? ` · Code ${detail.code}` : ""}
+                    {" · "}
+                    {detail.assignmentCount} assigned compan
+                    {detail.assignmentCount === 1 ? "y" : "ies"}
+                  </p>
+                  {detail.linkedTeamMember ? (
+                    <p className="mt-1 text-[12px] text-steel">
+                      Linked Meet the Team profile
+                      {detail.linkedTeamMember.isPublic ? " (public)" : " (not public)"}. Public site
+                      visibility stays separate from this customer profile.
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Customer-facing name">
+                    <input
+                      className={inputClass}
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      disabled={!canEdit || saving}
+                      placeholder={detail.user.name || detail.user.email}
+                      maxLength={120}
+                    />
+                    <Hint>Leave blank to use the linked user name.</Hint>
+                  </Field>
+                  <Field label="Job title">
+                    <input
+                      className={inputClass}
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
+                      disabled={!canEdit || saving}
+                      placeholder="Account Manager"
+                      maxLength={120}
+                    />
+                  </Field>
+                  <Field label="Business email">
+                    <input
+                      className={inputClass}
+                      type="email"
+                      value={businessEmail}
+                      onChange={(e) => setBusinessEmail(e.target.value)}
+                      disabled={!canEdit || saving}
+                      placeholder={detail.user.email}
+                      maxLength={320}
+                    />
+                    <Hint>{detail.emailFallbackHint}</Hint>
+                  </Field>
+                  <Field label="Telephone">
+                    <input
+                      className={inputClass}
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      disabled={!canEdit || saving}
+                      placeholder="01234 567890"
+                      maxLength={40}
+                    />
+                  </Field>
+                  <Field label="Mobile">
+                    <input
+                      className={inputClass}
+                      type="tel"
+                      value={mobile}
+                      onChange={(e) => setMobile(e.target.value)}
+                      disabled={!canEdit || saving}
+                      placeholder="07123 456789"
+                      maxLength={40}
+                    />
+                  </Field>
+                  <Field label="Profile photo">
+                    <div className="flex items-center gap-3">
+                      {photoMediaId ? (
+                        <img
+                          src={cmsMediaPublicPath(photoMediaId)}
+                          alt={photoAlt || detail.resolvedName}
+                          className="size-14 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="grid size-14 place-items-center rounded-full bg-ink text-[12px] font-semibold">
+                          —
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className={btnSecondary}
+                          disabled={!canEdit || saving}
+                          onClick={() => setPickerOpen(true)}
+                        >
+                          Choose photo
+                        </button>
+                        {photoMediaId ? (
+                          <button
+                            type="button"
+                            className={btnSecondary}
+                            disabled={!canEdit || saving}
+                            onClick={() => setPhotoMediaId(null)}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <input
+                      className={cn(inputClass, "mt-2")}
+                      value={photoAlt}
+                      onChange={(e) => setPhotoAlt(e.target.value)}
+                      disabled={!canEdit || saving || !photoMediaId}
+                      placeholder="Photo alt text"
+                      maxLength={200}
+                    />
+                  </Field>
+                </div>
+
+                <div className="flex flex-wrap gap-6">
+                  <Toggle
+                    label="Active"
+                    checked={active}
+                    onChange={setActive}
+                    disabled={!canEdit || saving}
+                  />
+                  <Toggle
+                    label="Customer contact enabled"
+                    checked={customerContactEnabled}
+                    onChange={setCustomerContactEnabled}
+                    disabled={!canEdit || saving}
+                  />
+                </div>
+                <Hint>
+                  When customer contact is off, the portal still shows the account manager name but
+                  hides email/telephone/mobile and falls back to the trade-team contact for the CTA.
+                </Hint>
+
+                {canEdit ? (
+                  <button
+                    type="button"
+                    onClick={() => void onSave()}
+                    disabled={saving}
+                    className="inline-flex h-11 items-center rounded-md bg-primary px-6 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110 disabled:opacity-60"
+                  >
+                    {saving ? "Saving…" : "Save profile"}
+                  </button>
+                ) : (
+                  <p className="text-[13px] text-steel">
+                    View only. Users with user-management permission can edit sales profiles.
+                  </p>
+                )}
+              </div>
+
+              <aside className="rounded-lg border border-border bg-surface/40 p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+                  Customer profile preview
+                </div>
+                {preview ? (
+                  <div className="mt-4">
+                    <div className="flex items-start gap-3">
+                      {preview.photo ? (
+                        <img
+                          src={preview.photo.src}
+                          alt={preview.photo.alt}
+                          className="size-14 shrink-0 rounded-full object-cover"
+                          style={{ objectPosition: preview.photo.objectPosition }}
+                        />
+                      ) : (
+                        <div className="grid size-14 shrink-0 place-items-center rounded-full bg-ink font-display text-sm font-semibold">
+                          {preview.initials}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-display text-lg font-semibold uppercase leading-tight">
+                          {preview.name}
+                        </div>
+                        <div className="text-[12px] text-steel">{preview.jobTitle}</div>
+                      </div>
+                    </div>
+                    <ul className="mt-3 space-y-1.5 text-[13px]">
+                      {preview.email ? (
+                        <li className="flex items-center gap-2">
+                          <Mail className="size-3.5 text-primary" aria-hidden />
+                          <span className="truncate">{preview.email}</span>
+                        </li>
+                      ) : null}
+                      {preview.phone ? (
+                        <li className="flex items-center gap-2">
+                          <Phone className="size-3.5 text-primary" aria-hidden />
+                          <span>{preview.phone}</span>
+                        </li>
+                      ) : null}
+                      {preview.mobile ? (
+                        <li className="flex items-center gap-2">
+                          <Smartphone className="size-3.5 text-primary" aria-hidden />
+                          <span>{preview.mobile}</span>
+                        </li>
+                      ) : null}
+                    </ul>
+                    {preview.primaryContactHref ? (
+                      <div className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[12px] font-bold uppercase text-primary-foreground">
+                        {preview.primaryContactLabel}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-[12px] text-steel">
+                        No customer contact CTA — trade-team fallback will be used in the portal.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-[13px] text-steel">
+                    Inactive or unavailable for customer display.
+                  </p>
+                )}
+              </aside>
+            </div>
+          )}
+        </section>
       </div>
 
-      <Drawer
-        open={rep !== null}
-        onClose={() => setRep(null)}
-        width="lg"
-        title={rep?.name ?? ""}
-        sub={rep ? `${rep.region} · ${rep.accounts} accounts` : ""}
-      >
-        {rep ? (
-          <>
-            <div className="grid gap-px bg-border sm:grid-cols-2">
-              {[
-                ["Sales MTD", gbp0(rep.mtd)],
-                ["Target", gbp0(rep.target)],
-                ["Pipeline", gbp0(rep.pipeline)],
-                ["Quote conversion", `${rep.conversion}%`],
-              ].map(([k, v]) => (
-                <div key={k} className="bg-surface/60 px-3 py-2.5">
-                  <div className="text-[10px] uppercase tracking-[0.14em] text-steel">{k}</div>
-                  <div className="num font-display text-xl font-semibold">{v}</div>
-                </div>
-              ))}
-            </div>
-            <h3 className="mb-2 mt-6 font-display text-base font-semibold uppercase">Their accounts</h3>
-            <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
-              {customers
-                .filter((c) => c.manager === rep.name)
-                .map((c) => (
-                  <li key={c.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-3 py-2.5">
-                    <Link to="/sales/customers/$id" params={{ id: c.id }} className="min-w-0 truncate text-primary">
-                      {c.company}
-                    </Link>
-                    <span className="num shrink-0 font-semibold">{gbp0(c.ytd)}</span>
-                  </li>
-                ))}
-            </ul>
-          </>
-        ) : null}
-      </Drawer>
+      <MediaPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(item) => {
+          setPhotoMediaId(item.id);
+          if (!photoAlt && item.altText) setPhotoAlt(item.altText);
+          setPickerOpen(false);
+        }}
+      />
     </div>
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div>
-      <h2 className="mb-3 font-display text-lg font-semibold uppercase">{title}</h2>
-      <ul className="divide-y divide-border rounded-lg border border-border">{children}</ul>
-    </div>
+    <label className="grid gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
+      {label}
+      {children}
+    </label>
   );
 }
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return <p className="mt-1 text-[11px] font-normal normal-case tracking-normal text-steel">{children}</p>;
+}
+
+function Toggle({
+  label,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-[13px]">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className="size-4 rounded border-border"
+      />
+      <span className="font-medium">{label}</span>
+    </label>
+  );
+}
+
+const inputClass =
+  "h-10 w-full rounded-md border border-border bg-ink px-3 text-[14px] font-normal normal-case tracking-normal text-foreground outline-none focus-visible:border-primary disabled:opacity-60";
+
+const btnSecondary =
+  "inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide transition hover:border-steel disabled:opacity-60";

@@ -131,12 +131,19 @@ function Support() {
                     </li>
                   ) : null}
                 </ul>
-                {manager.mailtoHref ? (
+                {manager.primaryContactHref ? (
                   <a
-                    href={manager.mailtoHref}
+                    href={manager.primaryContactHref}
                     className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
                   >
-                    Contact account manager
+                    {manager.primaryContactLabel ?? "Contact account manager"}
+                  </a>
+                ) : generalMailto ? (
+                  <a
+                    href={generalMailto}
+                    className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
+                  >
+                    Contact Automotive Brands
                   </a>
                 ) : null}
               </>

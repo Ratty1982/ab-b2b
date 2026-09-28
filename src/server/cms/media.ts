@@ -146,6 +146,16 @@ async function mediaUsageCounts(): Promise<Map<string, number>> {
   for (const category of categories) bump(category.imageMediaId);
   const productMedia = await prisma.productMedia.findMany({ select: { mediaId: true } });
   for (const row of productMedia) bump(row.mediaId);
+  const teamPhotos = await prisma.teamMember.findMany({
+    where: { photoMediaId: { not: null } },
+    select: { photoMediaId: true },
+  });
+  for (const row of teamPhotos) bump(row.photoMediaId);
+  const salesPhotos = await prisma.salesRep.findMany({
+    where: { photoMediaId: { not: null } },
+    select: { photoMediaId: true },
+  });
+  for (const row of salesPhotos) bump(row.photoMediaId);
   return counts;
 }
 

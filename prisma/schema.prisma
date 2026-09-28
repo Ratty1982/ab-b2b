@@ -657,6 +657,22 @@ model SalesRep {
   managerId String?
   targetMtd Decimal? @db.Decimal(12, 2)
   active    Boolean  @default(true)
+  /// Customer-facing display name. Falls back to linked User.name when blank.
+  displayName String?
+  /// Customer-facing job title (e.g. Account Manager).
+  jobTitle String?
+  /// Explicit customer-facing business email. Falls back to linked User.email when blank.
+  businessEmail String?
+  /// Customer-facing landline (string — preserves leading zeroes).
+  phone String?
+  /// Customer-facing mobile (string — preserves leading zeroes).
+  mobile String?
+  /// When false, portal/quotes must not expose SalesRep email/phone/mobile.
+  customerContactEnabled Boolean @default(true)
+  photoMediaId String?
+  photoAlt     String?
+  photoFocalX  Int     @default(50)
+  photoFocalY  Int     @default(50)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -666,8 +682,10 @@ model SalesRep {
   assignments  CompanyAssignment[]
   applications TradeApplication[]
   publicTeamProfile TeamMember?
+  photoMedia   CmsMedia?           @relation("SalesRepPhoto", fields: [photoMediaId], references: [id], onDelete: SetNull)
 
   @@index([managerId])
+  @@index([photoMediaId])
 }
 
 model CompanyAssignment {
@@ -1843,6 +1861,7 @@ model CmsMedia {
   categoryImages Category[]    @relation("CategoryImage")
   productMedia  ProductMedia[] @relation("ProductMedia")
   teamPhotos    TeamMember[]   @relation("TeamMemberPhoto")
+  salesRepPhotos SalesRep[]    @relation("SalesRepPhoto")
 
   @@index([contentType])
   @@index([uploadedById])

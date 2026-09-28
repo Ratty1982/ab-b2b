@@ -95,47 +95,8 @@ async function resolveActiveTradeMembership(userId: string) {
 }
 
 async function resolveAssignmentRoute(companyId: string): Promise<AssignmentRoute | null> {
-  const assignment = await prisma.companyAssignment.findFirst({
-    where: { companyId, isPrimary: true },
-    include: {
-      salesRep: {
-        include: {
-          user: { select: { id: true, name: true, email: true, status: true } },
-          publicTeamProfile: {
-            select: {
-              isPublic: true,
-              isContactable: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
-        },
-      },
-    },
-  });
-  const rep = assignment?.salesRep;
-  if (!rep?.active || rep.user.status !== "ACTIVE") return null;
-
-  const profile = rep.publicTeamProfile;
-  const usePublic = Boolean(profile?.isPublic);
-  const name =
-    usePublic && profile
-      ? `${profile.firstName} ${profile.lastName}`.trim()
-      : rep.user.name?.trim() || rep.user.email;
-
-  const contactable = Boolean(usePublic && profile?.isContactable);
-  const notificationEmail =
-    (contactable && profile?.email?.trim()
-      ? profile.email.trim().toLowerCase()
-      : rep.user.email.trim().toLowerCase()) || null;
-
-  return {
-    salesRepId: rep.id,
-    assigneeUserId: rep.user.id,
-    accountManagerName: name,
-    notificationEmail,
-  };
+  const { resolveSalesRepAssignmentRoute } = await import("@/server/sales/account-manager");
+  return resolveSalesRepAssignmentRoute(companyId);
 }
 
 async function findContactForCompany(

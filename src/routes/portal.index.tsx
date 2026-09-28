@@ -235,12 +235,19 @@ function Dashboard() {
                     </li>
                   ) : null}
                 </ul>
-                {data.accountManager.mailtoHref ? (
+                {data.accountManager.primaryContactHref ? (
                   <a
-                    href={data.accountManager.mailtoHref}
+                    href={data.accountManager.primaryContactHref}
                     className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
                   >
-                    Contact account manager
+                    {data.accountManager.primaryContactLabel ?? "Contact account manager"}
+                  </a>
+                ) : data.generalContact.mailtoHref ? (
+                  <a
+                    href={data.generalContact.mailtoHref}
+                    className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
+                  >
+                    Contact Automotive Brands
                   </a>
                 ) : null}
               </div>

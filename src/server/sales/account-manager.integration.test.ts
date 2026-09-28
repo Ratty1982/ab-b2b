@@ -116,12 +116,14 @@ describe("resolveAccountManagerForCompany", () => {
     expect(am!.jobTitle).toBe("Account Manager");
     expect(am!.email).toContain("luke.andrews");
     expect(am!.mailtoHref).toContain("mailto:");
+    expect(am!.primaryContactHref).toContain("mailto:");
     expect(am!.phone).toBeNull();
     expect(am!.mobile).toBeNull();
     expect(am!.photo).toBeNull();
     expect(am!.initials).toBe("LA");
     expect(JSON.stringify(am)).not.toContain(salesRepId);
     expect(JSON.stringify(am)).not.toContain("Autopart");
+    expect(JSON.stringify(am)).not.toContain("customerContactEnabled");
   });
 
   it("omits inactive SalesRep", async () => {

@@ -411,7 +411,12 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         label: "Sales Team",
         icon: "users",
         to: ROUTES.crmManager,
-        permission: ["sales.view_team_accounts", "sales.view_all_accounts", "reports.management"],
+        permission: [
+          "sales.view_team_accounts",
+          "sales.view_all_accounts",
+          "reports.management",
+          "users.manage",
+        ],
         implemented: true,
       },
       {
