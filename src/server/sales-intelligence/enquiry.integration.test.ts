@@ -152,7 +152,7 @@ beforeAll(async () => {
   if (!existingVariant) {
     await saveProduct(adminId, {
       sku: matchSku,
-      name: "SI All Purpose Cleaner 5L",
+      name: `SI All Purpose Cleaner ${stamp} 5L`,
       brand: brand.name,
       category: cat.name,
       trade: 5,
@@ -161,6 +161,11 @@ beforeAll(async () => {
       caseQty: 12,
       description: "SI cleaner",
       active: true,
+    });
+  } else {
+    await prisma.product.update({
+      where: { id: existingVariant.productId },
+      data: { name: `SI All Purpose Cleaner ${stamp} 5L` },
     });
   }
   const v = await prisma.productVariant.findUniqueOrThrow({ where: { sku: matchSku } });
@@ -376,7 +381,10 @@ describe("Sales Intelligence Sales Enquiry", () => {
   it("product search includes historic-only SKU", async () => {
     const r = await searchSalesIntelligenceProducts(adminId, { q: goneSku });
     expect(r.items.some((i) => String(i['sku']).toUpperCase() === goneSku.toUpperCase() && !i['inCatalogue'])).toBe(true);
-    const byName = await searchSalesIntelligenceProducts(adminId, { q: "All Purpose Cleaner" });
+    // Unique name fragment avoids collisions with leftover products from prior suite runs.
+    const byName = await searchSalesIntelligenceProducts(adminId, {
+      q: `All Purpose Cleaner ${stamp}`,
+    });
     expect(byName.items.some((i) => String(i['sku']).toUpperCase() === matchSku.toUpperCase())).toBe(true);
   });
 
