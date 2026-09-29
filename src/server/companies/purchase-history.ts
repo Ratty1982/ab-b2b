@@ -157,7 +157,8 @@ function monthLabelUk(monthKey: string): string {
   );
 }
 
-function windowRange(
+/** Inclusive calendar-date window in Europe/London YYYY-MM-DD. LAST_N is last N days including today. */
+export function purchaseHistoryWindowRange(
   purchased: PurchaseHistoryPurchasedWindow,
   from: string | null | undefined,
   to: string | null | undefined,
@@ -179,13 +180,31 @@ function windowRange(
   return { from: addDaysIso(today, -(days - 1)), to: today };
 }
 
+function lineDocumentDateIso(line: LineRow): string | null {
+  return line.document?.documentDate ? dateOnlyIso(line.document.documentDate) : null;
+}
+
+function linesInPurchasedWindow(
+  lines: LineRow[],
+  range: { from: string; to: string } | null,
+): LineRow[] {
+  if (!range) return lines;
+  return lines.filter((line) => {
+    const d = lineDocumentDateIso(line);
+    return d != null && d >= range.from && d <= range.to;
+  });
+}
+
 function moneyFromMinor(minor: bigint): string {
   return moneyToString({ minor }, 2);
 }
 
-function buildSkuAggregates(lines: LineRow[]): Map<string, SkuAgg> {
+function buildSkuAggregates(
+  lines: LineRow[],
+  range?: { from: string; to: string } | null,
+): Map<string, SkuAgg> {
   const bySku = new Map<string, SkuAgg>();
-  for (const line of lines) {
+  for (const line of linesInPurchasedWindow(lines, range ?? null)) {
     const key = line.sku.trim().toUpperCase();
     let agg = bySku.get(key);
     if (!agg) {
@@ -275,7 +294,12 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
   let availability = (input.availability ?? "ALL") as PurchaseHistoryAvailabilityFilter;
   if (input.filter === "AVAILABLE") availability = "AVAILABLE";
   if (input.filter === "UNAVAILABLE") availability = "HISTORIC_ONLY";
-  const dateRange = windowRange(purchased, input.purchasedFrom, input.purchasedTo, today);
+  const dateRange = purchaseHistoryWindowRange(
+    purchased,
+    input.purchasedFrom,
+    input.purchasedTo,
+    today,
+  );
 
   const lines = await prisma.autopartSalesLine.findMany({
     where: { companyId: company.id },
@@ -290,26 +314,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
     },
   });
 
-  const bySku = buildSkuAggregates(lines);
-
-  // Company-level summary (unfiltered) — real imported totals only.
-  let summaryProducts = bySku.size;
-  let summaryUnits = 0;
-  let summarySpend = 0n;
-  const allInvoiceRefs = new Set<string>();
-  for (const agg of bySku.values()) {
-    summaryUnits += agg.netUnits;
-    summarySpend += agg.netSpendMinor;
-    for (const ref of agg.invoiceRefs) allInvoiceRefs.add(ref);
-  }
-  // Distinct INVOICE documents that have at least one product line for this company.
-  const invoiceDocCount = await prisma.autopartSalesDocument.count({
-    where: {
-      companyId: company.id,
-      documentType: "INVOICE",
-      lines: { some: {} },
-    },
-  });
+  const bySku = buildSkuAggregates(lines, dateRange);
 
   const skus = [...bySku.keys()];
   const variants = skus.length
@@ -364,7 +369,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
     canBuyAgain: boolean;
     currentlyAvailable: boolean;
     action: "BUY_AGAIN" | "VIEW_PRODUCT" | "HISTORIC_PRODUCT";
-    datedInvoiceInRange: boolean;
+    invoiceRefs: Set<string>;
   };
 
   const brandOptions = new Map<string, string>();
@@ -410,13 +415,6 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
     if (product?.brand) brandOptions.set(product.brand.id, product.brand.name);
     if (product?.category) categoryOptions.set(product.category.id, product.category.name);
 
-    let datedInvoiceInRange = true;
-    if (dateRange) {
-      datedInvoiceInRange = [...agg.invoiceDatesByRef.values()].some(
-        (d) => d >= dateRange.from && d <= dateRange.to,
-      );
-    }
-
     const displayName =
       product?.name ??
       agg.historicDescription ??
@@ -448,7 +446,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
       canBuyAgain,
       currentlyAvailable: canBuyAgain,
       action,
-      datedInvoiceInRange,
+      invoiceRefs: agg.invoiceRefs,
     });
   }
 
@@ -464,7 +462,6 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
   }
   if (input.brandId) items = items.filter((i) => i.brandId === input.brandId);
   if (input.categoryId) items = items.filter((i) => i.categoryId === input.categoryId);
-  if (dateRange) items = items.filter((i) => i.datedInvoiceInRange);
 
   if (availability === "AVAILABLE") {
     items = items.filter((i) => i.canBuyAgain);
@@ -519,13 +516,24 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
   });
 
   const total = items.length;
+  let summaryUnits = 0;
+  let summarySpend = 0n;
+  const summaryInvoiceRefs = new Set<string>();
+  for (const item of items) {
+    summaryUnits += item.netUnits;
+    summarySpend += item.netSpendMinor;
+    for (const ref of item.invoiceRefs) summaryInvoiceRefs.add(ref);
+  }
+
   const start = (page - 1) * pageSize;
-  const pageItems = items.slice(start, start + pageSize).map(({ netSpendMinor: _m, datedInvoiceInRange: _d, ...rest }) => rest);
+  const pageItems = items.slice(start, start + pageSize).map(
+    ({ netSpendMinor: _m, invoiceRefs: _r, ...rest }) => rest,
+  );
 
   return {
     summary: {
-      productsPurchased: summaryProducts,
-      purchaseTransactions: invoiceDocCount || allInvoiceRefs.size,
+      productsPurchased: total,
+      purchaseTransactions: summaryInvoiceRefs.size,
       historicNetSpend: moneyFromMinor(summarySpend),
       unitsPurchased: summaryUnits,
     },

@@ -8,6 +8,7 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   getPortalPurchaseProductInsight,
   listPortalPurchaseHistory,
+  purchaseHistoryWindowRange,
 } from "@/server/companies/purchase-history";
 import { listPortalHistoricPurchases } from "@/server/companies/autopart-history";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
@@ -398,6 +399,210 @@ describe("portal purchase history", () => {
     if (c12) {
       expect(c12.unitsChangePct === null || Number.isFinite(c12.unitsChangePct)).toBe(true);
     }
+  });
+
+  it("purchaseHistoryWindowRange LAST_N windows are inclusive of today", () => {
+    const today = "2026-09-29";
+    expect(purchaseHistoryWindowRange("ANY", null, null, today)).toBeNull();
+    expect(purchaseHistoryWindowRange("LAST_30", null, null, today)).toEqual({
+      from: "2026-08-31",
+      to: "2026-09-29",
+    });
+    expect(purchaseHistoryWindowRange("LAST_90", null, null, today)).toEqual({
+      from: "2026-07-02",
+      to: "2026-09-29",
+    });
+    expect(purchaseHistoryWindowRange("LAST_180", null, null, today)).toEqual({
+      from: "2026-04-03",
+      to: "2026-09-29",
+    });
+    expect(purchaseHistoryWindowRange("LAST_365", null, null, today)).toEqual({
+      from: "2025-09-30",
+      to: "2026-09-29",
+    });
+    expect(
+      purchaseHistoryWindowRange("CUSTOM", "2026-03-01", "2026-03-31", today),
+    ).toEqual({ from: "2026-03-01", to: "2026-03-31" });
+  });
+
+  it("LAST_30 / LAST_90 / LAST_180 / LAST_365 match CUSTOM of the same inclusive window", async () => {
+    const any = await listPortalPurchaseHistory(buyerAId, { pageSize: 50 });
+    const windows = ["LAST_30", "LAST_90", "LAST_180", "LAST_365"] as const;
+    for (const purchased of windows) {
+      const ranged = await listPortalPurchaseHistory(buyerAId, { purchased, pageSize: 50 });
+      const wr = purchaseHistoryWindowRange(
+        purchased,
+        null,
+        null,
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Europe/London",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date()),
+      );
+      const custom = await listPortalPurchaseHistory(buyerAId, {
+        purchased: "CUSTOM",
+        purchasedFrom: wr!.from,
+        purchasedTo: wr!.to,
+        pageSize: 50,
+      });
+      expect(ranged.total).toBe(custom.total);
+      expect(ranged.summary).toEqual(custom.summary);
+      expect(ranged.items.map((i) => i.sku.toUpperCase()).sort()).toEqual(
+        custom.items.map((i) => i.sku.toUpperCase()).sort(),
+      );
+      // Bounded windows must not silently fall back to lifetime ANY.
+      if (ranged.total === 0) {
+        expect(ranged.summary.productsPurchased).toBe(0);
+        expect(ranged.summary.purchaseTransactions).toBe(0);
+        expect(Number(ranged.summary.historicNetSpend)).toBe(0);
+        expect(ranged.summary.unitsPurchased).toBe(0);
+        expect(ranged.items).toEqual([]);
+      } else {
+        expect(ranged.summary.productsPurchased).toBeLessThanOrEqual(any.summary.productsPurchased);
+      }
+    }
+  });
+
+  it("period filter recalculates row metrics and summary (not lifetime)", async () => {
+    const r = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2026-03-01",
+      purchasedTo: "2026-03-31",
+      pageSize: 50,
+    });
+    expect(r.total).toBe(1);
+    expect(r.items.map((i) => i.sku.toUpperCase())).toEqual(["MATCH-A"]);
+    const matchA = r.items[0]!;
+    // March invoices SS900003 (8+1 units, 80+10 spend) + credit -2 / -20 — not lifetime 22 / 220
+    expect(matchA.purchaseCount).toBe(1);
+    expect(matchA.netUnits).toBe(7);
+    expect(Number(matchA.netSpend)).toBeCloseTo(70, 2);
+    expect(matchA.firstPurchasedDate).toBe("2026-03-10");
+    expect(matchA.lastPurchasedDate).toBe("2026-03-10");
+    expect(r.summary.productsPurchased).toBe(1);
+    expect(r.summary.purchaseTransactions).toBe(1);
+    expect(r.summary.unitsPurchased).toBe(7);
+    expect(Number(r.summary.historicNetSpend)).toBeCloseTo(70, 2);
+  });
+
+  it("product with no dated transaction in range disappears", async () => {
+    const r = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2025-06-01",
+      purchasedTo: "2025-06-30",
+      pageSize: 50,
+    });
+    const skus = r.items.map((i) => i.sku.toUpperCase());
+    expect(skus).toContain("MATCH-A");
+    expect(skus).toContain("MATCH-B");
+    expect(skus).not.toContain("GONE-SKU");
+    const matchA = r.items.find((i) => i.sku.toUpperCase() === "MATCH-A")!;
+    expect(matchA.purchaseCount).toBe(1);
+    expect(matchA.netUnits).toBe(5);
+    expect(Number(matchA.netSpend)).toBeCloseTo(50, 2);
+    expect(matchA.lastPurchasedDate).toBe("2025-06-20");
+    expect(matchA.firstPurchasedDate).toBe("2025-06-20");
+    const matchB = r.items.find((i) => i.sku.toUpperCase() === "MATCH-B")!;
+    expect(matchB.purchaseCount).toBe(1);
+    expect(matchB.netUnits).toBe(3);
+    expect(r.summary.productsPurchased).toBe(2);
+    expect(r.summary.purchaseTransactions).toBe(1); // shared SS900002
+    expect(r.summary.unitsPurchased).toBe(8);
+    expect(Number(r.summary.historicNetSpend)).toBeCloseTo(80, 2);
+  });
+
+  it("credits in period reduce net spend and credits-only SKUs still appear", async () => {
+    const r = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2026-03-15",
+      purchasedTo: "2026-03-31",
+      pageSize: 50,
+    });
+    expect(r.items.map((i) => i.sku.toUpperCase())).toEqual(["MATCH-A"]);
+    const matchA = r.items[0]!;
+    expect(matchA.purchaseCount).toBe(0);
+    expect(matchA.netUnits).toBe(-2);
+    expect(Number(matchA.netSpend)).toBeCloseTo(-20, 2);
+    expect(r.summary.productsPurchased).toBe(1);
+    expect(r.summary.purchaseTransactions).toBe(0);
+    expect(r.summary.unitsPurchased).toBe(-2);
+    expect(Number(r.summary.historicNetSpend)).toBeCloseTo(-20, 2);
+  });
+
+  it("empty period returns empty items and zero summary (no ANY fallback)", async () => {
+    const r = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2024-01-01",
+      purchasedTo: "2024-01-31",
+      pageSize: 50,
+    });
+    expect(r.total).toBe(0);
+    expect(r.items).toEqual([]);
+    expect(r.summary.productsPurchased).toBe(0);
+    expect(r.summary.purchaseTransactions).toBe(0);
+    expect(r.summary.unitsPurchased).toBe(0);
+    expect(Number(r.summary.historicNetSpend)).toBe(0);
+  });
+
+  it("undated invoices are excluded from bounded periods", async () => {
+    const r = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2025-01-01",
+      purchasedTo: "2025-01-31",
+      pageSize: 50,
+    });
+    const gone = r.items.find((i) => i.sku.toUpperCase() === "GONE-SKU")!;
+    expect(gone.purchaseCount).toBe(1);
+    expect(gone.netUnits).toBe(4);
+    expect(Number(gone.netSpend)).toBeCloseTo(40, 2);
+  });
+
+  it("brand filter combines with purchased period; summary follows the filtered set", async () => {
+    const matchA = (
+      await listPortalPurchaseHistory(buyerAId, { pageSize: 50 })
+    ).items.find((i) => i.sku.toUpperCase() === "MATCH-A")!;
+    const matchB = (
+      await listPortalPurchaseHistory(buyerAId, { pageSize: 50 })
+    ).items.find((i) => i.sku.toUpperCase() === "MATCH-B")!;
+
+    const power = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2025-06-01",
+      purchasedTo: "2025-06-30",
+      brandId: matchA.brandId!,
+      pageSize: 50,
+    });
+    expect(power.items.map((i) => i.sku.toUpperCase())).toEqual(["MATCH-A"]);
+    expect(power.summary.productsPurchased).toBe(1);
+    expect(power.summary.unitsPurchased).toBe(5);
+    expect(Number(power.summary.historicNetSpend)).toBeCloseTo(50, 2);
+
+    const steel = await listPortalPurchaseHistory(buyerAId, {
+      purchased: "CUSTOM",
+      purchasedFrom: "2026-03-01",
+      purchasedTo: "2026-03-31",
+      brandId: matchB.brandId!,
+      pageSize: 50,
+    });
+    expect(steel.total).toBe(0);
+    expect(steel.items).toEqual([]);
+    expect(steel.summary.productsPurchased).toBe(0);
+    expect(steel.summary.unitsPurchased).toBe(0);
+  });
+
+  it("ANY time still shows lifetime aggregation including undated lines", async () => {
+    const r = await listPortalPurchaseHistory(buyerAId, { purchased: "ANY", pageSize: 50 });
+    expect(r.summary.productsPurchased).toBe(3);
+    expect(r.summary.purchaseTransactions).toBe(4);
+    expect(r.summary.unitsPurchased).toBe(31);
+    const gone = r.items.find((i) => i.sku.toUpperCase() === "GONE-SKU")!;
+    expect(gone.purchaseCount).toBe(2);
+    expect(gone.netUnits).toBe(6);
+    const matchA = r.items.find((i) => i.sku.toUpperCase() === "MATCH-A")!;
+    expect(matchA.purchaseCount).toBe(3);
+    expect(matchA.netUnits).toBe(22);
   });
 
   it("compat shim listPortalHistoricPurchases still works", async () => {

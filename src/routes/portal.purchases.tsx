@@ -421,7 +421,14 @@ function PortalPurchasesPage() {
         <p className="p-6 text-[13px] text-steel">Loading purchase history…</p>
       ) : error ? (
         <p className="p-6 text-[13px] text-bad">{error}</p>
-      ) : !data || data.summary.productsPurchased === 0 ? (
+      ) : !data ||
+        (data.total === 0 &&
+          purchased === "ANY" &&
+          !q &&
+          !brandId &&
+          !categoryId &&
+          availability === "ALL" &&
+          !quick) ? (
         <div className="p-6">
           <p className="text-[14px] text-steel">
             No purchase history is available for this account yet.
@@ -434,7 +441,11 @@ function PortalPurchasesPage() {
           </Link>
         </div>
       ) : data.items.length === 0 ? (
-        <p className="p-6 text-[14px] text-steel">No purchases match these filters.</p>
+        <p className="p-6 text-[14px] text-steel">
+          {purchased !== "ANY"
+            ? "No purchases found for this period."
+            : "No purchases match these filters."}
+        </p>
       ) : (
         <>
           {/* Desktop table */}
