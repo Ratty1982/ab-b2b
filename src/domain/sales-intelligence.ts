@@ -11,13 +11,14 @@ import {
   isDateOnlyIso,
   previousEquivalentPeriod,
   resolveSalesEnquiryPeriod,
+  samePeriodPreviousYear,
   todayLondonDateOnly,
 } from "@/domain/sales-history-period";
 import { moneyToString, moneyZero, parseMoney, type Money } from "@/domain/money";
 
 export type SalesEnquiryMode = "customers" | "products";
 
-export type SalesEnquiryCompareMode = "OFF" | "PREVIOUS" | "CUSTOM";
+export type SalesEnquiryCompareMode = "OFF" | "PREVIOUS" | "PREVIOUS_YEAR" | "CUSTOM";
 
 export type CustomerProductSort =
   | "NET_SALES"
@@ -234,7 +235,12 @@ export function parseSalesEnquiryUrlSearch(
   }
   if (typeof search["from"] === "string" && isDateOnlyIso(search["from"])) out.from = search["from"];
   if (typeof search["to"] === "string" && isDateOnlyIso(search["to"])) out.to = search["to"];
-  if (search["compare"] === "PREVIOUS" || search["compare"] === "CUSTOM" || search["compare"] === "OFF") {
+  if (
+    search["compare"] === "PREVIOUS" ||
+    search["compare"] === "PREVIOUS_YEAR" ||
+    search["compare"] === "CUSTOM" ||
+    search["compare"] === "OFF"
+  ) {
     out.compare = search["compare"];
   }
   if (typeof search["compareFrom"] === "string" && isDateOnlyIso(search["compareFrom"])) {
@@ -311,6 +317,7 @@ export function resolveEnquiryComparisonPeriod(input: {
 }): DateOnlyRange | null {
   if (!input.compare || input.compare === "OFF") return null;
   if (input.compare === "PREVIOUS") return previousEquivalentPeriod(input.primary);
+  if (input.compare === "PREVIOUS_YEAR") return samePeriodPreviousYear(input.primary);
   if (input.compare === "CUSTOM") {
     if (!input.compareFrom && !input.compareTo) return null;
     return {
@@ -350,6 +357,9 @@ export type MutableLineAgg = {
   creditsMinor: bigint;
   netSalesMinor: bigint;
   units: number;
+  /** Invoice line units only — used for purchase presence / gap volume. */
+  invoiceUnits: number;
+  creditUnits: number;
   invoiceRefs: Set<string>;
   lastPurchasedDate: string | null;
   firstPurchasedDate: string | null;
@@ -361,6 +371,8 @@ export function createLineAgg(): MutableLineAgg {
     creditsMinor: 0n,
     netSalesMinor: 0n,
     units: 0,
+    invoiceUnits: 0,
+    creditUnits: 0,
     invoiceRefs: new Set(),
     lastPurchasedDate: null,
     firstPurchasedDate: null,
@@ -374,6 +386,7 @@ export function accumulateLine(agg: MutableLineAgg, line: LineAggInput, dateIso:
   agg.netSalesMinor += spend;
   if (line.documentType === "INVOICE") {
     agg.invoiceSalesMinor += spend;
+    agg.invoiceUnits += units;
     agg.invoiceRefs.add(line.documentReference);
     if (dateIso) {
       if (!agg.firstPurchasedDate || dateIso < agg.firstPurchasedDate) agg.firstPurchasedDate = dateIso;
@@ -381,7 +394,13 @@ export function accumulateLine(agg: MutableLineAgg, line: LineAggInput, dateIso:
     }
   } else if (line.documentType === "CREDIT") {
     agg.creditsMinor += spend;
+    agg.creditUnits += units;
   }
+}
+
+/** Invoice purchase presence — credits alone never create presence. */
+export function hasInvoicePurchase(agg: Pick<MutableLineAgg, "invoiceRefs" | "invoiceUnits">): boolean {
+  return agg.invoiceRefs.size > 0 || agg.invoiceUnits !== 0;
 }
 
 export function lineAggPurchaseCount(agg: MutableLineAgg): number {

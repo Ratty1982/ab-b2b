@@ -2680,4 +2680,52 @@ export const exportProductSalesEnquiryCsvFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getCustomerGapAnalysisFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const gap = await import("@/server/sales-intelligence/gap");
+      return { ok: true as const, data: await gap.getCustomerGapAnalysis(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getProductGapAnalysisFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const gap = await import("@/server/sales-intelligence/gap");
+      return { ok: true as const, data: await gap.getProductGapAnalysis(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerGapCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const gap = await import("@/server/sales-intelligence/gap");
+      return { ok: true as const, data: await gap.exportCustomerGapCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportProductGapCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const gap = await import("@/server/sales-intelligence/gap");
+      return { ok: true as const, data: await gap.exportProductGapCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

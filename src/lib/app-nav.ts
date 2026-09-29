@@ -67,6 +67,7 @@ export const ROUTES = {
   adminOrder: (id: string) => `/admin/orders/${id}` as const,
 
   salesIntelligence: "/sales/sales-intelligence",
+  salesIntelligenceGaps: "/sales/sales-intelligence/gaps",
 } as const;
 
 /**
@@ -256,6 +257,16 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligence,
         matchPrefixes: [ROUTES.salesIntelligence],
+        excludePrefixes: [ROUTES.salesIntelligenceGaps],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-gap-analysis",
+        label: "Gap Analysis",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligenceGaps,
+        matchPrefixes: [ROUTES.salesIntelligenceGaps],
         permission: "sales_intelligence.view",
         implemented: true,
       },

@@ -134,6 +134,7 @@ describe("canonical navigation contract", () => {
     expect(ids).toContain("trade-applications");
     expect(ids).toContain("quotes");
     expect(ids).toContain("sales-enquiry");
+    expect(ids).toContain("sales-gap-analysis");
     expect(ids).toContain("opportunities");
     expect(ids).not.toContain("website-pages");
     expect(ids).not.toContain("website-homepage");

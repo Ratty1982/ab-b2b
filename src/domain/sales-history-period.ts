@@ -61,13 +61,36 @@ export function daysInclusive(range: DateOnlyRange): number {
 
 /**
  * Previous equivalent period: same length, ending the day before primary.from.
- * Example: 01/01/2026–30/06/2026 → 02/07/2025–31/12/2025.
+ * Example: 01/01/2026–30/06/2026 → 04/07/2025–31/12/2025 (181 inclusive days).
  */
 export function previousEquivalentPeriod(primary: DateOnlyRange): DateOnlyRange {
   const len = daysInclusive(primary);
   const to = addDaysIso(primary.from, -1);
   const from = addDaysIso(to, -(len - 1));
   return { from, to };
+}
+
+/**
+ * Same calendar dates one year earlier.
+ * Leap-day rule: 29 Feb in a leap year → 28 Feb in the prior non-leap year.
+ * Example: 01/01/2026–30/06/2026 → 01/01/2025–30/06/2025.
+ */
+export function samePeriodPreviousYear(primary: DateOnlyRange): DateOnlyRange {
+  return {
+    from: shiftYearIso(primary.from, -1),
+    to: shiftYearIso(primary.to, -1),
+  };
+}
+
+function shiftYearIso(iso: string, deltaYears: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const year = y! + deltaYears;
+  const month = m!;
+  const day = d!;
+  // Clamp day to last day of target month (handles 29 Feb → 28 Feb).
+  const last = Number(lastDayOfMonth(year, month).slice(8, 10));
+  const safeDay = Math.min(day, last);
+  return `${year}-${String(month).padStart(2, "0")}-${String(safeDay).padStart(2, "0")}`;
 }
 
 export type SalesEnquiryPeriodPreset =

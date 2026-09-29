@@ -8,19 +8,16 @@ import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
-import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
+import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
+export { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import {
   dateOnlyIsoFromDate,
-  documentDatePrismaBounds,
   todayLondonDateOnly,
   type DateOnlyRange,
 } from "@/domain/sales-history-period";
 import {
-  accumulateLine,
   buildCsv,
   compareSalesTotals,
-  createLineAgg,
-  emptySalesTotals,
   lineAggPurchaseCount,
   moneyMinorToDto,
   parseSalesNetMinor,
@@ -28,12 +25,17 @@ import {
   resolveEnquiryPrimaryPeriod,
   totalsToDto,
   type CustomerProductSort,
-  type MutableLineAgg,
   type PeriodComparisonDto,
   type ProductCustomerSort,
-  type SalesMoneyTotals,
   type SalesMoneyTotalsDto,
 } from "@/domain/sales-intelligence";
+import {
+  groupHistoricByCompany,
+  groupHistoricBySku,
+  loadHistoricSalesLines,
+  summarizeHistoricLines,
+  type HistoricLineRow,
+} from "@/server/sales-intelligence/historic-lines";
 import {
   PUBLIC_AVAILABILITY_LABEL,
   type PublicAvailability,
@@ -55,21 +57,12 @@ const periodInputSchema = z.object({
   period: periodPresetSchema.optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-  compare: z.enum(["OFF", "PREVIOUS", "CUSTOM"]).optional().nullable(),
+  compare: z.enum(["OFF", "PREVIOUS", "PREVIOUS_YEAR", "CUSTOM"]).optional().nullable(),
   compareFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   compareTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
 });
 
-type LineRow = {
-  companyId: string;
-  sku: string;
-  units: { toString(): string } | number;
-  salesNet: { toString(): string } | number;
-  descriptionSnapshot: string | null;
-  documentType: string;
-  documentReference: string;
-  document: { documentDate: Date | null } | null;
-};
+type LineRow = HistoricLineRow;
 
 async function requireSalesIntelligence(actorUserId: string): Promise<LoadedAccessProfile> {
   const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
@@ -77,25 +70,6 @@ async function requireSalesIntelligence(actorUserId: string): Promise<LoadedAcce
     throw new AuthError("Sales Intelligence is internal only", "FORBIDDEN", 403);
   }
   return profile;
-}
-
-/**
- * Company scope for SI:
- * - sales.view_all / admin → all
- * - own/team sales → assigned
- * - sales_intelligence.view without sales scope (e.g. Accounts) → all
- */
-export async function resolveSalesIntelligenceCompanyScope(
-  profile: LoadedAccessProfile,
-): Promise<string[] | "all"> {
-  if (hasPermission(profile, "sales.view_all_accounts") || hasPermission(profile, "admin.access")) {
-    return "all";
-  }
-  const scoped = await getAccessibleCompanyIdsForSales(profile);
-  if (scoped === "all") return "all";
-  if (scoped.length > 0) return scoped;
-  if (hasPermission(profile, "sales_intelligence.view")) return "all";
-  return [];
 }
 
 async function assertCompanyInScope(profile: LoadedAccessProfile, companyId: string) {
@@ -132,56 +106,11 @@ async function loadLines(args: {
   sku?: { equals: string; mode: "insensitive" } | undefined;
   range: DateOnlyRange;
 }): Promise<LineRow[]> {
-  const bounds = documentDatePrismaBounds(args.range);
-  return prisma.autopartSalesLine.findMany({
-    where: {
-      ...(typeof args.companyId === "string"
-        ? { companyId: args.companyId }
-        : args.companyId
-          ? { companyId: args.companyId }
-          : {}),
-      ...(args.sku ? { sku: args.sku } : {}),
-      document: {
-        is: {
-          documentDate: { gte: bounds.gte, lte: bounds.lte },
-        },
-      },
-    },
-    select: {
-      companyId: true,
-      sku: true,
-      units: true,
-      salesNet: true,
-      descriptionSnapshot: true,
-      documentType: true,
-      documentReference: true,
-      document: { select: { documentDate: true } },
-    },
-  });
+  return loadHistoricSalesLines(args);
 }
 
-function summarizeLines(lines: LineRow[]): SalesMoneyTotals {
-  const totals = emptySalesTotals();
-  const invoiceRefs = new Set<string>();
-  const skus = new Set<string>();
-  const companies = new Set<string>();
-  for (const line of lines) {
-    const minor = parseSalesNetMinor(line.salesNet);
-    totals.units += Number(line.units ?? 0);
-    totals.netSalesMinor += minor;
-    if (line.documentType === "INVOICE") {
-      totals.invoiceSalesMinor += minor;
-      invoiceRefs.add(`${line.companyId}:${line.documentReference}`);
-    } else if (line.documentType === "CREDIT") {
-      totals.creditsMinor += minor;
-    }
-    skus.add(line.sku.trim().toUpperCase());
-    companies.add(line.companyId);
-  }
-  totals.purchaseTransactions = invoiceRefs.size;
-  totals.productsPurchased = skus.size;
-  totals.customers = companies.size;
-  return totals;
+function summarizeLines(lines: LineRow[]) {
+  return summarizeHistoricLines(lines);
 }
 
 /** Auditable customer net sales for a date range — rebate foundation. */
@@ -362,44 +291,12 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
   return { items: items.slice(0, limit) };
 }
 
-function groupBySku(lines: LineRow[]): Map<string, { agg: MutableLineAgg; sku: string; desc: string | null }> {
-  const map = new Map<string, { agg: MutableLineAgg; sku: string; desc: string | null }>();
-  for (const line of lines) {
-    const key = line.sku.trim().toUpperCase();
-    let entry = map.get(key);
-    if (!entry) {
-      entry = {
-        agg: createLineAgg(),
-        sku: line.sku.trim(),
-        desc: line.descriptionSnapshot?.trim() || null,
-      };
-      map.set(key, entry);
-    }
-    const dateIso = line.document?.documentDate
-      ? dateOnlyIsoFromDate(line.document.documentDate)
-      : null;
-    accumulateLine(entry.agg, line, dateIso);
-    if (!entry.desc && line.descriptionSnapshot?.trim()) {
-      entry.desc = line.descriptionSnapshot.trim();
-    }
-  }
-  return map;
+function groupBySku(lines: LineRow[]) {
+  return groupHistoricBySku(lines);
 }
 
-function groupByCompany(lines: LineRow[]): Map<string, MutableLineAgg> {
-  const map = new Map<string, MutableLineAgg>();
-  for (const line of lines) {
-    let agg = map.get(line.companyId);
-    if (!agg) {
-      agg = createLineAgg();
-      map.set(line.companyId, agg);
-    }
-    const dateIso = line.document?.documentDate
-      ? dateOnlyIsoFromDate(line.document.documentDate)
-      : null;
-    accumulateLine(agg, line, dateIso);
-  }
-  return map;
+function groupByCompany(lines: LineRow[]) {
+  return groupHistoricByCompany(lines);
 }
 
 const customerEnquirySchema = periodInputSchema.extend({

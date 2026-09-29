@@ -86,6 +86,8 @@ import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
 import { Route as SalesQuotesQuoteIdRouteImport } from './routes/sales.quotes.$quoteId'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
+import { Route as SalesSalesIntelligenceIndexRouteImport } from './routes/sales.sales-intelligence.index'
+import { Route as SalesSalesIntelligenceGapsRouteImport } from './routes/sales.sales-intelligence.gaps'
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
@@ -477,6 +479,18 @@ const SalesQuotesNewRoute = SalesQuotesNewRouteImport.update({
   path: '/quotes/new',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesSalesIntelligenceIndexRoute =
+  SalesSalesIntelligenceIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => SalesSalesIntelligenceRoute,
+  } as any)
+const SalesSalesIntelligenceGapsRoute =
+  SalesSalesIntelligenceGapsRouteImport.update({
+    id: '/gaps',
+    path: '/gaps',
+    getParentRoute: () => SalesSalesIntelligenceRoute,
+  } as any)
 const AdminContentSlugPreviewRoute = AdminContentSlugPreviewRouteImport.update({
   id: '/preview',
   path: '/preview',
@@ -548,7 +562,7 @@ export interface FileRoutesByFullPath {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
-  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRoute
+  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
@@ -574,6 +588,7 @@ export interface FileRoutesByFullPath {
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
@@ -584,6 +599,7 @@ export interface FileRoutesByFullPath {
   '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
+  '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
@@ -622,7 +638,6 @@ export interface FileRoutesByTo {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
-  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRoute
   '/admin': typeof AdminIndexRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
@@ -646,6 +661,7 @@ export interface FileRoutesByTo {
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
   '/admin/applications': typeof AdminApplicationsIndexRoute
   '/admin/content': typeof AdminContentIndexRoute
   '/admin/customers': typeof AdminCustomersIndexRoute
@@ -656,6 +672,7 @@ export interface FileRoutesByTo {
   '/portal/quotes': typeof PortalQuotesIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
+  '/sales/sales-intelligence': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
@@ -705,7 +722,7 @@ export interface FileRoutesById {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
-  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRoute
+  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
@@ -731,6 +748,7 @@ export interface FileRoutesById {
   '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
@@ -741,6 +759,7 @@ export interface FileRoutesById {
   '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
+  '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
@@ -817,6 +836,7 @@ export interface FileRouteTypes {
     | '/sales/order/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
+    | '/sales/sales-intelligence/gaps'
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
@@ -827,6 +847,7 @@ export interface FileRouteTypes {
     | '/portal/quotes/'
     | '/sales/customers/'
     | '/sales/quotes/'
+    | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
@@ -865,7 +886,6 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
-    | '/sales/sales-intelligence'
     | '/admin'
     | '/brands'
     | '/crm'
@@ -889,6 +909,7 @@ export interface FileRouteTypes {
     | '/sales/order/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
+    | '/sales/sales-intelligence/gaps'
     | '/admin/applications'
     | '/admin/content'
     | '/admin/customers'
@@ -899,6 +920,7 @@ export interface FileRouteTypes {
     | '/portal/quotes'
     | '/sales/customers'
     | '/sales/quotes'
+    | '/sales/sales-intelligence'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
@@ -973,6 +995,7 @@ export interface FileRouteTypes {
     | '/sales/order/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
+    | '/sales/sales-intelligence/gaps'
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
@@ -983,6 +1006,7 @@ export interface FileRouteTypes {
     | '/portal/quotes/'
     | '/sales/customers/'
     | '/sales/quotes/'
+    | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
@@ -1561,6 +1585,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesQuotesNewRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/sales/sales-intelligence/': {
+      id: '/sales/sales-intelligence/'
+      path: '/'
+      fullPath: '/sales/sales-intelligence/'
+      preLoaderRoute: typeof SalesSalesIntelligenceIndexRouteImport
+      parentRoute: typeof SalesSalesIntelligenceRoute
+    }
+    '/sales/sales-intelligence/gaps': {
+      id: '/sales/sales-intelligence/gaps'
+      path: '/gaps'
+      fullPath: '/sales/sales-intelligence/gaps'
+      preLoaderRoute: typeof SalesSalesIntelligenceGapsRouteImport
+      parentRoute: typeof SalesSalesIntelligenceRoute
+    }
     '/admin/content/$slug/preview': {
       id: '/admin/content/$slug/preview'
       path: '/preview'
@@ -1805,8 +1843,24 @@ const PortalRouteChildren: PortalRouteChildren = {
 const PortalRouteWithChildren =
   PortalRoute._addFileChildren(PortalRouteChildren)
 
+interface SalesSalesIntelligenceRouteChildren {
+  SalesSalesIntelligenceGapsRoute: typeof SalesSalesIntelligenceGapsRoute
+  SalesSalesIntelligenceIndexRoute: typeof SalesSalesIntelligenceIndexRoute
+}
+
+const SalesSalesIntelligenceRouteChildren: SalesSalesIntelligenceRouteChildren =
+  {
+    SalesSalesIntelligenceGapsRoute: SalesSalesIntelligenceGapsRoute,
+    SalesSalesIntelligenceIndexRoute: SalesSalesIntelligenceIndexRoute,
+  }
+
+const SalesSalesIntelligenceRouteWithChildren =
+  SalesSalesIntelligenceRoute._addFileChildren(
+    SalesSalesIntelligenceRouteChildren,
+  )
+
 interface SalesRouteChildren {
-  SalesSalesIntelligenceRoute: typeof SalesSalesIntelligenceRoute
+  SalesSalesIntelligenceRoute: typeof SalesSalesIntelligenceRouteWithChildren
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
   SalesOrderIdRoute: typeof SalesOrderIdRoute
@@ -1817,7 +1871,7 @@ interface SalesRouteChildren {
 }
 
 const SalesRouteChildren: SalesRouteChildren = {
-  SalesSalesIntelligenceRoute: SalesSalesIntelligenceRoute,
+  SalesSalesIntelligenceRoute: SalesSalesIntelligenceRouteWithChildren,
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
   SalesOrderIdRoute: SalesOrderIdRoute,
