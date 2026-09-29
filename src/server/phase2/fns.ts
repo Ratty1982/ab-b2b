@@ -2824,4 +2824,64 @@ export const exportMultiCustomerRebateCsvFn = createServerFn({ method: "GET" })
     }
   });
 
+export const previewSalesIntelligenceFollowUpFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.previewSalesIntelligenceFollowUp(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createSalesIntelligenceFollowUpFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.createSalesIntelligenceFollowUp(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCrmTasksFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.listCrmTasks(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCrmTaskFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.getCrmTask(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const completeCrmTaskFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.completeCrmTask(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

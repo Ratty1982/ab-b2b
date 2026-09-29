@@ -41,6 +41,7 @@ import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
 import { Route as CrmApplicationsRouteImport } from './routes/crm.applications'
 import { Route as CrmManagerRouteImport } from './routes/crm.manager'
+import { Route as CrmTasksRouteImport } from './routes/crm.tasks'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
 import { Route as PortalBasketRouteImport } from './routes/portal.basket'
 import { Route as PortalCheckoutRouteImport } from './routes/portal.checkout'
@@ -254,6 +255,11 @@ const CrmApplicationsRoute = CrmApplicationsRouteImport.update({
 const CrmManagerRoute = CrmManagerRouteImport.update({
   id: '/manager',
   path: '/manager',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmTasksRoute = CrmTasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => CrmRoute,
 } as any)
 const PortalIndexRoute = PortalIndexRouteImport.update({
@@ -564,6 +570,7 @@ export interface FileRoutesByFullPath {
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/tasks': typeof CrmTasksRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
@@ -644,6 +651,7 @@ export interface FileRoutesByTo {
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/tasks': typeof CrmTasksRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
@@ -728,6 +736,7 @@ export interface FileRoutesById {
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/tasks': typeof CrmTasksRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
@@ -818,6 +827,7 @@ export interface FileRouteTypes {
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
+    | '/crm/tasks'
     | '/portal/basket'
     | '/portal/checkout'
     | '/portal/favourites'
@@ -898,6 +908,7 @@ export interface FileRouteTypes {
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
+    | '/crm/tasks'
     | '/portal/basket'
     | '/portal/checkout'
     | '/portal/favourites'
@@ -981,6 +992,7 @@ export interface FileRouteTypes {
     | '/brands/$slug'
     | '/crm/applications'
     | '/crm/manager'
+    | '/crm/tasks'
     | '/portal/basket'
     | '/portal/checkout'
     | '/portal/favourites'
@@ -1294,6 +1306,13 @@ declare module '@tanstack/react-router' {
       path: '/manager'
       fullPath: '/crm/manager'
       preLoaderRoute: typeof CrmManagerRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/tasks': {
+      id: '/crm/tasks'
+      path: '/tasks'
+      fullPath: '/crm/tasks'
+      preLoaderRoute: typeof CrmTasksRouteImport
       parentRoute: typeof CrmRoute
     }
     '/portal/': {
@@ -1800,12 +1819,14 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 interface CrmRouteChildren {
   CrmApplicationsRoute: typeof CrmApplicationsRoute
   CrmManagerRoute: typeof CrmManagerRoute
+  CrmTasksRoute: typeof CrmTasksRoute
   CrmIndexRoute: typeof CrmIndexRoute
 }
 
 const CrmRouteChildren: CrmRouteChildren = {
   CrmApplicationsRoute: CrmApplicationsRoute,
   CrmManagerRoute: CrmManagerRoute,
+  CrmTasksRoute: CrmTasksRoute,
   CrmIndexRoute: CrmIndexRoute,
 }
 

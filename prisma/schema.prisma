@@ -885,6 +885,7 @@ model Product {
   variants  ProductVariant[]
   documents Document[]
   media     ProductMedia[]
+  tasks     Task[]
 
   @@index([brandId])
   @@index([categoryId])
@@ -2027,15 +2028,28 @@ model Task {
   priority     TaskPriority @default(NORMAL)
   dueAt        DateTime?
   completedAt  DateTime?
+  /// Origin module when created from Sales Intelligence (or similar bridges).
+  sourceModule String?
+  /// Factual reason/classification at creation (e.g. STOPPED, RANGE_GAP).
+  sourceReason String?
+  /// SKU snapshot key for product-context follow-ups / open-duplicate checks.
+  sourceSku    String?
+  productId    String?
+  /// Concise structured evidence snapshot (never full report dumps).
+  sourceContext Json?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
   company   Company? @relation(fields: [companyId], references: [id])
   assignee  User?    @relation("TaskAssignee", fields: [assigneeId], references: [id])
   createdBy User?    @relation("TaskCreator", fields: [createdById], references: [id])
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([assigneeId, status])
   @@index([companyId, status])
+  @@index([companyId, sourceModule, sourceReason, sourceSku, status])
+  @@index([sourceModule, status])
+  @@index([productId])
 }
 
 model Note {

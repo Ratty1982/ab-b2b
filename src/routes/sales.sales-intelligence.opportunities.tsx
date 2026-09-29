@@ -28,6 +28,11 @@ import {
 } from "@/domain/sales-opportunity";
 import { formatPeriodRangeLong, shouldShowEntitySuggestions } from "@/domain/sales-intelligence-ux";
 import {
+  CreateFollowUpDrawer,
+  SiCreateFollowUpButton,
+  type FollowUpRequest,
+} from "@/components/sales-intelligence/create-followup-drawer";
+import {
   exportCustomerRangeOpportunitiesCsvFn,
   getCustomerRangeOpportunitiesFn,
   searchSalesIntelligenceCustomersFn,
@@ -88,6 +93,7 @@ function RangeOpportunitiesPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
+  const [followUp, setFollowUp] = useState<FollowUpRequest | null>(null);
 
   function patch(next: Partial<Record<keyof OpportunityUrlSearch, string | number | boolean | null>>) {
     const draft: OpportunityUrlSearch = {};
@@ -605,13 +611,32 @@ function RangeOpportunitiesPage() {
                                   )}
                                 </td>
                                 <td className="py-2.5">
-                                  <a
-                                    href={`${ROUTES.salesIntelligence}?mode=products&sku=${encodeURIComponent(r.sku)}&period=CUSTOM&from=${data.analysisPeriod.from}&to=${data.analysisPeriod.to}`}
-                                    className="inline-flex h-8 items-center rounded-md border border-border px-2.5 text-[10px] font-bold uppercase tracking-wide text-steel hover:border-primary hover:text-primary"
+                                  <div
+                                    className="flex flex-col items-start gap-1"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    View product enquiry →
-                                  </a>
+                                    <a
+                                      href={`${ROUTES.salesIntelligence}?mode=products&sku=${encodeURIComponent(r.sku)}&period=CUSTOM&from=${data.analysisPeriod.from}&to=${data.analysisPeriod.to}`}
+                                      className="inline-flex h-8 items-center rounded-md border border-border px-2.5 text-[10px] font-bold uppercase tracking-wide text-steel hover:border-primary hover:text-primary"
+                                    >
+                                      View product enquiry →
+                                    </a>
+                                    {search.companyId ? (
+                                      <SiCreateFollowUpButton
+                                        onClick={() =>
+                                          setFollowUp({
+                                            sourceModule: "RANGE_OPPORTUNITY",
+                                            sourceReason: "RANGE_GAP",
+                                            companyId: search.companyId!,
+                                            sku: r.sku,
+                                            opportunityPeriod: period,
+                                            from: search.from ?? null,
+                                            to: search.to ?? null,
+                                          })
+                                        }
+                                      />
+                                    ) : null}
+                                  </div>
                                 </td>
                               </tr>
                               {expandedSku === r.sku ? (
@@ -675,12 +700,29 @@ function RangeOpportunitiesPage() {
                               />
                             </div>
                           ) : null}
-                          <a
-                            href={`${ROUTES.salesIntelligence}?mode=products&sku=${encodeURIComponent(r.sku)}&period=CUSTOM&from=${data.analysisPeriod.from}&to=${data.analysisPeriod.to}`}
-                            className="mt-2 inline-block text-[11px] font-bold uppercase text-primary"
-                          >
-                            View product enquiry →
-                          </a>
+                          <div className="mt-2 flex flex-wrap gap-3">
+                            <a
+                              href={`${ROUTES.salesIntelligence}?mode=products&sku=${encodeURIComponent(r.sku)}&period=CUSTOM&from=${data.analysisPeriod.from}&to=${data.analysisPeriod.to}`}
+                              className="inline-block text-[11px] font-bold uppercase text-primary"
+                            >
+                              View product enquiry →
+                            </a>
+                            {search.companyId ? (
+                              <SiCreateFollowUpButton
+                                onClick={() =>
+                                  setFollowUp({
+                                    sourceModule: "RANGE_OPPORTUNITY",
+                                    sourceReason: "RANGE_GAP",
+                                    companyId: search.companyId!,
+                                    sku: r.sku,
+                                    opportunityPeriod: period,
+                                    from: search.from ?? null,
+                                    to: search.to ?? null,
+                                  })
+                                }
+                              />
+                            ) : null}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -698,6 +740,11 @@ function RangeOpportunitiesPage() {
           </div>
         ) : null}
       </div>
+      <CreateFollowUpDrawer
+        open={Boolean(followUp)}
+        request={followUp}
+        onClose={() => setFollowUp(null)}
+      />
     </div>
   );
 }

@@ -27,6 +27,11 @@ import {
 } from "@/domain/sales-rebate";
 import type { RebatePeriodPreset } from "@/domain/sales-history-period";
 import {
+  CreateFollowUpDrawer,
+  SiCreateFollowUpButton,
+  type FollowUpRequest,
+} from "@/components/sales-intelligence/create-followup-drawer";
+import {
   exportCustomerRebateDocumentsCsvFn,
   exportCustomerRebateProductsCsvFn,
   exportCustomerRebateSummaryCsvFn,
@@ -162,6 +167,7 @@ function RebateAnalysisPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [followUp, setFollowUp] = useState<FollowUpRequest | null>(null);
 
   function patch(next: Partial<Record<keyof RebateUrlSearch, string | number | boolean | null>>) {
     const draft: RebateUrlSearch = {};
@@ -676,17 +682,31 @@ function RebateAnalysisPage() {
                   <p className="hidden text-[10px] font-bold uppercase tracking-[0.18em] text-steel print:block">
                     {customerData.print.organisation} — {customerData.print.title}
                   </p>
-                  <SiEntityContext
-                    title={customerData.company.name}
-                    meta={[
-                      customerData.company.autopartCustomerCode ??
-                        customerData.company.accountNumber ??
-                        "",
-                      customerData.company.salesperson?.name ?? "",
-                      customerData.company.paymentTerms ?? "",
-                    ].filter(Boolean)}
-                    onChange={() => setChangingEntity(true)}
-                  />
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <SiEntityContext
+                      title={customerData.company.name}
+                      meta={[
+                        customerData.company.autopartCustomerCode ??
+                          customerData.company.accountNumber ??
+                          "",
+                        customerData.company.salesperson?.name ?? "",
+                        customerData.company.paymentTerms ?? "",
+                      ].filter(Boolean)}
+                      onChange={() => setChangingEntity(true)}
+                    />
+                    <SiCreateFollowUpButton
+                      onClick={() =>
+                        setFollowUp({
+                          sourceModule: "REBATE_ANALYSIS",
+                          sourceReason: "NET_SPEND_REVIEW",
+                          companyId: customerData.company.id,
+                          period,
+                          from: search.from ?? null,
+                          to: search.to ?? null,
+                        })
+                      }
+                    />
+                  </div>
                   <SiPeriodSummary
                     selectedFrom={customerData.period.from}
                     selectedTo={customerData.period.to}
@@ -1315,6 +1335,11 @@ function RebateAnalysisPage() {
           </>
         ) : null}
       </div>
+      <CreateFollowUpDrawer
+        open={Boolean(followUp)}
+        request={followUp}
+        onClose={() => setFollowUp(null)}
+      />
     </div>
   );
 }

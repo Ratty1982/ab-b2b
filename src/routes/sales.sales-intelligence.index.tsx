@@ -33,6 +33,11 @@ import {
   shouldShowEntitySuggestions,
 } from "@/domain/sales-intelligence-ux";
 import {
+  CreateFollowUpDrawer,
+  SiCreateFollowUpButton,
+  type FollowUpRequest,
+} from "@/components/sales-intelligence/create-followup-drawer";
+import {
   exportCustomerSalesEnquiryCsvFn,
   exportProductSalesEnquiryCsvFn,
   getCustomerSalesEnquiryFn,
@@ -103,6 +108,7 @@ function SalesEnquiryPage() {
   const [productData, setProductData] = useState<ProductEnquiry | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [followUp, setFollowUp] = useState<FollowUpRequest | null>(null);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [expandedCompanyId, setExpandedCompanyId] = useState<string | null>(null);
   const [filterQ, setFilterQ] = useState(search.q ?? "");
@@ -419,19 +425,33 @@ function SalesEnquiryPage() {
 
         {mode === "customers" ? (
           customerSelected && customerData && !changingEntity ? (
-            <SiEntityContext
-              eyebrow="Customer"
-              title={customerData.company.name}
-              meta={[
-                customerData.company.autopartCustomerCode ||
-                  customerData.company.accountNumber ||
-                  "No Autopart code",
-                customerData.company.salesperson?.name ?? "",
-                customerData.company.paymentTerms ?? "",
-              ]}
-              onChange={() => setChangingEntity(true)}
-              changeLabel="Change customer"
-            />
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <SiEntityContext
+                eyebrow="Customer"
+                title={customerData.company.name}
+                meta={[
+                  customerData.company.autopartCustomerCode ||
+                    customerData.company.accountNumber ||
+                    "No Autopart code",
+                  customerData.company.salesperson?.name ?? "",
+                  customerData.company.paymentTerms ?? "",
+                ]}
+                onChange={() => setChangingEntity(true)}
+                changeLabel="Change customer"
+              />
+              <SiCreateFollowUpButton
+                onClick={() =>
+                  setFollowUp({
+                    sourceModule: "SALES_ENQUIRY",
+                    sourceReason: "CUSTOMER",
+                    companyId: customerData.company.id,
+                    period,
+                    from: search.from ?? null,
+                    to: search.to ?? null,
+                  })
+                }
+              />
+            </div>
           ) : (
             <SiField label="Customer" className="max-w-xl">
               <input
@@ -631,6 +651,17 @@ function SalesEnquiryPage() {
             page={page}
             totalPages={totalPages}
             onPage={(p) => patch({ page: p })}
+            onFollowUpProduct={(sku) =>
+              setFollowUp({
+                sourceModule: "SALES_ENQUIRY",
+                sourceReason: "PRODUCT",
+                companyId: customerData.company.id,
+                sku,
+                period,
+                from: search.from ?? null,
+                to: search.to ?? null,
+              })
+            }
           />
         ) : null}
 
@@ -674,6 +705,11 @@ function SalesEnquiryPage() {
           </p>
         ) : null}
       </div>
+      <CreateFollowUpDrawer
+        open={Boolean(followUp)}
+        request={followUp}
+        onClose={() => setFollowUp(null)}
+      />
     </div>
   );
 }
@@ -757,6 +793,7 @@ function CustomerEnquiryView({
   page,
   totalPages,
   onPage,
+  onFollowUpProduct,
 }: {
   data: CustomerEnquiry;
   filterQ: string;
@@ -771,6 +808,7 @@ function CustomerEnquiryView({
   page: number;
   totalPages: number;
   onPage: (p: number) => void;
+  onFollowUpProduct: (sku: string) => void;
 }) {
   const filtersActive = hasActiveEnquiryTableFilters({
     brandId,
@@ -874,6 +912,9 @@ function CustomerEnquiryView({
                           {item.sku}
                           {item.brandName ? ` · ${item.brandName}` : ""}
                           {!item.inCatalogue ? " · Historic only" : ""}
+                        </div>
+                        <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                          <SiCreateFollowUpButton onClick={() => onFollowUpProduct(item.sku)} />
                         </div>
                       </td>
                       <td className="py-2.5 pr-3 text-steel">

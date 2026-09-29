@@ -10,7 +10,9 @@ Internal staff module for factual Autopart historic sales enquiry, period gap co
 
 **Phase 4 ships:** Rebate / Net Spend Analysis — auditable customer and multi-customer historic net spend for rebate checking (no schemes yet).
 
-**Not yet built:** Cross-sell UI, AI recommendations, forecasting, churn scoring, salesperson scoring, rebate schemes / percentages / accruals, management dashboards.
+**Phase 5 ships:** Sales Actions / Follow-Ups — human-initiated CRM Task creation from Sales Intelligence evidence (no automatic CRM actions).
+
+**Not yet built:** Cross-sell UI, AI recommendations, forecasting, churn scoring, salesperson scoring, rebate schemes / percentages / accruals, management dashboards, follow-up conversion analytics.
 
 ## Route & navigation
 
@@ -20,6 +22,7 @@ Internal staff module for factual Autopart historic sales enquiry, period gap co
 | Gap Analysis | `/sales/sales-intelligence/gaps` |
 | Range Opportunities | `/sales/sales-intelligence/opportunities` |
 | Rebate Analysis | `/sales/sales-intelligence/rebates` |
+| CRM Tasks (incl. SI follow-ups) | `/crm/tasks` |
 
 Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis | Range Opportunities | Rebate Analysis**
 
@@ -357,9 +360,118 @@ Multi-customer: full filtered authorized table (not page-only).
 
 Print: browser print CSS with organisation, customer, account, period, generated timestamp, and spend summary.
 
+## Sales Actions / Follow-Ups
+
+Purpose: let a salesperson create a CRM follow-up **from evidence they are looking at** in Sales Intelligence, without retyping customer/product/period facts.
+
+### Human-initiated only
+
+Sales Intelligence provides evidence. The salesperson decides whether to act.
+
+**Never automatic:**
+
+- No auto-created Tasks, Leads, or Opportunities
+- No customer emails
+- No “at risk” assignment
+- No inferred sale probability or expected revenue
+
+Every CRM action requires an explicit staff click on **Create follow-up**.
+
+### Supported SI sources
+
+| Source module | Typical reason | Where the action appears |
+|---------------|----------------|--------------------------|
+| `GAP_ANALYSIS` | `STOPPED` / `DECREASED` / `INCREASED` / `NEW` | Changed customer/product rows (not status-count cards) |
+| `RANGE_OPPORTUNITY` | `RANGE_GAP` | Candidate product rows (only when a real candidate exists) |
+| `SALES_ENQUIRY` | `CUSTOMER` / `PRODUCT` | Customer context and product rows |
+| `REBATE_ANALYSIS` | `NET_SPEND_REVIEW` | Customer header only (not every invoice/credit line) |
+
+Gap status cards remain filters only.
+
+### Task reuse
+
+Follow-ups reuse the existing CRM **`Task`** model (status `OPEN` / `IN_PROGRESS` / `DONE` / `CANCELLED`, priority `LOW` / `NORMAL` / `HIGH`).
+
+Additive fields only:
+
+- `sourceModule`, `sourceReason`, `sourceSku`, `productId`, `sourceContext` (JSON snapshot)
+
+No `SalesIntelligenceTask` / parallel task store.
+
+### Source snapshot semantics
+
+`sourceContext` is a **concise snapshot of what the salesperson saw at creation time**:
+
+- source module + reason
+- company (+ Autopart account when useful)
+- product id (if catalogue), SKU, name, brand, category
+- selected / comparison periods
+- factual metrics (qty, net sales, adoption labels, etc.)
+- deep-link path back into SI
+- `capturedAt`
+
+Server rebuilds authoritative Gap / Range / Enquiry / Rebate evidence before write. Client-supplied money/qty/classification values are not trusted.
+
+If live SI later changes (new invoice arrives), the Task snapshot stays unchanged. **View Sales Intelligence** opens the current live analysis for the same customer/SKU/periods.
+
+Do not dump full 561L/SLRB histories, gap result sets, or comparable customer identities into the snapshot.
+
+### Assignee rules
+
+Default assignee = authoritative Company → CompanyAssignment → SalesRep → User when present and assignable.
+
+If none: current authenticated staff user (valid task owner).
+
+No arbitrary fallback to a named person. Non-managers may only assign to the company sales rep or themselves (existing CRM scope). Managers keep broader assign rights via existing permissions.
+
+### Due date & priority
+
+Due date: salesperson chooses (`Today` / `Tomorrow` / `In 3 days` / `In 1 week` / `Custom`). Europe/London date-only semantics. No invented business deadline.
+
+Priority: existing Task priority; default `NORMAL`. Never inferred from Stopped / adoption / spend.
+
+Subject: editable default such as `Follow up — Catalytic Converter Cleaner` or `Range opportunity — Brake Cleaner 500ml`.
+
+### Duplicate warning
+
+Before create, open tasks (`OPEN` / `IN_PROGRESS`) matching same company + source module + reason + SKU (when product-context) surface:
+
+> An open follow-up already exists…
+
+Options: **View existing** or **Create another** (explicit `allowDuplicate`). Completed/cancelled tasks do not block.
+
+### Deep links & CRM display
+
+- Task detail shows structured source context (not raw JSON) + optional salesperson notes
+- **View Sales Intelligence** uses the stored deep-link path
+- **View task** opens `/crm/tasks?taskId=…`
+- CRM Tasks list shows a subtle Sales Intelligence source badge and optional source filter
+- Company activity timeline records `FOLLOW_UP` “Sales follow-up created” when the bridge creates the task (Task create itself does not auto-write activities elsewhere)
+
+### Security
+
+Requires `sales_intelligence.view` **and** (`tasks.manage` or `crm.activities.create`). Trade users denied. Company must be in the actor’s SI scope. Assignees validated. Gap/Range rows must exist for the requested periods/SKU; mismatched classification is rejected.
+
+Accounts may view SI but cannot create follow-ups unless CRM task permissions are granted (they are not, by default).
+
+### Explicit non-goals
+
+- No automatic Lead / Opportunity creation
+- No customer contact / outbound email from this bridge
+- No follow-up conversion % / revenue attribution reporting yet
+- No CRM redesign; existing Task lifecycle for completion
+
+### Current limitations
+
+- Assignee picker is intentionally small (default + self) rather than a full staff directory
+- Rebate follow-up is customer-level Net Spend Review only — no rebate eligibility claim
+- Historic-only Gap SKUs may have null `productId` (SKU + description still snapshotted; catalogue products are never auto-created)
+
 ## Indexes
 
 `AutopartSalesLine(sku, companyId)` for product-first enquiry across companies. Existing `(companyId, documentDate)` on documents and `(companyId, sku)` on lines remain for customer-first / rebate paths. **No new indexes** for Range Opportunities or Rebate Analysis (set-based period loads + in-process aggregation).
+
+Task follow-up indexes: `(companyId, sourceModule, sourceReason, sourceSku, status)`, `(sourceModule, status)`, `(productId)`.
 
 ## Architecture
 
@@ -370,12 +482,15 @@ Print: browser print CSS with organisation, customer, account, period, generated
 | `src/domain/sales-gap.ts` | Gap classification, URL state, period resolution |
 | `src/domain/sales-opportunity.ts` | Similarity, adoption, range match, opportunity URL/config |
 | `src/domain/sales-rebate.ts` | Rebate URL state, eligibility stub, document-count helpers |
+| `src/domain/sales-followup.ts` | Follow-up subjects, due presets, snapshot helpers |
 | `src/server/sales-intelligence/historic-lines.ts` | Shared DB loaders + summarizers |
 | `src/server/sales-intelligence/scope.ts` | Shared company scope |
 | `src/server/sales-intelligence/enquiry.ts` | Sales Enquiry service |
 | `src/server/sales-intelligence/gap.ts` | Gap Analysis service + CSV |
 | `src/server/sales-intelligence/opportunity.ts` | Range Opportunities service + CSV |
 | `src/server/sales-intelligence/rebate.ts` | Rebate / Net Spend service + CSV |
+| `src/server/sales-intelligence/followup.ts` | SI → CRM Task preview/create + CRM task list/detail/complete |
+| `src/components/sales-intelligence/create-followup-drawer.tsx` | Shared Create Follow-up drawer |
 
 Query approach: one scoped historic-line load for the selected period, then in-process document/SKU/brand/category (or multi-customer) aggregation — not one query per customer/document/SKU.
 
@@ -385,3 +500,4 @@ Query approach: one scoped historic-line load for the selected period, then in-p
 2. **Rebate Schemes** — date range, customer/group, brand/category/SKU inclusion/exclusion, spend thresholds, tier/fixed percentages, accruals/payments (on top of trusted Net Spend)
 3. Salesperson performance
 4. Management dashboards / Sales-i style analysis
+5. Follow-up conversion / attribution analytics (only after the workflow is proven useful)

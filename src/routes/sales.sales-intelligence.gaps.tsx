@@ -39,6 +39,11 @@ import {
   toggleGapStatusFilter,
 } from "@/domain/sales-intelligence-ux";
 import {
+  CreateFollowUpDrawer,
+  SiCreateFollowUpButton,
+  type FollowUpRequest,
+} from "@/components/sales-intelligence/create-followup-drawer";
+import {
   exportCustomerGapCsvFn,
   exportProductGapCsvFn,
   getCustomerGapAnalysisFn,
@@ -105,6 +110,7 @@ function GapAnalysisPage() {
   const [productData, setProductData] = useState<ProductGap | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [followUp, setFollowUp] = useState<FollowUpRequest | null>(null);
 
   function patch(next: {
     mode?: "customers" | "products";
@@ -636,6 +642,20 @@ function GapAnalysisPage() {
             enquiryLink={(sku) =>
               `${ROUTES.salesIntelligence}?mode=customers&companyId=${customerData.company.id}&period=CUSTOM&from=${customerData.selectedPeriod.from}&to=${customerData.selectedPeriod.to}&compare=CUSTOM&compareFrom=${customerData.comparisonPeriod.from}&compareTo=${customerData.comparisonPeriod.to}&q=${encodeURIComponent(sku)}`
             }
+            onFollowUp={(sku, reason) =>
+              setFollowUp({
+                sourceModule: "GAP_ANALYSIS",
+                sourceReason: reason,
+                companyId: customerData.company.id,
+                sku,
+                period,
+                from: search.from ?? null,
+                to: search.to ?? null,
+                compare,
+                compareFrom: search.compareFrom ?? null,
+                compareTo: search.compareTo ?? null,
+              })
+            }
           />
         ) : null}
 
@@ -659,8 +679,28 @@ function GapAnalysisPage() {
             enquiryLink={(companyId) =>
               `${ROUTES.salesIntelligence}?mode=customers&companyId=${companyId}&period=CUSTOM&from=${productData.selectedPeriod.from}&to=${productData.selectedPeriod.to}&compare=CUSTOM&compareFrom=${productData.comparisonPeriod.from}&compareTo=${productData.comparisonPeriod.to}`
             }
+            onFollowUp={(companyId, reason) =>
+              setFollowUp({
+                sourceModule: "GAP_ANALYSIS",
+                sourceReason: reason,
+                companyId,
+                sku: productData.product.sku,
+                period,
+                from: search.from ?? null,
+                to: search.to ?? null,
+                compare,
+                compareFrom: search.compareFrom ?? null,
+                compareTo: search.compareTo ?? null,
+              })
+            }
           />
         ) : null}
+
+        <CreateFollowUpDrawer
+          open={Boolean(followUp)}
+          request={followUp}
+          onClose={() => setFollowUp(null)}
+        />
 
         {!loading && mode === "customers" && !search.companyId ? (
           <p className="text-[14px] text-steel">Search and select a customer to compare periods.</p>
@@ -727,6 +767,7 @@ function CustomerGapView({
   totalPages,
   onPage,
   enquiryLink,
+  onFollowUp,
 }: {
   data: CustomerGap;
   filterQ: string;
@@ -746,6 +787,7 @@ function CustomerGapView({
   totalPages: number;
   onPage: (p: number) => void;
   enquiryLink: (sku: string) => string;
+  onFollowUp: (sku: string, reason: "STOPPED" | "DECREASED" | "INCREASED" | "NEW") => void;
 }) {
   const filtersActive = hasActiveGapTableFilters({
     status,
@@ -938,7 +980,19 @@ function CustomerGapView({
                       {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                     </td>
                     <td className="py-2">
-                      <SiViewEnquiryLink href={enquiryLink(r.sku)} />
+                      <div className="flex flex-col items-start gap-1">
+                        <SiViewEnquiryLink href={enquiryLink(r.sku)} />
+                        {r.status !== "UNCHANGED" ? (
+                          <SiCreateFollowUpButton
+                            onClick={() =>
+                              onFollowUp(
+                                r.sku,
+                                r.status as "STOPPED" | "DECREASED" | "INCREASED" | "NEW",
+                              )
+                            }
+                          />
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -991,8 +1045,18 @@ function CustomerGapView({
                   Last purchased{" "}
                   {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                 </p>
-                <div className="mt-2">
+                <div className="mt-2 flex flex-wrap gap-3">
                   <SiViewEnquiryLink href={enquiryLink(r.sku)} />
+                  {r.status !== "UNCHANGED" ? (
+                    <SiCreateFollowUpButton
+                      onClick={() =>
+                        onFollowUp(
+                          r.sku,
+                          r.status as "STOPPED" | "DECREASED" | "INCREASED" | "NEW",
+                        )
+                      }
+                    />
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -1033,6 +1097,7 @@ function ProductGapView({
   totalPages,
   onPage,
   enquiryLink,
+  onFollowUp,
 }: {
   data: ProductGap;
   filterQ: string;
@@ -1050,6 +1115,10 @@ function ProductGapView({
   totalPages: number;
   onPage: (p: number) => void;
   enquiryLink: (companyId: string) => string;
+  onFollowUp: (
+    companyId: string,
+    reason: "STOPPED" | "DECREASED" | "INCREASED" | "NEW",
+  ) => void;
 }) {
   const filtersActive = hasActiveGapTableFilters({
     status,
@@ -1227,7 +1296,19 @@ function ProductGapView({
                       {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                     </td>
                     <td className="py-2">
-                      <SiViewEnquiryLink href={enquiryLink(r.companyId)} />
+                      <div className="flex flex-col items-start gap-1">
+                        <SiViewEnquiryLink href={enquiryLink(r.companyId)} />
+                        {r.status !== "UNCHANGED" ? (
+                          <SiCreateFollowUpButton
+                            onClick={() =>
+                              onFollowUp(
+                                r.companyId,
+                                r.status as "STOPPED" | "DECREASED" | "INCREASED" | "NEW",
+                              )
+                            }
+                          />
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1278,8 +1359,18 @@ function ProductGapView({
                     <dd>{r.salespersonName || "—"}</dd>
                   </div>
                 </dl>
-                <div className="mt-2">
+                <div className="mt-2 flex flex-wrap gap-3">
                   <SiViewEnquiryLink href={enquiryLink(r.companyId)} />
+                  {r.status !== "UNCHANGED" ? (
+                    <SiCreateFollowUpButton
+                      onClick={() =>
+                        onFollowUp(
+                          r.companyId,
+                          r.status as "STOPPED" | "DECREASED" | "INCREASED" | "NEW",
+                        )
+                      }
+                    />
+                  ) : null}
                 </div>
               </div>
             ))}
