@@ -1,19 +1,16 @@
 /**
  * Authoritative customer Account Manager resolver.
  *
- * Source of truth: Company → primary CompanyAssignment → active SalesRep → User,
- * using SalesRep customer-facing profile fields first, then optional linked
- * TeamMember enrichment, then User email fallback.
+ * Source of truth: Company → current primary CompanyAssignment → active SalesRep
+ * (+ linked User for same-person name/email fallback).
+ *
+ * ALL card fields come from that one SalesRep record. Never mix TeamMember /
+ * CMS public profile data (that previously produced Tom's name + Wayne's phones).
  *
  * Never invents people. Never exposes internal IDs, Autopart data, roles, or notes.
  */
 import { prisma } from "@/infra/database/client";
 import { cmsMediaPublicPath, cmsFocalStyle } from "@/lib/cms-media";
-import {
-  publicTeamJobTitle,
-  teamMemberDisplayName,
-  teamMemberInitials,
-} from "@/domain/team";
 import { defaultSalesRepJobTitle, telHrefFromPhone } from "@/domain/sales-rep-profile";
 import { getEmailFooterMeta } from "@/server/email/settings";
 
@@ -69,17 +66,11 @@ function initialsFromName(name: string): string {
   return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
 }
 
+/** SalesRep + User + photo only — no TeamMember join. */
 export const salesRepAmInclude = {
   user: { select: { id: true, name: true, email: true, status: true } },
   photoMedia: {
     select: { id: true, altText: true, width: true, height: true },
-  },
-  publicTeamProfile: {
-    include: {
-      photoMedia: {
-        select: { id: true, altText: true, width: true, height: true },
-      },
-    },
   },
 } as const;
 
@@ -97,39 +88,15 @@ type RepWithProfile = {
   photoFocalY: number;
   photoMedia: { id: string; altText: string | null } | null;
   user: { id: string; name: string | null; email: string; status: string };
-  publicTeamProfile: {
-    isPublic: boolean;
-    isContactable: boolean;
-    firstName: string;
-    lastName: string;
-    jobTitle: string | null;
-    email: string | null;
-    phone: string | null;
-    mobile: string | null;
-    photoAlt: string | null;
-    photoFocalX: number;
-    photoFocalY: number;
-    photoMedia: { id: string; altText: string | null } | null;
-  } | null;
 };
 
 function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | null {
   if (!rep.active || rep.user.status !== "ACTIVE") return null;
 
-  const profile = rep.publicTeamProfile;
-  const teamPublic = Boolean(profile?.isPublic);
-  const teamContactable = Boolean(teamPublic && profile?.isContactable);
   const contactEnabled = rep.customerContactEnabled !== false;
 
-  const teamName =
-    teamPublic && profile ? teamMemberDisplayName(profile.firstName, profile.lastName) : null;
-  const name =
-    rep.displayName?.trim() || teamName || rep.user.name?.trim() || rep.user.email;
-
-  const jobTitle =
-    rep.jobTitle?.trim() ||
-    (teamPublic && profile ? publicTeamJobTitle(profile.jobTitle) : null) ||
-    defaultSalesRepJobTitle(null);
+  const name = rep.displayName?.trim() || rep.user.name?.trim() || rep.user.email;
+  const jobTitle = rep.jobTitle?.trim() || defaultSalesRepJobTitle(null);
 
   let email: string | null = null;
   let phone: string | null = null;
@@ -138,19 +105,10 @@ function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | nul
   if (contactEnabled) {
     email =
       (rep.businessEmail?.trim().toLowerCase() || null) ||
-      (teamContactable && profile?.email?.trim()
-        ? profile.email.trim().toLowerCase()
-        : null) ||
       rep.user.email.trim().toLowerCase() ||
       null;
-
-    phone =
-      (rep.phone?.trim() || null) ||
-      (teamContactable && profile?.phone?.trim() ? profile.phone.trim() : null);
-
-    mobile =
-      (rep.mobile?.trim() || null) ||
-      (teamContactable && profile?.mobile?.trim() ? profile.mobile.trim() : null);
+    phone = rep.phone?.trim() || null;
+    mobile = rep.mobile?.trim() || null;
   }
 
   let photo: AccountManagerPhoto | null = null;
@@ -161,15 +119,6 @@ function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | nul
       objectPosition: cmsFocalStyle({
         focalX: rep.photoFocalX,
         focalY: rep.photoFocalY,
-      }).objectPosition as string,
-    };
-  } else if (teamPublic && profile?.photoMedia) {
-    photo = {
-      src: cmsMediaPublicPath(profile.photoMedia.id),
-      alt: profile.photoAlt || profile.photoMedia.altText || name,
-      objectPosition: cmsFocalStyle({
-        focalX: profile.photoFocalX,
-        focalY: profile.photoFocalY,
       }).objectPosition as string,
     };
   }
@@ -186,10 +135,7 @@ function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | nul
 
   return {
     name,
-    initials:
-      teamPublic && profile
-        ? teamMemberInitials(profile.firstName, profile.lastName)
-        : initialsFromName(name),
+    initials: initialsFromName(name),
     jobTitle,
     email,
     phone,
@@ -204,18 +150,27 @@ function mapRepToAccountManager(rep: RepWithProfile): AccountManagerPublic | nul
 }
 
 /**
+ * Current primary assignment for a company.
+ * Deterministic: newest primary wins if legacy duplicates exist.
+ */
+async function loadCurrentPrimaryAssignment(companyId: string) {
+  return prisma.companyAssignment.findFirst({
+    where: { companyId, isPrimary: true },
+    orderBy: { createdAt: "desc" },
+    include: {
+      salesRep: { include: salesRepAmInclude },
+    },
+  });
+}
+
+/**
  * Resolve the assigned Account Manager for a company.
  * Returns null when no active primary SalesRep is assigned.
  */
 export async function resolveAccountManagerForCompany(
   companyId: string,
 ): Promise<AccountManagerPublic | null> {
-  const assignment = await prisma.companyAssignment.findFirst({
-    where: { companyId, isPrimary: true },
-    include: {
-      salesRep: { include: salesRepAmInclude },
-    },
-  });
+  const assignment = await loadCurrentPrimaryAssignment(companyId);
   if (!assignment?.salesRep) return null;
   return mapRepToAccountManager(assignment.salesRep);
 }
@@ -245,12 +200,7 @@ export async function resolveSalesRepAssignmentRoute(companyId: string): Promise
   accountManagerName: string;
   notificationEmail: string | null;
 } | null> {
-  const assignment = await prisma.companyAssignment.findFirst({
-    where: { companyId, isPrimary: true },
-    include: {
-      salesRep: { include: salesRepAmInclude },
-    },
-  });
+  const assignment = await loadCurrentPrimaryAssignment(companyId);
   const rep = assignment?.salesRep;
   if (!rep) return null;
   const am = mapRepToAccountManager(rep);
@@ -265,13 +215,13 @@ export async function resolveSalesRepAssignmentRoute(companyId: string): Promise
 
 /**
  * General Automotive Brands contact for companies with no assigned SalesRep.
- * Uses configured transactional reply-to / from email only — never invents addresses.
+ * Uses configured transactional reply-to / from email only — never invents people.
  */
 export async function resolveGeneralTradeContact(): Promise<GeneralTradeContact> {
   const footer = await getEmailFooterMeta();
   const email = (footer.replyToEmail || footer.fromEmail || "").trim().toLowerCase() || null;
   return {
-    label: "Automotive Brands",
+    label: "Automotive Brands Team",
     email,
     mailtoHref: mailtoHref(email),
   };

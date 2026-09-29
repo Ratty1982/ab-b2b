@@ -391,7 +391,7 @@ function Dashboard() {
             ) : (
               <div className="rounded-lg border border-border bg-surface/50 p-4 text-[13px]">
                 <div className="font-display text-base font-semibold uppercase">
-                  Your account manager
+                  {data.generalContact.label || "Contact our trade team"}
                 </div>
                 <p className="mt-2 text-steel">Our trade team is here to help.</p>
                 {data.generalContact.mailtoHref ? (
@@ -399,7 +399,7 @@ function Dashboard() {
                     href={data.generalContact.mailtoHref}
                     className="mt-4 grid h-10 place-items-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground transition hover:brightness-110"
                   >
-                    Contact Automotive Brands
+                    Contact our trade team
                   </a>
                 ) : (
                   <Link

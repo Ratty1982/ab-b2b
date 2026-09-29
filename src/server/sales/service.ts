@@ -181,7 +181,9 @@ function mapListItem(
     rep.customerContactEnabled === false
       ? null
       : rep.businessEmail?.trim().toLowerCase() || rep.user.email.trim().toLowerCase();
-  const activeAssignments = rep.assignments.filter((a) => a.company.status === "ACTIVE");
+  const currentPrimaryActive = rep.assignments.filter(
+    (a) => a.isPrimary && a.company.status === "ACTIVE",
+  );
   return {
     id: rep.id,
     code: rep.code,
@@ -203,8 +205,8 @@ function mapListItem(
       roleLabels: roleLabels(rep.user),
     },
     photoSrc: rep.photoMedia ? cmsMediaPublicPath(rep.photoMedia.id) : null,
-    customerCount: activeAssignments.length,
-    assignmentCount: rep.assignments.length,
+    customerCount: currentPrimaryActive.length,
+    assignmentCount: rep.assignments.filter((a) => a.isPrimary).length,
     openCallbackTasks: counts.openCallbackTasks,
     openQuotes: counts.openQuotes,
     linkedTeamMember: rep.publicTeamProfile
@@ -598,12 +600,20 @@ export async function assignCompanyToSalesRep(actorUserId: string, raw: unknown)
   }
 
   if (existingPrimary) {
-    await prisma.$transaction([
-      prisma.companyAssignment.delete({ where: { id: existingPrimary.id } }),
-      prisma.companyAssignment.create({
-        data: { companyId: company.id, salesRepId: rep.id, isPrimary: true },
-      }),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      // Keep historic non-primary rows; demote current primary then set the new one.
+      await tx.companyAssignment.updateMany({
+        where: { companyId: company.id, isPrimary: true },
+        data: { isPrimary: false },
+      });
+      await tx.companyAssignment.upsert({
+        where: {
+          companyId_salesRepId: { companyId: company.id, salesRepId: rep.id },
+        },
+        create: { companyId: company.id, salesRepId: rep.id, isPrimary: true },
+        update: { isPrimary: true },
+      });
+    });
     const fromLabel =
       existingPrimary.salesRep.displayName?.trim() ||
       existingPrimary.salesRep.user.name?.trim() ||
@@ -623,22 +633,32 @@ export async function assignCompanyToSalesRep(actorUserId: string, raw: unknown)
         toSalesRepName: repLabel,
       },
     });
-  } else {
-    const existingPair = await prisma.companyAssignment.findUnique({
-      where: {
-        companyId_salesRepId: { companyId: company.id, salesRepId: rep.id },
+    await recordAuditEvent({
+      action: "company.sales_rep_changed",
+      entityType: "Company",
+      entityId: company.id,
+      actorUserId,
+      companyId: company.id,
+      before: {
+        salesRepId: existingPrimary.salesRepId,
+        salesRepName: fromLabel,
       },
+      after: { salesRepId: rep.id, salesRepName: repLabel },
     });
-    if (existingPair) {
-      await prisma.companyAssignment.update({
-        where: { id: existingPair.id },
-        data: { isPrimary: true },
+  } else {
+    await prisma.$transaction(async (tx) => {
+      await tx.companyAssignment.updateMany({
+        where: { companyId: company.id, isPrimary: true },
+        data: { isPrimary: false },
       });
-    } else {
-      await prisma.companyAssignment.create({
-        data: { companyId: company.id, salesRepId: rep.id, isPrimary: true },
+      await tx.companyAssignment.upsert({
+        where: {
+          companyId_salesRepId: { companyId: company.id, salesRepId: rep.id },
+        },
+        create: { companyId: company.id, salesRepId: rep.id, isPrimary: true },
+        update: { isPrimary: true },
       });
-    }
+    });
     await recordAuditEvent({
       action: "sales_rep.company_assigned",
       entityType: "CompanyAssignment",
@@ -651,6 +671,15 @@ export async function assignCompanyToSalesRep(actorUserId: string, raw: unknown)
         salesRepId: rep.id,
         salesRepName: repLabel,
       },
+    });
+    await recordAuditEvent({
+      action: "company.sales_rep_changed",
+      entityType: "Company",
+      entityId: company.id,
+      actorUserId,
+      companyId: company.id,
+      before: { salesRepId: null },
+      after: { salesRepId: rep.id, salesRepName: repLabel },
     });
   }
 

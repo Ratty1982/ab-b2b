@@ -7,14 +7,18 @@ import {
   resolveGeneralTradeContact,
 } from "@/server/sales/account-manager";
 import { getPortalDashboard } from "@/server/portal/dashboard";
+import { updateCompany } from "@/server/companies/service";
 
 const prisma = new PrismaClient();
 const suffix = Date.now().toString(36);
 let companyId = "";
 let otherCompanyId = "";
 let buyerId = "";
-let salesRepUserId = "";
-let salesRepId = "";
+let adminId = "";
+let wayneUserId = "";
+let tomUserId = "";
+let wayneRepId = "";
+let tomRepId = "";
 let mediaId = "";
 
 async function ensureUser(
@@ -57,6 +61,7 @@ beforeAll(async () => {
   });
   otherCompanyId = other.id;
 
+  adminId = await ensureUser(`am.admin.${suffix}@example.invalid`, ["SUPER_ADMIN"]);
   buyerId = await ensureUser(`am.buyer.${suffix}@example.invalid`, [], "TRADE");
   await prisma.companyUser.create({
     data: {
@@ -68,19 +73,53 @@ beforeAll(async () => {
     },
   });
 
-  salesRepUserId = await ensureUser(
-    `luke.andrews.${suffix}@automotivebrands.co.uk`,
+  wayneUserId = await ensureUser(
+    `wayne.radford.${suffix}@automotivebrands.co.uk`,
     ["SALES_REPRESENTATIVE"],
     "INTERNAL",
   );
   await prisma.user.update({
-    where: { id: salesRepUserId },
-    data: { name: "Luke Andrews" },
+    where: { id: wayneUserId },
+    data: { name: "Wayne Radford" },
   });
-  const rep = await prisma.salesRep.create({
-    data: { userId: salesRepUserId, code: `LA${suffix.slice(-4).toUpperCase()}`, active: true },
+  const wayne = await prisma.salesRep.create({
+    data: {
+      userId: wayneUserId,
+      code: `WR${suffix.slice(-4).toUpperCase()}`,
+      active: true,
+      displayName: "Wayne Radford",
+      jobTitle: "Account Manager",
+      businessEmail: `wayne.radford.${suffix}@automotivebrands.co.uk`,
+      phone: "01789330668",
+      mobile: "07718149284",
+      customerContactEnabled: true,
+    },
   });
-  salesRepId = rep.id;
+  wayneRepId = wayne.id;
+
+  tomUserId = await ensureUser(
+    `tom.gibbons.${suffix}@automotivebrands.co.uk`,
+    ["SALES_REPRESENTATIVE"],
+    "INTERNAL",
+  );
+  await prisma.user.update({
+    where: { id: tomUserId },
+    data: { name: "Tom Gibbons" },
+  });
+  const tom = await prisma.salesRep.create({
+    data: {
+      userId: tomUserId,
+      code: `TG${suffix.slice(-4).toUpperCase()}`,
+      active: true,
+      displayName: "Tom Gibbons",
+      jobTitle: "Account Manager",
+      businessEmail: `tom.gibbons.${suffix}@automotivebrands.co.uk`,
+      phone: "01234567890",
+      mobile: "07000000001",
+      customerContactEnabled: true,
+    },
+  });
+  tomRepId = tom.id;
 
   const media = await prisma.cmsMedia.create({
     data: {
@@ -88,7 +127,7 @@ beforeAll(async () => {
       contentType: "image/jpeg",
       sizeBytes: 100,
       storageKey: `test/am-${suffix}.jpg`,
-      altText: "Luke Andrews",
+      altText: "Wayne Radford",
       width: 200,
       height: 200,
     },
@@ -106,87 +145,82 @@ describe("resolveAccountManagerForCompany", () => {
     expect(await resolveAccountManagerForCompany(companyId)).toBeNull();
   });
 
-  it("shows assigned SalesRep name and user email without inventing phone/photo", async () => {
+  it("shows assigned SalesRep name/email/phones from the same SalesRep record", async () => {
     await prisma.companyAssignment.create({
-      data: { companyId, salesRepId, isPrimary: true },
+      data: { companyId, salesRepId: wayneRepId, isPrimary: true },
     });
     const am = await resolveAccountManagerForCompany(companyId);
     expect(am).not.toBeNull();
-    expect(am!.name).toBe("Luke Andrews");
+    expect(am!.name).toBe("Wayne Radford");
     expect(am!.jobTitle).toBe("Account Manager");
-    expect(am!.email).toContain("luke.andrews");
+    expect(am!.email).toBe(`wayne.radford.${suffix}@automotivebrands.co.uk`);
+    expect(am!.phone).toBe("01789330668");
+    expect(am!.mobile).toBe("07718149284");
     expect(am!.mailtoHref).toContain("mailto:");
-    expect(am!.primaryContactHref).toContain("mailto:");
-    expect(am!.phone).toBeNull();
-    expect(am!.mobile).toBeNull();
-    expect(am!.photo).toBeNull();
-    expect(am!.initials).toBe("LA");
-    expect(JSON.stringify(am)).not.toContain(salesRepId);
+    expect(am!.initials).toBe("WR");
+    expect(JSON.stringify(am)).not.toContain(wayneRepId);
     expect(JSON.stringify(am)).not.toContain("Autopart");
-    expect(JSON.stringify(am)).not.toContain("customerContactEnabled");
   });
 
-  it("omits inactive SalesRep", async () => {
-    await prisma.salesRep.update({ where: { id: salesRepId }, data: { active: false } });
-    expect(await resolveAccountManagerForCompany(companyId)).toBeNull();
-    await prisma.salesRep.update({ where: { id: salesRepId }, data: { active: true } });
-  });
-
-  it("enriches from public contactable TeamMember (phone, mobile, photo, job title)", async () => {
-    const member = await prisma.teamMember.create({
+  it("does not mix TeamMember name with SalesRep contact details", async () => {
+    // Wrongly linked public TeamMember under Wayne — must NOT steal the display name.
+    await prisma.teamMember.create({
       data: {
-        firstName: "Luke",
-        lastName: "Andrews",
-        jobTitle: "Account Manager",
-        email: `luke.public.${suffix}@automotivebrands.co.uk`,
-        phone: "01234 567890",
-        mobile: "07123 456789",
+        firstName: "Tom",
+        lastName: "Gibbons",
+        jobTitle: "Wrong Source",
+        email: `tom.wrong.${suffix}@automotivebrands.co.uk`,
+        phone: "09999 999999",
+        mobile: "07999 999999",
         isPublic: true,
         isContactable: true,
-        salesRepId,
+        salesRepId: wayneRepId,
         photoMediaId: mediaId,
-        photoAlt: "Luke Andrews",
       },
     });
 
     const am = await resolveAccountManagerForCompany(companyId);
-    expect(am!.name).toBe("Luke Andrews");
+    expect(am!.name).toBe("Wayne Radford");
+    expect(am!.email).toBe(`wayne.radford.${suffix}@automotivebrands.co.uk`);
+    expect(am!.phone).toBe("01789330668");
+    expect(am!.mobile).toBe("07718149284");
     expect(am!.jobTitle).toBe("Account Manager");
-    expect(am!.email).toBe(`luke.public.${suffix}@automotivebrands.co.uk`);
-    expect(am!.phone).toBe("01234 567890");
-    expect(am!.mobile).toBe("07123 456789");
-    expect(am!.telHref).toBe("tel:01234567890");
-    expect(am!.mobileTelHref).toBe("tel:07123456789");
-    expect(am!.photo?.src).toContain(mediaId);
-    expect(am!.photo?.alt).toContain("Luke");
+    expect(am!.name).not.toContain("Tom");
+    expect(am!.email).not.toContain("tom.wrong");
+    expect(am!.phone).not.toBe("09999 999999");
 
-    // Same resolver for SalesRep id (Quotes)
-    const byRep = await resolveAccountManagerForSalesRep(salesRepId);
-    expect(byRep?.email).toBe(am!.email);
+    await prisma.salesRep.update({
+      where: { id: wayneRepId },
+      data: { photoMediaId: mediaId, photoAlt: "Wayne Radford" },
+    });
+    const withPhoto = await resolveAccountManagerForCompany(companyId);
+    expect(withPhoto!.photo?.src).toContain(mediaId);
+    expect(withPhoto!.photo?.alt).toContain("Wayne");
+  });
+
+  it("omits inactive SalesRep", async () => {
+    await prisma.salesRep.update({ where: { id: wayneRepId }, data: { active: false } });
+    expect(await resolveAccountManagerForCompany(companyId)).toBeNull();
+    await prisma.salesRep.update({ where: { id: wayneRepId }, data: { active: true } });
+  });
+
+  it("resolves only the current primary when historic assignments exist", async () => {
+    await prisma.companyAssignment.deleteMany({ where: { companyId } });
+    await prisma.companyAssignment.create({
+      data: { companyId, salesRepId: tomRepId, isPrimary: false },
+    });
+    await prisma.companyAssignment.create({
+      data: { companyId, salesRepId: wayneRepId, isPrimary: true },
+    });
+
+    const am = await resolveAccountManagerForCompany(companyId);
+    expect(am!.name).toBe("Wayne Radford");
+    expect(am!.email).toContain("wayne.radford");
+    expect(am!.name).not.toContain("Tom");
+
+    const byRep = await resolveAccountManagerForSalesRep(wayneRepId);
+    expect(byRep?.name).toBe("Wayne Radford");
     expect(byRep?.phone).toBe(am!.phone);
-
-    // Non-contactable hides phone/mobile/public email (falls back to user email)
-    await prisma.teamMember.update({
-      where: { id: member.id },
-      data: { isContactable: false },
-    });
-    const hiddenContact = await resolveAccountManagerForCompany(companyId);
-    expect(hiddenContact!.phone).toBeNull();
-    expect(hiddenContact!.mobile).toBeNull();
-    expect(hiddenContact!.email).toContain("luke.andrews");
-    expect(hiddenContact!.photo).not.toBeNull(); // photo still ok when public
-
-    // Non-public profile ignored for enrichment
-    await prisma.teamMember.update({
-      where: { id: member.id },
-      data: { isPublic: false, isContactable: true },
-    });
-    const privateProfile = await resolveAccountManagerForCompany(companyId);
-    expect(privateProfile!.phone).toBeNull();
-    expect(privateProfile!.photo).toBeNull();
-    expect(privateProfile!.email).toContain("luke.andrews");
-
-    await prisma.teamMember.delete({ where: { id: member.id } });
   });
 
   it("isolates companies — other company does not inherit assignment", async () => {
@@ -196,46 +230,45 @@ describe("resolveAccountManagerForCompany", () => {
 });
 
 describe("portal dashboard account manager", () => {
-  it("surfaces enriched AM via the shared resolver", async () => {
-    await prisma.teamMember.create({
-      data: {
-        firstName: "Luke",
-        lastName: "Andrews",
-        jobTitle: "Regional Account Manager",
-        email: `dash.luke.${suffix}@automotivebrands.co.uk`,
-        phone: "01234 111111",
-        mobile: "07111 111111",
-        isPublic: true,
-        isContactable: true,
-        salesRepId,
-      },
+  it("matches admin commercial salesperson after reassignment", async () => {
+    await prisma.companyAssignment.deleteMany({ where: { companyId } });
+    await prisma.companyAssignment.create({
+      data: { companyId, salesRepId: tomRepId, isPrimary: true },
     });
 
-    const dash = await getPortalDashboard(buyerId);
-    expect(dash.accountManager?.name).toBe("Luke Andrews");
-    expect(dash.accountManager?.jobTitle).toBe("Regional Account Manager");
-    expect(dash.accountManager?.phone).toBe("01234 111111");
-    expect(dash.accountManager?.mobile).toBe("07111 111111");
-    expect(dash.accountManager?.mailtoHref).toContain("mailto:");
-    expect(dash.features.quotes).toBe(true);
-    // No internal fields
-    expect(JSON.stringify(dash.accountManager)).not.toContain(salesRepId);
-    expect(JSON.stringify(dash.accountManager)).not.toContain("targetMtd");
+    let dash = await getPortalDashboard(buyerId);
+    expect(dash.accountManager?.name).toBe("Tom Gibbons");
+    expect(dash.accountManager?.email).toContain("tom.gibbons");
+
+    const updated = await updateCompany(adminId, {
+      id: companyId,
+      salesRepId: wayneRepId,
+    });
+    expect(updated.salesperson?.salesRepId).toBe(wayneRepId);
+    expect(updated.salesperson?.name).toBe("Wayne Radford");
+    expect(updated.status).toBe("ACTIVE");
+
+    dash = await getPortalDashboard(buyerId);
+    expect(dash.accountManager?.name).toBe("Wayne Radford");
+    expect(dash.accountManager?.email).toContain("wayne.radford");
+    expect(dash.accountManager?.phone).toBe("01789330668");
+    expect(dash.accountManager?.mobile).toBe("07718149284");
+    expect(dash.accountManager?.name).not.toContain("Tom");
   });
 
-  it("shows general contact fallback when unassigned", async () => {
+  it("shows general team contact fallback when unassigned", async () => {
     await prisma.companyAssignment.deleteMany({ where: { companyId } });
     const dash = await getPortalDashboard(buyerId);
     expect(dash.accountManager).toBeNull();
     expect(dash.generalContact).toBeTruthy();
-    expect(dash.generalContact.label).toBe("Automotive Brands");
+    expect(dash.generalContact.label).toBe("Automotive Brands Team");
   });
 });
 
 describe("resolveGeneralTradeContact", () => {
   it("returns configured email only when present", async () => {
     const contact = await resolveGeneralTradeContact();
-    expect(contact.label).toBe("Automotive Brands");
+    expect(contact.label).toBe("Automotive Brands Team");
     if (contact.email) {
       expect(contact.mailtoHref).toBe(`mailto:${contact.email}`);
     } else {

@@ -351,7 +351,10 @@ describe("SalesRep create and company assignment", () => {
     expect(reassigned.assignments.some((a) => a.companyId === otherCompanyId)).toBe(true);
 
     const secondAfter = await getSalesRepProfile(adminId, secondRepId);
-    expect(secondAfter.assignments.some((a) => a.companyId === otherCompanyId)).toBe(false);
+    // Historic non-primary row may remain; must not stay current/primary.
+    expect(
+      secondAfter.assignments.some((a) => a.companyId === otherCompanyId && a.isPrimary),
+    ).toBe(false);
 
     const reaudit = await prisma.auditEvent.findFirst({
       where: { action: "sales_rep.company_reassigned", companyId: otherCompanyId },

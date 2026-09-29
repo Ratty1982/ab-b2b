@@ -777,6 +777,8 @@ model CompanyAssignment {
   id         String   @id @default(cuid())
   companyId  String
   salesRepId String
+  /// Current account manager when true. At most one primary per company
+  /// (enforced by partial unique index CompanyAssignment_companyId_isPrimary_unique).
   isPrimary  Boolean  @default(true)
   createdAt  DateTime @default(now())
 

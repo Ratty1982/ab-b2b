@@ -57,6 +57,7 @@ function companySelect() {
     },
     assignments: {
       where: { isPrimary: true },
+      orderBy: { createdAt: "desc" },
       take: 1,
       select: {
         salesRepId: true,
@@ -64,6 +65,7 @@ function companySelect() {
           select: {
             id: true,
             code: true,
+            displayName: true,
             user: { select: { id: true, name: true, email: true } },
           },
         },
@@ -178,6 +180,7 @@ function serializeCompany(row: {
     salesRep: {
       id: string;
       code: string | null;
+      displayName?: string | null;
       user: { id: string; name: string | null; email: string };
     };
   }>;
@@ -231,7 +234,10 @@ function serializeCompany(row: {
       ? {
           salesRepId: assignment.salesRep.id,
           code: assignment.salesRep.code,
-          name: assignment.salesRep.user.name ?? assignment.salesRep.user.email,
+          name:
+            assignment.salesRep.displayName?.trim() ||
+            assignment.salesRep.user.name ||
+            assignment.salesRep.user.email,
           email: assignment.salesRep.user.email,
         }
       : null,
@@ -472,6 +478,21 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
     data.creditLimit = input.creditLimit;
   }
 
+  const priorPrimary = await prisma.companyAssignment.findFirst({
+    where: { companyId: input.id, isPrimary: true },
+    orderBy: { createdAt: "desc" },
+    select: {
+      salesRepId: true,
+      salesRep: {
+        select: {
+          id: true,
+          displayName: true,
+          user: { select: { name: true, email: true } },
+        },
+      },
+    },
+  });
+
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.company.update({
       where: { id: input.id },
@@ -480,7 +501,11 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
     });
 
     if (input.salesRepId !== undefined) {
-      await tx.companyAssignment.deleteMany({ where: { companyId: input.id, isPrimary: true } });
+      // Exactly one current primary: demote/remove prior primaries, then set the new one.
+      await tx.companyAssignment.updateMany({
+        where: { companyId: input.id, isPrimary: true },
+        data: { isPrimary: false },
+      });
       if (input.salesRepId) {
         await tx.companyAssignment.upsert({
           where: {
@@ -488,6 +513,15 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
           },
           create: { companyId: input.id, salesRepId: input.salesRepId, isPrimary: true },
           update: { isPrimary: true },
+        });
+        // Legacy safety: never leave multiple isPrimary=true rows.
+        await tx.companyAssignment.updateMany({
+          where: {
+            companyId: input.id,
+            isPrimary: true,
+            salesRepId: { not: input.salesRepId },
+          },
+          data: { isPrimary: false },
         });
       }
     }
@@ -533,6 +567,39 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
       paymentTerms: updated.paymentTerms,
     },
   });
+
+  if (input.status !== undefined && input.status !== before.status) {
+    await recordAuditEvent({
+      action: "company.status_changed",
+      entityType: "Company",
+      entityId: input.id,
+      actorUserId,
+      companyId: input.id,
+      before: { status: before.status },
+      after: { status: input.status },
+    });
+  }
+
+  if (input.salesRepId !== undefined) {
+    const nextId = input.salesRepId;
+    const prevId = priorPrimary?.salesRepId ?? null;
+    if (nextId !== prevId) {
+      const prevLabel = priorPrimary
+        ? priorPrimary.salesRep.displayName?.trim() ||
+          priorPrimary.salesRep.user.name?.trim() ||
+          priorPrimary.salesRep.user.email
+        : null;
+      await recordAuditEvent({
+        action: "company.sales_rep_changed",
+        entityType: "Company",
+        entityId: input.id,
+        actorUserId,
+        companyId: input.id,
+        before: { salesRepId: prevId, salesRepName: prevLabel },
+        after: { salesRepId: nextId },
+      });
+    }
+  }
 
   const full = await prisma.company.findUniqueOrThrow({
     where: { id: input.id },
