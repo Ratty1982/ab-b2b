@@ -15,7 +15,10 @@ import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
 import { parseAutopart561l } from "@/domain/autopart-561l";
 import { parseAutopartSlrb } from "@/domain/autopart-slrb";
-import { parseAutopart407p100 } from "@/domain/autopart-407p100";
+import {
+  parseAutopart407p100,
+  selectCompanyRowFrom407p100,
+} from "@/domain/autopart-407p100";
 import {
   autopartAccountsEqual,
   normaliseAccountToken,
@@ -233,14 +236,6 @@ async function loadAcceptedAccounts(companyId: string, verifiedCode: string): Pr
     if (n) set.add(n);
   }
   return set;
-}
-
-function accountAllowed(detected: string[], accepted: Set<string>): {
-  ok: boolean;
-  unmatched: string[];
-} {
-  const unmatched = detected.filter((d) => !accepted.has(d));
-  return { ok: unmatched.length === 0 && detected.length > 0, unmatched };
 }
 
 export type HistoricAccountMatchStatus =
@@ -1815,7 +1810,7 @@ async function buildCreditPreview(
   }
 
   const parsed = parseAutopart407p100(input.file407);
-  if (!parsed.headerFound || parsed.positions.length === 0) {
+  if (!parsed.headerFound || (parsed.positions.length === 0 && parsed.invalidRows.length === 0)) {
     issues.push({
       severity: "BLOCKING",
       code: "UNRECOGNISED_407P100",
@@ -1829,25 +1824,64 @@ async function buildCreditPreview(
   const accepted = verifiedCode
     ? await loadAcceptedAccounts(input.companyId, verifiedCode)
     : new Set<string>();
-  const accountCheck = accountAllowed(parsed.detectedAccounts, accepted);
-  if (parsed.detectedAccounts.length && !accountCheck.ok) {
+
+  /**
+   * 407P100 is a multi-customer report. Select ONLY the verified account
+   * (or explicit verified alias) row — never require every account in the
+   * file to match this company (that is 561L/SLRB single-customer semantics).
+   */
+  const selection =
+    verifiedCode && parsed.positions.length > 0
+      ? selectCompanyRowFrom407p100({
+          positions: parsed.positions,
+          verifiedAccount: verifiedCode,
+          acceptedAccounts: accepted,
+        })
+      : ({ status: "NOT_FOUND" as const, matchedAccount: null } as const);
+
+  let position =
+    selection.status === "MATCHED" ? selection.position : null;
+  let matchStatus: "Matched" | "Matched alias" | "Not found" | "Conflicting duplicates" | null =
+    null;
+  let matchedVia: "VERIFIED" | "ALIAS" | null = null;
+
+  if (verifiedCode && parsed.headerFound && parsed.positions.length > 0) {
+    if (selection.status === "MATCHED") {
+      matchStatus = selection.matchedVia === "ALIAS" ? "Matched alias" : "Matched";
+      matchedVia = selection.matchedVia;
+      if (selection.identicalDuplicatesDiscarded > 0) {
+        issues.push({
+          severity: "INFO",
+          code: "IDENTICAL_DUPLICATE_ROWS",
+          message: `${selection.identicalDuplicatesDiscarded} identical duplicate row(s) for Autopart account ${selection.matchedAccount} were ignored.`,
+        });
+      }
+    } else if (selection.status === "CONFLICTING_DUPLICATES") {
+      matchStatus = "Conflicting duplicates";
+      issues.push({
+        severity: "BLOCKING",
+        code: "CONFLICTING_CREDIT_ROWS",
+        message: `Multiple conflicting credit rows were found for Autopart account ${selection.matchedAccount}.`,
+      });
+    } else {
+      matchStatus = "Not found";
+      issues.push({
+        severity: "BLOCKING",
+        code: "ACCOUNT_NOT_FOUND",
+        message: `Autopart account ${verifiedCode} was not found in this 407P100 report.`,
+      });
+    }
+  } else if (
+    verifiedCode &&
+    parsed.headerFound &&
+    parsed.positions.length === 0 &&
+    !issues.some((i) => i.code === "UNRECOGNISED_407P100")
+  ) {
+    matchStatus = "Not found";
     issues.push({
       severity: "BLOCKING",
-      code: "ACCOUNT_MISMATCH",
-      message: `Detected account(s) ${accountCheck.unmatched.join(", ")} do not match verified account ${verifiedCode ?? "—"}.`,
-    });
-  }
-
-  // Prefer the position matching verified account; else sole position.
-  const position =
-    parsed.positions.find((p) => p.accountCode && accepted.has(p.accountCode)) ??
-    (parsed.positions.length === 1 ? parsed.positions[0]! : null);
-
-  if (!position) {
-    issues.push({
-      severity: "BLOCKING",
-      code: "NO_POSITION",
-      message: "Could not select a credit position row for this company.",
+      code: "ACCOUNT_NOT_FOUND",
+      message: `Autopart account ${verifiedCode} was not found in this 407P100 report.`,
     });
   }
 
@@ -1868,18 +1902,36 @@ async function buildCreditPreview(
     });
   }
 
+  const reportStats = {
+    sourceReport: "407P100" as const,
+    rowsInReport: parsed.diagnostics.validRows + parsed.diagnostics.invalidRows,
+    validCustomerRows: parsed.diagnostics.validRows,
+    invalidRows: parsed.diagnostics.invalidRows,
+    matchedRows: selection.status === "MATCHED" ? 1 : 0,
+    /** Bounded sample for admin debugging only — never dump thousands of codes. */
+    sampleAccounts:
+      selection.status === "NOT_FOUND"
+        ? parsed.detectedAccounts.slice(0, 12)
+        : [],
+  };
+
   const blocking = issues.some((i) => i.severity === "BLOCKING");
   const preview = {
     companyId: company.id,
     companyName: company.name,
     verifiedAccount: verifiedCode,
-    detectedAccounts: parsed.detectedAccounts,
+    /** Matched account code only — do not expose the full multi-customer account list. */
+    detectedAccounts: position?.accountCode ? [position.accountCode] : [],
+    matchStatus,
+    matchedVia,
     fileHash: hash,
     filename: input.filename ?? null,
     alreadyImported: Boolean(prior),
+    reportStats,
     position: position
       ? {
           accountCode: position.accountCode,
+          customerName: position.customerName,
           invoices: position.invoices,
           picking: position.picking,
           dropShip: position.dropShip,
@@ -1911,8 +1963,8 @@ async function buildCreditPreview(
         status: blocking ? "BLOCKED" : "PREVIEWED",
         filename: input.filename ?? null,
         fileHash: hash,
-        detectedAccount: position?.accountCode ?? detectedAccountJoin(parsed.detectedAccounts),
-        rowsRead: parsed.positions.length,
+        detectedAccount: position?.accountCode ?? verifiedCode,
+        rowsRead: reportStats.rowsInReport,
         rowsValid: position ? 1 : 0,
         issues: issues as unknown as Prisma.InputJsonValue,
         diagnostics: preview as unknown as Prisma.InputJsonValue,
@@ -1924,10 +1976,6 @@ async function buildCreditPreview(
   }
 
   return { ...preview, runId };
-}
-
-function detectedAccountJoin(accounts: string[]): string | null {
-  return accounts.length ? accounts.join(",") : null;
 }
 
 export async function confirmAutopartCreditImport(actorUserId: string, raw: unknown) {
@@ -1955,7 +2003,7 @@ export async function confirmAutopartCreditImport(actorUserId: string, raw: unkn
       filename: input.filename ?? null,
       fileHash: preview.fileHash,
       detectedAccount: p.accountCode ?? verifiedCode,
-      rowsRead: 1,
+      rowsRead: preview.reportStats.rowsInReport,
       rowsValid: 1,
       rowsImported: 1,
       dryRun: false,

@@ -532,26 +532,91 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             Confirm update
           </button>
         </div>
-        {creditPreview?.position ? (
-          <dl className="mt-4 grid gap-2 text-[13px] sm:grid-cols-3">
-            <div>
-              <dt className="text-steel">Credit limit</dt>
-              <dd className="font-semibold">{gbp(creditPreview.position.creditLimit)}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Used credit</dt>
-              <dd className="font-semibold">{gbp(creditPreview.position.usedCredit)}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Available credit</dt>
-              <dd className="font-semibold">
-                {gbp(creditPreview.position.availableCreditDisplay)}
-                {creditPreview.position.overLimitBy
-                  ? ` (over by ${gbp(creditPreview.position.overLimitBy)})`
-                  : ""}
-              </dd>
-            </div>
-          </dl>
+        {creditPreview ? (
+          <div className="mt-4 space-y-4 text-[13px]">
+            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="text-[11px] uppercase tracking-wide text-steel">Autopart account</dt>
+                <dd className="font-mono font-semibold">
+                  {creditPreview.position?.accountCode ?? creditPreview.verifiedAccount ?? "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] uppercase tracking-wide text-steel">Account name</dt>
+                <dd className="font-semibold">{creditPreview.position?.customerName ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] uppercase tracking-wide text-steel">Status</dt>
+                <dd className="font-semibold">{creditPreview.matchStatus ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] uppercase tracking-wide text-steel">Source report</dt>
+                <dd className="font-semibold">
+                  {creditPreview.reportStats?.sourceReport ?? "407P100"}
+                  {creditPreview.reportStats != null
+                    ? ` · ${creditPreview.reportStats.rowsInReport} rows · ${creditPreview.reportStats.matchedRows} matched`
+                    : ""}
+                </dd>
+              </div>
+            </dl>
+
+            {creditPreview.position ? (
+              <>
+                <dl className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <dt className="text-steel">Credit limit</dt>
+                    <dd className="font-semibold">{gbp(creditPreview.position.creditLimit)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Used credit</dt>
+                    <dd className="font-semibold">{gbp(creditPreview.position.usedCredit)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Available credit</dt>
+                    <dd className="font-semibold">
+                      {gbp(creditPreview.position.availableCreditDisplay)}
+                      {creditPreview.position.overLimitBy
+                        ? ` (over by ${gbp(creditPreview.position.overLimitBy)})`
+                        : ""}
+                    </dd>
+                  </div>
+                </dl>
+
+                <div>
+                  <h3 className="text-[11px] font-bold uppercase tracking-wide text-steel">
+                    Credit breakdown
+                  </h3>
+                  <dl className="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                    {(
+                      [
+                        ["Invoices", creditPreview.position.invoices],
+                        ["Picking", creditPreview.position.picking],
+                        ["DropShip", creditPreview.position.dropShip],
+                        ["CrossDock", creditPreview.position.crossDock],
+                        ["Suspends", creditPreview.position.suspends],
+                        ["UnConsolidated", creditPreview.position.unConsol],
+                        ["Used credit", creditPreview.position.usedCredit],
+                        ["Credit limit", creditPreview.position.creditLimit],
+                        ["Available credit", creditPreview.position.availableCreditRaw],
+                      ] as const
+                    ).map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="text-steel">{label}</dt>
+                        <dd className="font-semibold tabular-nums">{gbp(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              </>
+            ) : null}
+
+            {creditPreview.matchStatus === "Not found" && creditPreview.reportStats ? (
+              <p className="text-[12px] text-steel">
+                Rows read: {creditPreview.reportStats.rowsInReport}. Valid customer rows:{" "}
+                {creditPreview.reportStats.validCustomerRows}.
+              </p>
+            ) : null}
+          </div>
         ) : null}
         {creditPreview?.issues?.length ? (
           <ul className="mt-3 space-y-1 text-[12px]">

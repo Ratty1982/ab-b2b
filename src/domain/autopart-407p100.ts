@@ -38,15 +38,117 @@ export type Autopart407p100InvalidRow = {
   reason: string;
 };
 
+export type Autopart407p100ParseDiagnostics = {
+  /** Valid credit-position data rows. */
+  validRows: number;
+  /** Rows rejected (malformed / missing account / invalid money). */
+  invalidRows: number;
+  /** Account codes that appear more than once among valid rows. */
+  duplicateAccountCodes: string[];
+};
+
 export type Autopart407p100ParseResult = {
   report: "407P100";
+  /** All valid credit-position rows (multi-customer report). */
   positions: Autopart407p100Position[];
   invalidRows: Autopart407p100InvalidRow[];
   detectedAccounts: string[];
   headerFound: boolean;
   malformedRows: number;
   errors: string[];
+  diagnostics: Autopart407p100ParseDiagnostics;
 };
+
+/**
+ * Financial + identity fingerprint for identical-row dedupe on per-company import.
+ * Unrelated customers in the same 407P100 are never part of this comparison.
+ */
+export function creditPositionFingerprint(p: Autopart407p100Position): string {
+  return [
+    p.accountCode ?? "",
+    p.customerName ?? "",
+    p.invoices,
+    p.picking,
+    p.dropShip,
+    p.crossDock,
+    p.suspends,
+    p.unConsol,
+    p.totalExposure,
+    p.creditLimit,
+  ].join("\u0001");
+}
+
+export type SelectCompany407p100RowResult =
+  | {
+      status: "MATCHED";
+      position: Autopart407p100Position;
+      matchedAccount: string;
+      matchedVia: "VERIFIED" | "ALIAS";
+      /** Extra identical rows discarded after safe dedupe (0 when unique). */
+      identicalDuplicatesDiscarded: number;
+    }
+  | {
+      status: "NOT_FOUND";
+      matchedAccount: null;
+    }
+  | {
+      status: "CONFLICTING_DUPLICATES";
+      matchedAccount: string;
+      positions: Autopart407p100Position[];
+    };
+
+/**
+ * Select the current company's row from a multi-customer 407P100 parse.
+ *
+ * Matching is exact verified account OR explicit verified alias only —
+ * no prefix / fuzzy / 561L truncation. Unrelated accounts are ignored.
+ *
+ * Identical duplicate target rows are safely deduped; conflicting values BLOCK.
+ */
+export function selectCompanyRowFrom407p100(input: {
+  positions: Autopart407p100Position[];
+  verifiedAccount: string;
+  acceptedAccounts: Set<string>;
+}): SelectCompany407p100RowResult {
+  const verified = normaliseAccountToken(input.verifiedAccount);
+  if (!verified) {
+    return { status: "NOT_FOUND", matchedAccount: null };
+  }
+
+  const matches = input.positions.filter(
+    (p) => p.accountCode != null && input.acceptedAccounts.has(p.accountCode),
+  );
+  if (matches.length === 0) {
+    return { status: "NOT_FOUND", matchedAccount: null };
+  }
+
+  const byFingerprint = new Map<string, Autopart407p100Position>();
+  for (const m of matches) {
+    const key = creditPositionFingerprint(m);
+    if (!byFingerprint.has(key)) byFingerprint.set(key, m);
+  }
+  const unique = [...byFingerprint.values()];
+  if (unique.length > 1) {
+    const matchedAccount = unique[0]!.accountCode!;
+    return {
+      status: "CONFLICTING_DUPLICATES",
+      matchedAccount,
+      positions: unique,
+    };
+  }
+
+  const position = unique[0]!;
+  const matchedAccount = position.accountCode!;
+  const matchedVia: "VERIFIED" | "ALIAS" =
+    matchedAccount === verified ? "VERIFIED" : "ALIAS";
+  return {
+    status: "MATCHED",
+    position,
+    matchedAccount,
+    matchedVia,
+    identicalDuplicatesDiscarded: matches.length - 1,
+  };
+}
 
 const HEADER_ALIASES: Record<string, string> = {
   acct: "account",
@@ -255,6 +357,16 @@ export function parseAutopart407p100(text: string): Autopart407p100ParseResult {
     errors.push("407P100 contained no credit-position rows");
   }
 
+  const accountCounts = new Map<string, number>();
+  for (const p of positions) {
+    if (!p.accountCode) continue;
+    accountCounts.set(p.accountCode, (accountCounts.get(p.accountCode) ?? 0) + 1);
+  }
+  const duplicateAccountCodes = [...accountCounts.entries()]
+    .filter(([, n]) => n > 1)
+    .map(([a]) => a)
+    .sort();
+
   return {
     report: "407P100",
     positions,
@@ -263,6 +375,11 @@ export function parseAutopart407p100(text: string): Autopart407p100ParseResult {
     headerFound,
     malformedRows,
     errors,
+    diagnostics: {
+      validRows: positions.length,
+      invalidRows: invalidRows.length,
+      duplicateAccountCodes,
+    },
   };
 }
 
