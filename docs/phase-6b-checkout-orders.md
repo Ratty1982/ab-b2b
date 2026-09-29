@@ -156,7 +156,7 @@ Product inventory panel shows Autopart Avail, AB Reserved, Effective Sellable.
 
 - `/portal` dashboard “recent orders” may still use prototype fixtures until updated separately  
 - `/portal/quick-order` remains mock backend (6A out of scope)  
-- `/sales/order/$id` sales mock route remains until replaced  
+- `/sales/order/$id` mock route was removed in pre-live fix batch 1 (PL-002)  
 
 ## Phase 6C requirements
 

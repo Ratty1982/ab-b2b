@@ -38,8 +38,8 @@ describe("PL-004 — Settings honesty", () => {
     expect(src).not.toMatch(/Free delivery threshold[\s\S]{0,120}<input/);
     expect(src).not.toMatch(/Standard carriage charge[\s\S]{0,120}<input/);
     expect(src).not.toMatch(/type="checkbox"[\s\S]{0,80}defaultChecked/);
-    expect(moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT)).toBe("100.00");
-    expect(moneyToString(TRADE_DELIVERY_CHARGE_EX_VAT)).toBe("5.95");
+    expect(moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT, 2)).toBe("100.00");
+    expect(moneyToString(TRADE_DELIVERY_CHARGE_EX_VAT, 2)).toBe("5.95");
   });
 });
 
@@ -72,8 +72,8 @@ describe("PL-006 — CMS media public eligibility", () => {
 
 describe("PL-007 — free delivery business confirmation", () => {
   it("keeps £100 ex VAT threshold (not £150)", () => {
-    expect(moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT)).toBe("100.00");
-    expect(moneyToString(TRADE_DELIVERY_CHARGE_EX_VAT)).toBe("5.95");
+    expect(moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT, 2)).toBe("100.00");
+    expect(moneyToString(TRADE_DELIVERY_CHARGE_EX_VAT, 2)).toBe("5.95");
   });
 });
 

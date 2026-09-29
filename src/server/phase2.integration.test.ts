@@ -684,7 +684,9 @@ describe("CMS media library", () => {
     const listed = await listCmsMedia(adminId);
     expect(listed.some((m) => m.id === uploaded.id)).toBe(true);
 
-    const bytes = await getPublicCmsMediaBytes(uploaded.id);
+    // Unbound upload is draft — only authorised preview may read bytes.
+    expect(await getPublicCmsMediaBytes(uploaded.id)).toBeNull();
+    const bytes = await getPublicCmsMediaBytes(uploaded.id, { actorUserId: adminId });
     expect(bytes?.contentType).toBe("image/png");
     expect(bytes?.bytes.length).toBeGreaterThan(8);
 
@@ -748,7 +750,7 @@ describe("CMS media library", () => {
     expect(uploaded.width).toBe(1000);
     expect(uploaded.height).toBe(1000);
     expect(uploaded.sizeBytes).toBeTruthy();
-    const bytes = await getPublicCmsMediaBytes(uploaded.id);
+    const bytes = await getPublicCmsMediaBytes(uploaded.id, { actorUserId: adminId });
     const meta = await sharp(bytes!.bytes).metadata();
     expect(meta.width).toBe(1000);
     expect(meta.height).toBe(1000);
