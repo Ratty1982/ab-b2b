@@ -6,7 +6,8 @@ import { inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate } from "@/lib/datetime";
 import { formatQuoteDateOnlyUk, QUOTE_STATUS_LABEL, type QuoteStatusKey } from "@/domain/quote";
-import { listStaffQuotesFn } from "@/server/phase2/fns";
+import { deleteStaffQuoteFn, listStaffQuotesFn } from "@/server/phase2/fns";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/sales/quotes/")({
   head: () => ({
@@ -43,6 +44,10 @@ function quoteTone(status: string) {
   return "brand" as const;
 }
 
+function canDeleteQuote(row: Row) {
+  return !row.convertedOrderId && row.status !== "ACCEPTED" && row.status !== "CONVERTED";
+}
+
 function QuotesList() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
   const [q, setQ] = useState("");
@@ -50,6 +55,7 @@ function QuotesList() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,6 +80,25 @@ function QuotesList() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function onDelete(row: Row) {
+    if (!canDeleteQuote(row)) {
+      toast.error("Converted quotations cannot be deleted");
+      return;
+    }
+    if (!window.confirm(`Delete quotation ${row.quoteNumber}? This cannot be undone.`)) {
+      return;
+    }
+    setDeletingId(row.id);
+    const result = await deleteStaffQuoteFn({ data: { id: row.id } });
+    setDeletingId(null);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Deleted ${result.data.quoteNumber}`);
+    await load();
+  }
 
   return (
     <div>
@@ -156,13 +181,26 @@ function QuotesList() {
                       <td className="py-3 pr-3 text-right">£{row.vatTotal}</td>
                       <td className="py-3 pr-3 text-right font-semibold">£{row.grandTotal}</td>
                       <td className="py-3">
-                        <Link
-                          to="/sales/quotes/$quoteId"
-                          params={{ quoteId: row.id }}
-                          className="font-semibold text-primary hover:underline"
-                        >
-                          Open
-                        </Link>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <Link
+                            to="/sales/quotes/$quoteId"
+                            params={{ quoteId: row.id }}
+                            className="font-semibold text-primary hover:underline"
+                          >
+                            Open
+                          </Link>
+                          {canDeleteQuote(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => void onDelete(row)}
+                              disabled={deletingId === row.id}
+                              className="font-semibold text-bad hover:underline disabled:opacity-50"
+                              aria-label={`Delete quotation ${row.quoteNumber}`}
+                            >
+                              {deletingId === row.id ? "Deleting…" : "Delete"}
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
