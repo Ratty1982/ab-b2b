@@ -216,7 +216,7 @@ and portal**.
 Not in 6A:
 
 - checkout / draft Order creation
-- payment / credit hold
+- payment collection
 - Autopart order file / email / API
 - inventory reservation
 - Quick Order bulk add backend
