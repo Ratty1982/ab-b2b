@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
-import { gbp } from "@/lib/data";
+import { gbp } from "@/lib/format-money";
 import { ROUTES } from "@/lib/app-nav";
 import {
   bulkUpdateBackorderPolicyFn,

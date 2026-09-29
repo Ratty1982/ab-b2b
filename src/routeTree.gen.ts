@@ -59,7 +59,6 @@ import { Route as PortalSupportRouteImport } from './routes/portal.support'
 import { Route as PortalUsersRouteImport } from './routes/portal.users'
 import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
-import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as SalesSalesIntelligenceRouteImport } from './routes/sales.sales-intelligence'
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
@@ -87,7 +86,6 @@ import { Route as PortalQuotesQuoteIdRouteImport } from './routes/portal.quotes.
 import { Route as ProductsCategorySlugRouteImport } from './routes/products.category.$slug'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
-import { Route as SalesOrderIdRouteImport } from './routes/sales.order.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
 import { Route as SalesQuotesQuoteIdRouteImport } from './routes/sales.quotes.$quoteId'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
@@ -351,11 +349,6 @@ const ProductsSkuRoute = ProductsSkuRouteImport.update({
   path: '/products/$sku',
   getParentRoute: () => rootRouteImport,
 } as any)
-const QuoteIdRoute = QuoteIdRouteImport.update({
-  id: '/quote/$id',
-  path: '/quote/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SalesIndexRoute = SalesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -491,11 +484,6 @@ const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => SalesRoute,
 } as any)
-const SalesOrderIdRoute = SalesOrderIdRouteImport.update({
-  id: '/order/$id',
-  path: '/order/$id',
-  getParentRoute: () => SalesRoute,
-} as any)
 const SalesQuotesIndexRoute = SalesQuotesIndexRouteImport.update({
   id: '/quotes/',
   path: '/quotes/',
@@ -610,7 +598,6 @@ export interface FileRoutesByFullPath {
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
-  '/quote/$id': typeof QuoteIdRoute
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
@@ -634,7 +621,6 @@ export interface FileRoutesByFullPath {
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
-  '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
@@ -693,7 +679,6 @@ export interface FileRoutesByTo {
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
-  '/quote/$id': typeof QuoteIdRoute
   '/admin': typeof AdminIndexRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
@@ -714,7 +699,6 @@ export interface FileRoutesByTo {
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
-  '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
@@ -784,7 +768,6 @@ export interface FileRoutesById {
   '/portal/support': typeof PortalSupportRoute
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
-  '/quote/$id': typeof QuoteIdRoute
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
@@ -808,7 +791,6 @@ export interface FileRoutesById {
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
-  '/sales/order/$id': typeof SalesOrderIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
@@ -879,7 +861,6 @@ export interface FileRouteTypes {
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
-    | '/quote/$id'
     | '/sales/sales-intelligence'
     | '/admin/'
     | '/brands/'
@@ -903,7 +884,6 @@ export interface FileRouteTypes {
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
-    | '/sales/order/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/gaps'
@@ -962,7 +942,6 @@ export interface FileRouteTypes {
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
-    | '/quote/$id'
     | '/admin'
     | '/brands'
     | '/crm'
@@ -983,7 +962,6 @@ export interface FileRouteTypes {
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
-    | '/sales/order/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/gaps'
@@ -1052,7 +1030,6 @@ export interface FileRouteTypes {
     | '/portal/support'
     | '/portal/users'
     | '/products/$sku'
-    | '/quote/$id'
     | '/sales/sales-intelligence'
     | '/admin/'
     | '/brands/'
@@ -1076,7 +1053,6 @@ export interface FileRouteTypes {
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
-    | '/sales/order/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/gaps'
@@ -1121,7 +1097,6 @@ export interface RootRouteChildren {
   ApiBuildRoute: typeof ApiBuildRoute
   BrandsSlugRoute: typeof BrandsSlugRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
-  QuoteIdRoute: typeof QuoteIdRoute
   BrandsIndexRoute: typeof BrandsIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -1482,13 +1457,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProductsSkuRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/quote/$id': {
-      id: '/quote/$id'
-      path: '/quote/$id'
-      fullPath: '/quote/$id'
-      preLoaderRoute: typeof QuoteIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/sales/': {
       id: '/sales/'
       path: '/'
@@ -1676,13 +1644,6 @@ declare module '@tanstack/react-router' {
       path: '/customers/$id'
       fullPath: '/sales/customers/$id'
       preLoaderRoute: typeof SalesCustomersIdRouteImport
-      parentRoute: typeof SalesRoute
-    }
-    '/sales/order/$id': {
-      id: '/sales/order/$id'
-      path: '/order/$id'
-      fullPath: '/sales/order/$id'
-      preLoaderRoute: typeof SalesOrderIdRouteImport
       parentRoute: typeof SalesRoute
     }
     '/sales/quotes/': {
@@ -2013,7 +1974,6 @@ interface SalesRouteChildren {
   SalesSalesIntelligenceRoute: typeof SalesSalesIntelligenceRouteWithChildren
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
-  SalesOrderIdRoute: typeof SalesOrderIdRoute
   SalesQuotesQuoteIdRoute: typeof SalesQuotesQuoteIdRoute
   SalesQuotesNewRoute: typeof SalesQuotesNewRoute
   SalesCustomersIndexRoute: typeof SalesCustomersIndexRoute
@@ -2024,7 +1984,6 @@ const SalesRouteChildren: SalesRouteChildren = {
   SalesSalesIntelligenceRoute: SalesSalesIntelligenceRouteWithChildren,
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
-  SalesOrderIdRoute: SalesOrderIdRoute,
   SalesQuotesQuoteIdRoute: SalesQuotesQuoteIdRoute,
   SalesQuotesNewRoute: SalesQuotesNewRoute,
   SalesCustomersIndexRoute: SalesCustomersIndexRoute,
@@ -2054,7 +2013,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiBuildRoute: ApiBuildRoute,
   BrandsSlugRoute: BrandsSlugRoute,
   ProductsSkuRoute: ProductsSkuRoute,
-  QuoteIdRoute: QuoteIdRoute,
   BrandsIndexRoute: BrandsIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

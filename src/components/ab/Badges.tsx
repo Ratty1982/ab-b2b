@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { stockLabel, type Stock } from "@/lib/data";
+import { stockLabel, type Stock } from "@/lib/stock-label";
 import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 
 const tones = {

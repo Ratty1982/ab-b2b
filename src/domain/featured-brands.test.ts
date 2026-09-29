@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validateSectionConfig } from "@/domain/cms";
 import { defaultSectionConfig } from "@/domain/cms-editor";
-import { brands } from "@/lib/data";
 import {
   DEFAULT_FEATURED_BRANDS_HEADING,
   DEFAULT_FEATURED_BRANDS_INTRO,
@@ -13,7 +12,17 @@ import {
   resolveFeaturedBrandCards,
 } from "@/domain/featured-brands";
 
-const catalogue = brands.map((b) => ({ slug: b.slug, name: b.name }));
+/** Test-only catalogue names — not a production mock module. */
+const catalogue = [
+  { slug: "power-maxed", name: "Power Maxed" },
+  { slug: "steel-seal", name: "Steel Seal" },
+  { slug: "street-rhino", name: "Street Rhino" },
+  { slug: "bramley-power", name: "Bramley Power" },
+  { slug: "kidzmotion", name: "Kidzmotion" },
+];
+const mockBlurbs: Record<string, string> = {
+  "power-maxed": "Braking, clutch and drivetrain components engineered for the UK aftermarket.",
+};
 
 describe("featured brands CMS copy", () => {
   it("ships editable defaults for launch brands only", () => {
@@ -26,9 +35,10 @@ describe("featured brands CMS copy", () => {
     expect(cards.find((c) => c.slug === "power-maxed")?.description).toMatch(/valeting|cleaning|workshop/i);
     expect(cards.find((c) => c.slug === "steel-seal")?.description).toMatch(/head gasket/i);
     expect(DEFAULT_FEATURED_BRAND_CARDS.find((c) => c.slug === "kidzmotion")?.enabled).toBe(false);
-    const power = brands.find((b) => b.slug === "power-maxed");
-    expect(power?.blurb).toBeTruthy();
-    expect(cards.find((c) => c.slug === "power-maxed")?.description).not.toBe(power?.blurb);
+    expect(mockBlurbs["power-maxed"]).toBeTruthy();
+    expect(cards.find((c) => c.slug === "power-maxed")?.description).not.toBe(
+      mockBlurbs["power-maxed"],
+    );
   });
 
   it("uses homepage builder draft values on the live preview, including custom links", () => {
@@ -84,7 +94,7 @@ describe("featured brands CMS copy", () => {
       DEFAULT_FEATURED_BRAND_CARDS.find((c) => c.slug === "power-maxed")?.description,
     );
     expect(power?.logo?.mediaId).toBe("cms-logo-1");
-    expect(power?.description).not.toBe(brands.find((b) => b.slug === "power-maxed")?.blurb);
+    expect(power?.description).not.toBe(mockBlurbs["power-maxed"]);
     expect(featuredBrandsIntro({ heading: "TWO BRANDS. ONE TRADE SUPPLIER." })).toBe(
       DEFAULT_FEATURED_BRANDS_INTRO,
     );

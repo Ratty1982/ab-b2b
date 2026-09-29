@@ -319,6 +319,56 @@ describe("CRM empty / real workflow", () => {
     ).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("PL-003: client companyId cannot expand sales scope for CRM/SI lists", async () => {
+    const { listCrmActivities } = await import("@/server/crm/activities");
+
+    const oppB = await createCrmOpportunity(otherRepUserId, {
+      companyId: outOfScopeId,
+      title: `Out-of-scope opp ${stamp}`,
+      value: "99",
+    });
+    const actB = await logCrmActivity(otherRepUserId, {
+      type: "NOTE",
+      companyId: outOfScopeId,
+      body: `Secret note ${stamp}`,
+    });
+    const taskB = await createCrmTask(otherRepUserId, {
+      companyId: outOfScopeId,
+      title: `Secret task ${stamp}`,
+      dueDate: new Date().toISOString().slice(0, 10),
+      taskType: "CALL",
+    });
+
+    await expect(
+      listCrmOpportunities(salesRepUserId, { companyId: outOfScopeId }),
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      listCrmActivities(salesRepUserId, { companyId: outOfScopeId }),
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      listCrmTasks(salesRepUserId, { companyId: outOfScopeId }),
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      getCompanyCrmWorkspace(salesRepUserId, { companyId: outOfScopeId }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    const ownOpps = await listCrmOpportunities(salesRepUserId, { companyId: yorkId });
+    expect(ownOpps.items.every((o) => o.company.id === yorkId)).toBe(true);
+    expect(ownOpps.items.some((o) => o.id === oppB.id)).toBe(false);
+
+    const ownActs = await listCrmActivities(salesRepUserId, { companyId: yorkId });
+    expect(ownActs.items.every((a) => a.company?.id === yorkId)).toBe(true);
+    expect(ownActs.items.some((a) => a.id === actB.id)).toBe(false);
+
+    const ownTasks = await listCrmTasks(salesRepUserId, { companyId: yorkId });
+    expect(ownTasks.items.every((t) => t.company?.id === yorkId)).toBe(true);
+    expect(ownTasks.items.some((t) => t.id === taskB.id)).toBe(false);
+
+    // Managers retain team/all visibility when requesting a company in their remit.
+    const managerView = await listCrmOpportunities(adminId, { companyId: outOfScopeId });
+    expect(managerView.items.some((o) => o.id === oppB.id)).toBe(true);
+  });
+
   it("lists leads without inventing demo rows", async () => {
     const list = await listCrmLeads(adminId, { status: "ALL", pageSize: 5 });
     expect(list.items.every((l) => !l.companyName.includes("ABC Motor Factors"))).toBe(true);

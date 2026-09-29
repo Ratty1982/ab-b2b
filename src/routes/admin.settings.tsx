@@ -175,93 +175,80 @@ function AdminSettings() {
 
         <Autopart504cFeedPanel />
 
-        <section className="space-y-4">
-          <h2 className="font-display text-lg font-semibold uppercase">Trading</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Default payment terms">
-              <select className={inputClass} defaultValue="30 Days Net">
-                {["Pro-forma", "30 Days Net", "45 Days Net", "60 Days Net"].map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Default price for new accounts">
-              <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5 text-[13px]">
-                <p className="font-semibold">Default Trade Price</p>
-                <p className="mt-1 text-[12px] text-steel">
-                  Every new trade account starts on catalogue Default Trade Price
-                  (ProductVariant.tradePrice). A salesperson can later assign a named price list
-                  or set special prices per product on the customer Commercial tab. This is not
-                  configurable here.
-                </p>
-              </div>
-            </Field>
-            <Field label="VAT rate">
-              <input className={inputClass} defaultValue="20%" />
-            </Field>
-            <Field label="Minimum order value">
-              <input className={inputClass} defaultValue="£25.00" />
-            </Field>
-            <Field label="Free delivery threshold">
-              <input className={inputClass} defaultValue="£100.00" />
-            </Field>
-            <Field label="Standard carriage charge">
-              <input className={inputClass} defaultValue="£5.95" />
-            </Field>
-          </div>
+        <section className="space-y-4" aria-labelledby="trading-read-only-heading">
+          <h2 id="trading-read-only-heading" className="font-display text-lg font-semibold uppercase">
+            Trading
+          </h2>
+          <p className="text-[12px] text-steel">
+            Read-only platform rules. These values are defined in application code and cannot be
+            changed from this screen.
+          </p>
+          <dl className="grid gap-3 sm:grid-cols-2 text-[13px]">
+            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                Default payment terms
+              </dt>
+              <dd className="mt-1 font-semibold">30 Days Net</dd>
+              <dd className="mt-1 text-[12px] text-steel">
+                Company payment terms are set per customer. This is the usual default for new
+                accounts.
+              </dd>
+            </div>
+            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                Default price for new accounts
+              </dt>
+              <dd className="mt-1 font-semibold">Default Trade Price</dd>
+              <dd className="mt-1 text-[12px] text-steel">
+                Every new trade account starts on catalogue Default Trade Price
+                (ProductVariant.tradePrice). A salesperson can later assign a named price list or
+                set special prices on the customer Commercial tab.
+              </dd>
+            </div>
+            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                Free delivery threshold
+              </dt>
+              <dd className="mt-1 font-semibold">£100.00 ex VAT goods</dd>
+              <dd className="mt-1 text-[12px] text-steel">
+                Authoritative domain rule (TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT).
+              </dd>
+            </div>
+            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+                Standard carriage charge
+              </dt>
+              <dd className="mt-1 font-semibold">£5.95 ex VAT</dd>
+              <dd className="mt-1 text-[12px] text-steel">
+                Applied when goods subtotal is below the free-delivery threshold
+                (TRADE_DELIVERY_CHARGE_EX_VAT).
+              </dd>
+            </div>
+          </dl>
         </section>
 
-        <section className="space-y-4">
-          <h2 className="font-display text-lg font-semibold uppercase">Ordering</h2>
+        <section className="space-y-4" aria-labelledby="ordering-read-only-heading">
+          <h2 id="ordering-read-only-heading" className="font-display text-lg font-semibold uppercase">
+            Ordering &amp; notifications
+          </h2>
           <p className="text-[12px] text-steel">
             Automotive Brands does not manage customer credit control. Credit limits and available
             credit remain authoritative in Autopart/MAM and are managed by Accounts.
           </p>
           <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
             {[
-              ["Require purchase order number at checkout", true],
-              ["Allow card payment for pro-forma accounts", true],
-              ["Show live stock quantities to trade customers", true],
-            ].map(([label, on]) => (
-              <li
-                key={String(label)}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-3"
-              >
-                <span className="min-w-0">{label as string}</span>
-                <input
-                  type="checkbox"
-                  defaultChecked={on as boolean}
-                  className="size-4 accent-primary"
-                  aria-label={label as string}
-                />
-              </li>
-            ))}
-          </ul>
-
-          <h2 className="pt-2 font-display text-lg font-semibold uppercase">Notifications</h2>
-          <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
-            {[
-              ["Email account manager when a customer places an order", true],
-              ["Notify representative when a quote is viewed", true],
-              ["Weekly at-risk customer digest", false],
-            ].map(([label, on]) => (
-              <li
-                key={String(label)}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-3"
-              >
-                <span className="min-w-0">{label as string}</span>
-                <input
-                  type="checkbox"
-                  defaultChecked={on as boolean}
-                  className="size-4 accent-primary"
-                  aria-label={label as string}
-                />
+              "Purchase order handling is enforced in checkout where required by the order flow.",
+              "Live stock availability bands are shown to authenticated trade customers according to stock policy.",
+              "Order and quote email alerts are configured in the Email section above.",
+            ].map((line) => (
+              <li key={line} className="px-3 py-3 text-steel">
+                {line}
               </li>
             ))}
           </ul>
           <p className="text-[12px] text-steel">
-            Trade application and new B2B order alert recipients are configured in the Email section
-            above.
+            There are no editable ordering/notification toggles on this page. Trade application and
+            new B2B order alert recipients are configured in the Email section.
           </p>
         </section>
       </div>

@@ -649,7 +649,11 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
     where.sourceModule = input.sourceModule;
   }
   if (input.assigneeId) where.assigneeId = input.assigneeId;
-  if (input.companyId) where.companyId = input.companyId;
+  if (input.companyId) {
+    // Never let a client companyId expand past actor scope.
+    await assertCompanyInScope(profile, input.companyId);
+    where.companyId = input.companyId;
+  }
   if (input.priority) where.priority = input.priority;
 
   const today = todayLondonDateOnly();

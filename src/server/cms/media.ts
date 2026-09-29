@@ -1,6 +1,7 @@
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
+import { hasPermission, loadAccessProfile } from "@/server/rbac/access";
 import {
   CMS_MEDIA_MAX_BYTES,
   cmsMediaDeleteSchema,
@@ -327,14 +328,104 @@ export async function deleteCmsMedia(actorUserId: string, raw: unknown) {
   return { id: existing.id };
 }
 
-/** Public bytes for rendering published pages. Does not include upload metadata beyond headers. */
-export async function getPublicCmsMediaBytes(id: string) {
+/**
+ * Media is anonymously public only when bound to intentional public surfaces:
+ * active brand/category logos, trade-visible product media, public team photos,
+ * sales-rep photos, published CMS OG images, or media referenced by a published
+ * CMS page version. UUID secrecy is not authorization.
+ */
+export async function isCmsMediaPubliclyEligible(id: string): Promise<boolean> {
+  if (!id || id.length > 64) return false;
+
+  const bound = await prisma.cmsMedia.findUnique({
+    where: { id },
+    select: {
+      brandLogos: { where: { isActive: true }, take: 1, select: { id: true } },
+      categoryImages: { where: { isActive: true }, take: 1, select: { id: true } },
+      productMedia: {
+        where: {
+          product: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+        },
+        take: 1,
+        select: { id: true },
+      },
+      teamPhotos: {
+        where: { isPublic: true, department: { isPublic: true } },
+        take: 1,
+        select: { id: true },
+      },
+      salesRepPhotos: { take: 1, select: { id: true } },
+    },
+  });
+  if (!bound) return false;
+  if (
+    bound.brandLogos.length ||
+    bound.categoryImages.length ||
+    bound.productMedia.length ||
+    bound.teamPhotos.length ||
+    bound.salesRepPhotos.length
+  ) {
+    return true;
+  }
+
+  const ogPage = await prisma.cmsPage.findFirst({
+    where: { ogImageMediaId: id, publishedVersionId: { not: null } },
+    select: { id: true },
+  });
+  if (ogPage) return true;
+
+  const publishedSections = await prisma.cmsSection.findMany({
+    where: {
+      enabled: true,
+      version: { publishedFor: { isNot: null } },
+    },
+    select: { config: true },
+  });
+  for (const section of publishedSections) {
+    if (collectMediaIds(section.config).has(id)) return true;
+  }
+  return false;
+}
+
+async function actorMayPreviewCmsMedia(actorUserId: string | null | undefined): Promise<boolean> {
+  if (!actorUserId) return false;
+  const profile = await loadAccessProfile(actorUserId);
+  if (!profile || profile.actorType !== "INTERNAL") return false;
+  return (
+    hasPermission(profile, "admin.access") ||
+    hasPermission(profile, "cms.media.read") ||
+    hasPermission(profile, "cms.media.manage") ||
+    hasPermission(profile, "cms.page.read") ||
+    hasPermission(profile, "cms.page.edit") ||
+    hasPermission(profile, "cms.view") ||
+    hasPermission(profile, "cms.edit") ||
+    hasPermission(profile, "products.edit") ||
+    hasPermission(profile, "products.create")
+  );
+}
+
+/**
+ * Resolve media bytes for `/api/cms-media/$id`.
+ * Anonymous callers only receive publicly eligible media.
+ * Authorised CMS/product staff may preview draft/internal media.
+ */
+export async function getPublicCmsMediaBytes(
+  id: string,
+  opts?: { actorUserId?: string | null },
+) {
   if (!id || id.length > 64) return null;
   const row = await prisma.cmsMedia.findUnique({
     where: { id },
     select: { bytes: true, contentType: true, filename: true, storageProvider: true, storageKey: true },
   });
   if (!row) return null;
+
+  const mayPreview = await actorMayPreviewCmsMedia(opts?.actorUserId);
+  if (!mayPreview) {
+    const eligible = await isCmsMediaPubliclyEligible(id);
+    if (!eligible) return null;
+  }
+
   const bytes = await getMediaObjectBytes(row);
   if (!bytes) return null;
   return { bytes, contentType: row.contentType, filename: row.filename };

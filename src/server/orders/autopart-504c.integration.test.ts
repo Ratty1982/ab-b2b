@@ -25,6 +25,25 @@ import { AuthError } from "@/server/rbac/guards";
 
 const prisma = new PrismaClient();
 let adminId = "";
+let abCounter = 0;
+
+/** Allocate an AB-###### that is not already present — avoids flaky collisions across tests. */
+async function uniqueAbOrderNumber(): Promise<string> {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    abCounter += 1;
+    const n = String(
+      (100000 + ((Date.now() + abCounter * 7919 + Math.floor(Math.random() * 900000)) % 900000)) %
+        1000000,
+    ).padStart(6, "0");
+    const orderNumber = `AB-${n}`;
+    const existing = await prisma.order.findUnique({
+      where: { orderNumber },
+      select: { id: true },
+    });
+    if (!existing) return orderNumber;
+  }
+  throw new Error("Could not allocate a unique AB-###### for 504C tests");
+}
 
 async function ensureUser(email: string, roles: string[]) {
   let user = await prisma.user.findUnique({ where: { email } });
@@ -242,7 +261,7 @@ describe("autopart 504C feed defaults", () => {
 
 describe("autopart 504C dry-run and apply", () => {
   it("dry-run parses fixture without mutating orders", async () => {
-    const abNumber = `AB-${String(900000 + (Date.now() % 90000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const { order, reservation, inventory } = await createProcessingOrder(abNumber);
 
     const preview = await dryRunAutopart504cFile(adminId, {
@@ -269,7 +288,7 @@ describe("autopart 504C dry-run and apply", () => {
   });
 
   it("apply invoices → DESPATCHED once; duplicate file safe; credit no despatch", async () => {
-    const abNumber = `AB-${String(910000 + (Date.now() % 80000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const doc = `I${Date.now().toString().slice(-7)}`;
     const creditDoc = `C${Date.now().toString().slice(-7)}`;
     const { order, reservation, inventory } = await createProcessingOrder(abNumber);
@@ -334,7 +353,7 @@ describe("autopart 504C dry-run and apply", () => {
   });
 
   it("does not despatch RECEIVED orders from 504C alone", async () => {
-    const abNumber = `AB-${String(920000 + (Date.now() % 70000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const { order } = await createProcessingOrder(abNumber);
     await prisma.order.update({ where: { id: order.id }, data: { status: "SUBMITTED" } });
 
@@ -350,7 +369,7 @@ describe("autopart 504C dry-run and apply", () => {
   });
 
   it("reports unknown AB references without treating non-AB as errors", async () => {
-    const unknown = `AB-${String(930000 + (Date.now() % 60000)).padStart(6, "0")}`;
+    const unknown = await uniqueAbOrderNumber();
     const run = await applyAutopart504cFile(adminId, {
       text: reportForAbOrders([
         { document: `I${Date.now().toString().slice(-6)}`, orderNumber: unknown },
@@ -365,7 +384,7 @@ describe("autopart 504C dry-run and apply", () => {
 
 describe("autopart 504C dry-run predictive diagnostics", () => {
   it("AB-000003 real-world dry-run predicts create+despatch with zero mutations", async () => {
-    const abNumber = `AB-${String(940000 + (Date.now() % 50000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const document = `SS${String(Date.now()).slice(-6)}`;
     const { order, reservation, inventory } = await createProcessingOrder(abNumber);
 
@@ -451,7 +470,7 @@ describe("autopart 504C dry-run predictive diagnostics", () => {
   });
 
   it("dry-run duplicate predicts no create/despatch", async () => {
-    const abNumber = `AB-${String(950000 + (Date.now() % 40000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const document = `SS${String(Date.now()).slice(-6)}`;
     const { order } = await createProcessingOrder(abNumber);
     await applyAutopart504cFile(adminId, {
@@ -474,7 +493,7 @@ describe("autopart 504C dry-run predictive diagnostics", () => {
   });
 
   it("dry-run credit predicts no despatch", async () => {
-    const abNumber = `AB-${String(960000 + (Date.now() % 30000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const creditDoc = `C${String(Date.now()).slice(-6)}`;
     await createProcessingOrder(abNumber);
     const preview = await dryRunAutopart504cFile(adminId, {
@@ -491,7 +510,7 @@ describe("autopart 504C dry-run predictive diagnostics", () => {
   });
 
   it("dry-run unknown AB order counts as issue; non-AB ignored", async () => {
-    const unknown = `AB-${String(970000 + (Date.now() % 20000)).padStart(6, "0")}`;
+    const unknown = await uniqueAbOrderNumber();
     const preview = await dryRunAutopart504cFile(adminId, {
       text: reportForAbOrders([
         { document: `I${String(Date.now()).slice(-6)}`, orderNumber: unknown },
@@ -506,7 +525,7 @@ describe("autopart 504C dry-run predictive diagnostics", () => {
   });
 
   it("dry-run financial mismatch includes delivery and still predicts live create", async () => {
-    const abNumber = `AB-${String(980000 + (Date.now() % 15000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const document = `I${String(Date.now()).slice(-6)}`;
     const { order } = await createProcessingOrder(abNumber);
     await prisma.order.update({
@@ -543,7 +562,7 @@ describe("autopart 504C dry-run predictive diagnostics", () => {
   });
 
   it("live counters remain actual completed actions after apply", async () => {
-    const abNumber = `AB-${String(990000 + (Date.now() % 10000)).padStart(6, "0")}`;
+    const abNumber = await uniqueAbOrderNumber();
     const document = `I${String(Date.now()).slice(-6)}`;
     await createProcessingOrder(abNumber);
     const run = await applyAutopart504cFile(adminId, {

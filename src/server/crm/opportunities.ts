@@ -51,7 +51,11 @@ export async function listCrmOpportunities(actorUserId: string, raw: unknown) {
     where.stage = input.stage as (typeof OPPORTUNITY_STAGES)[number];
   }
   if (input.ownerId) where.ownerId = input.ownerId;
-  if (input.companyId) where.companyId = input.companyId;
+  if (input.companyId) {
+    // Never let a client companyId expand past actor scope.
+    await assertCrmCompanyAccess(profile, input.companyId);
+    where.companyId = input.companyId;
+  }
   if (input.q?.trim()) {
     const qq = input.q.trim();
     where.OR = [

@@ -16,6 +16,7 @@ import {
 } from "@/server/cms/homepage-seed";
 import { MARKETING_CMS_PAGES } from "@/domain/cms-marketing-pages";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
+import { listPublicBrands } from "@/server/catalogue/products";
 import { attachFeaturedBrandLogos } from "@/domain/featured-brands";
 import { mergeBrandLogoMaps, readBrandLogos } from "@/lib/cms-media";
 
@@ -61,8 +62,10 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
 
   const version = page.draftVersion ?? page.publishedVersion;
   let catalogueLogos: Awaited<ReturnType<typeof listPublicBrandLogos>> = {};
+  let catalogueBrands: Array<{ slug: string; name: string }> = [];
   try {
     catalogueLogos = await listPublicBrandLogos();
+    catalogueBrands = (await listPublicBrands()).map((b) => ({ slug: b.slug, name: b.name }));
   } catch (error) {
     console.error("[ab:cms] brand logos unavailable", error);
   }
@@ -124,7 +127,12 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
           sections: version.sections.map((s) => ({
             id: s.id,
             type: s.type,
-            config: attachBrandLogos(s.type as CmsSectionTypeKey, s.config, catalogueLogos),
+            config: attachBrandLogos(
+              s.type as CmsSectionTypeKey,
+              s.config,
+              catalogueLogos,
+              catalogueBrands,
+            ),
             sortOrder: s.sortOrder,
             enabled: s.enabled,
           })),
@@ -150,8 +158,10 @@ export async function getPublishedCmsPage(slug: string) {
   });
   if (!page?.publishedVersion) return null;
   let catalogueLogos: Awaited<ReturnType<typeof listPublicBrandLogos>> = {};
+  let catalogueBrands: Array<{ slug: string; name: string }> = [];
   try {
     catalogueLogos = await listPublicBrandLogos();
+    catalogueBrands = (await listPublicBrands()).map((b) => ({ slug: b.slug, name: b.name }));
   } catch (error) {
     console.error("[ab:cms] brand logos unavailable", error);
   }
@@ -162,7 +172,7 @@ export async function getPublishedCmsPage(slug: string) {
     metaDescription: page.metaDescription ?? page.publishedVersion.metaDescription,
     ogImageSrc: page.ogImageMediaId ? `/api/cms-media/${page.ogImageMediaId}` : null,
     sections: page.publishedVersion.sections.map((s) => {
-      const withLogos = attachBrandLogos(s.type, s.config, catalogueLogos);
+      const withLogos = attachBrandLogos(s.type, s.config, catalogueLogos, catalogueBrands);
       return {
         id: s.id,
         type: s.type as CmsSectionTypeKey,
@@ -178,6 +188,7 @@ function attachBrandLogos(
   type: CmsSectionTypeKey,
   config: Prisma.JsonValue,
   catalogueLogos: Awaited<ReturnType<typeof listPublicBrandLogos>>,
+  catalogueBrands: Array<{ slug: string; name: string }> = [],
 ): Prisma.JsonValue {
   if (type !== "FEATURED_BRANDS" && type !== "BRAND_LOGO_STRIP") return config;
   if (!config || typeof config !== "object" || Array.isArray(config)) return config;
@@ -186,7 +197,7 @@ function attachBrandLogos(
     return attachFeaturedBrandLogos(record, catalogueLogos) as Prisma.JsonValue;
   }
   const logos = mergeBrandLogoMaps(readBrandLogos(record), catalogueLogos);
-  return { ...record, logos };
+  return { ...record, logos, catalogueBrands };
 }
 
 async function ensureDraftVersion(pageId: string, actorUserId: string) {

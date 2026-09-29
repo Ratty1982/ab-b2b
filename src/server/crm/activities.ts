@@ -54,7 +54,11 @@ export async function listCrmActivities(actorUserId: string, raw: unknown) {
   };
   if (input.type && input.type !== "ALL") where.type = input.type;
   if (input.userId) where.userId = input.userId;
-  if (input.companyId) where.companyId = input.companyId;
+  if (input.companyId) {
+    // Never let a client companyId expand past actor scope.
+    await assertCrmCompanyAccess(profile, input.companyId);
+    where.companyId = input.companyId;
+  }
   if (input.from || input.to) {
     where.occurredAt = {};
     if (input.from) where.occurredAt.gte = new Date(`${input.from}T00:00:00.000Z`);

@@ -3,7 +3,6 @@ import type { CmsSectionTypeKey } from "@/domain/cms";
 import { resolveFeaturedBrandCards, featuredBrandsIntro } from "@/domain/featured-brands";
 import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureSection";
 import { MotorsportMediaGallery } from "@/components/public/MotorsportMediaGallery";
-import { brands } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
 import { cmsMediaDisplaySrc, cmsFocalStyle, cmsImageFitClass, readBrandLogos } from "@/lib/cms-media";
@@ -373,8 +372,19 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
     case "BRAND_LOGO_STRIP": {
       if (section.type === "BRAND_LOGO_STRIP") {
         const slugs = Array.isArray(c["brandSlugs"]) ? (c["brandSlugs"] as string[]) : [];
-        const selected = brands.filter((b) => slugs.includes(b.slug));
+        const catalogueBrands = Array.isArray(c["catalogueBrands"])
+          ? (c["catalogueBrands"] as Array<{ slug: string; name: string }>)
+          : [];
         const logos = readBrandLogos(c);
+        const selected = catalogueBrands.filter((b) => slugs.includes(b.slug));
+        const display = selected.length
+          ? selected
+          : catalogueBrands.length
+            ? catalogueBrands
+            : slugs.map((slug) => ({
+                slug,
+                name: logos[slug]?.alt || slug.replace(/-/g, " "),
+              }));
         return (
           <section className="border-b border-border/60 px-4 py-10 sm:px-6">
             <div className="mx-auto max-w-[1400px]">
@@ -382,18 +392,31 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
                 <h2 className="mb-6 font-display text-xl font-semibold uppercase">{str(c, "heading")}</h2>
               ) : null}
               <div className="flex flex-wrap items-center gap-6">
-                {(selected.length ? selected : brands.slice(0, 5)).map((brand) => {
-                  const logoSrc = cmsMediaDisplaySrc(logos[brand.slug]);
-                  return (
-                    <div key={brand.slug} className="grid h-16 w-36 place-items-center border border-border bg-white px-3">
-                      {logoSrc ? (
-                        <img src={logoSrc} alt={logos[brand.slug]?.alt || brand.name} className={cn("max-h-10 max-w-full", mediaContainClass)} />
-                      ) : (
-                        <span className="text-[11px] font-semibold uppercase text-steel">{brand.name}</span>
-                      )}
-                    </div>
-                  );
-                })}
+                {display.length === 0 ? (
+                  <p className="text-sm text-steel">No public brands available for this strip.</p>
+                ) : (
+                  display.map((brand) => {
+                    const logoSrc = cmsMediaDisplaySrc(logos[brand.slug]);
+                    return (
+                      <div
+                        key={brand.slug}
+                        className="grid h-16 w-36 place-items-center border border-border bg-white px-3"
+                      >
+                        {logoSrc ? (
+                          <img
+                            src={logoSrc}
+                            alt={logos[brand.slug]?.alt || brand.name}
+                            className={cn("max-h-10 max-w-full", mediaContainClass)}
+                          />
+                        ) : (
+                          <span className="text-[11px] font-semibold uppercase text-steel">
+                            {brand.name}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </section>

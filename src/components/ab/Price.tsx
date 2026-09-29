@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Lock } from "lucide-react";
-import { gbp } from "@/lib/data";
+import { gbp } from "@/lib/format-money";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
