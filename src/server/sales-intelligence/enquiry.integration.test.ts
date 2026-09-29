@@ -207,7 +207,7 @@ beforeAll(async () => {
   });
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
     companyId: companyAId,
-    code: `SIALPH${String(stamp).slice(-3)}`,
+    code: `SIA${String(stamp).slice(-7)}`,
   });
   const codeA = (
     await prisma.company.findUniqueOrThrow({ where: { id: companyAId } })
@@ -225,7 +225,7 @@ beforeAll(async () => {
   companyBId = coB.id;
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
     companyId: companyBId,
-    code: `SIBETA${String(stamp).slice(-3)}`,
+    code: `SIB${String(stamp).slice(-7)}`,
   });
   const codeB = (
     await prisma.company.findUniqueOrThrow({ where: { id: companyBId } })
