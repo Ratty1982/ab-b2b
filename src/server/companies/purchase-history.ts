@@ -302,7 +302,21 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
   );
 
   const lines = await prisma.autopartSalesLine.findMany({
-    where: { companyId: company.id },
+    where: {
+      companyId: company.id,
+      ...(dateRange
+        ? {
+            document: {
+              is: {
+                documentDate: {
+                  gte: new Date(`${dateRange.from}T00:00:00.000Z`),
+                  lte: new Date(`${dateRange.to}T23:59:59.999Z`),
+                },
+              },
+            },
+          }
+        : {}),
+    },
     select: {
       sku: true,
       units: true,
