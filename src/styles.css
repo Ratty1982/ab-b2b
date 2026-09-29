@@ -155,6 +155,41 @@
     outline: 2px solid var(--color-ring);
     outline-offset: 2px;
   }
+
+  /*
+   * Native <select> / <option> contrast.
+   * Closed controls follow the dark industrial theme (html color-scheme: dark).
+   * Open option lists on Windows/Chrome often render a light system popup while
+   * still inheriting the page's light foreground — making options invisible.
+   * Force a light option surface + dark ink so every option is readable without
+   * hover/selection. Applies app-wide (portal + admin native selects).
+   */
+  select {
+    color: var(--color-foreground);
+    background-color: var(--color-surface);
+  }
+
+  select:disabled {
+    color: var(--color-muted-foreground);
+    opacity: 0.7;
+  }
+
+  select option,
+  select optgroup {
+    color: var(--ink);
+    background-color: oklch(1 0 0);
+  }
+
+  select option:disabled {
+    color: var(--steel);
+    background-color: oklch(0.97 0 0);
+  }
+
+  select option:checked,
+  select option:hover {
+    color: var(--ink);
+    background-color: oklch(0.94 0.01 264);
+  }
 }
 
 /* the signature slow light sweep used behind public marketing surfaces */
