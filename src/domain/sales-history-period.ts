@@ -103,6 +103,19 @@ export type SalesEnquiryPeriodPreset =
   | "LAST_YEAR"
   | "CUSTOM";
 
+/** Calendar-quarter presets for Rebate / Net Spend Analysis (Jan–Mar … Oct–Dec). */
+export type RebatePeriodPreset =
+  | "THIS_MONTH"
+  | "LAST_MONTH"
+  | "THIS_QUARTER"
+  | "PREVIOUS_QUARTER"
+  | "YTD"
+  | "LAST_YEAR"
+  | "LAST_90"
+  | "LAST_180"
+  | "LAST_365"
+  | "CUSTOM";
+
 function monthStart(iso: string): string {
   return `${iso.slice(0, 7)}-01`;
 }
@@ -110,6 +123,59 @@ function monthStart(iso: string): string {
 function lastDayOfMonth(year: number, month1: number): string {
   const dt = new Date(Date.UTC(year, month1, 0));
   return dateOnlyIsoFromDate(dt);
+}
+
+/**
+ * Calendar quarter containing `today` (Q1=Jan–Mar … Q4=Oct–Dec).
+ * Not financial-year quarters.
+ */
+export function calendarQuarterRange(today: string): DateOnlyRange {
+  const [y, m] = today.split("-").map(Number);
+  const q = Math.floor((m! - 1) / 3); // 0..3
+  const startMonth = q * 3 + 1;
+  const endMonth = startMonth + 2;
+  const from = `${y}-${String(startMonth).padStart(2, "0")}-01`;
+  return { from, to: lastDayOfMonth(y!, endMonth) };
+}
+
+/** Previous calendar quarter relative to `today`. */
+export function previousCalendarQuarterRange(today: string): DateOnlyRange {
+  const [y, m] = today.split("-").map(Number);
+  const q = Math.floor((m! - 1) / 3);
+  let pq = q - 1;
+  let py = y!;
+  if (pq < 0) {
+    pq = 3;
+    py = y! - 1;
+  }
+  const startMonth = pq * 3 + 1;
+  const endMonth = startMonth + 2;
+  const from = `${py}-${String(startMonth).padStart(2, "0")}-01`;
+  return { from, to: lastDayOfMonth(py, endMonth) };
+}
+
+/** Resolve Rebate Analysis period presets (includes calendar quarters + last 12 months). */
+export function resolveRebatePeriod(
+  preset: RebatePeriodPreset,
+  from: string | null | undefined,
+  to: string | null | undefined,
+  today: string,
+): DateOnlyRange | null {
+  if (preset === "THIS_QUARTER") return calendarQuarterRange(today);
+  if (preset === "PREVIOUS_QUARTER") return previousCalendarQuarterRange(today);
+  if (preset === "LAST_365") return lastNDaysRange(today, 365);
+  if (
+    preset === "THIS_MONTH" ||
+    preset === "LAST_MONTH" ||
+    preset === "LAST_90" ||
+    preset === "LAST_180" ||
+    preset === "YTD" ||
+    preset === "LAST_YEAR" ||
+    preset === "CUSTOM"
+  ) {
+    return resolveSalesEnquiryPeriod(preset, from, to, today);
+  }
+  return null;
 }
 
 /** Resolve a Sales Enquiry preset to an inclusive London date-only range. */

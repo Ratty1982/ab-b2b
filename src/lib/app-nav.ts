@@ -69,6 +69,7 @@ export const ROUTES = {
   salesIntelligence: "/sales/sales-intelligence",
   salesIntelligenceGaps: "/sales/sales-intelligence/gaps",
   salesIntelligenceOpportunities: "/sales/sales-intelligence/opportunities",
+  salesIntelligenceRebates: "/sales/sales-intelligence/rebates",
 } as const;
 
 /**
@@ -258,7 +259,11 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligence,
         matchPrefixes: [ROUTES.salesIntelligence],
-        excludePrefixes: [ROUTES.salesIntelligenceGaps, ROUTES.salesIntelligenceOpportunities],
+        excludePrefixes: [
+          ROUTES.salesIntelligenceGaps,
+          ROUTES.salesIntelligenceOpportunities,
+          ROUTES.salesIntelligenceRebates,
+        ],
         permission: "sales_intelligence.view",
         implemented: true,
       },
@@ -277,6 +282,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligenceOpportunities,
         matchPrefixes: [ROUTES.salesIntelligenceOpportunities],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-rebate-analysis",
+        label: "Rebate Analysis",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligenceRebates,
+        matchPrefixes: [ROUTES.salesIntelligenceRebates],
         permission: "sales_intelligence.view",
         implemented: true,
       },

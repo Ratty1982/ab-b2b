@@ -2752,4 +2752,76 @@ export const exportCustomerRangeOpportunitiesCsvFn = createServerFn({ method: "G
     }
   });
 
+export const getCustomerRebateAnalysisFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const rebate = await import("@/server/sales-intelligence/rebate");
+      return { ok: true as const, data: await rebate.getCustomerRebateAnalysis(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getMultiCustomerRebateAnalysisFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const rebate = await import("@/server/sales-intelligence/rebate");
+      return { ok: true as const, data: await rebate.getMultiCustomerRebateAnalysis(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerRebateSummaryCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const rebate = await import("@/server/sales-intelligence/rebate");
+      return { ok: true as const, data: await rebate.exportCustomerRebateSummaryCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerRebateDocumentsCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const rebate = await import("@/server/sales-intelligence/rebate");
+      return { ok: true as const, data: await rebate.exportCustomerRebateDocumentsCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerRebateProductsCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const rebate = await import("@/server/sales-intelligence/rebate");
+      return { ok: true as const, data: await rebate.exportCustomerRebateProductsCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportMultiCustomerRebateCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const rebate = await import("@/server/sales-intelligence/rebate");
+      return { ok: true as const, data: await rebate.exportMultiCustomerRebateCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

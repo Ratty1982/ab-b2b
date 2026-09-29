@@ -1,6 +1,6 @@
 # Sales Intelligence
 
-Internal staff module for factual Autopart historic sales enquiry, period gap comparison, and explainable range opportunities.
+Internal staff module for factual Autopart historic sales enquiry, period gap comparison, explainable range opportunities, and trusted rebate / net-spend analysis.
 
 **Phase 1 ships:** Sales Enquiry (Customers + Products).
 
@@ -8,7 +8,9 @@ Internal staff module for factual Autopart historic sales enquiry, period gap co
 
 **Phase 3 ships:** Range Opportunities — current catalogue products a customer has not purchased, supported by comparable-customer evidence (not AI).
 
-**Not yet built:** Cross-sell UI, AI recommendations, forecasting, churn scoring, salesperson scoring, Rebate Analysis, management dashboards.
+**Phase 4 ships:** Rebate / Net Spend Analysis — auditable customer and multi-customer historic net spend for rebate checking (no schemes yet).
+
+**Not yet built:** Cross-sell UI, AI recommendations, forecasting, churn scoring, salesperson scoring, rebate schemes / percentages / accruals, management dashboards.
 
 ## Route & navigation
 
@@ -17,8 +19,9 @@ Internal staff module for factual Autopart historic sales enquiry, period gap co
 | Sales Enquiry | `/sales/sales-intelligence` |
 | Gap Analysis | `/sales/sales-intelligence/gaps` |
 | Range Opportunities | `/sales/sales-intelligence/opportunities` |
+| Rebate Analysis | `/sales/sales-intelligence/rebates` |
 
-Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis | Range Opportunities**
+Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis | Range Opportunities | Rebate Analysis**
 
 CRM remains separate. Do not move the Sales Enquiry route unnecessarily.
 
@@ -29,10 +32,12 @@ URL-backed state examples:
 - Gaps: `?mode=customers&companyId=…&period=LAST_30&compare=PREVIOUS_YEAR&status=ALL_CHANGES&sort=NET_DECREASE`
 - Gaps: `?mode=products&sku=…&compare=CUSTOM&compareFrom=…&compareTo=…&salesRepId=…`
 - Opportunities: `?companyId=…&period=LAST_365&sort=RANGE_MATCH`
+- Rebates: `?companyId=…&period=CUSTOM&from=2026-01-01&to=2026-06-30&tab=documents`
+- Rebates multi: `?mode=multi&period=THIS_QUARTER&sort=NET_DESC`
 
 ## RBAC
 
-Permission: `sales_intelligence.view` (shared by Enquiry, Gap Analysis, and Range Opportunities).
+Permission: `sales_intelligence.view` (shared by Enquiry, Gap Analysis, Range Opportunities, and Rebate Analysis).
 
 Granted to:
 
@@ -44,15 +49,15 @@ Granted to:
 
 Not granted to Marketing, Customer Service (by default), or any trade portal role.
 
-Enforced server-side on every search, enquiry, gap analysis, opportunity analysis, and CSV export. Trade sessions receive 403 even with a direct URL or API call.
+Enforced server-side on every search, enquiry, gap analysis, opportunity analysis, rebate analysis, and CSV export. Trade sessions receive 403 even with a direct URL or API call.
 
-Company scope (single resolver used by Enquiry, Gap Analysis, and Range Opportunities):
+Company scope (single resolver used by Enquiry, Gap Analysis, Range Opportunities, and Rebate Analysis):
 
 - `sales.view_all_accounts` / `admin.access` → all companies
 - own/team sales keys → assigned companies
-- Accounts (permission without sales scope) → all companies for enquiry/gap/opportunities
+- Accounts (permission without sales scope) → all companies for enquiry/gap/opportunities/rebates
 
-Product gap results only include customers the actor is authorized to analyse (same scope). Manipulated URL company/SKU IDs do not bypass scope.
+Product gap results and multi-customer rebate aggregates only include customers the actor is authorized to analyse (same scope). Manipulated URL company/SKU IDs do not bypass scope.
 
 ## Source of truth
 
@@ -62,7 +67,7 @@ Product gap results only include customers the actor is authorized to analyse (s
 | Purchase History period semantics | Shared Europe/London date-only filtering |
 | **AB Orders** | Excluded from Invoice/Credits/Net Sales |
 | **504C** | Excluded (despatch feedback, not line-level history) |
-| **231PO3NEW cost** | Not used in Gap Analysis ranking or margin |
+| **231PO3NEW cost** | Not used in Gap Analysis ranking, Range Opportunities, or Rebate / Net Spend |
 
 Do not double-count Autopart historic sales and AB native orders.
 
@@ -81,17 +86,25 @@ Sales Enquiry and Gap Analysis use the **same** loaders and totals so figures re
 | **Invoice Sales** | Sum of `INVOICE` line `salesNet` in the period |
 | **Credits** | Sum of `CREDIT` line `salesNet` (signed; typically negative) |
 | **Net Sales** | Invoice Sales + Credits (may be negative; never clamped) |
+| **Net Spend** | Same calculation as Net Sales; preferred label on Rebate Analysis |
 | **Units** | Signed net units in period |
 | **Invoice Units** | Units on invoice lines only (gap volume / presence helper) |
 | **Purchase Transactions** | Distinct `INVOICE` document references (credits never count) |
+| **Invoice Documents** | Same as Purchase Transactions (Rebate Analysis wording) |
+| **Credit Documents** | Distinct `CREDIT` document references in period |
 | **Products Purchased** | Distinct SKUs with qualifying lines (customer enquiry) |
-| **Customers** | Distinct companies with qualifying lines (product enquiry) |
+| **Customers** | Distinct companies with qualifying lines (product enquiry / multi-customer rebate) |
 
-Rebate-ready helper:
+Rebate-ready helpers:
 
 ```ts
 getCustomerNetSales(actorUserId, companyId, from, to)
+getCustomerNetSpend(actorUserId, companyId, from, to)
+getCustomerRebateAnalysis(actorUserId, raw)
+getMultiCustomerRebateAnalysis(actorUserId, raw)
 ```
+
+Money uses scaled-integer `Money` (`MONEY_SCALE` 4). UI/CSV present to 2 decimal places via `moneyMinorToDto`; internal aggregation never uses IEEE floats.
 
 ## Date semantics
 
@@ -100,10 +113,17 @@ Shared via `src/domain/sales-history-period.ts`:
 - Europe/London civil calendar for “today”
 - Date-only `YYYY-MM-DD` comparison on `AutopartSalesDocument.documentDate`
 - Inclusive `[from, to]`
-- Bounded periods exclude undated documents
+- Bounded periods exclude undated documents (do not substitute `createdAt` / import timestamps)
 - Filter transactions **before** aggregation
+- Credits belong to the period of their document date (not backdated to an original invoice)
 
-Presets: This month, Last month, Last 30 days, Last 3 months, Last 6 months, YTD, Last year, Custom.
+Enquiry presets: This month, Last month, Last 30 days, Last 3 months, Last 6 months, YTD, Last year, Custom.
+
+Rebate Analysis adds:
+
+- **This quarter** / **Previous quarter** — calendar quarters Q1 Jan–Mar, Q2 Apr–Jun, Q3 Jul–Sep, Q4 Oct–Dec (not financial-year quarters)
+- **Last 12 months** (`LAST_365`)
+- Custom FROM/TO remains the primary rebate-checking workflow
 
 ## Period comparison (Enquiry)
 
@@ -276,35 +296,90 @@ Transparent sorts (no mystery score):
 
 ### Cross-sell foundation
 
-Server computes SKU co-purchase counts among the comparable cohort (`computeSkuCoPurchase`) for future Phase 4. **No Cross Sell UI** in Phase 3.
+Server computes SKU co-purchase counts among the comparable cohort (`computeSkuCoPurchase`) for a future Cross-sell UI. **No Cross Sell UI** in Phase 3/4.
 
 ### CSV
 
 Server-generated, RBAC-protected, full filtered set. Columns: customer, account, analysis bounds, SKU/product/brand/category, range match, comparable customers, buyers, adoption %, units, availability. No comparable identities.
 
+## Rebate / Net Spend Analysis (Phase 4)
+
+Purpose: answer “what was this customer’s historic net spend between two dates?” with an auditable document/line trail for Sales/Accounts rebate checking.
+
+### What Phase 4 is / is not
+
+| Ships | Does **not** ship |
+|-------|-------------------|
+| Trusted TOTAL / HISTORIC NET SPEND | Rebate schemes, % rates, thresholds |
+| Invoice / credit document drilldown | Accruals, payments, forecasts |
+| Product / brand / category breakdown | Customer-facing rebate balances |
+| Multi-customer cohort report | “2% rebate = £X” calculations |
+| CSV + browser print report | Qualifying-spend exclusions (architecture only) |
+
+Disclaimer shown in UI:
+
+> Net spend includes all imported invoice and credit activity in the selected period. Rebate eligibility rules are not applied.
+
+### Definitions (must match Sales Enquiry)
+
+For the same customer + period:
+
+| Rebate Analysis | Sales Enquiry |
+|-----------------|---------------|
+| Invoice Sales | Invoice Sales |
+| Credits | Credits |
+| **Net Spend** | **Net Sales** |
+| Units | Units |
+| Invoice Documents | Purchase Transactions |
+
+`NET SPEND = Invoice Sales + signed Credits` (never clamped to zero).
+
+Document totals are summed from imported `AutopartSalesLine.salesNet` values (same source as the headline). Brand/category rollups include **Unassigned** for historic SKUs without catalogue mapping — nothing is discarded financially.
+
+### Modes
+
+- **Customer** — select one company; summary, documents, products, brands, categories; optional comparison
+- **Multi-Customer** — authorized cohort for the period; salesperson / search / min–max net spend filters; drillthrough preserves period into Customer mode
+
+Headline summary always reflects the full selected customer/period (or full filtered authorized cohort in multi). Detail filters may show a separate **Filtered net spend**; they do not silently rewrite the headline.
+
+### Eligibility extension point
+
+`applyRebateEligibilityRules(lines, rules)` in `src/domain/sales-rebate.ts` is currently identity. Future Rebate Schemes may filter by brand/category/SKU/date before summing **Qualifying Net Spend**, without rewriting the historic-sales engine. Phase 4 does not display a fake qualifying figure.
+
+### CSV / print
+
+Customer: Export summary, documents, product breakdown (server-generated, full sets).
+
+Multi-customer: full filtered authorized table (not page-only).
+
+Print: browser print CSS with organisation, customer, account, period, generated timestamp, and spend summary.
+
 ## Indexes
 
-`AutopartSalesLine(sku, companyId)` for product-first enquiry across companies. Existing `(companyId, documentDate)` on documents and `(companyId, sku)` on lines remain for customer-first paths. **No new indexes** for Range Opportunities (on-demand set aggregation over scoped period lines).
+`AutopartSalesLine(sku, companyId)` for product-first enquiry across companies. Existing `(companyId, documentDate)` on documents and `(companyId, sku)` on lines remain for customer-first / rebate paths. **No new indexes** for Range Opportunities or Rebate Analysis (set-based period loads + in-process aggregation).
 
 ## Architecture
 
 | Layer | Role |
 |-------|------|
-| `src/domain/sales-history-period.ts` | Date presets, previous equivalent, same-period-previous-year |
+| `src/domain/sales-history-period.ts` | Date presets, quarters, previous equivalent, same-period-previous-year |
 | `src/domain/sales-intelligence.ts` | Money totals, line aggregation, enquiry URL helpers |
 | `src/domain/sales-gap.ts` | Gap classification, URL state, period resolution |
 | `src/domain/sales-opportunity.ts` | Similarity, adoption, range match, opportunity URL/config |
+| `src/domain/sales-rebate.ts` | Rebate URL state, eligibility stub, document-count helpers |
 | `src/server/sales-intelligence/historic-lines.ts` | Shared DB loaders + summarizers |
 | `src/server/sales-intelligence/scope.ts` | Shared company scope |
 | `src/server/sales-intelligence/enquiry.ts` | Sales Enquiry service |
 | `src/server/sales-intelligence/gap.ts` | Gap Analysis service + CSV |
 | `src/server/sales-intelligence/opportunity.ts` | Range Opportunities service + CSV |
+| `src/server/sales-intelligence/rebate.ts` | Rebate / Net Spend service + CSV |
 
-Query approach: one scoped historic-line load for the analysis period, catalogue enrichment, deterministic in-memory similarity + candidate aggregation (not one query per SKU/customer).
+Query approach: one scoped historic-line load for the selected period, then in-process document/SKU/brand/category (or multi-customer) aggregation — not one query per customer/document/SKU.
 
 ## Future phases (do not implement here)
 
 1. Cross-sell UI (co-purchase foundation already computed server-side)
-2. Rebate Analysis (thresholds/schemes on top of Net Sales)
+2. **Rebate Schemes** — date range, customer/group, brand/category/SKU inclusion/exclusion, spend thresholds, tier/fixed percentages, accruals/payments (on top of trusted Net Spend)
 3. Salesperson performance
 4. Management dashboards / Sales-i style analysis
