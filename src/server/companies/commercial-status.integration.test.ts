@@ -53,19 +53,42 @@ async function makeRep(email: string, name: string, code: string) {
   await prisma.user.update({ where: { id: userId }, data: { name } });
   const existing = await prisma.salesRep.findUnique({ where: { userId } });
   if (existing) return existing.id;
-  const rep = await prisma.salesRep.create({
-    data: {
-      userId,
-      code,
-      active: true,
-      displayName: name,
-      businessEmail: email,
-      phone: "01789330668",
-      mobile: "07718149284",
-      customerContactEnabled: true,
-    },
-  });
-  return rep.id;
+  const byCode = await prisma.salesRep.findUnique({ where: { code } });
+  if (byCode) {
+    // Parallel/prior run may have claimed this code — rebind to this user when free.
+    if (byCode.userId === userId) return byCode.id;
+  }
+  try {
+    const rep = await prisma.salesRep.create({
+      data: {
+        userId,
+        code,
+        active: true,
+        displayName: name,
+        businessEmail: email,
+        phone: "01789330668",
+        mobile: "07718149284",
+        customerContactEnabled: true,
+      },
+    });
+    return rep.id;
+  } catch {
+    const again = await prisma.salesRep.findUnique({ where: { userId } });
+    if (again) return again.id;
+    const unique = await prisma.salesRep.create({
+      data: {
+        userId,
+        code: `${code}${Math.random().toString(36).slice(2, 6).toUpperCase()}`.slice(0, 20),
+        active: true,
+        displayName: name,
+        businessEmail: email,
+        phone: "01789330668",
+        mobile: "07718149284",
+        customerContactEnabled: true,
+      },
+    });
+    return unique.id;
+  }
 }
 
 beforeAll(async () => {
@@ -74,12 +97,12 @@ beforeAll(async () => {
   wayneRepId = await makeRep(
     `wayne.comm.${suffix}@automotivebrands.co.uk`,
     "Wayne Radford",
-    `WC${suffix.slice(-4).toUpperCase()}`,
+    `WC${suffix.replace(/[^a-zA-Z0-9]/g, "").slice(-10).toUpperCase()}`,
   );
   tomRepId = await makeRep(
     `tom.comm.${suffix}@automotivebrands.co.uk`,
     "Tom Gibbons",
-    `TC${suffix.slice(-4).toUpperCase()}`,
+    `TC${suffix.replace(/[^a-zA-Z0-9]/g, "").slice(-10).toUpperCase()}`,
   );
 });
 
