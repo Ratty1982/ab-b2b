@@ -6,7 +6,6 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
 import { TradeOrderingSettingsPanel } from "@/components/ab/TradeOrderingSettingsPanel";
 import { Autopart504cFeedPanel } from "@/components/ab/Autopart504cFeedPanel";
-import { AutopartBulkCreditImportPanel } from "@/components/ab/AutopartBulkCreditImportPanel";
 import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
 
@@ -17,7 +16,7 @@ export const Route = createFileRoute("/admin/settings")({
       {
         name: "description",
         content:
-          "Trading, ordering, delivery, credit, email and notification settings for the Automotive Brands trade platform.",
+          "Trading, ordering, delivery, email and notification settings for the Automotive Brands trade platform.",
       },
       { property: "og:title", content: "Platform Settings — Automotive Brands Admin" },
       { property: "og:description", content: "Trading, ordering, email and notification defaults." },
@@ -176,8 +175,6 @@ function AdminSettings() {
 
         <Autopart504cFeedPanel />
 
-        <AutopartBulkCreditImportPanel />
-
         <section className="space-y-4">
           <h2 className="font-display text-lg font-semibold uppercase">Trading</h2>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -215,12 +212,14 @@ function AdminSettings() {
         </section>
 
         <section className="space-y-4">
-          <h2 className="font-display text-lg font-semibold uppercase">Ordering &amp; credit</h2>
+          <h2 className="font-display text-lg font-semibold uppercase">Ordering</h2>
+          <p className="text-[12px] text-steel">
+            Automotive Brands does not manage customer credit control. Credit limits and available
+            credit remain authoritative in Autopart/MAM and are managed by Accounts.
+          </p>
           <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
             {[
               ["Require purchase order number at checkout", true],
-              ["Allow ordering above available credit", false],
-              ["Hold orders that exceed credit limit for review", true],
               ["Allow card payment for pro-forma accounts", true],
               ["Show live stock quantities to trade customers", true],
             ].map(([label, on]) => (
@@ -243,7 +242,6 @@ function AdminSettings() {
           <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
             {[
               ["Email account manager when a customer places an order", true],
-              ["Email accounts team when an order exceeds credit", true],
               ["Notify representative when a quote is viewed", true],
               ["Weekly at-risk customer digest", false],
             ].map(([label, on]) => (

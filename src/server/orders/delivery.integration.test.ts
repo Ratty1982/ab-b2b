@@ -195,15 +195,6 @@ describe("trade delivery on placeOrder", () => {
       sourceQuoteNumber: null,
       portalOrderUrl: "https://example.test/portal/orders/x",
       adminOrderUrl: "https://example.test/admin/orders/x",
-      creditStatus: "NOT_REQUIRED",
-      creditDecisionReason: null,
-      creditLimitAtOrder: null,
-      autopartExposureAtOrder: null,
-      pendingAbExposureAtOrder: null,
-      effectiveAvailableCreditAtOrder: null,
-      orderCreditRequirement: null,
-      creditOverBy: null,
-      creditSnapshotStatus: null,
     });
     expect(email.text).toContain("Goods ex VAT: £25.72");
     expect(email.text).toContain("Delivery: £5.95");

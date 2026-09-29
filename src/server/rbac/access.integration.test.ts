@@ -118,9 +118,9 @@ describe("sales representative", () => {
     await expect(requireCompanyAccess(id, other)).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("cannot edit credit", async () => {
+  it("cannot manage users", async () => {
     const id = await userIdByEmail("sales.rep@example.invalid");
-    await expect(requireSystemPermission(id, "credit.edit")).rejects.toBeInstanceOf(AuthError);
+    await expect(requireSystemPermission(id, "users.manage")).rejects.toBeInstanceOf(AuthError);
   });
 });
 
@@ -136,19 +136,18 @@ describe("sales manager", () => {
 });
 
 describe("marketing / accounts", () => {
-  it("marketing cannot access invoices/credit permissions", async () => {
+  it("marketing cannot access invoices permissions", async () => {
     const id = await userIdByEmail("marketing@example.invalid");
     const profile = await loadAccessProfile(id);
     expect(hasPermission(profile!, "invoices.view")).toBe(false);
-    expect(hasPermission(profile!, "credit.edit")).toBe(false);
     expect(hasPermission(profile!, "cms.publish")).toBe(true);
   });
 
-  it("accounts cannot publish CMS", async () => {
+  it("accounts cannot publish CMS but can view invoices", async () => {
     const id = await userIdByEmail("accounts@example.invalid");
     const profile = await loadAccessProfile(id);
     expect(hasPermission(profile!, "cms.publish")).toBe(false);
-    expect(hasPermission(profile!, "credit.edit")).toBe(true);
+    expect(hasPermission(profile!, "invoices.view")).toBe(true);
   });
 });
 

@@ -2,10 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
 import {
-  confirmAutopartCreditImportFn,
   confirmAutopartHistoryImportFn,
   getCompanyAutopartHistoryWorkspaceFn,
-  previewAutopartCreditImportFn,
   previewAutopartHistoryImportFn,
   verifyAutopartAccountAliasFn,
 } from "@/server/phase2/fns";
@@ -16,10 +14,6 @@ type Workspace = Extract<
 >["data"];
 type HistoryPreview = Extract<
   Awaited<ReturnType<typeof previewAutopartHistoryImportFn>>,
-  { ok: true }
->["data"];
-type CreditPreview = Extract<
-  Awaited<ReturnType<typeof previewAutopartCreditImportFn>>,
   { ok: true }
 >["data"];
 
@@ -41,9 +35,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   const [loading, setLoading] = useState(true);
   const [file561, setFile561] = useState<File | null>(null);
   const [fileSlrb, setFileSlrb] = useState<File | null>(null);
-  const [file407, setFile407] = useState<File | null>(null);
   const [historyPreview, setHistoryPreview] = useState<HistoryPreview | null>(null);
-  const [creditPreview, setCreditPreview] = useState<CreditPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingHistory, setConfirmingHistory] = useState(false);
   const [alias, setAlias] = useState("");
@@ -124,40 +116,6 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
     }
   }
 
-  async function onPreviewCredit() {
-    if (!file407) {
-      toast.error("Select a 407P100 file");
-      return;
-    }
-    setBusy(true);
-    const text = await readFileText(file407);
-    const r = await previewAutopartCreditImportFn({
-      data: { companyId, file407: text!, filename: file407.name },
-    });
-    setBusy(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    setCreditPreview(r.data);
-  }
-
-  async function onConfirmCredit() {
-    if (!file407 || !creditPreview?.canCommit) return;
-    setBusy(true);
-    const text = await readFileText(file407);
-    const r = await confirmAutopartCreditImportFn({
-      data: { companyId, file407: text!, filename: file407.name },
-    });
-    setBusy(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    toast.success("Credit position updated");
-    setCreditPreview(null);
-    setWorkspace(r.data.workspace);
-  }
 
   async function onAddAlias() {
     if (!alias.trim()) return;
@@ -181,8 +139,6 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
     return <p className="p-4 text-[13px] text-bad">{error ?? "Unable to load"}</p>;
   }
 
-  const credit = workspace.credit;
-
   return (
     <div className="space-y-6 p-4 sm:p-6">
       <section className="rounded-lg border border-border p-5">
@@ -203,27 +159,11 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             <dd>{workspace.historic.imported ? "Imported" : "Not imported"}</dd>
           </div>
           <div>
-            <dt className="text-steel">Current credit position</dt>
-            <dd>
-              {!credit.imported
-                ? "Not imported"
-                : credit.freshness === "STALE"
-                  ? "Stale"
-                  : "Current"}
-            </dd>
-          </div>
-          <div>
             <dt className="text-steel">Last historic import</dt>
             <dd>
               {workspace.historic.lastImportedAt
                 ? formatDateTime(workspace.historic.lastImportedAt)
                 : "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-steel">Last credit import</dt>
-            <dd>
-              {credit.lastImportedAt ? formatDateTime(credit.lastImportedAt) : "—"}
             </dd>
           </div>
         </dl>
@@ -251,22 +191,6 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
           </dl>
         ) : null}
 
-        {credit.imported ? (
-          <dl className="mt-4 grid gap-2 border-t border-border pt-4 text-[13px] sm:grid-cols-3">
-            <div>
-              <dt className="text-steel">Credit limit</dt>
-              <dd className="font-semibold">{gbp(credit.creditLimit)}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Used credit</dt>
-              <dd className="font-semibold">{gbp(credit.usedCredit)}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Available credit</dt>
-              <dd className="font-semibold">{gbp(credit.availableCreditDisplay)}</dd>
-            </div>
-          </dl>
-        ) : null}
       </section>
 
       <section className="rounded-lg border border-border p-5">
@@ -496,139 +420,6 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               ))}
             </ul>
           </div>
-        ) : null}
-      </section>
-
-      <section className="rounded-lg border border-border p-5">
-        <h2 className="font-display text-base font-semibold uppercase">Update credit position</h2>
-        <p className="mt-2 text-[12px] text-steel">
-          407P100 is authoritative for current Autopart credit exposure. Used credit = Total
-          (includes picking/dropship/etc when present).
-        </p>
-        <label className="mt-4 block text-[12px]">
-          407P100 file
-          <input
-            type="file"
-            accept=".csv,.txt,text/csv,text/plain"
-            className="mt-1 block w-full text-[12px]"
-            onChange={(e) => setFile407(e.target.files?.[0] ?? null)}
-          />
-        </label>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void onPreviewCredit()}
-            className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase"
-          >
-            Preview
-          </button>
-          <button
-            type="button"
-            disabled={busy || !creditPreview?.canCommit}
-            onClick={() => void onConfirmCredit()}
-            className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-40"
-          >
-            Confirm update
-          </button>
-        </div>
-        {creditPreview ? (
-          <div className="mt-4 space-y-4 text-[13px]">
-            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <dt className="text-[11px] uppercase tracking-wide text-steel">Autopart account</dt>
-                <dd className="font-mono font-semibold">
-                  {creditPreview.position?.accountCode ?? creditPreview.verifiedAccount ?? "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[11px] uppercase tracking-wide text-steel">Account name</dt>
-                <dd className="font-semibold">{creditPreview.position?.customerName ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[11px] uppercase tracking-wide text-steel">Status</dt>
-                <dd className="font-semibold">{creditPreview.matchStatus ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[11px] uppercase tracking-wide text-steel">Source report</dt>
-                <dd className="font-semibold">
-                  {creditPreview.reportStats?.sourceReport ?? "407P100"}
-                  {creditPreview.reportStats != null
-                    ? ` · ${creditPreview.reportStats.rowsInReport} rows · ${creditPreview.reportStats.matchedRows} matched`
-                    : ""}
-                </dd>
-              </div>
-            </dl>
-
-            {creditPreview.position ? (
-              <>
-                <dl className="grid gap-2 sm:grid-cols-3">
-                  <div>
-                    <dt className="text-steel">Credit limit</dt>
-                    <dd className="font-semibold">{gbp(creditPreview.position.creditLimit)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-steel">Used credit</dt>
-                    <dd className="font-semibold">{gbp(creditPreview.position.usedCredit)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-steel">Available credit</dt>
-                    <dd className="font-semibold">
-                      {gbp(creditPreview.position.availableCreditDisplay)}
-                      {creditPreview.position.overLimitBy
-                        ? ` (over by ${gbp(creditPreview.position.overLimitBy)})`
-                        : ""}
-                    </dd>
-                  </div>
-                </dl>
-
-                <div>
-                  <h3 className="text-[11px] font-bold uppercase tracking-wide text-steel">
-                    Credit breakdown
-                  </h3>
-                  <dl className="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                    {(
-                      [
-                        ["Invoices", creditPreview.position.invoices],
-                        ["Picking", creditPreview.position.picking],
-                        ["DropShip", creditPreview.position.dropShip],
-                        ["CrossDock", creditPreview.position.crossDock],
-                        ["Suspends", creditPreview.position.suspends],
-                        ["UnConsolidated", creditPreview.position.unConsol],
-                        ["Used credit", creditPreview.position.usedCredit],
-                        ["Credit limit", creditPreview.position.creditLimit],
-                        ["Available credit", creditPreview.position.availableCreditRaw],
-                      ] as const
-                    ).map(([label, value]) => (
-                      <div key={label}>
-                        <dt className="text-steel">{label}</dt>
-                        <dd className="font-semibold tabular-nums">{gbp(value)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              </>
-            ) : null}
-
-            {creditPreview.matchStatus === "Not found" && creditPreview.reportStats ? (
-              <p className="text-[12px] text-steel">
-                Rows read: {creditPreview.reportStats.rowsInReport}. Valid customer rows:{" "}
-                {creditPreview.reportStats.validCustomerRows}.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        {creditPreview?.issues?.length ? (
-          <ul className="mt-3 space-y-1 text-[12px]">
-            {creditPreview.issues.map((i) => (
-              <li
-                key={`${i.code}-${i.message}`}
-                className={i.severity === "BLOCKING" ? "text-bad" : "text-steel"}
-              >
-                [{i.severity}] {i.message}
-              </li>
-            ))}
-          </ul>
         ) : null}
       </section>
 

@@ -13,10 +13,6 @@ import {
 import { validTradeApplicationInput } from "@/server/applications/test-fixtures";
 import { updateCompany, getCompanyWorkspace } from "@/server/companies/service";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
-import {
-  confirmAutopartCreditImport,
-  previewAutopartCreditImport,
-} from "@/server/companies/autopart-history";
 import { getPortalDashboard } from "@/server/portal/dashboard";
 import { resolveAccountManagerForCompany } from "@/server/sales/account-manager";
 import { companyUpdateSchema } from "@/domain/company";
@@ -92,7 +88,7 @@ afterAll(async () => {
 });
 
 describe("commercial settings preserve ACTIVE status", () => {
-  it("approval → ACTIVE; commercial save / salesperson / terms / credit / Autopart keep ACTIVE", async () => {
+  it("approval → ACTIVE; commercial save / salesperson / terms / Autopart keep ACTIVE", async () => {
     const email = `buyer.comm.${suffix}@example.invalid`;
     const submitted = await submitTradeApplication(
       validTradeApplicationInput({
@@ -112,7 +108,6 @@ describe("commercial settings preserve ACTIVE status", () => {
       paymentTerms: "60 DAYS",
       taxStatus: "STANDARD",
       salesRepId: tomRepId,
-      creditLimit: 5000,
     });
     expect(parsed.status).toBeUndefined();
 
@@ -121,11 +116,9 @@ describe("commercial settings preserve ACTIVE status", () => {
       paymentTerms: "60 DAYS",
       taxStatus: "STANDARD",
       salesRepId: tomRepId,
-      creditLimit: 5000,
     });
     expect(updated.status).toBe("ACTIVE");
     expect(updated.paymentTerms).toBe("60 DAYS");
-    expect(updated.creditLimit).toBe(5000);
     expect(updated.salesperson?.salesRepId).toBe(tomRepId);
 
     company = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });
@@ -160,11 +153,10 @@ describe("commercial settings preserve ACTIVE status", () => {
     expect(company.status).toBe("ACTIVE");
     expect(company.priceListId).toBe(list.id);
 
-    // Payment terms / credit again
+    // Payment terms again
     updated = await updateCompany(adminId, {
       id: companyId,
       paymentTerms: "30 DAYS",
-      creditLimit: 7500,
     });
     expect(updated.status).toBe("ACTIVE");
     expect(updated.paymentTerms).toBe("30 DAYS");
@@ -177,21 +169,7 @@ describe("commercial settings preserve ACTIVE status", () => {
     });
     company = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });
     expect(company.status).toBe("ACTIVE");
-
-    // Credit import (407P100 single-row for this account)
-    const file407 = `Customer,customer name,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
-OTHER001,OTHER ONE,100,0,0,0,0,0,100,1000
-${code},YORK MOTOR FACTORS,3494.75,0,0,0,0,0,3494.75,5000
-`;
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId,
-      file407,
-      filename: "407.csv",
-    });
-    expect(preview.canCommit).toBe(true);
-    await confirmAutopartCreditImport(adminId, { companyId, file407, filename: "407.csv" });
-    company = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });
-    expect(company.status).toBe("ACTIVE");
+    expect(company.autopartCustomerCode).toBe(code);
 
     // Activate buyer membership and check portal
     const buyer = await prisma.user.findUniqueOrThrow({ where: { email } });
@@ -206,12 +184,13 @@ ${code},YORK MOTOR FACTORS,3494.75,0,0,0,0,0,3494.75,5000
 
     const dash = await getPortalDashboard(buyer.id);
     expect(dash.company.status).toBe("ACTIVE");
+    expect(dash.company.paymentTerms).toBe("30 DAYS");
+    expect(dash.company.autopartCustomerCode).toBe(code);
     expect(dash.accountManager?.name).toBe("Wayne Radford");
     expect(dash.accountManager?.email).toContain("wayne.comm");
-    // Manual Company.creditLimit must not invent available credit; 407P100 snapshot drives it.
-    expect(dash.creditLimit).toBe(5000);
-    expect(dash.usedCredit).toBe(3494.75);
-    expect(dash.availableCredit).toBe(1505.25);
+    expect(dash).not.toHaveProperty("creditLimit");
+    expect(dash).not.toHaveProperty("availableCredit");
+    expect(dash).not.toHaveProperty("usedCredit");
 
     const workspace = await getCompanyWorkspace(adminId, companyId);
     expect(workspace.company.status).toBe("ACTIVE");

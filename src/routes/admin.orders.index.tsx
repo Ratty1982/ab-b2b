@@ -18,7 +18,6 @@ import { useSession } from "@/lib/session";
 
 type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
 type BackorderFilter = "ALL" | "CONTAINS" | "FULL";
-type CreditFilter = "ALL" | "HOLD" | "REVIEW";
 type BackorderLine = Extract<
   Awaited<ReturnType<typeof listAdminBackorderLinesFn>>,
   { ok: true }
@@ -31,24 +30,17 @@ function parseExportFilter(value: unknown): ExportFilter | undefined {
   return undefined;
 }
 
-function parseCreditFilter(value: unknown): CreditFilter | undefined {
-  if (value === "HOLD" || value === "REVIEW" || value === "ALL") return value;
-  return undefined;
-}
-
 export const Route = createFileRoute("/admin/orders/")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { autopartExport?: ExportFilter; backorders?: BackorderFilter; credit?: CreditFilter } => {
+  ): { autopartExport?: ExportFilter; backorders?: BackorderFilter } => {
     const autopartExport = parseExportFilter(search["autopartExport"]);
     const bo = search["backorders"];
     const backorders =
       bo === "ALL" || bo === "CONTAINS" || bo === "FULL" ? (bo as BackorderFilter) : undefined;
-    const credit = parseCreditFilter(search["credit"]);
     return {
       ...(autopartExport ? { autopartExport } : {}),
       ...(backorders ? { backorders } : {}),
-      ...(credit ? { credit } : {}),
     };
   },
   head: () => ({ meta: [{ title: "Orders — Automotive Brands Admin" }] }),
@@ -79,7 +71,6 @@ function AdminOrdersPage() {
   const [q, setQ] = useState("");
   const [exportFilter, setExportFilter] = useState<ExportFilter>(search.autopartExport ?? "ALL");
   const [backorderFilter, setBackorderFilter] = useState<BackorderFilter>(search.backorders ?? "ALL");
-  const [creditFilter, setCreditFilter] = useState<CreditFilter>(search.credit ?? "ALL");
   const [stockNowOnly, setStockNowOnly] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +83,7 @@ function AdminOrdersPage() {
   useEffect(() => {
     setExportFilter(search.autopartExport ?? "ALL");
     setBackorderFilter(search.backorders ?? "ALL");
-    setCreditFilter(search.credit ?? "ALL");
-  }, [search.autopartExport, search.backorders, search.credit]);
+  }, [search.autopartExport, search.backorders]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,7 +94,6 @@ function AdminOrdersPage() {
         q: q || undefined,
         autopartExport: exportFilter,
         backorders: backorderFilter,
-        credit: creditFilter,
       },
     });
     if (!result.ok) {
@@ -132,7 +121,7 @@ function AdminOrdersPage() {
       setBackorderLines([]);
     }
     setLoading(false);
-  }, [q, exportFilter, backorderFilter, creditFilter, stockNowOnly]);
+  }, [q, exportFilter, backorderFilter, stockNowOnly]);
 
   useEffect(() => {
     void load();
@@ -290,18 +279,6 @@ function AdminOrdersPage() {
               <option value="READY">Ready for Autopart</option>
               <option value="EXPORTED">Exported</option>
               <option value="BLOCKED">Blocked</option>
-            </select>
-          </label>
-          <label className="grid gap-1 text-[11px] font-semibold uppercase text-steel">
-            Credit
-            <select
-              value={creditFilter}
-              onChange={(e) => setCreditFilter(e.target.value as CreditFilter)}
-              className={cn(inputClass, "min-w-[10rem]")}
-            >
-              <option value="ALL">All</option>
-              <option value="HOLD">Credit Hold</option>
-              <option value="REVIEW">Credit Review</option>
             </select>
           </label>
           <label className="grid gap-1 text-[11px] font-semibold uppercase text-steel">
@@ -484,13 +461,6 @@ function AdminOrdersPage() {
                         </StatusBadge>
                         {o.containsBackorder ? (
                           <StatusBadge tone="warn">{o.fullyBackordered ? "Full backorder" : "Backorder"}</StatusBadge>
-                        ) : null}
-                        {o.creditStatus === "HOLD" ? (
-                          <StatusBadge tone="bad">Credit Hold</StatusBadge>
-                        ) : o.creditStatus === "REVIEW_REQUIRED" ? (
-                          <StatusBadge tone="warn">Credit Review</StatusBadge>
-                        ) : o.creditStatus === "APPROVED" ? (
-                          <StatusBadge tone="good">Credit Approved</StatusBadge>
                         ) : null}
                       </div>
                     </td>

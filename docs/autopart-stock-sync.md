@@ -255,7 +255,6 @@ Next phases can combine **without merging into fake Order/Invoice entities**:
 
 - 561L + SLRB → customer/product historic sales and credits
 - 231PO3NEW → current/daily product cost + usage
-- 407P100 → current customer credit position
 - AB Orders → native B2B activity
 
 Keep source provenance. Do not invent margin from today’s cost on 2024/2025 invoices until daily cost history supports clearly defined semantics.

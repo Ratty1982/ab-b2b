@@ -1,8 +1,8 @@
 /**
  * Shared money / date helpers for Autopart customer history reports
- * (561L, SLRB, 407P100). Authoritative arithmetic uses scaled Money — never floats.
+ * (561L, SLRB). Authoritative arithmetic uses scaled Money — never floats.
  */
-import { moneyToString, parseMoney, subMoney, type Money } from "@/domain/money";
+import { moneyToString, parseMoney, type Money } from "@/domain/money";
 
 /** Strip currency decoration and parse Autopart monetary fields to Money (4dp scale). */
 export function parseAutopartMoney(raw: string | null | undefined): Money | null {
@@ -27,19 +27,6 @@ export function parseAutopartMoney(raw: string | null | undefined): Money | null
 
 export function autopartMoneyToGbp2(value: Money): string {
   return moneyToString(value, 2);
-}
-
-export function availableCreditFromExposure(input: {
-  creditLimit: Money;
-  totalExposure: Money;
-}): { availableCreditRaw: Money; availableCreditDisplay: string; overLimitBy: Money | null } {
-  const raw = subMoney(input.creditLimit, input.totalExposure);
-  const over = raw.minor < 0n ? { minor: -raw.minor } : null;
-  return {
-    availableCreditRaw: raw,
-    availableCreditDisplay: autopartMoneyToGbp2(raw.minor < 0n ? { minor: 0n } : raw),
-    overLimitBy: over,
-  };
 }
 
 const MONTHS: Record<string, number> = {

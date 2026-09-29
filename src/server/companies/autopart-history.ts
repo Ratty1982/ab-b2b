@@ -1,8 +1,9 @@
 /**
- * Autopart historic purchase (561L/SLRB) + current credit (407P100) import.
+ * Autopart historic purchase import (561L + SLRB).
  *
- * AB is NOT the accounting system. Autopart/MAM remains authoritative for ledger.
- * Historic lines are NOT AB Orders. Credit position is a snapshot, not a ledger.
+ * AB is NOT the accounting system and does not manage customer credit control.
+ * Autopart/MAM remains authoritative for ledger, credit limits, and available credit.
+ * Historic lines are NOT AB Orders.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { Prisma, type AutopartHistoricDocumentType } from "@prisma/client";
@@ -16,17 +17,10 @@ import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-accou
 import { parseAutopart561l } from "@/domain/autopart-561l";
 import { parseAutopartSlrb } from "@/domain/autopart-slrb";
 import {
-  parseAutopart407p100,
-  selectCompanyRowFrom407p100,
-} from "@/domain/autopart-407p100";
-import {
   autopartAccountsEqual,
   normaliseAccountToken,
-  parseAutopartMoney,
 } from "@/domain/autopart-report-money";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
-import { creditFreshnessFromImportedAt } from "@/server/companies/autopart-credit-freshness";
-import { requireTradePortalCompany } from "@/server/portal/dashboard";
 
 export type ImportIssue = {
   severity: "BLOCKING" | "WARNING" | "INFO";
@@ -195,7 +189,7 @@ async function findLatestFailedHistoricImport(input: {
   });
 }
 
-async function assertStaffCompanyAccess(actorUserId: string, companyId: string, permission: "companies.view" | "companies.edit" | "credit.view" | "credit.edit") {
+async function assertStaffCompanyAccess(actorUserId: string, companyId: string, permission: "companies.view" | "companies.edit") {
   const profile = await requireSystemPermission(actorUserId, permission);
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade customers cannot manage Autopart history imports", "FORBIDDEN", 403);
@@ -214,7 +208,6 @@ async function loadVerifiedCompany(companyId: string) {
     select: {
       id: true,
       name: true,
-      creditLimit: true,
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
     },
@@ -343,8 +336,6 @@ async function truncatedFormAmbiguous(input: {
  *   and is validated as that representation — never requires an alias.
  * - Truncation matching applies only to 561L (or legacy pairs with no full
  *   identity). SLRB conflicting full codes still block.
- *
- * 407P100 must NOT use this helper.
  */
 export async function resolveHistoricReportAccountMatch(input: {
   companyId: string;
@@ -723,11 +714,10 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
   const company = await loadVerifiedCompany(companyId);
   const verified = Boolean(company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt);
 
-  const [lineCount, docCount, credit, lastHistory, lastCredit, aliases, topSkus, skuGroups] =
+  const [lineCount, docCount, lastHistory, aliases, topSkus, skuGroups] =
     await Promise.all([
       prisma.autopartSalesLine.count({ where: { companyId } }),
       prisma.autopartSalesDocument.count({ where: { companyId } }),
-      prisma.autopartCreditPosition.findUnique({ where: { companyId } }),
       prisma.autopartCustomerImportRun.findFirst({
         where: {
           companyId,
@@ -737,10 +727,6 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
           dryRun: false,
           OR: [{ rowsImported: { gt: 0 } }, { rowsUpdated: { gt: 0 } }],
         },
-        orderBy: { completedAt: "desc" },
-      }),
-      prisma.autopartCustomerImportRun.findFirst({
-        where: { companyId, type: "CREDIT_407P100", status: "COMMITTED" },
         orderBy: { completedAt: "desc" },
       }),
       prisma.autopartCustomerAccountAlias.findMany({
@@ -779,16 +765,12 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
     select: { documentDate: true },
   });
 
-  const freshness = creditFreshnessFromImportedAt(credit?.sourceImportedAt ?? null);
-
   return {
     company: {
       id: company.id,
       name: company.name,
       autopartCustomerCode: company.autopartCustomerCode,
       verified,
-      companyCreditLimit:
-        company.creditLimit != null ? moneyToString(parseMoney(String(company.creditLimit))!, 2) : null,
     },
     historic: {
       imported: lineCount > 0,
@@ -805,39 +787,6 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
         ? lastDated.documentDate.toISOString().slice(0, 10)
         : null,
     },
-    credit: credit
-      ? {
-          imported: true,
-          freshness,
-          autopartCustomerCode: credit.autopartCustomerCode,
-          invoices: moneyToString(parseMoney(String(credit.invoices))!, 2),
-          picking: moneyToString(parseMoney(String(credit.picking))!, 2),
-          dropShip: moneyToString(parseMoney(String(credit.dropShip))!, 2),
-          crossDock: moneyToString(parseMoney(String(credit.crossDock))!, 2),
-          suspends: moneyToString(parseMoney(String(credit.suspends))!, 2),
-          unConsol: moneyToString(parseMoney(String(credit.unConsol))!, 2),
-          usedCredit: moneyToString(parseMoney(String(credit.totalExposure))!, 2),
-          creditLimit: moneyToString(parseMoney(String(credit.creditLimit))!, 2),
-          availableCreditRaw: moneyToString(parseMoney(String(credit.availableCreditRaw))!, 2),
-          availableCreditDisplay:
-            (parseMoney(String(credit.availableCreditRaw))?.minor ?? 0n) < 0n
-              ? "0.00"
-              : moneyToString(parseMoney(String(credit.availableCreditRaw))!, 2),
-          overLimitBy:
-            (parseMoney(String(credit.availableCreditRaw))?.minor ?? 0n) < 0n
-              ? moneyToString(
-                  { minor: -(parseMoney(String(credit.availableCreditRaw))!.minor) },
-                  2,
-                )
-              : null,
-          sourceImportedAt: credit.sourceImportedAt.toISOString(),
-          lastImportedAt: lastCredit?.completedAt?.toISOString() ?? credit.sourceImportedAt.toISOString(),
-        }
-      : {
-          imported: false,
-          freshness: "NOT_AVAILABLE" as const,
-          lastImportedAt: null,
-        },
     aliases: aliases.map((a) => ({
       id: a.id,
       alias: a.alias,
@@ -1772,339 +1721,11 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
   };
 }
 
-// ─── Credit 407P100 ──────────────────────────────────────────────────────────
-
-const creditPreviewSchema = z.object({
-  companyId: z.string().cuid(),
-  file407: z.string().min(1),
-  filename: z.string().max(260).optional(),
-});
-
-async function assertCanImportCredit(actorUserId: string, companyId: string) {
-  try {
-    return await assertStaffCompanyAccess(actorUserId, companyId, "credit.edit");
-  } catch {
-    return assertStaffCompanyAccess(actorUserId, companyId, "companies.edit");
-  }
-}
-
-export async function previewAutopartCreditImport(actorUserId: string, raw: unknown) {
-  await assertCanImportCredit(actorUserId, (raw as { companyId: string }).companyId);
-  const input = creditPreviewSchema.parse(raw);
-  return buildCreditPreview(actorUserId, input, true);
-}
-
-async function buildCreditPreview(
-  actorUserId: string,
-  input: z.infer<typeof creditPreviewSchema>,
-  persistRun: boolean,
-) {
-  const company = await loadVerifiedCompany(input.companyId);
-  const issues: ImportIssue[] = [];
-  if (!company.autopartCustomerCode || !company.autopartCustomerCodeVerifiedAt) {
-    issues.push({
-      severity: "BLOCKING",
-      code: "AUTOPART_NOT_VERIFIED",
-      message: "Company Autopart account must be staff-verified before credit import.",
-    });
-  }
-
-  const parsed = parseAutopart407p100(input.file407);
-  if (!parsed.headerFound || (parsed.positions.length === 0 && parsed.invalidRows.length === 0)) {
-    issues.push({
-      severity: "BLOCKING",
-      code: "UNRECOGNISED_407P100",
-      message: "407P100 report format not recognised or empty.",
-    });
-  }
-
-  const verifiedCode = company.autopartCustomerCode
-    ? normaliseAccountToken(company.autopartCustomerCode)
-    : null;
-  const accepted = verifiedCode
-    ? await loadAcceptedAccounts(input.companyId, verifiedCode)
-    : new Set<string>();
-
-  /**
-   * 407P100 is a multi-customer report. Select ONLY the verified account
-   * (or explicit verified alias) row — never require every account in the
-   * file to match this company (that is 561L/SLRB single-customer semantics).
-   */
-  const selection =
-    verifiedCode && parsed.positions.length > 0
-      ? selectCompanyRowFrom407p100({
-          positions: parsed.positions,
-          verifiedAccount: verifiedCode,
-          acceptedAccounts: accepted,
-        })
-      : ({ status: "NOT_FOUND" as const, matchedAccount: null } as const);
-
-  let position =
-    selection.status === "MATCHED" ? selection.position : null;
-  let matchStatus: "Matched" | "Matched alias" | "Not found" | "Conflicting duplicates" | null =
-    null;
-  let matchedVia: "VERIFIED" | "ALIAS" | null = null;
-
-  if (verifiedCode && parsed.headerFound && parsed.positions.length > 0) {
-    if (selection.status === "MATCHED") {
-      matchStatus = selection.matchedVia === "ALIAS" ? "Matched alias" : "Matched";
-      matchedVia = selection.matchedVia;
-      if (selection.identicalDuplicatesDiscarded > 0) {
-        issues.push({
-          severity: "INFO",
-          code: "IDENTICAL_DUPLICATE_ROWS",
-          message: `${selection.identicalDuplicatesDiscarded} identical duplicate row(s) for Autopart account ${selection.matchedAccount} were ignored.`,
-        });
-      }
-    } else if (selection.status === "CONFLICTING_DUPLICATES") {
-      matchStatus = "Conflicting duplicates";
-      issues.push({
-        severity: "BLOCKING",
-        code: "CONFLICTING_CREDIT_ROWS",
-        message: `Multiple conflicting credit rows were found for Autopart account ${selection.matchedAccount}.`,
-      });
-    } else {
-      matchStatus = "Not found";
-      issues.push({
-        severity: "BLOCKING",
-        code: "ACCOUNT_NOT_FOUND",
-        message: `Autopart account ${verifiedCode} was not found in this 407P100 report.`,
-      });
-    }
-  } else if (
-    verifiedCode &&
-    parsed.headerFound &&
-    parsed.positions.length === 0 &&
-    !issues.some((i) => i.code === "UNRECOGNISED_407P100")
-  ) {
-    matchStatus = "Not found";
-    issues.push({
-      severity: "BLOCKING",
-      code: "ACCOUNT_NOT_FOUND",
-      message: `Autopart account ${verifiedCode} was not found in this 407P100 report.`,
-    });
-  }
-
-  const hash = sha256(input.file407);
-  const prior = await prisma.autopartCustomerImportRun.findFirst({
-    where: {
-      companyId: input.companyId,
-      type: "CREDIT_407P100",
-      status: "COMMITTED",
-      fileHash: hash,
-    },
-  });
-  if (prior) {
-    issues.push({
-      severity: "INFO",
-      code: "ALREADY_IMPORTED",
-      message: "This exact 407P100 file has already been imported.",
-    });
-  }
-
-  const reportStats = {
-    sourceReport: "407P100" as const,
-    rowsInReport: parsed.diagnostics.validRows + parsed.diagnostics.invalidRows,
-    validCustomerRows: parsed.diagnostics.validRows,
-    invalidRows: parsed.diagnostics.invalidRows,
-    matchedRows: selection.status === "MATCHED" ? 1 : 0,
-    /** Bounded sample for admin debugging only — never dump thousands of codes. */
-    sampleAccounts:
-      selection.status === "NOT_FOUND"
-        ? parsed.detectedAccounts.slice(0, 12)
-        : [],
-  };
-
-  const blocking = issues.some((i) => i.severity === "BLOCKING");
-  const preview = {
-    companyId: company.id,
-    companyName: company.name,
-    verifiedAccount: verifiedCode,
-    /** Matched account code only — do not expose the full multi-customer account list. */
-    detectedAccounts: position?.accountCode ? [position.accountCode] : [],
-    matchStatus,
-    matchedVia,
-    fileHash: hash,
-    filename: input.filename ?? null,
-    alreadyImported: Boolean(prior),
-    reportStats,
-    position: position
-      ? {
-          accountCode: position.accountCode,
-          customerName: position.customerName,
-          invoices: position.invoices,
-          picking: position.picking,
-          dropShip: position.dropShip,
-          crossDock: position.crossDock,
-          suspends: position.suspends,
-          unConsol: position.unConsol,
-          usedCredit: position.totalExposure,
-          creditLimit: position.creditLimit,
-          availableCreditRaw: position.availableCreditRaw,
-          availableCreditDisplay: position.availableCreditDisplay,
-          overLimitBy: position.overLimitBy,
-        }
-      : null,
-    issues,
-    canCommit: !blocking && Boolean(position),
-    /** Company.creditLimit is retained for legacy fields; displayed CURRENT Autopart credit uses 407P100. */
-    companyCreditLimitNote:
-      company.creditLimit != null
-        ? `Company.creditLimit is £${moneyToString(parseMoney(String(company.creditLimit))!, 2)}; imported Autopart credit limit takes precedence for current credit display.`
-        : null,
-  };
-
-  let runId: string | null = null;
-  if (persistRun) {
-    const run = await prisma.autopartCustomerImportRun.create({
-      data: {
-        companyId: company.id,
-        type: "CREDIT_407P100",
-        status: blocking ? "BLOCKED" : "PREVIEWED",
-        filename: input.filename ?? null,
-        fileHash: hash,
-        detectedAccount: position?.accountCode ?? verifiedCode,
-        rowsRead: reportStats.rowsInReport,
-        rowsValid: position ? 1 : 0,
-        issues: issues as unknown as Prisma.InputJsonValue,
-        diagnostics: preview as unknown as Prisma.InputJsonValue,
-        dryRun: true,
-        createdById: actorUserId,
-      },
-    });
-    runId = run.id;
-  }
-
-  return { ...preview, runId };
-}
-
-export async function confirmAutopartCreditImport(actorUserId: string, raw: unknown) {
-  await assertCanImportCredit(actorUserId, (raw as { companyId: string }).companyId);
-  const input = creditPreviewSchema.parse(raw);
-  const preview = await buildCreditPreview(actorUserId, input, false);
-  if (!preview.canCommit || !preview.position) {
-    throw new AuthError(
-      preview.issues.find((i) => i.severity === "BLOCKING")?.message ?? "Import blocked",
-      "IMPORT_BLOCKED",
-      400,
-    );
-  }
-
-  const company = await loadVerifiedCompany(input.companyId);
-  const verifiedCode = normaliseAccountToken(company.autopartCustomerCode)!;
-  const p = preview.position;
-  const now = new Date();
-
-  const run = await prisma.autopartCustomerImportRun.create({
-    data: {
-      companyId: company.id,
-      type: "CREDIT_407P100",
-      status: "COMMITTED",
-      filename: input.filename ?? null,
-      fileHash: preview.fileHash,
-      detectedAccount: p.accountCode ?? verifiedCode,
-      rowsRead: preview.reportStats.rowsInReport,
-      rowsValid: 1,
-      rowsImported: 1,
-      dryRun: false,
-      createdById: actorUserId,
-      completedAt: now,
-      issues: preview.issues as unknown as Prisma.InputJsonValue,
-      diagnostics: { preview } as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  const existing = await prisma.autopartCreditPosition.findUnique({
-    where: { companyId: company.id },
-  });
-
-  await prisma.autopartCreditPosition.upsert({
-    where: { companyId: company.id },
-    create: {
-      companyId: company.id,
-      autopartCustomerCode: verifiedCode,
-      invoices: p.invoices,
-      picking: p.picking,
-      dropShip: p.dropShip,
-      crossDock: p.crossDock,
-      suspends: p.suspends,
-      unConsol: p.unConsol,
-      totalExposure: p.usedCredit,
-      creditLimit: p.creditLimit,
-      availableCreditRaw: p.availableCreditRaw,
-      sourceReport: "407P100",
-      sourceImportedAt: now,
-      sourceImportRunId: run.id,
-    },
-    update: {
-      autopartCustomerCode: verifiedCode,
-      invoices: p.invoices,
-      picking: p.picking,
-      dropShip: p.dropShip,
-      crossDock: p.crossDock,
-      suspends: p.suspends,
-      unConsol: p.unConsol,
-      totalExposure: p.usedCredit,
-      creditLimit: p.creditLimit,
-      availableCreditRaw: p.availableCreditRaw,
-      sourceReport: "407P100",
-      sourceImportedAt: now,
-      sourceImportRunId: run.id,
-    },
-  });
-
-  await recordAuditEvent({
-    action: existing ? "autopart.credit_updated" : "autopart.credit_imported",
-    entityType: "Company",
-    entityId: company.id,
-    actorUserId,
-    companyId: company.id,
-    after: {
-      runId: run.id,
-      filename: input.filename ?? null,
-      usedCredit: p.usedCredit,
-      creditLimit: p.creditLimit,
-      availableCreditRaw: p.availableCreditRaw,
-    },
-  });
-
-  return {
-    runId: run.id,
-    workspace: await getCompanyAutopartHistoryWorkspace(actorUserId, company.id),
-  };
-}
-
-// ─── Portal credit + purchases ───────────────────────────────────────────────
-
-export async function getPortalCreditSummary(userId: string) {
-  const { company } = await requireTradePortalCompany(userId);
-  const credit = await prisma.autopartCreditPosition.findUnique({
-    where: { companyId: company.id },
-  });
-  if (!credit) {
-    return {
-      available: false as const,
-      freshness: "NOT_AVAILABLE" as const,
-      message: "Credit information not currently available.",
-    };
-  }
-  const raw = parseMoney(String(credit.availableCreditRaw)) ?? moneyZero();
-  const freshness = creditFreshnessFromImportedAt(credit.sourceImportedAt);
-  return {
-    available: true as const,
-    freshness,
-    creditLimit: moneyToString(parseMoney(String(credit.creditLimit))!, 2),
-    usedCredit: moneyToString(parseMoney(String(credit.totalExposure))!, 2),
-    availableCreditRaw: moneyToString(raw, 2),
-    availableCreditDisplay: raw.minor < 0n ? "0.00" : moneyToString(raw, 2),
-    overLimitBy: raw.minor < 0n ? moneyToString({ minor: -raw.minor }, 2) : null,
-    sourceImportedAt: credit.sourceImportedAt.toISOString(),
-    message:
-      freshness === "STALE"
-        ? `Last updated ${credit.sourceImportedAt.toISOString()} — not a live balance.`
-        : null,
-  };
-}
+// ─── Credit control (removed) ────────────────────────────────────────────────
+// Automotive Brands does not manage customer credit control. 407P100 import,
+// preview/confirm, and credit position snapshots are intentionally not supported.
+// Credit limits and available credit remain authoritative in Autopart/MAM.
 
 /** @deprecated Prefer listPortalPurchaseHistory — kept as a thin compat shim. */
 export { listPortalHistoricPurchases, listPortalPurchaseHistory, getPortalPurchaseProductInsight } from "@/server/companies/purchase-history";
+

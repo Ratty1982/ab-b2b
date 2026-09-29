@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   autopartAccountsEqual,
-  availableCreditFromExposure,
   parseAutopartDateOnly,
   parseAutopartMoney,
   splitCsvLine,
 } from "@/domain/autopart-report-money";
-import { moneyToString, parseMoney } from "@/domain/money";
+import { moneyToString } from "@/domain/money";
 
 describe("parseAutopartMoney", () => {
   it("parses currency decoration and commas", () => {
@@ -31,28 +30,6 @@ describe("autopartAccountsEqual", () => {
     expect(autopartAccountsEqual("YORKMOT", "yorkmot")).toBe(true);
     expect(autopartAccountsEqual("YORKMOT", "YORKMOTO")).toBe(false);
     expect(autopartAccountsEqual("YORKMOT", "YORK")).toBe(false);
-  });
-});
-
-describe("availableCreditFromExposure", () => {
-  it("matches £5,000 − £3,494.75 = £1,505.25", () => {
-    const r = availableCreditFromExposure({
-      creditLimit: parseMoney("5000.00")!,
-      totalExposure: parseMoney("3494.75")!,
-    });
-    expect(moneyToString(r.availableCreditRaw, 2)).toBe("1505.25");
-    expect(r.availableCreditDisplay).toBe("1505.25");
-    expect(r.overLimitBy).toBeNull();
-  });
-
-  it("preserves over-limit raw negative", () => {
-    const r = availableCreditFromExposure({
-      creditLimit: parseMoney("5000.00")!,
-      totalExposure: parseMoney("5400.00")!,
-    });
-    expect(moneyToString(r.availableCreditRaw, 2)).toBe("-400.00");
-    expect(r.availableCreditDisplay).toBe("0.00");
-    expect(moneyToString(r.overLimitBy!, 2)).toBe("400.00");
   });
 });
 

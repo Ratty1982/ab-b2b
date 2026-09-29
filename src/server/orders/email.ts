@@ -54,15 +54,6 @@ export type OrderEmailSnapshot = {
   sourceQuoteNumber: string | null;
   portalOrderUrl: string;
   adminOrderUrl: string;
-  creditStatus: "NOT_REQUIRED" | "APPROVED" | "HOLD" | "REVIEW_REQUIRED";
-  creditDecisionReason: string | null;
-  creditLimitAtOrder: string | null;
-  autopartExposureAtOrder: string | null;
-  pendingAbExposureAtOrder: string | null;
-  effectiveAvailableCreditAtOrder: string | null;
-  orderCreditRequirement: string | null;
-  creditOverBy: string | null;
-  creditSnapshotStatus: string | null;
 };
 
 export type EmailFooterMeta = {
@@ -202,19 +193,6 @@ export function buildOrderReceivedCustomerBodies(
           "",
         ]
       : []),
-    ...(order.creditStatus === "HOLD"
-      ? [
-          "CREDIT APPROVAL",
-          "Your order has been received and is awaiting credit approval before processing.",
-          "",
-        ]
-      : order.creditStatus === "REVIEW_REQUIRED"
-        ? [
-            "ACCOUNT REVIEW",
-            "Your order has been received and is awaiting an account review before processing.",
-            "",
-          ]
-        : []),
     "Your order has been received and is pending processing.",
     "This confirmation does not mean the order has been despatched.",
     "",
@@ -225,19 +203,6 @@ export function buildOrderReceivedCustomerBodies(
     "Automotive Brands",
     "https://automotivebrands.co.uk",
   ].join("\n");
-
-  const creditHtml =
-    order.creditStatus === "HOLD"
-      ? `<div style="margin:0 0 16px;padding:14px;background:#fef2f2;border:1px solid #fca5a5;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#991b1b;">
-<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"><strong>Credit approval</strong></p>
-<p style="margin:0;">Your order has been received and is awaiting credit approval before processing.</p>
-</div>`
-      : order.creditStatus === "REVIEW_REQUIRED"
-        ? `<div style="margin:0 0 16px;padding:14px;background:#eff6ff;border:1px solid #93c5fd;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1e3a8a;">
-<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"><strong>Account review</strong></p>
-<p style="margin:0;">Your order has been received and is awaiting an account review before processing.</p>
-</div>`
-        : "";
 
   const bodyHtml = `
 <p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
@@ -259,7 +224,6 @@ ${
 </div>`
     : ""
 }
-${creditHtml}
 <p style="margin:0 0 8px;">Your order has been received and is pending processing.<br/>
 This confirmation does not mean the order has been despatched.</p>`;
 
@@ -281,15 +245,7 @@ export function buildOrderReceivedInternalBodies(
   text: string;
   html: string;
 } {
-  const creditSubject =
-    order.creditStatus === "HOLD"
-      ? "CREDIT HOLD"
-      : order.creditStatus === "REVIEW_REQUIRED"
-        ? "CREDIT REVIEW"
-        : null;
-  const subject = creditSubject
-    ? `${creditSubject} — New B2B order ${order.orderNumber} — ${order.companyName}`
-    : `New B2B order ${order.orderNumber} — ${order.companyName}`;
+  const subject = `New B2B order ${order.orderNumber} — ${order.companyName}`;
   const salesRep =
     order.salesRepNameSnapshot || order.salesRepCodeSnapshot
       ? `${order.salesRepNameSnapshot ?? "—"}${order.salesRepCodeSnapshot ? ` (${order.salesRepCodeSnapshot})` : ""}`
@@ -299,26 +255,6 @@ export function buildOrderReceivedInternalBodies(
   const quoteOrigin = order.sourceQuoteNumber
     ? `Created from quotation ${order.sourceQuoteNumber}`
     : null;
-
-  const creditText =
-    order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED"
-      ? [
-          "CREDIT STATUS",
-          order.creditStatus === "HOLD" ? "CREDIT HOLD" : "REVIEW REQUIRED",
-          `Reason: ${order.creditDecisionReason ?? "—"}`,
-          `Credit Limit: £${formatGbp(order.creditLimitAtOrder ?? "0")}`,
-          `Autopart Exposure: £${formatGbp(order.autopartExposureAtOrder ?? "0")}`,
-          `Pending AB Exposure: £${formatGbp(order.pendingAbExposureAtOrder ?? "0")}`,
-          `Effective Available: £${formatGbp(order.effectiveAvailableCreditAtOrder ?? "0")}`,
-          `Order Requirement: £${formatGbp(order.orderCreditRequirement ?? order.grandTotal)}`,
-          ...(order.creditOverBy
-            ? [`Over By: £${formatGbp(order.creditOverBy)}`]
-            : order.creditStatus === "REVIEW_REQUIRED"
-              ? ["Credit data unavailable or stale — staff review required before Autopart export."]
-              : []),
-          "",
-        ]
-      : [];
 
   const text = [
     `Order ${order.orderNumber} received for ${order.companyName}.`,
@@ -330,7 +266,6 @@ export function buildOrderReceivedInternalBodies(
     `Autopart code snapshot: ${codeSnap}`,
     `Sales rep: ${salesRep}`,
     "",
-    ...creditText,
     "Items:",
     itemsPlain(order, "internal"),
     "",
@@ -345,26 +280,6 @@ export function buildOrderReceivedInternalBodies(
     "Automotive Brands",
   ].join("\n");
 
-  const creditHtml =
-    order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED"
-      ? `<div style="margin:0 0 16px;padding:14px;background:${order.creditStatus === "HOLD" ? "#fef2f2" : "#eff6ff"};border:1px solid ${order.creditStatus === "HOLD" ? "#fca5a5" : "#93c5fd"};font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${order.creditStatus === "HOLD" ? "#991b1b" : "#1e3a8a"};">
-<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"><strong>Credit status — ${order.creditStatus === "HOLD" ? "CREDIT HOLD" : "REVIEW REQUIRED"}</strong></p>
-<p style="margin:0 0 4px;">Reason: ${escapeEmailHtml(order.creditDecisionReason ?? "—")}</p>
-<p style="margin:0 0 4px;">Credit Limit: £${escapeEmailHtml(formatGbp(order.creditLimitAtOrder ?? "0"))}</p>
-<p style="margin:0 0 4px;">Autopart Exposure: £${escapeEmailHtml(formatGbp(order.autopartExposureAtOrder ?? "0"))}</p>
-<p style="margin:0 0 4px;">Pending AB Exposure: £${escapeEmailHtml(formatGbp(order.pendingAbExposureAtOrder ?? "0"))}</p>
-<p style="margin:0 0 4px;">Effective Available: £${escapeEmailHtml(formatGbp(order.effectiveAvailableCreditAtOrder ?? "0"))}</p>
-<p style="margin:0 0 4px;">Order Requirement: £${escapeEmailHtml(formatGbp(order.orderCreditRequirement ?? order.grandTotal))}</p>
-${
-  order.creditOverBy
-    ? `<p style="margin:0;">Over By: £${escapeEmailHtml(formatGbp(order.creditOverBy))}</p>`
-    : order.creditStatus === "REVIEW_REQUIRED"
-      ? `<p style="margin:0;">Credit data unavailable or stale — staff review required before Autopart export.</p>`
-      : ""
-}
-</div>`
-      : "";
-
   const bodyHtml = `
 <p style="margin:0 0 16px;">Order <strong>${escapeEmailHtml(order.orderNumber)}</strong> received for <strong>${escapeEmailHtml(order.companyName)}</strong>.</p>
 <p style="margin:0 0 12px;">
@@ -376,14 +291,11 @@ Autopart linked: <strong>${order.autopartAccountLinked ? "Yes" : "No"}</strong><
 Autopart code snapshot: <span style="font-family:Consolas,monospace;">${escapeEmailHtml(codeSnap)}</span><br/>
 Sales rep: ${escapeEmailHtml(salesRep)}
 </p>
-${creditHtml}
 ${orderSummaryTableHtml(order)}
 <p style="margin:0 0 8px;">Status: SUBMITTED (received / pending Autopart handoff — not despatched).</p>`;
 
   const html = renderTransactionalEmailShell({
-    preheader: creditSubject
-      ? `${creditSubject} — ${order.orderNumber}`
-      : `New B2B order ${order.orderNumber}`,
+    preheader: `New B2B order ${order.orderNumber}`,
     bodyHtml,
     cta: { label: "Review order", href: order.adminOrderUrl },
     footer: footer ?? { fromName: "Automotive Brands" },

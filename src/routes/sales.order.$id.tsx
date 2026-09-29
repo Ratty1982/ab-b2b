@@ -4,7 +4,7 @@ import { Search, Trash2, X } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge, StockBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
-import { customers, gbp, gbp0, products } from "@/lib/data";
+import { customers, gbp, products } from "@/lib/data";
 import { deliveryAddresses, usualProducts } from "@/lib/crm-data";
 
 export const Route = createFileRoute("/sales/order/$id")({
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/sales/order/$id")({
         { title: `Ordering for ${loaderData.customer.company} — Automotive Brands` },
         {
           name: "description",
-          content: `Place an order on behalf of ${loaderData.customer.company} using their trade pricing, credit, payment terms and delivery addresses.`,
+          content: `Place an order on behalf of ${loaderData.customer.company} using their trade pricing, payment terms and delivery addresses.`,
         },
         { property: "og:title", content: `Ordering for ${loaderData.customer.company}` },
         {
@@ -64,7 +64,6 @@ function CustomerOrderMode() {
   const delivery = subtotal >= 250 ? 0 : 8.95;
   const vat = (subtotal + delivery) * 0.2;
   const total = subtotal + delivery + vat;
-  const availableCredit = 8940;
 
   function add(sku: string, qty = 1) {
     setLines((ls) =>
@@ -85,7 +84,7 @@ function CustomerOrderMode() {
             Ordering for {customer.company}
           </span>
           <span className="num hidden text-[12px] text-steel sm:inline">
-            {customer.number} · Trade A pricing · 30 Days Net · Available credit {gbp0(availableCredit)}
+            {customer.number} · Trade A pricing · 30 Days Net
           </span>
         </div>
         <Link
@@ -305,16 +304,6 @@ function CustomerOrderMode() {
                   </dd>
                 </div>
               </dl>
-              <div className="mt-3 rounded-md border border-border bg-ink p-3 text-[12px]">
-                <div className="flex justify-between">
-                  <span className="text-steel">Available credit after order</span>
-                  <span
-                    className={`num font-semibold ${availableCredit - total < 0 ? "text-destructive" : "text-good"}`}
-                  >
-                    {gbp0(availableCredit - total)}
-                  </span>
-                </div>
-              </div>
               <button
                 type="button"
                 disabled={resolved.length === 0}
@@ -332,8 +321,6 @@ function CustomerOrderMode() {
               {[
                 ["Account", customer.number],
                 ["Payment terms", "30 Days Net"],
-                ["Credit limit", gbp0(15000)],
-                ["Available credit", gbp0(availableCredit)],
                 ["Permitted catalogues", "All five brands"],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-3 px-3 py-2.5">

@@ -55,7 +55,6 @@ const permissions: { name: string; grants: (boolean | "partial")[] }[] = [
   { name: "Edit price lists", grants: [true, true, "partial", false, false, false, false] },
   { name: "Place orders for customers", grants: [true, true, true, true, true, false, false] },
   { name: "Approve trade applications", grants: [true, true, true, false, "partial", true, false] },
-  { name: "Set credit limits", grants: [true, true, false, false, false, true, false] },
   { name: "View invoices & statements", grants: [true, true, true, "partial", true, true, false] },
   { name: "Manage internal users", grants: [true, "partial", false, false, false, false, false] },
   { name: "Edit website content", grants: [true, true, false, false, false, false, true] },

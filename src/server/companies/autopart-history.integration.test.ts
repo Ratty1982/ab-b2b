@@ -5,11 +5,9 @@ import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import {
-  confirmAutopartCreditImport,
   confirmAutopartHistoryImport,
   getCompanyAutopartHistoryWorkspace,
   listPortalHistoricPurchases,
-  previewAutopartCreditImport,
   previewAutopartHistoryImport,
   verifyAutopartAccountAlias,
 } from "@/server/companies/autopart-history";
@@ -20,7 +18,6 @@ const prisma = new PrismaClient();
 const fixtureDir = resolve(import.meta.dirname, "../../domain/fixtures");
 const file561 = readFileSync(resolve(fixtureDir, "autopart-561l-sample.csv"), "utf8");
 const fileSlrb = readFileSync(resolve(fixtureDir, "autopart-slrb-sample.csv"), "utf8");
-const file407 = readFileSync(resolve(fixtureDir, "autopart-407p100-sample.csv"), "utf8");
 
 let adminId = "";
 let buyerAId = "";
@@ -68,7 +65,6 @@ beforeAll(async () => {
       name: `AP Hist A ${stamp}`,
       status: "ACTIVE",
       paymentTerms: "30 Days",
-      creditLimit: 1000,
     },
   });
   companyAId = companyA.id;
@@ -226,193 +222,6 @@ describe("Autopart history import", () => {
         file561l: file561A,
         fileSlrb: fileSlrbA,
       }),
-    ).rejects.toBeInstanceOf(AuthError);
-  });
-});
-
-function multiCustomer407(targetCode: string, opts?: { aliasCode?: string; total?: string }) {
-  const code = opts?.aliasCode ?? targetCode;
-  const total = opts?.total ?? "3494.75";
-  return `Customer,customer name,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
-OTHER001,OTHER ONE LTD,100.00,0.00,0.00,0.00,0.00,0.00,100.00,1000.00
-OTHER002,OTHER TWO LTD,200.00,0.00,0.00,0.00,0.00,0.00,200.00,2000.00
-${code},YORK MOTOR FACTORS,${total},0.00,0.00,0.00,0.00,0.00,${total},5000.00
-OTHER003,OTHER THREE LTD,50.00,10.00,0.00,0.00,0.00,0.00,60.00,500.00
-BADROWX,BAD FINANCIALS,not-a-number,0,0,0,0,0,xxx,5000
-`;
-}
-
-describe("Autopart credit 407P100 import", () => {
-  it("imports regression totals and updates idempotently", async () => {
-    const file407A = withAccount(file407, accountA);
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file407A,
-      filename: "407.csv",
-    });
-    expect(preview.canCommit).toBe(true);
-    expect(preview.position?.creditLimit).toBe("5000.00");
-    expect(preview.position?.usedCredit).toBe("3494.75");
-    expect(preview.position?.availableCreditRaw).toBe("1505.25");
-
-    await confirmAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file407A,
-      filename: "407.csv",
-    });
-    let pos = await prisma.autopartCreditPosition.findUniqueOrThrow({
-      where: { companyId: companyAId },
-    });
-    expect(Number(pos.availableCreditRaw)).toBeCloseTo(1505.25, 2);
-
-    const reducedText = `Account,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Credit Limit
-${accountA},"£2,494.75",£0.00,£0.00,£0.00,£0.00,£0.00,"£2,494.75","£5,000.00"
-`;
-    await confirmAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: reducedText,
-    });
-    pos = await prisma.autopartCreditPosition.findUniqueOrThrow({
-      where: { companyId: companyAId },
-    });
-    expect(Number(pos.availableCreditRaw)).toBeCloseTo(2505.25, 2);
-
-    // Same file again — still one row
-    await confirmAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: reducedText,
-    });
-    expect(await prisma.autopartCreditPosition.count({ where: { companyId: companyAId } })).toBe(1);
-
-    await expect(
-      previewAutopartCreditImport(buyerAId, { companyId: companyAId, file407: file407A }),
-    ).rejects.toBeInstanceOf(AuthError);
-  });
-
-  it("selects verified customer row from multi-customer 407P100 and ignores others", async () => {
-    const file = multiCustomer407(accountA);
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file,
-      filename: "407-multi.csv",
-    });
-
-    expect(preview.canCommit).toBe(true);
-    expect(preview.matchStatus).toBe("Matched");
-    expect(preview.position?.accountCode).toBe(accountA);
-    expect(preview.position?.customerName).toBe("YORK MOTOR FACTORS");
-    expect(preview.position?.creditLimit).toBe("5000.00");
-    expect(preview.position?.usedCredit).toBe("3494.75");
-    expect(preview.position?.availableCreditRaw).toBe("1505.25");
-    expect(preview.position?.invoices).toBe("3494.75");
-    expect(preview.reportStats.validCustomerRows).toBe(4);
-    expect(preview.reportStats.matchedRows).toBe(1);
-    expect(preview.issues.some((i) => i.code === "ACCOUNT_MISMATCH")).toBe(false);
-    expect(preview.issues.some((i) => i.message.includes("OTHER001"))).toBe(false);
-    // Preview must not dump the whole multi-customer account list
-    expect(preview.detectedAccounts).toEqual([accountA]);
-
-    await confirmAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file,
-      filename: "407-multi.csv",
-    });
-
-    const posA = await prisma.autopartCreditPosition.findUniqueOrThrow({
-      where: { companyId: companyAId },
-    });
-    expect(Number(posA.totalExposure)).toBeCloseTo(3494.75, 2);
-    expect(Number(posA.creditLimit)).toBeCloseTo(5000, 2);
-
-    // Unrelated accounts in the report must not create credit rows for other companies
-    expect(await prisma.autopartCreditPosition.count({ where: { companyId: companyBId } })).toBe(0);
-    expect(
-      await prisma.autopartCreditPosition.count({
-        where: { autopartCustomerCode: { in: ["OTHER001", "OTHER002", "OTHER003"] } },
-      }),
-    ).toBe(0);
-  });
-
-  it("blocks when verified account is missing from multi-customer report", async () => {
-    const file = `Customer,customer name,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
-OTHER001,OTHER ONE LTD,100.00,0,0,0,0,0,100.00,1000.00
-OTHER002,OTHER TWO LTD,200.00,0,0,0,0,0,200.00,2000.00
-`;
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file,
-    });
-    expect(preview.canCommit).toBe(false);
-    expect(preview.matchStatus).toBe("Not found");
-    expect(preview.issues.some((i) => i.code === "ACCOUNT_NOT_FOUND")).toBe(true);
-    expect(
-      preview.issues.some((i) =>
-        i.message.includes(`Autopart account ${accountA} was not found in this 407P100 report.`),
-      ),
-    ).toBe(true);
-    expect(preview.issues.some((i) => i.message.includes("OTHER001") && i.severity === "BLOCKING")).toBe(
-      false,
-    );
-  });
-
-  it("blocks conflicting duplicate target rows", async () => {
-    const file = `Customer,customer name,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
-${accountA},YORK MOTOR FACTORS,3494.75,0,0,0,0,0,3494.75,5000.00
-${accountA},YORK MOTOR FACTORS,4000.00,0,0,0,0,0,4000.00,5000.00
-`;
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file,
-    });
-    expect(preview.canCommit).toBe(false);
-    expect(preview.matchStatus).toBe("Conflicting duplicates");
-    expect(preview.issues.some((i) => i.code === "CONFLICTING_CREDIT_ROWS")).toBe(true);
-    expect(preview.position).toBeNull();
-  });
-
-  it("dedupes identical duplicate target rows and allows confirm", async () => {
-    const row = `${accountA},YORK MOTOR FACTORS,3494.75,0,0,0,0,0,3494.75,5000.00`;
-    const file = `Customer,customer name,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
-${row}
-OTHER001,OTHER ONE LTD,100.00,0,0,0,0,0,100.00,1000.00
-${row}
-`;
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file,
-    });
-    expect(preview.canCommit).toBe(true);
-    expect(preview.matchStatus).toBe("Matched");
-    expect(preview.position?.availableCreditRaw).toBe("1505.25");
-    expect(preview.issues.some((i) => i.code === "IDENTICAL_DUPLICATE_ROWS")).toBe(true);
-  });
-
-  it("matches explicit verified alias in multi-customer 407P100", async () => {
-    const aliasCode = `${accountA}OLD`.slice(0, 12);
-    await verifyAutopartAccountAlias(adminId, {
-      companyId: companyAId,
-      alias: aliasCode,
-      note: "legacy credit code",
-    });
-    const file = multiCustomer407(accountA, { aliasCode });
-    const preview = await previewAutopartCreditImport(adminId, {
-      companyId: companyAId,
-      file407: file,
-    });
-    expect(preview.canCommit).toBe(true);
-    expect(preview.matchStatus).toBe("Matched alias");
-    expect(preview.matchedVia).toBe("ALIAS");
-    expect(preview.position?.accountCode).toBe(aliasCode);
-    expect(preview.position?.availableCreditRaw).toBe("1505.25");
-  });
-
-  it("does not allow portal users to preview or confirm credit import", async () => {
-    const file = multiCustomer407(accountA);
-    await expect(
-      previewAutopartCreditImport(buyerAId, { companyId: companyAId, file407: file }),
-    ).rejects.toBeInstanceOf(AuthError);
-    await expect(
-      confirmAutopartCreditImport(buyerAId, { companyId: companyAId, file407: file }),
     ).rejects.toBeInstanceOf(AuthError);
   });
 });

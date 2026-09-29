@@ -32,7 +32,6 @@ export type AutopartExportBlockReason =
   | "MISSING_DELIVERY"
   | "INVALID_FINANCIALS"
   | "ALREADY_EXPORTED"
-  | "CREDIT_APPROVAL_REQUIRED"
   | "NOT_FOUND"
   | "FORBIDDEN";
 
@@ -68,8 +67,6 @@ export type AutopartExportResult = {
   orderNumbers: string[];
   isReexport: boolean;
   headers: readonly string[];
-  /** Credit-held / review orders skipped from a mixed selection (never silently exported). */
-  skippedCredit: Array<{ orderNumber: string; reason: string }>;
 };
 
 type OrderForExport = Prisma.OrderGetPayload<{
@@ -126,18 +123,6 @@ function assessOrder(
   }
   if (order.status === "DRAFT") {
     return block("DRAFT", "Draft orders cannot be exported.");
-  }
-  if (order.creditStatus === "HOLD") {
-    return block(
-      "CREDIT_APPROVAL_REQUIRED",
-      "Not ready — Credit Hold. Authorised staff must approve credit before Autopart export.",
-    );
-  }
-  if (order.creditStatus === "REVIEW_REQUIRED") {
-    return block(
-      "CREDIT_APPROVAL_REQUIRED",
-      "Not ready — Account Review. Authorised staff must release credit before Autopart export.",
-    );
   }
   if (order.items.length === 0) {
     return block("NO_ITEMS", "Order has no line items.");
@@ -329,17 +314,10 @@ export async function exportAutopartOrdersCsv(
     throw new AuthError("No orders selected for export", "EXPORT_EMPTY", 400);
   }
 
-  const creditSkipped = preview.items.filter(
-    (i) => !i.eligible && i.reason === "CREDIT_APPROVAL_REQUIRED",
-  );
-  const otherBlocked = preview.items.filter(
-    (i) => !i.eligible && i.reason !== "CREDIT_APPROVAL_REQUIRED",
-  );
+  const blocked = preview.items.filter((i) => !i.eligible);
 
-  // Non-credit blocks still fail the batch (existing behaviour).
-  // Credit hold/review are skipped with an explicit report so eligible orders can export.
-  if (otherBlocked.length > 0) {
-    const details = otherBlocked
+  if (blocked.length > 0) {
+    const details = blocked
       .map((i) => `${i.orderNumber}: ${i.message}`)
       .slice(0, 20)
       .join(" | ");
@@ -352,12 +330,9 @@ export async function exportAutopartOrdersCsv(
 
   const eligibleIds = new Set(preview.items.filter((i) => i.eligible).map((i) => i.orderId));
   if (eligibleIds.size === 0) {
-    const details = creditSkipped
-      .map((i) => `${i.orderNumber} — Credit approval required`)
-      .join(" | ");
     throw new AuthError(
-      `Cannot export: all selected orders require credit approval. ${details}`,
-      "CREDIT_APPROVAL_REQUIRED",
+      "Cannot export: no eligible orders in selection.",
+      "EXPORT_BLOCKED",
       400,
     );
   }
@@ -503,10 +478,6 @@ export async function exportAutopartOrdersCsv(
     orderNumbers,
     isReexport,
     headers: AUTOPART_ORDER_CSV_HEADERS,
-    skippedCredit: creditSkipped.map((i) => ({
-      orderNumber: i.orderNumber,
-      reason: i.message ?? "Credit approval required",
-    })),
   };
 }
 

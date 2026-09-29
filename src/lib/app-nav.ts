@@ -87,7 +87,6 @@ export const ADMIN_SHELL_PERMISSIONS: PermissionKey[] = [
   "users.manage",
   "roles.manage",
   "settings.edit",
-  "credit.edit",
 ];
 
 export type NavIconName =

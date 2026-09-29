@@ -84,16 +84,6 @@ function PortalOrderDetailPage() {
           <StatusBadge tone={statusTone(order.statusBadge)}>{order.statusLabel}</StatusBadge>
         }
       />
-      {order.creditStatus === "HOLD" || order.creditStatus === "REVIEW_REQUIRED" ? (
-        <div className="mx-4 mt-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-[13px] sm:mx-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-warn">
-            Account approval
-          </p>
-          <p className="mt-1 text-steel">
-            This order has been received and is awaiting account approval before processing.
-          </p>
-        </div>
-      ) : null}
       {order.hasOutstandingBackorder ? (
         <div className="mx-4 mt-4 rounded-lg border border-cyan/40 bg-cyan/5 px-4 py-3 text-[13px] text-steel sm:mx-6">
           Items on this order are awaiting stock. You do not need to place another order — they

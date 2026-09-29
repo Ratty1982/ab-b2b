@@ -2061,7 +2061,6 @@ export const listAdminOrdersFn = createServerFn({ method: "GET" })
             q?: string;
             autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
             backorders?: "ALL" | "CONTAINS" | "FULL";
-            credit?: "ALL" | "HOLD" | "REVIEW";
           }
         | undefined,
   )
@@ -2070,46 +2069,6 @@ export const listAdminOrdersFn = createServerFn({ method: "GET" })
       const userId = await requireUserId();
       const orders = await import("@/server/orders/service");
       return { ok: true as const, data: await orders.listAdminOrders(userId, data ?? {}) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const releaseOrderCreditHoldFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data as { orderId: string; note: string })
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const credit = await import("@/server/orders/credit-control");
-      return { ok: true as const, data: await credit.releaseOrderCreditHold(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const previewOrderCreditFn = createServerFn({ method: "POST" })
-  .inputValidator(
-    (data: unknown) =>
-      data as { grandTotal: string; paymentTerms?: string | null },
-  )
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const orders = await import("@/server/orders/service");
-      const { company } = await orders.requireTradeCheckoutCompany(userId);
-      const credit = await import("@/server/orders/credit-control");
-      const verified = Boolean(
-        company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt,
-      );
-      return {
-        ok: true as const,
-        data: await credit.previewOrderCreditDecision({
-          companyId: company.id,
-          grandTotal: data.grandTotal,
-          paymentTerms: data.paymentTerms ?? company.paymentTerms,
-          hasVerifiedAutopartAccount: verified,
-        }),
-      };
     } catch (e) {
       return toError(e);
     }
@@ -2608,64 +2567,6 @@ export const confirmAutopartHistoryImportFn = createServerFn({ method: "POST" })
       const userId = await requireUserId();
       const hist = await import("@/server/companies/autopart-history");
       return { ok: true as const, data: await hist.confirmAutopartHistoryImport(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const previewAutopartCreditImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return { ok: true as const, data: await hist.previewAutopartCreditImport(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const confirmAutopartCreditImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return { ok: true as const, data: await hist.confirmAutopartCreditImport(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const getBulkCreditImportStatusFn = createServerFn({ method: "GET" }).handler(async () => {
-  try {
-    const userId = await requireUserId();
-    const bulk = await import("@/server/companies/autopart-credit-bulk");
-    return { ok: true as const, data: await bulk.getBulkCreditImportStatus(userId) };
-  } catch (e) {
-    return toError(e);
-  }
-});
-
-export const previewBulkAutopartCreditImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const bulk = await import("@/server/companies/autopart-credit-bulk");
-      return { ok: true as const, data: await bulk.previewBulkAutopartCreditImport(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const confirmBulkAutopartCreditImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const bulk = await import("@/server/companies/autopart-credit-bulk");
-      return { ok: true as const, data: await bulk.confirmBulkAutopartCreditImport(userId, data) };
     } catch (e) {
       return toError(e);
     }

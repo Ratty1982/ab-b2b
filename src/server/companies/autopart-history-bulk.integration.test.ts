@@ -88,7 +88,7 @@ beforeAll(async () => {
   const stamp = Date.now();
   account = `BK${String(stamp).slice(-8)}`;
   const company = await prisma.company.create({
-    data: { name: `AP Bulk ${stamp}`, status: "ACTIVE", creditLimit: 5000 },
+    data: { name: `AP Bulk ${stamp}`, status: "ACTIVE" },
   });
   companyId = company.id;
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, {

@@ -2,10 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import {
-  parseAutopart407p100,
-  selectCompanyRowFrom407p100,
-} from "@/domain/autopart-407p100";
-import {
   previewAutopartHistoryImport,
   resolveHistoricReportAccountMatch,
   verifyAutopartAccountAlias,
@@ -141,20 +137,6 @@ describe("historic report account truncation resolution", () => {
     });
     expect(match.ok).toBe(false);
     expect(["ALIAS_REQUIRED", "MISMATCH"]).toContain(match.status);
-  });
-
-  it("407P100 does not truncated-match YORKMOT to YORKMOTO", () => {
-    const text = `Customer,Invoices,Picking,DropShip,CrossDock,Suspends,UnConsol,Total,Cr Limit
-YORKMOT,3494.75,0,0,0,0,0,3494.75,5000.00
-`;
-    const parsed = parseAutopart407p100(text);
-    expect(parsed.detectedAccounts).toEqual(["YORKMOT"]);
-    const sel = selectCompanyRowFrom407p100({
-      positions: parsed.positions,
-      verifiedAccount: "YORKMOTO",
-      acceptedAccounts: new Set(["YORKMOTO"]),
-    });
-    expect(sel.status).toBe("NOT_FOUND");
   });
 
   it("MATCHED when 561L YORKMOT + SLRB YORKMOTO + verified YORKMOTO (no alias)", async () => {

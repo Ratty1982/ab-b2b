@@ -64,12 +64,12 @@ Already-approved applications with a claim but no company link show a **Claim no
 
 ### Existing Autopart customer vs new trade customer
 
-| Path | Historic 561L/SLRB | 407P100 credit |
-| --- | --- | --- |
-| **Existing Autopart customer** | Optional after staff verify — Admin → Customer → Autopart | Optional / later recurring |
-| **New trade customer** | Not required | Not required |
+| Path | Historic 561L/SLRB |
+| --- | --- |
+| **Existing Autopart customer** | Optional after staff verify — Admin → Customer → Autopart |
+| **New trade customer** | Not required |
 
-Historic Autopart purchases are **not** imported as AB Orders. See `docs/autopart-customer-history.md`.
+Historic Autopart purchases are **not** imported as AB Orders. Credit position (407P100) is not imported or shown in AB. See `docs/autopart-customer-history.md`.
 
 ---
 
@@ -162,7 +162,7 @@ When delivery is disabled, outbox rows are `DEFERRED` and invitation `emailDefer
 After approval, staff continue commercial management on the Customer record:
 
 - Autopart verify  
-- Price list / payment terms / credit  
+- Price list / payment terms  
 - Contacts  
 - Invites  
 

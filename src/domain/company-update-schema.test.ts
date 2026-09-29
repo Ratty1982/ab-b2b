@@ -8,12 +8,10 @@ describe("companyUpdateSchema", () => {
       paymentTerms: "60 DAYS",
       taxStatus: "STANDARD",
       salesRepId: null,
-      creditLimit: 5000,
     });
     expect(parsed).not.toHaveProperty("status");
     expect(parsed.status).toBeUndefined();
     expect(parsed.paymentTerms).toBe("60 DAYS");
-    expect(parsed.creditLimit).toBe(5000);
   });
 
   it("still allows explicit status changes", () => {

@@ -43,12 +43,15 @@ Convert the approved Lovable UX prototype into an independent production B2B pla
 Server code must **recompute** commercial values. Never accept as authoritative from the client:
 
 - prices / discounts / VAT
-- credit limits / available credit
 - stock quantities
 - roles / permissions
 - company identity beyond “which of *my* authorised companies”
 
 See `src/server/validation/trust.ts`.
+
+## Customer credit control
+
+Automotive Brands does not manage customer credit control. Credit limits, account stop status and available credit remain authoritative in Autopart/MAM and are managed operationally by Accounts.
 
 ## Authenticated navigation (stable contract)
 

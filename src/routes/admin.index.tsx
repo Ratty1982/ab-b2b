@@ -197,22 +197,6 @@ function NeedsAttention({
 function OrdersAttention({ data }: { data: Dashboard }) {
   const sections = [
     {
-      key: "credit-hold",
-      title: "Credit Hold",
-      count: data.ordersAttention.creditHold.count,
-      items: data.ordersAttention.creditHold.items,
-      empty: "No orders on credit hold.",
-      href: `${ROUTES.adminOrders}?credit=HOLD`,
-    },
-    {
-      key: "credit-review",
-      title: "Credit Review",
-      count: data.ordersAttention.creditReview.count,
-      items: data.ordersAttention.creditReview.items,
-      empty: "No orders awaiting account credit review.",
-      href: `${ROUTES.adminOrders}?credit=REVIEW`,
-    },
-    {
       key: "ready",
       title: "Ready for Autopart export",
       count: data.ordersAttention.readyForExport.count,
@@ -432,11 +416,6 @@ function OrderTable({ rows }: { rows: Dashboard["recentOrders"] }) {
               <td className="px-3 py-2">{o.companyName}</td>
               <td className="px-3 py-2">
                 <StatusBadge tone="neutral">{o.statusLabel}</StatusBadge>
-                {"creditNowAvailable" in o && o.creditNowAvailable ? (
-                  <span className="mt-1 block text-[11px] font-semibold text-good">
-                    Credit now available
-                  </span>
-                ) : null}
               </td>
               <td className="num px-3 py-2 text-right font-semibold">{o.grandTotalLabel}</td>
             </tr>

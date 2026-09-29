@@ -41,8 +41,6 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "reports.management",
   "cms.view",
   "cms.page.read",
-  "credit.view",
-  "orders.credit.approve",
   "audit.view",
   "settings.view",
   "settings.edit",
@@ -61,7 +59,6 @@ const SALES_MANAGER_PERMS: PermissionKey[] = [
   "orders.create",
   "orders.edit",
   "orders.place_for_customer",
-  "orders.credit.approve",
   "quotes.view",
   "quotes.create",
   "quotes.edit",
@@ -131,12 +128,9 @@ const ACCOUNTS_PERMS: PermissionKey[] = [
   "products.view",
   "products.cost.view",
   "orders.view",
-  "orders.credit.approve",
   "invoices.view",
   "applications.view",
   "applications.review",
-  "credit.view",
-  "credit.edit",
   "reports.view",
 ];
 
@@ -227,7 +221,7 @@ export const SYSTEM_ROLE_META: Record<SystemRoleKey, { name: string; description
   },
   ACCOUNTS: {
     name: "Accounts",
-    description: "Invoices, credit, payment terms. MFA required when editing credit (planned).",
+    description: "Invoices and payment terms.",
   },
   MARKETING: {
     name: "Marketing",

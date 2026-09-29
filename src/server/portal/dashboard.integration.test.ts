@@ -55,7 +55,6 @@ beforeAll(async () => {
       name: `Portal Dash A ${suffix}`,
       status: "ACTIVE",
       paymentTerms: "Pro Forma",
-      creditLimit: 2500,
     },
   });
   companyAId = companyA.id;
@@ -116,13 +115,12 @@ describe("getPortalDashboard", () => {
     expect(dash.company.status).toBe("ACTIVE");
     expect(dash.company.paymentTerms).toBe("Pro Forma");
     expect(dash.company.autopartCustomerCode).toBeNull();
-    expect(dash.creditLimit).toBe(2500);
-    expect(dash.availableCredit).toBeNull();
+    expect(dash).not.toHaveProperty("creditLimit");
+    expect(dash).not.toHaveProperty("availableCredit");
+    expect(dash).not.toHaveProperty("usedCredit");
     expect(dash.outstandingBalance).toBeNull();
     expect(dash.openQuotesValue).toBeNull();
     expect(dash.quotesRequiringAction).toEqual([]);
-    expect(dash.availableCredit).toBeNull();
-    expect(dash.creditFreshness).toBe("NOT_AVAILABLE");
     expect(dash.openOrderCount).toBe(0);
     expect(dash.totalOrderCount).toBe(0);
     expect(dash.openOrders).toEqual([]);

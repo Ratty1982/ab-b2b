@@ -32,7 +32,6 @@ function SalesCustomer() {
       priceList: { name: string } | null;
       salesperson: { name: string } | null;
       taxStatus: string;
-      creditLimit: number | null;
     };
     contacts: Array<{
       id: string;
@@ -50,7 +49,6 @@ function SalesCustomer() {
       isDefaultBilling: boolean;
       isDefaultDelivery: boolean;
     }>;
-    permissions: { canViewCredit: boolean };
   }>(null);
   const [activity, setActivity] = useState<
     Array<{ id: string; title: string; body: string | null; at: string; actor: string | null }>
@@ -78,7 +76,7 @@ function SalesCustomer() {
   if (error) return <div className="p-6 text-sm text-bad">{error}</div>;
   if (!data) return <div className="p-6 text-sm text-steel">Loading…</div>;
 
-  const { company, contacts, addresses, permissions } = data;
+  const { company, contacts, addresses } = data;
 
   return (
     <div>
@@ -161,16 +159,6 @@ function SalesCustomer() {
             <div>
               <dt className="text-steel">Tax status</dt>
               <dd>{company.taxStatus}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Credit limit</dt>
-              <dd>
-                {permissions.canViewCredit && company.creditLimit != null
-                  ? `£${company.creditLimit.toLocaleString()}`
-                  : permissions.canViewCredit
-                    ? "—"
-                    : "Restricted"}
-              </dd>
             </div>
           </dl>
         ) : null}

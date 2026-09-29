@@ -375,8 +375,6 @@ export const account = {
   manager: "James Whitfield",
   priceGroup: "Trade A",
   terms: "30 Days Net",
-  creditLimit: 15000,
-  creditUsed: 6060,
 };
 
 export const recentOrders = [

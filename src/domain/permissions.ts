@@ -33,7 +33,6 @@ export const PERMISSIONS = [
   "orders.create",
   "orders.edit",
   "orders.place_for_customer",
-  "orders.credit.approve",
 
   "quotes.view",
   "quotes.create",
@@ -78,9 +77,6 @@ export const PERMISSIONS = [
 
   "roles.view",
   "roles.manage",
-
-  "credit.view",
-  "credit.edit",
 
   "audit.view",
 

@@ -213,16 +213,6 @@ function CustomerWorkspace() {
                   value={companyPriceListLabel(company.priceList?.name)}
                 />
                 <Row label="Payment terms" value={company.paymentTerms} />
-                <Row
-                  label="Credit limit"
-                  value={
-                    permissions.canViewCredit && company.creditLimit != null
-                      ? `£${company.creditLimit.toLocaleString()}`
-                      : permissions.canViewCredit
-                        ? "—"
-                        : "Restricted"
-                  }
-                />
                 <Row label="Tax status" value={company.taxStatus} />
                 <Row
                   label="Autopart account"
@@ -700,20 +690,16 @@ function CommercialEditor({
 }: {
   company: {
     paymentTerms: string | null;
-    creditLimit: number | null;
     taxStatus: string;
     priceListId: string | null;
     salesperson: { salesRepId: string } | null;
   };
-  permissions: { canEdit: boolean; canEditCredit: boolean; canEditPricing: boolean };
+  permissions: { canEdit: boolean; canEditPricing: boolean };
   reps: Array<{ id: string; label: string }>;
   priceLists: Array<{ id: string; code: string; name: string }>;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
 }) {
   const [paymentTerms, setPaymentTerms] = useState(company.paymentTerms ?? "");
-  const [creditLimit, setCreditLimit] = useState(
-    company.creditLimit != null ? String(company.creditLimit) : "",
-  );
   const [taxStatus, setTaxStatus] = useState(company.taxStatus);
   const [priceListId, setPriceListId] = useState(company.priceListId ?? "");
   const [salesRepId, setSalesRepId] = useState(company.salesperson?.salesRepId ?? "");
@@ -729,12 +715,6 @@ function CommercialEditor({
           taxStatus,
           priceListId: permissions.canEditPricing ? priceListId || null : undefined,
           salesRepId: salesRepId || null,
-          creditLimit:
-            permissions.canEditCredit && creditLimit !== ""
-              ? Number(creditLimit)
-              : permissions.canEditCredit && creditLimit === ""
-                ? null
-                : undefined,
         });
       }}
     >
@@ -775,18 +755,6 @@ function CommercialEditor({
             </option>
           ))}
         </select>
-      </Field>
-      <Field label="Credit limit">
-        <input
-          type="number"
-          min={0}
-          step="0.01"
-          value={creditLimit}
-          onChange={(e) => setCreditLimit(e.target.value)}
-          className={inputClass}
-          disabled={!permissions.canEditCredit}
-          placeholder={permissions.canEditCredit ? "0.00" : "Restricted"}
-        />
       </Field>
       {permissions.canEdit ? (
         <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">

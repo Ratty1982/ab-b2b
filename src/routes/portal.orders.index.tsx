@@ -145,9 +145,6 @@ function OrdersPage() {
                         {o.backorderHint ? (
                           <span className="text-[11px] text-cyan">{o.backorderHint}</span>
                         ) : null}
-                        {o.creditHint ? (
-                          <span className="text-[11px] text-warn">{o.creditHint}</span>
-                        ) : null}
                       </div>
                     </td>
                     <td className="num px-3 py-2.5 text-right font-semibold">£{o.grandTotal}</td>

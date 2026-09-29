@@ -206,18 +206,6 @@ enum AutopartExportStatus {
   EXPORTED
 }
 
-/// Trade credit control — separate from Order.status fulfilment lifecycle.
-enum OrderCreditStatus {
-  /// Account type / payment terms do not consume Autopart trade credit.
-  NOT_REQUIRED
-  /// Passed automatic check or staff released hold/review.
-  APPROVED
-  /// Trusted 407P100 exists and order exceeds effective available credit.
-  HOLD
-  /// Credit data missing/stale — staff must review before Autopart export.
-  REVIEW_REQUIRED
-}
-
 /// Automotive Brands order-side stock hold (not an Autopart ERP reservation).
 enum StockReservationStatus {
   ACTIVE
@@ -251,9 +239,6 @@ enum AutopartHistoricLineMatchStatus {
 
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
-  CREDIT_407P100
-  /// Multi-customer 407P100 bulk credit import (Settings → Autopart).
-  CREDIT_407P100_BULK
 }
 
 enum AutopartCustomerImportStatus {
@@ -440,7 +425,6 @@ model User {
   tradeAppsReviewed  TradeApplication[] @relation("ApplicationReviewer")
   autopartCodesVerified Company[]       @relation("AutopartCodeVerifier")
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
-  ordersCreditApproved   Order[]        @relation("OrderCreditApprover")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
@@ -583,7 +567,6 @@ model Company {
   status         CompanyStatus @default(PROSPECT)
   taxStatus      TaxStatus     @default(STANDARD)
   paymentTerms   String?
-  creditLimit    Decimal?      @db.Decimal(12, 2)
   currency       String        @default("GBP")
   priceListId    String?
   /// Generic external ERP reference (legacy / non-Autopart). Prefer autopartCustomerCode for Autopart.
@@ -623,7 +606,6 @@ model Company {
   autopartAccountAliases AutopartCustomerAccountAlias[]
   autopartSalesDocuments AutopartSalesDocument[]
   autopartSalesLines     AutopartSalesLine[]
-  autopartCreditPosition AutopartCreditPosition?
   autopartCustomerImportRuns AutopartCustomerImportRun[]
 
   @@index([status])
@@ -1493,22 +1475,6 @@ model Order {
   /// When placed from an accepted quote — commercial prices come from the quote snapshot.
   sourceQuoteId       String?
   sourceQuoteNumber   String?
-  /// Trade credit control (separate from fulfilment status).
-  creditStatus        OrderCreditStatus @default(NOT_REQUIRED)
-  creditDecisionReason String?
-  creditLimitAtOrder               Decimal?  @db.Decimal(12, 2)
-  autopartExposureAtOrder          Decimal?  @db.Decimal(12, 2)
-  importedAvailableCreditAtOrder   Decimal?  @db.Decimal(12, 2)
-  pendingAbExposureAtOrder         Decimal?  @db.Decimal(12, 2)
-  effectiveAvailableCreditAtOrder  Decimal?  @db.Decimal(12, 2)
-  orderCreditRequirement           Decimal?  @db.Decimal(12, 2)
-  creditOverBy                     Decimal?  @db.Decimal(12, 2)
-  creditCheckedAt                  DateTime?
-  creditSourceImportedAt           DateTime?
-  creditApprovedByUserId           String?
-  creditApprovedAt                 DateTime?
-  creditApprovalNote               String?
-  previousCreditStatus             OrderCreditStatus?
   placedAt        DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -1521,7 +1487,6 @@ model Order {
   autopartExportedBy User? @relation("OrderAutopartExporter", fields: [autopartExportedByUserId], references: [id], onDelete: SetNull)
   autopartExportBatch AutopartOrderExportBatch? @relation(fields: [autopartExportBatchId], references: [id], onDelete: SetNull)
   sourceQuote  Quote?                  @relation("OrdersFromQuote", fields: [sourceQuoteId], references: [id], onDelete: SetNull)
-  creditApprovedBy User? @relation("OrderCreditApprover", fields: [creditApprovedByUserId], references: [id], onDelete: SetNull)
 
   @@index([companyId, placedAt])
   @@index([status])
@@ -1529,8 +1494,6 @@ model Order {
   @@index([autopartExportStatus])
   @@index([autopartExportBatchId])
   @@index([sourceQuoteId])
-  @@index([creditStatus])
-  @@index([companyId, creditStatus, placedAt])
 }
 
 /// Authoritative fulfilment timeline for customer portal (never invent events).
@@ -1956,36 +1919,8 @@ model AutopartSalesLine {
   @@index([documentReference])
 }
 
-/// Current Autopart credit exposure snapshot from 407P100 (one per company).
-model AutopartCreditPosition {
-  companyId            String   @id
-  autopartCustomerCode String
-  invoices             Decimal  @db.Decimal(12, 2)
-  picking              Decimal  @db.Decimal(12, 2)
-  dropShip             Decimal  @db.Decimal(12, 2)
-  crossDock            Decimal  @db.Decimal(12, 2)
-  suspends             Decimal  @db.Decimal(12, 2)
-  unConsol             Decimal  @db.Decimal(12, 2)
-  totalExposure        Decimal  @db.Decimal(12, 2)
-  creditLimit          Decimal  @db.Decimal(12, 2)
-  /// Raw available = creditLimit - totalExposure (may be negative).
-  availableCreditRaw   Decimal  @db.Decimal(12, 2)
-  sourceReport         String   @default("407P100")
-  sourceImportedAt     DateTime
-  sourceImportRunId    String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  importRun AutopartCustomerImportRun? @relation(fields: [sourceImportRunId], references: [id], onDelete: SetNull)
-
-  @@index([autopartCustomerCode])
-  @@index([sourceImportedAt])
-}
-
 model AutopartCustomerImportRun {
   id              String                       @id @default(cuid())
-  /// Null for multi-company bulk CREDIT_407P100_BULK runs.
   companyId       String?
   type            AutopartCustomerImportType
   status          AutopartCustomerImportStatus
@@ -2011,7 +1946,6 @@ model AutopartCustomerImportRun {
   createdBy User?   @relation("AutopartCustomerImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
   documents AutopartSalesDocument[]
   lines     AutopartSalesLine[]
-  creditPositions AutopartCreditPosition[]
 
   @@index([companyId, createdAt])
   @@index([companyId, type, status])

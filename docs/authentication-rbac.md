@@ -53,7 +53,6 @@ Future policy:
 
 - `SUPER_ADMIN` → MFA required
 - `ACCOUNTS` → MFA required
-- Anyone who can `credit.edit` → MFA required
 - Trade MFA initially optional
 
 ## Email

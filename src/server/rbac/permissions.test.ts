@@ -11,7 +11,7 @@ describe("permission catalogue", () => {
       "companies.view",
       "companies.manage_users",
       "orders.place_for_customer",
-      "credit.edit",
+      "products.cost.view",
       "cms.publish",
       "cms.page.publish",
       "impersonation.order_for_customer",
@@ -26,11 +26,9 @@ describe("permission catalogue", () => {
     expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toEqual(ALL_PERMISSIONS);
   });
 
-  it("does not give marketing invoice or credit rights", () => {
+  it("does not give marketing invoice rights", () => {
     const m = SYSTEM_ROLE_PERMISSIONS.MARKETING;
     expect(m).not.toContain("invoices.view");
-    expect(m).not.toContain("credit.view");
-    expect(m).not.toContain("credit.edit");
     expect(m).toContain("cms.publish");
   });
 
@@ -38,14 +36,24 @@ describe("permission catalogue", () => {
     const a = SYSTEM_ROLE_PERMISSIONS.ACCOUNTS;
     expect(a).not.toContain("cms.publish");
     expect(a).not.toContain("cms.edit");
-    expect(a).toContain("credit.edit");
+    expect(a).toContain("invoices.view");
   });
 
-  it("does not give sales rep credit.edit or global pricing.edit", () => {
+  it("does not give sales rep global pricing.edit", () => {
     const r = SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE;
-    expect(r).not.toContain("credit.edit");
     expect(r).not.toContain("pricing.edit");
     expect(r).toContain("impersonation.order_for_customer");
+  });
+
+  it("does not expose obsolete credit-control permissions", () => {
+    expect(isPermissionKey("credit.edit")).toBe(false);
+    expect(isPermissionKey("credit.view")).toBe(false);
+    expect(isPermissionKey("orders.credit.approve")).toBe(false);
+    for (const perms of Object.values(SYSTEM_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("credit.edit");
+      expect(perms).not.toContain("credit.view");
+      expect(perms).not.toContain("orders.credit.approve");
+    }
   });
 
   it("trade buyer cannot manage company users", () => {

@@ -20,7 +20,7 @@ Loader: `getPortalDashboard` in `src/server/portal/dashboard.ts`.
 | Account status | `Company.status` | Live |
 | Payment terms | `Company.paymentTerms` | Live; shows “Not set” when null |
 | Autopart account code | `Company.autopartCustomerCode` **only if verified** | Claimed application codes never shown |
-| Credit limit | `Company.creditLimit` when set | No invented default; available credit / outstanding balance **hidden** (no accounting integration) |
+| Credit control | — | **Not shown** — AB does not display credit limit / available credit |
 | Basket | Phase 6A `getBasketSummary` | Live OPEN company basket |
 | Open / recent orders | `Order` model (non-DRAFT) | Historical snapshots; empty states when none |
 | Account manager | Primary `CompanyAssignment` → `SalesRep` → User | No hard-coded fallback person |

@@ -38,7 +38,6 @@ function companySelect() {
     status: true,
     taxStatus: true,
     paymentTerms: true,
-    creditLimit: true,
     currency: true,
     priceListId: true,
     externalRef: true,
@@ -161,7 +160,6 @@ function serializeCompany(row: {
   status: string;
   taxStatus: string;
   paymentTerms: string | null;
-  creditLimit: { toNumber?: () => number } | number | null;
   currency: string;
   priceListId: string | null;
   externalRef: string | null;
@@ -186,14 +184,6 @@ function serializeCompany(row: {
   }>;
 }) {
   const assignment = row.assignments?.[0];
-  const credit =
-    row.creditLimit == null
-      ? null
-      : typeof row.creditLimit === "number"
-        ? row.creditLimit
-        : typeof row.creditLimit.toNumber === "function"
-          ? row.creditLimit.toNumber()
-          : Number(row.creditLimit);
   const autopartVerified = Boolean(row.autopartCustomerCode && row.autopartCustomerCodeVerifiedAt);
   return {
     id: row.id,
@@ -205,7 +195,6 @@ function serializeCompany(row: {
     status: row.status as CompanyStatusKey,
     taxStatus: row.taxStatus,
     paymentTerms: row.paymentTerms,
-    creditLimit: credit,
     currency: row.currency,
     priceListId: row.priceListId,
     priceList: row.priceList ?? null,
@@ -295,15 +284,10 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
     },
   });
 
-  const canViewCredit =
-    hasPermission(profile, "credit.view") || hasPermission(profile, "admin.access");
-  const canEditCredit =
-    hasPermission(profile, "credit.edit") || hasPermission(profile, "admin.access");
+  const canEditPricing =
+    hasPermission(profile, "pricing.edit") || hasPermission(profile, "admin.access");
 
   const serialized = serializeCompany(company);
-  if (!canViewCredit) {
-    serialized.creditLimit = null;
-  }
 
   const claimedCode = signupApplication?.claimedAutopartCustomerCode?.trim() || null;
   const verifiedLinked = Boolean(
@@ -327,10 +311,7 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
         hasPermission(profile, "companies.delete") || hasPermission(profile, "admin.access"),
       canManageUsers:
         hasPermission(profile, "companies.manage_users") || hasPermission(profile, "admin.access"),
-      canViewCredit,
-      canEditCredit,
-      canEditPricing:
-        hasPermission(profile, "pricing.edit") || hasPermission(profile, "admin.access"),
+      canEditPricing,
     },
     contacts: company.contacts.map((c) => ({
       ...c,
@@ -392,11 +373,6 @@ export async function createCompany(actorUserId: string, raw: unknown) {
         primaryEmail: emptyToNull(input.primaryEmail),
         notes: emptyToNull(input.notes),
         paymentTerms: emptyToNull(input.paymentTerms),
-        creditLimit:
-          input.creditLimit != null &&
-          (hasPermission(profile, "credit.edit") || hasPermission(profile, "admin.access"))
-            ? input.creditLimit
-            : null,
         // null = Default Trade Price (ProductVariant.tradePrice) until sales assigns a list.
         priceListId: input.priceListId ?? null,
         externalRef: emptyToNull(input.externalRef),
@@ -452,9 +428,6 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
   const before = await prisma.company.findUnique({ where: { id: input.id } });
   if (!before) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
-  const canEditCredit =
-    hasPermission(profile, "credit.edit") || hasPermission(profile, "admin.access");
-
   const data: Prisma.CompanyUpdateInput = {};
   if (input.name !== undefined) data.name = input.name;
   if (input.tradingName !== undefined) data.tradingName = emptyToNull(input.tradingName);
@@ -474,9 +447,6 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
       : { disconnect: true };
   }
   if (input.externalRef !== undefined) data.externalRef = emptyToNull(input.externalRef);
-  if (input.creditLimit !== undefined && canEditCredit) {
-    data.creditLimit = input.creditLimit;
-  }
 
   const priorPrimary = await prisma.companyAssignment.findFirst({
     where: { companyId: input.id, isPrimary: true },

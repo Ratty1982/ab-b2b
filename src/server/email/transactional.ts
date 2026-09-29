@@ -140,28 +140,6 @@ export async function loadOrderEmailSnapshot(orderId: string): Promise<OrderEmai
     sourceQuoteNumber: order.sourceQuoteNumber ?? null,
     portalOrderUrl: portalOrderUrl(order.id),
     adminOrderUrl: adminOrderUrl(order.id),
-    creditStatus: order.creditStatus,
-    creditDecisionReason: order.creditDecisionReason,
-    creditLimitAtOrder:
-      order.creditLimitAtOrder != null ? moneyStr(order.creditLimitAtOrder) : null,
-    autopartExposureAtOrder:
-      order.autopartExposureAtOrder != null ? moneyStr(order.autopartExposureAtOrder) : null,
-    pendingAbExposureAtOrder:
-      order.pendingAbExposureAtOrder != null ? moneyStr(order.pendingAbExposureAtOrder) : null,
-    effectiveAvailableCreditAtOrder:
-      order.effectiveAvailableCreditAtOrder != null
-        ? moneyStr(order.effectiveAvailableCreditAtOrder)
-        : null,
-    orderCreditRequirement:
-      order.orderCreditRequirement != null ? moneyStr(order.orderCreditRequirement) : null,
-    creditOverBy: order.creditOverBy != null ? moneyStr(order.creditOverBy) : null,
-    creditSnapshotStatus: order.creditDecisionReason?.includes("STALE")
-      ? "STALE"
-      : order.creditDecisionReason?.includes("NOT_AVAILABLE")
-        ? "NOT_AVAILABLE"
-        : order.creditStatus === "NOT_REQUIRED"
-          ? null
-          : "CURRENT",
   };
 }
 
