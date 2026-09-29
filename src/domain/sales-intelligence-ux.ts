@@ -20,6 +20,8 @@ const MONTHS = [
 /** YYYY-MM-DD → "31 Aug 2026" (date-only, no timezone shift). */
 export function formatDateOnlyLongUk(dateOnly: string | null | undefined): string {
   if (!dateOnly || !/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return dateOnly || "—";
+  // Never render internal unbounded-history sentinel bounds.
+  if (dateOnly === "0001-01-01" || dateOnly === "9999-12-31") return "—";
   const [ys, ms, ds] = dateOnly.split("-");
   const y = Number(ys);
   const m = Number(ms);
@@ -32,6 +34,8 @@ export function formatPeriodRangeLong(
   from: string | null | undefined,
   to: string | null | undefined,
 ): string {
+  // Defensive: never show internal unbounded sentinel pair as calendar dates.
+  if (from === "0001-01-01" && to === "9999-12-31") return "All history";
   return `${formatDateOnlyLongUk(from)} – ${formatDateOnlyLongUk(to)}`;
 }
 

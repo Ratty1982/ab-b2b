@@ -17,11 +17,15 @@ import {
 import {
   applyRebateEligibilityRules,
   countDocumentTypes,
+  rebatePeriodCsvCells,
   resolveRebateComparisonPeriod,
   resolveRebatePrimaryPeriod,
+  RebatePeriodValidationError,
+  toRebatePeriodDto,
   type RebateCatalogueFilter,
   type RebateCustomerSort,
   type RebateDocTypeFilter,
+  type ResolvedRebatePeriod,
 } from "@/domain/sales-rebate";
 import {
   buildCsv,
@@ -56,6 +60,7 @@ async function assertCompanyInScope(profile: LoadedAccessProfile, companyId: str
 }
 
 const periodPresetSchema = z.enum([
+  "ALL",
   "THIS_MONTH",
   "LAST_MONTH",
   "THIS_QUARTER",
@@ -77,20 +82,30 @@ const periodInputSchema = z.object({
   compareTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
 });
 
-function resolvePeriods(raw: z.infer<typeof periodInputSchema>, today = todayLondonDateOnly()) {
-  const primary = resolveRebatePrimaryPeriod({
-    period: raw.period,
-    from: raw.from,
-    to: raw.to,
-    today,
-  });
-  const comparison = resolveRebateComparisonPeriod({
-    compare: raw.compare,
-    primary,
-    compareFrom: raw.compareFrom,
-    compareTo: raw.compareTo,
-  });
-  return { primary, comparison };
+function resolvePeriods(
+  raw: z.infer<typeof periodInputSchema>,
+  today = todayLondonDateOnly(),
+): { primary: ResolvedRebatePeriod; comparison: import("@/domain/sales-history-period").DateOnlyRange | null } {
+  try {
+    const primary = resolveRebatePrimaryPeriod({
+      period: raw.period,
+      from: raw.from,
+      to: raw.to,
+      today,
+    });
+    const comparison = resolveRebateComparisonPeriod({
+      compare: raw.compare,
+      primary,
+      compareFrom: raw.compareFrom,
+      compareTo: raw.compareTo,
+    });
+    return { primary, comparison };
+  } catch (e) {
+    if (e instanceof RebatePeriodValidationError) {
+      throw new AuthError(e.message, "BAD_REQUEST", 400);
+    }
+    throw e;
+  }
 }
 
 function spendSummaryFromLines(lines: HistoricLineRow[]) {
@@ -298,7 +313,7 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
 
   const primaryLines = await loadHistoricSalesLines({
     companyId: input.companyId,
-    range: primary,
+    range: primary.queryRange,
   });
   const spend = spendSummaryFromLines(primaryLines);
   const undatedExcluded = await countUndatedDocuments(input.companyId);
@@ -310,11 +325,20 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
       range: comparisonRange,
     });
     comparison = compareSalesTotals(
-      primary,
+      primary.unbounded
+        ? { from: comparisonRange.from, to: comparisonRange.to }
+        : { from: primary.from!, to: primary.to! },
       comparisonRange,
       spend.totals,
       summarizeHistoricLines(applyRebateEligibilityRules(cmpLines, null)),
     );
+    if (primary.unbounded) {
+      // Avoid leaking internal sentinel bounds into comparison.primary.
+      comparison = {
+        ...comparison,
+        primary: { from: "", to: "" },
+      };
+    }
   }
 
   const skus = [...new Set(primaryLines.map((l) => l.sku.trim().toUpperCase()))];
@@ -501,7 +525,7 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
     disclaimer:
       "Net spend includes all imported invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
     company,
-    period: primary,
+    period: toRebatePeriodDto(primary),
     summary: {
       invoiceSales: spend.invoiceSales,
       credits: spend.credits,
@@ -694,7 +718,7 @@ export async function getMultiCustomerRebateAnalysis(actorUserId: string, raw: u
 
   const lines = await loadHistoricSalesLines({
     companyId: companyFilter,
-    range: primary,
+    range: primary.queryRange,
   });
   const eligible = applyRebateEligibilityRules(lines, null);
 
@@ -866,11 +890,16 @@ export async function getMultiCustomerRebateAnalysis(actorUserId: string, raw: u
       customers: rows.length,
     };
     comparison = compareSalesTotals(
-      primary,
+      primary.unbounded
+        ? { from: comparisonRange.from, to: comparisonRange.to }
+        : { from: primary.from!, to: primary.to! },
       comparisonRange,
       primaryTotals,
       summarizeHistoricLines(cmpScoped),
     );
+    if (primary.unbounded) {
+      comparison = { ...comparison, primary: { from: "", to: "" } };
+    }
   }
 
   const page = input.page ?? 1;
@@ -886,7 +915,7 @@ export async function getMultiCustomerRebateAnalysis(actorUserId: string, raw: u
       "Autopart historic sales (561L + SLRB). Aggregates include only customers in the actor’s Sales Intelligence scope.",
     disclaimer:
       "Net spend includes all imported invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
-    period: primary,
+    period: toRebatePeriodDto(primary),
     summary: {
       customers: rows.length,
       invoiceSales: moneyMinorToDto(invoiceSalesMinor),
@@ -922,10 +951,12 @@ export async function getMultiCustomerRebateAnalysis(actorUserId: string, raw: u
 
 export async function exportCustomerRebateSummaryCsv(actorUserId: string, raw: unknown) {
   const data = await getCustomerRebateAnalysis(actorUserId, raw);
+  const periodCells = rebatePeriodCsvCells(data.period);
   const csv = buildCsv(
     [
       "Customer",
       "Account",
+      "Period",
       "Period From",
       "Period To",
       "Invoice Sales",
@@ -940,8 +971,9 @@ export async function exportCustomerRebateSummaryCsv(actorUserId: string, raw: u
       [
         data.company.name,
         data.company.autopartCustomerCode ?? data.company.accountNumber ?? "",
-        data.period.from,
-        data.period.to,
+        periodCells.periodLabel,
+        periodCells.periodFrom,
+        periodCells.periodTo,
         data.summary.invoiceSales,
         data.summary.credits,
         data.summary.netSpend,
@@ -961,12 +993,17 @@ export async function exportCustomerRebateDocumentsCsv(actorUserId: string, raw:
   await assertCompanyInScope(profile, input.companyId);
   const { primary } = resolvePeriods(input);
   const company = await loadCompanyContext(input.companyId);
-  const lines = await loadHistoricSalesLines({ companyId: input.companyId, range: primary });
+  const lines = await loadHistoricSalesLines({
+    companyId: input.companyId,
+    range: primary.queryRange,
+  });
   const docs = aggregateDocuments(applyRebateEligibilityRules(lines, null));
+  const periodCells = rebatePeriodCsvCells(toRebatePeriodDto(primary));
   const csv = buildCsv(
     [
       "Customer",
       "Account",
+      "Period",
       "Date",
       "Document Reference",
       "Type",
@@ -977,6 +1014,7 @@ export async function exportCustomerRebateDocumentsCsv(actorUserId: string, raw:
     docs.map((d) => [
       company.name,
       company.autopartCustomerCode ?? company.accountNumber ?? "",
+      periodCells.periodLabel,
       d.documentDate ?? "",
       d.documentReference,
       d.documentType === "CREDIT" ? "Credit" : "Invoice",
@@ -1008,16 +1046,21 @@ export async function exportCustomerRebateProductsCsv(actorUserId: string, raw: 
   await assertCompanyInScope(profile, input.companyId);
   const { primary } = resolvePeriods(input);
   const company = await loadCompanyContext(input.companyId);
-  const lines = await loadHistoricSalesLines({ companyId: input.companyId, range: primary });
+  const lines = await loadHistoricSalesLines({
+    companyId: input.companyId,
+    range: primary.queryRange,
+  });
   const bySku = groupHistoricBySku(applyRebateEligibilityRules(lines, null));
   const skus = [...bySku.keys()];
   const { variantBySku } = await attachCatalogueMeta(skus);
+  const periodCells = rebatePeriodCsvCells(toRebatePeriodDto(primary));
   const rows: Array<Array<string | number>> = [];
   for (const [key, entry] of bySku) {
     const v = variantBySku.get(key);
     rows.push([
       company.name,
       company.autopartCustomerCode ?? company.accountNumber ?? "",
+      periodCells.periodLabel,
       v?.sku ?? entry.sku,
       v?.name ?? entry.desc ?? entry.sku,
       v?.brandName ?? "Unassigned",
@@ -1030,11 +1073,12 @@ export async function exportCustomerRebateProductsCsv(actorUserId: string, raw: 
       entry.agg.lastPurchasedDate ?? "",
     ]);
   }
-  rows.sort((a, b) => String(a[2]).localeCompare(String(b[2])));
+  rows.sort((a, b) => String(a[3]).localeCompare(String(b[3])));
   const csv = buildCsv(
     [
       "Customer",
       "Account",
+      "Period",
       "SKU",
       "Product",
       "Brand",
@@ -1069,7 +1113,10 @@ export async function exportMultiCustomerRebateCsv(actorUserId: string, raw: unk
   const { primary } = resolvePeriods(input);
   const companyFilter =
     scope === "all" ? undefined : { in: scope.length ? scope : ["__none__"] };
-  const lines = await loadHistoricSalesLines({ companyId: companyFilter, range: primary });
+  const lines = await loadHistoricSalesLines({
+    companyId: companyFilter,
+    range: primary.queryRange,
+  });
   const eligible = applyRebateEligibilityRules(lines, null);
   const byCompany = new Map<string, HistoricLineRow[]>();
   for (const line of eligible) {
@@ -1160,11 +1207,13 @@ export async function exportMultiCustomerRebateCsv(actorUserId: string, raw: unk
     a.netSpendMinor > b.netSpendMinor ? -1 : a.netSpendMinor < b.netSpendMinor ? 1 : 0,
   );
 
+  const periodCells = rebatePeriodCsvCells(toRebatePeriodDto(primary));
   const csv = buildCsv(
     [
       "Customer",
       "Account",
       "Salesperson",
+      "Period",
       "Period From",
       "Period To",
       "Invoice Sales",
@@ -1178,8 +1227,9 @@ export async function exportMultiCustomerRebateCsv(actorUserId: string, raw: unk
       r.name,
       r.autopartCustomerCode ?? r.accountNumber ?? "",
       r.salesperson?.name ?? "",
-      primary.from,
-      primary.to,
+      periodCells.periodLabel,
+      periodCells.periodFrom,
+      periodCells.periodTo,
       r.invoiceSales,
       r.credits,
       r.netSpend,
@@ -1189,5 +1239,8 @@ export async function exportMultiCustomerRebateCsv(actorUserId: string, raw: unk
     ]),
   );
   void data;
-  return { filename: `rebate-multi-customer-${primary.from}_${primary.to}.csv`, csv };
+  const fileSuffix = primary.unbounded
+    ? "all-history"
+    : `${primary.from}_${primary.to}`;
+  return { filename: `rebate-multi-customer-${fileSuffix}.csv`, csv };
 }

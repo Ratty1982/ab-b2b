@@ -93,5 +93,8 @@ describe("sales-history-period", () => {
       from: "2026-01-01",
       to: "2026-06-30",
     });
+    expect(resolveRebatePeriod("ALL", null, null, today)).toBeNull();
+    expect(resolveRebatePeriod("CUSTOM", null, null, today)).toBeNull();
+    expect(resolveRebatePeriod("CUSTOM", "2026-01-01", null, today)).toBeNull();
   });
 });

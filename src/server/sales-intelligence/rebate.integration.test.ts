@@ -418,10 +418,80 @@ describe("Rebate / Net Spend Analysis", () => {
       compareTo: "2025-03-31",
     });
     expect(q.period.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(q.period.unbounded).toBe(false);
     expect(q.comparison?.netSpend).toBeTruthy();
     expect(q.comparison?.netSpend.percentChange === null || typeof q.comparison?.netSpend.percentChange === "number").toBe(
       true,
     );
+  });
+
+  it("All history has no public date bounds and excludes undated like before", async () => {
+    const all = await getCustomerRebateAnalysis(adminId, {
+      companyId: companyAId,
+      period: "ALL",
+    });
+    expect(all.period.unbounded).toBe(true);
+    expect(all.period.from).toBeNull();
+    expect(all.period.to).toBeNull();
+    expect(all.period.label).toBe("All history");
+    expect(JSON.stringify(all.period)).not.toMatch(/0001-01-01|9999-12-31/);
+    // Same as Jan fixture + no extra undated inclusion
+    expect(Number(all.summary.invoiceSales)).toBeCloseTo(1500, 2);
+    expect(Number(all.summary.credits)).toBeCloseTo(-100, 2);
+    expect(Number(all.summary.netSpend)).toBeCloseTo(1400, 2);
+    expect(all.documents.items.some((d) => d.documentReference === "RB-A-UND")).toBe(false);
+
+    const legacy = await getCustomerRebateAnalysis(adminId, {
+      companyId: companyAId,
+      period: "CUSTOM",
+    });
+    expect(legacy.period.label).toBe("All history");
+    expect(legacy.summary.netSpend).toBe(all.summary.netSpend);
+  });
+
+  it("Custom from > to is rejected", async () => {
+    await expect(
+      getCustomerRebateAnalysis(adminId, {
+        companyId: companyAId,
+        period: "CUSTOM",
+        from: "2026-06-30",
+        to: "2026-01-01",
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("CSV and print use All history label", async () => {
+    const summary = await exportCustomerRebateSummaryCsv(adminId, {
+      companyId: companyAId,
+      period: "ALL",
+    });
+    expect(summary.csv).toContain("All history");
+    expect(summary.csv).not.toMatch(/0001-01-01|9999-12-31/);
+
+    const multi = await exportMultiCustomerRebateCsv(salesRepUserId, {
+      period: "ALL",
+    });
+    expect(multi.csv).toContain("All history");
+    expect(multi.filename).toContain("all-history");
+    expect(multi.csv).not.toMatch(/0001-01-01|9999-12-31/);
+
+    const analysis = await getCustomerRebateAnalysis(adminId, {
+      companyId: companyAId,
+      period: "ALL",
+    });
+    expect(analysis.print.title).toBeTruthy();
+    expect(analysis.period.label).toBe("All history");
+  });
+
+  it("multi-customer All history has no sentinel period dates", async () => {
+    const multi = await getMultiCustomerRebateAnalysis(salesRepUserId, {
+      period: "ALL",
+      pageSize: 50,
+    });
+    expect(multi.period.unbounded).toBe(true);
+    expect(multi.period.label).toBe("All history");
+    expect(JSON.stringify(multi.period)).not.toMatch(/0001-01-01|9999-12-31/);
+    expect(multi.summary.customers).toBeGreaterThanOrEqual(2);
   });
 
   it("previous equivalent and previous year comparison", async () => {

@@ -103,8 +103,12 @@ export type SalesEnquiryPeriodPreset =
   | "LAST_YEAR"
   | "CUSTOM";
 
-/** Calendar-quarter presets for Rebate / Net Spend Analysis (Jan–Mar … Oct–Dec). */
+/**
+ * Calendar-quarter presets for Rebate / Net Spend Analysis (Jan–Mar … Oct–Dec),
+ * plus unbounded All history (`ALL`).
+ */
 export type RebatePeriodPreset =
+  | "ALL"
   | "THIS_MONTH"
   | "LAST_MONTH"
   | "THIS_QUARTER"
@@ -115,6 +119,19 @@ export type RebatePeriodPreset =
   | "LAST_180"
   | "LAST_365"
   | "CUSTOM";
+
+/**
+ * Internal query window that preserves historic “all dated documents” semantics
+ * (excludes null documentDate via Prisma gte/lte). Never expose in UI/CSV/URL.
+ */
+export const ALL_DATED_HISTORY_QUERY_RANGE: DateOnlyRange = {
+  from: "0001-01-01",
+  to: "9999-12-31",
+};
+
+export function isSentinelDateOnly(value: string | null | undefined): boolean {
+  return value === "0001-01-01" || value === "9999-12-31";
+}
 
 function monthStart(iso: string): string {
   return `${iso.slice(0, 7)}-01`;
@@ -154,24 +171,33 @@ export function previousCalendarQuarterRange(today: string): DateOnlyRange {
   return { from, to: lastDayOfMonth(py, endMonth) };
 }
 
-/** Resolve Rebate Analysis period presets (includes calendar quarters + last 12 months). */
+/**
+ * Resolve Rebate Analysis period presets.
+ * `ALL` returns null (unbounded dated history — caller uses ALL_DATED_HISTORY_QUERY_RANGE).
+ * `CUSTOM` requires both from and to; incomplete blank Custom is handled by rebate domain as ALL.
+ */
 export function resolveRebatePeriod(
   preset: RebatePeriodPreset,
   from: string | null | undefined,
   to: string | null | undefined,
   today: string,
 ): DateOnlyRange | null {
+  if (preset === "ALL") return null;
   if (preset === "THIS_QUARTER") return calendarQuarterRange(today);
   if (preset === "PREVIOUS_QUARTER") return previousCalendarQuarterRange(today);
   if (preset === "LAST_365") return lastNDaysRange(today, 365);
+  if (preset === "CUSTOM") {
+    if (!from || !to) return null;
+    if (!isDateOnlyIso(from) || !isDateOnlyIso(to)) return null;
+    return { from, to };
+  }
   if (
     preset === "THIS_MONTH" ||
     preset === "LAST_MONTH" ||
     preset === "LAST_90" ||
     preset === "LAST_180" ||
     preset === "YTD" ||
-    preset === "LAST_YEAR" ||
-    preset === "CUSTOM"
+    preset === "LAST_YEAR"
   ) {
     return resolveSalesEnquiryPeriod(preset, from, to, today);
   }

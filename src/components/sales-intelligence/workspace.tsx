@@ -114,15 +114,32 @@ export function SiEntityContext({
 export function SiPeriodSummary({
   selectedFrom,
   selectedTo,
+  selectedLabel = null,
+  selectedHint = null,
   comparisonFrom = null,
   comparisonTo = null,
+  comparisonLabel = null,
 }: {
-  selectedFrom: string;
-  selectedTo: string;
+  selectedFrom?: string | null | undefined;
+  selectedTo?: string | null | undefined;
+  /** When set (e.g. “All history”), shown instead of from–to dates. */
+  selectedLabel?: string | null | undefined;
+  selectedHint?: string | null | undefined;
   comparisonFrom?: string | null | undefined;
   comparisonTo?: string | null | undefined;
+  comparisonLabel?: string | null | undefined;
 }) {
-  const hasComparison = Boolean(comparisonFrom && comparisonTo);
+  const hasComparison = Boolean(
+    comparisonLabel || (comparisonFrom && comparisonTo),
+  );
+  const selectedText =
+    selectedLabel ||
+    (selectedFrom && selectedTo ? formatPeriodRangeLong(selectedFrom, selectedTo) : "—");
+  const comparisonText =
+    comparisonLabel ||
+    (comparisonFrom && comparisonTo
+      ? formatPeriodRangeLong(comparisonFrom, comparisonTo)
+      : "—");
   return (
     <div
       className={cn(
@@ -134,9 +151,12 @@ export function SiPeriodSummary({
         <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-steel">
           Selected period
         </div>
-        <div className="mt-0.5 font-medium tabular-nums">
-          {formatPeriodRangeLong(selectedFrom, selectedTo)}
+        <div className={cn("mt-0.5 font-medium", selectedLabel ? "" : "tabular-nums")}>
+          {selectedText}
         </div>
+        {selectedHint ? (
+          <p className="mt-0.5 text-[11px] text-steel">{selectedHint}</p>
+        ) : null}
       </div>
       {hasComparison ? (
         <>
@@ -147,9 +167,7 @@ export function SiPeriodSummary({
             <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-steel">
               Comparison period
             </div>
-            <div className="mt-0.5 font-medium tabular-nums">
-              {formatPeriodRangeLong(comparisonFrom, comparisonTo)}
-            </div>
+            <div className="mt-0.5 font-medium tabular-nums">{comparisonText}</div>
           </div>
         </>
       ) : null}

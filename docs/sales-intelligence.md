@@ -32,6 +32,7 @@ URL-backed state examples:
 - Gaps: `?mode=customers&companyId=…&period=LAST_30&compare=PREVIOUS_YEAR&status=ALL_CHANGES&sort=NET_DECREASE`
 - Gaps: `?mode=products&sku=…&compare=CUSTOM&compareFrom=…&compareTo=…&salesRepId=…`
 - Opportunities: `?companyId=…&period=LAST_365&sort=RANGE_MATCH`
+- Rebates: `?companyId=…&period=ALL`
 - Rebates: `?companyId=…&period=CUSTOM&from=2026-01-01&to=2026-06-30&tab=documents`
 - Rebates multi: `?mode=multi&period=THIS_QUARTER&sort=NET_DESC`
 
@@ -121,9 +122,10 @@ Enquiry presets: This month, Last month, Last 30 days, Last 3 months, Last 6 mon
 
 Rebate Analysis adds:
 
+- **All history** (`ALL`) — all **dated** imported invoice/credit history (same query semantics as the former blank Custom sentinel window; undated documents remain excluded). Public UI/CSV/URL never show `0001-01-01` / `9999-12-31`.
 - **This quarter** / **Previous quarter** — calendar quarters Q1 Jan–Mar, Q2 Apr–Jun, Q3 Jul–Sep, Q4 Oct–Dec (not financial-year quarters)
 - **Last 12 months** (`LAST_365`)
-- Custom FROM/TO remains the primary rebate-checking workflow
+- **Custom** — requires both FROM and TO (`from <= to`); incomplete blank Custom URLs resolve to All history for backwards compatibility
 
 ## Period comparison (Enquiry)
 

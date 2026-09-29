@@ -72,6 +72,7 @@ type MultiData = Extract<
 >["data"];
 
 const PERIOD_OPTIONS: Array<{ value: RebatePeriodPreset; label: string }> = [
+  { value: "ALL", label: "All history" },
   { value: "THIS_MONTH", label: "This month" },
   { value: "LAST_MONTH", label: "Last month" },
   { value: "THIS_QUARTER", label: "This quarter" },
@@ -141,8 +142,11 @@ function RebateAnalysisPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const mode: RebateMode = search.mode ?? "customer";
-  const period = (search.period ?? "CUSTOM") as RebatePeriodPreset;
+  const period = (search.period ?? "ALL") as RebatePeriodPreset;
   const compare = search.compare ?? "OFF";
+  const customReady =
+    period !== "CUSTOM" ||
+    (Boolean(search.from) && Boolean(search.to) && search.from! <= search.to!);
   const tab: RebateTab = search.tab ?? "documents";
   const docType = search.docType ?? "ALL";
   const page = search.page ?? 1;
@@ -165,8 +169,14 @@ function RebateAnalysisPage() {
     const nextCompany =
       next.companyId === null ? undefined : ((next.companyId as string | undefined) ?? search.companyId);
     const nextPeriod = (next.period as RebatePeriodPreset | undefined) ?? period;
-    const nextFrom = next.from === null ? undefined : ((next.from as string | undefined) ?? search.from);
-    const nextTo = next.to === null ? undefined : ((next.to as string | undefined) ?? search.to);
+    const nextFrom =
+      next.from === null || nextPeriod === "ALL"
+        ? undefined
+        : ((next.from as string | undefined) ?? (nextPeriod === "CUSTOM" ? search.from : undefined));
+    const nextTo =
+      next.to === null || nextPeriod === "ALL"
+        ? undefined
+        : ((next.to as string | undefined) ?? (nextPeriod === "CUSTOM" ? search.to : undefined));
     const nextCompare =
       (next.compare as RebateUrlSearch["compare"] | undefined) ??
       (compare === "OFF" ? undefined : compare);
@@ -212,8 +222,8 @@ function RebateAnalysisPage() {
 
     if (nextMode !== "customer") draft.mode = nextMode;
     if (nextCompany) draft.companyId = nextCompany;
-    if (nextPeriod !== "CUSTOM") draft.period = nextPeriod;
-    if (nextPeriod === "CUSTOM" || nextFrom || nextTo) {
+    draft.period = nextPeriod;
+    if (nextPeriod === "CUSTOM") {
       if (nextFrom) draft.from = nextFrom;
       if (nextTo) draft.to = nextTo;
     }
@@ -277,14 +287,20 @@ function RebateAnalysisPage() {
       setCustomerData(null);
       return;
     }
+    if (!customReady) {
+      setCustomerData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     void (async () => {
       setLoading(true);
       const r = await getCustomerRebateAnalysisFn({
         data: {
           companyId: search.companyId,
           period,
-          from: search.from ?? null,
-          to: search.to ?? null,
+          from: period === "CUSTOM" ? (search.from ?? null) : null,
+          to: period === "CUSTOM" ? (search.to ?? null) : null,
           compare,
           compareFrom: search.compareFrom ?? null,
           compareTo: search.compareTo ?? null,
@@ -314,6 +330,7 @@ function RebateAnalysisPage() {
     period,
     search.from,
     search.to,
+    customReady,
     compare,
     search.compareFrom,
     search.compareTo,
@@ -332,13 +349,19 @@ function RebateAnalysisPage() {
       setMultiData(null);
       return;
     }
+    if (!customReady) {
+      setMultiData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     void (async () => {
       setLoading(true);
       const r = await getMultiCustomerRebateAnalysisFn({
         data: {
           period,
-          from: search.from ?? null,
-          to: search.to ?? null,
+          from: period === "CUSTOM" ? (search.from ?? null) : null,
+          to: period === "CUSTOM" ? (search.to ?? null) : null,
           compare,
           compareFrom: search.compareFrom ?? null,
           compareTo: search.compareTo ?? null,
@@ -365,6 +388,7 @@ function RebateAnalysisPage() {
     period,
     search.from,
     search.to,
+    customReady,
     compare,
     search.compareFrom,
     search.compareTo,
@@ -517,6 +541,8 @@ function RebateAnalysisPage() {
               onChange={(e) =>
                 patch({
                   period: e.target.value as RebatePeriodPreset,
+                  from: null,
+                  to: null,
                   page: 1,
                   docPage: 1,
                 })
@@ -548,6 +574,14 @@ function RebateAnalysisPage() {
                 />
               </SiField>
             </>
+          ) : null}
+          {period === "CUSTOM" && !customReady ? (
+            <p className="basis-full text-[12px] text-steel">
+              Enter both From and To dates to run a custom period report.
+              {search.from && search.to && search.from > search.to
+                ? " From must be on or before To."
+                : ""}
+            </p>
           ) : null}
           <SiField label="Compare">
             <select
@@ -656,10 +690,14 @@ function RebateAnalysisPage() {
                   <SiPeriodSummary
                     selectedFrom={customerData.period.from}
                     selectedTo={customerData.period.to}
+                    selectedLabel={customerData.period.label}
+                    selectedHint={customerData.period.hint}
                     comparisonFrom={customerData.comparison?.comparison.from}
                     comparisonTo={customerData.comparison?.comparison.to}
                   />
                   <p className="mt-1 hidden text-[11px] text-steel print:block">
+                    Period: {customerData.period.label}
+                    {" · "}
                     Generated {new Date(customerData.print.generatedAt).toLocaleString("en-GB")}
                   </p>
                 </div>
@@ -1178,6 +1216,8 @@ function RebateAnalysisPage() {
                 <SiPeriodSummary
                   selectedFrom={multiData.period.from}
                   selectedTo={multiData.period.to}
+                  selectedLabel={multiData.period.label}
+                  selectedHint={multiData.period.hint}
                   comparisonFrom={multiData.comparison?.comparison.from}
                   comparisonTo={multiData.comparison?.comparison.to}
                 />
@@ -1231,9 +1271,11 @@ function RebateAnalysisPage() {
                                 to={ROUTES.salesIntelligenceRebates}
                                 search={{
                                   companyId: r.companyId,
-                                  ...(period !== "CUSTOM" ? { period } : {}),
-                                  ...(search.from ? { from: search.from } : {}),
-                                  ...(search.to ? { to: search.to } : {}),
+                                  period,
+                                  ...(period === "CUSTOM" && search.from
+                                    ? { from: search.from }
+                                    : {}),
+                                  ...(period === "CUSTOM" && search.to ? { to: search.to } : {}),
                                   ...(compare !== "OFF" ? { compare } : {}),
                                   ...(search.compareFrom
                                     ? { compareFrom: search.compareFrom }
