@@ -73,7 +73,9 @@ describe("canonical navigation contract", () => {
     expect(visible.map((i) => i.id)).toContain("brands");
     expect(visible.map((i) => i.id)).toContain("categories");
     expect(visible.map((i) => i.id)).toContain("product-imports");
-    expect(visible.map((i) => i.id)).not.toContain("crm-leads");
+    expect(visible.map((i) => i.id)).toContain("crm-overview");
+    expect(visible.map((i) => i.id)).toContain("crm-leads");
+    expect(visible.map((i) => i.id)).toContain("activities");
     expect(visible.map((i) => i.id)).not.toContain("audit-log");
   });
 
