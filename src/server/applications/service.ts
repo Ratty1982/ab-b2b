@@ -598,6 +598,9 @@ export async function requestApplicationMoreInfo(actorUserId: string, raw: unkno
 /**
  * Commercial trade approval activates the Company account.
  * User / CompanyUser invite activation is a separate lifecycle and must not gate this.
+ *
+ * Idempotent re-approval may only heal pre-trade statuses (PROSPECT / PENDING_APPROVAL).
+ * Never resurrect ON_HOLD / SUSPENDED / CLOSED — those are deliberate commercial holds.
  */
 async function ensureCompanyActiveForTradeApproval(
   tx: Prisma.TransactionClient,
@@ -611,6 +614,9 @@ async function ensureCompanyActiveForTradeApproval(
     throw new AuthError("Company not found for trade application", "NOT_FOUND", 404);
   }
   if (company.status === "ACTIVE") {
+    return { id: company.id, status: company.status, repaired: false };
+  }
+  if (company.status !== "PROSPECT" && company.status !== "PENDING_APPROVAL") {
     return { id: company.id, status: company.status, repaired: false };
   }
   const updated = await tx.company.update({

@@ -272,4 +272,27 @@ describe("Company status on trade approval", () => {
     });
     expect(healed.status).toBe("ACTIVE");
   });
+
+  it("idempotent re-approval does not resurrect ON_HOLD / SUSPENDED / CLOSED", async () => {
+    for (const held of ["ON_HOLD", "SUSPENDED", "CLOSED"] as const) {
+      const email = `hold.${held.toLowerCase()}.${suffix}@example.invalid`;
+      const submitted = await submitTradeApplication(
+        validTradeApplicationInput({
+          companyName: `Hold ${held} ${suffix}`,
+          email,
+        }),
+      );
+      const approved = await approveTradeApplication(adminId, { id: submitted.id });
+      await prisma.company.update({
+        where: { id: approved.companyId },
+        data: { status: held },
+      });
+
+      await approveTradeApplication(adminId, { id: submitted.id });
+      const still = await prisma.company.findUniqueOrThrow({
+        where: { id: approved.companyId },
+      });
+      expect(still.status).toBe(held);
+    }
+  });
 });
