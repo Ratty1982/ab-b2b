@@ -212,8 +212,8 @@ describe("Autopart history import", () => {
     expect(portalA.items.some((i) => i.sku.toUpperCase() === "SS")).toBe(true);
     const ss = portalA.items.find((i) => i.sku.toUpperCase() === "SS")!;
     expect(ss.canBuyAgain).toBe(true);
-    // Latest dated SLRB match for SS includes credit SS100900 on 10 Oct 14
-    expect(ss.lastPurchasedDate).toBe("2014-10-10");
+    // Last purchased = latest INVOICE date only (credits do not count as purchases)
+    expect(ss.lastPurchasedDate).toBe("2014-10-06");
 
     await expect(listPortalHistoricPurchases(buyerBId, {})).resolves.toMatchObject({
       items: [],

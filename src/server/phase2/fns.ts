@@ -2646,8 +2646,32 @@ export const listPortalHistoricPurchasesFn = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
+      const hist = await import("@/server/companies/purchase-history");
       return { ok: true as const, data: await hist.listPortalHistoricPurchases(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPortalPurchaseHistoryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/purchase-history");
+      return { ok: true as const, data: await hist.listPortalPurchaseHistory(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPortalPurchaseProductInsightFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { sku: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/purchase-history");
+      return { ok: true as const, data: await hist.getPortalPurchaseProductInsight(userId, data) };
     } catch (e) {
       return toError(e);
     }

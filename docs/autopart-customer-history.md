@@ -149,9 +149,39 @@ Historic 561L/SLRB data is **not** a financial ledger and must **never** drive c
 ## Portal
 
 - Dashboard: Account credit panel when snapshot exists; otherwise “not currently available”
-- `/portal/purchases`: Previously purchased (net units/spend, last purchased when dated, Buy again → current catalogue rules)
+- `/portal/purchases` — **Purchase History** (customer-facing)
 
-Buy again never reuses historic price.
+### Purchase History semantics
+
+Authoritative source for this screen: imported `AutopartSalesLine` / `AutopartSalesDocument` only.
+AB `Order` / `OrderItem` rows are **not** merged. Combining them later must use a non-overlapping
+boundary so the same commercial event is never counted twice if it also appears in a later Autopart
+historic import.
+
+| Metric | Definition |
+|--------|------------|
+| Products purchased | Distinct historic SKUs (after credit netting of units/spend) |
+| Purchase transactions | Distinct **INVOICE** documents that have at least one product line |
+| Historic net spend | Sum of signed line `salesNet` (credits negative) |
+| Units purchased | Sum of signed line `units` (credits negative) |
+| Purchases (per SKU) | Count of distinct **INVOICE** `documentReference` values — not 561L line rows |
+| Last / first purchased | Latest / earliest reliable SLRB `documentDate` on invoice lines — never fabricated |
+| Monthly trend | Dated lines only, grouped by UTC date-only month (`YYYY-MM`); credits land in their own credit document month |
+
+**Undated lines:** included in net units/spend and invoice purchase counts, but excluded from date
+filters and monthly charts. Date filters never treat undated activity as inside the selected period.
+
+**Credits:** reduce net units/spend; never increment purchase count.
+
+**Historic-only products:** no current trade-visible catalogue match → show historic description +
+“Historic product”; no Buy again.
+
+**Buy again:** navigates to the current catalogue product and uses live price / case / stock /
+backorder rules. Never reuses historic price or quantity.
+
+**Trends are factual only** — no predicted next order date, reorder reminders, or demand forecasting.
+
+Implementation: `src/server/companies/purchase-history.ts`.
 
 ## Admin
 

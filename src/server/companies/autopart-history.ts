@@ -9,7 +9,7 @@ import { Prisma, type AutopartHistoricDocumentType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
-import { AuthError, requireSystemPermission, requireCompanyPermission } from "@/server/rbac/guards";
+import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
@@ -2058,114 +2058,5 @@ export async function getPortalCreditSummary(userId: string) {
   };
 }
 
-export async function listPortalHistoricPurchases(
-  userId: string,
-  raw?: { q?: string; filter?: "ALL" | "AVAILABLE" | "UNAVAILABLE" },
-) {
-  const { company } = await requireTradePortalCompany(userId);
-  await requireCompanyPermission(userId, company.id, "orders.view");
-
-  const q = raw?.q?.trim() ?? "";
-  const filter = raw?.filter ?? "ALL";
-
-  const groups = await prisma.autopartSalesLine.groupBy({
-    by: ["sku"],
-    where: {
-      companyId: company.id,
-      ...(q
-        ? {
-            OR: [
-              { sku: { contains: q, mode: "insensitive" } },
-              { descriptionSnapshot: { contains: q, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
-    _sum: { units: true, salesNet: true },
-    _count: { _all: true },
-  });
-
-  const skus = groups.map((g) => g.sku);
-  const variants = skus.length
-    ? await prisma.productVariant.findMany({
-        where: {
-          OR: skus.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
-        },
-        select: {
-          id: true,
-          sku: true,
-          product: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              isActive: true,
-              isTradeVisible: true,
-              status: true,
-            },
-          },
-        },
-      })
-    : [];
-  const variantBySku = new Map(variants.map((v) => [v.sku.trim().toUpperCase(), v]));
-
-  // Last purchased = latest SLRB-dated document among lines for that SKU
-  const datedLines = skus.length
-    ? await prisma.autopartSalesLine.findMany({
-        where: {
-          companyId: company.id,
-          sku: { in: skus },
-          document: { documentDate: { not: null } },
-        },
-        select: {
-          sku: true,
-          document: { select: { documentDate: true } },
-        },
-      })
-    : [];
-  const lastBySku = new Map<string, string>();
-  for (const row of datedLines) {
-    const d = row.document?.documentDate;
-    if (!d) continue;
-    const key = row.sku.trim().toUpperCase();
-    const iso = d.toISOString().slice(0, 10);
-    const prev = lastBySku.get(key);
-    if (!prev || iso > prev) lastBySku.set(key, iso);
-  }
-
-  let items = groups.map((g) => {
-    const v = variantBySku.get(g.sku.trim().toUpperCase());
-    const buyAgain =
-      Boolean(v) &&
-      v!.product.isActive &&
-      v!.product.isTradeVisible &&
-      v!.product.status === "ACTIVE";
-    return {
-      sku: g.sku,
-      name: v?.product.name ?? g.sku,
-      productId: v?.product.id ?? null,
-      productSlug: v?.product.slug ?? null,
-      variantId: v?.id ?? null,
-      netUnits: Number(g._sum.units ?? 0),
-      netSpend: moneyToString(parseMoney(String(g._sum.salesNet ?? 0)) ?? moneyZero(), 2),
-      lineCount: g._count._all,
-      lastPurchasedDate: lastBySku.get(g.sku.trim().toUpperCase()) ?? null,
-      currentlyAvailable: buyAgain,
-      canBuyAgain: buyAgain,
-    };
-  });
-
-  if (filter === "AVAILABLE") items = items.filter((i) => i.currentlyAvailable);
-  if (filter === "UNAVAILABLE") items = items.filter((i) => !i.currentlyAvailable);
-
-  items.sort((a, b) => {
-    if (a.lastPurchasedDate && b.lastPurchasedDate) {
-      return b.lastPurchasedDate.localeCompare(a.lastPurchasedDate);
-    }
-    if (a.lastPurchasedDate) return -1;
-    if (b.lastPurchasedDate) return 1;
-    return a.sku.localeCompare(b.sku);
-  });
-
-  return { items, total: items.length };
-}
+/** @deprecated Prefer listPortalPurchaseHistory — kept as a thin compat shim. */
+export { listPortalHistoricPurchases, listPortalPurchaseHistory, getPortalPurchaseProductInsight } from "@/server/companies/purchase-history";

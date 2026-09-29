@@ -535,7 +535,7 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
       },
       {
         id: "portal-purchases",
-        label: "Previously purchased",
+        label: "Purchase history",
         icon: "package",
         to: ROUTES.portalPurchases,
         permission: "orders.view",

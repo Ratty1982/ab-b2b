@@ -93,7 +93,7 @@ function Dashboard() {
         <QuickAction to={ROUTES.products} icon={ShoppingCart} label="Shop products" primary />
         <QuickAction to={ROUTES.portalBasket} icon={Zap} label="View basket" />
         <QuickAction to={ROUTES.portalOrders} icon={ShoppingCart} label="Order history" />
-        <QuickAction to={ROUTES.portalPurchases} icon={ShoppingCart} label="Previously purchased" />
+        <QuickAction to={ROUTES.portalPurchases} icon={ShoppingCart} label="Purchase history" />
       </div>
 
       <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
