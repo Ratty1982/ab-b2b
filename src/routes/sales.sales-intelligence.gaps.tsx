@@ -1,8 +1,25 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { PanelHeader } from "@/components/ab/AppShell";
 import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
 import { StatusBadge } from "@/components/ab/Badges";
+import {
+  SalesIntelligenceHeader,
+  SiClearFiltersButton,
+  SiComparisonSummary,
+  SiEntityContext,
+  SiExportButton,
+  SiField,
+  SiGapStatusCard,
+  SiModeSwitch,
+  SiMovementValue,
+  SiPager,
+  SiPeriodSummary,
+  SiProvenance,
+  SiStickyTableHead,
+  SiViewEnquiryLink,
+  SI_PERIOD_OPTIONS,
+  siControlClassName,
+} from "@/components/sales-intelligence/workspace";
 import { ROUTES } from "@/lib/app-nav";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import type { PublicAvailability } from "@/domain/availability";
@@ -14,6 +31,13 @@ import {
   type GapUrlSearch,
 } from "@/domain/sales-gap";
 import { formatGbp } from "@/domain/sales-intelligence";
+import {
+  clearedGapTableFilters,
+  gapStatusLabel,
+  hasActiveGapTableFilters,
+  shouldShowEntitySuggestions,
+  toggleGapStatusFilter,
+} from "@/domain/sales-intelligence-ux";
 import {
   exportCustomerGapCsvFn,
   exportProductGapCsvFn,
@@ -48,24 +72,8 @@ type ProductHit = { sku: string; name: string; brandName: string | null; inCatal
 type CustomerGap = Extract<Awaited<ReturnType<typeof getCustomerGapAnalysisFn>>, { ok: true }>["data"];
 type ProductGap = Extract<Awaited<ReturnType<typeof getProductGapAnalysisFn>>, { ok: true }>["data"];
 
-const PERIOD_OPTIONS: Array<{ value: SalesEnquiryPeriodPreset; label: string }> = [
-  { value: "THIS_MONTH", label: "This month" },
-  { value: "LAST_MONTH", label: "Last month" },
-  { value: "LAST_30", label: "Last 30 days" },
-  { value: "LAST_90", label: "Last 3 months" },
-  { value: "LAST_180", label: "Last 6 months" },
-  { value: "YTD", label: "Year to date" },
-  { value: "LAST_YEAR", label: "Last year" },
-  { value: "CUSTOM", label: "Custom" },
-];
-
 function gbp(v: string) {
   return formatGbp(v);
-}
-function pct(v: number | null) {
-  if (v == null) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
 }
 
 function statusTone(status: string): "bad" | "warn" | "good" | "brand" | "neutral" {
@@ -74,14 +82,6 @@ function statusTone(status: string): "bad" | "warn" | "good" | "brand" | "neutra
   if (status === "INCREASED") return "good";
   if (status === "NEW") return "brand";
   return "neutral";
-}
-
-function statusLabel(status: string) {
-  if (status === "STOPPED") return "Stopped buying";
-  if (status === "DECREASED") return "Decreased";
-  if (status === "INCREASED") return "Increased";
-  if (status === "NEW") return "New";
-  return "Unchanged";
 }
 
 function GapAnalysisPage() {
@@ -97,6 +97,7 @@ function GapAnalysisPage() {
 
   const [customerQ, setCustomerQ] = useState("");
   const [productQ, setProductQ] = useState("");
+  const [changingEntity, setChangingEntity] = useState(false);
   const [customerHits, setCustomerHits] = useState<CustomerHit[]>([]);
   const [productHits, setProductHits] = useState<ProductHit[]>([]);
   const [filterQ, setFilterQ] = useState(search.q ?? "");
@@ -214,6 +215,14 @@ function GapAnalysisPage() {
   }, [search.q]);
 
   useEffect(() => {
+    setChangingEntity(false);
+    setCustomerQ("");
+    setProductQ("");
+    setCustomerHits([]);
+    setProductHits([]);
+  }, [search.companyId, search.sku, mode]);
+
+  useEffect(() => {
     if (mode !== "customers" || !search.companyId) {
       setCustomerData(null);
       return;
@@ -327,6 +336,21 @@ function GapAnalysisPage() {
     return 1;
   }, [mode, customerData, productData]);
 
+  const customerSelected = mode === "customers" && Boolean(search.companyId);
+  const productSelected = mode === "products" && Boolean(search.sku);
+  const showCustomerHits = shouldShowEntitySuggestions({
+    entitySelected: customerSelected,
+    changing: changingEntity,
+    queryLength: customerQ.trim().length,
+    hitCount: customerHits.length,
+  });
+  const showProductHits = shouldShowEntitySuggestions({
+    entitySelected: productSelected,
+    changing: changingEntity,
+    queryLength: productQ.trim().length,
+    hitCount: productHits.length,
+  });
+
   async function exportCsv() {
     if (mode === "customers" && search.companyId) {
       const r = await exportCustomerGapCsvFn({
@@ -377,70 +401,71 @@ function GapAnalysisPage() {
     }
   }
 
+  const canExport =
+    (mode === "customers" && Boolean(search.companyId)) ||
+    (mode === "products" && Boolean(search.sku));
+
+  function clearTableFilters() {
+    const cleared = clearedGapTableFilters();
+    setFilterQ("");
+    patch({
+      status: cleared.status,
+      compareBy: cleared.compareBy as "UNITS" | "NET_SALES",
+      brandId: cleared.brandId,
+      categoryId: cleared.categoryId,
+      salesRepId: cleared.salesRepId,
+      q: cleared.q,
+      sort: cleared.sort,
+      page: 1,
+    });
+  }
+
   return (
     <div>
-      <PanelHeader
+      <SalesIntelligenceHeader
         title="Gap Analysis"
-        sub="Factual comparison of purchase activity between two periods"
-        crumbs={[
-          { label: "Sales Intelligence" },
-          { label: "Gap Analysis", to: ROUTES.salesIntelligenceGaps },
-        ]}
-        actions={
-          (mode === "customers" && search.companyId) || (mode === "products" && search.sku) ? (
-            <button
-              type="button"
-              onClick={() => void exportCsv()}
-              className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase tracking-wide"
-            >
-              Export CSV
-            </button>
-          ) : null
-        }
+        actions={canExport ? <SiExportButton onClick={() => void exportCsv()} /> : null}
       />
 
-      <div className="space-y-4 p-4 sm:p-6">
-        <div className="flex flex-wrap gap-2">
-          {(
-            [
-              ["customers", "Customers"],
-              ["products", "Products"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() =>
-                patch({
-                  mode: value,
-                  companyId: value === "customers" ? search.companyId ?? null : null,
-                  sku: value === "products" ? search.sku ?? null : null,
-                  page: 1,
-                  q: null,
-                })
-              }
-              className={`h-9 rounded-md border px-4 text-[11px] font-bold uppercase tracking-wide ${
-                mode === value
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border text-steel"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <div className="space-y-3 p-4 sm:p-5">
+        <SiModeSwitch
+          mode={mode}
+          onChange={(value) => {
+            setChangingEntity(false);
+            patch({
+              mode: value,
+              companyId: value === "customers" ? search.companyId ?? null : null,
+              sku: value === "products" ? search.sku ?? null : null,
+              page: 1,
+              q: null,
+            });
+          }}
+        />
 
-        <div className="grid gap-3 lg:grid-cols-4">
-          {mode === "customers" ? (
-            <label className="text-[12px] lg:col-span-2">
-              Customer
+        {mode === "customers" ? (
+          customerSelected && customerData && !changingEntity ? (
+            <SiEntityContext
+              eyebrow="Customer"
+              title={customerData.company.name}
+              meta={[
+                customerData.company.autopartCustomerCode ||
+                  customerData.company.accountNumber ||
+                  "No Autopart code",
+                customerData.company.salesperson?.name ?? "",
+              ]}
+              onChange={() => setChangingEntity(true)}
+              changeLabel="Change customer"
+            />
+          ) : (
+            <SiField label="Customer" className="max-w-xl">
               <input
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName()}
                 placeholder="Search name or Autopart account…"
                 value={customerQ}
                 onChange={(e) => setCustomerQ(e.target.value)}
+                autoFocus={changingEntity}
               />
-              {customerHits.length > 0 ? (
+              {showCustomerHits ? (
                 <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
                   {customerHits.map((c) => (
                     <li key={c.id}>
@@ -448,74 +473,92 @@ function GapAnalysisPage() {
                         type="button"
                         className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
                         onClick={() => {
-                          setCustomerQ(c.name);
+                          setCustomerQ("");
                           setCustomerHits([]);
+                          setChangingEntity(false);
                           patch({ companyId: c.id, page: 1 });
                         }}
                       >
                         <span className="font-medium">{c.name}</span>
                         <span className="text-[11px] text-steel">
                           {c.autopartCustomerCode || c.accountNumber || "No Autopart code"}
+                          {c.salesperson ? ` · ${c.salesperson.name}` : ""}
                         </span>
                       </button>
                     </li>
                   ))}
                 </ul>
               ) : null}
-            </label>
-          ) : (
-            <label className="text-[12px] lg:col-span-2">
-              Product / SKU
-              <input
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
-                placeholder="Search SKU, name, historic SKU…"
-                value={productQ}
-                onChange={(e) => setProductQ(e.target.value)}
-              />
-              {productHits.length > 0 ? (
-                <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
-                  {productHits.map((p) => (
-                    <li key={p.sku}>
-                      <button
-                        type="button"
-                        className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
-                        onClick={() => {
-                          setProductQ(p.sku);
-                          setProductHits([]);
-                          patch({ sku: p.sku, page: 1 });
-                        }}
-                      >
-                        <span className="font-medium">{p.name}</span>
-                        <span className="font-mono text-[11px] text-steel">{p.sku}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </label>
-          )}
+            </SiField>
+          )
+        ) : productSelected && productData && !changingEntity ? (
+          <SiEntityContext
+            eyebrow="Product"
+            title={productData.product.name}
+            meta={[
+              productData.product.sku,
+              productData.product.brandName ?? "",
+              !productData.product.inCatalogue ? "Historic only" : "",
+            ]}
+            onChange={() => setChangingEntity(true)}
+            changeLabel="Change product"
+          />
+        ) : (
+          <SiField label="Product / SKU" className="max-w-xl">
+            <input
+              className={siControlClassName()}
+              placeholder="Search SKU, name, historic SKU…"
+              value={productQ}
+              onChange={(e) => setProductQ(e.target.value)}
+              autoFocus={changingEntity}
+            />
+            {showProductHits ? (
+              <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
+                {productHits.map((p) => (
+                  <li key={p.sku}>
+                    <button
+                      type="button"
+                      className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
+                      onClick={() => {
+                        setProductQ("");
+                        setProductHits([]);
+                        setChangingEntity(false);
+                        patch({ sku: p.sku, page: 1 });
+                      }}
+                    >
+                      <span className="font-medium">{p.name}</span>
+                      <span className="font-mono text-[11px] text-steel">
+                        {p.sku}
+                        {!p.inCatalogue ? " · Historic only" : p.brandName ? ` · ${p.brandName}` : ""}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </SiField>
+        )}
 
-          <label className="text-[12px]">
-            Selected period
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 lg:max-w-3xl">
+          <SiField label="Selected period">
             <select
-              className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+              className={siControlClassName(period === "CUSTOM")}
               value={period}
               onChange={(e) =>
                 patch({ period: e.target.value as SalesEnquiryPeriodPreset, page: 1 })
               }
             >
-              {PERIOD_OPTIONS.map((o) => (
+              {SI_PERIOD_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
             </select>
-          </label>
+          </SiField>
 
-          <label className="text-[12px]">
-            Compare with
+          <SiField label="Compare with">
             <select
-              className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+              className={siControlClassName(compare !== "PREVIOUS")}
               value={compare}
               onChange={(e) => patch({ compare: e.target.value as GapCompareMode, page: 1 })}
             >
@@ -523,52 +566,48 @@ function GapAnalysisPage() {
               <option value="PREVIOUS_YEAR">Same period previous year</option>
               <option value="CUSTOM">Custom comparison</option>
             </select>
-          </label>
+          </SiField>
         </div>
 
         {period === "CUSTOM" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-[12px]">
-              Selected from
+          <div className="grid gap-2 sm:grid-cols-2 lg:max-w-xl">
+            <SiField label="Selected from">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.from ?? ""}
                 onChange={(e) => patch({ from: e.target.value || null, page: 1 })}
               />
-            </label>
-            <label className="text-[12px]">
-              Selected to
+            </SiField>
+            <SiField label="Selected to">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.to ?? ""}
                 onChange={(e) => patch({ to: e.target.value || null, page: 1 })}
               />
-            </label>
+            </SiField>
           </div>
         ) : null}
 
         {compare === "CUSTOM" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-[12px]">
-              Comparison from
+          <div className="grid gap-2 sm:grid-cols-2 lg:max-w-xl">
+            <SiField label="Comparison from">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.compareFrom ?? ""}
                 onChange={(e) => patch({ compareFrom: e.target.value || null })}
               />
-            </label>
-            <label className="text-[12px]">
-              Comparison to
+            </SiField>
+            <SiField label="Comparison to">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.compareTo ?? ""}
                 onChange={(e) => patch({ compareTo: e.target.value || null })}
               />
-            </label>
+            </SiField>
           </div>
         ) : null}
 
@@ -590,6 +629,7 @@ function GapAnalysisPage() {
             onCompareBy={(v) => patch({ compareBy: v, page: 1 })}
             onBrand={(v) => patch({ brandId: v || null, page: 1 })}
             onCategory={(v) => patch({ categoryId: v || null, page: 1 })}
+            onClearFilters={clearTableFilters}
             page={page}
             totalPages={totalPages}
             onPage={(p) => patch({ page: p })}
@@ -612,6 +652,7 @@ function GapAnalysisPage() {
             onSort={(v) => patch({ sort: v, page: 1 })}
             onCompareBy={(v) => patch({ compareBy: v, page: 1 })}
             onSalesRep={(v) => patch({ salesRepId: v || null, page: 1 })}
+            onClearFilters={clearTableFilters}
             page={page}
             totalPages={totalPages}
             onPage={(p) => patch({ page: p })}
@@ -632,100 +673,37 @@ function GapAnalysisPage() {
   );
 }
 
-function CountStrip({
-  counts,
-}: {
-  counts: { stopped: number; decreased: number; increased: number; new: number; unchanged: number };
-}) {
-  const cards = [
-    { label: "Stopped buying", value: counts.stopped },
-    { label: "Decreased", value: counts.decreased },
-    { label: "Increased", value: counts.increased },
-    { label: "New", value: counts.new },
-  ];
-  return (
-    <div className="grid gap-2 sm:grid-cols-4">
-      {cards.map((c) => (
-        <div key={c.label} className="border-b border-border/70 pb-2">
-          <div className="text-[10px] uppercase tracking-wide text-steel">{c.label}</div>
-          <div className="mt-1 font-display text-xl font-semibold tabular-nums">{c.value}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
+const GAP_STATUS_CARDS = ["STOPPED", "DECREASED", "INCREASED", "NEW"] as const;
 
-function OverallMovement({
-  data,
-  showCustomers = false,
+function GapStatusCards({
+  counts,
+  status,
+  mode,
+  onStatus,
 }: {
-  data: {
-    selectedPeriod: { from: string; to: string };
-    comparisonPeriod: { from: string; to: string };
-    overall: {
-      netSales: { selected: string | number; comparison: string | number; change: string | number; percentChange: number | null };
-      units: { selected: string | number; comparison: string | number; change: string | number; percentChange: number | null };
-      customers?: { selected: string | number; comparison: string | number; change: string | number; percentChange: number | null };
-    };
-  };
-  showCustomers?: boolean;
+  counts: { stopped: number; decreased: number; increased: number; new: number };
+  status: string;
+  mode: "customers" | "products";
+  onStatus: (v: string) => void;
 }) {
+  const byKey = {
+    STOPPED: counts.stopped,
+    DECREASED: counts.decreased,
+    INCREASED: counts.increased,
+    NEW: counts.new,
+  } as const;
   return (
-    <div className="overflow-x-auto">
-      <p className="mb-2 text-[11px] uppercase tracking-wide text-steel">
-        Selected {formatQuoteDateOnlyUk(data.selectedPeriod.from)} –{" "}
-        {formatQuoteDateOnlyUk(data.selectedPeriod.to)} · Comparison{" "}
-        {formatQuoteDateOnlyUk(data.comparisonPeriod.from)} –{" "}
-        {formatQuoteDateOnlyUk(data.comparisonPeriod.to)}
-      </p>
-      <table className="w-full text-left text-[13px]">
-        <thead>
-          <tr className="border-b border-border text-[11px] uppercase tracking-wide text-steel">
-            <th className="py-2 pr-3">Metric</th>
-            <th className="py-2 pr-3 text-right">Selected</th>
-            <th className="py-2 pr-3 text-right">Comparison</th>
-            <th className="py-2 pr-3 text-right">Change</th>
-            <th className="py-2 text-right">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr className="border-b border-border/50">
-            <td className="py-2 pr-3">Net sales</td>
-            <td className="py-2 pr-3 text-right tabular-nums">
-              {gbp(String(data.overall.netSales.selected))}
-            </td>
-            <td className="py-2 pr-3 text-right tabular-nums">
-              {gbp(String(data.overall.netSales.comparison))}
-            </td>
-            <td className="py-2 pr-3 text-right tabular-nums">
-              {gbp(String(data.overall.netSales.change))}
-            </td>
-            <td className="py-2 text-right tabular-nums">
-              {pct(data.overall.netSales.percentChange)}
-            </td>
-          </tr>
-          <tr className="border-b border-border/50">
-            <td className="py-2 pr-3">Units</td>
-            <td className="py-2 pr-3 text-right tabular-nums">{data.overall.units.selected}</td>
-            <td className="py-2 pr-3 text-right tabular-nums">{data.overall.units.comparison}</td>
-            <td className="py-2 pr-3 text-right tabular-nums">{data.overall.units.change}</td>
-            <td className="py-2 text-right tabular-nums">{pct(data.overall.units.percentChange)}</td>
-          </tr>
-          {showCustomers && data.overall.customers ? (
-            <tr className="border-b border-border/50">
-              <td className="py-2 pr-3">Customers</td>
-              <td className="py-2 pr-3 text-right tabular-nums">{data.overall.customers.selected}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">
-                {data.overall.customers.comparison}
-              </td>
-              <td className="py-2 pr-3 text-right tabular-nums">{data.overall.customers.change}</td>
-              <td className="py-2 text-right tabular-nums">
-                {pct(data.overall.customers.percentChange)}
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      {GAP_STATUS_CARDS.map((s) => (
+        <SiGapStatusCard
+          key={s}
+          status={s}
+          count={byKey[s]}
+          active={status === s}
+          mode={mode}
+          onClick={() => onStatus(toggleGapStatusFilter(status, s))}
+        />
+      ))}
     </div>
   );
 }
@@ -744,6 +722,7 @@ function CustomerGapView({
   onCompareBy,
   onBrand,
   onCategory,
+  onClearFilters,
   page,
   totalPages,
   onPage,
@@ -762,39 +741,64 @@ function CustomerGapView({
   onCompareBy: (v: "UNITS" | "NET_SALES") => void;
   onBrand: (v: string) => void;
   onCategory: (v: string) => void;
+  onClearFilters: () => void;
   page: number;
   totalPages: number;
   onPage: (p: number) => void;
   enquiryLink: (sku: string) => string;
 }) {
+  const filtersActive = hasActiveGapTableFilters({
+    status,
+    compareBy,
+    brandId,
+    categoryId,
+    q: filterQ,
+    sort,
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="border-b border-border pb-3">
-        <h2 className="font-display text-xl font-semibold uppercase tracking-wide">
-          {data.company.name}
-        </h2>
-        <p className="mt-1 text-[13px] text-steel">
-          {data.company.autopartCustomerCode || data.company.accountNumber || "No Autopart code"}
-          {data.company.salesperson ? ` · ${data.company.salesperson.name}` : ""}
-        </p>
-        <p className="mt-1 text-[11px] text-steel">{data.dataSource}</p>
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <SiPeriodSummary
+          selectedFrom={data.selectedPeriod.from}
+          selectedTo={data.selectedPeriod.to}
+          comparisonFrom={data.comparisonPeriod.from}
+          comparisonTo={data.comparisonPeriod.to}
+        />
+        <SiProvenance text={data.dataSource} />
       </div>
 
-      <CountStrip counts={data.statusCounts} />
-      <OverallMovement data={data} />
+      <GapStatusCards
+        counts={data.statusCounts}
+        status={status}
+        mode="customers"
+        onStatus={onStatus}
+      />
 
-      {(data.brandMovement.length > 0 || data.categoryMovement.length > 0) && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <MovementTable title="Brand" rows={data.brandMovement} />
-          <MovementTable title="Category" rows={data.categoryMovement} />
-        </div>
-      )}
+      <SiComparisonSummary
+        rows={[
+          {
+            label: "Net sales",
+            selected: String(data.overall.netSales.selected),
+            comparison: String(data.overall.netSales.comparison),
+            change: data.overall.netSales.change,
+            percentChange: data.overall.netSales.percentChange,
+            money: true,
+          },
+          {
+            label: "Units",
+            selected: String(data.overall.units.selected),
+            comparison: String(data.overall.units.comparison),
+            change: data.overall.units.change,
+            percentChange: data.overall.units.percentChange,
+          },
+        ]}
+      />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <label className="text-[12px]">
-          Status
+      <div className="flex flex-wrap items-end gap-2">
+        <SiField label="Status" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(status !== "ALL_CHANGES")}
             value={status}
             onChange={(e) => onStatus(e.target.value)}
           >
@@ -805,31 +809,28 @@ function CustomerGapView({
             <option value="NEW">New</option>
             <option value="UNCHANGED">Unchanged</option>
           </select>
-        </label>
-        <label className="text-[12px]">
-          Compare by
+        </SiField>
+        <SiField label="Compare by" className="min-w-[8rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(compareBy !== "UNITS")}
             value={compareBy}
             onChange={(e) => onCompareBy(e.target.value as "UNITS" | "NET_SALES")}
           >
             <option value="UNITS">Units</option>
             <option value="NET_SALES">Net sales</option>
           </select>
-        </label>
-        <label className="text-[12px]">
-          Search
+        </SiField>
+        <SiField label="Search" className="min-w-[10rem] flex-1">
           <input
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(filterQ.trim()))}
             value={filterQ}
             onChange={(e) => setFilterQ(e.target.value)}
             placeholder="SKU or name"
           />
-        </label>
-        <label className="text-[12px]">
-          Brand
+        </SiField>
+        <SiField label="Brand" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(brandId))}
             value={brandId}
             onChange={(e) => onBrand(e.target.value)}
           >
@@ -840,11 +841,10 @@ function CustomerGapView({
               </option>
             ))}
           </select>
-        </label>
-        <label className="text-[12px]">
-          Category
+        </SiField>
+        <SiField label="Category" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(categoryId))}
             value={categoryId}
             onChange={(e) => onCategory(e.target.value)}
           >
@@ -855,11 +855,10 @@ function CustomerGapView({
               </option>
             ))}
           </select>
-        </label>
-        <label className="text-[12px]">
-          Sort
+        </SiField>
+        <SiField label="Sort" className="min-w-[11rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(sort !== "NET_DECREASE")}
             value={sort}
             onChange={(e) => onSort(e.target.value)}
           >
@@ -870,7 +869,8 @@ function CustomerGapView({
             <option value="RECENT">Most recently purchased</option>
             <option value="NAME_AZ">Product A–Z</option>
           </select>
-        </label>
+        </SiField>
+        {filtersActive ? <SiClearFiltersButton onClick={onClearFilters} /> : null}
       </div>
 
       {data.items.total === 0 ? (
@@ -886,25 +886,27 @@ function CustomerGapView({
         <>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-left text-[13px]">
-              <thead>
+              <SiStickyTableHead>
                 <tr className="border-b-2 border-foreground text-[11px] uppercase tracking-wide text-steel">
                   <th className="py-2 pr-2">Status</th>
                   <th className="py-2 pr-2">Product</th>
-                  <th className="py-2 pr-2 text-right">Cmp qty</th>
-                  <th className="py-2 pr-2 text-right">Sel qty</th>
-                  <th className="py-2 pr-2 text-right">Qty Δ</th>
-                  <th className="py-2 pr-2 text-right">Cmp net</th>
-                  <th className="py-2 pr-2 text-right">Sel net</th>
-                  <th className="py-2 pr-2 text-right">Net Δ</th>
-                  <th className="py-2 pr-2">Last purchased</th>
+                  <th className="py-2 pr-2 text-right">Previous Qty</th>
+                  <th className="py-2 pr-2 text-right">Selected Qty</th>
+                  <th className="py-2 pr-2 text-right">Qty Change</th>
+                  <th className="py-2 pr-2 text-right">Previous Net</th>
+                  <th className="py-2 pr-2 text-right">Selected Net</th>
+                  <th className="py-2 pr-2 text-right">Net Change</th>
+                  <th className="py-2 pr-2">Last Purchased</th>
                   <th className="py-2">Action</th>
                 </tr>
-              </thead>
+              </SiStickyTableHead>
               <tbody>
                 {data.items.items.map((r) => (
                   <tr key={r.sku} className="border-b border-border/60">
                     <td className="py-2 pr-2">
-                      <StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status)}</StatusBadge>
+                      <StatusBadge tone={statusTone(r.status)}>
+                        {gapStatusLabel(r.status)}
+                      </StatusBadge>
                     </td>
                     <td className="py-2 pr-2">
                       <div className="font-medium">{r.name}</div>
@@ -920,20 +922,23 @@ function CustomerGapView({
                     </td>
                     <td className="py-2 pr-2 text-right tabular-nums">{r.comparisonQty}</td>
                     <td className="py-2 pr-2 text-right tabular-nums">{r.selectedQty}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{r.qtyChange}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{gbp(r.comparisonNetSales)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{gbp(r.selectedNetSales)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{gbp(r.netChange)}</td>
+                    <td className="py-2 pr-2 text-right">
+                      <SiMovementValue change={r.qtyChange} emphasize />
+                    </td>
+                    <td className="py-2 pr-2 text-right tabular-nums">
+                      {gbp(r.comparisonNetSales)}
+                    </td>
+                    <td className="py-2 pr-2 text-right tabular-nums">
+                      {gbp(r.selectedNetSales)}
+                    </td>
+                    <td className="py-2 pr-2 text-right">
+                      <SiMovementValue change={r.netChange} money emphasize />
+                    </td>
                     <td className="py-2 pr-2 text-steel">
                       {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                     </td>
                     <td className="py-2">
-                      <a
-                        href={enquiryLink(r.sku)}
-                        className="text-[11px] font-bold uppercase text-primary"
-                      >
-                        View enquiry
-                      </a>
+                      <SiViewEnquiryLink href={enquiryLink(r.sku)} />
                     </td>
                   </tr>
                 ))}
@@ -948,49 +953,64 @@ function CustomerGapView({
                     <div className="font-medium">{r.name}</div>
                     <div className="font-mono text-[11px] text-steel">{r.sku}</div>
                   </div>
-                  <StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status)}</StatusBadge>
+                  <StatusBadge tone={statusTone(r.status)}>
+                    {gapStatusLabel(r.status)}
+                  </StatusBadge>
                 </div>
                 <dl className="mt-2 grid grid-cols-2 gap-1 text-[12px]">
                   <div>
-                    <dt className="text-steel">Cmp qty</dt>
+                    <dt className="text-steel">Previous Qty</dt>
                     <dd className="tabular-nums">{r.comparisonQty}</dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Sel qty</dt>
+                    <dt className="text-steel">Selected Qty</dt>
                     <dd className="tabular-nums">{r.selectedQty}</dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Cmp net</dt>
+                    <dt className="text-steel">Previous Net</dt>
                     <dd className="tabular-nums">{gbp(r.comparisonNetSales)}</dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Sel net</dt>
+                    <dt className="text-steel">Selected Net</dt>
                     <dd className="tabular-nums">{gbp(r.selectedNetSales)}</dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Qty Δ</dt>
-                    <dd className="tabular-nums">{r.qtyChange}</dd>
+                    <dt className="text-steel">Qty Change</dt>
+                    <dd>
+                      <SiMovementValue change={r.qtyChange} emphasize />
+                    </dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Net Δ</dt>
-                    <dd className="tabular-nums">{gbp(r.netChange)}</dd>
+                    <dt className="text-steel">Net Change</dt>
+                    <dd>
+                      <SiMovementValue change={r.netChange} money emphasize />
+                    </dd>
                   </div>
                 </dl>
                 <p className="mt-1 text-[12px] text-steel">
                   Last purchased{" "}
                   {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                 </p>
-                <a
-                  href={enquiryLink(r.sku)}
-                  className="mt-2 inline-block text-[11px] font-bold uppercase text-primary"
-                >
-                  View enquiry
-                </a>
+                <div className="mt-2">
+                  <SiViewEnquiryLink href={enquiryLink(r.sku)} />
+                </div>
               </div>
             ))}
           </div>
-          <Pager page={page} totalPages={totalPages} total={data.items.total} onPage={onPage} />
+          <SiPager page={page} totalPages={totalPages} total={data.items.total} onPage={onPage} />
         </>
+      )}
+
+      {(data.brandMovement.length > 0 || data.categoryMovement.length > 0) && (
+        <details className="rounded-md border border-border/70">
+          <summary className="cursor-pointer px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-steel">
+            Breakdown
+          </summary>
+          <div className="grid gap-4 border-t border-border/60 px-3 py-3 lg:grid-cols-2">
+            <MovementTable title="Brand" rows={data.brandMovement} />
+            <MovementTable title="Category" rows={data.categoryMovement} />
+          </div>
+        </details>
       )}
     </div>
   );
@@ -1008,6 +1028,7 @@ function ProductGapView({
   onSort,
   onCompareBy,
   onSalesRep,
+  onClearFilters,
   page,
   totalPages,
   onPage,
@@ -1024,40 +1045,74 @@ function ProductGapView({
   onSort: (v: string) => void;
   onCompareBy: (v: "UNITS" | "NET_SALES") => void;
   onSalesRep: (v: string) => void;
+  onClearFilters: () => void;
   page: number;
   totalPages: number;
   onPage: (p: number) => void;
   enquiryLink: (companyId: string) => string;
 }) {
+  const filtersActive = hasActiveGapTableFilters({
+    status,
+    compareBy,
+    salesRepId,
+    q: filterQ,
+    sort,
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="border-b border-border pb-3">
-        <h2 className="font-display text-xl font-semibold uppercase tracking-wide">
-          {data.product.name}
-        </h2>
-        <p className="mt-1 font-mono text-[13px] text-steel">
-          {data.product.sku}
-          {!data.product.inCatalogue ? " · Historic only" : ""}
-        </p>
-        <p className="mt-1 text-[11px] text-steel">{data.dataSource}</p>
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <SiPeriodSummary
+          selectedFrom={data.selectedPeriod.from}
+          selectedTo={data.selectedPeriod.to}
+          comparisonFrom={data.comparisonPeriod.from}
+          comparisonTo={data.comparisonPeriod.to}
+        />
+        <SiProvenance text={data.dataSource} />
       </div>
 
-      <CountStrip
-        counts={{
-          stopped: data.statusCounts.stopped,
-          decreased: data.statusCounts.decreased,
-          increased: data.statusCounts.increased,
-          new: data.statusCounts.new,
-          unchanged: data.statusCounts.unchanged,
-        }}
+      <GapStatusCards
+        counts={data.statusCounts}
+        status={status}
+        mode="products"
+        onStatus={onStatus}
       />
-      <OverallMovement data={data} showCustomers />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        <label className="text-[12px]">
-          Status
+      <SiComparisonSummary
+        rows={[
+          {
+            label: "Net sales",
+            selected: String(data.overall.netSales.selected),
+            comparison: String(data.overall.netSales.comparison),
+            change: data.overall.netSales.change,
+            percentChange: data.overall.netSales.percentChange,
+            money: true,
+          },
+          {
+            label: "Units",
+            selected: String(data.overall.units.selected),
+            comparison: String(data.overall.units.comparison),
+            change: data.overall.units.change,
+            percentChange: data.overall.units.percentChange,
+          },
+          ...(data.overall.customers
+            ? [
+                {
+                  label: "Customers",
+                  selected: String(data.overall.customers.selected),
+                  comparison: String(data.overall.customers.comparison),
+                  change: data.overall.customers.change,
+                  percentChange: data.overall.customers.percentChange,
+                },
+              ]
+            : []),
+        ]}
+      />
+
+      <div className="flex flex-wrap items-end gap-2">
+        <SiField label="Status" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(status !== "ALL_CHANGES")}
             value={status}
             onChange={(e) => onStatus(e.target.value)}
           >
@@ -1068,31 +1123,28 @@ function ProductGapView({
             <option value="NEW">New</option>
             <option value="UNCHANGED">Unchanged</option>
           </select>
-        </label>
-        <label className="text-[12px]">
-          Compare by
+        </SiField>
+        <SiField label="Compare by" className="min-w-[8rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(compareBy !== "UNITS")}
             value={compareBy}
             onChange={(e) => onCompareBy(e.target.value as "UNITS" | "NET_SALES")}
           >
             <option value="UNITS">Units</option>
             <option value="NET_SALES">Net sales</option>
           </select>
-        </label>
-        <label className="text-[12px]">
-          Search
+        </SiField>
+        <SiField label="Search" className="min-w-[10rem] flex-1">
           <input
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(filterQ.trim()))}
             value={filterQ}
             onChange={(e) => setFilterQ(e.target.value)}
             placeholder="Customer or account"
           />
-        </label>
-        <label className="text-[12px]">
-          Salesperson
+        </SiField>
+        <SiField label="Salesperson" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(salesRepId))}
             value={salesRepId}
             onChange={(e) => onSalesRep(e.target.value)}
           >
@@ -1103,11 +1155,10 @@ function ProductGapView({
               </option>
             ))}
           </select>
-        </label>
-        <label className="text-[12px]">
-          Sort
+        </SiField>
+        <SiField label="Sort" className="min-w-[11rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(sort !== "NET_DECREASE")}
             value={sort}
             onChange={(e) => onSort(e.target.value)}
           >
@@ -1118,7 +1169,8 @@ function ProductGapView({
             <option value="RECENT">Most recently purchased</option>
             <option value="NAME_AZ">Customer A–Z</option>
           </select>
-        </label>
+        </SiField>
+        {filtersActive ? <SiClearFiltersButton onClick={onClearFilters} /> : null}
       </div>
 
       {data.items.total === 0 ? (
@@ -1129,26 +1181,28 @@ function ProductGapView({
         <>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-left text-[13px]">
-              <thead>
+              <SiStickyTableHead>
                 <tr className="border-b-2 border-foreground text-[11px] uppercase tracking-wide text-steel">
                   <th className="py-2 pr-2">Status</th>
                   <th className="py-2 pr-2">Customer</th>
                   <th className="py-2 pr-2">Salesperson</th>
-                  <th className="py-2 pr-2 text-right">Cmp qty</th>
-                  <th className="py-2 pr-2 text-right">Sel qty</th>
-                  <th className="py-2 pr-2 text-right">Qty Δ</th>
-                  <th className="py-2 pr-2 text-right">Cmp net</th>
-                  <th className="py-2 pr-2 text-right">Sel net</th>
-                  <th className="py-2 pr-2 text-right">Net Δ</th>
-                  <th className="py-2 pr-2">Last purchased</th>
+                  <th className="py-2 pr-2 text-right">Previous Qty</th>
+                  <th className="py-2 pr-2 text-right">Selected Qty</th>
+                  <th className="py-2 pr-2 text-right">Qty Change</th>
+                  <th className="py-2 pr-2 text-right">Previous Net</th>
+                  <th className="py-2 pr-2 text-right">Selected Net</th>
+                  <th className="py-2 pr-2 text-right">Net Change</th>
+                  <th className="py-2 pr-2">Last Purchased</th>
                   <th className="py-2">Action</th>
                 </tr>
-              </thead>
+              </SiStickyTableHead>
               <tbody>
                 {data.items.items.map((r) => (
                   <tr key={r.companyId} className="border-b border-border/60">
                     <td className="py-2 pr-2">
-                      <StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status)}</StatusBadge>
+                      <StatusBadge tone={statusTone(r.status)}>
+                        {gapStatusLabel(r.status)}
+                      </StatusBadge>
                     </td>
                     <td className="py-2 pr-2">
                       <div className="font-medium">{r.name}</div>
@@ -1157,20 +1211,23 @@ function ProductGapView({
                     <td className="py-2 pr-2 text-steel">{r.salespersonName || "—"}</td>
                     <td className="py-2 pr-2 text-right tabular-nums">{r.comparisonQty}</td>
                     <td className="py-2 pr-2 text-right tabular-nums">{r.selectedQty}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{r.qtyChange}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{gbp(r.comparisonNetSales)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{gbp(r.selectedNetSales)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{gbp(r.netChange)}</td>
+                    <td className="py-2 pr-2 text-right">
+                      <SiMovementValue change={r.qtyChange} emphasize />
+                    </td>
+                    <td className="py-2 pr-2 text-right tabular-nums">
+                      {gbp(r.comparisonNetSales)}
+                    </td>
+                    <td className="py-2 pr-2 text-right tabular-nums">
+                      {gbp(r.selectedNetSales)}
+                    </td>
+                    <td className="py-2 pr-2 text-right">
+                      <SiMovementValue change={r.netChange} money emphasize />
+                    </td>
                     <td className="py-2 pr-2 text-steel">
                       {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                     </td>
                     <td className="py-2">
-                      <a
-                        href={enquiryLink(r.companyId)}
-                        className="text-[11px] font-bold uppercase text-primary"
-                      >
-                        View enquiry
-                      </a>
+                      <SiViewEnquiryLink href={enquiryLink(r.companyId)} />
                     </td>
                   </tr>
                 ))}
@@ -1185,20 +1242,30 @@ function ProductGapView({
                     <div className="font-medium">{r.name}</div>
                     <div className="font-mono text-[11px] text-steel">{r.account || "—"}</div>
                   </div>
-                  <StatusBadge tone={statusTone(r.status)}>{statusLabel(r.status)}</StatusBadge>
+                  <StatusBadge tone={statusTone(r.status)}>
+                    {gapStatusLabel(r.status)}
+                  </StatusBadge>
                 </div>
                 <dl className="mt-2 grid grid-cols-2 gap-1 text-[12px]">
                   <div>
-                    <dt className="text-steel">Cmp qty</dt>
+                    <dt className="text-steel">Previous Qty</dt>
                     <dd className="tabular-nums">{r.comparisonQty}</dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Sel qty</dt>
+                    <dt className="text-steel">Selected Qty</dt>
                     <dd className="tabular-nums">{r.selectedQty}</dd>
                   </div>
                   <div>
-                    <dt className="text-steel">Net Δ</dt>
-                    <dd className="tabular-nums">{gbp(r.netChange)}</dd>
+                    <dt className="text-steel">Qty Change</dt>
+                    <dd>
+                      <SiMovementValue change={r.qtyChange} emphasize />
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Net Change</dt>
+                    <dd>
+                      <SiMovementValue change={r.netChange} money emphasize />
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-steel">Last purchased</dt>
@@ -1206,17 +1273,18 @@ function ProductGapView({
                       {r.lastPurchasedDate ? formatQuoteDateOnlyUk(r.lastPurchasedDate) : "—"}
                     </dd>
                   </div>
+                  <div>
+                    <dt className="text-steel">Salesperson</dt>
+                    <dd>{r.salespersonName || "—"}</dd>
+                  </div>
                 </dl>
-                <a
-                  href={enquiryLink(r.companyId)}
-                  className="mt-2 inline-block text-[11px] font-bold uppercase text-primary"
-                >
-                  View enquiry
-                </a>
+                <div className="mt-2">
+                  <SiViewEnquiryLink href={enquiryLink(r.companyId)} />
+                </div>
               </div>
             ))}
           </div>
-          <Pager page={page} totalPages={totalPages} total={data.items.total} onPage={onPage} />
+          <SiPager page={page} totalPages={totalPages} total={data.items.total} onPage={onPage} />
         </>
       )}
     </div>
@@ -1236,6 +1304,7 @@ function MovementTable({
     change: string;
   }>;
 }) {
+  if (rows.length === 0) return null;
   return (
     <div>
       <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-steel">{title}</h3>
@@ -1254,49 +1323,13 @@ function MovementTable({
               <td className="py-1.5 pr-2">{r.label}</td>
               <td className="py-1.5 pr-2 text-right tabular-nums">{gbp(r.comparisonNetSales)}</td>
               <td className="py-1.5 pr-2 text-right tabular-nums">{gbp(r.selectedNetSales)}</td>
-              <td className="py-1.5 text-right tabular-nums">{gbp(r.change)}</td>
+              <td className="py-1.5 text-right">
+                <SiMovementValue change={r.change} money emphasize />
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function Pager({
-  page,
-  totalPages,
-  total,
-  onPage,
-}: {
-  page: number;
-  totalPages: number;
-  total: number;
-  onPage: (p: number) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <p className="text-[12px] text-steel">
-        Page {page} of {totalPages} · {total} rows
-      </p>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onPage(Math.max(1, page - 1))}
-          className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:opacity-40"
-        >
-          Previous
-        </button>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => onPage(page + 1)}
-          className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:opacity-40"
-        >
-          Next
-        </button>
-      </div>
     </div>
   );
 }

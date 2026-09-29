@@ -1,9 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { PanelHeader } from "@/components/ab/AppShell";
 import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
 import { StatusBadge } from "@/components/ab/Badges";
-import { ROUTES } from "@/lib/app-nav";
+import {
+  SalesIntelligenceHeader,
+  SiClearFiltersButton,
+  SiEntityContext,
+  SiExportButton,
+  SiField,
+  SiMetricCard,
+  SiModeSwitch,
+  SiPager,
+  SiPeriodSummary,
+  SiProvenance,
+  SiStickyTableHead,
+  SI_PERIOD_OPTIONS,
+  siControlClassName,
+} from "@/components/sales-intelligence/workspace";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import type { PublicAvailability } from "@/domain/availability";
 import {
@@ -13,6 +26,12 @@ import {
   type SalesEnquiryUrlSearch,
 } from "@/domain/sales-intelligence";
 import type { SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
+import {
+  clearedEnquiryTableFilters,
+  creditMovementHint,
+  hasActiveEnquiryTableFilters,
+  shouldShowEntitySuggestions,
+} from "@/domain/sales-intelligence-ux";
 import {
   exportCustomerSalesEnquiryCsvFn,
   exportProductSalesEnquiryCsvFn,
@@ -62,25 +81,8 @@ type ProductEnquiry = Extract<
   { ok: true }
 >["data"];
 
-const PERIOD_OPTIONS: Array<{ value: SalesEnquiryPeriodPreset; label: string }> = [
-  { value: "THIS_MONTH", label: "This month" },
-  { value: "LAST_MONTH", label: "Last month" },
-  { value: "LAST_30", label: "Last 30 days" },
-  { value: "LAST_90", label: "Last 3 months" },
-  { value: "LAST_180", label: "Last 6 months" },
-  { value: "YTD", label: "Year to date" },
-  { value: "LAST_YEAR", label: "Last year" },
-  { value: "CUSTOM", label: "Custom" },
-];
-
 function gbp(value: string) {
   return formatGbp(value);
-}
-
-function pct(value: number | null) {
-  if (value == null) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}%`;
 }
 
 function SalesEnquiryPage() {
@@ -94,6 +96,7 @@ function SalesEnquiryPage() {
 
   const [customerQ, setCustomerQ] = useState("");
   const [productQ, setProductQ] = useState("");
+  const [changingEntity, setChangingEntity] = useState(false);
   const [customerHits, setCustomerHits] = useState<CustomerHit[]>([]);
   const [productHits, setProductHits] = useState<ProductHit[]>([]);
   const [customerData, setCustomerData] = useState<CustomerEnquiry | null>(null);
@@ -212,6 +215,14 @@ function SalesEnquiryPage() {
   }, [search.q]);
 
   useEffect(() => {
+    setChangingEntity(false);
+    setCustomerQ("");
+    setProductQ("");
+    setCustomerHits([]);
+    setProductHits([]);
+  }, [search.companyId, search.sku, mode]);
+
+  useEffect(() => {
     if (mode !== "customers" || !search.companyId) {
       setCustomerData(null);
       return;
@@ -325,6 +336,21 @@ function SalesEnquiryPage() {
     return 1;
   }, [mode, customerData, productData]);
 
+  const customerSelected = mode === "customers" && Boolean(search.companyId);
+  const productSelected = mode === "products" && Boolean(search.sku);
+  const showCustomerHits = shouldShowEntitySuggestions({
+    entitySelected: customerSelected,
+    changing: changingEntity,
+    queryLength: customerQ.trim().length,
+    hitCount: customerHits.length,
+  });
+  const showProductHits = shouldShowEntitySuggestions({
+    entitySelected: productSelected,
+    changing: changingEntity,
+    queryLength: productQ.trim().length,
+    hitCount: productHits.length,
+  });
+
   async function exportCsv() {
     if (mode === "customers" && search.companyId) {
       const r = await exportCustomerSalesEnquiryCsvFn({
@@ -365,70 +391,57 @@ function SalesEnquiryPage() {
     }
   }
 
+  const canExport =
+    (mode === "customers" && Boolean(search.companyId)) ||
+    (mode === "products" && Boolean(search.sku));
+
   return (
     <div>
-      <PanelHeader
+      <SalesIntelligenceHeader
         title="Sales Enquiry"
-        sub="Internal enquiry from Autopart historic invoices and credits"
-        crumbs={[
-          { label: "Sales Intelligence" },
-          { label: "Sales Enquiry", to: ROUTES.salesIntelligence },
-        ]}
-        actions={
-          (mode === "customers" && search.companyId) || (mode === "products" && search.sku) ? (
-            <button
-              type="button"
-              onClick={() => void exportCsv()}
-              className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase tracking-wide"
-            >
-              Export CSV
-            </button>
-          ) : null
-        }
+        actions={canExport ? <SiExportButton onClick={() => void exportCsv()} /> : null}
       />
 
-      <div className="space-y-4 p-4 sm:p-6">
-        <div className="flex flex-wrap gap-2">
-          {(
-            [
-              ["customers", "Customers"],
-              ["products", "Products"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() =>
-                patch({
-                  mode: value,
-                  companyId: value === "customers" ? search.companyId ?? null : null,
-                  sku: value === "products" ? search.sku ?? null : null,
-                  page: 1,
-                  q: null,
-                })
-              }
-              className={`h-9 rounded-md border px-4 text-[11px] font-bold uppercase tracking-wide ${
-                mode === value
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border text-steel"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <div className="space-y-3 p-4 sm:p-5">
+        <SiModeSwitch
+          mode={mode}
+          onChange={(value) => {
+            setChangingEntity(false);
+            patch({
+              mode: value,
+              companyId: value === "customers" ? search.companyId ?? null : null,
+              sku: value === "products" ? search.sku ?? null : null,
+              page: 1,
+              q: null,
+            });
+          }}
+        />
 
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
-          {mode === "customers" ? (
-            <label className="text-[12px]">
-              Customer
+        {mode === "customers" ? (
+          customerSelected && customerData && !changingEntity ? (
+            <SiEntityContext
+              eyebrow="Customer"
+              title={customerData.company.name}
+              meta={[
+                customerData.company.autopartCustomerCode ||
+                  customerData.company.accountNumber ||
+                  "No Autopart code",
+                customerData.company.salesperson?.name ?? "",
+                customerData.company.paymentTerms ?? "",
+              ]}
+              onChange={() => setChangingEntity(true)}
+              changeLabel="Change customer"
+            />
+          ) : (
+            <SiField label="Customer" className="max-w-xl">
               <input
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName()}
                 placeholder="Search name, Autopart account, postcode…"
                 value={customerQ}
                 onChange={(e) => setCustomerQ(e.target.value)}
+                autoFocus={changingEntity}
               />
-              {customerHits.length > 0 ? (
+              {showCustomerHits ? (
                 <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
                   {customerHits.map((c) => (
                     <li key={c.id}>
@@ -436,8 +449,9 @@ function SalesEnquiryPage() {
                         type="button"
                         className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
                         onClick={() => {
-                          setCustomerQ(c.name);
+                          setCustomerQ("");
                           setCustomerHits([]);
+                          setChangingEntity(false);
                           patch({ companyId: c.id, page: 1 });
                         }}
                       >
@@ -451,67 +465,80 @@ function SalesEnquiryPage() {
                   ))}
                 </ul>
               ) : null}
-            </label>
-          ) : (
-            <label className="text-[12px]">
-              Product / SKU
-              <input
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
-                placeholder="Search SKU, name, brand, historic SKU…"
-                value={productQ}
-                onChange={(e) => setProductQ(e.target.value)}
-              />
-              {productHits.length > 0 ? (
-                <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
-                  {productHits.map((p) => (
-                    <li key={p.sku}>
-                      <button
-                        type="button"
-                        className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
-                        onClick={() => {
-                          setProductQ(p.sku);
-                          setProductHits([]);
-                          patch({ sku: p.sku, page: 1 });
-                        }}
-                      >
-                        <span className="font-medium">{p.name}</span>
-                        <span className="font-mono text-[11px] text-steel">
-                          {p.sku}
-                          {!p.inCatalogue ? " · Historic only" : p.brandName ? ` · ${p.brandName}` : ""}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </label>
-          )}
+            </SiField>
+          )
+        ) : productSelected && productData && !changingEntity ? (
+          <SiEntityContext
+            eyebrow="Product"
+            title={productData.product.name}
+            meta={[
+              productData.product.sku,
+              productData.product.brandName ?? "",
+              !productData.product.inCatalogue ? "Historic only" : "",
+            ]}
+            onChange={() => setChangingEntity(true)}
+            changeLabel="Change product"
+          />
+        ) : (
+          <SiField label="Product / SKU" className="max-w-xl">
+            <input
+              className={siControlClassName()}
+              placeholder="Search SKU, name, brand, historic SKU…"
+              value={productQ}
+              onChange={(e) => setProductQ(e.target.value)}
+              autoFocus={changingEntity}
+            />
+            {showProductHits ? (
+              <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
+                {productHits.map((p) => (
+                  <li key={p.sku}>
+                    <button
+                      type="button"
+                      className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
+                      onClick={() => {
+                        setProductQ("");
+                        setProductHits([]);
+                        setChangingEntity(false);
+                        patch({ sku: p.sku, page: 1 });
+                      }}
+                    >
+                      <span className="font-medium">{p.name}</span>
+                      <span className="font-mono text-[11px] text-steel">
+                        {p.sku}
+                        {!p.inCatalogue ? " · Historic only" : p.brandName ? ` · ${p.brandName}` : ""}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </SiField>
+        )}
 
-          <label className="text-[12px]">
-            Period
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 lg:max-w-3xl">
+          <SiField label="Period">
             <select
-              className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+              className={siControlClassName(period === "CUSTOM")}
               value={period}
               onChange={(e) =>
                 patch({ period: e.target.value as SalesEnquiryPeriodPreset, page: 1 })
               }
             >
-              {PERIOD_OPTIONS.map((o) => (
+              {SI_PERIOD_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
             </select>
-          </label>
+          </SiField>
 
-          <label className="text-[12px]">
-            Compare
+          <SiField label="Compare">
             <select
-              className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+              className={siControlClassName(compare !== "OFF")}
               value={compare}
               onChange={(e) =>
                 patch({
-                  compare: e.target.value as "OFF" | "PREVIOUS" | "CUSTOM",
+                  compare: e.target.value as "OFF" | "PREVIOUS" | "PREVIOUS_YEAR" | "CUSTOM",
                   page: 1,
                 })
               }
@@ -521,12 +548,11 @@ function SalesEnquiryPage() {
               <option value="PREVIOUS_YEAR">Same period previous year</option>
               <option value="CUSTOM">Custom comparison</option>
             </select>
-          </label>
+          </SiField>
 
-          <label className="text-[12px]">
-            Sort
+          <SiField label="Sort">
             <select
-              className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+              className={siControlClassName(sort !== "NET_SALES")}
               value={sort}
               onChange={(e) => patch({ sort: e.target.value, page: 1 })}
             >
@@ -534,54 +560,52 @@ function SalesEnquiryPage() {
               <option value="QTY">Qty high → low</option>
               <option value="PURCHASES">Most purchases</option>
               <option value="RECENT">Most recently purchased</option>
-              <option value="NAME_AZ">{mode === "customers" ? "Product A–Z" : "Customer A–Z"}</option>
+              <option value="NAME_AZ">
+                {mode === "customers" ? "Product A–Z" : "Customer A–Z"}
+              </option>
             </select>
-          </label>
+          </SiField>
         </div>
 
         {period === "CUSTOM" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-[12px]">
-              From
+          <div className="grid gap-2 sm:grid-cols-2 lg:max-w-xl">
+            <SiField label="Selected from">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.from ?? ""}
                 onChange={(e) => patch({ from: e.target.value || null, page: 1 })}
               />
-            </label>
-            <label className="text-[12px]">
-              To
+            </SiField>
+            <SiField label="Selected to">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.to ?? ""}
                 onChange={(e) => patch({ to: e.target.value || null, page: 1 })}
               />
-            </label>
+            </SiField>
           </div>
         ) : null}
 
         {compare === "CUSTOM" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-[12px]">
-              Compare from
+          <div className="grid gap-2 sm:grid-cols-2 lg:max-w-xl">
+            <SiField label="Comparison from">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.compareFrom ?? ""}
                 onChange={(e) => patch({ compareFrom: e.target.value || null })}
               />
-            </label>
-            <label className="text-[12px]">
-              Compare to
+            </SiField>
+            <SiField label="Comparison to">
               <input
                 type="date"
-                className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+                className={siControlClassName(true)}
                 value={search.compareTo ?? ""}
                 onChange={(e) => patch({ compareTo: e.target.value || null })}
               />
-            </label>
+            </SiField>
           </div>
         ) : null}
 
@@ -597,6 +621,11 @@ function SalesEnquiryPage() {
             categoryId={search.categoryId ?? ""}
             onBrand={(id) => patch({ brandId: id || null, page: 1 })}
             onCategory={(id) => patch({ categoryId: id || null, page: 1 })}
+            onClearFilters={() => {
+              const cleared = clearedEnquiryTableFilters();
+              setFilterQ("");
+              patch({ ...cleared, page: 1 });
+            }}
             expandedSku={expandedSku}
             onToggleSku={(sku) => setExpandedSku((prev) => (prev === sku ? null : sku))}
             page={page}
@@ -610,6 +639,13 @@ function SalesEnquiryPage() {
             data={productData}
             filterQ={filterQ}
             setFilterQ={setFilterQ}
+            salesRepId={search.salesRepId ?? ""}
+            onSalesRep={(id) => patch({ salesRepId: id || null, page: 1 })}
+            onClearFilters={() => {
+              const cleared = clearedEnquiryTableFilters();
+              setFilterQ("");
+              patch({ ...cleared, page: 1 });
+            }}
             expandedCompanyId={expandedCompanyId}
             onToggleCompany={(id) =>
               setExpandedCompanyId((prev) => (prev === id ? null : id))
@@ -629,22 +665,22 @@ function SalesEnquiryPage() {
           />
         ) : null}
 
-        {!loading &&
-        mode === "customers" &&
-        !search.companyId ? (
+        {!loading && mode === "customers" && !search.companyId ? (
           <p className="text-[14px] text-steel">Search and select a customer to begin.</p>
         ) : null}
         {!loading && mode === "products" && !search.sku ? (
-          <p className="text-[14px] text-steel">Search and select a product or historic SKU to begin.</p>
+          <p className="text-[14px] text-steel">
+            Search and select a product or historic SKU to begin.
+          </p>
         ) : null}
       </div>
     </div>
   );
 }
 
-function SummaryStrip({
+function EnquiryMetrics({
   summary,
-  period,
+  comparison,
   showCustomers,
 }: {
   summary: {
@@ -656,90 +692,53 @@ function SummaryStrip({
     productsPurchased: number;
     customers: number;
   };
-  period: { from: string; to: string };
+  comparison: CustomerEnquiry["comparison"];
   showCustomers?: boolean;
 }) {
-  const cards = [
-    { label: "Invoice sales", value: gbp(summary.invoiceSales) },
-    { label: "Credits", value: gbp(summary.credits) },
-    { label: "Net sales", value: gbp(summary.netSales) },
-    { label: "Units", value: String(summary.units) },
-    { label: "Purchase transactions", value: String(summary.purchaseTransactions) },
-    showCustomers
-      ? { label: "Customers", value: String(summary.customers) }
-      : { label: "Products purchased", value: String(summary.productsPurchased) },
-  ];
   return (
-    <div>
-      <p className="mb-2 text-[11px] uppercase tracking-wide text-steel">
-        Period {formatQuoteDateOnlyUk(period.from)} – {formatQuoteDateOnlyUk(period.to)}
-      </p>
-      <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {cards.map((c) => (
-          <div key={c.label} className="border-b border-border/70 pb-2">
-            <div className="text-[10px] uppercase tracking-wide text-steel">{c.label}</div>
-            <div className="mt-1 font-display text-lg font-semibold tabular-nums">{c.value}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ComparisonBlock({
-  comparison,
-}: {
-  comparison: NonNullable<CustomerEnquiry["comparison"]>;
-}) {
-  const rows = [
-    { label: "Invoice sales", m: comparison.invoiceSales, money: true },
-    { label: "Credits", m: comparison.credits, money: true },
-    { label: "Net sales", m: comparison.netSales, money: true },
-    {
-      label: "Units",
-      m: {
-        primary: String(comparison.units.primary),
-        comparison: String(comparison.units.comparison),
-        difference: String(comparison.units.difference),
-        percentChange: comparison.units.percentChange,
-      },
-      money: false,
-    },
-  ];
-  return (
-    <div className="overflow-x-auto">
-      <p className="mb-2 text-[11px] uppercase tracking-wide text-steel">
-        Comparison {formatQuoteDateOnlyUk(comparison.comparison.from)} –{" "}
-        {formatQuoteDateOnlyUk(comparison.comparison.to)}
-      </p>
-      <table className="w-full text-left text-[13px]">
-        <thead>
-          <tr className="border-b border-border text-[11px] uppercase tracking-wide text-steel">
-            <th className="py-2 pr-3">Metric</th>
-            <th className="py-2 pr-3 text-right">Primary</th>
-            <th className="py-2 pr-3 text-right">Comparison</th>
-            <th className="py-2 pr-3 text-right">Change</th>
-            <th className="py-2 text-right">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.label} className="border-b border-border/50">
-              <td className="py-2 pr-3">{r.label}</td>
-              <td className="py-2 pr-3 text-right tabular-nums">
-                {r.money ? gbp(r.m.primary) : r.m.primary}
-              </td>
-              <td className="py-2 pr-3 text-right tabular-nums">
-                {r.money ? gbp(r.m.comparison) : r.m.comparison}
-              </td>
-              <td className="py-2 pr-3 text-right tabular-nums">
-                {r.money ? gbp(r.m.difference) : r.m.difference}
-              </td>
-              <td className="py-2 text-right tabular-nums">{pct(r.m.percentChange)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <SiMetricCard
+        label="Net sales"
+        value={gbp(summary.netSales)}
+        primary
+        movement={
+          comparison
+            ? {
+                change: comparison.netSales.difference,
+                percentChange: comparison.netSales.percentChange,
+                money: true,
+              }
+            : null
+        }
+      />
+      <SiMetricCard
+        label="Units"
+        value={String(summary.units)}
+        primary
+        movement={
+          comparison
+            ? {
+                change: comparison.units.difference,
+                percentChange: comparison.units.percentChange,
+              }
+            : null
+        }
+      />
+      <SiMetricCard label="Invoice sales" value={gbp(summary.invoiceSales)} />
+      <SiMetricCard
+        label="Credits"
+        value={gbp(summary.credits)}
+        creditHint={
+          comparison
+            ? creditMovementHint(summary.credits, comparison.credits.comparison)
+            : null
+        }
+      />
+      <SiMetricCard label="Transactions" value={String(summary.purchaseTransactions)} />
+      <SiMetricCard
+        label={showCustomers ? "Customers" : "Products"}
+        value={String(showCustomers ? summary.customers : summary.productsPurchased)}
+      />
     </div>
   );
 }
@@ -752,6 +751,7 @@ function CustomerEnquiryView({
   categoryId,
   onBrand,
   onCategory,
+  onClearFilters,
   expandedSku,
   onToggleSku,
   page,
@@ -765,50 +765,56 @@ function CustomerEnquiryView({
   categoryId: string;
   onBrand: (id: string) => void;
   onCategory: (id: string) => void;
+  onClearFilters: () => void;
   expandedSku: string | null;
   onToggleSku: (sku: string) => void;
   page: number;
   totalPages: number;
   onPage: (p: number) => void;
 }) {
+  const filtersActive = hasActiveEnquiryTableFilters({
+    brandId,
+    categoryId,
+    q: filterQ,
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="border-b border-border pb-3">
-        <h2 className="font-display text-xl font-semibold uppercase tracking-wide">
-          {data.company.name}
-        </h2>
-        <p className="mt-1 text-[13px] text-steel">
-          {data.company.autopartCustomerCode || data.company.accountNumber || "No Autopart code"}
-          {data.company.salesperson ? ` · ${data.company.salesperson.name}` : ""}
-          {data.company.paymentTerms ? ` · ${data.company.paymentTerms}` : ""}
-        </p>
-        <p className="mt-1 text-[11px] text-steel">{data.dataSource}</p>
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <SiPeriodSummary
+          selectedFrom={data.period.from}
+          selectedTo={data.period.to}
+          comparisonFrom={data.comparison?.comparison.from ?? null}
+          comparisonTo={data.comparison?.comparison.to ?? null}
+        />
+        <SiProvenance text={data.dataSource} />
       </div>
 
-      <SummaryStrip summary={data.summary} period={data.period} />
-      {data.comparison ? <ComparisonBlock comparison={data.comparison} /> : null}
+      <EnquiryMetrics summary={data.summary} comparison={data.comparison} />
 
-      {(data.brandBreakdown.length > 0 || data.categoryBreakdown.length > 0) && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <BreakdownTable title="Brand" rows={data.brandBreakdown} />
-          <BreakdownTable title="Category" rows={data.categoryBreakdown} />
-        </div>
-      )}
+      {data.comparison ? (
+        <details className="rounded-md border border-border/70">
+          <summary className="cursor-pointer px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-steel">
+            View full comparison
+          </summary>
+          <div className="overflow-x-auto border-t border-border/60 px-3 py-2">
+            <ComparisonTable comparison={data.comparison} />
+          </div>
+        </details>
+      ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label className="text-[12px]">
-          Search products
+      <div className="flex flex-wrap items-end gap-2">
+        <SiField label="Search products" className="min-w-[10rem] flex-1">
           <input
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(filterQ.trim()))}
             value={filterQ}
             onChange={(e) => setFilterQ(e.target.value)}
             placeholder="SKU or name"
           />
-        </label>
-        <label className="text-[12px]">
-          Brand
+        </SiField>
+        <SiField label="Brand" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(brandId))}
             value={brandId}
             onChange={(e) => onBrand(e.target.value)}
           >
@@ -819,11 +825,10 @@ function CustomerEnquiryView({
               </option>
             ))}
           </select>
-        </label>
-        <label className="text-[12px]">
-          Category
+        </SiField>
+        <SiField label="Category" className="min-w-[9rem]">
           <select
-            className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
+            className={siControlClassName(Boolean(categoryId))}
             value={categoryId}
             onChange={(e) => onCategory(e.target.value)}
           >
@@ -834,7 +839,8 @@ function CustomerEnquiryView({
               </option>
             ))}
           </select>
-        </label>
+        </SiField>
+        {filtersActive ? <SiClearFiltersButton onClick={onClearFilters} /> : null}
       </div>
 
       {data.products.total === 0 ? (
@@ -843,18 +849,18 @@ function CustomerEnquiryView({
         <>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
-              <thead>
+              <SiStickyTableHead>
                 <tr className="border-b-2 border-foreground text-[11px] uppercase tracking-wide text-steel">
-                  <th className="py-2 pr-3">Product</th>
-                  <th className="py-2 pr-3">Last purchased</th>
-                  <th className="py-2 pr-3 text-right">Purchases</th>
-                  <th className="py-2 pr-3 text-right">Qty</th>
-                  <th className="py-2 pr-3 text-right">Invoice</th>
-                  <th className="py-2 pr-3 text-right">Credits</th>
-                  <th className="py-2 pr-3 text-right">Net</th>
-                  <th className="py-2">Availability</th>
+                  <th className="bg-background py-2 pr-3">Product</th>
+                  <th className="bg-background py-2 pr-3">Last purchased</th>
+                  <th className="bg-background py-2 pr-3 text-right">Purchases</th>
+                  <th className="bg-background py-2 pr-3 text-right">Qty</th>
+                  <th className="bg-background py-2 pr-3 text-right">Invoice</th>
+                  <th className="bg-background py-2 pr-3 text-right">Credits</th>
+                  <th className="bg-background py-2 pr-3 text-right">Net</th>
+                  <th className="bg-background py-2">Availability</th>
                 </tr>
-              </thead>
+              </SiStickyTableHead>
               <tbody>
                 {data.products.items.map((item) => (
                   <Fragment key={item.sku}>
@@ -867,7 +873,7 @@ function CustomerEnquiryView({
                         <div className="font-mono text-[11px] text-steel">
                           {item.sku}
                           {item.brandName ? ` · ${item.brandName}` : ""}
-                          {!item.inCatalogue ? " · Historic" : ""}
+                          {!item.inCatalogue ? " · Historic only" : ""}
                         </div>
                       </td>
                       <td className="py-2.5 pr-3 text-steel">
@@ -881,7 +887,9 @@ function CustomerEnquiryView({
                         {gbp(item.invoiceSales)}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{gbp(item.credits)}</td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums">{gbp(item.netSales)}</td>
+                      <td className="py-2.5 pr-3 text-right font-medium tabular-nums">
+                        {gbp(item.netSales)}
+                      </td>
                       <td className="py-2.5">
                         {item.availabilityBand === "historic" ? (
                           <StatusBadge tone="neutral">{item.availabilityLabel}</StatusBadge>
@@ -913,8 +921,20 @@ function CustomerEnquiryView({
               </tbody>
             </table>
           </div>
-          <Pager page={page} totalPages={totalPages} total={data.products.total} onPage={onPage} />
+          <SiPager page={page} totalPages={totalPages} total={data.products.total} onPage={onPage} />
         </>
+      )}
+
+      {(data.brandBreakdown.length > 0 || data.categoryBreakdown.length > 0) && (
+        <details className="rounded-md border border-border/70" open>
+          <summary className="cursor-pointer px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-steel">
+            Breakdown by brand / category
+          </summary>
+          <div className="grid gap-4 border-t border-border/60 p-3 lg:grid-cols-2">
+            <BreakdownTable title="Brand" rows={data.brandBreakdown} />
+            <BreakdownTable title="Category" rows={data.categoryBreakdown} />
+          </div>
+        </details>
       )}
     </div>
   );
@@ -924,6 +944,9 @@ function ProductEnquiryView({
   data,
   filterQ,
   setFilterQ,
+  salesRepId,
+  onSalesRep,
+  onClearFilters,
   expandedCompanyId,
   onToggleCompany,
   onOpenCustomer,
@@ -934,6 +957,9 @@ function ProductEnquiryView({
   data: ProductEnquiry;
   filterQ: string;
   setFilterQ: (v: string) => void;
+  salesRepId: string;
+  onSalesRep: (id: string) => void;
+  onClearFilters: () => void;
   expandedCompanyId: string | null;
   onToggleCompany: (id: string) => void;
   onOpenCustomer: (companyId: string) => void;
@@ -941,40 +967,80 @@ function ProductEnquiryView({
   totalPages: number;
   onPage: (p: number) => void;
 }) {
+  const filtersActive = hasActiveEnquiryTableFilters({
+    salesRepId,
+    q: filterQ,
+  });
+  const salespeople = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of data.customers.items) {
+      if (c.salespersonId && c.salespersonName) map.set(c.salespersonId, c.salespersonName);
+    }
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "en-GB"));
+  }, [data.customers.items]);
+
   return (
-    <div className="space-y-6">
-      <div className="border-b border-border pb-3">
-        <h2 className="font-display text-xl font-semibold uppercase tracking-wide">
-          {data.product.name}
-        </h2>
-        <p className="mt-1 font-mono text-[13px] text-steel">
-          {data.product.sku}
-          {data.product.brandName ? ` · ${data.product.brandName}` : ""}
-          {!data.product.inCatalogue ? " · Historic only (not in catalogue)" : ""}
-        </p>
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <SiPeriodSummary
+          selectedFrom={data.period.from}
+          selectedTo={data.period.to}
+          comparisonFrom={data.comparison?.comparison.from ?? null}
+          comparisonTo={data.comparison?.comparison.to ?? null}
+        />
+        <SiProvenance text={data.dataSource} />
         {data.product.latestAutopartCost !== undefined ? (
-          <p className="mt-1 text-[12px] text-steel">
+          <p className="text-[11px] text-steel">
             Latest Autopart cost:{" "}
             {data.product.latestAutopartCost != null
               ? `£${data.product.latestAutopartCost}`
               : "No cost observation yet"}
           </p>
         ) : null}
-        <p className="mt-1 text-[11px] text-steel">{data.dataSource}</p>
       </div>
 
-      <SummaryStrip summary={data.summary} period={data.period} showCustomers />
-      {data.comparison ? <ComparisonBlock comparison={data.comparison} /> : null}
+      <EnquiryMetrics summary={data.summary} comparison={data.comparison} showCustomers />
 
-      <label className="block text-[12px] sm:max-w-sm">
-        Search customers
-        <input
-          className="mt-1 block h-10 w-full rounded-md border border-border bg-background px-3 text-[13px]"
-          value={filterQ}
-          onChange={(e) => setFilterQ(e.target.value)}
-          placeholder="Customer or account"
-        />
-      </label>
+      {data.comparison ? (
+        <details className="rounded-md border border-border/70">
+          <summary className="cursor-pointer px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-steel">
+            View full comparison
+          </summary>
+          <div className="overflow-x-auto border-t border-border/60 px-3 py-2">
+            <ComparisonTable comparison={data.comparison} />
+          </div>
+        </details>
+      ) : null}
+
+      <div className="flex flex-wrap items-end gap-2">
+        <SiField label="Search customers" className="min-w-[10rem] flex-1">
+          <input
+            className={siControlClassName(Boolean(filterQ.trim()))}
+            value={filterQ}
+            onChange={(e) => setFilterQ(e.target.value)}
+            placeholder="Customer or account"
+          />
+        </SiField>
+        {salespeople.length > 0 ? (
+          <SiField label="Salesperson" className="min-w-[9rem]">
+            <select
+              className={siControlClassName(Boolean(salesRepId))}
+              value={salesRepId}
+              onChange={(e) => onSalesRep(e.target.value)}
+            >
+              <option value="">All salespeople</option>
+              {salespeople.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </SiField>
+        ) : null}
+        {filtersActive ? <SiClearFiltersButton onClick={onClearFilters} /> : null}
+      </div>
 
       {data.customers.total === 0 ? (
         <p className="text-[14px] text-steel">No customers purchased this product in this period.</p>
@@ -982,18 +1048,18 @@ function ProductEnquiryView({
         <>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
-              <thead>
+              <SiStickyTableHead>
                 <tr className="border-b-2 border-foreground text-[11px] uppercase tracking-wide text-steel">
-                  <th className="py-2 pr-3">Customer</th>
-                  <th className="py-2 pr-3">Salesperson</th>
-                  <th className="py-2 pr-3">Last purchased</th>
-                  <th className="py-2 pr-3 text-right">Purchases</th>
-                  <th className="py-2 pr-3 text-right">Qty</th>
-                  <th className="py-2 pr-3 text-right">Invoice</th>
-                  <th className="py-2 pr-3 text-right">Credits</th>
-                  <th className="py-2 text-right">Net</th>
+                  <th className="bg-background py-2 pr-3">Customer</th>
+                  <th className="bg-background py-2 pr-3">Salesperson</th>
+                  <th className="bg-background py-2 pr-3">Last purchased</th>
+                  <th className="bg-background py-2 pr-3 text-right">Purchases</th>
+                  <th className="bg-background py-2 pr-3 text-right">Qty</th>
+                  <th className="bg-background py-2 pr-3 text-right">Invoice</th>
+                  <th className="bg-background py-2 pr-3 text-right">Credits</th>
+                  <th className="bg-background py-2 text-right">Net</th>
                 </tr>
-              </thead>
+              </SiStickyTableHead>
               <tbody>
                 {data.customers.items.map((c) => (
                   <Fragment key={c.companyId}>
@@ -1022,7 +1088,9 @@ function ProductEnquiryView({
                       <td className="py-2.5 pr-3 text-right tabular-nums">{c.units}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{gbp(c.invoiceSales)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{gbp(c.credits)}</td>
-                      <td className="py-2.5 text-right tabular-nums">{gbp(c.netSales)}</td>
+                      <td className="py-2.5 text-right font-medium tabular-nums">
+                        {gbp(c.netSales)}
+                      </td>
                     </tr>
                     {expandedCompanyId === c.companyId && data.transactions ? (
                       <tr className="border-b border-border/40 bg-surface/30">
@@ -1045,10 +1113,71 @@ function ProductEnquiryView({
               </tbody>
             </table>
           </div>
-          <Pager page={page} totalPages={totalPages} total={data.customers.total} onPage={onPage} />
+          <SiPager
+            page={page}
+            totalPages={totalPages}
+            total={data.customers.total}
+            onPage={onPage}
+          />
         </>
       )}
     </div>
+  );
+}
+
+function ComparisonTable({
+  comparison,
+}: {
+  comparison: NonNullable<CustomerEnquiry["comparison"]>;
+}) {
+  const rows = [
+    { label: "Invoice sales", m: comparison.invoiceSales, money: true },
+    { label: "Credits", m: comparison.credits, money: true },
+    { label: "Net sales", m: comparison.netSales, money: true },
+    {
+      label: "Units",
+      m: {
+        primary: String(comparison.units.primary),
+        comparison: String(comparison.units.comparison),
+        difference: String(comparison.units.difference),
+        percentChange: comparison.units.percentChange,
+      },
+      money: false,
+    },
+  ];
+  return (
+    <table className="w-full text-left text-[13px]">
+      <thead>
+        <tr className="border-b border-border text-[11px] uppercase tracking-wide text-steel">
+          <th className="py-2 pr-3">Metric</th>
+          <th className="py-2 pr-3 text-right">Selected</th>
+          <th className="py-2 pr-3 text-right">Comparison</th>
+          <th className="py-2 pr-3 text-right">Change</th>
+          <th className="py-2 text-right">%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.label} className="border-b border-border/50">
+            <td className="py-2 pr-3">{r.label}</td>
+            <td className="py-2 pr-3 text-right tabular-nums">
+              {r.money ? gbp(r.m.primary) : r.m.primary}
+            </td>
+            <td className="py-2 pr-3 text-right tabular-nums">
+              {r.money ? gbp(r.m.comparison) : r.m.comparison}
+            </td>
+            <td className="py-2 pr-3 text-right tabular-nums">
+              {r.money ? gbp(r.m.difference) : r.m.difference}
+            </td>
+            <td className="py-2 text-right tabular-nums">
+              {r.m.percentChange == null
+                ? "—"
+                : `${r.m.percentChange > 0 ? "+" : ""}${r.m.percentChange.toFixed(2)}%`}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1116,9 +1245,7 @@ function TxTable({
       <tbody>
         {rows.map((t, i) => (
           <tr key={`${t.ref}-${i}`} className="border-t border-border/40">
-            <td className="py-1 pr-2">
-              {t.date ? formatQuoteDateOnlyUk(t.date) : "—"}
-            </td>
+            <td className="py-1 pr-2">{t.date ? formatQuoteDateOnlyUk(t.date) : "—"}</td>
             <td className="py-1 pr-2 font-mono">{t.ref}</td>
             <td className="py-1 pr-2">{t.type === "CREDIT" ? "Credit" : "Invoice"}</td>
             <td className="py-1 pr-2 text-steel">{t.detail || "—"}</td>
@@ -1128,44 +1255,6 @@ function TxTable({
         ))}
       </tbody>
     </table>
-  );
-}
-
-function Pager({
-  page,
-  totalPages,
-  total,
-  onPage,
-}: {
-  page: number;
-  totalPages: number;
-  total: number;
-  onPage: (p: number) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <p className="text-[12px] text-steel">
-        Page {page} of {totalPages} · {total} rows
-      </p>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onPage(Math.max(1, page - 1))}
-          className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:opacity-40"
-        >
-          Previous
-        </button>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => onPage(page + 1)}
-          className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:opacity-40"
-        >
-          Next
-        </button>
-      </div>
-    </div>
   );
 }
 
