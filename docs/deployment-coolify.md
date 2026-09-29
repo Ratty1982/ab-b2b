@@ -114,6 +114,26 @@ Coolify’s helper container has killed `docker exec … bash /artifacts/build.s
 
 **This is not an application compile failure.** Raise the Coolify Docker build timeout before retrying.
 
+### Bun version / lockfiles (authoritative)
+
+| Item | Value |
+|------|--------|
+| Docker Bun image | **`oven/bun:1.2.23-alpine`** (pinned; do not use floating `1.2-alpine` alone) |
+| Root `bun.lock` | `lockfileVersion: 1` — generate / refresh with Bun **1.2.x** (currently verified with 1.2.23) |
+| `docker/runtime-bun.lock` | Slim production set from `docker/runtime-package.json`; must also be `lockfileVersion: 1` |
+
+Bun **≥1.4** writes `lockfileVersion: 2`, which Coolify’s Bun **1.2.23** rejects with `Unknown lockfile version`. Never regenerate `docker/runtime-bun.lock` with a newer host Bun.
+
+Regenerate the runtime lockfile:
+
+```bash
+# must be Bun 1.2.23
+curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.23"
+./scripts/generate-runtime-lockfile.sh
+```
+
+Keep `--frozen-lockfile` in the Dockerfile. Do not delete lockfiles to “make deploy work”.
+
 The Docker **deps** stage runs `bun install --frozen-lockfile --production --ignore-scripts` so Playwright/eslint/vitest are not downloaded. `vite`, `nitro`, and `@vitejs/plugin-react` are production dependencies so the image can still compile. Runtime packages come from locked `docker/runtime-package.json` + `docker/runtime-bun.lock` (Prisma + sharp + `imapflow` + `mailparser`). Bun install cache is mounted via BuildKit (`id=ab-bun-cache`) to keep redeploys under the helper wall clock.
 
 **Coolify setting (required on the host):** Application → Advanced / Build → **Docker build timeout** ≥ **15 minutes** (900s). A ~4-minute cap will keep killing first-pull / cold-cache builds even when the Dockerfile and app build are healthy.

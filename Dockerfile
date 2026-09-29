@@ -11,7 +11,10 @@
 # Runtime: Prisma CLI + generated client + sharp + IMAP acquisition libs.
 # Nitro already bundled the application into .output.
 
-FROM oven/bun:1.2-alpine AS deps
+# Pin exact Bun patch (not floating `1.2-alpine`). Host Bun ≥1.4 writes
+# lockfileVersion 2 which 1.2.x rejects — regenerate docker/runtime-bun.lock
+# with this same version (see scripts/generate-runtime-lockfile.sh).
+FROM oven/bun:1.2.23-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml ./
 COPY prisma ./prisma
@@ -20,7 +23,7 @@ ENV NODE_ENV=production
 RUN --mount=type=cache,id=ab-bun-cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile --production --ignore-scripts
 
-FROM oven/bun:1.2-alpine AS build
+FROM oven/bun:1.2.23-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -37,7 +40,7 @@ RUN bun build ./prisma/bootstrap/run-production.ts \
 
 # Minimal runtime packages — locked separately so Coolify does not re-resolve
 # `bun add` on every deploy (that alone was ~50s and rewrote a lockfile).
-FROM oven/bun:1.2-alpine AS runtime-deps
+FROM oven/bun:1.2.23-alpine AS runtime-deps
 WORKDIR /app
 COPY bunfig.toml ./
 COPY docker/runtime-package.json ./package.json
