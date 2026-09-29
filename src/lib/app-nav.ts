@@ -189,7 +189,7 @@ export type NavSectionDef = {
  * Internal layouts (admin, sales, CRM) all consume this tree.
  */
 export const BACK_OFFICE_NAV: NavSectionDef[] = [
-  {
+{
     id: "home",
     label: "Home",
     items: [
@@ -203,7 +203,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-  {
+{
     id: "sales",
     label: "Sales",
     items: [
@@ -254,54 +254,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-  {
-    id: "sales-intelligence",
-    label: "Sales Intelligence",
-    items: [
-      {
-        id: "sales-enquiry",
-        label: "Sales Enquiry",
-        icon: "bar-chart-3",
-        to: ROUTES.salesIntelligence,
-        matchPrefixes: [ROUTES.salesIntelligence],
-        excludePrefixes: [
-          ROUTES.salesIntelligenceGaps,
-          ROUTES.salesIntelligenceOpportunities,
-          ROUTES.salesIntelligenceRebates,
-        ],
-        permission: "sales_intelligence.view",
-        implemented: true,
-      },
-      {
-        id: "sales-gap-analysis",
-        label: "Gap Analysis",
-        icon: "bar-chart-3",
-        to: ROUTES.salesIntelligenceGaps,
-        matchPrefixes: [ROUTES.salesIntelligenceGaps],
-        permission: "sales_intelligence.view",
-        implemented: true,
-      },
-      {
-        id: "sales-range-opportunities",
-        label: "Range Opportunities",
-        icon: "bar-chart-3",
-        to: ROUTES.salesIntelligenceOpportunities,
-        matchPrefixes: [ROUTES.salesIntelligenceOpportunities],
-        permission: "sales_intelligence.view",
-        implemented: true,
-      },
-      {
-        id: "sales-rebate-analysis",
-        label: "Rebate Analysis",
-        icon: "bar-chart-3",
-        to: ROUTES.salesIntelligenceRebates,
-        matchPrefixes: [ROUTES.salesIntelligenceRebates],
-        permission: "sales_intelligence.view",
-        implemented: true,
-      },
-    ],
-  },
-  {
+{
     id: "catalogue",
     label: "Catalogue",
     items: [
@@ -375,7 +328,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-  {
+{
     id: "crm",
     label: "CRM",
     items: [
@@ -426,7 +379,54 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-  {
+{
+    id: "sales-intelligence",
+    label: "Sales Intelligence",
+    items: [
+      {
+        id: "sales-enquiry",
+        label: "Sales Enquiry",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligence,
+        matchPrefixes: [ROUTES.salesIntelligence],
+        excludePrefixes: [
+          ROUTES.salesIntelligenceGaps,
+          ROUTES.salesIntelligenceOpportunities,
+          ROUTES.salesIntelligenceRebates,
+        ],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-gap-analysis",
+        label: "Gap Analysis",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligenceGaps,
+        matchPrefixes: [ROUTES.salesIntelligenceGaps],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-range-opportunities",
+        label: "Range Opportunities",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligenceOpportunities,
+        matchPrefixes: [ROUTES.salesIntelligenceOpportunities],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-rebate-analysis",
+        label: "Rebate Analysis",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligenceRebates,
+        matchPrefixes: [ROUTES.salesIntelligenceRebates],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+    ],
+  },
+{
     id: "website",
     label: "Website",
     items: [
@@ -473,7 +473,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-  {
+{
     id: "operations",
     label: "Operations",
     items: [
@@ -510,7 +510,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-  {
+{
     id: "system",
     label: "System",
     items: [

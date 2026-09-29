@@ -95,13 +95,16 @@ describe("canonical navigation contract", () => {
     expect(sections).toEqual([
       "home",
       "sales",
-      "sales-intelligence",
       "catalogue",
       "crm",
+      "sales-intelligence",
       "website",
       "operations",
       "system",
     ]);
+    // CRM sits under Catalogue (stock tools / Cost Intelligence) and before Sales Intelligence.
+    expect(sections.indexOf("crm")).toBe(sections.indexOf("catalogue") + 1);
+    expect(sections.indexOf("sales-intelligence")).toBe(sections.indexOf("crm") + 1);
   });
 
   it("keeps Website nav as Pages, Homepage, Team, Media in that order", () => {
