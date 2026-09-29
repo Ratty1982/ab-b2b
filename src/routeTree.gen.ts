@@ -30,6 +30,7 @@ import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminBrandsRouteImport } from './routes/admin.brands'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminContentRouteImport } from './routes/admin.content'
+import { Route as AdminCostIntelligenceRouteImport } from './routes/admin.cost-intelligence'
 import { Route as AdminOrdersRouteImport } from './routes/admin.orders'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
@@ -203,6 +204,11 @@ const AdminCategoriesRoute = AdminCategoriesRouteImport.update({
 const AdminContentRoute = AdminContentRouteImport.update({
   id: '/content',
   path: '/content',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminCostIntelligenceRoute = AdminCostIntelligenceRouteImport.update({
+  id: '/cost-intelligence',
+  path: '/cost-intelligence',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminOrdersRoute = AdminOrdersRouteImport.update({
@@ -579,6 +585,7 @@ export interface FileRoutesByFullPath {
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
+  '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/pricing': typeof AdminPricingRouteWithChildren
   '/admin/products': typeof AdminProductsRouteWithChildren
@@ -666,6 +673,7 @@ export interface FileRoutesByTo {
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
+  '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
@@ -751,6 +759,7 @@ export interface FileRoutesById {
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
+  '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/pricing': typeof AdminPricingRouteWithChildren
   '/admin/products': typeof AdminProductsRouteWithChildren
@@ -845,6 +854,7 @@ export interface FileRouteTypes {
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/content'
+    | '/admin/cost-intelligence'
     | '/admin/orders'
     | '/admin/pricing'
     | '/admin/products'
@@ -932,6 +942,7 @@ export interface FileRouteTypes {
     | '/why-automotive-brands'
     | '/admin/brands'
     | '/admin/categories'
+    | '/admin/cost-intelligence'
     | '/admin/roles'
     | '/admin/settings'
     | '/api/build'
@@ -1016,6 +1027,7 @@ export interface FileRouteTypes {
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/content'
+    | '/admin/cost-intelligence'
     | '/admin/orders'
     | '/admin/pricing'
     | '/admin/products'
@@ -1265,6 +1277,13 @@ declare module '@tanstack/react-router' {
       path: '/content'
       fullPath: '/admin/content'
       preLoaderRoute: typeof AdminContentRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/cost-intelligence': {
+      id: '/admin/cost-intelligence'
+      path: '/cost-intelligence'
+      fullPath: '/admin/cost-intelligence'
+      preLoaderRoute: typeof AdminCostIntelligenceRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/orders': {
@@ -1845,6 +1864,7 @@ interface AdminRouteChildren {
   AdminBrandsRoute: typeof AdminBrandsRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminContentRoute: typeof AdminContentRouteWithChildren
+  AdminCostIntelligenceRoute: typeof AdminCostIntelligenceRoute
   AdminOrdersRoute: typeof AdminOrdersRouteWithChildren
   AdminPricingRoute: typeof AdminPricingRouteWithChildren
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
@@ -1860,6 +1880,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminBrandsRoute: AdminBrandsRoute,
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminContentRoute: AdminContentRouteWithChildren,
+  AdminCostIntelligenceRoute: AdminCostIntelligenceRoute,
   AdminOrdersRoute: AdminOrdersRouteWithChildren,
   AdminPricingRoute: AdminPricingRouteWithChildren,
   AdminProductsRoute: AdminProductsRouteWithChildren,

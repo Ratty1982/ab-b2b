@@ -240,6 +240,8 @@ SKU match for cost is the same as stock: trim + case-insensitive exact. Unmatche
 
 Permission: `products.cost.view` (Super Admin, Management, Sales Manager, Accounts). Ordinary Sales Representatives and all trade/customer roles never receive cost. Admin Product → Commercial shows the Autopart cost panel when permitted.
 
+Catalogue-wide workspace: **Catalogue → Cost Intelligence** (`/admin/cost-intelligence`). See [Cost Intelligence](./cost-intelligence.md).
+
 ### Usage snapshots (conservative)
 
 `AutopartProductUsageSnapshot` stores same-day upserts of source columns:

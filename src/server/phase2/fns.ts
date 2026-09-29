@@ -1652,6 +1652,30 @@ export const getProductAutopartCostHistoryFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getCostIntelligenceWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const ci = await import("@/server/stock/cost-intelligence");
+      return { ok: true as const, data: await ci.getCostIntelligenceWorkspace(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCostIntelligenceCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const ci = await import("@/server/stock/cost-intelligence");
+      return { ok: true as const, data: await ci.exportCostIntelligenceCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getImapSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();
