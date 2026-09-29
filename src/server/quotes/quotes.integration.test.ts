@@ -8,6 +8,7 @@ import {
   acceptQuoteOnBehalf,
   createQuote,
   declineQuote,
+  deleteStaffQuote,
   duplicateQuote,
   getQuoteForPortal,
   getQuoteForStaff,
@@ -702,5 +703,59 @@ describe("Quote regression — live QT commercial snapshot", () => {
         where: { entityId: order.id, purpose: "ORDER_RECEIVED" },
       }),
     ).toBe(1);
+  });
+});
+
+describe("Quote delete", () => {
+  it("deletes a draft quotation and blocks converted quotes", async () => {
+    const stamp = Date.now().toString(36);
+    const { company, contact, address } = await seedCompany(`Delete Co ${stamp}`);
+    const variant = await seedVariant(`QD${stamp.slice(-6).toUpperCase()}`, 10);
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      deliveryAddressId: address.id,
+    });
+    await updateQuoteDraft(adminId, {
+      id: draft.id,
+      lines: [{ variantId: variant.id, qty: 12, quotedUnitPrice: null }],
+    });
+
+    const deleted = await deleteStaffQuote(adminId, { id: draft.id });
+    expect(deleted.quoteNumber).toBe(draft.quoteNumber);
+    expect(await prisma.quote.findUnique({ where: { id: draft.id } })).toBeNull();
+
+    const again = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      deliveryAddressId: address.id,
+    });
+    await updateQuoteDraft(adminId, {
+      id: again.id,
+      lines: [{ variantId: variant.id, qty: 12, quotedUnitPrice: null }],
+    });
+    await sendQuote(adminId, { id: again.id });
+    const buyerId = await ensureTradeBuyer(`qd.buyer.${stamp}@example.invalid`, company.id);
+    const converted = await acceptQuoteAsCustomer(buyerId, {
+      id: again.id,
+      idempotencyKey: `delete-block-${stamp}`,
+    });
+    expect(converted.orderNumber).toBeTruthy();
+
+    await expect(deleteStaffQuote(adminId, { id: again.id })).rejects.toBeInstanceOf(AuthError);
+    expect(await prisma.quote.findUnique({ where: { id: again.id } })).toBeTruthy();
+  });
+
+  it("denies trade buyers from deleting quotations", async () => {
+    const stamp = Date.now().toString(36);
+    const { company, contact, address } = await seedCompany(`Delete Trade ${stamp}`);
+    const draft = await createQuote(adminId, {
+      companyId: company.id,
+      contactId: contact.id,
+      deliveryAddressId: address.id,
+    });
+    const buyerId = await ensureTradeBuyer(`qd.deny.${stamp}@example.invalid`, company.id);
+    await expect(deleteStaffQuote(buyerId, { id: draft.id })).rejects.toBeInstanceOf(AuthError);
+    expect(await prisma.quote.findUnique({ where: { id: draft.id } })).toBeTruthy();
   });
 });

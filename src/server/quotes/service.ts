@@ -1854,3 +1854,65 @@ export async function listQuoteEmailsForStaff(actorUserId: string, quoteId: stri
     attemptCount: r.attemptCount,
   }));
 }
+
+/**
+ * Hard-delete a staff quotation.
+ * Blocked when the quote is still linked to a converted order (preserve order history).
+ * Requires `quotes.edit` and sales-scope access to the company.
+ */
+export async function deleteStaffQuote(actorUserId: string, raw: unknown) {
+  await requireQuoteStaff(actorUserId, "quotes.edit");
+  const { id } = quoteIdSchema.parse(raw);
+
+  const quote = await prisma.quote.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      quoteNumber: true,
+      companyId: true,
+      status: true,
+      convertedOrderId: true,
+      _count: { select: { orders: true } },
+    },
+  });
+  if (!quote) throw new AuthError("Quote not found", "NOT_FOUND", 404);
+  await assertCompanyInSalesScope(actorUserId, quote.companyId);
+
+  if (quote.convertedOrderId || quote._count.orders > 0) {
+    throw new AuthError(
+      "This quotation has been converted to an order and cannot be deleted. Delete or manage the order instead.",
+      "QUOTE_CONVERTED",
+      400,
+    );
+  }
+
+  if (quote.status === "ACCEPTED") {
+    throw new AuthError(
+      "This quotation is mid-conversion and cannot be deleted. Wait for conversion to finish or contact support.",
+      "QUOTE_ACCEPTING",
+      409,
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.transactionalEmail.deleteMany({
+      where: { entityType: "Quote", entityId: quote.id },
+    });
+    // QuoteItem cascades; Order.sourceQuoteId is onDelete: SetNull
+    await tx.quote.delete({ where: { id: quote.id } });
+  });
+
+  await recordAuditEvent({
+    action: "quote.deleted",
+    entityType: "Quote",
+    entityId: quote.id,
+    actorUserId,
+    companyId: quote.companyId,
+    metadata: {
+      quoteNumber: quote.quoteNumber,
+      previousStatus: quote.status,
+    },
+  });
+
+  return { id: quote.id, quoteNumber: quote.quoteNumber };
+}

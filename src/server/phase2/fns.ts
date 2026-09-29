@@ -2472,6 +2472,18 @@ export const duplicateQuoteFn = createServerFn({ method: "POST" })
     }
   });
 
+export const deleteStaffQuoteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const quotes = await import("@/server/quotes/service");
+      return { ok: true as const, data: await quotes.deleteStaffQuote(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const acceptQuoteOnBehalfFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

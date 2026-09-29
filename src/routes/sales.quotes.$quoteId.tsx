@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -8,6 +8,7 @@ import { formatDate, formatDateTime } from "@/lib/datetime";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import {
   acceptQuoteOnBehalfFn,
+  deleteStaffQuoteFn,
   duplicateQuoteFn,
   getQuoteCompanyContextFn,
   getStaffQuoteFn,
@@ -56,11 +57,13 @@ function quoteTone(status: string) {
 
 function QuoteWorkspace() {
   const { quoteId } = Route.useParams();
+  const navigate = useNavigate();
   const [quote, setQuote] = useState<Quote | null>(null);
   const [company, setCompany] = useState<CompanyCtx | null>(null);
   const [emails, setEmails] = useState<EmailRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [productQ, setProductQ] = useState("");
   const [hits, setHits] = useState<ProductHit[]>([]);
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -234,6 +237,27 @@ function QuoteWorkspace() {
     window.location.href = ROUTES.salesQuote(result.data.id);
   }
 
+  async function deleteQuote() {
+    if (!quote) return;
+    if (quote.convertedOrderId) {
+      toast.error("Converted quotations cannot be deleted");
+      return;
+    }
+    const ok = window.confirm(
+      `Delete quotation ${quote.quoteNumber}? This cannot be undone.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    const result = await deleteStaffQuoteFn({ data: { id: quoteId } });
+    setDeleting(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Deleted ${result.data.quoteNumber}`);
+    void navigate({ to: ROUTES.salesQuotes });
+  }
+
   async function acceptOnBehalf() {
     if (!acceptNote.trim()) {
       toast.error("Add a confirmation note");
@@ -323,7 +347,17 @@ function QuoteWorkspace() {
               >
                 View order {quote.convertedOrderNumber}
               </Link>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                onClick={() => void deleteQuote()}
+                disabled={deleting || quote.status === "ACCEPTED"}
+                className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold text-bad disabled:opacity-50"
+                aria-label={`Delete quotation ${quote.quoteNumber}`}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => window.print()}

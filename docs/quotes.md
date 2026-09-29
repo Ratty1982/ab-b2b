@@ -141,6 +141,14 @@ Existing converted orders (e.g. AB-000005) are **not** emailed retrospectively b
 | Customer notes | Yes | No (keep email concise) | Yes | Yes |
 | Internal notes | **Never** | **Never** | **Never** | Yes |
 
+## Delete
+
+Staff with `quotes.edit` may **Delete** a quotation from the quote workspace (confirmation required).
+
+Hard-delete removes the quote, line items, and related quote transactional emails. Audited as `quote.deleted`.
+
+**Blocked** when the quote is linked to a converted order (`convertedOrderId` or `Order.sourceQuoteId`), or while status is `ACCEPTED` mid-conversion. Manage or delete the order instead.
+
 ## Duplicate
 
 Creates a new `QT-######` in `DRAFT` with new validity. May copy customer, contact, address, lines (re-resolved prices), PO, notes. Does **not** copy SENT/VIEWED/ACCEPTED/DECLINED/CONVERTED state, email history, convertedOrderId, acceptance metadata, or audit history.
