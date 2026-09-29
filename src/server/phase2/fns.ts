@@ -2728,4 +2728,28 @@ export const exportProductGapCsvFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getCustomerRangeOpportunitiesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opp = await import("@/server/sales-intelligence/opportunity");
+      return { ok: true as const, data: await opp.getCustomerRangeOpportunities(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerRangeOpportunitiesCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opp = await import("@/server/sales-intelligence/opportunity");
+      return { ok: true as const, data: await opp.exportCustomerRangeOpportunitiesCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

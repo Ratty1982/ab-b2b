@@ -68,6 +68,7 @@ export const ROUTES = {
 
   salesIntelligence: "/sales/sales-intelligence",
   salesIntelligenceGaps: "/sales/sales-intelligence/gaps",
+  salesIntelligenceOpportunities: "/sales/sales-intelligence/opportunities",
 } as const;
 
 /**
@@ -257,7 +258,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligence,
         matchPrefixes: [ROUTES.salesIntelligence],
-        excludePrefixes: [ROUTES.salesIntelligenceGaps],
+        excludePrefixes: [ROUTES.salesIntelligenceGaps, ROUTES.salesIntelligenceOpportunities],
         permission: "sales_intelligence.view",
         implemented: true,
       },
@@ -267,6 +268,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligenceGaps,
         matchPrefixes: [ROUTES.salesIntelligenceGaps],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-range-opportunities",
+        label: "Range Opportunities",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligenceOpportunities,
+        matchPrefixes: [ROUTES.salesIntelligenceOpportunities],
         permission: "sales_intelligence.view",
         implemented: true,
       },

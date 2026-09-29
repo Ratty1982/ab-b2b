@@ -88,6 +88,7 @@ import { Route as SalesQuotesQuoteIdRouteImport } from './routes/sales.quotes.$q
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 import { Route as SalesSalesIntelligenceIndexRouteImport } from './routes/sales.sales-intelligence.index'
 import { Route as SalesSalesIntelligenceGapsRouteImport } from './routes/sales.sales-intelligence.gaps'
+import { Route as SalesSalesIntelligenceOpportunitiesRouteImport } from './routes/sales.sales-intelligence.opportunities'
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
@@ -491,6 +492,12 @@ const SalesSalesIntelligenceGapsRoute =
     path: '/gaps',
     getParentRoute: () => SalesSalesIntelligenceRoute,
   } as any)
+const SalesSalesIntelligenceOpportunitiesRoute =
+  SalesSalesIntelligenceOpportunitiesRouteImport.update({
+    id: '/opportunities',
+    path: '/opportunities',
+    getParentRoute: () => SalesSalesIntelligenceRoute,
+  } as any)
 const AdminContentSlugPreviewRoute = AdminContentSlugPreviewRouteImport.update({
   id: '/preview',
   path: '/preview',
@@ -589,6 +596,7 @@ export interface FileRoutesByFullPath {
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
+  '/sales/sales-intelligence/opportunities': typeof SalesSalesIntelligenceOpportunitiesRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
@@ -662,6 +670,7 @@ export interface FileRoutesByTo {
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
+  '/sales/sales-intelligence/opportunities': typeof SalesSalesIntelligenceOpportunitiesRoute
   '/admin/applications': typeof AdminApplicationsIndexRoute
   '/admin/content': typeof AdminContentIndexRoute
   '/admin/customers': typeof AdminCustomersIndexRoute
@@ -749,6 +758,7 @@ export interface FileRoutesById {
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
+  '/sales/sales-intelligence/opportunities': typeof SalesSalesIntelligenceOpportunitiesRoute
   '/admin/applications/': typeof AdminApplicationsIndexRoute
   '/admin/content/': typeof AdminContentIndexRoute
   '/admin/customers/': typeof AdminCustomersIndexRoute
@@ -837,6 +847,7 @@ export interface FileRouteTypes {
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/gaps'
+    | '/sales/sales-intelligence/opportunities'
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
@@ -910,6 +921,7 @@ export interface FileRouteTypes {
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/gaps'
+    | '/sales/sales-intelligence/opportunities'
     | '/admin/applications'
     | '/admin/content'
     | '/admin/customers'
@@ -996,6 +1008,7 @@ export interface FileRouteTypes {
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/gaps'
+    | '/sales/sales-intelligence/opportunities'
     | '/admin/applications/'
     | '/admin/content/'
     | '/admin/customers/'
@@ -1599,6 +1612,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesSalesIntelligenceGapsRouteImport
       parentRoute: typeof SalesSalesIntelligenceRoute
     }
+    '/sales/sales-intelligence/opportunities': {
+      id: '/sales/sales-intelligence/opportunities'
+      path: '/opportunities'
+      fullPath: '/sales/sales-intelligence/opportunities'
+      preLoaderRoute: typeof SalesSalesIntelligenceOpportunitiesRouteImport
+      parentRoute: typeof SalesSalesIntelligenceRoute
+    }
     '/admin/content/$slug/preview': {
       id: '/admin/content/$slug/preview'
       path: '/preview'
@@ -1845,12 +1865,15 @@ const PortalRouteWithChildren =
 
 interface SalesSalesIntelligenceRouteChildren {
   SalesSalesIntelligenceGapsRoute: typeof SalesSalesIntelligenceGapsRoute
+  SalesSalesIntelligenceOpportunitiesRoute: typeof SalesSalesIntelligenceOpportunitiesRoute
   SalesSalesIntelligenceIndexRoute: typeof SalesSalesIntelligenceIndexRoute
 }
 
 const SalesSalesIntelligenceRouteChildren: SalesSalesIntelligenceRouteChildren =
   {
     SalesSalesIntelligenceGapsRoute: SalesSalesIntelligenceGapsRoute,
+    SalesSalesIntelligenceOpportunitiesRoute:
+      SalesSalesIntelligenceOpportunitiesRoute,
     SalesSalesIntelligenceIndexRoute: SalesSalesIntelligenceIndexRoute,
   }
 

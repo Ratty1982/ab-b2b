@@ -1,12 +1,14 @@
 # Sales Intelligence
 
-Internal staff module for factual Autopart historic sales enquiry and period gap comparison.
+Internal staff module for factual Autopart historic sales enquiry, period gap comparison, and explainable range opportunities.
 
 **Phase 1 ships:** Sales Enquiry (Customers + Products).
 
 **Phase 2 ships:** Gap Analysis — factual period comparison (Customers + Products).
 
-**Not yet built:** AI opportunity generation, similar-customer recommendations, reorder prediction, churn scoring, salesperson scoring, product recommendations, Rebate Analysis, management dashboards.
+**Phase 3 ships:** Range Opportunities — current catalogue products a customer has not purchased, supported by comparable-customer evidence (not AI).
+
+**Not yet built:** Cross-sell UI, AI recommendations, forecasting, churn scoring, salesperson scoring, Rebate Analysis, management dashboards.
 
 ## Route & navigation
 
@@ -14,8 +16,9 @@ Internal staff module for factual Autopart historic sales enquiry and period gap
 |---------|--------|
 | Sales Enquiry | `/sales/sales-intelligence` |
 | Gap Analysis | `/sales/sales-intelligence/gaps` |
+| Range Opportunities | `/sales/sales-intelligence/opportunities` |
 
-Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis**
+Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis | Range Opportunities**
 
 CRM remains separate. Do not move the Sales Enquiry route unnecessarily.
 
@@ -25,10 +28,11 @@ URL-backed state examples:
 - Enquiry: `?mode=products&sku=…&period=CUSTOM&from=2026-01-01&to=2026-09-29&compare=PREVIOUS`
 - Gaps: `?mode=customers&companyId=…&period=LAST_30&compare=PREVIOUS_YEAR&status=ALL_CHANGES&sort=NET_DECREASE`
 - Gaps: `?mode=products&sku=…&compare=CUSTOM&compareFrom=…&compareTo=…&salesRepId=…`
+- Opportunities: `?companyId=…&period=LAST_365&sort=RANGE_MATCH`
 
 ## RBAC
 
-Permission: `sales_intelligence.view` (shared by Enquiry and Gap Analysis).
+Permission: `sales_intelligence.view` (shared by Enquiry, Gap Analysis, and Range Opportunities).
 
 Granted to:
 
@@ -40,13 +44,13 @@ Granted to:
 
 Not granted to Marketing, Customer Service (by default), or any trade portal role.
 
-Enforced server-side on every search, enquiry, gap analysis, and CSV export. Trade sessions receive 403 even with a direct URL or API call.
+Enforced server-side on every search, enquiry, gap analysis, opportunity analysis, and CSV export. Trade sessions receive 403 even with a direct URL or API call.
 
-Company scope (single resolver used by Enquiry and Gap Analysis):
+Company scope (single resolver used by Enquiry, Gap Analysis, and Range Opportunities):
 
 - `sales.view_all_accounts` / `admin.access` → all companies
 - own/team sales keys → assigned companies
-- Accounts (permission without sales scope) → all companies for enquiry/gap
+- Accounts (permission without sales scope) → all companies for enquiry/gap/opportunities
 
 Product gap results only include customers the actor is authorized to analyse (same scope). Manipulated URL company/SKU IDs do not bypass scope.
 
@@ -176,9 +180,111 @@ Customer columns include customer/account, both period bounds, status, SKU/produ
 
 Product columns include SKU/product, both period bounds, status, customer/account/salesperson, qty and financials, last purchased.
 
+## Range Opportunity methodology
+
+Range Opportunities answer:
+
+> Which **current catalogue** products has this customer **not** invoice-purchased in the analysis lookback, where **comparable customers** (within the actor’s Sales Intelligence scope) provide factual purchasing evidence?
+
+This is **not** AI, forecasting, or “the customer will buy”.
+
+### Analysis period
+
+Presets: Last 3 / 6 / 12 / 24 months, or Custom. Default: **Last 12 months** (`LAST_365`). Europe/London inclusive date-only bounds (shared helpers).
+
+### Customer purchase profile
+
+For the selected customer + analysis period (shared historic loaders):
+
+- Invoice SKU set (credits never create presence)
+- Brand / category sets from catalogue enrichment (unknown IDs excluded)
+- Invoice Sales, Credits, Net Sales, Units, Purchase Transactions
+
+Profile money/units/transactions **reconcile with Sales Enquiry** for the same customer + period.
+
+### Qualifying active customers (comparable population)
+
+- Limited to the actor’s Sales Intelligence company scope (same resolver as Enquiry/Gap)
+- Must have qualifying **INVOICE** purchase activity in the analysis period
+- Target customer excluded from their own cohort
+- **Privacy:** only aggregate evidence is returned (e.g. “18 of 27 comparable customers”). Other customer names, accounts, and IDs are never exposed in opportunity results/CSV — including when the actor has broad scope
+
+### Similarity formula
+
+Deterministic weighted Jaccard on purchase sets:
+
+| Dimension | Weight | Set |
+|-----------|--------|-----|
+| Category overlap | 50% | Catalogue category IDs with invoice purchases |
+| Brand overlap | 30% | Catalogue brand IDs with invoice purchases |
+| SKU overlap | 20% | Uppercase invoice SKUs |
+
+`Jaccard = |A ∩ B| / |A ∪ B|`
+
+- Both sets empty for a dimension → dimension **unused** (not a match); remaining weights renormalized
+- One empty → similarity 0 for that dimension
+- Unknown/unassigned brand or category never joins a set (so “both unknown” is not a strong match)
+
+Minimum similarity to enter cohort: **0.25** (`RANGE_OPPORTUNITY_CONFIG.minSimilarity`).
+
+Minimum comparable customers after thresholding: **3**. Below this → empty evidence state (no manufactured results).
+
+### Candidate eligibility
+
+A candidate SKU must:
+
+1. Be bought (invoice) by ≥ **2** comparable customers
+2. **Never** have invoice purchase by the target customer in the analysis lookback (credits alone do not count as purchase)
+3. Exist in the current AB catalogue, active, trade-visible, `ACTIVE`
+4. Not be historic-only / discontinued
+5. Pass availability filter (default **Orderable** = In Stock / Low Stock / Available to Backorder / Partial). Out of Stock with backorders denied is excluded by default
+6. Have a range relationship by default (Same Brand+Category / Same Category / Same Brand). Broader range is excluded unless explicitly included
+
+### Range match
+
+| Label | Meaning |
+|-------|---------|
+| Same brand + category | Target already buys that brand and category |
+| Same category | Target buys the category |
+| Same brand | Target buys the brand |
+| Broader range | No brand/category overlap (optional filter) |
+
+### Observed adoption
+
+```
+Adoption = comparable customers who invoice-purchased candidate
+         / eligible comparable customers
+```
+
+Display as buyers/cohort and percent. Credits do not create adoption. Not called probability/likelihood.
+
+### Ranking / sorting
+
+Transparent sorts (no mystery score):
+
+1. Strongest range match (default), then adoption, then buyers
+2. Highest adoption
+3. Most comparable buyers
+4. Most comparable units
+5. Product A–Z
+
+### Cost / pricing / CRM
+
+- Latest Autopart cost is **not** used for ranking
+- No margin/profit/expected revenue
+- No automatic CRM lead/task/email creation
+
+### Cross-sell foundation
+
+Server computes SKU co-purchase counts among the comparable cohort (`computeSkuCoPurchase`) for future Phase 4. **No Cross Sell UI** in Phase 3.
+
+### CSV
+
+Server-generated, RBAC-protected, full filtered set. Columns: customer, account, analysis bounds, SKU/product/brand/category, range match, comparable customers, buyers, adoption %, units, availability. No comparable identities.
+
 ## Indexes
 
-`AutopartSalesLine(sku, companyId)` for product-first enquiry across companies. Existing `(companyId, documentDate)` on documents and `(companyId, sku)` on lines remain for customer-first paths. No speculative indexes for Gap Analysis.
+`AutopartSalesLine(sku, companyId)` for product-first enquiry across companies. Existing `(companyId, documentDate)` on documents and `(companyId, sku)` on lines remain for customer-first paths. **No new indexes** for Range Opportunities (on-demand set aggregation over scoped period lines).
 
 ## Architecture
 
@@ -187,16 +293,18 @@ Product columns include SKU/product, both period bounds, status, customer/accoun
 | `src/domain/sales-history-period.ts` | Date presets, previous equivalent, same-period-previous-year |
 | `src/domain/sales-intelligence.ts` | Money totals, line aggregation, enquiry URL helpers |
 | `src/domain/sales-gap.ts` | Gap classification, URL state, period resolution |
+| `src/domain/sales-opportunity.ts` | Similarity, adoption, range match, opportunity URL/config |
 | `src/server/sales-intelligence/historic-lines.ts` | Shared DB loaders + summarizers |
 | `src/server/sales-intelligence/scope.ts` | Shared company scope |
 | `src/server/sales-intelligence/enquiry.ts` | Sales Enquiry service |
 | `src/server/sales-intelligence/gap.ts` | Gap Analysis service + CSV |
+| `src/server/sales-intelligence/opportunity.ts` | Range Opportunities service + CSV |
 
-Query approach: load both periods with DB-side date/source filters (not one query per SKU/customer), then deterministic in-memory classification.
+Query approach: one scoped historic-line load for the analysis period, catalogue enrichment, deterministic in-memory similarity + candidate aggregation (not one query per SKU/customer).
 
 ## Future phases (do not implement here)
 
-1. Opportunity / similar-customer recommendations (methodology TBD)
+1. Cross-sell UI (co-purchase foundation already computed server-side)
 2. Rebate Analysis (thresholds/schemes on top of Net Sales)
 3. Salesperson performance
 4. Management dashboards / Sales-i style analysis
