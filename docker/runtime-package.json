@@ -1,0 +1,11 @@
+{
+  "name": "ab-runtime-deps",
+  "private": true,
+  "dependencies": {
+    "prisma": "6.19.3",
+    "@prisma/client": "6.19.3",
+    "sharp": "0.35.4",
+    "imapflow": "2.0.5",
+    "mailparser": "3.9.28"
+  }
+}

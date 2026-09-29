@@ -110,14 +110,15 @@ Coolify’s helper container has killed `docker exec … bash /artifacts/build.s
 
 - historically during `#28 exporting layers` (image too large)
 - 22 Sep 2026 during `#31 unpacking` after a **~240 second** wall clock (07:52:06 → 07:56:06)
+- 29 Sep 2026 during `#31 exporting manifest list` for SHA `5ddac27` after **~229s** (07:47:18 → 07:51:07). Application build had already finished (`✓ built`, bootstrap bundled, runner `COPY` steps done); the helper died while Docker was finishing the image export.
 
-That 22 Sep job imported GitHub SHA `4ddc5ff` (Phase 5). Phase 5A IMAP lives on later commits on `production/phase-1-auth-rbac`. Redeploy **latest** after this image slim.
+**This is not an application compile failure.** Raise the Coolify Docker build timeout before retrying.
 
-The Docker **deps** stage now runs `bun install --frozen-lockfile --production --ignore-scripts` so Playwright/eslint/vitest are not downloaded. `vite`, `nitro`, and `@vitejs/plugin-react` are production dependencies so the image can still compile. The runner still does **not** copy the full app `node_modules`; it has Prisma + sharp + `imapflow` + `mailparser` (ssr-external IMAP client).
+The Docker **deps** stage runs `bun install --frozen-lockfile --production --ignore-scripts` so Playwright/eslint/vitest are not downloaded. `vite`, `nitro`, and `@vitejs/plugin-react` are production dependencies so the image can still compile. Runtime packages come from locked `docker/runtime-package.json` + `docker/runtime-bun.lock` (Prisma + sharp + `imapflow` + `mailparser`). Bun install cache is mounted via BuildKit (`id=ab-bun-cache`) to keep redeploys under the helper wall clock.
 
-**Coolify setting (required on the host):** raise the application **Docker build timeout** to at least **15 minutes**. A 4-minute cap will keep killing first-pull builds even when the Dockerfile is healthy.
+**Coolify setting (required on the host):** Application → Advanced / Build → **Docker build timeout** ≥ **15 minutes** (900s). A ~4-minute cap will keep killing first-pull / cold-cache builds even when the Dockerfile and app build are healthy.
 
-If unpack still fails: on the Coolify server run `docker system df` / `docker builder prune` to free disk, then redeploy.
+If export/unpack still fails after the timeout is raised: on the Coolify server run `docker system df` / `docker builder prune` to free disk, then redeploy.
 
 - Activation emails go through Admin → Settings → Email (TransactionalEmailService). Do not expect Coolify `SMTP_*` env vars.
 
