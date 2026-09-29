@@ -14,9 +14,10 @@ import {
   completeCrmTaskFn,
   getCrmTaskFn,
   listCrmTasksFn,
+  rescheduleCrmTaskFn,
 } from "@/server/phase2/fns";
 
-type Search = { taskId?: string; source?: string };
+type Search = { taskId?: string; source?: string; due?: string };
 
 export const Route = createFileRoute("/crm/tasks")({
   validateSearch: (search: Record<string, unknown>): Search => {
@@ -47,13 +48,17 @@ function CrmTasksPage() {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState(search.source ?? "ALL");
+  const [dueFilter, setDueFilter] = useState(search.due ?? "ALL");
   const [q, setQ] = useState("");
+  const [rescheduleId, setRescheduleId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState("");
 
-  useEffect(() => {
+  function reloadList() {
     void listCrmTasksFn({
       data: {
         q: q.trim() || null,
         sourceModule: sourceFilter === "ALL" ? "ALL" : sourceFilter,
+        due: dueFilter === "ALL" ? "ALL" : dueFilter,
         page: 1,
         pageSize: 50,
       },
@@ -66,7 +71,12 @@ function CrmTasksPage() {
         setData(r.data);
       }
     });
-  }, [q, sourceFilter]);
+  }
+
+  useEffect(() => {
+    reloadList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, sourceFilter, dueFilter]);
 
   useEffect(() => {
     if (!search.taskId) {
@@ -92,10 +102,16 @@ function CrmTasksPage() {
     }
     const refreshed = await getCrmTaskFn({ data: { taskId: search.taskId } });
     if (refreshed.ok) setDetail(refreshed.data);
-    const list = await listCrmTasksFn({
-      data: { sourceModule: sourceFilter === "ALL" ? "ALL" : sourceFilter, pageSize: 50 },
-    });
-    if (list.ok) setData(list.data);
+    reloadList();
+  }
+
+  async function completeFromList(taskId: string) {
+    const r = await completeCrmTaskFn({ data: { taskId } });
+    if (!r.ok) {
+      setError(r.error);
+      return;
+    }
+    reloadList();
   }
 
   return (
@@ -120,8 +136,21 @@ function CrmTasksPage() {
           />
           <select
             className="h-9 rounded-md border border-border px-3 text-sm"
+            value={dueFilter}
+            onChange={(e) => setDueFilter(e.target.value)}
+            aria-label="Due filter"
+          >
+            <option value="ALL">Open tasks</option>
+            <option value="TODAY">Due today</option>
+            <option value="OVERDUE">Overdue</option>
+            <option value="UPCOMING">Upcoming</option>
+            <option value="COMPLETED">Completed</option>
+          </select>
+          <select
+            className="h-9 rounded-md border border-border px-3 text-sm"
             value={sourceFilter}
             onChange={(e) => setSourceFilter(e.target.value)}
+            aria-label="Source filter"
           >
             <option value="ALL">All sources</option>
             <option value="GAP_ANALYSIS">Gap Analysis</option>
@@ -134,10 +163,14 @@ function CrmTasksPage() {
         {!data ? (
           <p className="text-sm text-steel">Loading…</p>
         ) : data.total === 0 ? (
-          <p className="text-sm text-steel">No open tasks match these filters.</p>
+          <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-steel">
+            {dueFilter === "TODAY"
+              ? "Nothing due today — you're up to date."
+              : "No tasks match these filters."}
+          </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+            <table className="w-full min-w-[800px] text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-[10px] font-bold uppercase tracking-wide text-steel">
                   <th className="py-2 pr-3">Task</th>
@@ -145,7 +178,8 @@ function CrmTasksPage() {
                   <th className="py-2 pr-3">Source</th>
                   <th className="py-2 pr-3">Assignee</th>
                   <th className="py-2 pr-3">Due</th>
-                  <th className="py-2">Status</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -163,7 +197,19 @@ function CrmTasksPage() {
                         <div className="font-mono text-[11px] text-steel">{t.sourceSku}</div>
                       ) : null}
                     </td>
-                    <td className="py-2 pr-3">{t.company?.name ?? "—"}</td>
+                    <td className="py-2 pr-3">
+                      {t.company ? (
+                        <Link
+                          to="/sales/customers/$id"
+                          params={{ id: t.company.id }}
+                          className="hover:underline"
+                        >
+                          {t.company.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="py-2 pr-3">
                       {t.sourceLabel ? (
                         <StatusBadge tone="neutral">{t.sourceLabel}</StatusBadge>
@@ -177,13 +223,77 @@ function CrmTasksPage() {
                         ? new Date(t.dueAt).toLocaleDateString("en-GB")
                         : "—"}
                     </td>
-                    <td className="py-2">{t.status}</td>
+                    <td className="py-2 pr-3">{t.status}</td>
+                    <td className="py-2">
+                      {t.status === "OPEN" || t.status === "IN_PROGRESS" ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="text-[11px] font-bold uppercase text-primary"
+                            onClick={() => void completeFromList(t.id)}
+                          >
+                            Complete
+                          </button>
+                          <button
+                            type="button"
+                            className="text-[11px] font-bold uppercase text-steel"
+                            onClick={() => {
+                              setRescheduleId(t.id);
+                              setRescheduleDate(
+                                t.dueAt ? t.dueAt.slice(0, 10) : "",
+                              );
+                            }}
+                          >
+                            Reschedule
+                          </button>
+                        </div>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {rescheduleId ? (
+          <div className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3">
+            <label className="text-sm">
+              <span className="mb-1 block text-[11px] font-bold uppercase text-steel">
+                New due date
+              </span>
+              <input
+                type="date"
+                className="h-9 rounded-md border border-border px-3 text-sm"
+                value={rescheduleDate}
+                onChange={(e) => setRescheduleDate(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="h-9 rounded-md bg-primary px-3 text-[12px] font-bold uppercase text-primary-foreground"
+              onClick={() => {
+                void rescheduleCrmTaskFn({
+                  data: { taskId: rescheduleId, dueDate: rescheduleDate },
+                }).then((r) => {
+                  if (!r.ok) setError(r.error);
+                  else {
+                    setRescheduleId(null);
+                    reloadList();
+                  }
+                });
+              }}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
+              onClick={() => setRescheduleId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <Drawer

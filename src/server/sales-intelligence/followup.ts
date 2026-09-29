@@ -540,6 +540,7 @@ export async function createSalesIntelligenceFollowUp(actorUserId: string, raw: 
       description,
       status: "OPEN",
       priority: input.priority ?? "NORMAL",
+      taskType: "FOLLOW_UP",
       dueAt,
       sourceModule: snapshot.sourceModule,
       sourceReason: snapshot.sourceReason,
@@ -624,6 +625,9 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
         .optional()
         .nullable(),
       assigneeId: z.string().optional().nullable(),
+      companyId: z.string().optional().nullable(),
+      due: z.enum(["ALL", "TODAY", "OVERDUE", "UPCOMING", "COMPLETED"]).optional().nullable(),
+      priority: z.enum(["LOW", "NORMAL", "HIGH"]).optional().nullable(),
       page: z.number().int().min(1).max(10_000).optional(),
       pageSize: z.number().int().min(1).max(100).optional(),
     })
@@ -634,7 +638,9 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
   if (scope !== "all") {
     where.companyId = { in: scope.length ? scope : ["__none__"] };
   }
-  if (input.status === "OPEN_ACTIVE" || !input.status) {
+  if (input.due === "COMPLETED") {
+    where.status = "DONE";
+  } else if (input.status === "OPEN_ACTIVE" || !input.status) {
     where.status = { in: ["OPEN", "IN_PROGRESS"] };
   } else {
     where.status = input.status;
@@ -643,6 +649,19 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
     where.sourceModule = input.sourceModule;
   }
   if (input.assigneeId) where.assigneeId = input.assigneeId;
+  if (input.companyId) where.companyId = input.companyId;
+  if (input.priority) where.priority = input.priority;
+
+  const today = todayLondonDateOnly();
+  const todayStart = new Date(`${today}T00:00:00.000Z`);
+  const todayEnd = new Date(`${today}T23:59:59.999Z`);
+  if (input.due === "TODAY") {
+    where.dueAt = { gte: todayStart, lte: todayEnd };
+  } else if (input.due === "OVERDUE") {
+    where.dueAt = { lt: todayStart };
+  } else if (input.due === "UPCOMING") {
+    where.dueAt = { gt: todayEnd };
+  }
   if (input.q?.trim()) {
     const qq = input.q.trim();
     where.OR = [
@@ -802,4 +821,24 @@ export async function completeCrmTask(actorUserId: string, raw: unknown) {
     status: updated.status,
     completedAt: updated.completedAt?.toISOString() ?? null,
   };
+}
+
+export async function rescheduleCrmTask(actorUserId: string, raw: unknown) {
+  const profile = await requireSystemPermission(actorUserId, "tasks.manage");
+  if (profile.actorType === "TRADE") {
+    throw new AuthError("Tasks are internal only", "FORBIDDEN", 403);
+  }
+  const input = z
+    .object({
+      taskId: z.string().min(1),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    })
+    .parse(raw ?? {});
+  await getCrmTask(actorUserId, { taskId: input.taskId });
+  const updated = await prisma.task.update({
+    where: { id: input.taskId },
+    data: { dueAt: dueAtFromDateOnly(input.dueDate) },
+    select: { id: true, dueAt: true },
+  });
+  return { id: updated.id, dueAt: updated.dueAt?.toISOString() ?? null };
 }

@@ -2884,4 +2884,220 @@ export const completeCrmTaskFn = createServerFn({ method: "POST" })
     }
   });
 
+export const rescheduleCrmTaskFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.rescheduleCrmTask(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCrmOverviewFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const overview = await import("@/server/crm/overview");
+      return { ok: true as const, data: await overview.getCrmOverview(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCrmLeadsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.listCrmLeads(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCrmLeadFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.getCrmLead(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCrmLeadFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.createCrmLead(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCrmLeadFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.updateCrmLead(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const markCrmLeadLostFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.markCrmLeadLost(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const convertCrmLeadFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.convertCrmLead(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchCompaniesForLeadConvertFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const leads = await import("@/server/crm/leads");
+      return { ok: true as const, data: await leads.searchCompaniesForLeadConvert(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCrmOpportunitiesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opps = await import("@/server/crm/opportunities");
+      return { ok: true as const, data: await opps.listCrmOpportunities(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCrmOpportunityFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opps = await import("@/server/crm/opportunities");
+      return { ok: true as const, data: await opps.getCrmOpportunity(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCrmOpportunityFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opps = await import("@/server/crm/opportunities");
+      return { ok: true as const, data: await opps.createCrmOpportunity(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCrmOpportunityStageFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opps = await import("@/server/crm/opportunities");
+      return { ok: true as const, data: await opps.updateCrmOpportunityStage(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCrmOpportunityFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const opps = await import("@/server/crm/opportunities");
+      return { ok: true as const, data: await opps.updateCrmOpportunity(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCrmActivitiesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const acts = await import("@/server/crm/activities");
+      return { ok: true as const, data: await acts.listCrmActivities(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const logCrmActivityFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const acts = await import("@/server/crm/activities");
+      return { ok: true as const, data: await acts.logCrmActivity(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCrmTaskFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const acts = await import("@/server/crm/activities");
+      return { ok: true as const, data: await acts.createCrmTask(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCompanyCrmWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const customer = await import("@/server/crm/customer");
+      return { ok: true as const, data: await customer.getCompanyCrmWorkspace(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 

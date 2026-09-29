@@ -1693,16 +1693,20 @@ model Quote {
   revisionOfQuoteId String?
   /// Idempotency for customer/staff acceptance → order conversion.
   acceptIdempotencyKey String? @unique
+  /// Optional link to CRM Opportunity (additive; quotes remain authoritative).
+  opportunityId String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  company Company     @relation(fields: [companyId], references: [id])
-  items   QuoteItem[]
-  orders  Order[]     @relation("OrdersFromQuote")
+  company     Company      @relation(fields: [companyId], references: [id])
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  items       QuoteItem[]
+  orders      Order[]      @relation("OrdersFromQuote")
 
   @@index([companyId, status])
   @@index([status, expiresAt])
   @@index([createdById])
+  @@index([opportunityId])
 }
 
 model QuoteItem {
@@ -1959,62 +1963,85 @@ model AutopartCustomerImportRun {
 // ─── CRM ─────────────────────────────────────────────────────────────────────
 
 model Lead {
-  id          String     @id @default(cuid())
-  companyName String
-  contactName String?
-  email       String?
-  phone       String?
-  status      LeadStatus @default(NEW)
-  source      String?
-  ownerId     String?
-  companyId   String?
-  notes       String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id             String     @id @default(cuid())
+  companyName    String
+  contactName    String?
+  email          String?
+  phone          String?
+  status         LeadStatus @default(NEW)
+  source         String?
+  ownerId        String?
+  companyId      String?
+  notes          String?
+  nextActionAt   DateTime?
+  nextActionNote String?
+  lostReason     String?
+  convertedAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
-  owner   User?    @relation(fields: [ownerId], references: [id])
-  company Company? @relation(fields: [companyId], references: [id])
+  owner      User?      @relation(fields: [ownerId], references: [id])
+  company    Company?   @relation(fields: [companyId], references: [id])
+  activities Activity[]
 
   @@index([status])
   @@index([ownerId])
+  @@index([ownerId, status])
+  @@index([companyId])
+  @@index([createdAt])
 }
 
 model Opportunity {
-  id          String           @id @default(cuid())
-  companyId   String
-  title       String
-  stage       OpportunityStage @default(NEW_LEAD)
-  value       Decimal?         @db.Decimal(12, 2)
-  probability Int?
-  ownerId     String?
+  id            String           @id @default(cuid())
+  companyId     String
+  title         String
+  stage         OpportunityStage @default(NEW_LEAD)
+  value         Decimal?         @db.Decimal(12, 2)
+  probability   Int?
+  ownerId       String?
   expectedClose DateTime?
-  lostReason  String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  description   String?
+  lostReason    String?
+  wonAt         DateTime?
+  lostAt        DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id])
-  owner   User?   @relation(fields: [ownerId], references: [id])
+  company      Company      @relation(fields: [companyId], references: [id])
+  owner        User?        @relation(fields: [ownerId], references: [id])
+  activities   Activity[]
+  quotes       Quote[]
 
   @@index([companyId, stage])
   @@index([ownerId])
+  @@index([ownerId, stage])
+  @@index([expectedClose])
+  @@index([updatedAt])
 }
 
 model Activity {
-  id         String       @id @default(cuid())
-  companyId  String?
-  userId     String?
-  type       ActivityType
-  subject    String?
-  body       String?
-  occurredAt DateTime     @default(now())
-  metadata   Json?
-  createdAt  DateTime     @default(now())
+  id            String       @id @default(cuid())
+  companyId     String?
+  leadId        String?
+  opportunityId String?
+  userId        String?
+  type          ActivityType
+  subject       String?
+  body          String?
+  occurredAt    DateTime     @default(now())
+  metadata      Json?
+  createdAt     DateTime     @default(now())
 
-  company Company? @relation(fields: [companyId], references: [id])
-  user    User?    @relation(fields: [userId], references: [id])
+  company     Company?     @relation(fields: [companyId], references: [id])
+  lead        Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  user        User?        @relation(fields: [userId], references: [id])
 
   @@index([companyId, occurredAt])
   @@index([userId, occurredAt])
+  @@index([leadId, occurredAt])
+  @@index([opportunityId, occurredAt])
+  @@index([type, occurredAt])
 }
 
 model Task {
@@ -2026,6 +2053,8 @@ model Task {
   description  String?
   status       TaskStatus   @default(OPEN)
   priority     TaskPriority @default(NORMAL)
+  /// Optional CRM task kind: CALL | EMAIL | MEETING | FOLLOW_UP | GENERAL
+  taskType     String?
   dueAt        DateTime?
   completedAt  DateTime?
   /// Origin module when created from Sales Intelligence (or similar bridges).
@@ -2050,6 +2079,8 @@ model Task {
   @@index([companyId, sourceModule, sourceReason, sourceSku, status])
   @@index([sourceModule, status])
   @@index([productId])
+  @@index([dueAt, status])
+  @@index([taskType, status])
 }
 
 model Note {

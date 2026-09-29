@@ -39,8 +39,11 @@ import { Route as ApiBuildRouteImport } from './routes/api/build'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
+import { Route as CrmActivitiesRouteImport } from './routes/crm.activities'
 import { Route as CrmApplicationsRouteImport } from './routes/crm.applications'
+import { Route as CrmLeadsRouteImport } from './routes/crm.leads'
 import { Route as CrmManagerRouteImport } from './routes/crm.manager'
+import { Route as CrmOverviewRouteImport } from './routes/crm.overview'
 import { Route as CrmTasksRouteImport } from './routes/crm.tasks'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
 import { Route as PortalBasketRouteImport } from './routes/portal.basket'
@@ -247,14 +250,29 @@ const CrmIndexRoute = CrmIndexRouteImport.update({
   path: '/',
   getParentRoute: () => CrmRoute,
 } as any)
+const CrmActivitiesRoute = CrmActivitiesRouteImport.update({
+  id: '/activities',
+  path: '/activities',
+  getParentRoute: () => CrmRoute,
+} as any)
 const CrmApplicationsRoute = CrmApplicationsRouteImport.update({
   id: '/applications',
   path: '/applications',
   getParentRoute: () => CrmRoute,
 } as any)
+const CrmLeadsRoute = CrmLeadsRouteImport.update({
+  id: '/leads',
+  path: '/leads',
+  getParentRoute: () => CrmRoute,
+} as any)
 const CrmManagerRoute = CrmManagerRouteImport.update({
   id: '/manager',
   path: '/manager',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmOverviewRoute = CrmOverviewRouteImport.update({
+  id: '/overview',
+  path: '/overview',
   getParentRoute: () => CrmRoute,
 } as any)
 const CrmTasksRoute = CrmTasksRouteImport.update({
@@ -568,8 +586,11 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
@@ -649,8 +670,11 @@ export interface FileRoutesByTo {
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
@@ -734,8 +758,11 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
+  '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
+  '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
@@ -825,8 +852,11 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/api/build'
     | '/brands/$slug'
+    | '/crm/activities'
     | '/crm/applications'
+    | '/crm/leads'
     | '/crm/manager'
+    | '/crm/overview'
     | '/crm/tasks'
     | '/portal/basket'
     | '/portal/checkout'
@@ -906,8 +936,11 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/api/build'
     | '/brands/$slug'
+    | '/crm/activities'
     | '/crm/applications'
+    | '/crm/leads'
     | '/crm/manager'
+    | '/crm/overview'
     | '/crm/tasks'
     | '/portal/basket'
     | '/portal/checkout'
@@ -990,8 +1023,11 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/api/build'
     | '/brands/$slug'
+    | '/crm/activities'
     | '/crm/applications'
+    | '/crm/leads'
     | '/crm/manager'
+    | '/crm/overview'
     | '/crm/tasks'
     | '/portal/basket'
     | '/portal/checkout'
@@ -1294,6 +1330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CrmIndexRouteImport
       parentRoute: typeof CrmRoute
     }
+    '/crm/activities': {
+      id: '/crm/activities'
+      path: '/activities'
+      fullPath: '/crm/activities'
+      preLoaderRoute: typeof CrmActivitiesRouteImport
+      parentRoute: typeof CrmRoute
+    }
     '/crm/applications': {
       id: '/crm/applications'
       path: '/applications'
@@ -1301,11 +1344,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CrmApplicationsRouteImport
       parentRoute: typeof CrmRoute
     }
+    '/crm/leads': {
+      id: '/crm/leads'
+      path: '/leads'
+      fullPath: '/crm/leads'
+      preLoaderRoute: typeof CrmLeadsRouteImport
+      parentRoute: typeof CrmRoute
+    }
     '/crm/manager': {
       id: '/crm/manager'
       path: '/manager'
       fullPath: '/crm/manager'
       preLoaderRoute: typeof CrmManagerRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/overview': {
+      id: '/crm/overview'
+      path: '/overview'
+      fullPath: '/crm/overview'
+      preLoaderRoute: typeof CrmOverviewRouteImport
       parentRoute: typeof CrmRoute
     }
     '/crm/tasks': {
@@ -1817,15 +1874,21 @@ const AdminRouteChildren: AdminRouteChildren = {
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface CrmRouteChildren {
+  CrmActivitiesRoute: typeof CrmActivitiesRoute
   CrmApplicationsRoute: typeof CrmApplicationsRoute
+  CrmLeadsRoute: typeof CrmLeadsRoute
   CrmManagerRoute: typeof CrmManagerRoute
+  CrmOverviewRoute: typeof CrmOverviewRoute
   CrmTasksRoute: typeof CrmTasksRoute
   CrmIndexRoute: typeof CrmIndexRoute
 }
 
 const CrmRouteChildren: CrmRouteChildren = {
+  CrmActivitiesRoute: CrmActivitiesRoute,
   CrmApplicationsRoute: CrmApplicationsRoute,
+  CrmLeadsRoute: CrmLeadsRoute,
   CrmManagerRoute: CrmManagerRoute,
+  CrmOverviewRoute: CrmOverviewRoute,
   CrmTasksRoute: CrmTasksRoute,
   CrmIndexRoute: CrmIndexRoute,
 }
