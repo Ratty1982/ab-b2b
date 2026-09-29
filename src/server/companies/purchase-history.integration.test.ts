@@ -605,6 +605,46 @@ describe("portal purchase history", () => {
     expect(matchA.netUnits).toBe(22);
   });
 
+  it("search, category, availability and quick combine with purchased period", async () => {
+    const search = await listPortalPurchaseHistory(buyerAId, {
+      q: "MATCH",
+      purchased: "CUSTOM",
+      purchasedFrom: "2026-03-01",
+      purchasedTo: "2026-03-31",
+      pageSize: 50,
+    });
+    expect(search.items.map((i) => i.sku.toUpperCase())).toEqual(["MATCH-A"]);
+    expect(search.summary.productsPurchased).toBe(1);
+
+    const cat = await listPortalPurchaseHistory(buyerAId, {
+      categoryId: catSealId,
+      purchased: "CUSTOM",
+      purchasedFrom: "2025-06-01",
+      purchasedTo: "2025-06-30",
+      pageSize: 50,
+    });
+    expect(cat.items.map((i) => i.sku.toUpperCase())).toEqual(["MATCH-B"]);
+
+    const historicPeriod = await listPortalPurchaseHistory(buyerAId, {
+      availability: "HISTORIC_ONLY",
+      purchased: "CUSTOM",
+      purchasedFrom: "2025-01-01",
+      purchasedTo: "2025-01-31",
+      pageSize: 50,
+    });
+    expect(historicPeriod.items.every((i) => i.sku.toUpperCase() === "GONE-SKU")).toBe(true);
+
+    const frequentInJune = await listPortalPurchaseHistory(buyerAId, {
+      quick: "FREQUENT",
+      purchased: "CUSTOM",
+      purchasedFrom: "2025-06-01",
+      purchasedTo: "2025-06-30",
+      pageSize: 50,
+    });
+    expect(frequentInJune.items).toHaveLength(0);
+    expect(frequentInJune.summary.productsPurchased).toBe(0);
+  });
+
   it("compat shim listPortalHistoricPurchases still works", async () => {
     const legacy = await listPortalHistoricPurchases(buyerAId, { filter: "AVAILABLE" });
     expect(legacy.items.every((i) => i.canBuyAgain)).toBe(true);

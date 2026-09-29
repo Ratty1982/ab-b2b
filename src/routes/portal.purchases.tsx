@@ -1,6 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
+  compactPurchaseHistoryUrlSearch,
+  parsePurchaseHistoryUrlSearch,
+  type PurchaseHistoryUrlSearch,
+} from "@/domain/purchase-history-search";
+import {
   Bar,
   BarChart,
   CartesianGrid,
@@ -21,6 +26,8 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/portal/purchases")({
+  validateSearch: (search: Record<string, unknown>): PurchaseHistoryUrlSearch =>
+    parsePurchaseHistoryUrlSearch(search),
   head: () => ({
     meta: [
       { title: "Purchase history — Automotive Brands Trade Portal" },
@@ -111,22 +118,64 @@ function AvailabilityCell({
 }
 
 function PortalPurchasesPage() {
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const purchased = (search.purchased ?? "ANY") as Purchased;
+  const purchasedFrom = search.purchasedFrom ?? "";
+  const purchasedTo = search.purchasedTo ?? "";
+  const q = search.q ?? "";
+  const brandId = search.brandId ?? "";
+  const categoryId = search.categoryId ?? "";
+  const availability = (search.availability ?? "ALL") as Availability;
+  const sort = (search.sort ?? "RECENT") as Sort;
+  const quick = (search.quick ?? null) as Quick;
+  const page = search.page ?? 1;
+
   const [data, setData] = useState<HistoryData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [qInput, setQInput] = useState("");
-  const [q, setQ] = useState("");
-  const [brandId, setBrandId] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [purchased, setPurchased] = useState<Purchased>("ANY");
-  const [purchasedFrom, setPurchasedFrom] = useState("");
-  const [purchasedTo, setPurchasedTo] = useState("");
-  const [availability, setAvailability] = useState<Availability>("ALL");
-  const [sort, setSort] = useState<Sort>("RECENT");
-  const [quick, setQuick] = useState<Quick>(null);
-  const [page, setPage] = useState(1);
+  const [qInput, setQInput] = useState(q);
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  function patchSearch(next: {
+    purchased?: Purchased | null;
+    purchasedFrom?: string | null;
+    purchasedTo?: string | null;
+    q?: string | null;
+    brandId?: string | null;
+    categoryId?: string | null;
+    availability?: Availability | null;
+    sort?: Sort | null;
+    quick?: Exclude<Quick, null> | null;
+    page?: number;
+  }) {
+    const nextPurchased = next.purchased === null ? "ANY" : (next.purchased ?? purchased);
+    const nextFrom =
+      next.purchasedFrom === null ? "" : (next.purchasedFrom ?? purchasedFrom);
+    const nextTo = next.purchasedTo === null ? "" : (next.purchasedTo ?? purchasedTo);
+    const nextQ = next.q === null ? "" : (next.q ?? q);
+    const nextBrand = next.brandId === null ? "" : (next.brandId ?? brandId);
+    const nextCat = next.categoryId === null ? "" : (next.categoryId ?? categoryId);
+    const nextAvail = next.availability === null ? "ALL" : (next.availability ?? availability);
+    const nextSort = next.sort === null ? "RECENT" : (next.sort ?? sort);
+    const nextQuick = next.quick === null ? null : (next.quick === undefined ? quick : next.quick);
+    const nextPage = next.page ?? page;
+    const payload: PurchaseHistoryUrlSearch = {};
+    if (nextPurchased !== "ANY") payload.purchased = nextPurchased;
+    if (nextPurchased === "CUSTOM") {
+      if (nextFrom) payload.purchasedFrom = nextFrom;
+      if (nextTo) payload.purchasedTo = nextTo;
+    }
+    if (nextQ.trim()) payload.q = nextQ.trim();
+    if (nextBrand) payload.brandId = nextBrand;
+    if (nextCat) payload.categoryId = nextCat;
+    if (nextAvail !== "ALL") payload.availability = nextAvail;
+    if (nextSort !== "RECENT") payload.sort = nextSort;
+    if (nextQuick) payload.quick = nextQuick;
+    if (nextPage > 1) payload.page = nextPage;
+    void navigate({ search: compactPurchaseHistoryUrlSearch(payload) });
+  }
 
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [insight, setInsight] = useState<InsightData | null>(null);
@@ -134,12 +183,19 @@ function PortalPurchasesPage() {
   const [chartMetric, setChartMetric] = useState<"units" | "spend">("units");
 
   useEffect(() => {
+    setQInput(q);
+  }, [q]);
+
+  useEffect(() => {
     const t = window.setTimeout(() => {
-      setQ(qInput.trim());
-      setPage(1);
+      const next = qInput.trim();
+      if (next === q) return;
+      patchSearch({ q: next || null, page: 1 });
     }, 250);
     return () => window.clearTimeout(t);
-  }, [qInput]);
+    // patchSearch is recreated each render; debounce only on qInput.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput, q]);
 
   useEffect(() => {
     void (async () => {
@@ -201,8 +257,7 @@ function PortalPurchasesPage() {
   }, [data]);
 
   function toggleQuick(next: Exclude<Quick, null>) {
-    setQuick((prev) => (prev === next ? null : next));
-    setPage(1);
+    patchSearch({ quick: quick === next ? null : next, page: 1 });
   }
 
   function toggleExpand(sku: string) {
@@ -276,10 +331,7 @@ function PortalPurchasesPage() {
               <select
                 className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                 value={brandId}
-                onChange={(e) => {
-                  setBrandId(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => patchSearch({ brandId: e.target.value || null, page: 1 })}
               >
                 <option value="">All brands</option>
                 {(data?.filterOptions.brands ?? []).map((b) => (
@@ -294,10 +346,7 @@ function PortalPurchasesPage() {
               <select
                 className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                 value={categoryId}
-                onChange={(e) => {
-                  setCategoryId(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => patchSearch({ categoryId: e.target.value || null, page: 1 })}
               >
                 <option value="">All categories</option>
                 {(data?.filterOptions.categories ?? []).map((c) => (
@@ -312,10 +361,14 @@ function PortalPurchasesPage() {
               <select
                 className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                 value={purchased}
-                onChange={(e) => {
-                  setPurchased(e.target.value as Purchased);
-                  setPage(1);
-                }}
+                onChange={(e) =>
+                  patchSearch({
+                    purchased: e.target.value as Purchased,
+                    page: 1,
+                    purchasedFrom: e.target.value === "CUSTOM" ? purchasedFrom || null : null,
+                    purchasedTo: e.target.value === "CUSTOM" ? purchasedTo || null : null,
+                  })
+                }
               >
                 <option value="ANY">Any time</option>
                 <option value="LAST_30">Last 30 days</option>
@@ -330,10 +383,9 @@ function PortalPurchasesPage() {
               <select
                 className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                 value={availability}
-                onChange={(e) => {
-                  setAvailability(e.target.value as Availability);
-                  setPage(1);
-                }}
+                onChange={(e) =>
+                  patchSearch({ availability: e.target.value as Availability, page: 1 })
+                }
               >
                 <option value="ALL">All</option>
                 <option value="AVAILABLE">Available to order</option>
@@ -347,10 +399,7 @@ function PortalPurchasesPage() {
               <select
                 className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                 value={sort}
-                onChange={(e) => {
-                  setSort(e.target.value as Sort);
-                  setPage(1);
-                }}
+                onChange={(e) => patchSearch({ sort: e.target.value as Sort, page: 1 })}
               >
                 <option value="RECENT">Most recently purchased</option>
                 <option value="MOST_PURCHASED">Most purchased</option>
@@ -370,10 +419,9 @@ function PortalPurchasesPage() {
                   type="date"
                   className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                   value={purchasedFrom}
-                  onChange={(e) => {
-                    setPurchasedFrom(e.target.value);
-                    setPage(1);
-                  }}
+                  onChange={(e) =>
+                    patchSearch({ purchasedFrom: e.target.value || null, page: 1 })
+                  }
                 />
               </label>
               <label className="text-[12px]">
@@ -382,10 +430,9 @@ function PortalPurchasesPage() {
                   type="date"
                   className="mt-1 block h-10 w-full rounded-md border border-border px-3 text-[13px]"
                   value={purchasedTo}
-                  onChange={(e) => {
-                    setPurchasedTo(e.target.value);
-                    setPage(1);
-                  }}
+                  onChange={(e) =>
+                    patchSearch({ purchasedTo: e.target.value || null, page: 1 })
+                  }
                 />
               </label>
             </div>
@@ -577,7 +624,7 @@ function PortalPurchasesPage() {
               <button
                 type="button"
                 disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => patchSearch({ page: Math.max(1, page - 1) })}
                 className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:opacity-40"
               >
                 Previous
@@ -585,7 +632,7 @@ function PortalPurchasesPage() {
               <button
                 type="button"
                 disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => patchSearch({ page: page + 1 })}
                 className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase disabled:opacity-40"
               >
                 Next
