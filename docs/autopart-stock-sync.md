@@ -57,7 +57,7 @@ Dedupe: `Message-ID|UID` (UID required). Message-ID alone is not unique. Dry-run
 
 Printed Autopart report (fixed-width), not a simple CSV. Positive detection requires title `(231PO3NEW)` or a header with **Part Number + Stk + Avail + Pick Qty**. Filename is not enough.
 
-Native parser reads **Avail** only. Manual CSV/TSV upload still uses the Phase 5 delimited parser.
+Native parser reads **Avail** as sellable stock authority. The same report also carries **Latest Cost** and stock/usage columns (`Stk`, `Pick Qty`, `Physical Stk`, and optionally `Ryr` / `Curr` / `Mth1…`) which AB captures for **internal commercial intelligence** only — see [Product cost intelligence](#product-cost-intelligence-from-231po3new) below. Manual CSV/TSV upload still uses the Phase 5 delimited parser (Avail only; no cost).
 
 ## Avail rule
 
@@ -208,6 +208,58 @@ getVariantAvailability(variantId)
 
 Phase 6 must check `requestedQty <= getSellableQuantity(stock)` **and** full-case multiples. That validation is **not** implemented here.
 
+## Product cost intelligence from 231PO3NEW
+
+Sales Intelligence foundation (cost + usage only — not full SI).
+
+### What stays unchanged
+
+- **231PO3NEW `Avail` remains the authoritative sellable stock** for AB Inventory.
+- Existing polling cadence is unchanged: **09:00 / 12:00 / 15:00 / 18:00 Europe/London**.
+- Manual **Poll now** still updates Avail every time.
+- Cost capture never feeds the Phase 4 price resolver, trade/RRP, or public catalogue.
+- No historic gross margin is inferred by applying today’s cost to old invoices.
+- No rebate / gap-analysis / Sales-i features in this phase.
+
+### Latest Cost (internal only)
+
+From each successful native 231PO3NEW parse AB also reads **Latest Cost**:
+
+| Store | Purpose |
+| --- | --- |
+| `AutopartProductCostPosition` | Current cost per SKU (+ previous, first/last observed, last changed, source run) |
+| `AutopartProductCostSnapshot` | **One** row per SKU per **Europe/London** business date |
+
+Multiple polls the same London day **upsert** the daily snapshot — latest valid observation wins (e.g. 09:00 £2.50, 15:00 £2.60 → day’s snapshot £2.60). Database timestamps remain UTC; the business date label is London civil `YYYY-MM-DD` stored as that date at UTC midnight (no timezone shift of the label).
+
+Costs use Prisma `Decimal(12,4)` / scaled Money strings — never IEEE floats as the authority.
+
+**Malformed Latest Cost** does not overwrite a known valid cost. **Missing** cost is not treated as £0. Genuine source `0.00` is preserved as a valid observation. Invalid/missing cost rows are recorded in commercial diagnostics (`StockSyncRun.commercialJson` + ignored issue note) and **do not** make a healthy stock run PARTIAL / Needs Attention.
+
+SKU match for cost is the same as stock: trim + case-insensitive exact. Unmatched Autopart SKUs still retain cost positions with `productVariantId = null` (not a stock error; no auto-create).
+
+Permission: `products.cost.view` (Super Admin, Management, Sales Manager, Accounts). Ordinary Sales Representatives and all trade/customer roles never receive cost. Admin Product → Commercial shows the Autopart cost panel when permitted.
+
+### Usage snapshots (conservative)
+
+`AutopartProductUsageSnapshot` stores same-day upserts of source columns:
+
+- Known stock columns: `Stk`, `Pick Qty`, `Physical Stk` (diagnostic — **Avail** remains sellable authority)
+- Optional header fields when present: `Ryr`, `Curr`, `Mth1…Mth12`
+
+**Meaning of `Ryr` / `Curr` / `Mth*` is to be confirmed with Autopart before customer/commercial analysis.** They are not exposed in Sales Intelligence yet and are not calendar-month labels invented by AB.
+
+### Future Sales Intelligence dependency
+
+Next phases can combine **without merging into fake Order/Invoice entities**:
+
+- 561L + SLRB → customer/product historic sales and credits
+- 231PO3NEW → current/daily product cost + usage
+- 407P100 → current customer credit position
+- AB Orders → native B2B activity
+
+Keep source provenance. Do not invent margin from today’s cost on 2024/2025 invoices until daily cost history supports clearly defined semantics.
+
 ## First production activation
 
 1. Deploy this email-acquisition correction (does **not** import stock).
@@ -218,6 +270,7 @@ Phase 6 must check `requestedQty <= getSellableQuantity(stock)` **and** full-cas
 6. **Poll now (live)** once — first authorised Inventory write.
 7. Verify catalogue/PDP/internal Inventory.
 8. Leave the in-application scheduler enabled (production default). No Coolify Scheduled Task is required. Optional: `POST /api/internal/stock-sync` for recovery only.
+9. After go-live, confirm Admin Product → Commercial shows Latest Autopart Cost for a matched SKU (cost history begins from first successful native poll).
 
 Do **not** run the first live production sync from this agent session.
 

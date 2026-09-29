@@ -950,6 +950,9 @@ model ProductVariant {
   orderItems     OrderItem[]
   quoteItems       QuoteItem[]
   stockSyncChanges StockSyncChange[]
+  autopartCostPosition AutopartProductCostPosition?
+  autopartCostSnapshots AutopartProductCostSnapshot[]
+  autopartUsageSnapshots AutopartProductUsageSnapshot[]
 
   @@index([productId])
   @@index([barcode])
@@ -1062,6 +1065,8 @@ model StockSyncRun {
   duplicates     Int             @default(0)
   absentFromFeed Int             @default(0)
   errorSummary   String?
+  /// Internal commercial diagnostics from Latest Cost / usage capture (not stock health).
+  commercialJson Json?
   actorUserId    String?
   durationMs     Int?
   createdAt      DateTime        @default(now())
@@ -1127,6 +1132,91 @@ model StockFeedUnmatched {
   reason           String
 
   @@index([lastSeenAt])
+}
+
+/// Current Autopart Latest Cost position per SKU (internal commercial intelligence).
+/// NEVER expose to trade portal / public catalogue.
+model AutopartProductCostPosition {
+  id               String   @id @default(cuid())
+  sku              String   @unique
+  productVariantId String?  @unique
+  latestCost       Decimal  @db.Decimal(12, 4)
+  previousCost     Decimal? @db.Decimal(12, 4)
+  firstObservedAt  DateTime
+  lastObservedAt   DateTime
+  lastChangedAt    DateTime?
+  sourceImportedAt DateTime
+  sourceSyncRunId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  variant ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+
+  @@index([lastChangedAt])
+  @@index([sourceSyncRunId])
+}
+
+/// One authoritative Latest Cost observation per SKU per Europe/London business date.
+/// Multiple polls the same day upsert this row (latest poll wins).
+model AutopartProductCostSnapshot {
+  id               String   @id @default(cuid())
+  sku              String
+  productVariantId String?
+  /// Civil date YYYY-MM-DD in Europe/London (stored as Date at UTC midnight of that civil date).
+  businessDate     DateTime @db.Date
+  latestCost       Decimal  @db.Decimal(12, 4)
+  sourceImportedAt DateTime
+  sourceSyncRunId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  variant ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+
+  @@unique([sku, businessDate])
+  @@index([productVariantId, businessDate])
+  @@index([businessDate])
+  @@index([sourceSyncRunId])
+}
+
+/// Daily product usage / stock-column snapshot from 231PO3NEW.
+/// Ryr / Curr / Mth* retain Autopart source field names — period semantics
+/// are NOT interpreted until confirmed with Autopart. Stk / Pick Qty /
+/// Physical Stk are diagnostic only (Avail remains sellable stock authority).
+model AutopartProductUsageSnapshot {
+  id               String   @id @default(cuid())
+  sku              String
+  productVariantId String?
+  businessDate     DateTime @db.Date
+  stk              Decimal? @db.Decimal(14, 4)
+  pickQty          Decimal? @db.Decimal(14, 4)
+  physicalStk      Decimal? @db.Decimal(14, 4)
+  /// Autopart source field "Ryr" — meaning to be confirmed.
+  ryr              Decimal? @db.Decimal(14, 4)
+  /// Autopart source field "Curr" — meaning to be confirmed.
+  curr             Decimal? @db.Decimal(14, 4)
+  mth1             Decimal? @db.Decimal(14, 4)
+  mth2             Decimal? @db.Decimal(14, 4)
+  mth3             Decimal? @db.Decimal(14, 4)
+  mth4             Decimal? @db.Decimal(14, 4)
+  mth5             Decimal? @db.Decimal(14, 4)
+  mth6             Decimal? @db.Decimal(14, 4)
+  mth7             Decimal? @db.Decimal(14, 4)
+  mth8             Decimal? @db.Decimal(14, 4)
+  mth9             Decimal? @db.Decimal(14, 4)
+  mth10            Decimal? @db.Decimal(14, 4)
+  mth11            Decimal? @db.Decimal(14, 4)
+  mth12            Decimal? @db.Decimal(14, 4)
+  sourceImportedAt DateTime
+  sourceSyncRunId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  variant ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+
+  @@unique([sku, businessDate])
+  @@index([productVariantId, businessDate])
+  @@index([businessDate])
+  @@index([sourceSyncRunId])
 }
 
 /// Single-row mutex so Autopart imports cannot overlap (Prisma-safe; not Redis).

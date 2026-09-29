@@ -21,6 +21,8 @@ export const PERMISSIONS = [
   "products.edit",
   "products.import",
   "products.export",
+  /// Internal Autopart Latest Cost / cost history (never for trade portal).
+  "products.cost.view",
 
   "pricing.view",
   "pricing.edit",

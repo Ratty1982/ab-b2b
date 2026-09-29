@@ -30,6 +30,10 @@ import { dueStockWindow, shouldThrottleFailedAttempt, nextSyncDisplay } from "@/
 import { autopartConfigured, loadAutopartStockConfig, publicAutopartStatus } from "@/server/stock/config";
 import { fetchAutopartFeed } from "@/server/stock/fetch";
 import { releaseStockSyncLock, tryAcquireStockSyncLock } from "@/server/stock/lock";
+import {
+  persistAutopartProductCommercial,
+  type CostPersistStats,
+} from "@/server/stock/cost-persist";
 import type { PublicAvailability } from "@/domain/availability";
 import type { InboundStockEmail } from "@/server/stock/imap";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -110,6 +114,8 @@ export async function applyStockFeed(input: {
   trigger: "manual" | "schedule" | "api";
   actorUserId?: string | null;
   sourceLabel?: string;
+  /** Test/override observation time (UTC). Defaults to now. */
+  observedAt?: Date;
 }) {
   const lockHolder = randomUUID();
   const locked = await tryAcquireStockSyncLock(lockHolder);
@@ -269,7 +275,8 @@ export async function applyStockFeed(input: {
     const existingQty = new Map(existing.map((row) => [row.variantId, row.qtyOnHand]));
     let updated = 0;
     let unchanged = 0;
-    const now = new Date();
+    const now = input.observedAt ?? new Date();
+    // `now` is also the observation timestamp for commercial cost/usage snapshots.
     type ChangeDraft = ApplyRow & { previousQty: number; newQty: number; previousAvailability: string; newAvailability: string };
     const changeDrafts: ChangeDraft[] = [];
     for (const row of toApply) {
@@ -348,6 +355,48 @@ export async function applyStockFeed(input: {
       }
     }
 
+    // Commercial cost/usage intelligence — isolated from stock health.
+    let commercial: CostPersistStats = {
+      costRowsParsed: 0,
+      costPositionsUpdated: 0,
+      costPositionsCreated: 0,
+      costChangesDetected: 0,
+      costSnapshotsUpserted: 0,
+      usageSnapshotsUpserted: 0,
+      invalidCostRows: 0,
+      missingCostRows: 0,
+    };
+    try {
+      const variantByMatchKey = new Map<string, string>();
+      for (const row of toApply) {
+        variantByMatchKey.set(skuMatchKey(row.sku), row.variantId);
+      }
+      commercial = await persistAutopartProductCommercial({
+        rows: parsed.rows,
+        variantByMatchKey,
+        runId: run.id,
+        observedAt: now,
+        dryRun: input.dryRun,
+      });
+      if (commercial.invalidCostRows > 0) {
+        issues.push({
+          kind: "INVALID",
+          severity: "IGNORED",
+          sku: null,
+          description: null,
+          availRaw: null,
+          message: `${commercial.invalidCostRows} Latest Cost value(s) were malformed and ignored (stock Avail unaffected)`,
+          line: null,
+        });
+      }
+    } catch (costError) {
+      // Never fail operational stock sync for commercial-data problems.
+      console.warn("[ab:stock-sync:commercial]", {
+        runId: run.id,
+        error: costError instanceof Error ? costError.message : String(costError),
+      });
+    }
+
     const finalStatus = stockSyncOutcome({
       rowsRead: parsed.rows.length,
       actionableIssueCount,
@@ -381,6 +430,7 @@ export async function applyStockFeed(input: {
       duplicates,
       durationMs: Date.now() - started,
       errorSummary,
+      commercial,
     });
 
     console.info("[ab:stock-sync]", {
@@ -396,6 +446,7 @@ export async function applyStockFeed(input: {
       duplicates,
       status: finalStatus,
       summary,
+      commercial,
     });
 
     if (!input.dryRun && input.trigger === "manual") {
@@ -404,7 +455,7 @@ export async function applyStockFeed(input: {
         entityType: "StockSyncRun",
         entityId: run.id,
         actorUserId: input.actorUserId ?? null,
-        after: { status: finalStatus, matched, updated, unmatched, invalid },
+        after: { status: finalStatus, matched, updated, unmatched, invalid, commercial },
       });
     }
 
@@ -424,6 +475,7 @@ export async function applyStockFeed(input: {
       summary,
       errorSummary,
       wouldChanges: changeDrafts.slice(0, WOULD_CHANGE_CAP).map(serializeWouldChange),
+      commercial,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stock sync failed";
@@ -491,6 +543,7 @@ async function finishRun(
     invalid?: number;
     duplicates?: number;
     errorSummary?: string | null;
+    commercial?: CostPersistStats;
     durationMs: number;
   },
 ) {
@@ -508,6 +561,7 @@ async function finishRun(
       ...(data.invalid != null ? { invalid: data.invalid } : {}),
       ...(data.duplicates != null ? { duplicates: data.duplicates } : {}),
       ...(data.errorSummary !== undefined ? { errorSummary: data.errorSummary } : {}),
+      ...(data.commercial != null ? { commercialJson: data.commercial } : {}),
     },
   });
 }
@@ -1016,6 +1070,7 @@ function serializeRun(row: {
   invalid: number;
   duplicates: number;
   errorSummary: string | null;
+  commercialJson?: unknown;
   durationMs: number | null;
 }) {
   return {
@@ -1034,6 +1089,7 @@ function serializeRun(row: {
     invalid: row.invalid,
     duplicates: row.duplicates,
     errorSummary: row.errorSummary,
+    commercial: (row.commercialJson as CostPersistStats | null) ?? null,
     durationMs: row.durationMs,
     summary: catalogueMatchSummary({
       matched: row.matched,

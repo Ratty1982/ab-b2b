@@ -25,6 +25,7 @@ import { EditableStringList } from "@/components/catalogue/EditableStringList";
 import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
+import { AutopartProductCostPanel } from "@/components/catalogue/AutopartProductCostPanel";
 import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { InstantText } from "@/components/ab/InstantText";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
@@ -314,6 +315,7 @@ function ProductWorkspace() {
           <CommercialForm draft={draft} onChange={updateDraft} />
           {product.defaultVariantId ? (
             <div className="mt-10 space-y-10 border-t border-border/70 pt-8">
+              <AutopartProductCostPanel variantId={product.defaultVariantId} />
               <QuantityBreaksPanel variantId={product.defaultVariantId} />
               <PriceAsCustomerPanel variantId={product.defaultVariantId} sku={product.sku} />
               <CommercialAuditList variantId={product.defaultVariantId} />

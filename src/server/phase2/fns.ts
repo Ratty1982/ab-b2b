@@ -1622,6 +1622,36 @@ export const runManualStockSyncFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getProductAutopartCostFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { variantId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { getProductCostPositionByVariantId } = await import("@/server/stock/product-cost");
+      return {
+        ok: true as const,
+        data: await getProductCostPositionByVariantId(userId, data.variantId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getProductAutopartCostHistoryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { variantId: string; range?: "30d" | "90d" | "12m" | "all" })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { getProductCostHistoryByVariantId } = await import("@/server/stock/product-cost");
+      return {
+        ok: true as const,
+        data: await getProductCostHistoryByVariantId(userId, data.variantId, data.range ?? "90d"),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getImapSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

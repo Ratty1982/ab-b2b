@@ -1,5 +1,13 @@
 import { normalizeStockSku, skuMatchKey } from "@/domain/stock";
-import { MAX_STOCK_FEED_BYTES, parseAvailCell, type StagedStockRow, type StockParseFailure, type StockParseSuccess } from "@/domain/stock-parse-types";
+import { parseLatestCostCell, parseOptionalQuantityCell } from "@/domain/stock-parse-cost";
+import {
+  MAX_STOCK_FEED_BYTES,
+  parseAvailCell,
+  type StagedStockRow,
+  type StagedUsageFields,
+  type StockParseFailure,
+  type StockParseSuccess,
+} from "@/domain/stock-parse-types";
 
 const NEW_TITLE_RE = /\(\s*231PO3NEW\s*\)/i;
 
@@ -227,6 +235,37 @@ type NumericLayout = {
   physicalStkEnd: number;
 };
 
+/**
+ * Optional usage columns after Physical Stk.
+ * Labels mirror Autopart source headers — do not reinterpret as calendar months.
+ */
+type UsageLayout = {
+  ryrStart: number | null;
+  currStart: number | null;
+  mthStarts: Array<number | null>;
+};
+
+function detectUsageLayout(headerLine: string, _physicalStkEnd: number): UsageLayout {
+  const ryrStart = findLabelStart(headerLine, "Ryr");
+  const currStart = findLabelStart(headerLine, "Curr");
+  const mthStarts: Array<number | null> = [];
+  for (let i = 1; i <= 12; i += 1) {
+    const idx = findLabelStart(headerLine, `Mth${i}`);
+    mthStarts.push(idx >= 0 ? idx : null);
+  }
+  return {
+    ryrStart: ryrStart >= 0 ? ryrStart : null,
+    currStart: currStart >= 0 ? currStart : null,
+    mthStarts,
+  };
+}
+
+function sliceOptionalQty(line: string, start: number | null, end: number | null): string | null {
+  if (start == null || start < 0) return null;
+  const raw = end != null && end > start ? sliceField(line, start, end) : line.slice(start).trim().split(/\s+/)[0] ?? "";
+  return parseOptionalQuantityCell(raw);
+}
+
 function detectIdentity(headerLine: string): IdentityOffsets | null {
   const hasBranch = /^\s*Branch[\s\t]+Group[\s\t]+Part[\s\t]+Number/i.test(headerLine);
   const groupStart = findLabelStart(headerLine, "Group");
@@ -306,12 +345,16 @@ function detectNumericLayout(lines: string[], identity: IdentityOffsets): Numeri
   return { latestCostStart, stkStart, availStart, availEnd, pickQtyStart, physicalStkStart, physicalStkEnd };
 }
 
-function extractAvail(line: string, identity: IdentityOffsets, numeric: NumericLayout): { raw: string; value: number } | null {
+function extractNumericQuint(line: string, identity: IdentityOffsets, numeric: NumericLayout): QuintMatch | null {
   const region = line.slice(identity.descriptionStart);
-  const quint = selectBestNumericQuint(
+  return selectBestNumericQuint(
     findAllNumericQuintsInRegion(region, identity.descriptionStart),
     numeric.latestCostStart,
   );
+}
+
+function extractAvail(line: string, identity: IdentityOffsets, numeric: NumericLayout): { raw: string; value: number } | null {
+  const quint = extractNumericQuint(line, identity, numeric);
   if (quint) {
     const raw = line.slice(quint.availStart, quint.availEnd);
     const parsed = parseAvailCell(raw);
@@ -321,6 +364,52 @@ function extractAvail(line: string, identity: IdentityOffsets, numeric: NumericL
   const parsed = parseAvailCell(sliced);
   if (!parsed.ok) return null;
   return { raw: parsed.raw, value: parsed.value };
+}
+
+function extractCommercialFields(
+  line: string,
+  identity: IdentityOffsets,
+  numeric: NumericLayout,
+  usageLayout: UsageLayout,
+): {
+  latestCost: ReturnType<typeof parseLatestCostCell>;
+  usage: StagedUsageFields;
+} {
+  const quint = extractNumericQuint(line, identity, numeric);
+  const costRaw = quint
+    ? line.slice(quint.costStart, quint.costEnd)
+    : sliceField(line, numeric.latestCostStart, numeric.stkStart);
+  const stkRaw = quint
+    ? line.slice(quint.stkStart, quint.stkEnd)
+    : sliceField(line, numeric.stkStart, numeric.availStart);
+  const pickRaw = quint
+    ? line.slice(quint.pickStart, quint.pickEnd)
+    : sliceField(line, numeric.pickQtyStart, numeric.physicalStkStart);
+  const physRaw = quint
+    ? line.slice(quint.physStart, quint.physEnd)
+    : sliceField(line, numeric.physicalStkStart, numeric.physicalStkEnd);
+
+  const mthEnds = usageLayout.mthStarts.map((start, idx) => {
+    if (start == null) return null;
+    const next = usageLayout.mthStarts.slice(idx + 1).find((s) => s != null) ?? null;
+    return next;
+  });
+
+  return {
+    latestCost: parseLatestCostCell(costRaw),
+    usage: {
+      stk: parseOptionalQuantityCell(stkRaw),
+      pickQty: parseOptionalQuantityCell(pickRaw),
+      physicalStk: parseOptionalQuantityCell(physRaw),
+      ryr: sliceOptionalQty(line, usageLayout.ryrStart, usageLayout.currStart),
+      curr: sliceOptionalQty(
+        line,
+        usageLayout.currStart,
+        usageLayout.mthStarts.find((s) => s != null) ?? null,
+      ),
+      mth: usageLayout.mthStarts.map((start, idx) => sliceOptionalQty(line, start, mthEnds[idx] ?? null)),
+    },
+  };
 }
 
 const AVAIL_FAIL: StockParseFailure = {
@@ -345,6 +434,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
   if (!identity) return AVAIL_FAIL;
   const numeric = detectNumericLayout(lines, identity);
   if (!numeric) return AVAIL_FAIL;
+  const usageLayout = detectUsageLayout(headerLine, numeric.physicalStkEnd);
 
   const rows: StagedStockRow[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -360,6 +450,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     const avail = extracted
       ? { ok: true as const, value: extracted.value, raw: extracted.raw }
       : parseAvailCell("");
+    const commercial = extractCommercialFields(line, identity, numeric, usageLayout);
     rows.push({
       line: i + 1,
       sku,
@@ -367,6 +458,8 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       description,
       availRaw,
       avail,
+      latestCost: commercial.latestCost,
+      usage: commercial.usage,
     });
   }
 

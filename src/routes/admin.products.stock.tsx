@@ -65,6 +65,16 @@ type SyncResult = {
   emailsExamined?: number;
   attachmentFilename?: string;
   wouldChanges?: ChangeItem[];
+  commercial?: {
+    costRowsParsed?: number;
+    costPositionsUpdated?: number;
+    costPositionsCreated?: number;
+    costChangesDetected?: number;
+    costSnapshotsUpserted?: number;
+    usageSnapshotsUpserted?: number;
+    invalidCostRows?: number;
+    missingCostRows?: number;
+  } | null;
 };
 
 function buttonClass(primary = false) {
@@ -90,10 +100,26 @@ function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
     ]
       .filter(Boolean)
       .join(". ");
+  const commercial = data.commercial;
+  const commercialLine = commercial
+    ? [
+        `Cost rows: ${commercial.costRowsParsed ?? 0}`,
+        `Cost positions +${commercial.costPositionsCreated ?? 0}/~${commercial.costPositionsUpdated ?? 0}`,
+        `Cost changes: ${commercial.costChangesDetected ?? 0}`,
+        `Cost snapshots: ${commercial.costSnapshotsUpserted ?? 0}`,
+        `Usage snapshots: ${commercial.usageSnapshotsUpserted ?? 0}`,
+        (commercial.invalidCostRows ?? 0) > 0
+          ? `Invalid cost rows: ${commercial.invalidCostRows}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("; ")
+    : null;
   const extra = [
     data.attachmentFilename ? `Attachment ${data.attachmentFilename}` : null,
     data.emailsExamined != null ? `${data.emailsExamined} email(s) examined` : null,
     data.dryRun && (data.wouldUpdate ?? 0) > 0 ? `${data.wouldUpdate} SKU(s) would change (not written)` : null,
+    commercialLine,
     data.errorSummary,
   ]
     .filter(Boolean)
@@ -832,6 +858,32 @@ function RunDetailPanel({
         <StatusCard label="Ignored (invalid)" value={selected.invalid.toLocaleString("en-GB")} />
         <StatusCard label="Ignored (duplicates)" value={selected.duplicates.toLocaleString("en-GB")} />
       </div>
+      {selected.commercial && (selected.commercial.costRowsParsed ?? 0) > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatusCard
+            label="Cost rows parsed"
+            value={String(selected.commercial.costRowsParsed ?? 0)}
+          />
+          <StatusCard
+            label="Cost positions"
+            value={`+${selected.commercial.costPositionsCreated ?? 0} / ~${selected.commercial.costPositionsUpdated ?? 0}`}
+          />
+          <StatusCard
+            label="Cost changes"
+            value={String(selected.commercial.costChangesDetected ?? 0)}
+          />
+          <StatusCard
+            label="Cost / usage snapshots"
+            value={`${selected.commercial.costSnapshotsUpserted ?? 0} / ${selected.commercial.usageSnapshotsUpserted ?? 0}`}
+          />
+          {(selected.commercial.invalidCostRows ?? 0) > 0 ? (
+            <StatusCard
+              label="Invalid cost rows"
+              value={String(selected.commercial.invalidCostRows)}
+            />
+          ) : null}
+        </div>
+      ) : null}
       {stats.total > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <StatusCard label="Stock increased" value={String(stats.increased)} />
