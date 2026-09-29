@@ -22,6 +22,12 @@ import {
 } from "@/domain/availability";
 import { isEffectiveBackorderAllowed } from "@/domain/backorder";
 import { isOrderableByStockPolicy } from "@/domain/ordering";
+import {
+  addDaysIso,
+  dateOnlyIsoFromDate,
+  lastNDaysRange,
+  todayLondonDateOnly,
+} from "@/domain/sales-history-period";
 import { loadStockByVariantIds } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { trustedSellableForOrdering } from "@/server/ordering/policy";
@@ -121,28 +127,7 @@ type SkuAgg = {
 };
 
 function dateOnlyIso(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function addDaysIso(iso: string, days: number): string {
-  const [y, m, day] = iso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y!, m! - 1, day!));
-  dt.setUTCDate(dt.getUTCDate() + days);
-  return dateOnlyIso(dt);
-}
-
-function todayLondonDateOnly(now = new Date()): string {
-  // Europe/London calendar date via en-GB parts (avoids fabricating local TZ from server).
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const y = parts.find((p) => p.type === "year")?.value;
-  const m = parts.find((p) => p.type === "month")?.value;
-  const d = parts.find((p) => p.type === "day")?.value;
-  return `${y}-${m}-${d}`;
+  return dateOnlyIsoFromDate(d);
 }
 
 function monthKeyFromIso(iso: string): string {
@@ -177,7 +162,7 @@ export function purchaseHistoryWindowRange(
         : purchased === "LAST_180"
           ? 180
           : 365;
-  return { from: addDaysIso(today, -(days - 1)), to: today };
+  return lastNDaysRange(today, days);
 }
 
 function lineDocumentDateIso(line: LineRow): string | null {

@@ -37,6 +37,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "applications.review",
   "applications.approve",
   "sales.view_all_accounts",
+  "sales_intelligence.view",
   "reports.view",
   "reports.management",
   "cms.view",
@@ -76,6 +77,7 @@ const SALES_MANAGER_PERMS: PermissionKey[] = [
   "applications.review",
   "sales.view_team_accounts",
   "sales.view_own_accounts",
+  "sales_intelligence.view",
   "reports.view",
   "impersonation.order_for_customer",
 ];
@@ -104,6 +106,7 @@ const SALES_REP_PERMS: PermissionKey[] = [
   "tasks.manage",
   "applications.view",
   "sales.view_own_accounts",
+  "sales_intelligence.view",
   "impersonation.order_for_customer",
 ];
 
@@ -131,6 +134,7 @@ const ACCOUNTS_PERMS: PermissionKey[] = [
   "invoices.view",
   "applications.view",
   "applications.review",
+  "sales_intelligence.view",
   "reports.view",
 ];
 

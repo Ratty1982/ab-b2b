@@ -131,6 +131,7 @@ export async function requireInternalSalesAccess(
     hasPermission(profile, "sales.view_own_accounts") ||
     hasPermission(profile, "sales.view_team_accounts") ||
     hasPermission(profile, "sales.view_all_accounts") ||
+    hasPermission(profile, "sales_intelligence.view") ||
     hasPermission(profile, "crm.view") ||
     hasPermission(profile, "admin.access");
   if (!ok) {

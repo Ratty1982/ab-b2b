@@ -56,6 +56,7 @@ import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
 import { Route as QuoteIdRouteImport } from './routes/quote.$id'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
+import { Route as SalesSalesIntelligenceRouteImport } from './routes/sales.sales-intelligence'
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
 import { Route as AdminContentIndexRouteImport } from './routes/admin.content.index'
 import { Route as AdminContentSlugRouteImport } from './routes/admin.content.$slug'
@@ -326,6 +327,11 @@ const SalesIndexRoute = SalesIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesSalesIntelligenceRoute = SalesSalesIntelligenceRouteImport.update({
+  id: '/sales-intelligence',
+  path: '/sales-intelligence',
+  getParentRoute: () => SalesRoute,
+} as any)
 const AdminApplicationsIndexRoute = AdminApplicationsIndexRouteImport.update({
   id: '/applications/',
   path: '/applications/',
@@ -542,6 +548,7 @@ export interface FileRoutesByFullPath {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRoute
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
@@ -615,6 +622,7 @@ export interface FileRoutesByTo {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRoute
   '/admin': typeof AdminIndexRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
@@ -697,6 +705,7 @@ export interface FileRoutesById {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/quote/$id': typeof QuoteIdRoute
+  '/sales/sales-intelligence': typeof SalesSalesIntelligenceRoute
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
   '/crm/': typeof CrmIndexRoute
@@ -782,6 +791,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/sales/sales-intelligence'
     | '/admin/'
     | '/brands/'
     | '/crm/'
@@ -855,6 +865,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/sales/sales-intelligence'
     | '/admin'
     | '/brands'
     | '/crm'
@@ -936,6 +947,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/quote/$id'
+    | '/sales/sales-intelligence'
     | '/admin/'
     | '/brands/'
     | '/crm/'
@@ -1337,6 +1349,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/sales/'
       preLoaderRoute: typeof SalesIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/sales-intelligence': {
+      id: '/sales/sales-intelligence'
+      path: '/sales-intelligence'
+      fullPath: '/sales/sales-intelligence'
+      preLoaderRoute: typeof SalesSalesIntelligenceRouteImport
       parentRoute: typeof SalesRoute
     }
     '/admin/applications/': {
@@ -1787,6 +1806,7 @@ const PortalRouteWithChildren =
   PortalRoute._addFileChildren(PortalRouteChildren)
 
 interface SalesRouteChildren {
+  SalesSalesIntelligenceRoute: typeof SalesSalesIntelligenceRoute
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
   SalesOrderIdRoute: typeof SalesOrderIdRoute
@@ -1797,6 +1817,7 @@ interface SalesRouteChildren {
 }
 
 const SalesRouteChildren: SalesRouteChildren = {
+  SalesSalesIntelligenceRoute: SalesSalesIntelligenceRoute,
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
   SalesOrderIdRoute: SalesOrderIdRoute,

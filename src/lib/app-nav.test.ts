@@ -89,7 +89,16 @@ describe("canonical navigation contract", () => {
     expect(items.find((i) => i.id === "website-team")?.to).toBe(ROUTES.adminTeam);
     expect(items.find((i) => i.id === "website-media")?.to).toBe(ROUTES.adminMedia);
     const sections = backOfficeNavForUser(superAdmin).map((s) => s.id);
-    expect(sections).toEqual(["home", "sales", "catalogue", "crm", "website", "operations", "system"]);
+    expect(sections).toEqual([
+      "home",
+      "sales",
+      "sales-intelligence",
+      "catalogue",
+      "crm",
+      "website",
+      "operations",
+      "system",
+    ]);
   });
 
   it("keeps Website nav as Pages, Homepage, Team, Media in that order", () => {
@@ -124,6 +133,7 @@ describe("canonical navigation contract", () => {
     expect(ids).toContain("customers");
     expect(ids).toContain("trade-applications");
     expect(ids).toContain("quotes");
+    expect(ids).toContain("sales-enquiry");
     expect(ids).toContain("opportunities");
     expect(ids).not.toContain("website-pages");
     expect(ids).not.toContain("website-homepage");

@@ -12,6 +12,7 @@ describe("permission catalogue", () => {
       "companies.manage_users",
       "orders.place_for_customer",
       "products.cost.view",
+      "sales_intelligence.view",
       "cms.publish",
       "cms.page.publish",
       "impersonation.order_for_customer",
@@ -30,6 +31,19 @@ describe("permission catalogue", () => {
     const m = SYSTEM_ROLE_PERMISSIONS.MARKETING;
     expect(m).not.toContain("invoices.view");
     expect(m).toContain("cms.publish");
+  });
+
+  it("grants sales_intelligence.view to commercial internal roles only", () => {
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("sales_intelligence.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("sales_intelligence.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).toContain("sales_intelligence.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).toContain("sales_intelligence.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTS).toContain("sales_intelligence.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("sales_intelligence.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.CUSTOMER_SERVICE).not.toContain("sales_intelligence.view");
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("sales_intelligence.view");
+    }
   });
 
   it("does not give accounts CMS publish", () => {

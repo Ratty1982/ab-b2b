@@ -1914,6 +1914,8 @@ model AutopartSalesLine {
 
   @@unique([companyId, documentType, documentReference, lineNumber])
   @@index([companyId, sku])
+  /// Product-first Sales Intelligence enquiry (SKU across companies in scope).
+  @@index([sku, companyId])
   @@index([matchedVariantId])
   @@index([autopartCustomerCode])
   @@index([documentReference])

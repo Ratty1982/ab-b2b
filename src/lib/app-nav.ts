@@ -65,6 +65,8 @@ export const ROUTES = {
 
   adminOrders: "/admin/orders",
   adminOrder: (id: string) => `/admin/orders/${id}` as const,
+
+  salesIntelligence: "/sales/sales-intelligence",
 } as const;
 
 /**
@@ -241,6 +243,21 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: "/admin/invoices",
         permission: "invoices.view",
         implemented: false,
+      },
+    ],
+  },
+  {
+    id: "sales-intelligence",
+    label: "Sales Intelligence",
+    items: [
+      {
+        id: "sales-enquiry",
+        label: "Sales Enquiry",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligence,
+        matchPrefixes: [ROUTES.salesIntelligence],
+        permission: "sales_intelligence.view",
+        implemented: true,
       },
     ],
   },

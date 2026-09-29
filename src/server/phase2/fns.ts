@@ -2608,4 +2608,76 @@ export const getPortalPurchaseProductInsightFn = createServerFn({ method: "GET" 
     }
   });
 
+export const searchSalesIntelligenceCustomersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const si = await import("@/server/sales-intelligence/enquiry");
+      return { ok: true as const, data: await si.searchSalesIntelligenceCustomers(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchSalesIntelligenceProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const si = await import("@/server/sales-intelligence/enquiry");
+      return { ok: true as const, data: await si.searchSalesIntelligenceProducts(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCustomerSalesEnquiryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const si = await import("@/server/sales-intelligence/enquiry");
+      return { ok: true as const, data: await si.getCustomerSalesEnquiry(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getProductSalesEnquiryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const si = await import("@/server/sales-intelligence/enquiry");
+      return { ok: true as const, data: await si.getProductSalesEnquiry(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerSalesEnquiryCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const si = await import("@/server/sales-intelligence/enquiry");
+      return { ok: true as const, data: await si.exportCustomerSalesEnquiryCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportProductSalesEnquiryCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const si = await import("@/server/sales-intelligence/enquiry");
+      return { ok: true as const, data: await si.exportProductSalesEnquiryCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 
