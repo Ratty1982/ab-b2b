@@ -125,7 +125,7 @@ describe("cost-intelligence domain", () => {
       to: "2026-09-29",
     });
     expect(resolveCostPeriodRange("90D", null, null, today)).toEqual({
-      from: "2026-06-01",
+      from: "2026-07-02",
       to: "2026-09-29",
     });
     expect(resolveCostPeriodRange("ALL", null, null, today)).toBeNull();
