@@ -261,7 +261,8 @@ describe("ongoing 504 + TRM21QC", () => {
         contactSnapshot: { name: "Buyer", email: `cr-${stamp}@example.test`, phone: "01130000000" },
       },
     });
-    const creditDoc = `SCCRED${String(stamp).slice(-5)}`;
+    // 504C bridge pads Document to 10 chars — keep credit refs within that width.
+    const creditDoc = `SC${String(stamp).slice(-8)}`;
     const text = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
 ACCOUNT,${creditDoc},29/09/2026,14:10,EXAMPLE MOTOR FACTORS,-33.33,-6.66,-39.99,WR,${creditOrderNumber}
 `;
@@ -279,8 +280,10 @@ ACCOUNT,${creditDoc},29/09/2026,14:10,EXAMPLE MOTOR FACTORS,-33.33,-6.66,-39.99,
   });
 
   it("awaits companion report without failing", async () => {
+    // AB-linked 504 so company maps; companion TRM21QC not yet present.
+    const waitDoc = `SSW${String(stamp).slice(-7)}`;
     const only504 = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${docWait},29/09/2026,13:00,EXAMPLE,10.00,2.00,12.00,WR,NONE
+ACCOUNT,${waitDoc},29/09/2026,13:00,EXAMPLE,10.00,2.00,12.00,WR,${orderNumber}
 `;
     await confirmAutopart504Import(adminId, {
       text: only504,
@@ -288,7 +291,7 @@ ACCOUNT,${docWait},29/09/2026,13:00,EXAMPLE,10.00,2.00,12.00,WR,NONE
       source: "MANUAL",
     });
     const doc = await prisma.autopartSalesDocument.findFirst({
-      where: { documentReference: docWait },
+      where: { documentReference: waitDoc },
     });
     expect(doc?.reconciliationStatus).toBe("AWAITING_LINES");
   });
