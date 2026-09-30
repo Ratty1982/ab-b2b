@@ -239,6 +239,21 @@ enum AutopartHistoricLineMatchStatus {
 
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
+  /// Ongoing Autopart all-branches 504 document feed.
+  ONGOING_504
+  /// Ongoing Autopart TRM21QC product-line sales/credit feed.
+  ONGOING_TRM21QC
+}
+
+/// 504 ↔ TRM21QC document reconciliation (timing-tolerant).
+enum AutopartSalesReconciliationStatus {
+  AWAITING_504
+  AWAITING_LINES
+  MATCHED
+  VALUE_MISMATCH
+  UNKNOWN_DOCUMENT_TYPE
+  COMPLETE
+  UNMAPPED_CUSTOMER
 }
 
 enum AutopartCustomerImportStatus {
@@ -1843,6 +1858,27 @@ model Autopart504cImportRun {
   @@index([fileHash])
 }
 
+/// Ongoing 504 + TRM21QC feed settings — automatic polling defaults OFF.
+model AutopartOngoingSalesFeedSettings {
+  id                         String   @id @default("default")
+  enabled                    Boolean  @default(false)
+  configured                 Boolean  @default(false)
+  /// Working-day hours Europe/London — default [13, 18].
+  scheduleHoursJson          String   @default("[13,18]")
+  workingDaysOnly            Boolean  @default(true)
+  allowedSender              String?
+  filenamePattern504         String   @default("*504*")
+  filenamePatternTrm21qc     String   @default("*TRM21QC*")
+  /// Exclude 504C attachments when detecting all-branches 504.
+  excludeFilenamePattern504c String   @default("*504C*")
+  lastPolledAt               DateTime?
+  lastSuccess504At           DateTime?
+  lastSuccessTrm21qcAt       DateTime?
+  lastError                  String?
+  updatedAt                  DateTime @updatedAt
+  updatedByUserId            String?
+}
+
 // ─── Autopart customer history / credit (NOT AB Orders / accounting ledger) ───
 
 /// Explicit staff-verified report account alias. Never fuzzy/prefix matching.
@@ -1863,10 +1899,11 @@ model AutopartCustomerAccountAlias {
   @@index([alias])
 }
 
-/// Historic Autopart sales/credit document header (from SLRB + 561L correlation).
+/// Autopart sales/credit document header (historic 561L/SLRB + ongoing 504/TRM21QC).
 model AutopartSalesDocument {
   id                   String                      @id @default(cuid())
-  companyId            String
+  /// Nullable until customer account can be mapped (ongoing unmatched).
+  companyId            String?
   autopartCustomerCode String
   documentType         AutopartHistoricDocumentType
   documentReference    String
@@ -1875,22 +1912,41 @@ model AutopartSalesDocument {
   goodsNet             Decimal?                    @db.Decimal(12, 2)
   vat                  Decimal?                    @db.Decimal(12, 2)
   grossTotal           Decimal?                    @db.Decimal(12, 2)
+  /// Provenance: SLRB | 561L | ONGOING_504 | ONGOING_TRM21QC (combined sources may update).
   source               String                      @default("SLRB")
   importRunId          String?
+  reconciliationStatus AutopartSalesReconciliationStatus?
+  abOrderId            String?
+  abOrderNumber        String?
+  has504               Boolean                     @default(false)
+  hasTrm21qc           Boolean                     @default(false)
+  customerOrderNumber  String?
+  customerNameSnapshot String?
+  initialsSnapshot     String?
+  /// 504 Type column when present (ACCOUNT / CONSOL).
+  reportType504        String?
+  linesNetSum          Decimal?                    @db.Decimal(12, 2)
+  valueMismatchMinor   Int?
   createdAt            DateTime                    @default(now())
   updatedAt            DateTime                    @updatedAt
 
-  company Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company Company?            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   lines   AutopartSalesLine[]
   importRun AutopartCustomerImportRun? @relation(fields: [importRunId], references: [id], onDelete: SetNull)
 
+  /// Historic uniqueness remains company-scoped (same Autopart doc can appear under aliases).
+  /// Ongoing docs also have a partial unique index on (documentType, documentReference)
+  /// WHERE has504 OR hasTrm21qc — see migration 20260930120000.
   @@unique([companyId, documentType, documentReference])
   @@index([companyId, documentDate])
   @@index([autopartCustomerCode])
   @@index([documentReference])
+  @@index([reconciliationStatus])
+  @@index([abOrderNumber])
+  @@index([has504, hasTrm21qc])
 }
 
-/// Historic Autopart product line (561L). Not an OrderItem.
+/// Autopart product line (historic 561L + ongoing TRM21QC). Not an OrderItem.
 model AutopartSalesLine {
   id                   String                         @id @default(cuid())
   companyId            String
@@ -1903,11 +1959,18 @@ model AutopartSalesLine {
   descriptionSnapshot  String?
   /// Signed units (credits negative when normalised).
   units                Decimal                        @db.Decimal(12, 3)
-  /// Signed sales net (credits negative when normalised).
+  /// Signed sales net EX VAT (credits negative when normalised).
   salesNet             Decimal                        @db.Decimal(12, 2)
   matchedVariantId     String?
   matchStatus          AutopartHistoricLineMatchStatus @default(NOT_IN_AB_CATALOGUE)
   rawInvAndLn          String?
+  /// Deterministic TRM21QC row fingerprint for idempotent line numbers.
+  sourceFingerprint    String?
+  /// Raw TRM21QC Cost — preserved evidence only; NOT Cost Intelligence authority.
+  sourceCost           Decimal?                       @db.Decimal(12, 2)
+  sourceMargin         Decimal?                       @db.Decimal(12, 2)
+  sourcePerc           Decimal?                       @db.Decimal(8, 3)
+  /// Provenance: 561L | ONGOING_TRM21QC
   source               String                         @default("561L")
   importRunId          String?
   createdAt            DateTime                       @default(now())
@@ -1924,6 +1987,7 @@ model AutopartSalesLine {
   @@index([matchedVariantId])
   @@index([autopartCustomerCode])
   @@index([documentReference])
+  @@index([sourceFingerprint])
 }
 
 model AutopartCustomerImportRun {

@@ -2368,6 +2368,126 @@ export const pollAutopart504cMailboxFn = createServerFn({ method: "POST" }).hand
   }
 });
 
+/* ─── Ongoing Autopart 504 + TRM21QC ─────────────────────────────────────── */
+
+export const getOngoingSalesFeedSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/companies/autopart-ongoing-sales");
+    return { ok: true as const, data: await feed.getOngoingSalesFeedSettings(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const updateOngoingSalesFeedSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { enabled?: boolean; configured?: boolean; allowedSender?: string | null },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return { ok: true as const, data: await feed.updateOngoingSalesFeedSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewAutopart504Fn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return { ok: true as const, data: await feed.previewAutopart504Import(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmAutopart504Fn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return { ok: true as const, data: await feed.confirmAutopart504Import(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewAutopartTrm21qcFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return { ok: true as const, data: await feed.previewAutopartTrm21qcImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmAutopartTrm21qcFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return { ok: true as const, data: await feed.confirmAutopartTrm21qcImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listOngoingSalesImportRunsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { limit?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return {
+        ok: true as const,
+        data: await feed.listOngoingSalesImportRuns(userId, data?.limit ?? 25),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getOngoingSalesFreshnessFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/companies/autopart-ongoing-sales");
+    return { ok: true as const, data: await feed.getOngoingSalesFreshness(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getSalesIntelligenceFreshnessFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/companies/autopart-ongoing-sales");
+    return { ok: true as const, data: await feed.getSalesDataFreshnessForIntelligence(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const pollOngoingSalesMailboxFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const poll = await import("@/server/companies/autopart-ongoing-sales-poll");
+    return { ok: true as const, data: await poll.pollOngoingSalesMailboxNow(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 /* ─── Production B2B Quotes ─────────────────────────────────────────────── */
 
 export const listStaffQuotesFn = createServerFn({ method: "GET" })

@@ -1,8 +1,10 @@
 /**
  * Internal Sales Intelligence — Sales Enquiry query layer.
  *
- * Provenance: AutopartSalesLine + AutopartSalesDocument only (561L / SLRB).
- * AB Orders and 504C are intentionally excluded from invoiced sales metrics.
+ * Provenance: AutopartSalesLine + AutopartSalesDocument
+ * (historic 561L/SLRB + ongoing 504/TRM21QC).
+ * AB Orders and legacy 504C are intentionally excluded from realised sales metrics
+ * so AB-originated orders are not double-counted once Autopart invoices arrive.
  */
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";

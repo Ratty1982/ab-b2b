@@ -15,6 +15,7 @@ import {
   SiStickyTableHead,
   siControlClassName,
 } from "@/components/sales-intelligence/workspace";
+import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import { ROUTES } from "@/lib/app-nav";
 import type { PublicAvailability } from "@/domain/availability";
 import {
@@ -78,6 +79,7 @@ const PERIOD_OPTIONS: Array<{ value: OpportunityAnalysisPeriod; label: string }>
 function RangeOpportunitiesPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const freshnessLabel = useSalesIntelligenceFreshnessLabel();
   const period = (search.period ?? "LAST_365") as OpportunityAnalysisPeriod;
   const sort = (search.sort ?? "RANGE_MATCH") as OpportunitySort;
   const page = search.page ?? 1;
@@ -290,6 +292,7 @@ function RangeOpportunitiesPage() {
     <div>
       <SalesIntelligenceHeader
         title="Range Opportunities"
+        freshnessLabel={freshnessLabel}
         actions={
           search.companyId ? <SiExportButton onClick={() => void exportCsv()} /> : null
         }

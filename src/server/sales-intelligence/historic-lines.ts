@@ -36,6 +36,9 @@ export async function loadHistoricSalesLines(args: {
   range: DateOnlyRange;
 }): Promise<HistoricLineRow[]> {
   const bounds = documentDatePrismaBounds(args.range);
+  // Realised Autopart sales only (historic 561L/SLRB + ongoing 504/TRM21QC).
+  // Excludes unmapped documents (null company) and never merges AB Order lines —
+  // AB Orders remain operational; Autopart invoice/credit lines are authoritative realised sales.
   return prisma.autopartSalesLine.findMany({
     where: {
       ...(typeof args.companyId === "string"
@@ -46,6 +49,7 @@ export async function loadHistoricSalesLines(args: {
       ...(args.sku ? { sku: args.sku } : {}),
       document: {
         is: {
+          companyId: { not: null },
           documentDate: { gte: bounds.gte, lte: bounds.lte },
         },
       },

@@ -63,6 +63,15 @@ function ensureStockScheduler() {
         error: error instanceof Error ? error.message : error,
       });
     });
+  // Ongoing 504 + TRM21QC — no-ops while AutopartOngoingSalesFeedSettings.enabled=false.
+  void import("./server/companies/autopart-ongoing-sales-scheduler")
+    .then((mod) => mod.startAutopartOngoingSalesScheduler())
+    .catch((error) => {
+      console.error("[ab:ongoing-sales]", {
+        event: "AUTOPART_ONGOING_SALES_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();

@@ -6,6 +6,7 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
 import { TradeOrderingSettingsPanel } from "@/components/ab/TradeOrderingSettingsPanel";
 import { Autopart504cFeedPanel } from "@/components/ab/Autopart504cFeedPanel";
+import { AutopartOngoingSalesFeedPanel } from "@/components/ab/AutopartOngoingSalesFeedPanel";
 import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
 
@@ -174,6 +175,8 @@ function AdminSettings() {
         <EmailSettingsPanel />
 
         <Autopart504cFeedPanel />
+
+        <AutopartOngoingSalesFeedPanel />
 
         <section className="space-y-4" aria-labelledby="trading-read-only-heading">
           <h2 id="trading-read-only-heading" className="font-display text-lg font-semibold uppercase">

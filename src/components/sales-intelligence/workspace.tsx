@@ -16,9 +16,12 @@ import {
 export function SalesIntelligenceHeader({
   title,
   actions,
+  freshnessLabel,
 }: {
   title: string;
   actions?: ReactNode;
+  /** e.g. "Sales data updated: 30/09/2026 18:07" */
+  freshnessLabel?: string | null;
 }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-3 sm:px-6">
@@ -29,6 +32,9 @@ export function SalesIntelligenceHeader({
         <h1 className="truncate font-display text-xl font-semibold uppercase tracking-tight sm:text-2xl">
           {title}
         </h1>
+        {freshnessLabel ? (
+          <p className="mt-0.5 text-[11px] text-steel">{freshnessLabel}</p>
+        ) : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
     </div>

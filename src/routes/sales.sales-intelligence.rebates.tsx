@@ -14,6 +14,7 @@ import {
   SiStickyTableHead,
   siControlClassName,
 } from "@/components/sales-intelligence/workspace";
+import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { formatGbp } from "@/domain/sales-intelligence";
@@ -146,6 +147,7 @@ function RebateModeSwitch({
 function RebateAnalysisPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const freshnessLabel = useSalesIntelligenceFreshnessLabel();
   const mode: RebateMode = search.mode ?? "customer";
   const period = (search.period ?? "ALL") as RebatePeriodPreset;
   const compare = search.compare ?? "OFF";
@@ -476,6 +478,7 @@ function RebateAnalysisPage() {
     <div className="min-h-full bg-background print:bg-white">
       <SalesIntelligenceHeader
         title="Rebate / Net Spend Analysis"
+        freshnessLabel={freshnessLabel}
         actions={
           <>
             <RebateModeSwitch

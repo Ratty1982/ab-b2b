@@ -37,6 +37,7 @@ import {
   SiCreateFollowUpButton,
   type FollowUpRequest,
 } from "@/components/sales-intelligence/create-followup-drawer";
+import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import {
   exportCustomerSalesEnquiryCsvFn,
   exportProductSalesEnquiryCsvFn,
@@ -93,6 +94,7 @@ function gbp(value: string) {
 function SalesEnquiryPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const freshnessLabel = useSalesIntelligenceFreshnessLabel();
   const mode = search.mode ?? "customers";
   const period = (search.period ?? "LAST_30") as SalesEnquiryPeriodPreset;
   const compare = search.compare ?? "OFF";
@@ -405,6 +407,7 @@ function SalesEnquiryPage() {
     <div>
       <SalesIntelligenceHeader
         title="Sales Enquiry"
+        freshnessLabel={freshnessLabel}
         actions={canExport ? <SiExportButton onClick={() => void exportCsv()} /> : null}
       />
 

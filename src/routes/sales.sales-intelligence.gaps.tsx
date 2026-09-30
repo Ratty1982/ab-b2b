@@ -20,6 +20,7 @@ import {
   SI_PERIOD_OPTIONS,
   siControlClassName,
 } from "@/components/sales-intelligence/workspace";
+import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import { ROUTES } from "@/lib/app-nav";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import type { PublicAvailability } from "@/domain/availability";
@@ -92,6 +93,7 @@ function statusTone(status: string): "bad" | "warn" | "good" | "brand" | "neutra
 function GapAnalysisPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const freshnessLabel = useSalesIntelligenceFreshnessLabel();
   const mode = search.mode ?? "customers";
   const period = (search.period ?? "LAST_30") as SalesEnquiryPeriodPreset;
   const compare = (search.compare ?? "PREVIOUS") as GapCompareMode;
@@ -430,6 +432,7 @@ function GapAnalysisPage() {
     <div>
       <SalesIntelligenceHeader
         title="Gap Analysis"
+        freshnessLabel={freshnessLabel}
         actions={canExport ? <SiExportButton onClick={() => void exportCsv()} /> : null}
       />
 
