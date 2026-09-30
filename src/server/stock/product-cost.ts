@@ -5,6 +5,7 @@
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
 import { moneyToString, parseMoney, type Money } from "@/domain/money";
+import { collapseDistinctCostMovements } from "@/domain/product-cost-history";
 
 export type ProductCostChange = {
   absolute: string;
@@ -25,8 +26,11 @@ export type ProductCostPositionDto = {
   sourceSyncRunId: string | null;
 };
 
+/** Distinct cost movement (consecutive identical daily snapshots collapsed). */
 export type ProductCostHistoryPoint = {
   businessDate: string;
+  firstObservedDate: string;
+  lastObservedDate: string;
   latestCost: string;
   changeFromPrevious: string | null;
 };
@@ -170,18 +174,29 @@ export async function getProductCostHistoryByVariantId(
     const key = row.businessDate.toISOString().slice(0, 10);
     byDate.set(key, formatCost(row.latestCost));
   }
-  const dates = [...byDate.keys()].sort();
+  const daily = [...byDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([businessDate, latestCost]) => ({ businessDate, latestCost }));
+
+  // Presentation: collapse consecutive identical costs into distinct movements.
+  // Persistence still keeps one snapshot per London business date.
+  const collapsed = collapseDistinctCostMovements(daily);
   const points: ProductCostHistoryPoint[] = [];
   let prev: Money | null = null;
-  for (const date of dates) {
-    const costStr = byDate.get(date)!;
-    const cost = parseMoney(costStr)!;
+  for (const move of collapsed) {
+    const cost = parseMoney(move.latestCost)!;
     let changeFromPrevious: string | null = null;
     if (prev) {
       const ch = computeChange(cost, prev);
       changeFromPrevious = ch && ch.direction !== "flat" ? ch.absolute : null;
     }
-    points.push({ businessDate: date, latestCost: costStr, changeFromPrevious });
+    points.push({
+      businessDate: move.businessDate,
+      firstObservedDate: move.firstObservedDate,
+      lastObservedDate: move.lastObservedDate,
+      latestCost: move.latestCost,
+      changeFromPrevious,
+    });
     prev = cost;
   }
 

@@ -315,7 +315,10 @@ function ProductWorkspace() {
           <CommercialForm draft={draft} onChange={updateDraft} />
           {product.defaultVariantId ? (
             <div className="mt-10 space-y-10 border-t border-border/70 pt-8">
-              <AutopartProductCostPanel variantId={product.defaultVariantId} />
+              <AutopartProductCostPanel
+                variantId={product.defaultVariantId}
+                presentation="accordion"
+              />
               <QuantityBreaksPanel variantId={product.defaultVariantId} />
               <PriceAsCustomerPanel variantId={product.defaultVariantId} sku={product.sku} />
               <CommercialAuditList variantId={product.defaultVariantId} />

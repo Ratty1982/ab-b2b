@@ -243,6 +243,59 @@ describe("231PO3NEW product cost intelligence", () => {
     expect(Number(latest?.latestCost)).toBeCloseTo(3.1, 4);
   });
 
+  it("history collapses repeated identical daily costs into one distinct movement", async () => {
+    const day1 = new Date("2026-09-28T08:00:00.000Z");
+    const day2 = new Date("2026-09-29T08:00:00.000Z");
+    const day3 = new Date("2026-09-30T08:00:00.000Z");
+
+    await applyStockFeed({
+      text: feed("0.84"),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+      sourceLabel: "test-cost-same-d1",
+      observedAt: day1,
+    });
+    await applyStockFeed({
+      text: feed("0.84"),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+      sourceLabel: "test-cost-same-d2",
+      observedAt: day2,
+    });
+    await applyStockFeed({
+      text: feed("0.84"),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+      sourceLabel: "test-cost-same-d3",
+      observedAt: day3,
+    });
+
+    const snapCount = await prisma.autopartProductCostSnapshot.count({
+      where: {
+        sku,
+        businessDate: {
+          in: [
+            new Date("2026-09-28T00:00:00.000Z"),
+            new Date("2026-09-29T00:00:00.000Z"),
+            new Date("2026-09-30T00:00:00.000Z"),
+          ],
+        },
+      },
+    });
+    // Persistence: one row per business date (presentation issue if not collapsed).
+    expect(snapCount).toBe(3);
+
+    const hist = await getProductCostHistoryByVariantId(adminId, variantId, "all");
+    const eightyFour = hist.points.filter((p) => Number(p.latestCost) === 0.84);
+    // Presentation: not three separate movement rows for the same cost.
+    expect(eightyFour.length).toBe(1);
+    expect(eightyFour[0]?.firstObservedDate).toBe("2026-09-28");
+    expect(eightyFour[0]?.lastObservedDate).toBe("2026-09-30");
+  });
+
   it("public catalogue card never includes Latest Cost fields", async () => {
     const { getPublicProduct } = await import("@/server/catalogue/products");
     const product = await prisma.product.findFirstOrThrow({

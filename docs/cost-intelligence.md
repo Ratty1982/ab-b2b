@@ -52,9 +52,15 @@ Invalid / blank / malformed Latest Cost is **not** treated as £0 and must not o
 
 Multiple same-day polls with the same cost update **last observed** only. They do **not** create multiple change events.
 
+Daily snapshots may still store the same Latest Cost on consecutive London business dates (one row per day). Product history APIs/UI **collapse** consecutive identical costs into a single distinct movement with first/last observed dates — a repeated observation is not a cost change.
+
 Example: £3.01 four times → one history point for movement purposes.  
 £3.01 → £3.10 → one distinct movement.  
 £3.00 → £3.20 → £3.10 → two distinct movements (repeated mover).
+
+### Product workspace accordion
+
+On an individual admin Product → Commercial tab, Cost Intelligence is a **compact accordion** (collapsed by default) showing Latest Cost / Last Change in the summary row. Expanding reveals the full metrics, period controls, chart (only when ≥2 distinct costs), and movement table. The catalogue `/admin/cost-intelligence` workspace is unchanged.
 
 ### History limitation
 
