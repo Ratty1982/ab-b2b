@@ -7,6 +7,7 @@ import {
   resolvePostLoginPath,
   safeReturnPath,
   signInWithPassword,
+  verifyTwoFactorLogin,
 } from "@/server/auth/session";
 
 const loginSearchSchema = z.object({
@@ -43,6 +44,7 @@ function Login() {
   const { returnTo } = Route.useSearch();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
 
   return (
     <PublicLayout>
@@ -66,85 +68,164 @@ function Login() {
           </p>
         </div>
 
-        <form
-          className="rounded-lg border border-border bg-surface/60 p-6"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const form = e.currentTarget;
-            const fd = new FormData(form);
-            const email = String(fd.get("email") ?? "")
-              .trim()
-              .toLowerCase();
-            const password = String(fd.get("password") ?? "");
-            void (async () => {
-              setPending(true);
-              setError(null);
-              const result = await signInWithPassword({
-                data: { email, password },
-              });
-              setPending(false);
-              if (!result.ok) {
-                setError(result.error);
-                return;
-              }
-              const session = await getClientSession();
-              if (!session.signedIn) {
-                setError("Invalid email or password");
-                return;
-              }
-              // Re-run root beforeLoad so public chrome and portal share the new session.
-              await router.invalidate();
-              const dest = safeReturnPath(returnTo, resolvePostLoginPath(session));
-              await navigate({ href: dest });
-            })();
-          }}
-        >
-          <div className="grid gap-4">
-            <div>
-              <label htmlFor="email" className="block text-[12px] font-medium text-steel">
-                Email address
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="username"
-                required
-                className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
-              />
+        {!needsTwoFactor ? (
+          <form
+            className="rounded-lg border border-border bg-surface/60 p-6"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const form = e.currentTarget;
+              const fd = new FormData(form);
+              const email = String(fd.get("email") ?? "")
+                .trim()
+                .toLowerCase();
+              const password = String(fd.get("password") ?? "");
+              void (async () => {
+                setPending(true);
+                setError(null);
+                const result = await signInWithPassword({
+                  data: { email, password },
+                });
+                setPending(false);
+                if (!result.ok) {
+                  if ("needsTwoFactor" in result && result.needsTwoFactor) {
+                    setNeedsTwoFactor(true);
+                    setError(null);
+                    return;
+                  }
+                  setError(result.error);
+                  return;
+                }
+                const session = await getClientSession();
+                if (!session.signedIn) {
+                  setError("Invalid email or password");
+                  return;
+                }
+                await router.invalidate();
+                const dest = safeReturnPath(returnTo, resolvePostLoginPath(session));
+                await navigate({ href: dest });
+              })();
+            }}
+          >
+            <div className="grid gap-4">
+              <div>
+                <label htmlFor="email" className="block text-[12px] font-medium text-steel">
+                  Email address
+                </label>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="username"
+                  required
+                  className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
+                />
+              </div>
+              <div>
+                <label htmlFor="password" className="block text-[12px] font-medium text-steel">
+                  Password
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
+                />
+              </div>
+              {error ? (
+                <p className="text-[13px] text-warn" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <button
+                type="submit"
+                disabled={pending}
+                className="h-11 rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110 disabled:opacity-60"
+              >
+                {pending ? "Signing in…" : "Sign in to the trade portal"}
+              </button>
+              <div className="grid gap-2 border-t border-border pt-4 text-[13px]">
+                <Link to="/forgot-password" className="font-semibold text-cyan hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
-            <div>
-              <label htmlFor="password" className="block text-[12px] font-medium text-steel">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
-              />
+          </form>
+        ) : (
+          <form
+            className="rounded-lg border border-border bg-surface/60 p-6"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const code = String(fd.get("code") ?? "");
+              void (async () => {
+                setPending(true);
+                setError(null);
+                const result = await verifyTwoFactorLogin({ data: { code } });
+                setPending(false);
+                if (!result.ok) {
+                  setError(result.error);
+                  return;
+                }
+                const session = await getClientSession();
+                if (!session.signedIn) {
+                  setError("Authentication failed");
+                  return;
+                }
+                await router.invalidate();
+                if (session.user.mfaRequired && !session.user.twoFactorEnabled) {
+                  await navigate({ href: "/admin/security/mfa" });
+                  return;
+                }
+                const dest = safeReturnPath(returnTo, resolvePostLoginPath(session));
+                await navigate({ href: dest });
+              })();
+            }}
+          >
+            <h2 className="font-display text-lg font-semibold uppercase">Authenticator code</h2>
+            <p className="mt-1 text-[13px] text-steel">
+              Enter the 6-digit code from your authenticator app, or a one-time recovery code.
+            </p>
+            <div className="mt-4 grid gap-4">
+              <div>
+                <label htmlFor="code" className="block text-[12px] font-medium text-steel">
+                  Authentication code
+                </label>
+                <input
+                  id="code"
+                  name="code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                  className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm tracking-widest"
+                />
+              </div>
+              {error ? (
+                <p className="text-[13px] text-warn" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <button
+                type="submit"
+                disabled={pending}
+                className="h-11 rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110 disabled:opacity-60"
+              >
+                {pending ? "Verifying…" : "Verify and continue"}
+              </button>
+              <button
+                type="button"
+                className="text-[13px] font-semibold text-steel hover:text-primary"
+                onClick={() => {
+                  setNeedsTwoFactor(false);
+                  setError(null);
+                }}
+              >
+                Back to password
+              </button>
             </div>
-            {error ? (
-              <p className="text-[13px] text-warn" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <button
-              type="submit"
-              disabled={pending}
-              className="h-11 rounded-md bg-primary text-sm font-bold text-primary-foreground transition hover:brightness-110 disabled:opacity-60"
-            >
-              {pending ? "Signing in…" : "Sign in to the trade portal"}
-            </button>
-            <div className="grid gap-2 border-t border-border pt-4 text-[13px]">
-              <Link to="/forgot-password" className="font-semibold text-cyan hover:underline">
-                Forgot password?
-              </Link>
-            </div>
-          </div>
-        </form>
+          </form>
+        )}
       </div>
     </PublicLayout>
   );

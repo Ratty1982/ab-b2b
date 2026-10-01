@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createMicrosoftGraphClient } from "@/server/integrations/microsoft-graph";
 
 describe("microsoft graph client", () => {
-  it("paginates folder children via @odata.nextLink", async () => {
+  it("paginates folder children via @odata.nextLink on graph.microsoft.com only", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/oauth2/v2.0/token")) {
@@ -47,9 +47,36 @@ describe("microsoft graph client", () => {
     const items = await client.listFolderChildren("d", "f", { pageSize: 2 });
     expect(items).toHaveLength(3);
     expect(items.map((i) => i.name)).toEqual(["a.pdf", "notes.txt", "b.pdf"]);
-    expect(fetchMock).toHaveBeenCalled();
-    // Token response must not leak into return values
     expect(JSON.stringify(items)).not.toContain("tok");
+    // Read-only surface — no write helpers
+    expect(client).not.toHaveProperty("uploadDriveItem");
+    expect(client).not.toHaveProperty("deleteDriveItem");
+    expect(client).not.toHaveProperty("getAccessToken");
+  });
+
+  it("rejects malicious pagination hosts (SSRF)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/oauth2/v2.0/token")) {
+        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          value: [{ id: "1", name: "a.pdf", file: { mimeType: "application/pdf" } }],
+          "@odata.nextLink": "https://attacker.example/steal",
+        }),
+        { status: 200 },
+      );
+    });
+
+    const client = createMicrosoftGraphClient(
+      { tenantId: "t", clientId: "c", clientSecret: "s" },
+      fetchMock as unknown as typeof fetch,
+    );
+
+    await expect(client.listFolderChildren("d", "f")).rejects.toThrow(/not allowed|Graph/);
   });
 
   it("maps auth failures without returning secrets", async () => {
@@ -67,5 +94,16 @@ describe("microsoft graph client", () => {
       fetchMock as unknown as typeof fetch,
     );
     await expect(client.getUserDrive("a@b.com")).rejects.toThrow(/Authentication failed/i);
+    await expect(client.getUserDrive("a@b.com")).rejects.not.toThrow(/super-secret-value/);
+  });
+
+  it("rejects path-traversal style ids", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    const client = createMicrosoftGraphClient(
+      { tenantId: "t", clientId: "c", clientSecret: "s" },
+      fetchMock as unknown as typeof fetch,
+    );
+    await expect(client.downloadDriveItem("../x", "y")).rejects.toThrow(/Invalid/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

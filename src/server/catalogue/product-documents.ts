@@ -48,6 +48,19 @@ async function requireDocumentsView(userId: string) {
   return profile;
 }
 
+/** Microsoft Graph / SharePoint SDS integration configuration (credentials, source, enable). */
+async function requireSharePointIntegrationManage(userId: string) {
+  const profile = await requireSystemPermission(userId, "integrations.sharepoint.manage");
+  if (profile.actorType === "TRADE") {
+    throw new AuthError(
+      "Trade users cannot manage the SharePoint SDS integration",
+      "FORBIDDEN",
+      403,
+    );
+  }
+  return profile;
+}
+
 function utcNoon(dateOnly: string | null | undefined): Date | null {
   if (!dateOnly) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return null;
@@ -572,7 +585,12 @@ export async function previewBulkSdsImport(
 }
 
 /** Exported for SharePoint import RBAC reuse. */
-export { requireDocumentsManage, requireDocumentsView, decodeBase64Body };
+export {
+  requireDocumentsManage,
+  requireDocumentsView,
+  requireSharePointIntegrationManage,
+  decodeBase64Body,
+};
 
 const confirmBulkSchema = z.object({
   items: z.array(

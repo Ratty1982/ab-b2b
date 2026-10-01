@@ -98,6 +98,8 @@ const tradeSession: ClientSession = {
     tradeTestPricingMode: "NONE",
     tradeTestPriceListId: null,
     tradeTestPriceListName: null,
+    twoFactorEnabled: false,
+    mfaRequired: false,
   },
 };
 
@@ -119,6 +121,8 @@ const adminSession: ClientSession = {
     tradeTestPricingMode: "NONE",
     tradeTestPriceListId: null,
     tradeTestPriceListName: null,
+    twoFactorEnabled: false,
+    mfaRequired: false,
   },
 };
 

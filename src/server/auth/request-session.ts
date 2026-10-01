@@ -16,6 +16,7 @@ import { prisma } from "@/infra/database/client";
 import { loadAccessProfile } from "@/server/rbac/access";
 import { getActiveActingContext } from "@/server/acting-context";
 import type { PermissionKey, TradeAccessKey } from "@/domain/permissions";
+import { profileRequiresMfa } from "@/domain/mfa-policy";
 
 /** Safe session payload for the client — no hashes, tokens, or full permission dumps by default */
 export interface SafeSessionUser {
@@ -42,6 +43,10 @@ export interface SafeSessionUser {
   /** INTERNAL only — PriceList id when mode is PRICE_LIST. */
   tradeTestPriceListId: string | null;
   tradeTestPriceListName: string | null;
+  /** Better Auth TOTP enrollment state. */
+  twoFactorEnabled: boolean;
+  /** True when system role policy requires MFA for this user. */
+  mfaRequired: boolean;
 }
 
 export interface SafeSession {
@@ -82,25 +87,26 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
 
   const acting = await getActiveActingContext(userId);
 
-  const tradeTest =
-    profile.actorType === "INTERNAL"
-      ? await prisma.user.findUnique({
-          where: { id: userId },
-          select: {
-            tradeTestPricingMode: true,
-            tradeTestPriceListId: true,
-            tradeTestPriceList: { select: { name: true } },
-          },
-        })
-      : null;
+  const userRow = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      tradeTestPricingMode: true,
+      tradeTestPriceListId: true,
+      tradeTestPriceList: { select: { name: true } },
+      twoFactorEnabled: true,
+      mfaEnabled: true,
+    },
+  });
 
-  const tradeTestMode = tradeTest?.tradeTestPricingMode ?? "NONE";
+  const tradeTestMode =
+    profile.actorType === "INTERNAL" ? (userRow?.tradeTestPricingMode ?? "NONE") : "NONE";
   const tradeTestListName =
     tradeTestMode === "BASE_TRADE"
       ? "Default Trade Price"
       : tradeTestMode === "PRICE_LIST"
-        ? (tradeTest?.tradeTestPriceList?.name ?? null)
+        ? (userRow?.tradeTestPriceList?.name ?? null)
         : null;
+  const twoFactorEnabled = Boolean(userRow?.twoFactorEnabled || userRow?.mfaEnabled);
 
   return {
     signedIn: true,
@@ -116,6 +122,8 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
       accountNumber: membership?.accountNumber ?? null,
       tradeRole: membership?.role ?? null,
       navPermissions: [...profile.permissions],
+      twoFactorEnabled,
+      mfaRequired: profileRequiresMfa(profile.systemRoles),
       actingFor: acting
         ? {
             companyId: acting.onBehalfOfCompany.id,
@@ -125,7 +133,7 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
         : null,
       tradeTestPricingMode: tradeTestMode,
       tradeTestPriceListId:
-        tradeTestMode === "PRICE_LIST" ? (tradeTest?.tradeTestPriceListId ?? null) : null,
+        tradeTestMode === "PRICE_LIST" ? (userRow?.tradeTestPriceListId ?? null) : null,
       tradeTestPriceListName: tradeTestListName,
     },
   };

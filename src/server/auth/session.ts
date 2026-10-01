@@ -34,41 +34,104 @@ const loginSchema = z.object({
 
 export const signInWithPassword = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => loginSchema.parse(data))
+  .handler(
+    async ({
+      data,
+    }): Promise<
+      { ok: true } | { ok: false; error: string; needsTwoFactor?: boolean }
+    > => {
+      const headers = getRequestHeaders();
+      const meta = clientMetaFromRequestHeaders(headers);
+
+      try {
+        const result = await auth.api.signInEmail({
+          body: {
+            email: data.email.toLowerCase().trim(),
+            password: data.password,
+          },
+          headers,
+        });
+
+        // Better Auth two-factor: password OK, TOTP/backup still required.
+        if (
+          result &&
+          typeof result === "object" &&
+          "twoFactorRedirect" in result &&
+          (result as { twoFactorRedirect?: boolean }).twoFactorRedirect
+        ) {
+          return { ok: false, error: "Enter your authenticator code", needsTwoFactor: true };
+        }
+
+        const userId = (result as { user?: { id?: string } } | null)?.user?.id;
+        await recordAuditEvent({
+          action: "LOGIN_SUCCESS",
+          entityType: "User",
+          entityId: userId ?? null,
+          actorUserId: userId ?? null,
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        });
+
+        return { ok: true };
+      } catch {
+        await recordAuditEvent({
+          action: "LOGIN_FAILED",
+          entityType: "User",
+          entityId: null,
+          metadata: { emailDomain: data.email.split("@")[1] ?? null },
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        });
+        // Generic message — avoid user enumeration
+        return { ok: false, error: "Invalid email or password" };
+      }
+    },
+  );
+
+const totpSchema = z.object({
+  code: z.string().trim().min(6).max(32),
+  trustDevice: z.boolean().optional(),
+});
+
+/** Complete MFA challenge after password sign-in (TOTP or backup code). */
+export const verifyTwoFactorLogin = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => totpSchema.parse(data))
   .handler(async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
     const headers = getRequestHeaders();
     const meta = clientMetaFromRequestHeaders(headers);
-
+    const code = data.code.replace(/\s+/g, "");
     try {
-      const result = await auth.api.signInEmail({
-        body: {
-          email: data.email.toLowerCase().trim(),
-          password: data.password,
-        },
-        headers,
-      });
-
-      const userId = result?.user?.id;
+      if (/^\d{6}$/.test(code)) {
+        await auth.api.verifyTOTP({
+          body: { code, trustDevice: data.trustDevice ?? false },
+          headers,
+        });
+      } else {
+        await auth.api.verifyBackupCode({
+          body: { code, trustDevice: data.trustDevice ?? false },
+          headers,
+        });
+      }
+      const session = await auth.api.getSession({ headers });
+      const userId = session?.user?.id ?? null;
       await recordAuditEvent({
-        action: "LOGIN_SUCCESS",
+        action: "LOGIN_MFA_SUCCESS",
         entityType: "User",
-        entityId: userId ?? null,
-        actorUserId: userId ?? null,
+        entityId: userId,
+        actorUserId: userId,
         ipAddress: meta.ipAddress,
         userAgent: meta.userAgent,
       });
-
       return { ok: true };
     } catch {
       await recordAuditEvent({
-        action: "LOGIN_FAILED",
+        action: "LOGIN_MFA_FAILED",
         entityType: "User",
         entityId: null,
-        metadata: { emailDomain: data.email.split("@")[1] ?? null },
         ipAddress: meta.ipAddress,
         userAgent: meta.userAgent,
       });
-      // Generic message — avoid user enumeration
-      return { ok: false, error: "Invalid email or password" };
+      return { ok: false, error: "Invalid authentication code" };
     }
   });
 

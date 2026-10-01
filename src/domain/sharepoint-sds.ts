@@ -177,7 +177,7 @@ export function publicMicrosoftErrorMessage(error: unknown): string {
     return "Authentication failed — check tenant ID, client ID and client secret";
   }
   if (lower.includes("accessdenied") || lower.includes("forbidden") || lower.includes("403")) {
-    return "Permission denied — grant Files.Read.All (application) admin consent";
+    return "Permission denied — grant Files.SelectedOperations.Selected and a read role on the authorised SDS folder";
   }
   if (lower.includes("itemnotfound") || lower.includes("404") || lower.includes("not found")) {
     return "Folder not found — resolve the SharePoint folder again";

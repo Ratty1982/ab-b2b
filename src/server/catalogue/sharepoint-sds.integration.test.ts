@@ -28,6 +28,7 @@ const PDF_B = Buffer.from("%PDF-1.4\n% sp-sds-b-updated\ntrailer\n%%EOF\n", "utf
 
 let adminId = "";
 let tradeUserId = "";
+let marketingId = "";
 let productId = "";
 
 async function ensureUser(
@@ -67,6 +68,7 @@ beforeAll(async () => {
   await bootstrapRbac(prisma);
   adminId = await ensureUser(`sp.admin.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
   tradeUserId = await ensureUser(`sp.trade.${stamp}@example.invalid`, [], "TRADE");
+  marketingId = await ensureUser(`sp.mkt.${stamp}@example.invalid`, ["MARKETING"]);
 
   const brand = await prisma.brand.create({
     data: {
@@ -115,6 +117,14 @@ describe("SharePoint SDS settings RBAC", () => {
     ).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("blocks marketing (products.edit without integrations.sharepoint.manage) from config changes", async () => {
+    await expect(
+      updateSharePointSdsSettings(marketingId, { sourceLabel: "nope" }),
+    ).rejects.toBeInstanceOf(AuthError);
+    // Viewing settings remains products.view — marketing has products.view
+    await expect(getSharePointSdsSettingsForActor(marketingId)).resolves.toBeTruthy();
+  });
+
   it("allows admin to save settings without returning secrets", async () => {
     const saved = await updateSharePointSdsSettings(adminId, {
       enabled: true,
@@ -124,13 +134,19 @@ describe("SharePoint SDS settings RBAC", () => {
       clientId: "11111111-1111-1111-1111-111111111111",
       clientSecret: "unit-test-secret-not-for-production",
       userPrincipalName: "george.parker@automotivebrands.co.uk",
-      folderUrlHint: "https://example.invalid/sds-folder",
+      folderUrlHint:
+        "https://automotivebrands-my.sharepoint.com/personal/george_parker_automotivebrands_co_uk/Documents/SDS",
+      driveId: "b!driveTestId001",
+      folderItemId: "01FOLDERITEMIDTEST",
     });
     expect(saved.hasClientSecret).toBe(true);
     expect(saved.tenantId).toBe("00000000-0000-0000-0000-000000000001");
     expect(saved.clientId).toBe("11111111-1111-1111-1111-111111111111");
     expect(saved.userPrincipalName).toBe("george.parker@automotivebrands.co.uk");
-    expect(saved.folderUrlHint).toBe("https://example.invalid/sds-folder");
+    expect(saved.folderUrlHint).toContain("sharepoint.com");
+    expect(saved.driveId).toBe("b!driveTestId001");
+    expect(saved.folderItemId).toBe("01FOLDERITEMIDTEST");
+    expect(saved.recommendedPermission).toBe("Files.SelectedOperations.Selected");
     expect(JSON.stringify(saved)).not.toContain("unit-test-secret");
     expect(saved).not.toHaveProperty("clientSecret");
     expect(saved).not.toHaveProperty("clientSecretEncrypted");
@@ -142,10 +158,18 @@ describe("SharePoint SDS settings RBAC", () => {
     expect(JSON.stringify(reloaded)).not.toContain("unit-test-secret");
   });
 
+  it("rejects non-SharePoint folder URLs (SSRF boundary)", async () => {
+    await expect(
+      updateSharePointSdsSettings(adminId, {
+        folderUrlHint: "https://evil.example/steal",
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+
   it("preserves encrypted secret when later save omits clientSecret", async () => {
     await updateSharePointSdsSettings(adminId, {
-      tenantId: "tenant-preserve-1",
-      clientId: "client-preserve-1",
+      tenantId: "00000000-0000-0000-0000-0000000000a1",
+      clientId: "22222222-2222-2222-2222-222222222222",
       clientSecret: "original-secret-value-abc",
       userPrincipalName: "george.parker@automotivebrands.co.uk",
     });
@@ -157,13 +181,13 @@ describe("SharePoint SDS settings RBAC", () => {
     expect(originalPlain).toBe("original-secret-value-abc");
 
     const saved = await updateSharePointSdsSettings(adminId, {
-      tenantId: "tenant-preserve-2",
-      clientId: "client-preserve-2",
+      tenantId: "00000000-0000-0000-0000-0000000000a2",
+      clientId: "33333333-3333-3333-3333-333333333333",
       sourceLabel: "Updated label only",
       // clientSecret intentionally omitted
     });
-    expect(saved.tenantId).toBe("tenant-preserve-2");
-    expect(saved.clientId).toBe("client-preserve-2");
+    expect(saved.tenantId).toBe("00000000-0000-0000-0000-0000000000a2");
+    expect(saved.clientId).toBe("33333333-3333-3333-3333-333333333333");
     expect(saved.hasClientSecret).toBe(true);
     expect(JSON.stringify(saved)).not.toContain("original-secret");
 
@@ -192,10 +216,10 @@ describe("SharePoint SDS settings RBAC", () => {
     await updateSharePointSdsSettings(adminId, {
       enabled: true,
       tenantId: "tenant-keep-on-fail",
-      clientId: "client-keep-on-fail",
+      clientId: "44444444-4444-4444-4444-444444444444",
       clientSecret: "secret-keep-on-fail",
       userPrincipalName: "george.parker@automotivebrands.co.uk",
-      folderUrlHint: "https://example.invalid/keep-me",
+      folderUrlHint: "https://automotivebrands-my.sharepoint.com/personal/x/Documents/keep-me",
       folderDisplayName: "Keep Folder Name",
       sourceLabel: "Keep Source Label",
     });
@@ -213,9 +237,11 @@ describe("SharePoint SDS settings RBAC", () => {
 
     const pub = await getSharePointSdsSettingsForActor(adminId);
     expect(pub.tenantId).toBe("tenant-keep-on-fail");
-    expect(pub.clientId).toBe("client-keep-on-fail");
+    expect(pub.clientId).toBe("44444444-4444-4444-4444-444444444444");
     expect(pub.userPrincipalName).toBe("george.parker@automotivebrands.co.uk");
-    expect(pub.folderUrlHint).toBe("https://example.invalid/keep-me");
+    expect(pub.folderUrlHint).toBe(
+      "https://automotivebrands-my.sharepoint.com/personal/x/Documents/keep-me",
+    );
     expect(pub.folderDisplayName).toBe("Keep Folder Name");
     expect(pub.sourceLabel).toBe("Keep Source Label");
     expect(pub.hasClientSecret).toBe(true);

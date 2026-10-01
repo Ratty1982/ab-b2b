@@ -93,6 +93,13 @@ export const PERMISSIONS = [
   "settings.view",
   "settings.edit",
 
+  /**
+   * Microsoft Graph / SharePoint SDS integration administration:
+   * credentials, source folder resolve, enable/disable, connection test.
+   * Broader than ordinary product document upload (products.edit).
+   */
+  "integrations.sharepoint.manage",
+
   /// Super Admin only — manage Version Updates / What's New (via ALL_PERMISSIONS).
   "version_updates.manage",
 ] as const;

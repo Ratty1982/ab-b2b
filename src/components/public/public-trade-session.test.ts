@@ -95,6 +95,8 @@ const tradeSession: ClientSession = {
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
   },
 };
 
@@ -230,6 +232,8 @@ describe("public trade session chrome", () => {
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
       },
     };
     const markup = html(createElement(PublicHeader));
@@ -261,6 +265,8 @@ describe("public trade session chrome", () => {
         tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-a",
         tradeTestPriceListName: "Trade Level A",
+        twoFactorEnabled: false,
+        mfaRequired: false,
       },
     };
     const markup = html(createElement(PublicHeader));
@@ -322,6 +328,8 @@ describe("public trade session chrome", () => {
         tradeTestPricingMode: "NONE",
         tradeTestPriceListId: null,
         tradeTestPriceListName: null,
+        twoFactorEnabled: false,
+        mfaRequired: false,
       },
     };
     expect(hasOrderingCompanyContext(adminNoCtx)).toBe(false);
@@ -333,6 +341,8 @@ describe("public trade session chrome", () => {
         tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-a",
         tradeTestPriceListName: "Trade A",
+        twoFactorEnabled: false,
+        mfaRequired: false,
       },
     };
     expect(hasOrderingCompanyContext(adminTest)).toBe(true);
@@ -510,6 +520,8 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
     },
   };
 
@@ -581,6 +593,8 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
         tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-a",
         tradeTestPriceListName: "Trade Level A",
+        twoFactorEnabled: false,
+        mfaRequired: false,
       },
     };
     const markup = html(

@@ -438,10 +438,14 @@ model User {
   emailVerifiedAt DateTime?
   image           String?
 
-  /// MFA-ready fields — enforcement planned for privileged roles (Phase 1+ docs)
+  /// Legacy MFA flags (kept for compatibility). Better Auth twoFactor uses twoFactorEnabled + TwoFactor.
   mfaEnabled     Boolean @default(false)
   mfaSecretEnc   String?
   mfaRecoveryEnc String?
+
+  /// Better Auth two-factor plugin — authenticator TOTP enrollment state.
+  twoFactorEnabled Boolean @default(false)
+  twoFactorFactors TwoFactor[]
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -498,6 +502,24 @@ model AuthSession {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// Better Auth two-factor (TOTP + hashed backup codes). Never log secret/backupCodes.
+model TwoFactor {
+  id                      String    @id @default(cuid())
+  userId                  String
+  secret                  String
+  backupCodes             String
+  verified                Boolean   @default(true)
+  failedVerificationCount Int       @default(0)
+  lockedUntil             DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("twoFactor")
 }
 
 /// Better Auth–compatible account / provider linkage

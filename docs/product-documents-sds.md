@@ -114,20 +114,17 @@ Uncertain matches never auto-import. There is no “Replace all existing SDS” 
 
 ### Required Entra configuration (human steps)
 
-1. Azure Portal → Microsoft Entra ID → App registrations → **New registration** (e.g. “Automotive Brands B2B SDS”).
-2. **Certificates & secrets** → create a client secret; store it only in B2B settings or server env.
-3. **API permissions** → Microsoft Graph → **Application** permissions:
-   - `Files.Read.All` (read the SDS folder in OneDrive/SharePoint)
-   - Optional: `User.Read.All` if resolving users by UPN proves necessary in the tenant
-4. Click **Grant admin consent** for the Automotive Brands tenant.
-5. In B2B **Settings → SharePoint SDS connection** (or Import SDS → Connection settings):
-   - Directory (tenant) ID
-   - Application (client) ID
-   - Client secret
-   - OneDrive user UPN (e.g. `george.parker@automotivebrands.co.uk`)
-   - Paste the folder browser URL → **Resolve folder** → **Test connection**
+See **`docs/microsoft-graph-security-review.md`** and **`docs/security.md`** for the authoritative Maximum Networks review pack.
 
-Least privilege note: `Files.Read.All` is broader than a single folder. A future hardening pass may move to `Sites.Selected` + explicit grants; this phase prioritises a working org-managed read of the personal SDS folder.
+1. Entra app **Automotive Brands B2B** → Microsoft Graph **Application** permission:
+   - `Files.SelectedOperations.Selected` (preferred; **not** `Files.Read.All`)
+2. Admin consent for that permission, **plus** a folder-level `read` grant on the SDS driveItem.
+3. Prefer Coolify env secrets: `MICROSOFT_GRAPH_TENANT_ID`, `MICROSOFT_GRAPH_CLIENT_ID`, `MICROSOFT_GRAPH_CLIENT_SECRET`.
+4. In B2B **Settings → Documents & SDS**:
+   - Paste stable `driveId` + `folderItemId` (preferred least-privilege bootstrap), or resolve from a SharePoint folder URL when bootstrap access allows
+   - **Test connection** → Scan → Preview → Confirm import
+
+Configuration changes require `integrations.sharepoint.manage`. Ordinary SDS upload/import confirm uses `products.edit`.
 
 ### Source metadata (internal)
 

@@ -28,12 +28,20 @@ const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => 
 
   const headers = new Headers(response.headers);
   headers.set("X-Content-Type-Options", "nosniff");
+  // frame-ancestors in CSP is authoritative; keep XFO for older clients.
   headers.set("X-Frame-Options", "DENY");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  );
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  // Start with a modest CSP that still allows Google Fonts used by the prototype.
-  // Tighten further once fonts are self-hosted.
+  if (process.env["NODE_ENV"] === "production") {
+    // HTTPS termination is expected in Coolify/production.
+    headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  // Modest CSP compatible with TanStack/Vite + Google Fonts currently in use.
+  // Do not add remote script hosts without an explicit review.
   if (!headers.has("Content-Security-Policy")) {
     headers.set(
       "Content-Security-Policy",
@@ -47,6 +55,7 @@ const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => 
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",
+        "object-src 'none'",
       ].join("; "),
     );
   }

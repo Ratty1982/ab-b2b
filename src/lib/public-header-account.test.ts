@@ -24,6 +24,8 @@ function tradeSession(partial: Partial<Extract<ClientSession, { signedIn: true }
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
       ...partial,
     },
   };
@@ -48,6 +50,8 @@ function adminSession(): ClientSession {
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
     },
   };
 }
@@ -71,6 +75,8 @@ function salesSession(): ClientSession {
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
     },
   };
 }
@@ -114,6 +120,8 @@ describe("publicHeaderAccountLinks", () => {
         tradeTestPricingMode: "PRICE_LIST",
         tradeTestPriceListId: "pl-test",
         tradeTestPriceListName: "Trade Level A",
+        twoFactorEnabled: false,
+        mfaRequired: false,
       },
     };
     expect(publicHeaderAccountLinks(session)).toEqual([

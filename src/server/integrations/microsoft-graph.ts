@@ -1,8 +1,22 @@
 /**
- * Minimal Microsoft Graph client (client-credentials).
+ * Minimal Microsoft Graph client (client-credentials) — READ-ONLY SDS operations.
+ *
+ * Exposes ONLY:
+ * - getUserDrive (bootstrap resolve; may require broader Entra consent during cutover)
+ * - getDriveItemByPath / getDriveItem
+ * - listFolderChildren
+ * - downloadDriveItem
+ *
+ * No generic Graph proxy. No arbitrary browser-supplied URLs.
+ * No write / update / delete methods.
  * Server-only — never import from client bundles.
  */
 import { publicMicrosoftErrorMessage } from "@/domain/sharepoint-sds";
+import {
+  assertSafeGraphResourceId,
+  resolveMicrosoftGraphUrl,
+  resolveMicrosoftTokenUrl,
+} from "@/domain/microsoft-graph-security";
 
 export type GraphDriveItem = {
   id: string;
@@ -12,6 +26,7 @@ export type GraphDriveItem = {
   cTag?: string | null;
   lastModifiedDateTime?: string | null;
   webUrl?: string | null;
+  parentReference?: { id?: string | null; driveId?: string | null } | null;
   file?: { mimeType?: string } | null;
   folder?: Record<string, unknown> | null;
 };
@@ -54,14 +69,12 @@ export function createMicrosoftGraphClient(
       scope: "https://graph.microsoft.com/.default",
       grant_type: "client_credentials",
     });
-    const res = await fetchImpl(
-      `https://login.microsoftonline.com/${encodeURIComponent(config.tenantId)}/oauth2/v2.0/token`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      },
-    );
+    const tokenUrl = resolveMicrosoftTokenUrl(config.tenantId);
+    const res = await fetchImpl(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
     const json = (await res.json().catch(() => ({}))) as {
       access_token?: string;
       expires_in?: number;
@@ -85,17 +98,14 @@ export function createMicrosoftGraphClient(
     return cache.accessToken;
   }
 
-  async function graphJson<T>(path: string, init?: RequestInit): Promise<T> {
+  async function graphGetJson<T>(pathOrUrl: string): Promise<T> {
     const token = await getAccessToken();
-    const url = path.startsWith("https://")
-      ? path
-      : `https://graph.microsoft.com/v1.0${path.startsWith("/") ? path : `/${path}`}`;
+    const url = resolveMicrosoftGraphUrl(pathOrUrl);
     const res = await fetchImpl(url, {
-      ...init,
+      method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
-        ...(init?.headers ?? {}),
       },
     });
     if (!res.ok) {
@@ -113,12 +123,11 @@ export function createMicrosoftGraphClient(
     return (await res.json()) as T;
   }
 
-  async function graphBytes(path: string): Promise<Buffer> {
+  async function graphGetBytes(pathOrUrl: string): Promise<Buffer> {
     const token = await getAccessToken();
-    const url = path.startsWith("https://")
-      ? path
-      : `https://graph.microsoft.com/v1.0${path.startsWith("/") ? path : `/${path}`}`;
+    const url = resolveMicrosoftGraphUrl(pathOrUrl);
     const res = await fetchImpl(url, {
+      method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
@@ -133,47 +142,60 @@ export function createMicrosoftGraphClient(
   }
 
   async function getUserDrive(userPrincipalName: string): Promise<{ id: string; name?: string }> {
-    return graphJson(`/users/${encodeURIComponent(userPrincipalName)}/drive`);
+    const upn = userPrincipalName.trim();
+    if (!upn || upn.length > 320 || upn.includes("/") || upn.includes("..")) {
+      throw new MicrosoftGraphError("Invalid user principal name", 400, "VALIDATION");
+    }
+    return graphGetJson(`/users/${encodeURIComponent(upn)}/drive`);
   }
 
   async function getDriveItemByPath(
     driveId: string,
     folderPath: string,
   ): Promise<GraphDriveItem> {
+    const safeDrive = assertSafeGraphResourceId(driveId, "drive id");
     const clean = folderPath.replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!clean || clean.includes("..") || clean.length > 1000) {
+      throw new MicrosoftGraphError("Invalid folder path", 400, "VALIDATION");
+    }
     const encoded = clean
       .split("/")
       .map((p) => encodeURIComponent(p))
       .join("/");
-    return graphJson(`/drives/${encodeURIComponent(driveId)}/root:/${encoded}`);
+    return graphGetJson(`/drives/${encodeURIComponent(safeDrive)}/root:/${encoded}`);
   }
 
   async function getDriveItem(driveId: string, itemId: string): Promise<GraphDriveItem> {
-    return graphJson(
-      `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`,
+    const safeDrive = assertSafeGraphResourceId(driveId, "drive id");
+    const safeItem = assertSafeGraphResourceId(itemId, "item id");
+    return graphGetJson(
+      `/drives/${encodeURIComponent(safeDrive)}/items/${encodeURIComponent(safeItem)}?$select=id,name,size,file,folder,eTag,cTag,lastModifiedDateTime,webUrl,parentReference`,
     );
   }
 
   /**
    * List all children under a folder, following Graph @odata.nextLink pagination.
+   * nextLink hosts are validated to graph.microsoft.com only.
    */
   async function listFolderChildren(
     driveId: string,
     folderItemId: string,
     opts?: { pageSize?: number; maxItems?: number },
   ): Promise<GraphDriveItem[]> {
+    const safeDrive = assertSafeGraphResourceId(driveId, "drive id");
+    const safeFolder = assertSafeGraphResourceId(folderItemId, "folder id");
     const pageSize = Math.min(200, Math.max(1, opts?.pageSize ?? 200));
     const maxItems = opts?.maxItems ?? 2000;
     const select =
-      "id,name,size,file,folder,eTag,cTag,lastModifiedDateTime,webUrl";
+      "id,name,size,file,folder,eTag,cTag,lastModifiedDateTime,webUrl,parentReference";
     let next: string | null =
-      `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(folderItemId)}/children?$select=${select}&$top=${pageSize}`;
+      `/drives/${encodeURIComponent(safeDrive)}/items/${encodeURIComponent(safeFolder)}/children?$select=${select}&$top=${pageSize}`;
     const out: GraphDriveItem[] = [];
     while (next) {
       const page: {
         value?: GraphDriveItem[];
         "@odata.nextLink"?: string;
-      } = await graphJson(next);
+      } = await graphGetJson(next);
       for (const item of page.value ?? []) {
         out.push(item);
         if (out.length >= maxItems) return out;
@@ -184,13 +206,14 @@ export function createMicrosoftGraphClient(
   }
 
   async function downloadDriveItem(driveId: string, itemId: string): Promise<Buffer> {
-    return graphBytes(
-      `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/content`,
+    const safeDrive = assertSafeGraphResourceId(driveId, "drive id");
+    const safeItem = assertSafeGraphResourceId(itemId, "item id");
+    return graphGetBytes(
+      `/drives/${encodeURIComponent(safeDrive)}/items/${encodeURIComponent(safeItem)}/content`,
     );
   }
 
   return {
-    getAccessToken,
     getUserDrive,
     getDriveItemByPath,
     getDriveItem,

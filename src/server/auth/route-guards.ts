@@ -10,10 +10,15 @@ import {
   AuthError,
 } from "@/server/rbac/guards";
 import { getClientSession, type ClientSession } from "@/server/auth/session";
+import { isPrivilegedMfaEnforced } from "@/domain/mfa-policy";
 
 export type GuardResult =
   | { ok: true; session: ClientSession & { signedIn: true }; userId: string }
-  | { ok: false; reason: "unauthenticated" | "forbidden"; session: ClientSession };
+  | {
+      ok: false;
+      reason: "unauthenticated" | "forbidden" | "mfa_required";
+      session: ClientSession;
+    };
 
 async function currentUserId(): Promise<string | null> {
   const headers = getRequestHeaders();
@@ -52,6 +57,16 @@ export const ensureCrmAccess = createServerFn({ method: "GET" }).handler(async (
   runGuard((id) => requireCrmAccess(id)),
 );
 
-export const ensureAdminAccess = createServerFn({ method: "GET" }).handler(async () =>
-  runGuard((id) => requireAdminAccess(id)),
-);
+export const ensureAdminAccess = createServerFn({ method: "GET" }).handler(async () => {
+  const result = await runGuard((id) => requireAdminAccess(id));
+  if (!result.ok) return result;
+  // Privileged MFA enforcement (opt-in via MFA_ENFORCE_PRIVILEGED=true).
+  if (
+    isPrivilegedMfaEnforced() &&
+    result.session.user.mfaRequired &&
+    !result.session.user.twoFactorEnabled
+  ) {
+    return { ok: false as const, reason: "mfa_required" as const, session: result.session };
+  }
+  return result;
+});

@@ -79,6 +79,7 @@ import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id
 import { Route as AdminProductsDocumentsImportRouteImport } from './routes/admin.products.documents-import'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
 import { Route as AdminProductsStockRouteImport } from './routes/admin.products.stock'
+import { Route as AdminSecurityMfaRouteImport } from './routes/admin.security.mfa'
 import { Route as AdminVersionUpdatesIndexRouteImport } from './routes/admin.version-updates.index'
 import { Route as AdminVersionUpdatesIdRouteImport } from './routes/admin.version-updates.$id'
 import { Route as AdminVersionUpdatesNewRouteImport } from './routes/admin.version-updates.new'
@@ -460,6 +461,11 @@ const AdminProductsStockRoute = AdminProductsStockRouteImport.update({
   path: '/stock',
   getParentRoute: () => AdminProductsRoute,
 } as any)
+const AdminSecurityMfaRoute = AdminSecurityMfaRouteImport.update({
+  id: '/security/mfa',
+  path: '/security/mfa',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminVersionUpdatesIndexRoute =
   AdminVersionUpdatesIndexRouteImport.update({
     id: '/',
@@ -676,6 +682,7 @@ export interface FileRoutesByFullPath {
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/security/mfa': typeof AdminSecurityMfaRoute
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -763,6 +770,7 @@ export interface FileRoutesByTo {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/security/mfa': typeof AdminSecurityMfaRoute
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -863,6 +871,7 @@ export interface FileRoutesById {
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/security/mfa': typeof AdminSecurityMfaRoute
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -965,6 +974,7 @@ export interface FileRouteTypes {
     | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
+    | '/admin/security/mfa'
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
@@ -1052,6 +1062,7 @@ export interface FileRouteTypes {
     | '/admin/products/$id'
     | '/admin/products/documents-import'
     | '/admin/products/stock'
+    | '/admin/security/mfa'
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
@@ -1151,6 +1162,7 @@ export interface FileRouteTypes {
     | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
+    | '/admin/security/mfa'
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
@@ -1709,6 +1721,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsStockRouteImport
       parentRoute: typeof AdminProductsRoute
     }
+    '/admin/security/mfa': {
+      id: '/admin/security/mfa'
+      path: '/security/mfa'
+      fullPath: '/admin/security/mfa'
+      preLoaderRoute: typeof AdminSecurityMfaRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/version-updates/': {
       id: '/admin/version-updates/'
       path: '/'
@@ -2027,6 +2046,7 @@ interface AdminRouteChildren {
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCustomersIdRoute: typeof AdminCustomersIdRoute
   AdminCustomersAutopartAccountsRoute: typeof AdminCustomersAutopartAccountsRoute
+  AdminSecurityMfaRoute: typeof AdminSecurityMfaRoute
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
   AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
   AdminCustomersGroupsGroupIdRoute: typeof AdminCustomersGroupsGroupIdRoute
@@ -2047,6 +2067,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminIndexRoute: AdminIndexRoute,
   AdminCustomersIdRoute: AdminCustomersIdRoute,
   AdminCustomersAutopartAccountsRoute: AdminCustomersAutopartAccountsRoute,
+  AdminSecurityMfaRoute: AdminSecurityMfaRoute,
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
   AdminCustomersIndexRoute: AdminCustomersIndexRoute,
   AdminCustomersGroupsGroupIdRoute: AdminCustomersGroupsGroupIdRoute,

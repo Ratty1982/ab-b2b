@@ -17,8 +17,11 @@ describe("permission catalogue", () => {
       "cms.page.publish",
       "impersonation.order_for_customer",
       "audit.view",
+      "integrations.sharepoint.manage",
       "version_updates.manage",
     ];
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("integrations.sharepoint.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("integrations.sharepoint.manage");
     for (const key of required) {
       expect(isPermissionKey(key)).toBe(true);
     }

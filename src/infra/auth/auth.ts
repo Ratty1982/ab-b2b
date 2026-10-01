@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "@better-auth/prisma-adapter";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
+import { twoFactor } from "better-auth/plugins";
 
 import { prisma } from "@/infra/database/client";
 import { getServerEnv } from "@/server/env";
@@ -39,6 +40,13 @@ function createAuth() {
           returned: true,
         },
         mfaEnabled: {
+          type: "boolean",
+          required: false,
+          defaultValue: false,
+          input: false,
+          returned: true,
+        },
+        twoFactorEnabled: {
           type: "boolean",
           required: false,
           defaultValue: false,
@@ -173,8 +181,22 @@ function createAuth() {
         },
       },
     },
-    // Must be last plugin so Set-Cookie is applied via TanStack Start
-    plugins: [tanstackStartCookies()],
+    // twoFactor before cookie plugin — TOTP + backup codes for privileged staff.
+    plugins: [
+      twoFactor({
+        issuer: "Automotive Brands",
+        totpOptions: {
+          digits: 6,
+          period: 30,
+        },
+        backupCodeOptions: {
+          amount: 10,
+          length: 10,
+        },
+      }),
+      // Must be last so Set-Cookie is applied via TanStack Start
+      tanstackStartCookies(),
+    ],
   });
 }
 

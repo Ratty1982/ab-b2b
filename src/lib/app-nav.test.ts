@@ -32,6 +32,8 @@ function user(partial: Partial<SafeSessionUser> & Pick<SafeSessionUser, "actorTy
       tradeTestPricingMode: "NONE",
       tradeTestPriceListId: null,
       tradeTestPriceListName: null,
+      twoFactorEnabled: false,
+      mfaRequired: false,
     ...partial,
   };
 }

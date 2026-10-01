@@ -13,6 +13,11 @@ import {
   SHAREPOINT_SDS_MAX_FILES,
   SHAREPOINT_SDS_SOURCE,
 } from "@/domain/sharepoint-sds";
+import {
+  assertAuthorisedSdsResource,
+  assertSafeGraphResourceId,
+} from "@/domain/microsoft-graph-security";
+import { validateProductDocumentPdf } from "@/domain/product-documents";
 import { createMicrosoftGraphClient } from "@/server/integrations/microsoft-graph";
 import {
   buildSdsPreviewItems,
@@ -24,6 +29,7 @@ import {
 } from "@/server/catalogue/product-documents";
 import {
   loadSharePointRuntimeConfig,
+  loadAuthorisedSdsResource,
   getOrCreateSharePointSdsSettings,
   SHAREPOINT_SDS_SETTINGS_ID,
   toPublicSharePointSdsSettings,
@@ -58,14 +64,21 @@ function summarise(items: Array<{ status: string }>) {
 
 export async function scanSharePointSdsFolder(actorUserId: string) {
   await requireDocumentsManage(actorUserId);
+  const authorised = await loadAuthorisedSdsResource();
   const runtime = await loadSharePointRuntimeConfig();
-  if (!runtime?.driveId || !runtime.folderItemId) {
+  if (!authorised || !runtime?.driveId || !runtime.folderItemId) {
     throw new AuthError(
       "SharePoint folder is not connected — configure and test connection first",
       "NOT_CONFIGURED",
       400,
     );
   }
+
+  assertAuthorisedSdsResource({
+    configured: authorised,
+    driveId: runtime.driveId,
+    folderItemId: runtime.folderItemId,
+  });
 
   const client = createMicrosoftGraphClient({
     tenantId: runtime.tenantId,
@@ -85,12 +98,27 @@ export async function scanSharePointSdsFolder(actorUserId: string) {
       where: { id: SHAREPOINT_SDS_SETTINGS_ID },
       data: { lastScanError: message, lastScanAt: new Date() },
     });
+    await recordAuditEvent({
+      action: "catalogue.sharepoint_sds_scan_failed",
+      entityType: "SharePointSdsSettings",
+      entityId: SHAREPOINT_SDS_SETTINGS_ID,
+      actorUserId,
+      metadata: { error: message, driveId: runtime.driveId, folderItemId: runtime.folderItemId },
+    });
     throw new AuthError(message, "SCAN_FAILED", 502);
   }
 
-  const pdfItems = children.filter(
-    (c) => !c.folder && c.file && isPdfFilename(c.name ?? ""),
-  );
+  const pdfItems = children.filter((c) => {
+    if (c.folder || !c.file || !isPdfFilename(c.name ?? "")) return false;
+    // Bound children to the authorised folder when Graph returns parentReference.
+    if (c.parentReference?.driveId && c.parentReference.driveId !== authorised.driveId) {
+      return false;
+    }
+    if (c.parentReference?.id && c.parentReference.id !== authorised.folderItemId) {
+      return false;
+    }
+    return true;
+  });
   if (pdfItems.length > SHAREPOINT_SDS_MAX_FILES) {
     throw new AuthError(
       `Folder has more than ${SHAREPOINT_SDS_MAX_FILES} PDFs — narrow the folder or contact engineering`,
@@ -116,11 +144,36 @@ export async function scanSharePointSdsFolder(actorUserId: string) {
     const item = pdfItems[i]!;
     const clientKey = `sp-${item.id}`;
     try {
+      assertSafeGraphResourceId(item.id, "item id");
+      assertAuthorisedSdsResource({
+        configured: authorised,
+        driveId: runtime.driveId,
+        folderItemId: runtime.folderItemId,
+        itemParentFolderId: item.parentReference?.id ?? runtime.folderItemId,
+      });
       const bytes = await client.downloadDriveItem(runtime.driveId, item.id);
-      previewInputs.push({
-        clientKey,
+      const validated = validateProductDocumentPdf({
         filename: item.name,
         contentType: item.file?.mimeType ?? "application/pdf",
+        bytes,
+      });
+      if (!validated.ok) {
+        previewInputs.push({
+          clientKey,
+          filename: item.name,
+          contentType: item.file?.mimeType ?? "application/pdf",
+          bytes: null,
+          downloadError: validated.error,
+          sharepointItemId: item.id,
+          sharepointEtag: item.eTag ?? null,
+          sharepointLastModified: item.lastModifiedDateTime ?? null,
+        });
+        continue;
+      }
+      previewInputs.push({
+        clientKey,
+        filename: validated.filename,
+        contentType: validated.contentType,
         bytes,
         sharepointItemId: item.id,
         sharepointEtag: item.eTag ?? null,
@@ -332,8 +385,9 @@ const confirmSchema = z.object({
 export async function confirmSharePointSdsImport(actorUserId: string, raw: unknown) {
   await requireDocumentsManage(actorUserId);
   const input = confirmSchema.parse(raw);
+  const authorised = await loadAuthorisedSdsResource();
   const runtime = await loadSharePointRuntimeConfig();
-  if (!runtime?.driveId) {
+  if (!authorised || !runtime?.driveId) {
     throw new AuthError("SharePoint is not configured", "NOT_CONFIGURED", 400);
   }
 
@@ -342,6 +396,21 @@ export async function confirmSharePointSdsImport(actorUserId: string, raw: unkno
     include: { items: true },
   });
   if (!session) throw new AuthError("Scan session not found", "NOT_FOUND", 404);
+
+  // Session must target the currently authorised resource — reject substitution.
+  try {
+    assertAuthorisedSdsResource({
+      configured: authorised,
+      driveId: session.driveId,
+      folderItemId: session.folderItemId,
+    });
+  } catch {
+    throw new AuthError(
+      "Scan session does not match the authorised SDS folder",
+      "FORBIDDEN",
+      403,
+    );
+  }
 
   const byKey = new Map(session.items.map((i) => [i.clientKey, i]));
   const client = createMicrosoftGraphClient({
@@ -412,24 +481,36 @@ export async function confirmSharePointSdsImport(actorUserId: string, raw: unkno
     }
 
     try {
-      const bytes = await client.downloadDriveItem(runtime.driveId, row.graphItemId);
-      const sourceMetadata = buildSharePointSourceMetadata({
-        driveId: runtime.driveId,
-        itemId: row.graphItemId,
+      assertSafeGraphResourceId(row.graphItemId, "item id");
+      // Downloads always use the authorised drive — never a client-supplied drive id.
+      const bytes = await client.downloadDriveItem(authorised.driveId, row.graphItemId);
+      const validated = validateProductDocumentPdf({
         filename: row.filename,
+        contentType: "application/pdf",
+        bytes,
+      });
+      if (!validated.ok) {
+        throw new Error(validated.error);
+      }
+      const sourceMetadata = buildSharePointSourceMetadata({
+        driveId: authorised.driveId,
+        itemId: row.graphItemId,
+        filename: validated.filename,
         lastModified: row.graphLastModified?.toISOString() ?? null,
         eTag: row.graphEtag,
         cTag: row.graphCtag,
-        folderItemId: session.folderItemId,
+        folderItemId: authorised.folderItemId,
       });
 
+      const replaceExisting = sel.action === "REPLACE" || row.status === "UPDATED_SOURCE";
+      // Explicit confirmation required — scan never auto-imports.
       const doc = await uploadProductDocument(actorUserId, {
         productId: sel.productId,
         type: "SAFETY_DATA_SHEET",
-        filename: row.filename,
+        filename: validated.filename,
         contentType: "application/pdf",
         base64: bytes.toString("base64"),
-        replaceExisting: sel.action === "REPLACE" || row.status === "UPDATED_SOURCE",
+        replaceExisting,
         sourceMetadata,
       });
 

@@ -47,6 +47,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "audit.view",
   "settings.view",
   "settings.edit",
+  "integrations.sharepoint.manage",
 ];
 
 const SALES_MANAGER_PERMS: PermissionKey[] = [
@@ -211,7 +212,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRoleKey, PermissionKey[]> = {
 export const SYSTEM_ROLE_META: Record<SystemRoleKey, { name: string; description: string }> = {
   SUPER_ADMIN: {
     name: "Super Admin",
-    description: "Full system access. All actions must be audit-visible. MFA required (planned).",
+    description: "Full system access. All actions must be audit-visible. MFA required.",
   },
   MANAGEMENT: {
     name: "Management",
@@ -232,7 +233,7 @@ export const SYSTEM_ROLE_META: Record<SystemRoleKey, { name: string; description
   },
   ACCOUNTS: {
     name: "Accounts",
-    description: "Invoices and payment terms.",
+    description: "Invoices and payment terms. MFA required.",
   },
   MARKETING: {
     name: "Marketing",

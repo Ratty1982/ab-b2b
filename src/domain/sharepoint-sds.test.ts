@@ -43,5 +43,9 @@ describe("sharepoint SDS domain", () => {
     );
     expect(msg.toLowerCase()).not.toContain("eyj");
     expect(msg).toMatch(/Authentication failed|Permission denied|redacted/i);
+    const denied = publicMicrosoftErrorMessage(new Error("AccessDenied 403 Forbidden"));
+    expect(denied).toContain("Files.SelectedOperations.Selected");
+    expect(denied).not.toContain("Files.Read.All");
   });
 });
+
