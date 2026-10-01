@@ -34,7 +34,7 @@ describe("admin dashboard UI states", () => {
 
   it("renders healthy needs-attention empty state", () => {
     const html = renderToStaticMarkup(<NeedsAttentionPanel items={[]} />);
-    expect(html).toContain("You're up to date");
+    expect(html).toContain("You&#x27;re up to date");
     expect(html).toContain("No operational issues currently require attention.");
   });
 
