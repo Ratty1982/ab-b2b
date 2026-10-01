@@ -268,7 +268,11 @@ function ProductTradeOrderingCard({
       {showTestLevelPrompt ? (
         <p className="mt-3 text-[13px] text-steel" role="status" data-ordering-status="needs-test-level">
           Select a trade test level in{" "}
-          <Link to="/admin/settings" className="font-semibold text-primary hover:underline">
+          <Link
+            to="/admin/settings"
+            search={{ tab: "trade" }}
+            className="font-semibold text-primary hover:underline"
+          >
             Admin → Settings
           </Link>{" "}
           to enable ordering.

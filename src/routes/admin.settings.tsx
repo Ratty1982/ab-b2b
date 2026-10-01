@@ -10,8 +10,25 @@ import { AutopartOngoingSalesFeedPanel } from "@/components/ab/AutopartOngoingSa
 import { SharePointSdsSettingsPanel } from "@/components/catalogue/SharePointSdsSettingsPanel";
 import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
+import { cn } from "@/lib/utils";
+import {
+  SETTINGS_TAB_META,
+  parseSettingsSearch,
+  resolveSettingsTab,
+  type SettingsSearch,
+  type SettingsTab,
+} from "@/domain/admin-settings-tabs";
+
+export {
+  parseSettingsSearch,
+  resolveSettingsTab,
+  SETTINGS_TABS,
+} from "@/domain/admin-settings-tabs";
+export type { SettingsSearch, SettingsTab } from "@/domain/admin-settings-tabs";
 
 export const Route = createFileRoute("/admin/settings")({
+  validateSearch: (search: Record<string, unknown>): SettingsSearch =>
+    parseSettingsSearch(search),
   head: () => ({
     meta: [
       { title: "Platform Settings — Automotive Brands Admin" },
@@ -90,17 +107,18 @@ function TradeTestingPanel() {
   return (
     <section
       data-admin-section="trade-testing"
-      className="space-y-4 rounded-lg border border-border bg-surface/30 p-4 sm:p-5 lg:col-span-2"
+      className="space-y-4 rounded-lg border border-border bg-surface/30 p-4 sm:p-5"
     >
-      <div>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-display text-lg font-semibold uppercase">Trade testing</h2>
-        <p className="mt-1 max-w-2xl text-[13px] text-steel">
-          Choose Default Trade Price (catalogue import / ProductVariant.tradePrice) or a named
-          PriceList to browse the public catalogue and exercise Phase 6A ordering. This is not
-          customer impersonation — no real company or CustomerPrice is used. Separate from
-          &quot;Default price group for new accounts&quot; below.
-        </p>
+        <span className="text-[10px] font-bold uppercase tracking-wide text-warn">
+          Internal tool
+        </span>
       </div>
+      <p className="max-w-2xl text-[13px] text-steel">
+        Sets the price level used when staff browse the public catalogue for ordering tests. Not
+        customer impersonation and not the default price group for new accounts.
+      </p>
 
       {loadError ? (
         <p className="text-[13px] text-warn" role="status">
@@ -163,102 +181,289 @@ function TradeTestingPanel() {
   );
 }
 
-function AdminSettings() {
+function PlatformDefaultsSection() {
   return (
-    <div>
-      <PanelHeader title="Settings" sub="Trading defaults, ordering rules, email and notifications" />
-
-      <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
-        <TradeTestingPanel />
-
-        <TradeOrderingSettingsPanel />
-
-        <EmailSettingsPanel />
-
-        <Autopart504cFeedPanel />
-
-        <AutopartOngoingSalesFeedPanel />
-
-        <div className="lg:col-span-2">
-          <SharePointSdsSettingsPanel />
+    <section
+      data-admin-section="platform-defaults"
+      className="space-y-4"
+      aria-labelledby="platform-defaults-heading"
+    >
+      <div>
+        <h2
+          id="platform-defaults-heading"
+          className="font-display text-lg font-semibold uppercase"
+        >
+          Platform defaults
+        </h2>
+        <p className="mt-1 text-[12px] text-steel">
+          Read-only platform rules. These values are defined in application code and cannot be
+          changed from this screen.
+        </p>
+      </div>
+      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-[13px]">
+        <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+            Default payment terms
+          </dt>
+          <dd className="mt-1 font-semibold">30 Days Net</dd>
+          <dd className="mt-1 text-[12px] text-steel">Usual default for new trade accounts.</dd>
         </div>
+        <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+            Default price for new accounts
+          </dt>
+          <dd className="mt-1 font-semibold">Default Trade Price</dd>
+          <dd className="mt-1 text-[12px] text-steel">
+            Catalogue ProductVariant.tradePrice until a list or special is assigned.
+          </dd>
+        </div>
+        <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+            Free delivery threshold
+          </dt>
+          <dd className="mt-1 font-semibold">£100.00 ex VAT goods</dd>
+          <dd className="mt-1 text-[12px] text-steel">TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT</dd>
+        </div>
+        <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+            Standard carriage
+          </dt>
+          <dd className="mt-1 font-semibold">£5.95 ex VAT</dd>
+          <dd className="mt-1 text-[12px] text-steel">
+            TRADE_DELIVERY_CHARGE_EX_VAT when below free-delivery threshold.
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
 
-        <section className="space-y-4" aria-labelledby="trading-read-only-heading">
-          <h2 id="trading-read-only-heading" className="font-display text-lg font-semibold uppercase">
-            Trading
-          </h2>
-          <p className="text-[12px] text-steel">
-            Read-only platform rules. These values are defined in application code and cannot be
-            changed from this screen.
-          </p>
-          <dl className="grid gap-3 sm:grid-cols-2 text-[13px]">
-            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
-                Default payment terms
-              </dt>
-              <dd className="mt-1 font-semibold">30 Days Net</dd>
-              <dd className="mt-1 text-[12px] text-steel">
-                Company payment terms are set per customer. This is the usual default for new
-                accounts.
-              </dd>
-            </div>
-            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
-                Default price for new accounts
-              </dt>
-              <dd className="mt-1 font-semibold">Default Trade Price</dd>
-              <dd className="mt-1 text-[12px] text-steel">
-                Every new trade account starts on catalogue Default Trade Price
-                (ProductVariant.tradePrice). A salesperson can later assign a named price list or
-                set special prices on the customer Commercial tab.
-              </dd>
-            </div>
-            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
-                Free delivery threshold
-              </dt>
-              <dd className="mt-1 font-semibold">£100.00 ex VAT goods</dd>
-              <dd className="mt-1 text-[12px] text-steel">
-                Authoritative domain rule (TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT).
-              </dd>
-            </div>
-            <div className="rounded-md border border-border bg-ink/30 px-3 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-steel">
-                Standard carriage charge
-              </dt>
-              <dd className="mt-1 font-semibold">£5.95 ex VAT</dd>
-              <dd className="mt-1 text-[12px] text-steel">
-                Applied when goods subtotal is below the free-delivery threshold
-                (TRADE_DELIVERY_CHARGE_EX_VAT).
-              </dd>
-            </div>
-          </dl>
-        </section>
+function OrderingNotesSection() {
+  return (
+    <section
+      data-admin-section="ordering-notes"
+      className="space-y-3"
+      aria-labelledby="ordering-notes-heading"
+    >
+      <h2 id="ordering-notes-heading" className="font-display text-base font-semibold uppercase">
+        Ordering notes
+      </h2>
+      <p className="text-[12px] text-steel">
+        Automotive Brands does not manage customer credit control. Credit limits and available
+        credit remain authoritative in Autopart/MAM and are managed by Accounts.
+      </p>
+      <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
+        {[
+          "Purchase order handling is enforced in checkout where required by the order flow.",
+          "Live stock availability bands are shown to authenticated trade customers according to stock policy.",
+          "Order and quote email alerts are configured under the Email tab.",
+        ].map((line) => (
+          <li key={line} className="px-3 py-3 text-steel">
+            {line}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
-        <section className="space-y-4" aria-labelledby="ordering-read-only-heading">
-          <h2 id="ordering-read-only-heading" className="font-display text-lg font-semibold uppercase">
-            Ordering &amp; notifications
-          </h2>
-          <p className="text-[12px] text-steel">
-            Automotive Brands does not manage customer credit control. Credit limits and available
-            credit remain authoritative in Autopart/MAM and are managed by Accounts.
+function SettingsTabNav({
+  tab,
+  onSelect,
+}: {
+  tab: SettingsTab;
+  onSelect: (next: SettingsTab) => void;
+}) {
+  return (
+    <div
+      className="-mx-4 border-b border-border/70 px-4 sm:-mx-0 sm:px-6"
+      data-settings-tabs="nav"
+    >
+      <div
+        role="tablist"
+        aria-label="Settings sections"
+        className="flex gap-1 overflow-x-auto"
+      >
+        {SETTINGS_TAB_META.map((item) => {
+          const active = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${item.id}`}
+              aria-selected={active}
+              aria-controls={`settings-panel-${item.id}`}
+              aria-current={active ? "page" : undefined}
+              tabIndex={active ? 0 : -1}
+              data-settings-tab={item.id}
+              data-active={active ? "true" : "false"}
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                "shrink-0 border-b-2 px-3 py-3 text-[11px] font-bold uppercase tracking-wide transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                active
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-steel hover:text-foreground",
+              )}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GeneralTab() {
+  return (
+    <div className="space-y-8" data-settings-panel="general">
+      <PlatformDefaultsSection />
+      <p className="max-w-2xl text-[13px] text-steel">
+        Trade testing, email, Autopart feeds, and SharePoint SDS each have their own tab. Use those
+        for editable configuration.
+      </p>
+    </div>
+  );
+}
+
+function TradeTab() {
+  return (
+    <div className="space-y-8" data-settings-panel="trade">
+      <TradeTestingPanel />
+      <TradeOrderingSettingsPanel />
+      <OrderingNotesSection />
+    </div>
+  );
+}
+
+function EmailTab() {
+  return (
+    <div className="space-y-6" data-settings-panel="email">
+      <div>
+        <h2 className="font-display text-lg font-semibold uppercase">Email</h2>
+        <p className="mt-1 max-w-2xl text-[13px] text-steel">
+          Microsoft 365 / SMTP delivery and notification recipients for trade applications, orders,
+          and quotes.
+        </p>
+      </div>
+      <EmailSettingsPanel />
+    </div>
+  );
+}
+
+function AutopartTab() {
+  return (
+    <div className="space-y-8" data-settings-panel="autopart">
+      <div>
+        <h2 className="font-display text-lg font-semibold uppercase">Autopart integrations</h2>
+        <p className="mt-1 max-w-3xl text-[13px] text-steel">
+          Separate mailbox feeds for order status and ongoing sales. Settings and polling remain
+          independent — do not merge these integrations.
+        </p>
+      </div>
+
+      <section aria-labelledby="autopart-504c-heading" className="space-y-3">
+        <div>
+          <h3
+            id="autopart-504c-heading"
+            className="font-display text-base font-semibold uppercase"
+          >
+            504C — Order status
+          </h3>
+          <p className="mt-1 text-[12px] text-steel">
+            Invoice / despatch feed (report 504C). Connection, schedule, and dry-run tools below.
           </p>
-          <ul className="divide-y divide-border rounded-lg border border-border text-[13px]">
-            {[
-              "Purchase order handling is enforced in checkout where required by the order flow.",
-              "Live stock availability bands are shown to authenticated trade customers according to stock policy.",
-              "Order and quote email alerts are configured in the Email section above.",
-            ].map((line) => (
-              <li key={line} className="px-3 py-3 text-steel">
-                {line}
-              </li>
-            ))}
-          </ul>
-          <p className="text-[12px] text-steel">
-            There are no editable ordering/notification toggles on this page. Trade application and
-            new B2B order alert recipients are configured in the Email section.
-          </p>
-        </section>
+        </div>
+        <Autopart504cFeedPanel />
+      </section>
+
+      <section aria-labelledby="autopart-ongoing-heading" className="space-y-3">
+        <div>
+          <h3
+            id="autopart-ongoing-heading"
+            className="font-display text-base font-semibold uppercase"
+          >
+            Ongoing sales &amp; credits
+          </h3>
+          <p className="mt-1 text-[12px] text-steel">504 + TRM21QC ongoing Autopart sales import.</p>
+        </div>
+        <AutopartOngoingSalesFeedPanel />
+      </section>
+    </div>
+  );
+}
+
+function DocumentsTab() {
+  return (
+    <div className="space-y-6" data-settings-panel="documents">
+      <div>
+        <h2 className="font-display text-lg font-semibold uppercase">Documents &amp; SDS</h2>
+        <p className="mt-1 max-w-2xl text-[13px] text-steel">
+          Configure the Microsoft SharePoint source used to import product Safety Data Sheets.
+          Bulk SDS import remains on the catalogue documents import screen.
+        </p>
+      </div>
+      <SharePointSdsSettingsPanel />
+    </div>
+  );
+}
+
+function SystemTab() {
+  return (
+    <div className="space-y-4" data-settings-panel="system">
+      <div>
+        <h2 className="font-display text-lg font-semibold uppercase">System</h2>
+        <p className="mt-1 max-w-2xl text-[13px] text-steel">
+          Reserved for genuine platform-level configuration. Version Updates and other SYSTEM
+          tools keep their own navigation entries when available.
+        </p>
+      </div>
+      <div
+        className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-steel"
+        data-settings-empty="system"
+      >
+        No editable system settings on this page yet.
+      </div>
+    </div>
+  );
+}
+
+function AdminSettings() {
+  const search = Route.useSearch();
+  const tab = resolveSettingsTab(search);
+  const navigate = Route.useNavigate();
+
+  function selectTab(next: SettingsTab) {
+    void navigate({
+      search: (prev) => ({ ...prev, tab: next }),
+      replace: false,
+    });
+  }
+
+  return (
+    <div data-page="admin-settings">
+      <PanelHeader
+        title="Settings"
+        sub="Configure the Automotive Brands B2B platform"
+      />
+
+      <SettingsTabNav tab={tab} onSelect={selectTab} />
+
+      <div
+        className="p-4 sm:p-6"
+        role="tabpanel"
+        id={`settings-panel-${tab}`}
+        aria-labelledby={`settings-tab-${tab}`}
+        data-settings-active-tab={tab}
+      >
+        {tab === "general" ? <GeneralTab /> : null}
+        {tab === "trade" ? <TradeTab /> : null}
+        {tab === "email" ? <EmailTab /> : null}
+        {tab === "autopart" ? <AutopartTab /> : null}
+        {tab === "documents" ? <DocumentsTab /> : null}
+        {tab === "system" ? <SystemTab /> : null}
       </div>
     </div>
   );
