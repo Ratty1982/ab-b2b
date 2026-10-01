@@ -7,6 +7,7 @@
  * so AB-originated orders are not double-counted once Autopart invoices arrive.
  */
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
@@ -14,12 +15,14 @@ import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligenc
 export { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import {
   dateOnlyIsoFromDate,
+  documentDatePrismaBounds,
   todayLondonDateOnly,
   type DateOnlyRange,
 } from "@/domain/sales-history-period";
 import {
   buildCsv,
   compareSalesTotals,
+  createLineAgg,
   lineAggPurchaseCount,
   moneyMinorToDto,
   parseSalesNetMinor,
@@ -27,6 +30,7 @@ import {
   resolveEnquiryPrimaryPeriod,
   totalsToDto,
   type CustomerProductSort,
+  type MutableLineAgg,
   type PeriodComparisonDto,
   type ProductCustomerSort,
   type SalesMoneyTotalsDto,
@@ -34,10 +38,14 @@ import {
 import {
   groupHistoricByCompany,
   groupHistoricBySku,
+  countHistoricSalesLines,
+  HISTORIC_LINES_IN_MEMORY_MAX,
   loadHistoricSalesLines,
+  summarizeHistoricSalesFromDb,
   summarizeHistoricLines,
   type HistoricLineRow,
 } from "@/server/sales-intelligence/historic-lines";
+import { SAFE_SKU_EQUALS_CHUNK, chunkArray } from "@/server/db/prisma-in-chunks";
 import {
   PUBLIC_AVAILABILITY_LABEL,
   type PublicAvailability,
@@ -124,7 +132,12 @@ export async function getCustomerNetSales(
 ): Promise<SalesMoneyTotalsDto> {
   const profile = await requireSalesIntelligence(actorUserId);
   await assertCompanyInScope(profile, companyId);
-  const lines = await loadLines({ companyId, range: { from, to } });
+  const range = { from, to };
+  const lineCount = await countHistoricSalesLines({ companyId, range });
+  if (lineCount > HISTORIC_LINES_IN_MEMORY_MAX) {
+    return totalsToDto(await summarizeHistoricSalesFromDb({ companyId, range }));
+  }
+  const lines = await loadLines({ companyId, range });
   return totalsToDto(summarizeLines(lines));
 }
 
@@ -371,42 +384,127 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
   });
   if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
-  const primaryLines = await loadLines({ companyId: input.companyId, range: primary });
-  const primaryTotals = summarizeLines(primaryLines);
+  const primaryLineCount = await countHistoricSalesLines({
+    companyId: input.companyId,
+    range: primary,
+  });
+  const useDbSummary = primaryLineCount > HISTORIC_LINES_IN_MEMORY_MAX;
+
+  let primaryTotals;
+  let bySku: Map<string, { agg: MutableLineAgg; sku: string; desc: string | null }>;
+
+  if (useDbSummary) {
+    primaryTotals = await summarizeHistoricSalesFromDb({
+      companyId: input.companyId,
+      range: primary,
+    });
+    const bounds = documentDatePrismaBounds(primary);
+    const skuRows = await prisma.$queryRaw<
+      Array<{
+        sku: string;
+        desc: string | null;
+        units: Prisma.Decimal | number;
+        invoice_sales: Prisma.Decimal | number;
+        credits: Prisma.Decimal | number;
+        net_sales: Prisma.Decimal | number;
+        purchase_count: bigint | number;
+        last_purchased: Date | null;
+      }>
+    >`
+      SELECT
+        MIN(l.sku) AS sku,
+        MAX(l."descriptionSnapshot") AS desc,
+        COALESCE(SUM(l.units), 0) AS units,
+        COALESCE(SUM(CASE WHEN l."documentType" = 'INVOICE' THEN l."salesNet" ELSE 0 END), 0) AS invoice_sales,
+        COALESCE(SUM(CASE WHEN l."documentType" = 'CREDIT' THEN l."salesNet" ELSE 0 END), 0) AS credits,
+        COALESCE(SUM(l."salesNet"), 0) AS net_sales,
+        COUNT(DISTINCT CASE WHEN l."documentType" = 'INVOICE' THEN l."documentReference" END) AS purchase_count,
+        MAX(CASE WHEN l."documentType" = 'INVOICE' THEN d."documentDate" END) AS last_purchased
+      FROM "AutopartSalesLine" l
+      INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+      WHERE l."companyId" = ${input.companyId}
+        AND d."companyId" IS NOT NULL
+        AND d."documentDate" >= ${bounds.gte}
+        AND d."documentDate" <= ${bounds.lte}
+      GROUP BY UPPER(TRIM(l.sku))
+    `;
+    bySku = new Map();
+    for (const row of skuRows) {
+      const key = row.sku.trim().toUpperCase();
+      const agg = createLineAgg();
+      agg.units = Number(row.units ?? 0);
+      agg.invoiceSalesMinor = parseSalesNetMinor(row.invoice_sales);
+      agg.creditsMinor = parseSalesNetMinor(row.credits);
+      agg.netSalesMinor = parseSalesNetMinor(row.net_sales);
+      agg.lastPurchasedDate = row.last_purchased
+        ? dateOnlyIsoFromDate(row.last_purchased)
+        : null;
+      // Seed invoiceRefs size via placeholder keys so lineAggPurchaseCount works.
+      const purchaseCount = Number(row.purchase_count ?? 0);
+      for (let i = 0; i < purchaseCount; i += 1) agg.invoiceRefs.add(`${key}:${i}`);
+      bySku.set(key, {
+        agg,
+        sku: row.sku.trim(),
+        desc: row.desc?.trim() || null,
+      });
+    }
+  } else {
+    const primaryLines = await loadLines({ companyId: input.companyId, range: primary });
+    primaryTotals = summarizeLines(primaryLines);
+    bySku = groupBySku(primaryLines);
+  }
 
   let comparison: PeriodComparisonDto | null = null;
   if (comparisonRange) {
-    const cmpLines = await loadLines({ companyId: input.companyId, range: comparisonRange });
-    comparison = compareSalesTotals(
-      primary,
-      comparisonRange,
-      primaryTotals,
-      summarizeLines(cmpLines),
-    );
+    const cmpTotals =
+      (await countHistoricSalesLines({
+        companyId: input.companyId,
+        range: comparisonRange,
+      })) > HISTORIC_LINES_IN_MEMORY_MAX
+        ? await summarizeHistoricSalesFromDb({
+            companyId: input.companyId,
+            range: comparisonRange,
+          })
+        : summarizeLines(
+            await loadLines({ companyId: input.companyId, range: comparisonRange }),
+          );
+    comparison = compareSalesTotals(primary, comparisonRange, primaryTotals, cmpTotals);
   }
 
-  const bySku = groupBySku(primaryLines);
   const skus = [...bySku.keys()];
-  const variants = skus.length
-    ? await prisma.productVariant.findMany({
-        where: {
-          OR: skus.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
-        },
-        select: {
-          id: true,
-          sku: true,
-          product: {
-            select: {
-              name: true,
-              brandId: true,
-              categoryId: true,
-              brand: { select: { id: true, name: true } },
-              category: { select: { id: true, name: true } },
-            },
+  const variants: Array<{
+    id: string;
+    sku: string;
+    product: {
+      name: string;
+      brandId: string | null;
+      categoryId: string | null;
+      brand: { id: string; name: string } | null;
+      category: { id: string; name: string } | null;
+    } | null;
+  }> = [];
+  // Chunk OR-equals SKU resolve — thousands of historic SKUs must not unbound one IN/OR.
+  for (const chunk of chunkArray(skus, SAFE_SKU_EQUALS_CHUNK)) {
+    const part = await prisma.productVariant.findMany({
+      where: {
+        OR: chunk.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
+      },
+      select: {
+        id: true,
+        sku: true,
+        product: {
+          select: {
+            name: true,
+            brandId: true,
+            categoryId: true,
+            brand: { select: { id: true, name: true } },
+            category: { select: { id: true, name: true } },
           },
         },
-      })
-    : [];
+      },
+    });
+    variants.push(...part);
+  }
   const variantBySku = new Map(variants.map((v) => [v.sku.trim().toUpperCase(), v]));
   const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
 
@@ -566,9 +664,39 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
 
   if (input.txSku?.trim()) {
     const skuKey = input.txSku.trim().toUpperCase();
-    const txLines = primaryLines
-      .filter((l) => l.sku.trim().toUpperCase() === skuKey)
-      .map((l) => ({
+    const txPage = input.txPage ?? 1;
+    const txPageSize = input.txPageSize ?? 25;
+    const bounds = documentDatePrismaBounds(primary);
+    const txWhere: Prisma.AutopartSalesLineWhereInput = {
+      companyId: input.companyId,
+      sku: { equals: skuKey, mode: "insensitive" },
+      document: {
+        is: {
+          companyId: { not: null },
+          documentDate: { gte: bounds.gte, lte: bounds.lte },
+        },
+      },
+    };
+    const [txTotal, txRows] = await Promise.all([
+      prisma.autopartSalesLine.count({ where: txWhere }),
+      prisma.autopartSalesLine.findMany({
+        where: txWhere,
+        orderBy: [{ documentReference: "desc" }, { lineNumber: "asc" }],
+        skip: (txPage - 1) * txPageSize,
+        take: txPageSize,
+        select: {
+          documentReference: true,
+          documentType: true,
+          sku: true,
+          descriptionSnapshot: true,
+          units: true,
+          salesNet: true,
+          document: { select: { documentDate: true } },
+        },
+      }),
+    ]);
+    transactions = {
+      items: txRows.map((l) => ({
         documentDate: l.document?.documentDate
           ? dateOnlyIsoFromDate(l.document.documentDate)
           : null,
@@ -578,18 +706,10 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
         description: l.descriptionSnapshot,
         units: Number(l.units ?? 0),
         netValue: moneyMinorToDto(parseSalesNetMinor(l.salesNet)),
-        _sort: l.document?.documentDate?.getTime() ?? 0,
-      }))
-      .sort((a, b) => b._sort - a._sort || a.documentReference.localeCompare(b.documentReference));
-    const txPage = input.txPage ?? 1;
-    const txPageSize = input.txPageSize ?? 25;
-    transactions = {
-      items: txLines
-        .slice((txPage - 1) * txPageSize, txPage * txPageSize)
-        .map(({ _sort: _, ...r }) => r),
+      })),
       page: txPage,
       pageSize: txPageSize,
-      total: txLines.length,
+      total: txTotal,
     };
   }
 

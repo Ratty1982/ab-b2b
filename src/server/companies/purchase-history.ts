@@ -12,10 +12,16 @@
  * purchaseCount (distinct INVOICE document references only).
  */
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireCompanyPermission } from "@/server/rbac/guards";
 import { requireTradePortalCompany } from "@/server/portal/dashboard";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
+import {
+  SAFE_SKU_EQUALS_CHUNK,
+  chunkArray,
+} from "@/server/db/prisma-in-chunks";
+import { HISTORIC_LINES_IN_MEMORY_MAX } from "@/server/sales-intelligence/historic-lines";
 import {
   PUBLIC_AVAILABILITY_LABEL,
   type PublicAvailability,
@@ -286,62 +292,121 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
     today,
   );
 
-  const lines = await prisma.autopartSalesLine.findMany({
-    where: {
-      companyId: company.id,
-      ...(dateRange
-        ? {
-            document: {
-              is: {
-                documentDate: {
-                  gte: new Date(`${dateRange.from}T00:00:00.000Z`),
-                  lte: new Date(`${dateRange.to}T23:59:59.999Z`),
-                },
+  const lineWhere: Prisma.AutopartSalesLineWhereInput = {
+    companyId: company.id,
+    ...(dateRange
+      ? {
+          document: {
+            is: {
+              documentDate: {
+                gte: new Date(`${dateRange.from}T00:00:00.000Z`),
+                lte: new Date(`${dateRange.to}T23:59:59.999Z`),
               },
             },
-          }
-        : {}),
-    },
-    select: {
-      sku: true,
-      units: true,
-      salesNet: true,
-      descriptionSnapshot: true,
-      documentType: true,
-      documentReference: true,
-      document: { select: { documentDate: true } },
-    },
-  });
+          },
+        }
+      : {}),
+  };
+  const lineCount = await prisma.autopartSalesLine.count({ where: lineWhere });
+  const usedDbSkuAgg = lineCount > HISTORIC_LINES_IN_MEMORY_MAX;
 
-  const bySku = buildSkuAggregates(lines, dateRange);
+  let bySku: Map<string, SkuAgg>;
+  if (usedDbSkuAgg) {
+    // Retail-scale: aggregate in Postgres — never load 60k+ lines into Node.
+    const dateSql = dateRange
+      ? Prisma.sql`AND d."documentDate" >= ${new Date(`${dateRange.from}T00:00:00.000Z`)}
+                   AND d."documentDate" <= ${new Date(`${dateRange.to}T23:59:59.999Z`)}`
+      : Prisma.empty;
+    const rows = await prisma.$queryRaw<
+      Array<{
+        sku: string;
+        historic_description: string | null;
+        net_units: Prisma.Decimal | number;
+        net_spend: Prisma.Decimal | number;
+        purchase_count: bigint | number;
+        first_purchased: Date | null;
+        last_purchased: Date | null;
+      }>
+    >`
+      SELECT
+        MIN(l.sku) AS sku,
+        MAX(l."descriptionSnapshot") AS historic_description,
+        COALESCE(SUM(l.units), 0) AS net_units,
+        COALESCE(SUM(l."salesNet"), 0) AS net_spend,
+        COUNT(DISTINCT CASE WHEN l."documentType" = 'INVOICE' THEN l."documentReference" END) AS purchase_count,
+        MIN(CASE WHEN l."documentType" = 'INVOICE' THEN d."documentDate" END) AS first_purchased,
+        MAX(CASE WHEN l."documentType" = 'INVOICE' THEN d."documentDate" END) AS last_purchased
+      FROM "AutopartSalesLine" l
+      LEFT JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+      WHERE l."companyId" = ${company.id}
+        ${dateSql}
+      GROUP BY UPPER(TRIM(l.sku))
+    `;
+    bySku = new Map();
+    for (const row of rows) {
+      const key = row.sku.trim().toUpperCase();
+      const invoiceRefs = new Set<string>();
+      const purchaseCount = Number(row.purchase_count ?? 0);
+      for (let i = 0; i < purchaseCount; i += 1) invoiceRefs.add(`${key}:${i}`);
+      bySku.set(key, {
+        sku: row.sku.trim(),
+        historicDescription: row.historic_description?.trim() || null,
+        netUnits: Number(row.net_units ?? 0),
+        netSpendMinor: (parseMoney(String(row.net_spend ?? 0)) ?? moneyZero()).minor,
+        invoiceRefs,
+        invoiceDatesByRef: new Map(),
+        creditDatesByRef: new Map(),
+        firstPurchasedDate: row.first_purchased
+          ? dateOnlyIso(row.first_purchased)
+          : null,
+        lastPurchasedDate: row.last_purchased ? dateOnlyIso(row.last_purchased) : null,
+      });
+    }
+  } else {
+    const lines = await prisma.autopartSalesLine.findMany({
+      where: lineWhere,
+      select: {
+        sku: true,
+        units: true,
+        salesNet: true,
+        descriptionSnapshot: true,
+        documentType: true,
+        documentReference: true,
+        document: { select: { documentDate: true } },
+      },
+    });
+    bySku = buildSkuAggregates(lines, dateRange);
+  }
 
   const skus = [...bySku.keys()];
-  const variants = skus.length
-    ? await prisma.productVariant.findMany({
-        where: {
-          OR: skus.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
-        },
-        select: {
-          id: true,
-          sku: true,
-          backorderPolicy: true,
-          product: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              isActive: true,
-              isTradeVisible: true,
-              status: true,
-              brandId: true,
-              categoryId: true,
-              brand: { select: { id: true, name: true } },
-              category: { select: { id: true, name: true } },
-            },
+  const variants = [];
+  for (const chunk of chunkArray(skus, SAFE_SKU_EQUALS_CHUNK)) {
+    const part = await prisma.productVariant.findMany({
+      where: {
+        OR: chunk.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
+      },
+      select: {
+        id: true,
+        sku: true,
+        backorderPolicy: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            isActive: true,
+            isTradeVisible: true,
+            status: true,
+            brandId: true,
+            categoryId: true,
+            brand: { select: { id: true, name: true } },
+            category: { select: { id: true, name: true } },
           },
         },
-      })
-    : [];
+      },
+    });
+    variants.push(...part);
+  }
   const variantBySku = new Map(variants.map((v) => [v.sku.trim().toUpperCase(), v]));
   const globalPolicy = await getGlobalBackorderPolicy();
   const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
@@ -524,6 +589,34 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
     for (const ref of item.invoiceRefs) summaryInvoiceRefs.add(ref);
   }
 
+  // DB SKU agg uses placeholder invoice refs — recompute distinct invoices for filtered SKUs.
+  let purchaseTransactions = summaryInvoiceRefs.size;
+  if (usedDbSkuAgg) {
+    const filteredSkus = items.map((i) => i.sku.trim().toUpperCase());
+    if (filteredSkus.length === 0) {
+      purchaseTransactions = 0;
+    } else {
+      const dateSql = dateRange
+        ? Prisma.sql`AND d."documentDate" >= ${new Date(`${dateRange.from}T00:00:00.000Z`)}
+                     AND d."documentDate" <= ${new Date(`${dateRange.to}T23:59:59.999Z`)}`
+        : Prisma.empty;
+      const refs = new Set<string>();
+      for (const chunk of chunkArray(filteredSkus, SAFE_SKU_EQUALS_CHUNK)) {
+        const rows = await prisma.$queryRaw<Array<{ documentReference: string }>>`
+          SELECT DISTINCT l."documentReference" AS "documentReference"
+          FROM "AutopartSalesLine" l
+          LEFT JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+          WHERE l."companyId" = ${company.id}
+            AND l."documentType" = 'INVOICE'
+            AND UPPER(TRIM(l.sku)) IN (${Prisma.join(chunk)})
+            ${dateSql}
+        `;
+        for (const row of rows) refs.add(row.documentReference);
+      }
+      purchaseTransactions = refs.size;
+    }
+  }
+
   const start = (page - 1) * pageSize;
   const pageItems = items.slice(start, start + pageSize).map(
     ({ netSpendMinor: _m, invoiceRefs: _r, ...rest }) => rest,
@@ -532,7 +625,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
   return {
     summary: {
       productsPurchased: total,
-      purchaseTransactions: summaryInvoiceRefs.size,
+      purchaseTransactions,
       historicNetSpend: moneyFromMinor(summarySpend),
       unitsPurchased: summaryUnits,
     },
