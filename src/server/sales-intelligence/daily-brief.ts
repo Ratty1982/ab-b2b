@@ -12,21 +12,26 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { chunkArray, SAFE_IN_LIST_CHUNK } from "@/server/db/prisma-in-chunks";
 import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
-import { moneyMinorToDto, parseSalesNetMinor } from "@/domain/sales-intelligence";
+import { formatGbp, moneyMinorToDto, parseSalesNetMinor } from "@/domain/sales-intelligence";
 import { compareOpportunityRows, PORTFOLIO_DEFAULT_PERIOD } from "@/domain/sales-portfolio";
 import {
   activityStatus,
+  cadenceHumanLabel,
   DAILY_BRIEF_ACTIVITY_PAGE_SIZE,
-  DAILY_BRIEF_ATTENTION_LIMIT,
   DAILY_BRIEF_FIRST_EVENT_LIMIT,
   DAILY_BRIEF_FOLLOWUP_LIMIT,
   DAILY_BRIEF_METHODOLOGY,
   DAILY_BRIEF_OPPORTUNITY_LIMIT,
   DAILY_BRIEF_POSITIVE_LIMIT,
   formatLondonBriefDate,
+  formatPurchaseDateLabel,
+  humanComparisonPhrase,
+  isEarlyCalendarPeriod,
   isNewCustomerToday,
   isReturnedCustomerFromCadence,
-  pickNeedsAttention,
+  periodElapsedDays,
+  personalisedGreetingLine,
+  pickDailyBriefPriorities,
   positiveMovementSortRank,
   previousLondonCivilDay,
   toAttentionItem,
@@ -424,7 +429,29 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
   let netSalesTodayMinor = 0n;
   for (const v of todayAgg.values()) netSalesTodayMinor += v.netMinor;
 
-  const attentionRows = pickNeedsAttention(portfolio.rows, DAILY_BRIEF_ATTENTION_LIMIT);
+  const elapsedDays = periodElapsedDays({
+    from: portfolio.period.displayFrom,
+    to: portfolio.period.displayTo,
+  });
+  const earlyPeriod = isEarlyCalendarPeriod({
+    periodKey: portfolio.period.key,
+    elapsedDays,
+  });
+  const comparisonPhrase = humanComparisonPhrase(portfolio.period.key);
+  const periodShortLabel =
+    portfolio.period.key === "THIS_MONTH"
+      ? "this month"
+      : portfolio.period.key === "THIS_QUARTER"
+        ? "this quarter"
+        : portfolio.period.key === "THIS_YEAR"
+          ? "this year"
+          : "this period";
+
+  const priorityEligible = pickDailyBriefPriorities(portfolio.rows, {
+    earlyPeriod,
+    limit: Math.max(portfolio.rows.length, 1),
+  });
+  const priorityRows = priorityEligible.slice(0, 5);
   const opportunityRows = [...portfolio.rows]
     .filter((r) => r.opportunityCount > 0)
     .sort(compareOpportunityRows)
@@ -448,6 +475,7 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
     if (ret.returned) {
       returnedIds.add(companyId);
       const dayNet = todayAgg.get(companyId);
+      const amount = dayNet ? formatGbp(moneyMinorToDto(dayNet.netMinor)) : "£0.00";
       positive.push({
         kind: "RETURNED_CUSTOMER",
         companyId,
@@ -455,10 +483,11 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
         customerGroupName: row.customerGroupName,
         salesRepName: row.salesRepName,
         mamAccount: row.mamAccount,
-        headline: "Returned customer",
+        headline: "Customer returned",
         detail:
-          ret.explanation ??
-          `Purchased today after a dormant inactivity period.`,
+          ret.daysInactive != null
+            ? `${row.companyName} ordered ${amount} today after ${ret.daysInactive} days.`
+            : `${row.companyName} ordered ${amount} today after a quiet spell.`,
         netSalesToday: dayNet ? moneyMinorToDto(dayNet.netMinor) : "0",
         daysInactive: ret.daysInactive,
         typicalIntervalDays: ret.typicalIntervalDays,
@@ -479,6 +508,7 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
 
   for (const row of growing) {
     if (returnedIds.has(row.companyId)) continue;
+    const ahead = formatGbp(row.movement.startsWith("-") ? row.movement.slice(1) : row.movement);
     positive.push({
       kind: "GROWING",
       companyId: row.companyId,
@@ -486,10 +516,8 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
       customerGroupName: row.customerGroupName,
       salesRepName: row.salesRepName,
       mamAccount: row.mamAccount,
-      headline: "Materially growing",
-      detail: `Net sales ${row.currentNetSales} vs ${row.previousNetSales} comparable period (${
-        row.movementPercent != null ? `${row.movementPercent.toFixed(1)}%` : "n/a"
-      })`,
+      headline: "Sales growth",
+      detail: `${row.companyName} is ${ahead} ahead of ${comparisonPhrase}.`,
       netSalesToday: todayAgg.has(row.companyId)
         ? moneyMinorToDto(todayAgg.get(row.companyId)!.netMinor)
         : null,
@@ -497,12 +525,20 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
   }
 
   const firstSkuLimited = firstSkus.slice(0, DAILY_BRIEF_FIRST_EVENT_LIMIT);
-  const meta = await resolveProductMeta(firstSkuLimited.map((r) => r.sku));
+  const oppSkus = opportunityRows.flatMap((r) =>
+    r.opportunities.flatMap((o) => [o.sku, o.seedSku].filter(Boolean) as string[]),
+  );
+  const meta = await resolveProductMeta([...firstSkuLimited.map((r) => r.sku), ...oppSkus]);
+  const productNameBySku = new Map<string, string>();
+  for (const [sku, m] of meta) {
+    if (m.productName) productNameBySku.set(sku, m.productName);
+  }
 
   for (const fs of firstSkuLimited) {
     const row = byId.get(fs.companyId);
     if (!row) continue;
     const m = meta.get(fs.sku.toUpperCase());
+    const label = m?.productName ?? fs.sku;
     positive.push({
       kind: "FIRST_PRODUCT",
       companyId: fs.companyId,
@@ -510,10 +546,8 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
       customerGroupName: row.customerGroupName,
       salesRepName: row.salesRepName,
       mamAccount: row.mamAccount,
-      headline: "First-time product purchase",
-      detail: m?.productName
-        ? `${row.companyName} bought ${m.productName} (${fs.sku}) for the first time.`
-        : `${row.companyName} bought ${fs.sku} for the first time.`,
+      headline: "New product purchase",
+      detail: `${row.companyName} bought ${label} for the first time.`,
       netSalesToday: moneyMinorToDto(parseSalesNetMinor(fs.net)),
       sku: fs.sku,
       productName: m?.productName ?? null,
@@ -531,7 +565,7 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
       customerGroupName: row.customerGroupName,
       salesRepName: row.salesRepName,
       mamAccount: row.mamAccount,
-      headline: "First-time brand purchase",
+      headline: "New brand purchase",
       detail: `${row.companyName} bought ${fb.brandName} for the first time.`,
       netSalesToday: todayAgg.has(fb.companyId)
         ? moneyMinorToDto(todayAgg.get(fb.companyId)!.netMinor)
@@ -568,6 +602,8 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
       units: agg.units,
       products: agg.products,
       lastPurchaseBeforeToday: lastBefore,
+      lastPurchaseBeforeTodayLabel: formatPurchaseDateLabel(lastBefore, today),
+      cadenceHuman: cadenceHumanLabel(row.typicalIntervalDays),
       status: activityStatus({
         returned,
         newToday,
@@ -592,11 +628,25 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
   const summary: DailyBriefSummary = {
     customersPurchased: purchasedTodayIds.length,
     netSalesToday: moneyMinorToDto(netSalesTodayMinor),
-    needAttention: portfolio.kpis.needingAttention,
+    needAttention: priorityEligible.length,
     newOpportunities: portfolio.rows.filter((r) => r.opportunityCount > 0).length,
     followUpsDueToday: followUps.dueToday.length,
     overdueFollowUps: followUps.overdue.length,
   };
+
+  const personalized = !portfolio.canSelectSalesRep;
+  const greeting = personalized
+    ? {
+        personalized: true as const,
+        line: personalisedGreetingLine(profile.name),
+        subtitle: "Here's what is happening across your customers today.",
+      }
+    : {
+        personalized: false as const,
+        line: "Daily Sales Brief",
+        subtitle: "Here's what is happening across the selected customer portfolio today.",
+        viewingLabel: portfolio.salesRepFilterLabel,
+      };
 
   // For due today / overdue totals, listCrmTasks already capped — refetch counts when possible.
   let followUpsDueTodayCount = followUps.dueToday.length;
@@ -628,6 +678,9 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
     businessDate: today,
     businessDateLabel: briefDateLabel,
     yesterday,
+    greeting,
+    comparisonPhrase,
+    earlyPeriod,
     salesRepFilterLabel: portfolio.salesRepFilterLabel,
     canSelectSalesRep: portfolio.canSelectSalesRep,
     actorSalesRepId: portfolio.actorSalesRepId,
@@ -637,8 +690,21 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
     comparison: portfolio.comparison,
     summary,
     sinceYesterday,
-    needsAttention: attentionRows.map(toAttentionItem),
-    opportunities: opportunityRows.map(toOpportunityItem),
+    needsAttention: priorityRows.map((row) => {
+      const day = todayAgg.get(row.companyId);
+      const purchasedToday = Boolean(day?.hasInvoice);
+      return toAttentionItem(row, {
+        purchasedToday,
+        todayNetSales: day ? moneyMinorToDto(day.netMinor) : null,
+        todayUnits: day?.units ?? null,
+        todayProducts: day?.products ?? null,
+        comparisonPhrase,
+        periodShortLabel,
+      });
+    }),
+    opportunities: opportunityRows.map((row) =>
+      toOpportunityItem(row, { productNameBySku, earlyPeriod }),
+    ),
     positiveMovement: positive.slice(0, DAILY_BRIEF_POSITIVE_LIMIT),
     followUps: {
       overdue: followUps.overdue,

@@ -1,13 +1,24 @@
 /**
  * Sales Intelligence — Daily Sales Brief types and pure helpers.
  *
- * Brief answers “what should I know or act on today?” using the same
- * Portfolio attention / opportunity classifications (no second engine).
+ * Brief answers “what should I do today?” using the same Portfolio
+ * attention / opportunity classifications (no second engine).
+ * Presentation/prioritisation helpers live here; Portfolio rules stay authoritative.
  */
-import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
+import { addDaysIso, daysInclusive, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { derivePurchaseCadence, evaluateCadenceAttention } from "@/domain/sales-cadence";
-import { attentionSortKey, type AttentionReason } from "@/domain/sales-attention";
-import type { PortfolioCustomerRow, PortfolioOpportunity } from "@/domain/sales-portfolio";
+import {
+  attentionSortKey,
+  type AttentionReason,
+  type AttentionReasonCode,
+} from "@/domain/sales-attention";
+import type {
+  PortfolioCustomerRow,
+  PortfolioOpportunity,
+  PortfolioOpportunityType,
+} from "@/domain/sales-portfolio";
+import { formatGbp } from "@/domain/sales-intelligence";
+import { formatDate } from "@/lib/datetime";
 
 export const DAILY_BRIEF_ATTENTION_LIMIT = 5;
 export const DAILY_BRIEF_OPPORTUNITY_LIMIT = 5;
@@ -15,6 +26,9 @@ export const DAILY_BRIEF_POSITIVE_LIMIT = 8;
 export const DAILY_BRIEF_ACTIVITY_PAGE_SIZE = 25;
 export const DAILY_BRIEF_FOLLOWUP_LIMIT = 10;
 export const DAILY_BRIEF_FIRST_EVENT_LIMIT = 12;
+
+/** Suppress decline-only Daily Brief priorities in the first N days of THIS_* periods. */
+export const DAILY_BRIEF_EARLY_PERIOD_DAYS = 3;
 
 export type DailyBriefActivityStatus =
   | "NEW_TODAY"
@@ -31,6 +45,7 @@ export type DailyBriefPositiveKind =
 export type DailyBriefSummary = {
   customersPurchased: number;
   netSalesToday: string;
+  /** Daily Brief priority count after presentation suppression. */
   needAttention: number;
   newOpportunities: number;
   followUpsDueToday: number;
@@ -44,15 +59,33 @@ export type DailyBriefAttentionItem = {
   salesRepName: string | null;
   mamAccount: string | null;
   attentionReasons: AttentionReason[];
+  /** Salesperson-facing badge label for the lead reason. */
+  priorityLabel: string;
   cadenceSummary: string;
   cadenceIntervalLabel: string;
   cadenceLastPurchaseLabel: string;
+  cadenceHuman: string;
   currentNetSales: string;
   previousNetSales: string;
   movement: string;
   movementPercent: number | null;
   daysSinceLastPurchase: number | null;
   typicalIntervalDays: number | null;
+  purchasedToday: boolean;
+  todayNetSales: string | null;
+  todayUnits: number | null;
+  todayProducts: number | null;
+  /** Compact salesperson lines (no threshold jargon). */
+  summaryLines: string[];
+};
+
+export type DailyBriefOpportunityLine = {
+  type: PortfolioOpportunityType;
+  productLabel: string;
+  sku: string | null;
+  brandName: string | null;
+  primaryText: string;
+  secondaryText: string | null;
 };
 
 export type DailyBriefOpportunityItem = {
@@ -63,6 +96,7 @@ export type DailyBriefOpportunityItem = {
   mamAccount: string | null;
   opportunityCount: number;
   opportunities: PortfolioOpportunity[];
+  lines: DailyBriefOpportunityLine[];
 };
 
 export type DailyBriefPositiveItem = {
@@ -92,6 +126,8 @@ export type DailyBriefActivityRow = {
   units: number;
   products: number;
   lastPurchaseBeforeToday: string | null;
+  lastPurchaseBeforeTodayLabel: string;
+  cadenceHuman: string;
   status: DailyBriefActivityStatus;
 };
 
@@ -131,6 +167,260 @@ export function formatLondonBriefDate(dateOnly: string): string {
   }).format(noonUtc);
 }
 
+/** Good morning / afternoon / evening from Europe/London clock hour. */
+export function londonDayGreeting(now = new Date()): "Good morning" | "Good afternoon" | "Good evening" {
+  const hourStr = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    hour: "numeric",
+    hourCycle: "h23",
+  }).format(now);
+  const hour = Number(hourStr);
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+export function firstNameFromDisplayName(name: string | null | undefined): string | null {
+  const trimmed = name?.trim();
+  if (!trimmed) return null;
+  const first = trimmed.split(/\s+/)[0];
+  return first || null;
+}
+
+export function personalisedGreetingLine(
+  name: string | null | undefined,
+  now = new Date(),
+): string {
+  const first = firstNameFromDisplayName(name);
+  const greet = londonDayGreeting(now);
+  return first ? `${greet}, ${first}` : greet;
+}
+
+/**
+ * Human comparison phrase for Portfolio/THIS_* comparable windows.
+ * Prefer concrete commercial language over “comparable period”.
+ */
+export function humanComparisonPhrase(periodKey: string | null | undefined): string {
+  const p = (periodKey ?? "").toUpperCase();
+  switch (p) {
+    case "THIS_MONTH":
+      return "same point last month";
+    case "THIS_QUARTER":
+      return "same point last quarter";
+    case "THIS_YEAR":
+      return "same point last year";
+    case "LAST_30":
+      return "previous 30 days";
+    case "LAST_7":
+      return "previous 7 days";
+    case "LAST_90":
+      return "previous 90 days";
+    case "LAST_365":
+      return "previous 12 months";
+    case "LAST_MONTH":
+      return "the month before";
+    case "LAST_QUARTER":
+      return "the quarter before";
+    case "LAST_YEAR":
+      return "the year before";
+    default:
+      return "the comparison period";
+  }
+}
+
+export function isEarlyCalendarPeriod(input: {
+  periodKey: string | null | undefined;
+  elapsedDays: number;
+  thresholdDays?: number;
+}): boolean {
+  const p = (input.periodKey ?? "").toUpperCase();
+  if (p !== "THIS_MONTH" && p !== "THIS_QUARTER" && p !== "THIS_YEAR") return false;
+  return input.elapsedDays <= (input.thresholdDays ?? DAILY_BRIEF_EARLY_PERIOD_DAYS);
+}
+
+/** True when the only attention reason is material decline (Daily Brief suppressible). */
+export function isDeclineOnlyAttention(reasons: AttentionReason[]): boolean {
+  return reasons.length > 0 && reasons.every((r) => r.code === "DECLINING");
+}
+
+export function humanPriorityLabel(code: AttentionReasonCode): string {
+  switch (code) {
+    case "DORMANT":
+      return "Customer gone quiet";
+    case "PURCHASE_GAP":
+      return "Purchase gap";
+    case "DECLINING":
+      return "Sales lower than usual";
+    case "STOPPED_BUYING":
+      return "Products worth checking";
+    default:
+      return "Worth a check-in";
+  }
+}
+
+export function leadPriorityLabel(reasons: AttentionReason[]): string {
+  if (reasons.length === 0) return "Worth a check-in";
+  return humanPriorityLabel(reasons[0]!.code);
+}
+
+export function cadenceHumanLabel(typicalIntervalDays: number | null | undefined): string {
+  if (typicalIntervalDays == null || typicalIntervalDays < 1) return "Cadence not yet established";
+  if (typicalIntervalDays === 1) return "Usually orders daily";
+  if (typicalIntervalDays <= 3) return `Usually orders every ${typicalIntervalDays} days`;
+  return `Usually orders about every ${typicalIntervalDays} days`;
+}
+
+/** UK-friendly relative label for a prior purchase date. */
+export function formatPurchaseDateLabel(
+  dateOnly: string | null | undefined,
+  today: string,
+): string {
+  if (!dateOnly) return "No earlier order";
+  if (dateOnly === today) return "Today";
+  if (dateOnly === addDaysIso(today, -1)) return "Yesterday";
+  return formatDate(dateOnly) ?? dateOnly;
+}
+
+export function absMoneyDisplay(value: string): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return formatGbp(value);
+  return formatGbp(String(Math.abs(n)));
+}
+
+export function buildPrioritySummaryLines(input: {
+  reasons: AttentionReason[];
+  currentNetSales: string;
+  movement: string;
+  movementPercent: number | null;
+  daysSinceLastPurchase: number | null;
+  typicalIntervalDays: number | null;
+  purchasedToday: boolean;
+  todayNetSales: string | null;
+  todayUnits: number | null;
+  todayProducts: number | null;
+  comparisonPhrase: string;
+  periodShortLabel: string;
+}): string[] {
+  const lines: string[] = [];
+  if (input.purchasedToday && input.todayNetSales != null) {
+    const units =
+      input.todayUnits != null
+        ? ` · ${input.todayUnits} unit${input.todayUnits === 1 ? "" : "s"}`
+        : "";
+    const products =
+      input.todayProducts != null
+        ? ` · ${input.todayProducts} product${input.todayProducts === 1 ? "" : "s"}`
+        : "";
+    lines.push(`Ordered today: ${formatGbp(input.todayNetSales)}${units}${products}`);
+  }
+
+  const lead = input.reasons[0]?.code;
+  if (lead === "DORMANT" || lead === "PURCHASE_GAP") {
+    if (input.daysSinceLastPurchase != null && input.daysSinceLastPurchase > 0) {
+      lines.push(`No order for ${input.daysSinceLastPurchase} days`);
+    }
+    lines.push(cadenceHumanLabel(input.typicalIntervalDays));
+  } else if (lead === "DECLINING") {
+    lines.push(`${formatGbp(input.currentNetSales)} ${input.periodShortLabel}`);
+    const behind = absMoneyDisplay(input.movement);
+    const pct =
+      input.movementPercent != null ? ` (${Math.abs(input.movementPercent).toFixed(0)}%)` : "";
+    lines.push(`${behind} lower than ${input.comparisonPhrase}${pct}`);
+  } else if (lead === "STOPPED_BUYING") {
+    lines.push(cadenceHumanLabel(input.typicalIntervalDays));
+    if (!input.purchasedToday) {
+      lines.push(`${formatGbp(input.currentNetSales)} ${input.periodShortLabel}`);
+    }
+  } else if (!input.purchasedToday) {
+    lines.push(cadenceHumanLabel(input.typicalIntervalDays));
+  } else {
+    lines.push(cadenceHumanLabel(input.typicalIntervalDays));
+  }
+
+  return lines;
+}
+
+export function presentOpportunityLine(
+  opp: PortfolioOpportunity,
+  opts: {
+    productName?: string | null;
+    seedLabel?: string | null;
+    earlyPeriod: boolean;
+  },
+): DailyBriefOpportunityLine {
+  const sku = opp.sku ?? null;
+  const productLabel =
+    (opts.productName?.trim() || opp.brandName?.trim() || sku || "Opportunity").trim();
+
+  if (opp.type === "CROSS_SELL") {
+    const seed = opts.seedLabel?.trim() || opp.seedSku || "products they already buy";
+    const secondary =
+      opp.evidenceNumerator != null && opp.evidenceDenominator != null
+        ? `${opp.evidenceNumerator} of ${opp.evidenceDenominator} customers in this comparison group`
+        : null;
+    return {
+      type: opp.type,
+      productLabel,
+      sku,
+      brandName: opp.brandName ?? null,
+      primaryText: `Often bought by customers who also buy ${seed}.`,
+      secondaryText: secondary,
+    };
+  }
+
+  if (opp.type === "BRAND_GAP") {
+    return {
+      type: opp.type,
+      productLabel: opp.brandName ?? productLabel,
+      sku,
+      brandName: opp.brandName ?? null,
+      primaryText: `Other customers in their group buy ${opp.brandName ?? "this brand"}; they have not yet.`,
+      secondaryText: null,
+    };
+  }
+
+  // STOPPED_PRODUCT
+  const countMatch = opp.title.match(/^(\d+)/);
+  const count = countMatch ? Number(countMatch[1]) : null;
+  const strong = opp.title.toLowerCase().includes("stopped");
+  if (opts.earlyPeriod && !strong) {
+    return {
+      type: opp.type,
+      productLabel: count != null ? `${count} products to keep an eye on` : "Products to keep an eye on",
+      sku,
+      brandName: null,
+      primaryText:
+        "These products were bought in the comparison period but haven’t been ordered yet this period.",
+      secondaryText: null,
+    };
+  }
+  if (strong) {
+    return {
+      type: opp.type,
+      productLabel:
+        count != null
+          ? `${count} product${count === 1 ? "" : "s"} worth checking`
+          : "Products worth checking",
+      sku,
+      brandName: null,
+      primaryText: "Previously purchased products with no order yet this period.",
+      secondaryText: null,
+    };
+  }
+  return {
+    type: opp.type,
+    productLabel:
+      count != null
+        ? `${count} product${count === 1 ? "" : "s"} not reordered yet`
+        : "Products not reordered yet",
+    sku,
+    brandName: null,
+    primaryText:
+      "These products were bought in the comparison period but haven’t been ordered yet this period.",
+    secondaryText: null,
+  };
+}
+
 /**
  * Returned customer: invoice purchase today ends a dormant inactivity period.
  * Cadence is evaluated on invoice dates before today (asOf = yesterday).
@@ -168,7 +458,6 @@ export function isReturnedCustomerFromCadence(input: {
     };
   }
 
-  // Days without invoice purchase before today's buy (from last prior purchase to yesterday, +1 to include gap to today).
   const daysInactive =
     cadence.lastPurchaseDate != null
       ? Math.max(1, (cadence.daysSinceLastPurchase ?? 0) + 1)
@@ -196,8 +485,25 @@ export function pickNeedsAttention(
   rows: PortfolioCustomerRow[],
   limit = DAILY_BRIEF_ATTENTION_LIMIT,
 ): PortfolioCustomerRow[] {
+  return pickDailyBriefPriorities(rows, { earlyPeriod: false, limit });
+}
+
+/**
+ * Daily Brief priority selection.
+ * When earlyPeriod, suppress customers whose only Portfolio attention reason is DECLINING.
+ * Portfolio classifications themselves are unchanged.
+ */
+export function pickDailyBriefPriorities(
+  rows: PortfolioCustomerRow[],
+  opts: { earlyPeriod: boolean; limit?: number },
+): PortfolioCustomerRow[] {
+  const limit = opts.limit ?? DAILY_BRIEF_ATTENTION_LIMIT;
   return [...rows]
     .filter((r) => r.needsAttention)
+    .filter((r) => {
+      if (!opts.earlyPeriod) return true;
+      return !isDeclineOnlyAttention(r.attentionReasons);
+    })
     .sort((a, b) => {
       const ka = attentionSortKey(a.attentionReasons);
       const kb = attentionSortKey(b.attentionReasons);
@@ -210,7 +516,19 @@ export function pickNeedsAttention(
     .slice(0, limit);
 }
 
-export function toAttentionItem(row: PortfolioCustomerRow): DailyBriefAttentionItem {
+export function toAttentionItem(
+  row: PortfolioCustomerRow,
+  opts: {
+    purchasedToday: boolean;
+    todayNetSales: string | null;
+    todayUnits: number | null;
+    todayProducts: number | null;
+    comparisonPhrase: string;
+    periodShortLabel: string;
+  },
+): DailyBriefAttentionItem {
+  const priorityLabel = leadPriorityLabel(row.attentionReasons);
+  const cadenceHuman = cadenceHumanLabel(row.typicalIntervalDays);
   return {
     companyId: row.companyId,
     companyName: row.companyName,
@@ -218,19 +536,56 @@ export function toAttentionItem(row: PortfolioCustomerRow): DailyBriefAttentionI
     salesRepName: row.salesRepName,
     mamAccount: row.mamAccount,
     attentionReasons: row.attentionReasons,
+    priorityLabel,
     cadenceSummary: row.cadenceSummary,
     cadenceIntervalLabel: row.cadenceIntervalLabel,
     cadenceLastPurchaseLabel: row.cadenceLastPurchaseLabel,
+    cadenceHuman,
     currentNetSales: row.currentNetSales,
     previousNetSales: row.previousNetSales,
     movement: row.movement,
     movementPercent: row.movementPercent,
     daysSinceLastPurchase: row.daysSinceLastPurchase,
     typicalIntervalDays: row.typicalIntervalDays,
+    purchasedToday: opts.purchasedToday,
+    todayNetSales: opts.todayNetSales,
+    todayUnits: opts.todayUnits,
+    todayProducts: opts.todayProducts,
+    summaryLines: buildPrioritySummaryLines({
+      reasons: row.attentionReasons,
+      currentNetSales: row.currentNetSales,
+      movement: row.movement,
+      movementPercent: row.movementPercent,
+      daysSinceLastPurchase: row.daysSinceLastPurchase,
+      typicalIntervalDays: row.typicalIntervalDays,
+      purchasedToday: opts.purchasedToday,
+      todayNetSales: opts.todayNetSales,
+      todayUnits: opts.todayUnits,
+      todayProducts: opts.todayProducts,
+      comparisonPhrase: opts.comparisonPhrase,
+      periodShortLabel: opts.periodShortLabel,
+    }),
   };
 }
 
-export function toOpportunityItem(row: PortfolioCustomerRow): DailyBriefOpportunityItem {
+export function toOpportunityItem(
+  row: PortfolioCustomerRow,
+  opts: {
+    productNameBySku: Map<string, string>;
+    earlyPeriod: boolean;
+  },
+): DailyBriefOpportunityItem {
+  const lines = row.opportunities.slice(0, 3).map((o) => {
+    const skuKey = o.sku?.toUpperCase() ?? "";
+    const seedKey = o.seedSku?.toUpperCase() ?? "";
+    return presentOpportunityLine(o, {
+      productName: skuKey ? opts.productNameBySku.get(skuKey) ?? null : null,
+      seedLabel: seedKey
+        ? opts.productNameBySku.get(seedKey) ?? o.seedSku ?? null
+        : o.seedSku ?? null,
+      earlyPeriod: opts.earlyPeriod,
+    });
+  });
   return {
     companyId: row.companyId,
     companyName: row.companyName,
@@ -239,6 +594,7 @@ export function toOpportunityItem(row: PortfolioCustomerRow): DailyBriefOpportun
     mamAccount: row.mamAccount,
     opportunityCount: row.opportunityCount,
     opportunities: row.opportunities,
+    lines,
   };
 }
 
@@ -270,31 +626,41 @@ export function previousLondonCivilDay(today = todayLondonDateOnly()): string {
   return addDaysIso(today, -1);
 }
 
+export function periodElapsedDays(range: { from: string; to: string }): number {
+  return daysInclusive(range);
+}
+
 export const DAILY_BRIEF_METHODOLOGY = {
   purpose:
-    "Daily Sales Brief surfaces what changed or needs action today. Sales Rep Portfolio remains the overall portfolio performance workspace.",
+    "Daily Sales Brief surfaces what to do today in salesperson language. Sales Rep Portfolio remains the analytical workspace for why.",
   purchasingPresence:
-    "A customer “purchased today” only when they have at least one AutopartSalesLine on an INVOICE document dated today (Europe/London). Credits never create purchasing presence.",
+    "A customer “purchased today” / “ordered today” only when they have at least one AutopartSalesLine on an INVOICE document dated today (Europe/London). Credits never create purchasing presence.",
   netSalesToday:
     "Net sales today sum signed AutopartSalesLine.salesNet for documents dated today (invoices and credits).",
   attention:
-    "Needs Attention reuses Sales Rep Portfolio classifications exactly (dormant, purchase gap, material decline, significant stopped buying). Opportunity alone never creates Needs Attention.",
+    "Priorities reuse Sales Rep Portfolio classifications (dormant, purchase gap, material decline, significant stopped buying). Opportunity alone never creates a priority.",
+  earlyPeriodSuppression:
+    `On THIS_MONTH / THIS_QUARTER / THIS_YEAR when elapsed calendar days ≤ ${DAILY_BRIEF_EARLY_PERIOD_DAYS}, Daily Brief hides priorities that are decline-only. Dormant, purchase gap, and significant stopped buying still appear. Portfolio classifications are unchanged.`,
   opportunities:
-    "Opportunities reuse Portfolio evidence (stopped-product re-engagement, brand gap, cross-sell). No probability, opportunity £, or AI score.",
+    "Opportunities reuse Portfolio evidence (stopped-product re-engagement, brand gap, cross-sell). Product names come from the current catalogue when mapped; otherwise SKU is shown. No probability, opportunity £, or AI score.",
+  crossSellEvidence:
+    "Cross-sell primary wording is commercial; cohort counts (e.g. 8 of 8 customers in this comparison group) remain as supporting evidence.",
   returnedCustomer:
-    "Returned Customer fires only when today’s invoice purchase ends a dormant inactivity period under Portfolio cadence rules (evaluated on invoice dates before today). Normal cadence buyers who skipped a day are not returned.",
+    "Returned Customer fires only when today’s invoice purchase ends a dormant inactivity period under Portfolio cadence rules (evaluated on invoice dates before today).",
   firstProduct:
-    "First-time product: customer has a positive INVOICE line for the SKU today and no prior INVOICE purchase of that SKU. Credits do not establish prior purchase. Historic-only SKUs are supported.",
+    "First-time product: customer has a positive INVOICE line for the SKU today and no prior INVOICE purchase of that SKU. Credits do not establish prior purchase.",
   firstBrand:
-    "First-time brand only when today’s SKU maps authoritatively via ProductVariant → Product → Brand. No brand inference from SKU prefixes or unmapped historic SKUs.",
+    "First-time brand only when today’s SKU maps authoritatively via ProductVariant → Product → Brand.",
   positiveMovement:
-    "Positive Movement is conservative: returned dormant customers, material Portfolio growth, first-time product, and first-time brand (when provable).",
+    "Good News is conservative: returned dormant customers, material Portfolio growth, first-time product, and first-time brand (when provable).",
   comparablePeriod:
-    "Decline/growth use the same Portfolio comparable calendar period via previousComparableBusinessPeriod().",
+    "Decline/growth use the same Portfolio comparable calendar period via previousComparableBusinessPeriod(). Salesperson UI says e.g. “same point last month” instead of “comparable period”.",
   followUps:
     "Follow-ups reuse the CRM Task model (overdue / due today, Europe/London). Create Follow-up is human-confirmed only.",
   freshness:
     "Sales data freshness reuses the existing Sales Intelligence feed freshness implementation. Not real-time.",
   credits:
     "Credits reduce net sales, never create invoice purchasing presence, cadence dates, first-product events, or returned-customer events.",
+  thresholds:
+    "Material decline for Portfolio Needs Attention requires ≥ £100 absolute fall and ≥ 20% fall vs the comparable period. Those thresholds are not shown on Daily Brief cards.",
 } as const;

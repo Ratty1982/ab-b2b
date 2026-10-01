@@ -6,10 +6,16 @@ import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
-import { todayLondonDateOnly, addDaysIso } from "@/domain/sales-history-period";
+import {
+  todayLondonDateOnly,
+  addDaysIso,
+  previousComparableBusinessPeriod,
+  resolveBusinessPeriod,
+} from "@/domain/sales-history-period";
 import { getDailySalesBrief } from "@/server/sales-intelligence/daily-brief";
 import { getSalesRepPortfolio } from "@/server/sales-intelligence/portfolio";
 import { dueAtFromDateOnly } from "@/domain/sales-followup";
+import { isEarlyCalendarPeriod, periodElapsedDays } from "@/domain/sales-daily-brief";
 
 const prisma = new PrismaClient();
 const stamp = Date.now();
@@ -23,11 +29,15 @@ let tradeUserId = "";
 let companyId = "";
 let creditOnlyCompanyId = "";
 let dormantCompanyId = "";
+let declineOnlyCompanyId = "";
+let quietDormantCompanyId = "";
 let salesRepId = "";
 let otherSalesRepId = "";
 const account = `DB${String(stamp).slice(-8)}`;
 const creditAccount = `DC${String(stamp).slice(-8)}`;
 const dormantAccount = `DD${String(stamp).slice(-8)}`;
+const declineAccount = `DE${String(stamp).slice(-8)}`;
+const quietAccount = `DQ${String(stamp).slice(-8)}`;
 const skuKnown = `DB-SKU-${String(stamp).slice(-6)}`;
 const skuHistoric = `DB-HIST-${String(stamp).slice(-6)}`;
 const skuFirst = `DB-FIRST-${String(stamp).slice(-6)}`;
@@ -162,6 +172,24 @@ beforeAll(async () => {
     code: dormantAccount,
   });
 
+  const declineOnly = await prisma.company.create({
+    data: { name: `Decline Only Co ${stamp}`, status: "ACTIVE", paymentTerms: "30 Days" },
+  });
+  declineOnlyCompanyId = declineOnly.id;
+  await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
+    companyId: declineOnlyCompanyId,
+    code: declineAccount,
+  });
+
+  const quietDormant = await prisma.company.create({
+    data: { name: `Quiet Dormant Co ${stamp}`, status: "ACTIVE", paymentTerms: "30 Days" },
+  });
+  quietDormantCompanyId = quietDormant.id;
+  await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
+    companyId: quietDormantCompanyId,
+    code: quietAccount,
+  });
+
   const rep = await prisma.salesRep.create({
     data: { code: `DB${String(stamp).slice(-4)}`, userId: repUserId, active: true },
   });
@@ -171,7 +199,13 @@ beforeAll(async () => {
   });
   otherSalesRepId = otherRep.id;
 
-  for (const cid of [companyId, creditOnlyCompanyId, dormantCompanyId]) {
+  for (const cid of [
+    companyId,
+    creditOnlyCompanyId,
+    dormantCompanyId,
+    declineOnlyCompanyId,
+    quietDormantCompanyId,
+  ]) {
     await prisma.companyAssignment.create({
       data: { companyId: cid, salesRepId, isPrimary: true },
     });
@@ -247,6 +281,54 @@ beforeAll(async () => {
     lines: [{ sku: skuKnown, salesNet: "64.02", lineNumber: 1 }],
   });
 
+  // Decline-only: daily buyer with huge comparable-period sales and tiny today (early-month noise).
+  const monthResolved = resolveBusinessPeriod({
+    period: "THIS_MONTH",
+    defaultPeriod: "THIS_MONTH",
+  });
+  if (!monthResolved.ok) throw new Error(monthResolved.message);
+  const compareRange = previousComparableBusinessPeriod(monthResolved.value.range, "THIS_MONTH");
+  for (let i = 14; i >= 1; i--) {
+    await createInvoiceDoc({
+      companyId: declineOnlyCompanyId,
+      account: declineAccount,
+      ref: `DDL${i}${String(stamp).slice(-4)}`,
+      date: addDaysIso(today, -i),
+      lines: [{ sku: skuKnown, salesNet: "50.00", lineNumber: 1 }],
+    });
+  }
+  await createInvoiceDoc({
+    companyId: declineOnlyCompanyId,
+    account: declineAccount,
+    ref: `DDC${String(stamp).slice(-5)}`,
+    date: compareRange.to,
+    lines: [{ sku: skuKnown, salesNet: "3801.56", lineNumber: 1 }],
+  });
+  await createInvoiceDoc({
+    companyId: declineOnlyCompanyId,
+    account: declineAccount,
+    ref: `DDT${String(stamp).slice(-5)}`,
+    date: today,
+    lines: [{ sku: skuKnown, salesNet: "16.66", lineNumber: 1 }],
+  });
+
+  // Quiet dormant (no purchase today) — should still surface as a priority in early period.
+  const quietDates = [
+    addDaysIso(today, -200),
+    addDaysIso(today, -170),
+    addDaysIso(today, -140),
+    addDaysIso(today, -110),
+  ];
+  for (let i = 0; i < quietDates.length; i++) {
+    await createInvoiceDoc({
+      companyId: quietDormantCompanyId,
+      account: quietAccount,
+      ref: `DQ${i}${String(stamp).slice(-5)}`,
+      date: quietDates[i]!,
+      lines: [{ sku: skuKnown, salesNet: "80.00", lineNumber: 1 }],
+    });
+  }
+
   // CRM follow-ups: overdue + due today for rep
   await prisma.task.create({
     data: {
@@ -298,9 +380,9 @@ describe("daily sales brief", () => {
     expect(activityIds.has(dormantCompanyId)).toBe(true);
     expect(activityIds.has(creditOnlyCompanyId)).toBe(false);
 
-    // Net sales includes credit effect for scoped companies (40+25+15-10 + 64.02 -5 credit-only)
+    // Net sales includes credit effect + decline-only today (40+25+15-10 + 64.02 -5 + 16.66)
     const net = Number(brief.summary.netSalesToday);
-    expect(net).toBeCloseTo(40 + 25 + 15 - 10 + 64.02 - 5, 1);
+    expect(net).toBeCloseTo(40 + 25 + 15 - 10 + 64.02 - 5 + 16.66, 1);
 
     // Multiple lines same customer appear once
     expect(brief.activity.rows.filter((r) => r.companyId === companyId)).toHaveLength(1);
@@ -381,20 +463,86 @@ describe("daily sales brief", () => {
   it("scopes sales rep to assigned companies; management can select rep", async () => {
     const repBrief = await getDailySalesBrief(repUserId, {});
     for (const row of repBrief.activity.rows) {
-      // Activity rows are from assigned portfolio only
-      expect([companyId, dormantCompanyId, creditOnlyCompanyId]).toContain(row.companyId);
+      expect([
+        companyId,
+        dormantCompanyId,
+        creditOnlyCompanyId,
+        declineOnlyCompanyId,
+        quietDormantCompanyId,
+      ]).toContain(row.companyId);
     }
+    expect(repBrief.greeting.personalized).toBe(true);
+    expect(repBrief.greeting.subtitle).toMatch(/your customers/i);
 
     const adminBrief = await getDailySalesBrief(adminId, { salesRepId });
     expect(adminBrief.canSelectSalesRep).toBe(true);
+    expect(adminBrief.greeting.personalized).toBe(false);
+    expect(adminBrief.greeting.subtitle).toMatch(/selected customer portfolio/i);
     expect(adminBrief.salesRepFilterLabel).toBeTruthy();
+    expect(adminBrief.comparisonPhrase).toBe("same point last month");
 
     const otherBrief = await getDailySalesBrief(adminId, { salesRepId: otherSalesRepId });
     expect(otherBrief.summary.customersPurchased).toBe(0);
   });
 
+  it("suppresses decline-only priorities in early THIS_MONTH but keeps them in Portfolio", async () => {
+    const [brief, portfolio] = await Promise.all([
+      getDailySalesBrief(adminId, { salesRepId }),
+      getSalesRepPortfolio(adminId, {
+        period: "THIS_MONTH",
+        salesRepId,
+        filter: "ALL",
+        allRows: true,
+      }),
+    ]);
+
+    const elapsed = periodElapsedDays({
+      from: brief.period.displayFrom,
+      to: brief.period.displayTo,
+    });
+    const early = isEarlyCalendarPeriod({ periodKey: brief.period.key, elapsedDays: elapsed });
+    expect(brief.earlyPeriod).toBe(early);
+
+    const pfDecline = portfolio.rows.find((r) => r.companyId === declineOnlyCompanyId);
+    expect(pfDecline?.needsAttention).toBe(true);
+    expect(pfDecline?.attentionReasons.some((a) => a.code === "DECLINING")).toBe(true);
+
+    if (early) {
+      expect(brief.needsAttention.some((a) => a.companyId === declineOnlyCompanyId)).toBe(false);
+    }
+
+    // Quiet dormant still appears as a Daily Brief priority during early period.
+    const pfQuiet = portfolio.rows.find((r) => r.companyId === quietDormantCompanyId);
+    expect(pfQuiet?.needsAttention).toBe(true);
+    expect(pfQuiet?.attentionReasons.some((a) => a.code === "DORMANT")).toBe(true);
+    expect(brief.needsAttention.some((a) => a.companyId === quietDormantCompanyId)).toBe(true);
+  });
+
+  it("resolves catalogue product names and UK date labels for today's customers", async () => {
+    const brief = await getDailySalesBrief(adminId, { salesRepId });
+    const first = brief.positiveMovement.find(
+      (p) => p.kind === "FIRST_PRODUCT" && p.sku === skuFirst.toUpperCase(),
+    );
+    expect(first?.productName).toMatch(/DB First Product/);
+    expect(first?.detail).toMatch(/DB First Product/);
+
+    const historic = brief.positiveMovement.find(
+      (p) => p.kind === "FIRST_PRODUCT" && p.sku === skuHistoric.toUpperCase(),
+    );
+    expect(historic?.productName ?? null).toBeNull();
+    expect(historic?.detail).toContain(skuHistoric);
+
+    const activity = brief.activity.rows.find((r) => r.companyId === companyId);
+    expect(activity).toBeTruthy();
+    expect(activity!.lastPurchaseBeforeTodayLabel).toMatch(/Yesterday|\d{2}\/\d{2}\/\d{4}/);
+
+    const priorityWithToday = brief.needsAttention.find((a) => a.purchasedToday);
+    if (priorityWithToday) {
+      expect(priorityWithToday.summaryLines.some((l) => /Ordered today/i.test(l))).toBe(true);
+    }
+  });
+
   it("does not load complete financial history into Node for first-purchase detection", async () => {
-    // Structural guarantee: first-time query uses NOT EXISTS SQL path (smoke: completes quickly with fixture volume).
     const started = Date.now();
     await getDailySalesBrief(adminId, { salesRepId });
     expect(Date.now() - started).toBeLessThan(60_000);

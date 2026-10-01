@@ -44,6 +44,8 @@ export type PortfolioOpportunity = {
   title: string;
   explanation: string;
   sku?: string | null;
+  /** Cross-sell seed SKU (presentation / Daily Brief); not a calculated score. */
+  seedSku?: string | null;
   brandName?: string | null;
   categoryName?: string | null;
   /** For CROSS_SELL: numerator of comparable buyers. */
@@ -274,6 +276,7 @@ export function buildCrossSellOpportunity(input: {
     title: `Cross-sell — ${label}`,
     explanation: `${input.coBuyers} of ${input.cohortSize} comparable customers who bought ${input.seedSku} also bought ${input.suggestedSku} (${pct}%).`,
     sku: input.suggestedSku,
+    seedSku: input.seedSku,
     evidenceNumerator: input.coBuyers,
     evidenceDenominator: input.cohortSize,
   };
