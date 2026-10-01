@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
 import {
   confirmAutopartHistoryImportFn,
   getCompanyAutopartHistoryWorkspaceFn,
+  getHistoricImportRunStatusFn,
   previewAutopartHistoryImportFn,
   verifyAutopartAccountAliasFn,
 } from "@/server/phase2/fns";
@@ -14,6 +15,10 @@ type Workspace = Extract<
 >["data"];
 type HistoryPreview = Extract<
   Awaited<ReturnType<typeof previewAutopartHistoryImportFn>>,
+  { ok: true }
+>["data"];
+type ImportRunStatus = Extract<
+  Awaited<ReturnType<typeof getHistoricImportRunStatusFn>>,
   { ok: true }
 >["data"];
 
@@ -38,8 +43,10 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   const [historyPreview, setHistoryPreview] = useState<HistoryPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingHistory, setConfirmingHistory] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportRunStatus | null>(null);
   const [alias, setAlias] = useState("");
   const [aliasNote, setAliasNote] = useState("");
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,12 +65,59 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
     void load();
   }, [load]);
 
+  useEffect(() => {
+    return () => {
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+    };
+  }, []);
+
+  const pollImportRun = useCallback(
+    async (runId: string) => {
+      const poll = async () => {
+        const r = await getHistoricImportRunStatusFn({ data: { runId } });
+        if (!r.ok) {
+          toast.error(r.error || "Could not load import progress");
+          setConfirmingHistory(false);
+          setBusy(false);
+          return;
+        }
+        setImportProgress(r.data);
+        if (r.data.status === "PROCESSING") {
+          pollTimer.current = setTimeout(() => void poll(), 2000);
+          return;
+        }
+        setConfirmingHistory(false);
+        setBusy(false);
+        if (r.data.status === "COMMITTED") {
+          toast.success("Historic Autopart data imported");
+          setHistoryPreview(null);
+          setImportProgress(null);
+          await load();
+          return;
+        }
+        if (r.data.status === "FAILED") {
+          const progressNote =
+            r.data.partialProgress != null
+              ? " Some batches may already be persisted; retry is idempotent."
+              : "";
+          toast.error(
+            `Historic import failed.${progressNote} No completed import was recorded.`,
+          );
+          // Keep preview so the operator can retry
+        }
+      };
+      void poll();
+    },
+    [load],
+  );
+
   async function onPreviewHistory() {
     if (!file561 || !fileSlrb) {
       toast.error("Select both 561L and SLRB files");
       return;
     }
     setBusy(true);
+    setImportProgress(null);
     const [t561, tSlrb] = await Promise.all([readFileText(file561), readFileText(fileSlrb)]);
     const r = await previewAutopartHistoryImportFn({
       data: {
@@ -80,6 +134,13 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
       return;
     }
     setHistoryPreview(r.data);
+    if (r.data.priorImport?.status === "PROCESSING" && r.data.priorImport.runId) {
+      setConfirmingHistory(true);
+      setBusy(true);
+      void pollImportRun(r.data.priorImport.runId);
+      toast.message("A historic import is already processing — showing progress");
+      return;
+    }
     toast.message(r.data.canCommit ? "Preview ready — review then confirm" : "Preview blocked");
   }
 
@@ -87,6 +148,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
     if (!file561 || !fileSlrb || !historyPreview?.canCommit || busy || confirmingHistory) return;
     setBusy(true);
     setConfirmingHistory(true);
+    setImportProgress(null);
     try {
       const [t561, tSlrb] = await Promise.all([readFileText(file561), readFileText(fileSlrb)]);
       const r = await confirmAutopartHistoryImportFn({
@@ -104,18 +166,31 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
           r.error ||
             "Historic import failed. No completed import was recorded. You can retry this file pair.",
         );
-        // Keep preview so the operator can retry without re-selecting files
+        setConfirmingHistory(false);
+        setBusy(false);
+        return;
+      }
+      if (r.data.async) {
+        toast.message(
+          r.data.message ??
+            "Large historic import is processing server-side. Progress updates below.",
+        );
+        if (r.data.workspace) setWorkspace(r.data.workspace);
+        void pollImportRun(r.data.runId);
         return;
       }
       toast.success("Historic Autopart data imported");
       setHistoryPreview(null);
+      setImportProgress(null);
       setWorkspace(r.data.workspace);
-    } finally {
       setConfirmingHistory(false);
       setBusy(false);
+    } catch {
+      setConfirmingHistory(false);
+      setBusy(false);
+      toast.error("Historic import failed. You can retry this file pair.");
     }
   }
-
 
   async function onAddAlias() {
     if (!alias.trim()) return;
@@ -138,6 +213,10 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   if (error || !workspace) {
     return <p className="p-4 text-[13px] text-bad">{error ?? "Unable to load"}</p>;
   }
+
+  const progress = importProgress?.progress;
+  const importInFlight =
+    confirmingHistory || importProgress?.status === "PROCESSING";
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -190,7 +269,6 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             </div>
           </dl>
         ) : null}
-
       </section>
 
       <section className="rounded-lg border border-border p-5">
@@ -242,7 +320,8 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         <h2 className="font-display text-base font-semibold uppercase">Import historic data</h2>
         <p className="mt-2 text-[12px] text-steel">
           Upload 561L (lines) and SLRB (document dates). Format is detected from file content —
-          extension does not matter. Dry-run first — no database writes until confirm.
+          extension does not matter. Dry-run first — no database writes until confirm. Large
+          retail histories process server-side with live progress.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="text-[12px]">
@@ -286,9 +365,50 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             onClick={() => void onConfirmHistory()}
             className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-40"
           >
-            {confirmingHistory ? "Importing…" : "Confirm import"}
+            {importInFlight ? "Importing…" : "Confirm import"}
           </button>
         </div>
+
+        {importProgress ? (
+          <div
+            className="mt-4 space-y-2 rounded-md border border-border/70 bg-surface/40 p-3 text-[12px]"
+            data-historic-import-progress={importProgress.status}
+          >
+            <p className="font-semibold uppercase tracking-wide">
+              Status: {importProgress.status}
+            </p>
+            {progress ? (
+              <>
+                <p>{progress.message}</p>
+                <p className="text-steel">
+                  Documents {progress.documentsWritten.toLocaleString()}
+                  {progress.phase === "documents" || progress.phase === "lines" || progress.phase === "complete"
+                    ? ` · Lines ${progress.linesWritten.toLocaleString()}`
+                    : null}
+                </p>
+                {progress.total > 0 ? (
+                  <div className="h-2 overflow-hidden rounded bg-border/60">
+                    <div
+                      className="h-full bg-primary transition-[width]"
+                      style={{
+                        width: `${Math.min(100, Math.round((progress.current / progress.total) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-steel">Waiting for progress…</p>
+            )}
+            {importProgress.status === "FAILED" && importProgress.failure ? (
+              <p className="text-bad">
+                {(importProgress.failure as { message?: string }).message ??
+                  "Import failed"}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {historyPreview ? (
           <div className="mt-4 space-y-3 rounded-md border border-border/70 bg-surface/40 p-3 text-[12px]">
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -384,7 +504,6 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                     setWorkspace(r.data);
                     setAlias("");
                     setAliasNote("");
-                    // Re-run preview with same files if still selected
                     if (file561 && fileSlrb) void onPreviewHistory();
                   })();
                 }}
@@ -397,10 +516,14 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               561L: {historyPreview.report561l.validLines} lines (
               {historyPreview.report561l.invoiceLines} inv / {historyPreview.report561l.creditLines}{" "}
               credit) · SLRB: {historyPreview.reportSlrb.invoiceDocuments} invoices
+              {historyPreview.reportSlrb.creditDocuments
+                ? ` / ${historyPreview.reportSlrb.creditDocuments} credits`
+                : null}
             </p>
             <p>
               Matched docs: {historyPreview.matching.matchedDocuments} · Unmatched 561L:{" "}
-              {historyPreview.matching.unmatched561Documents} · SKUs matched:{" "}
+              {historyPreview.matching.unmatched561Documents} · SLRB without lines:{" "}
+              {historyPreview.matching.slrbDocumentsWithoutLines} · SKUs matched:{" "}
               {historyPreview.products.matchedAbSkus}/{historyPreview.products.uniqueSkus}
             </p>
             <ul className="space-y-1">

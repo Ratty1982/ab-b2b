@@ -21,11 +21,28 @@ import {
   normaliseAccountToken,
 } from "@/domain/autopart-report-money";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
+import {
+  SAFE_HISTORIC_DOCUMENT_UPSERT_CHUNK,
+  SAFE_HISTORIC_LINE_UPSERT_CHUNK,
+  SAFE_IN_LIST_CHUNK,
+  SAFE_SKU_EQUALS_CHUNK,
+  findManyByInChunks,
+} from "@/server/db/prisma-in-chunks";
 
 export type ImportIssue = {
   severity: "BLOCKING" | "WARNING" | "INFO";
   code: string;
   message: string;
+};
+
+export type HistoricImportProgress = {
+  phase: string;
+  message: string;
+  current: number;
+  total: number;
+  documentsWritten: number;
+  linesWritten: number;
+  updatedAt: string;
 };
 
 function sha256(text: string): string {
@@ -688,10 +705,10 @@ async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (!cleaned.length) return map;
   // Batch exact case-insensitive SKU match — no fuzzy / prefix matching.
+  // Chunk OR-equals binds (SAFE_SKU_EQUALS_CHUNK) well below Postgres 32_767 ceiling.
   const byUpper = new Map<string, string>();
-  const chunkSize = 80;
-  for (let i = 0; i < cleaned.length; i += chunkSize) {
-    const chunk = cleaned.slice(i, i + chunkSize);
+  for (let i = 0; i < cleaned.length; i += SAFE_SKU_EQUALS_CHUNK) {
+    const chunk = cleaned.slice(i, i + SAFE_SKU_EQUALS_CHUNK);
     const variants = await prisma.productVariant.findMany({
       where: {
         OR: chunk.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
@@ -1155,8 +1172,15 @@ async function buildHistoryPreview(
       slrbDocumentsWithoutLines: slrbWithoutLines,
       linesWithDates,
       linesWithoutDates,
-      refs561lOnly: [...lineRefs].filter((r) => !slrbByRef.has(r)).sort(),
-      refsSlrbOnly: [...slrbByRef.keys()].filter((r) => !lineRefs.has(r)).sort(),
+      // Sample only — full lists at retail scale (10k+) would bloat preview JSON.
+      refs561lOnly: [...lineRefs]
+        .filter((r) => !slrbByRef.has(r))
+        .sort()
+        .slice(0, 50),
+      refsSlrbOnly: [...slrbByRef.keys()]
+        .filter((r) => !lineRefs.has(r))
+        .sort()
+        .slice(0, 50),
     },
     products: {
       uniqueSkus: uniqueSkus.length,
@@ -1217,10 +1241,34 @@ const historyConfirmSchema = z.object({
   previewRunId: z.string().cuid().optional(),
 });
 
-const HISTORY_UPSERT_CHUNK = 250;
-
 function newImportRowId(): string {
   return `c${randomBytes(16).toString("hex")}`;
+}
+
+async function patchHistoricImportProgress(
+  runId: string,
+  progress: HistoricImportProgress,
+  extraDiagnostics?: Record<string, unknown>,
+) {
+  const existing = await prisma.autopartCustomerImportRun.findUnique({
+    where: { id: runId },
+    select: { diagnostics: true, rowsImported: true, rowsUpdated: true },
+  });
+  const prev =
+    existing?.diagnostics && typeof existing.diagnostics === "object"
+      ? (existing.diagnostics as Record<string, unknown>)
+      : {};
+  await prisma.autopartCustomerImportRun.update({
+    where: { id: runId },
+    data: {
+      rowsImported: progress.documentsWritten + progress.linesWritten,
+      diagnostics: {
+        ...prev,
+        ...(extraDiagnostics ?? {}),
+        progress,
+      } as unknown as Prisma.InputJsonValue,
+    },
+  });
 }
 
 type PreparedHistoricDocument = {
@@ -1260,18 +1308,27 @@ function docKey(type: string, ref: string): string {
 /**
  * Bulk upsert historic documents via Postgres ON CONFLICT.
  * Short chunked statements — never one interactive transaction of thousands of awaits.
+ * Existence lookups use SAFE_IN_LIST_CHUNK so companyId + IN-list never approaches 32_767 binds.
  */
 async function bulkUpsertHistoricDocuments(
   docs: PreparedHistoricDocument[],
+  onChunk?: (done: number, total: number) => Promise<void>,
 ): Promise<{ inserted: number; updated: number; idByKey: Map<string, string> }> {
   const idByKey = new Map<string, string>();
   if (!docs.length) return { inserted: 0, updated: 0, idByKey };
 
-  // Preload existing so we can count insert vs update accurately
+  const companyId = docs[0]!.companyId;
   const refs = [...new Set(docs.map((d) => d.documentReference))];
-  const existing = await prisma.autopartSalesDocument.findMany({
-    where: { companyId: docs[0]!.companyId, documentReference: { in: refs } },
-    select: { id: true, documentType: true, documentReference: true },
+  // Preload existing in chunks — the RETAIL failure was a single findMany with
+  // companyId + 32_767 refs = 32_768 binds (Postgres ceiling + 1).
+  const existing = await findManyByInChunks({
+    ids: refs,
+    chunkSize: SAFE_IN_LIST_CHUNK,
+    findChunk: (chunk) =>
+      prisma.autopartSalesDocument.findMany({
+        where: { companyId, documentReference: { in: chunk } },
+        select: { id: true, documentType: true, documentReference: true },
+      }),
   });
   const existingKeys = new Set(existing.map((e) => docKey(e.documentType, e.documentReference)));
   for (const e of existing) idByKey.set(docKey(e.documentType, e.documentReference), e.id);
@@ -1279,9 +1336,10 @@ async function bulkUpsertHistoricDocuments(
   let inserted = 0;
   let updated = 0;
   const now = new Date();
+  const writeChunk = SAFE_HISTORIC_DOCUMENT_UPSERT_CHUNK;
 
-  for (let i = 0; i < docs.length; i += HISTORY_UPSERT_CHUNK) {
-    const chunk = docs.slice(i, i + HISTORY_UPSERT_CHUNK);
+  for (let i = 0; i < docs.length; i += writeChunk) {
+    const chunk = docs.slice(i, i + writeChunk);
     const values = Prisma.join(
       chunk.map((d) => {
         const id = idByKey.get(docKey(d.documentType, d.documentReference)) ?? newImportRowId();
@@ -1335,12 +1393,18 @@ async function bulkUpsertHistoricDocuments(
         existingKeys.add(docKey(d.documentType, d.documentReference));
       }
     }
+    if (onChunk) await onChunk(Math.min(i + chunk.length, docs.length), docs.length);
   }
 
-  // Refresh IDs (conflict path keeps existing ids)
-  const after = await prisma.autopartSalesDocument.findMany({
-    where: { companyId: docs[0]!.companyId, documentReference: { in: refs } },
-    select: { id: true, documentType: true, documentReference: true },
+  // Refresh IDs (conflict path keeps existing ids) — also chunked
+  const after = await findManyByInChunks({
+    ids: refs,
+    chunkSize: SAFE_IN_LIST_CHUNK,
+    findChunk: (chunk) =>
+      prisma.autopartSalesDocument.findMany({
+        where: { companyId, documentReference: { in: chunk } },
+        select: { id: true, documentType: true, documentReference: true },
+      }),
   });
   for (const row of after) {
     idByKey.set(docKey(row.documentType, row.documentReference), row.id);
@@ -1364,20 +1428,26 @@ function dedupePreparedHistoricLines(lines: PreparedHistoricLine[]): PreparedHis
 async function bulkUpsertHistoricLines(
   lines: PreparedHistoricLine[],
   idByDocKey: Map<string, string>,
+  onChunk?: (done: number, total: number) => Promise<void>,
 ): Promise<{ inserted: number; updated: number }> {
   const uniqueLines = dedupePreparedHistoricLines(lines);
   if (!uniqueLines.length) return { inserted: 0, updated: 0 };
 
   const companyId = uniqueLines[0]!.companyId;
   const refs = [...new Set(uniqueLines.map((l) => l.documentReference))];
-  const existing = await prisma.autopartSalesLine.findMany({
-    where: { companyId, documentReference: { in: refs } },
-    select: {
-      id: true,
-      documentType: true,
-      documentReference: true,
-      lineNumber: true,
-    },
+  const existing = await findManyByInChunks({
+    ids: refs,
+    chunkSize: SAFE_IN_LIST_CHUNK,
+    findChunk: (chunk) =>
+      prisma.autopartSalesLine.findMany({
+        where: { companyId, documentReference: { in: chunk } },
+        select: {
+          id: true,
+          documentType: true,
+          documentReference: true,
+          lineNumber: true,
+        },
+      }),
   });
   const existingKeys = new Set(
     existing.map((e) => `${e.documentType}::${e.documentReference}::${e.lineNumber}`),
@@ -1386,9 +1456,10 @@ async function bulkUpsertHistoricLines(
   let inserted = 0;
   let updated = 0;
   const now = new Date();
+  const writeChunk = SAFE_HISTORIC_LINE_UPSERT_CHUNK;
 
-  for (let i = 0; i < uniqueLines.length; i += HISTORY_UPSERT_CHUNK) {
-    const chunk = uniqueLines.slice(i, i + HISTORY_UPSERT_CHUNK);
+  for (let i = 0; i < uniqueLines.length; i += writeChunk) {
+    const chunk = uniqueLines.slice(i, i + writeChunk);
     const values = Prisma.join(
       chunk.map((l) => {
         const documentId = idByDocKey.get(docKey(l.documentType, l.documentReference)) ?? null;
@@ -1466,10 +1537,14 @@ async function bulkUpsertHistoricLines(
         existingKeys.add(key);
       }
     }
+    if (onChunk) await onChunk(Math.min(i + chunk.length, uniqueLines.length), uniqueLines.length);
   }
 
   return { inserted, updated };
 }
+
+/** Above this combined size, confirm returns immediately and finishes in-process asynchronously. */
+const HISTORIC_ASYNC_THRESHOLD = 12_000;
 
 export async function confirmAutopartHistoryImport(actorUserId: string, raw: unknown) {
   await assertStaffCompanyAccess(actorUserId, (raw as { companyId: string }).companyId, "companies.edit");
@@ -1611,34 +1686,200 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
   for (const doc of preparedDocs.values()) doc.importRunId = run.id;
   for (const line of preparedLines) line.importRunId = run.id;
 
-  let imported = 0;
-  let updated = 0;
+  const workSize = preparedDocs.size + preparedLines.length;
+  const runAsync = workSize >= HISTORIC_ASYNC_THRESHOLD;
 
-  try {
-    const docResult = await bulkUpsertHistoricDocuments([...preparedDocs.values()]);
-    const lineResult = await bulkUpsertHistoricLines(preparedLines, docResult.idByKey);
-    imported = docResult.inserted + lineResult.inserted;
-    updated = docResult.updated + lineResult.updated;
-  } catch (error) {
-    console.error("[ab:autopart-history-import] confirm failed", {
+  await recordAuditEvent({
+    action: "autopart.history_import_started",
+    entityType: "Company",
+    entityId: company.id,
+    actorUserId,
+    companyId: company.id,
+    after: {
+      runId: run.id,
+      documentCount: preparedDocs.size,
+      lineCount: preparedLines.length,
+      async: runAsync,
+    },
+  });
+
+  await patchHistoricImportProgress(run.id, {
+    phase: "queued",
+    message: runAsync
+      ? "Large historic import started — processing server-side"
+      : "Starting historic import",
+    current: 0,
+    total: workSize,
+    documentsWritten: 0,
+    linesWritten: 0,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const writeJob = async () =>
+    executeHistoricImportWrites({
       runId: run.id,
       companyId: company.id,
+      actorUserId,
+      preparedDocs: [...preparedDocs.values()],
+      preparedLines,
+      skipped,
+      unmatched561Documents: preview.matching.unmatched561Documents,
+      previewSummary,
+      alreadyImported: Boolean(preview.alreadyImported),
+      filename561l: input.filename561l ?? null,
+      filenameSlrb: input.filenameSlrb ?? null,
+    });
+
+  if (runAsync) {
+    // Durable progress on the import run; work continues in-process (no Redis/cron).
+    // Idempotent ON CONFLICT upserts make retry-after-failure safe.
+    void writeJob().catch((err) => {
+      console.error("[ab:autopart-history-import] async job failed", { runId: run.id, err });
+    });
+    return {
+      runId: run.id,
+      status: "PROCESSING" as const,
+      async: true as const,
+      imported: 0,
+      updated: 0,
+      skipped,
+      documentCount: preparedDocs.size,
+      lineCount: preparedLines.length,
+      message:
+        "Large historic import is processing server-side. You can leave this page — refresh to check progress.",
+      workspace: await getCompanyAutopartHistoryWorkspace(actorUserId, company.id),
+    };
+  }
+
+  const result = await writeJob();
+  return {
+    runId: run.id,
+    status: "COMMITTED" as const,
+    async: false as const,
+    imported: result.imported,
+    updated: result.updated,
+    skipped,
+    documentCount: preparedDocs.size,
+    lineCount: preparedLines.length,
+    workspace: await getCompanyAutopartHistoryWorkspace(actorUserId, company.id),
+  };
+}
+
+async function executeHistoricImportWrites(args: {
+  runId: string;
+  companyId: string;
+  actorUserId: string;
+  preparedDocs: PreparedHistoricDocument[];
+  preparedLines: PreparedHistoricLine[];
+  skipped: number;
+  unmatched561Documents: number;
+  previewSummary: Record<string, unknown>;
+  alreadyImported: boolean;
+  filename561l: string | null;
+  filenameSlrb: string | null;
+}): Promise<{ imported: number; updated: number }> {
+  let docsInserted = 0;
+  let docsUpdated = 0;
+  let linesInserted = 0;
+  let linesUpdated = 0;
+  let partialDocs = 0;
+  let partialLines = 0;
+
+  try {
+    await patchHistoricImportProgress(args.runId, {
+      phase: "documents",
+      message: `Checking existing documents / importing documents 0 / ${args.preparedDocs.length}`,
+      current: 0,
+      total: args.preparedDocs.length,
+      documentsWritten: 0,
+      linesWritten: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const docResult = await bulkUpsertHistoricDocuments(
+      args.preparedDocs,
+      async (done, total) => {
+        partialDocs = done;
+        await patchHistoricImportProgress(args.runId, {
+          phase: "documents",
+          message: `Importing documents ${done.toLocaleString()} / ${total.toLocaleString()}`,
+          current: done,
+          total,
+          documentsWritten: done,
+          linesWritten: 0,
+          updatedAt: new Date().toISOString(),
+        });
+      },
+    );
+    docsInserted = docResult.inserted;
+    docsUpdated = docResult.updated;
+
+    await patchHistoricImportProgress(args.runId, {
+      phase: "lines",
+      message: `Importing product lines 0 / ${args.preparedLines.length}`,
+      current: 0,
+      total: args.preparedLines.length,
+      documentsWritten: args.preparedDocs.length,
+      linesWritten: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const lineResult = await bulkUpsertHistoricLines(
+      args.preparedLines,
+      docResult.idByKey,
+      async (done, total) => {
+        partialLines = done;
+        await patchHistoricImportProgress(args.runId, {
+          phase: "lines",
+          message: `Importing product lines ${done.toLocaleString()} / ${total.toLocaleString()}`,
+          current: done,
+          total,
+          documentsWritten: args.preparedDocs.length,
+          linesWritten: done,
+          updatedAt: new Date().toISOString(),
+        });
+      },
+    );
+    linesInserted = lineResult.inserted;
+    linesUpdated = lineResult.updated;
+  } catch (error) {
+    console.error("[ab:autopart-history-import] confirm failed", {
+      runId: args.runId,
+      companyId: args.companyId,
       error,
     });
     const failure =
       error instanceof Error
         ? { name: error.name, message: error.message }
         : { message: "Unknown import failure" };
-    // Mark FAILED with root client — never reuse a closed transaction client
     try {
+      const existing = await prisma.autopartCustomerImportRun.findUnique({
+        where: { id: args.runId },
+        select: { diagnostics: true },
+      });
+      const prev =
+        existing?.diagnostics && typeof existing.diagnostics === "object"
+          ? (existing.diagnostics as Record<string, unknown>)
+          : {};
       await prisma.autopartCustomerImportRun.update({
-        where: { id: run.id },
+        where: { id: args.runId },
         data: {
           status: "FAILED",
           completedAt: new Date(),
+          rowsImported: docsInserted + linesInserted,
+          rowsUpdated: docsUpdated + linesUpdated,
           diagnostics: {
-            previewSummary,
+            ...prev,
+            previewSummary: args.previewSummary,
             failure,
+            partialProgress: {
+              documentsProcessed: partialDocs,
+              linesProcessed: partialLines,
+              documentsInserted: docsInserted,
+              documentsUpdated: docsUpdated,
+              linesInserted,
+              linesUpdated,
+            },
           } as unknown as Prisma.InputJsonValue,
         },
       });
@@ -1648,37 +1889,59 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
     await recordAuditEvent({
       action: "autopart.history_import_failed",
       entityType: "Company",
-      entityId: company.id,
-      actorUserId,
-      companyId: company.id,
-      after: { runId: run.id, failure },
+      entityId: args.companyId,
+      actorUserId: args.actorUserId,
+      companyId: args.companyId,
+      after: {
+        runId: args.runId,
+        failure,
+        partialDocuments: partialDocs,
+        partialLines,
+      },
     });
     const detail = failure.message.replace(/\s+/g, " ").slice(0, 280);
+    const partialNote =
+      partialDocs > 0 || partialLines > 0 || docsInserted + linesInserted > 0
+        ? ` Some batches may already be persisted (${partialDocs} documents / ${partialLines} lines processed); retry is idempotent and will not duplicate financial rows.`
+        : " No financial batches were confirmed written.";
     throw new AuthError(
-      `Historic import failed. No completed import was recorded. You can retry this file pair. Detail: ${detail}`,
+      `Historic import failed.${partialNote} You can retry this file pair. Detail: ${detail}`,
       "IMPORT_FAILED",
       500,
     );
   }
 
-  // Success finalisation — only after all authoritative writes completed.
-  // Do not mark FAILED if this step errors; rows are already persisted.
+  const imported = docsInserted + linesInserted;
+  const updated = docsUpdated + linesUpdated;
+
   try {
     await prisma.autopartCustomerImportRun.update({
-      where: { id: run.id },
+      where: { id: args.runId },
       data: {
         status: "COMMITTED",
         rowsImported: imported,
         rowsUpdated: updated,
-        rowsSkipped: skipped,
-        rowsUnmatched: preview.matching.unmatched561Documents,
+        rowsSkipped: args.skipped,
+        rowsUnmatched: args.unmatched561Documents,
         completedAt: new Date(),
+        diagnostics: {
+          previewSummary: args.previewSummary,
+          progress: {
+            phase: "complete",
+            message: "Import complete",
+            current: args.preparedDocs.length + args.preparedLines.length,
+            total: args.preparedDocs.length + args.preparedLines.length,
+            documentsWritten: args.preparedDocs.length,
+            linesWritten: args.preparedLines.length,
+            updatedAt: new Date().toISOString(),
+          },
+        } as unknown as Prisma.InputJsonValue,
       },
     });
   } catch (finalErr) {
     console.error("[ab:autopart-history-import] writes succeeded but run finalisation failed", {
-      runId: run.id,
-      companyId: company.id,
+      runId: args.runId,
+      companyId: args.companyId,
       finalErr,
     });
     const detail =
@@ -1693,31 +1956,71 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
   }
 
   await recordAuditEvent({
-    action: preview.alreadyImported
-      ? "autopart.history_reimported"
-      : "autopart.history_imported",
+    action: args.alreadyImported ? "autopart.history_reimported" : "autopart.history_imported",
     entityType: "Company",
-    entityId: company.id,
-    actorUserId,
-    companyId: company.id,
+    entityId: args.companyId,
+    actorUserId: args.actorUserId,
+    companyId: args.companyId,
     after: {
-      runId: run.id,
-      filename561l: input.filename561l ?? null,
-      filenameSlrb: input.filenameSlrb ?? null,
+      runId: args.runId,
+      filename561l: args.filename561l,
+      filenameSlrb: args.filenameSlrb,
       imported,
       updated,
-      skipped,
-      documentCount: preparedDocs.size,
-      lineCount: preparedLines.length,
+      skipped: args.skipped,
+      documentCount: args.preparedDocs.length,
+      lineCount: args.preparedLines.length,
     },
   });
 
+  return { imported, updated };
+}
+
+export async function getHistoricImportRunStatus(actorUserId: string, runId: string) {
+  const profile = await requireSystemPermission(actorUserId, "companies.view");
+  if (profile.actorType === "TRADE") {
+    throw new AuthError("Forbidden", "FORBIDDEN", 403);
+  }
+  const run = await prisma.autopartCustomerImportRun.findFirst({
+    where: { id: runId, type: "HISTORY_561L_SLRB" },
+    select: {
+      id: true,
+      companyId: true,
+      status: true,
+      rowsImported: true,
+      rowsUpdated: true,
+      rowsSkipped: true,
+      rowsUnmatched: true,
+      createdAt: true,
+      completedAt: true,
+      diagnostics: true,
+      filename: true,
+      filenameSlrb: true,
+    },
+  });
+  if (!run) throw new AuthError("Import run not found", "NOT_FOUND", 404);
+  if (run.companyId) {
+    await assertStaffCompanyAccess(actorUserId, run.companyId, "companies.view");
+  }
+  const diag =
+    run.diagnostics && typeof run.diagnostics === "object"
+      ? (run.diagnostics as Record<string, unknown>)
+      : {};
   return {
     runId: run.id,
-    imported,
-    updated,
-    skipped,
-    workspace: await getCompanyAutopartHistoryWorkspace(actorUserId, company.id),
+    companyId: run.companyId,
+    status: run.status,
+    rowsImported: run.rowsImported,
+    rowsUpdated: run.rowsUpdated,
+    rowsSkipped: run.rowsSkipped,
+    rowsUnmatched: run.rowsUnmatched,
+    createdAt: run.createdAt.toISOString(),
+    completedAt: run.completedAt?.toISOString() ?? null,
+    filename561l: run.filename,
+    filenameSlrb: run.filenameSlrb,
+    progress: (diag["progress"] as HistoricImportProgress | undefined) ?? null,
+    failure: diag["failure"] ?? null,
+    partialProgress: diag["partialProgress"] ?? null,
   };
 }
 

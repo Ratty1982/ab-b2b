@@ -46,6 +46,8 @@ function CustomerGroupWorkspace() {
   const [lines, setLines] = useState<
     Extract<Awaited<ReturnType<typeof listCustomerGroupProductLinesFn>>, { ok: true }>["data"] | null
   >(null);
+  const [docsPage, setDocsPage] = useState(1);
+  const [linesPage, setLinesPage] = useState(1);
   const [addQ, setAddQ] = useState("");
   const [addHits, setAddHits] = useState<Array<{ id: string; name: string }>>([]);
   const [editName, setEditName] = useState("");
@@ -75,14 +77,33 @@ function CustomerGroupWorkspace() {
     else setError(s.error);
 
     const d = await listCustomerGroupDocumentsFn({
-      data: { groupId, period, companyId: drillCompanyId, mamAccount: drillMam, pageSize: 25 },
+      data: {
+        groupId,
+        period,
+        companyId: drillCompanyId,
+        mamAccount: drillMam,
+        page: docsPage,
+        pageSize: 25,
+      },
     });
     if (d.ok) setDocs(d.data);
     const l = await listCustomerGroupProductLinesFn({
-      data: { groupId, period, companyId: drillCompanyId, mamAccount: drillMam, pageSize: 40 },
+      data: {
+        groupId,
+        period,
+        companyId: drillCompanyId,
+        mamAccount: drillMam,
+        page: linesPage,
+        pageSize: 40,
+      },
     });
     if (l.ok) setLines(l.data);
-  }, [groupId, period, drillCompanyId, drillMam]);
+  }, [groupId, period, drillCompanyId, drillMam, docsPage, linesPage]);
+
+  useEffect(() => {
+    setDocsPage(1);
+    setLinesPage(1);
+  }, [period, drillCompanyId, drillMam]);
 
   useEffect(() => {
     void load();
@@ -280,6 +301,9 @@ function CustomerGroupWorkspace() {
 
         <section className="space-y-2">
           <h2 className="font-display text-base font-semibold uppercase">Documents</h2>
+          <p className="text-[11px] text-steel">
+            Page {docs?.page ?? 1} · {docs?.total?.toLocaleString() ?? 0} documents (paginated)
+          </p>
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="min-w-full text-left text-[12px]">
               <thead className="border-b border-border bg-surface/60 text-[10px] uppercase text-steel">
@@ -309,12 +333,33 @@ function CustomerGroupWorkspace() {
               </tbody>
             </table>
           </div>
+          {docs && docs.total > docs.pageSize ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={docsPage <= 1}
+                className="h-8 rounded-md border border-border px-3 text-[10px] font-semibold uppercase disabled:opacity-40"
+                onClick={() => setDocsPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={docsPage * docs.pageSize >= docs.total}
+                className="h-8 rounded-md border border-border px-3 text-[10px] font-semibold uppercase disabled:opacity-40"
+                onClick={() => setDocsPage((p) => p + 1)}
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="space-y-2">
           <h2 className="font-display text-base font-semibold uppercase">Product lines</h2>
           <p className="text-[11px] text-steel">
             Includes NOT_IN_AB_CATALOGUE / retail-only SKUs using source SKU and description.
+            Page {lines?.page ?? 1} · {lines?.total?.toLocaleString() ?? 0} lines (paginated)
           </p>
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="min-w-full text-left text-[12px]">
@@ -340,6 +385,26 @@ function CustomerGroupWorkspace() {
               </tbody>
             </table>
           </div>
+          {lines && lines.total > lines.pageSize ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={linesPage <= 1}
+                className="h-8 rounded-md border border-border px-3 text-[10px] font-semibold uppercase disabled:opacity-40"
+                onClick={() => setLinesPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={linesPage * lines.pageSize >= lines.total}
+                className="h-8 rounded-md border border-border px-3 text-[10px] font-semibold uppercase disabled:opacity-40"
+                onClick={() => setLinesPage((p) => p + 1)}
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="space-y-3 rounded-md border border-border p-4">

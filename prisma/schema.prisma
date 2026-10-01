@@ -1994,6 +1994,7 @@ model AutopartSalesDocument {
   @@index([companyId, documentDate])
   @@index([autopartCustomerCode])
   @@index([documentReference])
+  @@index([importRunId])
   @@index([reconciliationStatus])
   @@index([abOrderNumber])
   @@index([has504, hasTrm21qc])
@@ -2040,6 +2041,8 @@ model AutopartSalesLine {
   @@index([matchedVariantId])
   @@index([autopartCustomerCode])
   @@index([documentReference])
+  @@index([documentId])
+  @@index([importRunId])
   @@index([sourceFingerprint])
 }
 

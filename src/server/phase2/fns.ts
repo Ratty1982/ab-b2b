@@ -3336,6 +3336,21 @@ export const confirmAutopartHistoryImportFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getHistoricImportRunStatusFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const hist = await import("@/server/companies/autopart-history");
+      return {
+        ok: true as const,
+        data: await hist.getHistoricImportRunStatus(userId, data.runId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPortalHistoricPurchasesFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { q?: string; filter?: "ALL" | "AVAILABLE" | "UNAVAILABLE" } | undefined)
   .handler(async ({ data }) => {

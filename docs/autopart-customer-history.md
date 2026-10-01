@@ -94,15 +94,62 @@ Account validation is **source-aware** (not a flat set of equivalent codes):
 
 Do **not** create AB `Order` / `OrderItem` / `Invoice` rows for historic Autopart transactions.
 
-## Confirm import write path
+## Large historic imports (retail / high-volume)
 
-Confirm does **not** hold one interactive Prisma `$transaction` across thousands of
-row round-trips (that caused `Transaction not found` on large YORKMOTO-scale files).
+A production RETAIL-scale pair (~62k 561L lines, ~70k SLRB documents) previously failed with:
 
-1. Parse / validate / resolve SKUs **outside** any write transaction  
-2. Create `AutopartCustomerImportRun` with status `PROCESSING`  
-3. Bulk upsert documents then lines (Postgres `INSERT … ON CONFLICT`, chunked; duplicate line keys deduped)  
-4. Mark run `COMMITTED` only after all writes succeed (`completedAt` set); on write failure mark `FAILED` with the root client  
+`too many bind variables in prepared statement; expected maximum of 32767, received 32768`
+
+**Root cause:** `bulkUpsertHistoricDocuments` preloaded existing rows with a single
+
+`prisma.autopartSalesDocument.findMany({ where: { companyId, documentReference: { in: refs } } })`
+
+where `|refs| ≈ 32_767`. Prisma binds `companyId` plus every `IN` element → **32_768** binds
+(PostgreSQL prepared-statement ceiling is **32_767**). The same pattern existed on the
+post-write ID refresh and on line existence lookups.
+
+**Always Preview first** on large customer histories before Confirm.
+
+### Central chunking (`src/server/db/prisma-in-chunks.ts`)
+
+| Constant | Value | Rationale |
+|----------|------:|-----------|
+| `POSTGRES_MAX_BIND_PARAMS` | 32_767 | Postgres ceiling |
+| `SAFE_IN_LIST_CHUNK` | 4_000 | `IN` list + a few companion WHERE binds ≪ ceiling |
+| `SAFE_HISTORIC_DOCUMENT_UPSERT_CHUNK` | 200 | ~13 binds/row → ~2_600/statement |
+| `SAFE_HISTORIC_LINE_UPSERT_CHUNK` | 150 | ~18 binds/row → ~2_700/statement |
+| `SAFE_SKU_EQUALS_CHUNK` | 200 | OR-equals SKU resolve batches |
+
+Do **not** use chunk sizes near 32_000. Batch size is driven by **bind parameters**, not row count alone.
+
+### Confirm import write path
+
+Confirm does **not** hold one interactive Prisma `$transaction` across hundreds of thousands
+of operations (timeouts, lock duration, connection pressure).
+
+1. Parse / validate / resolve SKUs **outside** any write transaction (Preview remains read-only)  
+2. Create `AutopartCustomerImportRun` with status `PROCESSING` + audit `history_import_started`  
+3. Persist progress on `diagnostics.progress` (phase/message/counts)  
+4. Bulk upsert documents then lines via Postgres `INSERT … ON CONFLICT`, in safe chunks  
+5. Mark run `COMMITTED` only after all writes succeed; on fatal error mark `FAILED` with
+   truthful partial-progress diagnostics (never “nothing written” if batches persisted)  
+6. Audit `history_imported` / `history_reimported` / `history_import_failed` — **summary counts only**, not per-document events  
+
+**Small imports** (combined docs+lines &lt; 12_000): Confirm awaits completion synchronously.  
+**Large imports** (≥ 12_000): Confirm returns immediately with `async: true` and `runId`;
+work continues **in-process** on the Node server (no Redis/BullMQ/Coolify cron). The admin UI
+polls `getHistoricImportRunStatus`. Browser refresh/close is safe — progress lives on the run row.
+
+### Retry / idempotency
+
+Stable unique keys:
+
+- Document: `(companyId, documentType, documentReference)`
+- Line: `(companyId, documentType, documentReference, lineNumber)`
+
+Failed runs after partial batches are **safe to retry**: ON CONFLICT upserts recognise already
+written rows; no duplicate financial documents or product lines. Status stays `FAILED` until a
+later run reaches `COMMITTED`.
 
 Authoritative success (`hasSuccessfulHistoricImport`) requires `status = COMMITTED`,
 `completedAt != null`, and persisted row evidence (`rowsImported`/`rowsUpdated` > 0 or
@@ -111,14 +158,46 @@ are reclassified to `FAILED` so Preview never reports “already imported” aft
 attempt. Active `PROCESSING` blocks confirm; stale `PROCESSING` (>15 minutes) is recovered
 to `FAILED` for safe retry.
 
-## Idempotency
+## Matching counts (561L ↔ SLRB)
 
-Stable unique keys:
+| Metric | Definition |
+|--------|------------|
+| **matchedDocuments** | Distinct **561L** document references that also appear in SLRB |
+| **unmatched561Documents** | Distinct 561L refs with no SLRB header |
+| **slrbDocumentsWithoutLines** | Distinct **SLRB** document references with no 561L product lines |
 
-- Document: `(companyId, documentType, documentReference)`
-- Line: `(companyId, documentType, documentReference, lineNumber)`
+These are set arithmetic on document references (not invoice-only counts). Therefore:
 
-Re-import updates safely; does not duplicate spend/units. Exact file-hash matches warn “already imported” only after a successful `COMMITTED` run.
+`|SLRB document refs| = matchedDocuments + slrbDocumentsWithoutLines`
+
+(when unmatched 561L is zero). The admin Preview “SLRB: N invoices” figure is
+`invoiceDocuments` only — credits are separate (`creditDocuments`). A RETAIL-style
+preview can show ~69_953 invoices while `matched + slrbWithoutLines` equals the full
+INV+CRN document-ref set (~70_493). The **12_107** SLRB-without-561L figure is
+informational (ledger/header-only or lines outside the 561L extract) — **do not fabricate
+product lines**. Semantics are unchanged.
+
+## NOT_IN_AB_CATALOGUE
+
+Historic SKUs with no current `ProductVariant` stay stored with source SKU, description,
+quantity, and sales value. They are **not** blocking, not fuzzy-matched, and not
+auto-created as catalogue products. Expected for retail-only / discontinued lines. They
+remain available to Sales Intelligence, Customer Groups, and CSV/reporting.
+
+## Customer Groups
+
+Historic imports always target a **Company / MAM account**. Customer Groups aggregate
+member companies — there is no separate group-level financial import. After RETAIL (or any
+member) history is imported, the group workspace reflects it automatically.
+
+Group document/product drill-downs are **database-paginated**; summary cards use
+aggregation/`groupBy` when line volume is large so the UI never loads tens of thousands of
+raw rows into the browser.
+
+## Idempotency (summary)
+
+Re-import updates safely; does not duplicate spend/units. Exact file-hash matches warn
+“already imported” only after a successful `COMMITTED` run.
 
 Historic 561L/SLRB data is **not** a financial ledger and must **never** drive current credit decisions.
 
@@ -170,9 +249,11 @@ Customer workspace → **Autopart** tab:
 
 ## Security / audit
 
-Company-scoped; IDOR-safe. Staff need `companies.edit` (history).
+Company-scoped; IDOR-safe. Staff need `companies.edit` (history). Trade/customer users
+must not access historic import, progress, or internal diagnostics (server-enforced).
 
-Audited: alias verified, history previewed/imported/reimported. Raw financial files are not stored in audit JSON; import runs store hashes + counts.
+Audited (summary only): alias verified, history previewed/started/imported/reimported/failed.
+Raw financial files are not stored in audit JSON; import runs store hashes + counts + progress.
 
 ## Future automation boundary
 

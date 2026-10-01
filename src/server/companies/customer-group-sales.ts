@@ -8,6 +8,7 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import {
   ALL_DATED_HISTORY_QUERY_RANGE,
+  documentDatePrismaBounds,
   lastNDaysRange,
   todayLondonDateOnly,
   type DateOnlyRange,
@@ -23,6 +24,7 @@ import {
   summarizeHistoricLines,
   type HistoricLineRow,
 } from "@/server/sales-intelligence/historic-lines";
+import { Prisma } from "@prisma/client";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import { resolveCustomerGroupCompanyIds } from "@/server/companies/customer-groups";
 
@@ -140,31 +142,8 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
   }
 
   const range = resolveGroupPeriod(input.period, input.from, input.to);
-  const lines =
-    companyIds.length === 0
-      ? []
-      : await loadHistoricSalesLines({
-          companyId: { in: companyIds },
-          range,
-        });
-
   const mamFilter = input.mamAccount?.trim().toUpperCase() || null;
-  const filtered = mamFilter
-    ? lines.filter((l) => l.autopartCustomerCode.trim().toUpperCase() === mamFilter)
-    : lines;
-
-  const summaryTotals = summarizeHistoricLines(filtered);
-  const summary = {
-    ...totalsToDto(summaryTotals),
-    documents: new Set(
-      filtered.map((l) => `${l.companyId}:${l.documentType}:${l.documentReference}`),
-    ).size,
-    lastPurchase: filtered.reduce<string | null>((acc, l) => {
-      const d = l.document?.documentDate?.toISOString().slice(0, 10) ?? null;
-      if (!d) return acc;
-      return !acc || d > acc ? d : acc;
-    }, null),
-  };
+  const bounds = documentDatePrismaBounds(range);
 
   const companies = companyIds.length
     ? await prisma.company.findMany({
@@ -192,23 +171,214 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
     : [];
   const companyById = new Map(companies.map((c) => [c.id, c]));
 
-  const byCompanyMap = new Map<string, ReturnType<typeof emptyBucket>>();
-  const byMamMap = new Map<string, ReturnType<typeof emptyBucket> & { companyId: string }>();
-  for (const line of filtered) {
-    let cb = byCompanyMap.get(line.companyId);
-    if (!cb) {
-      cb = emptyBucket();
-      byCompanyMap.set(line.companyId, cb);
-    }
-    accumulateBucket(cb, line);
+  const lineWhere: Prisma.AutopartSalesLineWhereInput =
+    companyIds.length === 0
+      ? { companyId: "__none__" }
+      : {
+          companyId: { in: companyIds },
+          ...(mamFilter
+            ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" as const } }
+            : {}),
+          document: {
+            is: {
+              companyId: { not: null },
+              documentDate: { gte: bounds.gte, lte: bounds.lte },
+            },
+          },
+        };
 
-    const mam = line.autopartCustomerCode.trim().toUpperCase() || "UNKNOWN";
-    let mb = byMamMap.get(mam);
-    if (!mb) {
-      mb = { ...emptyBucket(), companyId: line.companyId };
-      byMamMap.set(mam, mb);
+  // Prefer DB aggregation for large retail histories — avoid loading 60k+ rows into Node.
+  const lineCount =
+    companyIds.length === 0 ? 0 : await prisma.autopartSalesLine.count({ where: lineWhere });
+
+  let summary: {
+    invoiceSales: string;
+    credits: string;
+    netSales: string;
+    units: number;
+    purchaseTransactions: number;
+    productsPurchased: number;
+    customers: number;
+    documents: number;
+    lastPurchase: string | null;
+  };
+  let byCompanyMap = new Map<string, ReturnType<typeof emptyBucket>>();
+  let byMamMap = new Map<string, ReturnType<typeof emptyBucket> & { companyId: string }>();
+  let products: Array<{
+    sku: string;
+    description: string | null;
+    units: number;
+    netSales: string;
+    invoiceSales: string;
+    credits: string;
+    documents: number;
+    productsPurchased: number;
+    lastPurchase: string | null;
+  }> = [];
+
+  if (lineCount <= 25_000) {
+    const lines =
+      companyIds.length === 0
+        ? []
+        : await loadHistoricSalesLines({
+            companyId: { in: companyIds },
+            range,
+          });
+    const filtered = mamFilter
+      ? lines.filter((l) => l.autopartCustomerCode.trim().toUpperCase() === mamFilter)
+      : lines;
+    const summaryTotals = summarizeHistoricLines(filtered);
+    summary = {
+      ...totalsToDto(summaryTotals),
+      documents: new Set(
+        filtered.map((l) => `${l.companyId}:${l.documentType}:${l.documentReference}`),
+      ).size,
+      lastPurchase: filtered.reduce<string | null>((acc, l) => {
+        const d = l.document?.documentDate?.toISOString().slice(0, 10) ?? null;
+        if (!d) return acc;
+        return !acc || d > acc ? d : acc;
+      }, null),
+    };
+    for (const line of filtered) {
+      let cb = byCompanyMap.get(line.companyId);
+      if (!cb) {
+        cb = emptyBucket();
+        byCompanyMap.set(line.companyId, cb);
+      }
+      accumulateBucket(cb, line);
+      const mam = line.autopartCustomerCode.trim().toUpperCase() || "UNKNOWN";
+      let mb = byMamMap.get(mam);
+      if (!mb) {
+        mb = { ...emptyBucket(), companyId: line.companyId };
+        byMamMap.set(mam, mb);
+      }
+      accumulateBucket(mb, line);
     }
-    accumulateBucket(mb, line);
+    const bySku = new Map<string, ReturnType<typeof emptyBucket> & { desc: string | null }>();
+    for (const line of filtered) {
+      const key = line.sku.trim().toUpperCase();
+      let row = bySku.get(key);
+      if (!row) {
+        row = { ...emptyBucket(), desc: line.descriptionSnapshot };
+        bySku.set(key, row);
+      }
+      accumulateBucket(row, line);
+      if (!row.desc && line.descriptionSnapshot) row.desc = line.descriptionSnapshot;
+    }
+    products = [...bySku.entries()]
+      .map(([sku, row]) => ({
+        sku,
+        description: row.desc,
+        ...bucketToDto(row),
+      }))
+      .sort((a, b) => Number(b.netSales) - Number(a.netSales))
+      .slice(0, 200);
+  } else {
+    const byCompanyType = await prisma.autopartSalesLine.groupBy({
+      by: ["companyId", "documentType"],
+      where: lineWhere,
+      _sum: { salesNet: true, units: true },
+    });
+    const byMamType = await prisma.autopartSalesLine.groupBy({
+      by: ["autopartCustomerCode", "companyId", "documentType"],
+      where: lineWhere,
+      _sum: { salesNet: true, units: true },
+    });
+    const bySkuAgg = await prisma.autopartSalesLine.groupBy({
+      by: ["sku"],
+      where: lineWhere,
+      _sum: { salesNet: true, units: true },
+      orderBy: { _sum: { salesNet: "desc" } },
+      take: 200,
+    });
+    const distinctDocs = await prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*)::bigint AS count FROM (
+        SELECT 1
+        FROM "AutopartSalesLine" l
+        INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+        WHERE l."companyId" IN (${Prisma.join(companyIds)})
+          AND d."documentDate" >= ${bounds.gte}
+          AND d."documentDate" <= ${bounds.lte}
+          ${mamFilter ? Prisma.sql`AND UPPER(l."autopartCustomerCode") = ${mamFilter}` : Prisma.empty}
+        GROUP BY l."companyId", l."documentType", l."documentReference"
+      ) t
+    `;
+    const lastDoc = await prisma.autopartSalesDocument.findFirst({
+      where: {
+        companyId: { in: companyIds },
+        documentDate: { gte: bounds.gte, lte: bounds.lte },
+        ...(mamFilter
+          ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" } }
+          : {}),
+      },
+      orderBy: { documentDate: "desc" },
+      select: { documentDate: true },
+    });
+    const skuCount = await prisma.autopartSalesLine.groupBy({
+      by: ["sku"],
+      where: lineWhere,
+    });
+
+    let net = 0n;
+    let inv = 0n;
+    let cred = 0n;
+    let units = 0;
+    byCompanyMap = new Map();
+    for (const row of byCompanyType) {
+      const minor = parseSalesNetMinor(row._sum.salesNet);
+      let bucket = byCompanyMap.get(row.companyId);
+      if (!bucket) {
+        bucket = emptyBucket();
+        byCompanyMap.set(row.companyId, bucket);
+      }
+      bucket.units += Number(row._sum.units ?? 0);
+      bucket.netSalesMinor += minor;
+      units += Number(row._sum.units ?? 0);
+      net += minor;
+      if (row.documentType === "INVOICE") {
+        bucket.invoiceSalesMinor += minor;
+        inv += minor;
+      } else if (row.documentType === "CREDIT") {
+        bucket.creditsMinor += minor;
+        cred += minor;
+      }
+    }
+    byMamMap = new Map();
+    for (const row of byMamType) {
+      const mam = row.autopartCustomerCode.trim().toUpperCase() || "UNKNOWN";
+      const minor = parseSalesNetMinor(row._sum.salesNet);
+      let bucket = byMamMap.get(mam);
+      if (!bucket) {
+        bucket = { ...emptyBucket(), companyId: row.companyId };
+        byMamMap.set(mam, bucket);
+      }
+      bucket.units += Number(row._sum.units ?? 0);
+      bucket.netSalesMinor += minor;
+      if (row.documentType === "INVOICE") bucket.invoiceSalesMinor += minor;
+      else if (row.documentType === "CREDIT") bucket.creditsMinor += minor;
+    }
+    summary = {
+      invoiceSales: moneyMinorToDto(inv),
+      credits: moneyMinorToDto(cred),
+      netSales: moneyMinorToDto(net),
+      units,
+      purchaseTransactions: 0,
+      productsPurchased: skuCount.length,
+      customers: byCompanyMap.size,
+      documents: Number(distinctDocs[0]?.count ?? 0),
+      lastPurchase: lastDoc?.documentDate?.toISOString().slice(0, 10) ?? null,
+    };
+    products = bySkuAgg.map((row) => ({
+      sku: row.sku,
+      description: null,
+      units: Number(row._sum.units ?? 0),
+      netSales: moneyMinorToDto(parseSalesNetMinor(row._sum.salesNet)),
+      invoiceSales: moneyMinorToDto(0n),
+      credits: moneyMinorToDto(0n),
+      documents: 0,
+      productsPurchased: 1,
+      lastPurchase: null,
+    }));
   }
 
   const byCompany = resolved.companyIds
@@ -244,27 +414,6 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
       };
     })
     .sort((a, b) => Number(b.netSales) - Number(a.netSales));
-
-  // Product lines (include NOT_IN_AB_CATALOGUE via source SKU/description)
-  const bySku = new Map<string, ReturnType<typeof emptyBucket> & { desc: string | null }>();
-  for (const line of filtered) {
-    const key = line.sku.trim().toUpperCase();
-    let row = bySku.get(key);
-    if (!row) {
-      row = { ...emptyBucket(), desc: line.descriptionSnapshot };
-      bySku.set(key, row);
-    }
-    accumulateBucket(row, line);
-    if (!row.desc && line.descriptionSnapshot) row.desc = line.descriptionSnapshot;
-  }
-  const products = [...bySku.entries()]
-    .map(([sku, row]) => ({
-      sku,
-      description: row.desc,
-      ...bucketToDto(row),
-    }))
-    .sort((a, b) => Number(b.netSales) - Number(a.netSales))
-    .slice(0, 200);
 
   // Salesperson breakdown (informational — ownership remains on Company)
   const bySalesperson = new Map<string, { name: string; netSalesMinor: bigint; companies: Set<string> }>();
@@ -336,75 +485,106 @@ export async function listCustomerGroupDocuments(actorUserId: string, raw: unkno
     companyIds = [input.companyId];
   }
   const range = resolveGroupPeriod(input.period, input.from, input.to);
-  const lines =
-    companyIds.length === 0
-      ? []
-      : await loadHistoricSalesLines({ companyId: { in: companyIds }, range });
+  const bounds = documentDatePrismaBounds(range);
   const mamFilter = input.mamAccount?.trim().toUpperCase() || null;
-  const filtered = mamFilter
-    ? lines.filter((l) => l.autopartCustomerCode.trim().toUpperCase() === mamFilter)
-    : lines;
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 50;
 
-  type DocAgg = {
-    companyId: string;
-    documentType: string;
-    documentReference: string;
-    documentDate: string | null;
-    mamAccount: string;
-    units: number;
-    netSalesMinor: bigint;
-    lineCount: number;
-  };
-  const docs = new Map<string, DocAgg>();
-  for (const line of filtered) {
-    const key = `${line.companyId}:${line.documentType}:${line.documentReference}`;
-    let d = docs.get(key);
-    if (!d) {
-      d = {
-        companyId: line.companyId,
-        documentType: line.documentType,
-        documentReference: line.documentReference,
-        documentDate: line.document?.documentDate?.toISOString().slice(0, 10) ?? null,
-        mamAccount: line.autopartCustomerCode,
-        units: 0,
-        netSalesMinor: 0n,
-        lineCount: 0,
-      };
-      docs.set(key, d);
-    }
-    d.units += Number(line.units ?? 0);
-    d.netSalesMinor += parseSalesNetMinor(line.salesNet);
-    d.lineCount += 1;
+  if (companyIds.length === 0) {
+    return {
+      total: 0,
+      page,
+      pageSize,
+      items: [] as Array<{
+        companyId: string;
+        companyName: string;
+        documentType: string;
+        documentReference: string;
+        documentDate: string | null;
+        mamAccount: string;
+        units: number;
+        netSales: string;
+        lineCount: number;
+      }>,
+    };
   }
 
+  // Paginate documents in the DB — never load tens of thousands of lines into Node.
+  const docWhere: Prisma.AutopartSalesDocumentWhereInput = {
+    companyId: { in: companyIds },
+    documentDate: { gte: bounds.gte, lte: bounds.lte },
+    ...(mamFilter
+      ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" as const } }
+      : {}),
+  };
+
+  const [total, docs] = await Promise.all([
+    prisma.autopartSalesDocument.count({ where: docWhere }),
+    prisma.autopartSalesDocument.findMany({
+      where: docWhere,
+      orderBy: [{ documentDate: "desc" }, { documentReference: "desc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        id: true,
+        companyId: true,
+        documentType: true,
+        documentReference: true,
+        documentDate: true,
+        autopartCustomerCode: true,
+      },
+    }),
+  ]);
+
+  const docIds = docs.map((d) => d.id);
+  const lineAggs =
+    docIds.length === 0
+      ? []
+      : await prisma.autopartSalesLine.groupBy({
+          by: ["documentId"],
+          where: { documentId: { in: docIds } },
+          _sum: { units: true, salesNet: true },
+          _count: { _all: true },
+        });
+  const aggByDocId = new Map(
+    lineAggs.map((a) => [
+      a.documentId!,
+      {
+        units: Number(a._sum.units ?? 0),
+        netSalesMinor: parseSalesNetMinor(a._sum.salesNet),
+        lineCount: a._count._all,
+      },
+    ]),
+  );
+
   const companies = await prisma.company.findMany({
-    where: { id: { in: [...new Set([...docs.values()].map((d) => d.companyId))] } },
+    where: { id: { in: [...new Set(docs.map((d) => d.companyId!).filter(Boolean))] } },
     select: { id: true, name: true },
   });
   const nameById = new Map(companies.map((c) => [c.id, c.name]));
 
-  const all = [...docs.values()]
-    .map((d) => ({
-      companyId: d.companyId,
-      companyName: nameById.get(d.companyId) ?? d.companyId,
-      documentType: d.documentType,
-      documentReference: d.documentReference,
-      documentDate: d.documentDate,
-      mamAccount: d.mamAccount,
-      units: d.units,
-      netSales: moneyMinorToDto(d.netSalesMinor),
-      lineCount: d.lineCount,
-    }))
-    .sort((a, b) => (b.documentDate ?? "").localeCompare(a.documentDate ?? ""));
-
-  const page = input.page ?? 1;
-  const pageSize = input.pageSize ?? 50;
-  const start = (page - 1) * pageSize;
   return {
-    total: all.length,
+    total,
     page,
     pageSize,
-    items: all.slice(start, start + pageSize),
+    items: docs.map((d) => {
+      const agg = aggByDocId.get(d.id) ?? {
+        units: 0,
+        netSalesMinor: 0n,
+        lineCount: 0,
+      };
+      return {
+        companyId: d.companyId!,
+        companyName: nameById.get(d.companyId!) ?? d.companyId!,
+        documentType: d.documentType,
+        documentReference: d.documentReference,
+        documentDate: d.documentDate?.toISOString().slice(0, 10) ?? null,
+        mamAccount: d.autopartCustomerCode,
+        units: agg.units,
+        netSales: moneyMinorToDto(agg.netSalesMinor),
+        lineCount: agg.lineCount,
+      };
+    }),
   };
 }
 
@@ -434,42 +614,92 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
     companyIds = [input.companyId];
   }
   const range = resolveGroupPeriod(input.period, input.from, input.to);
-  let lines =
-    companyIds.length === 0
-      ? []
-      : await loadHistoricSalesLines({ companyId: { in: companyIds }, range });
-  if (input.mamAccount) {
-    const mam = input.mamAccount.trim().toUpperCase();
-    lines = lines.filter((l) => l.autopartCustomerCode.trim().toUpperCase() === mam);
-  }
-  if (input.documentReference) {
-    const ref = input.documentReference.trim().toUpperCase();
-    lines = lines.filter((l) => l.documentReference.trim().toUpperCase() === ref);
-  }
-
+  const bounds = documentDatePrismaBounds(range);
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 100;
-  const start = (page - 1) * pageSize;
+  const mamFilter = input.mamAccount?.trim().toUpperCase() || null;
+  const docRef = input.documentReference?.trim().toUpperCase() || null;
+
+  if (companyIds.length === 0) {
+    return {
+      total: 0,
+      page,
+      pageSize,
+      items: [] as Array<{
+        companyId: string;
+        companyName: string;
+        mamAccount: string;
+        documentType: string;
+        documentReference: string;
+        documentDate: string | null;
+        sku: string;
+        description: string | null;
+        units: number;
+        netSales: string;
+      }>,
+    };
+  }
+
+  const lineWhere: Prisma.AutopartSalesLineWhereInput = {
+    companyId: { in: companyIds },
+    ...(mamFilter
+      ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" as const } }
+      : {}),
+    ...(docRef
+      ? { documentReference: { equals: docRef, mode: "insensitive" as const } }
+      : {}),
+    document: {
+      is: {
+        companyId: { not: null },
+        documentDate: { gte: bounds.gte, lte: bounds.lte },
+      },
+    },
+  };
+
+  const [total, lines] = await Promise.all([
+    prisma.autopartSalesLine.count({ where: lineWhere }),
+    prisma.autopartSalesLine.findMany({
+      where: lineWhere,
+      orderBy: [{ documentReference: "desc" }, { lineNumber: "asc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        companyId: true,
+        autopartCustomerCode: true,
+        documentType: true,
+        documentReference: true,
+        sku: true,
+        descriptionSnapshot: true,
+        units: true,
+        salesNet: true,
+        document: { select: { documentDate: true } },
+      },
+    }),
+  ]);
+
   const companies = await prisma.company.findMany({
     where: { id: { in: [...new Set(lines.map((l) => l.companyId))] } },
     select: { id: true, name: true },
   });
   const nameById = new Map(companies.map((c) => [c.id, c.name]));
 
-  const items = lines.slice(start, start + pageSize).map((l) => ({
-    companyId: l.companyId,
-    companyName: nameById.get(l.companyId) ?? l.companyId,
-    mamAccount: l.autopartCustomerCode,
-    documentType: l.documentType,
-    documentReference: l.documentReference,
-    documentDate: l.document?.documentDate?.toISOString().slice(0, 10) ?? null,
-    sku: l.sku,
-    description: l.descriptionSnapshot,
-    units: Number(l.units ?? 0),
-    netSales: moneyMinorToDto(parseSalesNetMinor(l.salesNet)),
-  }));
-
-  return { total: lines.length, page, pageSize, items };
+  return {
+    total,
+    page,
+    pageSize,
+    items: lines.map((l) => ({
+      companyId: l.companyId,
+      companyName: nameById.get(l.companyId) ?? l.companyId,
+      mamAccount: l.autopartCustomerCode,
+      documentType: l.documentType,
+      documentReference: l.documentReference,
+      documentDate: l.document?.documentDate?.toISOString().slice(0, 10) ?? null,
+      sku: l.sku,
+      description: l.descriptionSnapshot,
+      units: Number(l.units ?? 0),
+      netSales: moneyMinorToDto(parseSalesNetMinor(l.salesNet)),
+    })),
+  };
 }
 
 export async function exportCustomerGroupSalesCsv(actorUserId: string, raw: unknown) {
