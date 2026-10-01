@@ -14,9 +14,19 @@ import {
   DASHBOARD_OPEN_QUOTE_STATUSES,
   DASHBOARD_ORDER_VALUE_EXCLUDED_STATUSES,
   DASHBOARD_PROCESSING_ORDER_STATUSES,
+  attentionActionLabel,
+  buildDashboardGreeting,
+  emailHealthFromState,
+  feed504cHealthFromState,
   formatGbpIncVat,
+  ongoingSalesHealthFromState,
+  sharePointSdsHealthFromState,
   stockHealthLabel,
+  stockHealthTone,
   type AttentionItem,
+  type DashboardGreeting,
+  type DashboardQuickAction,
+  type SystemHealthRow,
 } from "@/domain/admin-dashboard";
 import { OPEN_APPLICATION_STATUSES } from "@/domain/trade-application";
 import { customerOrderStatusLabel } from "@/domain/order-status";
@@ -25,6 +35,7 @@ import {
   formatAuditDateTime,
   formatDate,
   formatDateTime,
+  formatTime,
   londonCalendarDayBounds,
 } from "@/lib/datetime";
 import { ROUTES } from "@/lib/app-nav";
@@ -116,6 +127,8 @@ export type AdminDashboardActivityRow = {
   id: string;
   when: string;
   whenLabel: string;
+  /** Europe/London HH:mm for compact timeline rows. */
+  whenTimeLabel: string;
   who: string;
   what: string;
 };
@@ -123,23 +136,30 @@ export type AdminDashboardActivityRow = {
 export type AdminDashboardPayload = {
   generatedAt: string;
   scope: "all" | "sales";
+  greeting: DashboardGreeting;
+  quickActions: DashboardQuickAction[];
   summary: {
+    /**
+     * Today's Sales — Europe/London civil day, non-cancelled B2B order grandTotal sum (inc VAT).
+     * See domain/admin-dashboard.ts for the authoritative definition.
+     */
     ordersToday: { count: number; orderValueIncVat: string; orderValueLabel: string };
     openOrders: { count: number };
     activeTradeCustomers: { count: number };
     tradeApplicationsAttention: { count: number };
-    openQuotes: { count: number } | null;
+    openQuotes: { count: number; expiringSoon: number } | null;
   };
   ordersAttention: {
-    readyForExport: { count: number; items: AdminDashboardOrderRow[] };
-    processing: { count: number; items: AdminDashboardOrderRow[] };
-    exportBlocked: { count: number; items: AdminDashboardOrderRow[] };
+    readyForExport: { count: number; items: AdminDashboardOrderRow[]; href: string };
+    processing: { count: number; items: AdminDashboardOrderRow[]; href: string };
+    exportBlocked: { count: number; items: AdminDashboardOrderRow[]; href: string };
     /** Outstanding backorder operational metrics (real records only). */
     backorderedOrders: {
       count: number;
       units: number;
       skusAffected: number;
       stockNowAvailableSkus: number;
+      href: string;
     };
   };
   applications: {
@@ -190,6 +210,8 @@ export type AdminDashboardPayload = {
     recentFailures: number;
     href: string;
   } | null;
+  /** Consolidated authoritative health rows — omit services without genuine state. */
+  systemHealth: SystemHealthRow[];
   needsAttention: AttentionItem[];
 };
 
@@ -234,16 +256,26 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
   const canSeeOrders = hasPermission(profile, "orders.view") || hasPermission(profile, "admin.access");
   const canSeeCompanies =
     hasPermission(profile, "companies.view") || hasPermission(profile, "admin.access");
+  const canCreateCompanies =
+    hasPermission(profile, "companies.create") || hasPermission(profile, "admin.access");
   const canSeeApplications =
     hasPermission(profile, "applications.view") || hasPermission(profile, "admin.access");
   const canSeeQuotes = hasPermission(profile, "quotes.view") || hasPermission(profile, "admin.access");
+  const canCreateQuotes =
+    hasPermission(profile, "quotes.create") || hasPermission(profile, "admin.access");
+  const canSeeProducts =
+    hasPermission(profile, "products.view") || hasPermission(profile, "admin.access");
   const canSeeStock =
     hasPermission(profile, "inventory.view") ||
-    hasPermission(profile, "products.view") ||
+    canSeeProducts ||
     hasPermission(profile, "admin.access");
   const canSeeEmail = hasPermission(profile, "settings.view") || hasPermission(profile, "admin.access");
   const canSeeAudit = hasPermission(profile, "audit.view") || hasPermission(profile, "admin.access");
   const canSeeTasks = hasPermission(profile, "tasks.view") || hasPermission(profile, "admin.access");
+  /** Ongoing sales settings row — readable for staff who can view orders (no edit required for health). */
+  const canSeeOngoingSales = canSeeOrders;
+  /** SharePoint SDS public settings — products.view staff (same gate as document admin view). */
+  const canSeeSharePointSds = canSeeProducts;
 
   if (!canSeeOrders && !canSeeCompanies && !canSeeApplications && !hasPermission(profile, "admin.access")) {
     throw new AuthError("Insufficient permissions for dashboard", "FORBIDDEN", 403);
@@ -331,6 +363,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     emailDto,
     emailFailures,
     feed504c,
+    ongoingFreshness,
+    sharePointSds,
   ] = await Promise.all([
     canSeeOrders
       ? prisma.order.aggregate({
@@ -532,6 +566,48 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
           return getAutopart504cFeedSettings();
         })()
       : Promise.resolve(null),
+    canSeeOngoingSales
+      ? (async () => {
+          const settings = await prisma.autopartOngoingSalesFeedSettings.findUnique({
+            where: { id: "default" },
+          });
+          if (!settings) {
+            return {
+              configured: false,
+              enabled: false,
+              salesDataUpdatedAt: null as string | null,
+              feedsAligned: false,
+            };
+          }
+          const last504 = settings.lastSuccess504At;
+          const lastTrm = settings.lastSuccessTrm21qcAt;
+          const latest =
+            last504 && lastTrm
+              ? last504 > lastTrm
+                ? last504
+                : lastTrm
+              : last504 ?? lastTrm ?? null;
+          const bothPresent = Boolean(last504 && lastTrm);
+          const skewMinutes =
+            last504 && lastTrm
+              ? Math.abs(last504.getTime() - lastTrm.getTime()) / 60_000
+              : null;
+          return {
+            configured: settings.configured,
+            enabled: settings.enabled,
+            salesDataUpdatedAt: latest?.toISOString() ?? null,
+            feedsAligned: bothPresent && (skewMinutes == null || skewMinutes <= 120),
+          };
+        })()
+      : Promise.resolve(null),
+    canSeeSharePointSds
+      ? (async () => {
+          const { toPublicSharePointSdsSettings } = await import(
+            "@/server/catalogue/sharepoint-sds-settings"
+          );
+          return toPublicSharePointSdsSettings();
+        })()
+      : Promise.resolve(null),
   ]);
 
   const backorderMetrics = canSeeOrders
@@ -654,6 +730,10 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
         }
       : null;
 
+  const settingsAutopartHref = `${ROUTES.adminSettings}?tab=autopart`;
+  const settingsEmailHref = `${ROUTES.adminSettings}?tab=email`;
+  const settingsDocumentsHref = `${ROUTES.adminSettings}?tab=documents`;
+
   const autopart504c = feed504c
     ? {
         configured: feed504c.configured,
@@ -661,7 +741,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
         automaticPolling: feed504c.automaticPolling,
         statusLabel: feed504c.statusLabel,
         scheduleLabel: feed504c.scheduleLabel || AUTOPART_504C_SCHEDULE_LABEL,
-        href: ROUTES.adminSettings,
+        href: settingsAutopartHref,
         informational: true as const,
       }
     : null;
@@ -671,7 +751,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
         configured: emailDto.configured,
         enabled: emailDto.enabled,
         recentFailures: emailFailures,
-        href: ROUTES.adminSettings,
+        href: settingsEmailHref,
       }
     : null;
 
@@ -679,9 +759,15 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     id: row.id,
     when: row.createdAt.toISOString(),
     whenLabel: formatAuditDateTime(row.createdAt) ?? "—",
+    whenTimeLabel: formatTime(row.createdAt) ?? "—",
     who: row.actor?.name?.trim() || row.actor?.email || "System",
     what: humanizeAuditAction(row.action),
   }));
+
+  const readyHref = `${ROUTES.adminOrders}?autopartExport=READY`;
+  const processingHref = `${ROUTES.adminOrders}?autopartExport=EXPORTED`;
+  const blockedHref = `${ROUTES.adminOrders}?autopartExport=BLOCKED`;
+  const backorderHref = `${ROUTES.adminOrders}?backorders=CONTAINS`;
 
   const needsAttention: AttentionItem[] = [];
   const appAttention = appSubmitted + appUnderReview + appMoreInfo;
@@ -691,7 +777,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       label: "Trade applications awaiting review",
       count: appAttention,
       href: ROUTES.adminApplications,
-      severity: "action",
+      severity: "attention",
+      actionLabel: attentionActionLabel("applications"),
     });
   }
   if (readyCount > 0) {
@@ -699,8 +786,9 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       id: "export-ready",
       label: "Orders ready for Autopart export",
       count: readyCount,
-      href: `${ROUTES.adminOrders}?autopartExport=READY`,
-      severity: "action",
+      href: readyHref,
+      severity: "attention",
+      actionLabel: attentionActionLabel("export-ready"),
     });
   }
   if (blockedCount > 0) {
@@ -708,8 +796,9 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       id: "export-blocked",
       label: "Orders blocked from Autopart export",
       count: blockedCount,
-      href: `${ROUTES.adminOrders}?autopartExport=BLOCKED`,
-      severity: "action",
+      href: blockedHref,
+      severity: "critical",
+      actionLabel: attentionActionLabel("export-blocked"),
     });
   }
   if (openCallbackCount > 0 && canSeeTasks) {
@@ -718,7 +807,18 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       label: "Open callback tasks",
       count: openCallbackCount,
       href: ROUTES.adminCustomers,
-      severity: "action",
+      severity: "attention",
+      actionLabel: attentionActionLabel("callbacks"),
+    });
+  }
+  if (canSeeQuotes && quoteExpiring > 0) {
+    needsAttention.push({
+      id: "quotes-expiring",
+      label: "Quotes expiring within 7 days",
+      count: quoteExpiring,
+      href: ROUTES.salesQuotes,
+      severity: "attention",
+      actionLabel: attentionActionLabel("quotes-expiring"),
     });
   }
   if (email && email.recentFailures > 0) {
@@ -726,8 +826,9 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       id: "email-failures",
       label: "Failed transactional emails (7 days)",
       count: email.recentFailures,
-      href: ROUTES.adminSettings,
-      severity: "action",
+      href: settingsEmailHref,
+      severity: "critical",
+      actionLabel: attentionActionLabel("email-failures"),
     });
   }
   if (stock && stock.actionableIssues > 0) {
@@ -736,7 +837,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       label: "Actionable issues in latest stock sync",
       count: stock.actionableIssues,
       href: ROUTES.adminStockSync,
-      severity: "action",
+      severity: "critical",
+      actionLabel: attentionActionLabel("stock-issues"),
     });
   }
   if (autopart504c && !autopart504c.configured) {
@@ -744,14 +846,89 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       id: "504c-not-configured",
       label: "504C invoice/despatch feed not configured (waiting on Autopart)",
       count: null,
-      href: ROUTES.adminSettings,
+      href: settingsAutopartHref,
       severity: "info",
+      actionLabel: attentionActionLabel("504c-not-configured"),
+    });
+  }
+
+  const systemHealth: SystemHealthRow[] = [];
+  if (stock) {
+    systemHealth.push({
+      id: "autopart-stock",
+      label: "Autopart Stock",
+      statusLabel: stock.statusLabel,
+      tone: stockHealthTone(stock.statusLabel),
+      href: stock.href,
+    });
+  }
+  if (autopart504c) {
+    const h = feed504cHealthFromState(autopart504c);
+    systemHealth.push({
+      id: "autopart-504c",
+      label: "504C Order Status Feed",
+      statusLabel: h.statusLabel,
+      tone: h.tone,
+      href: autopart504c.href,
+    });
+  }
+  if (ongoingFreshness) {
+    const h = ongoingSalesHealthFromState(ongoingFreshness);
+    systemHealth.push({
+      id: "sales-feed",
+      label: "Ongoing Sales Feed",
+      statusLabel: h.statusLabel,
+      tone: h.tone,
+      href: settingsAutopartHref,
+    });
+  }
+  if (email) {
+    const h = emailHealthFromState(email);
+    systemHealth.push({
+      id: "email",
+      label: "Email",
+      statusLabel: h.statusLabel,
+      tone: h.tone,
+      href: email.href,
+    });
+  }
+  if (sharePointSds) {
+    const h = sharePointSdsHealthFromState(sharePointSds);
+    systemHealth.push({
+      id: "sharepoint-sds",
+      label: "SharePoint SDS",
+      statusLabel: h.statusLabel,
+      tone: h.tone,
+      href: settingsDocumentsHref,
+    });
+  }
+
+  const quickActions: DashboardQuickAction[] = [];
+  if (canCreateCompanies) {
+    quickActions.push({ id: "new-customer", label: "New Customer", href: ROUTES.adminCustomers });
+  }
+  if (canCreateQuotes) {
+    quickActions.push({ id: "new-quote", label: "New Quote", href: ROUTES.salesQuotesNew });
+  }
+  if (canSeeOrders) {
+    quickActions.push({ id: "view-orders", label: "View Orders", href: ROUTES.adminOrders });
+  }
+  if (canSeeProducts) {
+    quickActions.push({ id: "products", label: "Products", href: ROUTES.adminProducts });
+  }
+  if (canSeeApplications) {
+    quickActions.push({
+      id: "trade-applications",
+      label: "Trade Applications",
+      href: ROUTES.adminApplications,
     });
   }
 
   return {
     generatedAt: new Date().toISOString(),
     scope,
+    greeting: buildDashboardGreeting({ name: profile.name }),
+    quickActions,
     summary: {
       ordersToday: {
         count: ordersTodayAgg._count._all,
@@ -761,13 +938,28 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       openOrders: { count: openOrderCount },
       activeTradeCustomers: { count: activeCustomerCount },
       tradeApplicationsAttention: { count: appAttention },
-      openQuotes: openQuotesCount == null ? null : { count: openQuotesCount },
+      openQuotes:
+        openQuotesCount == null
+          ? null
+          : { count: openQuotesCount, expiringSoon: quoteExpiring },
     },
     ordersAttention: {
-      readyForExport: { count: readyCount, items: readyItems.map(mapOrderRow) },
-      processing: { count: processingCount, items: processingItems.map(mapOrderRow) },
-      exportBlocked: { count: blockedCount, items: blockedItems.map(mapOrderRow) },
-      backorderedOrders: backorderMetrics,
+      readyForExport: {
+        count: readyCount,
+        items: readyItems.map(mapOrderRow),
+        href: readyHref,
+      },
+      processing: {
+        count: processingCount,
+        items: processingItems.map(mapOrderRow),
+        href: processingHref,
+      },
+      exportBlocked: {
+        count: blockedCount,
+        items: blockedItems.map(mapOrderRow),
+        href: blockedHref,
+      },
+      backorderedOrders: { ...backorderMetrics, href: backorderHref },
     },
     applications: {
       submitted: appSubmitted,
@@ -792,6 +984,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     stock,
     autopart504c,
     email,
+    systemHealth,
     needsAttention,
   };
 }

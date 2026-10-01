@@ -184,12 +184,30 @@ describe("admin production dashboard", () => {
     const dash = await getAdminDashboard(adminId);
     expect(dash.summary.ordersToday.count).toBeGreaterThanOrEqual(1);
     expect(Number(dash.summary.ordersToday.orderValueIncVat)).toBeGreaterThan(0);
+    expect(dash.summary.ordersToday.orderValueLabel).toContain("£");
     expect(dash.summary.openOrders.count).toBeGreaterThanOrEqual(1);
     expect(dash.summary.activeTradeCustomers.count).toBeGreaterThanOrEqual(1);
     expect(dash.summary.tradeApplicationsAttention.count).toBeGreaterThanOrEqual(1);
     expect(dash.summary.openQuotes).not.toBeNull();
+    expect(dash.summary.openQuotes?.expiringSoon).toBeGreaterThanOrEqual(0);
+
+    expect(dash.greeting.greeting).toMatch(/^Good (morning|afternoon|evening)$/);
+    expect(dash.greeting.dateLabel.length).toBeGreaterThan(10);
+    expect(dash.quickActions.some((a) => a.id === "view-orders")).toBe(true);
+    expect(dash.quickActions.some((a) => a.id === "trade-applications")).toBe(true);
+    expect(dash.quickActions.every((a) => a.href.startsWith("/"))).toBe(true);
+
+    expect(dash.systemHealth.some((r) => r.id === "autopart-504c")).toBe(true);
+    expect(dash.systemHealth.some((r) => r.id === "sales-feed")).toBe(true);
+    expect(dash.systemHealth.every((r) => r.statusLabel.length > 0 && r.href.length > 0)).toBe(true);
+    // Must not invent Healthy for unconfigured 504C
+    const feed504 = dash.systemHealth.find((r) => r.id === "autopart-504c");
+    expect(feed504?.tone).not.toBe("healthy");
 
     expect(dash.ordersAttention.readyForExport.count).toBeGreaterThanOrEqual(1);
+    expect(dash.ordersAttention.readyForExport.href).toContain("autopartExport=READY");
+    expect(dash.ordersAttention.exportBlocked.href).toContain("autopartExport=BLOCKED");
+    expect(dash.ordersAttention.backorderedOrders.href).toContain("backorders=CONTAINS");
     // Preview list is capped at 5 — confirm the fixture itself is Ready even if not in the sample.
     expect(
       await prisma.order.count({
@@ -237,12 +255,21 @@ describe("admin production dashboard", () => {
     expect(dash.autopart504c?.automaticPolling).toBe("OFF");
     expect(dash.autopart504c?.informational).toBe(true);
 
-    expect(dash.needsAttention.some((i) => i.id === "applications")).toBe(true);
-    expect(dash.needsAttention.some((i) => i.id === "export-ready")).toBe(true);
-    expect(dash.needsAttention.some((i) => i.id === "export-blocked")).toBe(true);
+    expect(dash.needsAttention.some((i) => i.id === "applications" && i.actionLabel === "REVIEW")).toBe(
+      true,
+    );
+    expect(dash.needsAttention.some((i) => i.id === "export-ready" && i.actionLabel === "VIEW")).toBe(
+      true,
+    );
+    expect(
+      dash.needsAttention.some(
+        (i) => i.id === "export-blocked" && i.severity === "critical" && i.actionLabel === "FIX",
+      ),
+    ).toBe(true);
     expect(dash.needsAttention.some((i) => i.id === "504c-not-configured" && i.severity === "info")).toBe(
       true,
     );
+    expect(dash.recentActivity.every((a) => a.whenTimeLabel.length >= 4)).toBe(true);
     // Ignored INVALID/DUPLICATE diagnostics must never appear as Needs Attention.
     expect(dash.needsAttention.some((i) => i.id === "stock-issues")).toBe(false);
     if (dash.stock && dash.stock.statusLabel !== "No sync yet") {
@@ -284,6 +311,10 @@ describe("admin production dashboard", () => {
     expect(dash.scope).toBe("sales");
     expect(dash.summary.activeTradeCustomers.count).toBeGreaterThanOrEqual(1);
     expect(dash.recentOrders.every((o) => o.companyName.includes("Dash Co"))).toBe(true);
+    // Sales reps without companies.create / quotes.create should not see those quick actions
+    expect(dash.quickActions.some((a) => a.id === "new-customer")).toBe(false);
+    // View orders / products / applications depend on role catalogue — orders.view is typical
+    expect(dash.quickActions.every((a) => ["new-customer", "new-quote", "view-orders", "products", "trade-applications"].includes(a.id))).toBe(true);
   });
 
   it("lists known prototype dashboard strings for source regression", () => {
