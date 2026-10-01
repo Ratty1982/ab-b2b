@@ -120,13 +120,22 @@ const HEADER_ALIASES: Record<string, string> = {
   amount: "sales",
 };
 
-const INV_LN_RE = /^([IC])\/([A-Za-z0-9][A-Za-z0-9._-]*)\/(\d+)$/i;
+/**
+ * Autopart Inv & Ln forms:
+ * - `I/SS306008/1` / `C/SC500093/1` — document + source line number
+ * - `I/OIN022047/` — document only (Amazon/listing docs often omit the line number
+ *   after the trailing slash). Line number is assigned deterministically on import.
+ *
+ * Requires the trailing `/` so bare tokens like `I/BADLINE` stay malformed.
+ */
+const INV_LN_RE = /^([IC])\/([A-Za-z0-9][A-Za-z0-9._-]*)\/(\d*)$/i;
 const START_CUSTOMER_RE = /\[\s*Start\s+Customer\s+/i;
 const END_CUSTOMER_RE = /\[\s*End\s+Customer\s+/i;
 
 /**
- * Normalise Inv & Ln identities such as I/SS306008/1 or C/SC500093/1.
- * Does not guess malformed values.
+ * Normalise Inv & Ln identities such as I/SS306008/1, C/SC500093/1, or I/OIN022047/.
+ * Does not invent document references. Source line number may be null when Autopart
+ * emits an empty line segment after the trailing slash.
  */
 export function parseInvAndLn(raw: string | null | undefined): {
   documentType: Autopart561lDocumentType;
@@ -158,8 +167,13 @@ export function parseInvAndLn(raw: string | null | undefined): {
   const kind = m[1]!.toUpperCase();
   const documentType: Autopart561lDocumentType = kind === "C" ? "CREDIT" : "INVOICE";
   const documentReference = m[2]!.trim().toUpperCase();
-  const sourceLineNumber = Number(m[3]);
-  if (!documentReference || !Number.isInteger(sourceLineNumber) || sourceLineNumber < 1) {
+  const lineRaw = (m[3] ?? "").trim();
+  const sourceLineNumber = lineRaw === "" ? null : Number(lineRaw);
+  if (
+    !documentReference ||
+    (sourceLineNumber != null &&
+      (!Number.isInteger(sourceLineNumber) || sourceLineNumber < 1))
+  ) {
     return {
       documentType: "UNKNOWN",
       documentReference: null,
@@ -386,6 +400,8 @@ function buildDataLine(input: {
   }
 
   const accountCode = input.accountCode;
+  // Source line number may be null (e.g. I/OIN022047/) — still a valid financial line;
+  // import assigns a deterministic lineNumber within the document.
   const ok =
     identity.ok &&
     Boolean(accountCode) &&

@@ -1589,8 +1589,23 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
 
   const preparedLines: PreparedHistoricLine[] = [];
   let skipped = 0;
+  /** Track used Autopart line numbers per document so OIN-style rows without /n get unique ids. */
+  const usedLineNumbersByDoc = new Map<string, Set<number>>();
+  type PendingLine = {
+    documentType: AutopartHistoricDocumentType;
+    documentReference: string;
+    sku: string;
+    descriptionSnapshot: string | null;
+    units: string;
+    salesNet: string;
+    matchedVariantId: string | null;
+    matchStatus: "MATCHED" | "NOT_IN_AB_CATALOGUE";
+    rawInvAndLn: string;
+  };
+  const pendingLineNumbers: PendingLine[] = [];
+
   for (const line of parsed561.lines) {
-    if (!line.documentReference || !line.sourceLineNumber || !line.partNumber) {
+    if (!line.documentReference || !line.partNumber) {
       skipped += 1;
       continue;
     }
@@ -1627,18 +1642,64 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
 
     const skuKey = line.partNumber.trim().toUpperCase();
     const matchedVariantId = skuMap.get(skuKey) ?? null;
-    preparedLines.push({
+    const base = {
       companyId: company.id,
       documentType,
       documentReference: line.documentReference,
-      lineNumber: line.sourceLineNumber,
       sku: line.partNumber.trim(),
       descriptionSnapshot: line.description,
       units: String(line.units ?? 0),
       salesNet: line.salesNet ?? "0.00",
       matchedVariantId,
-      matchStatus: matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
+      matchStatus: (matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE") as
+        | "MATCHED"
+        | "NOT_IN_AB_CATALOGUE",
       rawInvAndLn: line.rawInvAndLn,
+      source: "561L",
+      importRunId: "",
+      autopartCustomerCode: verifiedCode,
+    };
+
+    if (line.sourceLineNumber != null && line.sourceLineNumber >= 1) {
+      const used = usedLineNumbersByDoc.get(key) ?? new Set<number>();
+      used.add(line.sourceLineNumber);
+      usedLineNumbersByDoc.set(key, used);
+      preparedLines.push({ ...base, lineNumber: line.sourceLineNumber });
+    } else {
+      // I/OIN022047/ — Autopart omitted source line number; assign after explicit lines.
+      pendingLineNumbers.push({
+        documentType,
+        documentReference: line.documentReference,
+        sku: base.sku,
+        descriptionSnapshot: base.descriptionSnapshot,
+        units: base.units,
+        salesNet: base.salesNet,
+        matchedVariantId: base.matchedVariantId,
+        matchStatus: base.matchStatus,
+        rawInvAndLn: base.rawInvAndLn,
+      });
+    }
+  }
+
+  for (const pending of pendingLineNumbers) {
+    const key = docKey(pending.documentType, pending.documentReference);
+    const used = usedLineNumbersByDoc.get(key) ?? new Set<number>();
+    let n = 1;
+    while (used.has(n)) n += 1;
+    used.add(n);
+    usedLineNumbersByDoc.set(key, used);
+    preparedLines.push({
+      companyId: company.id,
+      documentType: pending.documentType,
+      documentReference: pending.documentReference,
+      lineNumber: n,
+      sku: pending.sku,
+      descriptionSnapshot: pending.descriptionSnapshot,
+      units: pending.units,
+      salesNet: pending.salesNet,
+      matchedVariantId: pending.matchedVariantId,
+      matchStatus: pending.matchStatus,
+      rawInvAndLn: pending.rawInvAndLn,
       source: "561L",
       importRunId: "",
       autopartCustomerCode: verifiedCode,

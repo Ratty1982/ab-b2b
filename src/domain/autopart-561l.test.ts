@@ -25,6 +25,23 @@ describe("parseInvAndLn", () => {
     expect(parseInvAndLn("I/BADLINE").ok).toBe(false);
     expect(parseInvAndLn("").ok).toBe(false);
   });
+
+  it("accepts Amazon/listing Inv & Ln with empty line segment (I/OIN…/)", () => {
+    expect(parseInvAndLn("I/OIN022047/")).toMatchObject({
+      documentType: "INVOICE",
+      documentReference: "OIN022047",
+      sourceLineNumber: null,
+      ok: true,
+    });
+    expect(parseInvAndLn("C/OIN022047/")).toMatchObject({
+      documentType: "CREDIT",
+      documentReference: "OIN022047",
+      sourceLineNumber: null,
+      ok: true,
+    });
+    // Still requires the trailing slash — do not accept bare I/DOC
+    expect(parseInvAndLn("I/OIN022047").ok).toBe(false);
+  });
 });
 
 describe("parseAutopart561l", () => {
@@ -94,5 +111,43 @@ YORKMOT,I/SS1/1,SKU,Item,-3,"-£12.00"
     const result = parseAutopart561l(text);
     expect(result.lines[0]).toMatchObject({ units: -3, salesNet: "-12.00" });
     expect(result.detectedAccounts).toEqual(["YORKMOT"]);
+  });
+
+  it("parses RETAILA SSAMZ / SSAMZ-1 rows including OIN Inv & Ln without line numbers", () => {
+    const text = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+RETAILA,I/OIN022047/,SSAMZ-1,Steel Seal Amazon LISTIN,1,31.24
+RETAILA,I/SS303694/1,SSAMZ-1,Steel Seal Amazon LISTIN,1,37.49
+RETAILA,I/OIN022048/,SSAMZ,Steel Seal Amazon LISTIN,2,62.48
+RETAILA,I/SS303694/2,SSAMZ,Steel Seal Amazon LISTIN,1,40.00
+`;
+    const result = parseAutopart561l(text);
+    expect(result.malformedRows).toBe(0);
+    expect(result.lines).toHaveLength(4);
+
+    const oin = result.lines.find((l) => l.documentReference === "OIN022047");
+    expect(oin).toMatchObject({
+      partNumber: "SSAMZ-1",
+      units: 1,
+      salesNet: "31.24",
+      sourceLineNumber: null,
+      documentType: "INVOICE",
+      classification: "LINE",
+    });
+
+    const ss = result.lines.find(
+      (l) => l.documentReference === "SS303694" && l.sourceLineNumber === 1,
+    );
+    expect(ss).toMatchObject({
+      partNumber: "SSAMZ-1",
+      salesNet: "37.49",
+    });
+
+    const ssamz = result.lines.filter((l) => l.partNumber === "SSAMZ");
+    const ssamz1 = result.lines.filter((l) => l.partNumber === "SSAMZ-1");
+    expect(ssamz).toHaveLength(2);
+    expect(ssamz1).toHaveLength(2);
+    // Exact SKU identity — never conflate hyphenated listing SKU with base SKU
+    expect(ssamz.every((l) => l.partNumber === "SSAMZ")).toBe(true);
+    expect(ssamz1.every((l) => l.partNumber === "SSAMZ-1")).toBe(true);
   });
 });

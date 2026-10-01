@@ -44,7 +44,10 @@ touch with no whitespace, e.g. `YORKMOTC/SC500093/127113` → account `YORKMOT`,
 Inv & Ln `C/SC500093/1`, part `27113`.
 
 `I/…/n` → INVOICE, `C/…/n` → CREDIT (from Inv & Ln identity, never from signed money).
-Malformed identities are skipped (no guessing). Credits stored with signed units/spend.
+Autopart Amazon/listing rows may omit the line number after the trailing slash
+(`I/OIN022047/`). Those are valid financial lines; AB assigns a deterministic
+`lineNumber` within the document on import (does not invent document refs or money).
+Malformed identities (e.g. bare `I/BADLINE` without `/`) are skipped. Credits stored with signed units/spend.
 
 Report selection `[Start Customer YORKMOTO]` is the authoritative selected customer.
 The 7-character body account (`YORKMOT`) is the truncated row representation.
