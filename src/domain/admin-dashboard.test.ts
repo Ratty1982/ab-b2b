@@ -4,11 +4,13 @@ import { join } from "node:path";
 import {
   attentionActionLabel,
   buildDashboardGreeting,
+  DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES,
   emailHealthFromState,
   feed504cHealthFromState,
   firstNameFromDisplayName,
   formatGbpIncVat,
   greetingForLondonHour,
+  isOperationalEmailFailurePurpose,
   ongoingSalesHealthFromState,
   PROTOTYPE_ADMIN_DASHBOARD_STRINGS,
   resolveAttentionTone,
@@ -74,14 +76,24 @@ describe("admin dashboard helpers", () => {
     expect(resolveAttentionTone("action", "applications")).toBe("attention");
   });
 
-  it("derives system health without labelling configured-only as Healthy", () => {
+  it("excludes EMAIL_TEST from operational email failure purposes", () => {
+    expect(DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES).toContain("EMAIL_TEST");
+    expect(isOperationalEmailFailurePurpose("EMAIL_TEST")).toBe(false);
+    expect(isOperationalEmailFailurePurpose("PASSWORD_RESET")).toBe(true);
+    expect(isOperationalEmailFailurePurpose("ORDER_RECEIVED")).toBe(true);
+    expect(isOperationalEmailFailurePurpose("ORDER_RECEIVED_INTERNAL")).toBe(true);
+    expect(isOperationalEmailFailurePurpose("QUOTE_SENT")).toBe(true);
+  });
+
+  it("derives email health: Healthy when configured/enabled with zero operational failures", () => {
     expect(emailHealthFromState({ configured: true, enabled: true, recentFailures: 0 })).toEqual({
-      statusLabel: "Operational",
-      tone: "operational",
+      statusLabel: "Healthy",
+      tone: "healthy",
     });
-    expect(emailHealthFromState({ configured: true, enabled: true, recentFailures: 2 }).tone).toBe(
-      "attention",
-    );
+    expect(emailHealthFromState({ configured: true, enabled: true, recentFailures: 2 })).toEqual({
+      statusLabel: "Failures",
+      tone: "attention",
+    });
     expect(feed504cHealthFromState({ configured: false, enabled: false, statusLabel: "NOT_CONFIGURED" })).toEqual({
       statusLabel: "Not configured",
       tone: "not_configured",

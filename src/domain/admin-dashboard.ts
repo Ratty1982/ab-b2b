@@ -215,9 +215,21 @@ export function resolveAttentionTone(
   return "attention";
 }
 
+/**
+ * Diagnostic SMTP/test emails — visible in Settings → Email history, but must
+ * never drive System Health or Needs Attention.
+ */
+export const DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES = ["EMAIL_TEST"] as const;
+
+/** Count FAILED rows that affect operational email health (excludes diagnostics). */
+export function isOperationalEmailFailurePurpose(purpose: string): boolean {
+  return !(DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES as readonly string[]).includes(purpose);
+}
+
 export function emailHealthFromState(input: {
   configured: boolean;
   enabled: boolean;
+  /** Genuine transactional FAILED count in the health window — never EMAIL_TEST. */
   recentFailures: number;
 }): { statusLabel: string; tone: SystemHealthTone } {
   if (input.recentFailures > 0) {
@@ -229,7 +241,7 @@ export function emailHealthFromState(input: {
   if (!input.enabled) {
     return { statusLabel: "Disabled", tone: "disabled" };
   }
-  return { statusLabel: "Operational", tone: "operational" };
+  return { statusLabel: "Healthy", tone: "healthy" };
 }
 
 export function feed504cHealthFromState(input: {

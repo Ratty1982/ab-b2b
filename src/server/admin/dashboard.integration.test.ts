@@ -5,6 +5,8 @@ import { getAdminDashboard } from "@/server/admin/dashboard";
 import { AuthError } from "@/server/rbac/guards";
 import { PROTOTYPE_ADMIN_DASHBOARD_STRINGS } from "@/domain/admin-dashboard";
 import { londonCalendarDayBounds } from "@/lib/datetime";
+import { updateEmailSettings } from "@/server/email/settings";
+import { listTransactionalEmails } from "@/server/email/transactional";
 
 const prisma = new PrismaClient();
 const suffix = Date.now().toString(36);
@@ -320,5 +322,166 @@ describe("admin production dashboard", () => {
   it("lists known prototype dashboard strings for source regression", () => {
     expect(PROTOTYPE_ADMIN_DASHBOARD_STRINGS).toContain("Prototype data set");
     expect(PROTOTYPE_ADMIN_DASHBOARD_STRINGS).toContain("James Whitfield");
+  });
+});
+
+describe("admin dashboard email health excludes EMAIL_TEST diagnostics", () => {
+  const marker = `dash-email-health-${suffix}`;
+
+  async function ensureSmtpReady() {
+    await updateEmailSettings(adminId, {
+      enabled: true,
+      smtpHost: "smtp.dashboard-health.example",
+      smtpPort: 465,
+      smtpSecurity: "SSL_TLS",
+      smtpUsername: "health@example.invalid",
+      smtpPassword: "dashboard-health-secret",
+      replacePassword: true,
+      fromName: "Automotive Brands",
+      fromEmail: "trade@example.invalid",
+    });
+  }
+
+  async function insertMail(input: {
+    purpose: "EMAIL_TEST" | "PASSWORD_RESET" | "ORDER_RECEIVED";
+    status: "FAILED" | "SENT";
+    key: string;
+  }) {
+    return prisma.transactionalEmail.create({
+      data: {
+        purpose: input.purpose,
+        status: input.status,
+        toEmail: `recipient.${marker}@example.invalid`,
+        subject: `${input.purpose} ${input.status}`,
+        textBody: "body",
+        entityType: "Diagnostic",
+        entityId: input.key,
+        idempotencyKey: `${marker}:${input.key}`,
+        attemptCount: 1,
+        lastError: input.status === "FAILED" ? "smtp rejected" : null,
+        sentAt: input.status === "SENT" ? new Date() : null,
+      },
+    });
+  }
+
+  async function cleanupMarkedMails() {
+    await prisma.transactionalEmail.deleteMany({
+      where: { idempotencyKey: { startsWith: `${marker}:` } },
+    });
+  }
+
+  beforeAll(async () => {
+    await ensureSmtpReady();
+  });
+
+  afterAll(async () => {
+    await cleanupMarkedMails();
+  });
+
+  it("FAILED EMAIL_TEST alone does not increase operational failures or Needs Attention", async () => {
+    await cleanupMarkedMails();
+    // Isolate from other suites' FAILED operational rows in the shared DB.
+    await prisma.transactionalEmail.deleteMany({
+      where: {
+        status: "FAILED",
+        purpose: { not: "EMAIL_TEST" },
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+    });
+
+    const before = await getAdminDashboard(adminId);
+    expect(before.email?.recentFailures).toBe(0);
+
+    await insertMail({ purpose: "EMAIL_TEST", status: "FAILED", key: "test-fail-only" });
+
+    const dash = await getAdminDashboard(adminId);
+    expect(dash.email).not.toBeNull();
+    expect(dash.email?.configured).toBe(true);
+    expect(dash.email?.enabled).toBe(true);
+    expect(dash.email?.recentFailures).toBe(0);
+    const emailHealth = dash.systemHealth.find((r) => r.id === "email");
+    expect(emailHealth?.statusLabel).toBe("Healthy");
+    expect(emailHealth?.tone).toBe("healthy");
+    expect(dash.needsAttention.some((i) => i.id === "email-failures")).toBe(false);
+
+    // Diagnostic history remains visible in Settings → Recent Emails
+    const history = await listTransactionalEmails(adminId, {
+      purpose: "EMAIL_TEST",
+      status: "FAILED",
+      limit: 50,
+    });
+    expect(
+      history.some(
+        (r) => r.purpose === "EMAIL_TEST" && r.status === "FAILED" && r.entityId === "test-fail-only",
+      ),
+    ).toBe(true);
+  });
+
+  it("SENT EMAIL_TEST leaves email Healthy", async () => {
+    await cleanupMarkedMails();
+    await prisma.transactionalEmail.deleteMany({
+      where: {
+        status: "FAILED",
+        purpose: { not: "EMAIL_TEST" },
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+    });
+    await insertMail({ purpose: "EMAIL_TEST", status: "SENT", key: "test-sent" });
+    const dash = await getAdminDashboard(adminId);
+    expect(dash.email?.recentFailures).toBe(0);
+    expect(dash.systemHealth.find((r) => r.id === "email")?.statusLabel).toBe("Healthy");
+    expect(dash.needsAttention.some((i) => i.id === "email-failures")).toBe(false);
+  });
+
+  it("FAILED PASSWORD_RESET marks Failures and Needs Attention", async () => {
+    await cleanupMarkedMails();
+    const before = (await getAdminDashboard(adminId)).email?.recentFailures ?? 0;
+    await insertMail({ purpose: "PASSWORD_RESET", status: "FAILED", key: "reset-fail" });
+    const dash = await getAdminDashboard(adminId);
+    expect(dash.email?.recentFailures).toBe(before + 1);
+    expect(dash.systemHealth.find((r) => r.id === "email")?.statusLabel).toBe("Failures");
+    expect(dash.needsAttention.some((i) => i.id === "email-failures" && (i.count ?? 0) >= 1)).toBe(
+      true,
+    );
+  });
+
+  it("FAILED ORDER_RECEIVED marks Failures", async () => {
+    await cleanupMarkedMails();
+    const before = (await getAdminDashboard(adminId)).email?.recentFailures ?? 0;
+    await insertMail({ purpose: "ORDER_RECEIVED", status: "FAILED", key: "order-fail" });
+    const dash = await getAdminDashboard(adminId);
+    expect(dash.email?.recentFailures).toBe(before + 1);
+    expect(dash.systemHealth.find((r) => r.id === "email")?.statusLabel).toBe("Failures");
+  });
+
+  it("historical FAILED EMAIL_TEST plus successful genuine mail stays Healthy", async () => {
+    await cleanupMarkedMails();
+    await prisma.transactionalEmail.deleteMany({
+      where: {
+        status: "FAILED",
+        purpose: { not: "EMAIL_TEST" },
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+    });
+    await insertMail({ purpose: "EMAIL_TEST", status: "FAILED", key: "old-test-fail" });
+    await insertMail({ purpose: "PASSWORD_RESET", status: "SENT", key: "reset-ok" });
+    await insertMail({ purpose: "ORDER_RECEIVED", status: "SENT", key: "order-ok" });
+
+    const dash = await getAdminDashboard(adminId);
+    expect(dash.email?.recentFailures).toBe(0);
+    expect(dash.systemHealth.find((r) => r.id === "email")?.statusLabel).toBe("Healthy");
+    expect(dash.needsAttention.some((i) => i.id === "email-failures")).toBe(false);
+
+    const history = await listTransactionalEmails(adminId, { limit: 50 });
+    expect(
+      history.some(
+        (r) => r.purpose === "EMAIL_TEST" && r.status === "FAILED" && r.entityId === "old-test-fail",
+      ),
+    ).toBe(true);
+    expect(
+      history.some(
+        (r) => r.purpose === "PASSWORD_RESET" && r.status === "SENT" && r.entityId === "reset-ok",
+      ),
+    ).toBe(true);
   });
 });

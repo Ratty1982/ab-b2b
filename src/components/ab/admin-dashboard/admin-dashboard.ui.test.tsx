@@ -73,8 +73,8 @@ describe("admin dashboard UI states", () => {
           {
             id: "email",
             label: "Email",
-            statusLabel: "Operational",
-            tone: "operational",
+            statusLabel: "Healthy",
+            tone: "healthy",
             href: "/admin/settings?tab=email",
           },
           {
@@ -87,7 +87,7 @@ describe("admin dashboard UI states", () => {
         ]}
       />,
     );
-    expect(html).toContain("Operational");
+    expect(html).toContain("Healthy");
     expect(html).toContain("Not configured");
     expect(html).not.toContain("+12%");
   });

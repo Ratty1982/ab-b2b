@@ -16,6 +16,7 @@ import {
   DASHBOARD_PROCESSING_ORDER_STATUSES,
   attentionActionLabel,
   buildDashboardGreeting,
+  DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES,
   emailHealthFromState,
   feed504cHealthFromState,
   formatGbpIncVat,
@@ -207,6 +208,10 @@ export type AdminDashboardPayload = {
   email: {
     configured: boolean;
     enabled: boolean;
+    /**
+     * FAILED genuine transactional emails in the health window (7 days).
+     * Excludes diagnostic EMAIL_TEST — those remain in Settings → Recent Emails only.
+     */
     recentFailures: number;
     href: string;
   } | null;
@@ -557,6 +562,8 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
           where: {
             status: "FAILED",
             createdAt: { gte: sevenDaysAgo },
+            // Diagnostic SMTP test emails must not drive System Health / Needs Attention.
+            purpose: { notIn: [...DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES] },
           },
         })
       : Promise.resolve(0),
