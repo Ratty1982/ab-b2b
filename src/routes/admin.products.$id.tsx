@@ -26,13 +26,23 @@ import { catalogueActivityLabel } from "@/domain/product-content-json";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { AutopartProductCostPanel } from "@/components/catalogue/AutopartProductCostPanel";
+import { ProductDocumentsPanel } from "@/components/catalogue/ProductDocumentsPanel";
 import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { InstantText } from "@/components/ab/InstantText";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-type Tab = "Overview" | "Content" | "Images" | "Commercial" | "Inventory" | "Variants" | "SEO" | "Activity";
+type Tab =
+  | "Overview"
+  | "Content"
+  | "Images"
+  | "Commercial"
+  | "Documents"
+  | "Inventory"
+  | "Variants"
+  | "SEO"
+  | "Activity";
 
 export const Route = createFileRoute("/admin/products/$id")({
   head: () => ({ meta: [{ title: "Product workspace — Automotive Brands Admin" }] }),
@@ -43,6 +53,7 @@ export const Route = createFileRoute("/admin/products/$id")({
       tab === "Content" ||
       tab === "Images" ||
       tab === "Commercial" ||
+      tab === "Documents" ||
       tab === "Inventory" ||
       tab === "Variants" ||
       tab === "SEO" ||
@@ -250,7 +261,17 @@ function ProductWorkspace() {
   }
   if (!product || !draft) return <p className="p-6 text-[13px] text-steel">Loading product…</p>;
 
-  const tabs: Tab[] = ["Overview", "Content", "Images", "Commercial", "Inventory", "Variants", "SEO", "Activity"];
+  const tabs: Tab[] = [
+    "Overview",
+    "Content",
+    "Images",
+    "Commercial",
+    "Documents",
+    "Inventory",
+    "Variants",
+    "SEO",
+    "Activity",
+  ];
   const refreshMedia = () => load({ keepDraft: true });
 
   return (
@@ -325,6 +346,9 @@ function ProductWorkspace() {
             </div>
           ) : null}
         </div>
+        <div hidden={tab !== "Documents"}>
+          <ProductDocumentsPanel productId={product.id} />
+        </div>
         <div hidden={tab !== "Inventory"}>
           <InventoryPanel product={product} onSaved={refreshMedia} />
         </div>
@@ -337,7 +361,11 @@ function ProductWorkspace() {
         <div hidden={tab !== "Activity"}>
           <ActivityPanel product={product} />
         </div>
-        {tab !== "Images" && tab !== "Variants" && tab !== "Inventory" && tab !== "Activity" ? (
+        {tab !== "Images" &&
+        tab !== "Variants" &&
+        tab !== "Inventory" &&
+        tab !== "Documents" &&
+        tab !== "Activity" ? (
           <p className="mt-6 max-w-2xl text-[12px] text-steel">Switch tabs freely. Save in the header writes overview, content, commercial and SEO together.</p>
         ) : null}
       </div>

@@ -20,6 +20,19 @@ import { cn } from "@/lib/utils";
 import type { PublicProductCard } from "@/server/catalogue/products";
 import type { ProductSellingContent } from "@/domain/product-specifications";
 
+export type PublicProductDocument = {
+  id: string;
+  type: string;
+  typeLabel: string;
+  title: string;
+  revision: string | null;
+  documentDate: string | null;
+  sizeBytes: number;
+  updatedAt: string;
+  viewUrl: string;
+  downloadUrl: string;
+};
+
 export type PublicProductDetail = {
   card: PublicProductCard;
   sku: string;
@@ -40,6 +53,8 @@ export type PublicProductDetail = {
   unit?: string | null;
   /** SSR trade ordering panel when the root session is an order-capable trade actor. */
   orderingPanel?: ProductOrderingPanelView | null;
+  /** Current public product documents (SDS, TDS, …). Omit/empty = no section. */
+  documents?: PublicProductDocument[];
 };
 
 export function ProductDetailView({ data }: { data: PublicProductDetail }) {
@@ -103,6 +118,7 @@ export function ProductDetailView({ data }: { data: PublicProductDetail }) {
             ) : null}
           </div>
         ) : null}
+        <ProductSafetyDocuments documents={data.documents ?? []} />
       </div>
       {data.related.length ? (
         <section data-product-section="related" className="mt-12 border-t border-border/70 pt-10">
@@ -322,6 +338,73 @@ export function ProductDetails({ rows }: { rows: Array<{ label: string; value: s
       <div className="mt-4">
         <SpecTable rows={rows} />
       </div>
+    </section>
+  );
+}
+
+export function ProductSafetyDocuments({ documents }: { documents: PublicProductDocument[] }) {
+  if (!documents.length) return null;
+  const sds = documents.find((d) => d.type === "SAFETY_DATA_SHEET");
+  const others = documents.filter((d) => d.type !== "SAFETY_DATA_SHEET");
+  return (
+    <section data-product-section="safety-documents" className="max-w-3xl">
+      <h2 className="font-display text-xl font-semibold uppercase tracking-tight">
+        Safety &amp; Documents
+      </h2>
+      {sds ? (
+        <div className="mt-4 border-t border-border/80 pt-4">
+          <h3 className="text-[13px] font-semibold uppercase tracking-wide">
+            Safety Data Sheet (SDS)
+          </h3>
+          <p className="mt-1 text-[14px] text-steel">
+            Product safety and handling information.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a
+              href={sds.viewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide hover:bg-surface/60"
+            >
+              View SDS
+            </a>
+            <a
+              href={sds.downloadUrl}
+              className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-semibold uppercase tracking-wide text-primary-foreground"
+            >
+              Download PDF
+            </a>
+          </div>
+        </div>
+      ) : null}
+      {others.length ? (
+        <ul className="mt-5 space-y-3 border-t border-border/80 pt-4">
+          {others.map((doc) => (
+            <li key={doc.id} className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[13px] font-semibold uppercase tracking-wide">{doc.typeLabel}</p>
+                <p className="text-[13px] text-steel">{doc.title}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={doc.viewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[11px] font-semibold uppercase tracking-wide hover:bg-surface/60"
+                >
+                  View
+                </a>
+                <a
+                  href={doc.downloadUrl}
+                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[11px] font-semibold uppercase tracking-wide hover:bg-surface/60"
+                >
+                  Download PDF
+                </a>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }

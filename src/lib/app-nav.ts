@@ -22,6 +22,7 @@ export const ROUTES = {
   adminBrands: "/admin/brands",
   adminCategories: "/admin/categories",
   adminProductImports: "/admin/products/imports",
+  adminProductDocumentsImport: "/admin/products/documents-import",
   adminStockSync: "/admin/products/stock",
   adminCostIntelligence: "/admin/cost-intelligence",
   adminCustomers: "/admin/customers",

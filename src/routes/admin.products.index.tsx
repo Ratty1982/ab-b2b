@@ -56,6 +56,7 @@ type ProductRow = {
   availability: import("@/domain/availability").PublicAvailability | null;
   imageSrc: string | null;
   updatedAt: string;
+  hasSds: boolean;
 };
 
 function statusTone(status: string) {
@@ -89,6 +90,7 @@ function AdminProducts() {
   const [tradeVisible, setTradeVisible] = useState("");
   const [featured, setFeatured] = useState("");
   const [stock, setStock] = useState("");
+  const [sds, setSds] = useState<"" | "attached" | "missing">("");
   const [sort, setSort] = useState<"name" | "sku" | "updated" | "brand">("updated");
   const [brands, setBrands] = useState<BrandRow[]>([]);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
@@ -114,6 +116,7 @@ function AdminProducts() {
     tradeVisible: tradeVisible === "" ? undefined : tradeVisible === "true",
     featured: featured === "" ? undefined : featured === "true",
     stock: (stock || undefined) as "in" | "out" | "unknown" | undefined,
+    sds: sds || undefined,
     sort,
     page,
     pageSize: 25,
@@ -139,7 +142,7 @@ function AdminProducts() {
     if (catRows.ok) setCategories(catRows.data);
     setSelectedIds(new Set());
     setLoading(false);
-  }, [debouncedQ, brandId, categoryId, status, tradeVisible, featured, stock, sort, page]);
+  }, [debouncedQ, brandId, categoryId, status, tradeVisible, featured, stock, sds, sort, page]);
 
   useEffect(() => {
     void load();
@@ -239,6 +242,19 @@ function AdminProducts() {
         <option value="out">Local qty zero</option>
         <option value="unknown">No Autopart stock yet</option>
       </select>
+      <select
+        value={sds}
+        onChange={(e) => {
+          setPage(1);
+          setSds(e.target.value as "" | "attached" | "missing");
+        }}
+        className={inputClass}
+        aria-label="Safety Data Sheet filter"
+      >
+        <option value="">Safety Data Sheet — All</option>
+        <option value="attached">SDS attached</option>
+        <option value="missing">SDS missing</option>
+      </select>
       <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={inputClass}>
         <option value="updated">Recently updated</option>
         <option value="name">Name</option>
@@ -261,6 +277,14 @@ function AdminProducts() {
                 className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
               >
                 Import
+              </Link>
+            ) : null}
+            {canEdit ? (
+              <Link
+                to={ROUTES.adminProductDocumentsImport}
+                className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+              >
+                Import SDS
               </Link>
             ) : null}
             {canExport ? (
@@ -360,7 +384,12 @@ function AdminProducts() {
                 <div className="num text-[12px] text-primary">{p.sku}</div>
                 <div className="text-[12px] text-steel">{p.brand} · {p.category}</div>
                 <div className="mt-2 flex items-center justify-between gap-2">
-                  <StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge>
+                    <span className={cn("text-[11px]", p.hasSds ? "text-good" : "text-steel")}>
+                      {p.hasSds ? "SDS ✓" : "SDS Missing"}
+                    </span>
+                  </div>
                   <span className="text-[12px] font-semibold text-primary">Edit product</span>
                 </div>
               </div>
@@ -388,6 +417,7 @@ function AdminProducts() {
                 <th className="px-3 py-2 font-semibold">Brand</th>
                 <th className="px-3 py-2 font-semibold">Category</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
+                <th className="px-3 py-2 font-semibold">SDS</th>
                 <th className="px-3 py-2 text-right font-semibold">Trade</th>
                 <th className="px-3 py-2 text-right font-semibold">RRP</th>
                 <th className="px-3 py-2 text-right font-semibold">Stock</th>
@@ -397,9 +427,9 @@ function AdminProducts() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={canEdit ? 12 : 11} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
+                <tr><td colSpan={canEdit ? 13 : 12} className="px-3 py-10 text-center text-sm text-steel">Loading catalogue…</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={canEdit ? 12 : 11} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
+                <tr><td colSpan={canEdit ? 13 : 12} className="px-3 py-10 text-center text-sm text-steel">No products match. Add a product or import a CSV.</td></tr>
               ) : (
                 items.map((p, i) => (
                   <tr key={p.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
@@ -425,6 +455,17 @@ function AdminProducts() {
                     <td className="px-3 py-2 text-steel">{p.brand}</td>
                     <td className="px-3 py-2 text-steel">{p.category}</td>
                     <td className="px-3 py-2"><StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge></td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={cn(
+                          "text-[11px] font-semibold uppercase tracking-wide",
+                          p.hasSds ? "text-good" : "text-steel",
+                        )}
+                        title={p.hasSds ? "Safety Data Sheet attached" : "Safety Data Sheet missing"}
+                      >
+                        {p.hasSds ? "SDS ✓" : "SDS Missing"}
+                      </span>
+                    </td>
                     <td className="num px-3 py-2 text-right">{p.trade != null ? gbp(p.trade) : "—"}</td>
                     <td className="num px-3 py-2 text-right text-steel">{p.rrp != null ? gbp(p.rrp) : "—"}</td>
                     <td className="px-3 py-2 text-right">

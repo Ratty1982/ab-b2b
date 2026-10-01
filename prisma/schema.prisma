@@ -389,6 +389,23 @@ enum DocumentVisibility {
   INTERNAL
 }
 
+/// Customer-facing / internal product file attachments (SDS, TDS, etc.).
+enum ProductDocumentType {
+  SAFETY_DATA_SHEET
+  TECHNICAL_DATA_SHEET
+  INSTRUCTIONS
+  CERTIFICATE
+  DECLARATION
+  FITTING_GUIDE
+  OTHER
+}
+
+/// Only CURRENT documents are shown publicly for a given type.
+enum ProductDocumentStatus {
+  CURRENT
+  ARCHIVED
+}
+
 enum PromotionType {
   PERCENT
   FIXED
@@ -899,6 +916,7 @@ model Product {
   category  Category?        @relation(fields: [categoryId], references: [id])
   variants  ProductVariant[]
   documents Document[]
+  productDocuments ProductDocument[]
   media     ProductMedia[]
   tasks     Task[]
 
@@ -2163,6 +2181,8 @@ model Note {
 
 // ─── Documents & audit ───────────────────────────────────────────────────────
 
+/// Legacy polymorphic attachment scaffold (company / application / product).
+/// Product SDS and related catalogue files use ProductDocument instead.
 model Document {
   id             String             @id @default(cuid())
   fileName       String
@@ -2184,6 +2204,45 @@ model Document {
   @@index([companyId])
   @@index([productId])
   @@index([visibility])
+}
+
+/// Reusable product-level documents (Safety Data Sheets, TDS, etc.).
+/// Stored in R2 (or Postgres bytes fallback). Product-owned by default.
+model ProductDocument {
+  id                 String                @id @default(cuid())
+  productId          String
+  /// Optional variant scope — normally null (one SDS covers all pack sizes).
+  productVariantId   String?
+  type               ProductDocumentType
+  status             ProductDocumentStatus @default(CURRENT)
+  title              String
+  originalFilename   String
+  storageKey         String
+  storageProvider    String                @default("database")
+  /// Local/database provider payload (null when stored in R2/S3).
+  bytes              Bytes?
+  contentType        String
+  sizeBytes          Int
+  checksumSha256     String
+  revision           String?
+  /// Optional document/revision calendar date (UTC noon).
+  documentDate       DateTime?
+  notes              String?
+  sourceMetadata     Json?
+  uploadedById       String?
+  archivedAt         DateTime?
+  archivedById       String?
+  replacesDocumentId String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, type, status])
+  @@index([productId, status])
+  @@index([checksumSha256])
+  @@index([type, status])
+  @@index([uploadedById])
 }
 
 model AuditEvent {

@@ -64,6 +64,7 @@ export type CatalogueListItem = {
   updatedAt: string;
   isTradeVisible: boolean;
   isFeatured: boolean;
+  hasSds: boolean;
 };
 
 export type CatalogueListQuery = {
@@ -74,6 +75,8 @@ export type CatalogueListQuery = {
   tradeVisible?: boolean | "";
   featured?: boolean | "";
   stock?: "in" | "out" | "unknown" | "";
+  /** Safety Data Sheet filter */
+  sds?: "attached" | "missing" | "";
   sort?: "name" | "sku" | "updated" | "brand";
   page?: number;
   pageSize?: number;
@@ -108,6 +111,7 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       ]
     : undefined;
 
+  const { sdsFilterWhere } = await import("@/server/catalogue/product-documents");
   const where: Prisma.ProductWhereInput = {
     ...(raw.brandId ? { brandId: raw.brandId } : {}),
     ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
@@ -116,6 +120,7 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       ? { isTradeVisible: raw.tradeVisible }
       : {}),
     ...(raw.featured === true || raw.featured === false ? { isFeatured: raw.featured } : {}),
+    ...sdsFilterWhere(raw.sds),
     ...(q
       ? {
           OR: [
@@ -164,6 +169,11 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
         },
         media: {
           orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+          take: 1,
+        },
+        productDocuments: {
+          where: { type: "SAFETY_DATA_SHEET", status: "CURRENT" },
+          select: { id: true },
           take: 1,
         },
       },
@@ -226,6 +236,7 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       updatedAt: row.updatedAt.toISOString(),
       isTradeVisible: row.isTradeVisible,
       isFeatured: row.isFeatured,
+      hasSds: row.productDocuments.length > 0,
     };
   });
 
@@ -317,8 +328,16 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
   const specDoc = parseSpecificationsDocument(product.specifications);
   const activity = await prisma.auditEvent.findMany({
     where: {
-      OR: [{ entityId: product.id }, { entityId: variant?.id ?? "__none__" }],
-      entityType: { in: ["Product", "ProductVariant"] },
+      OR: [
+        {
+          entityType: { in: ["Product", "ProductVariant"] },
+          OR: [{ entityId: product.id }, { entityId: variant?.id ?? "__none__" }],
+        },
+        {
+          entityType: "ProductDocument",
+          metadata: { path: ["productId"], equals: product.id },
+        },
+      ],
     },
     orderBy: { createdAt: "desc" },
     take: 40,
@@ -1138,7 +1157,8 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     }));
   if (!product) return null;
   const variant = defaultVariant(product.variants);
-  const [related, nav] = await Promise.all([
+  const { listPublicProductDocuments } = await import("@/server/catalogue/product-documents");
+  const [related, nav, documents] = await Promise.all([
     prisma.product.findMany({
       where: { ...publicWhere, brandId: product.brandId, id: { not: product.id } },
       include: publicInclude,
@@ -1146,6 +1166,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
       orderBy: { name: "asc" },
     }),
     loadPublicCatalogueNav(),
+    listPublicProductDocuments(product.id),
   ]);
   const priced = await displayPricesForProductRows(userId, [product, ...related]);
   const [freshness, globalBackorderPolicy] = await Promise.all([
@@ -1168,6 +1189,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     mpn: variant?.mpn ?? null,
     unit: variant?.unit ?? "EA",
     ...publicOrderingFromVariant(variant),
+    documents,
     related: related.map((row) => {
       const rel = defaultVariant(row.variants);
       return toPublicCard(row, priced.viewer, rel ? priced.byVariantId.get(rel.id) : undefined, freshness.stale, null, globalBackorderPolicy);

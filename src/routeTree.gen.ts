@@ -74,11 +74,13 @@ import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.in
 import { Route as AdminPricingIdRouteImport } from './routes/admin.pricing.$id'
 import { Route as AdminProductsIndexRouteImport } from './routes/admin.products.index'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
+import { Route as AdminProductsDocumentsImportRouteImport } from './routes/admin.products.documents-import'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
 import { Route as AdminProductsStockRouteImport } from './routes/admin.products.stock'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
+import { Route as ApiProductDocumentsIdRouteImport } from './routes/api/product-documents/$id'
 import { Route as PortalOrdersIndexRouteImport } from './routes/portal.orders.index'
 import { Route as PortalOrdersOrderIdRouteImport } from './routes/portal.orders.$orderId'
 import { Route as PortalQuotesIndexRouteImport } from './routes/portal.quotes.index'
@@ -424,6 +426,12 @@ const AdminProductsIdRoute = AdminProductsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminProductsRoute,
 } as any)
+const AdminProductsDocumentsImportRoute =
+  AdminProductsDocumentsImportRouteImport.update({
+    id: '/documents-import',
+    path: '/documents-import',
+    getParentRoute: () => AdminProductsRoute,
+  } as any)
 const AdminProductsImportsRoute = AdminProductsImportsRouteImport.update({
   id: '/imports',
   path: '/imports',
@@ -447,6 +455,11 @@ const ApiCmsMediaIdRoute = ApiCmsMediaIdRouteImport.update({
 const ApiInternalStockSyncRoute = ApiInternalStockSyncRouteImport.update({
   id: '/api/internal/stock-sync',
   path: '/api/internal/stock-sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProductDocumentsIdRoute = ApiProductDocumentsIdRouteImport.update({
+  id: '/api/product-documents/$id',
+  path: '/api/product-documents/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PortalOrdersIndexRoute = PortalOrdersIndexRouteImport.update({
@@ -612,11 +625,13 @@ export interface FileRoutesByFullPath {
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
@@ -692,10 +707,12 @@ export interface FileRoutesByTo {
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/stock': typeof AdminProductsStockRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
@@ -782,11 +799,13 @@ export interface FileRoutesById {
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
@@ -875,11 +894,13 @@ export interface FileRouteTypes {
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/api/product-documents/$id'
     | '/portal/orders/$orderId'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
@@ -955,10 +976,12 @@ export interface FileRouteTypes {
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/documents-import'
     | '/admin/products/stock'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/api/product-documents/$id'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/sales/customers/$id'
@@ -1044,11 +1067,13 @@ export interface FileRouteTypes {
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/api/product-documents/$id'
     | '/portal/orders/$orderId'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
@@ -1102,6 +1127,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCmsMediaIdRoute: typeof ApiCmsMediaIdRoute
   ApiInternalStockSyncRoute: typeof ApiInternalStockSyncRoute
+  ApiProductDocumentsIdRoute: typeof ApiProductDocumentsIdRoute
   ProductsCategorySlugRoute: typeof ProductsCategorySlugRoute
 }
 
@@ -1562,6 +1588,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsIdRouteImport
       parentRoute: typeof AdminProductsRoute
     }
+    '/admin/products/documents-import': {
+      id: '/admin/products/documents-import'
+      path: '/documents-import'
+      fullPath: '/admin/products/documents-import'
+      preLoaderRoute: typeof AdminProductsDocumentsImportRouteImport
+      parentRoute: typeof AdminProductsRoute
+    }
     '/admin/products/imports': {
       id: '/admin/products/imports'
       path: '/imports'
@@ -1595,6 +1628,13 @@ declare module '@tanstack/react-router' {
       path: '/api/internal/stock-sync'
       fullPath: '/api/internal/stock-sync'
       preLoaderRoute: typeof ApiInternalStockSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/product-documents/$id': {
+      id: '/api/product-documents/$id'
+      path: '/api/product-documents/$id'
+      fullPath: '/api/product-documents/$id'
+      preLoaderRoute: typeof ApiProductDocumentsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/portal/orders/': {
@@ -1805,6 +1845,7 @@ const AdminProductsImportsRouteWithChildren =
 
 interface AdminProductsRouteChildren {
   AdminProductsIdRoute: typeof AdminProductsIdRoute
+  AdminProductsDocumentsImportRoute: typeof AdminProductsDocumentsImportRoute
   AdminProductsImportsRoute: typeof AdminProductsImportsRouteWithChildren
   AdminProductsStockRoute: typeof AdminProductsStockRoute
   AdminProductsIndexRoute: typeof AdminProductsIndexRoute
@@ -1812,6 +1853,7 @@ interface AdminProductsRouteChildren {
 
 const AdminProductsRouteChildren: AdminProductsRouteChildren = {
   AdminProductsIdRoute: AdminProductsIdRoute,
+  AdminProductsDocumentsImportRoute: AdminProductsDocumentsImportRoute,
   AdminProductsImportsRoute: AdminProductsImportsRouteWithChildren,
   AdminProductsStockRoute: AdminProductsStockRoute,
   AdminProductsIndexRoute: AdminProductsIndexRoute,
@@ -2018,6 +2060,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCmsMediaIdRoute: ApiCmsMediaIdRoute,
   ApiInternalStockSyncRoute: ApiInternalStockSyncRoute,
+  ApiProductDocumentsIdRoute: ApiProductDocumentsIdRoute,
   ProductsCategorySlugRoute: ProductsCategorySlugRoute,
 }
 export const routeTree = rootRouteImport

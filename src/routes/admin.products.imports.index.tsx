@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { decodeCsvBytes, ingestCsvText } from "@/domain/catalogue-csv";
+import { ROUTES } from "@/lib/app-nav";
 import { listProductImportsFn, uploadProductImportFn, downloadProductImportTemplateFn } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,13 @@ function ProductImports() {
         title="Imports"
         sub="Upload → validate → map → preview → confirm. The Excel template lists current categories as dropdowns. Empty cells do not wipe existing values."
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to={ROUTES.adminProductDocumentsImport}
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
+            >
+              Import SDS
+            </Link>
             <button
               type="button"
               className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase"

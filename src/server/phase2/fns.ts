@@ -916,6 +916,85 @@ export const updateCatalogueProductFn = createServerFn({ method: "POST" })
     }
   });
 
+/* ─── Product Documents / SDS ─────────────────────────────────────────────── */
+
+export const listProductDocumentsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { productId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const docs = await import("@/server/catalogue/product-documents");
+      return { ok: true as const, data: await docs.listProductDocumentsAdmin(userId, data.productId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const uploadProductDocumentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const docs = await import("@/server/catalogue/product-documents");
+      return { ok: true as const, data: await docs.uploadProductDocument(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const archiveProductDocumentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { documentId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const docs = await import("@/server/catalogue/product-documents");
+      return { ok: true as const, data: await docs.archiveProductDocument(userId, data.documentId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewBulkSdsImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as {
+    files: Array<{ filename: string; contentType?: string; base64: string; clientKey?: string }>;
+  })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const docs = await import("@/server/catalogue/product-documents");
+      return { ok: true as const, data: await docs.previewBulkSdsImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmBulkSdsImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const docs = await import("@/server/catalogue/product-documents");
+      return { ok: true as const, data: await docs.confirmBulkSdsImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchProductsForDocumentAttachFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q: string; limit?: number })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const docs = await import("@/server/catalogue/product-documents");
+      return {
+        ok: true as const,
+        data: await docs.searchProductsForDocumentAttach(userId, data.q, data.limit),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const bulkUpdateBackorderPolicyFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

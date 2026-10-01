@@ -860,6 +860,10 @@ export function catalogueActivityLabel(action: string): string {
   if (action === "catalogue.product_updated") return "Product updated";
   if (action === "catalogue.product_status_changed") return "Product status changed";
   if (action === "catalogue.product_created") return "Product created";
+  if (action === "catalogue.document_uploaded") return "Safety Data Sheet uploaded";
+  if (action === "catalogue.document_replaced") return "Safety Data Sheet replaced";
+  if (action === "catalogue.document_archived") return "Product document archived";
+  if (action === "catalogue.bulk_document_import") return "Bulk document import";
   return action.replace(/^catalogue\./, "").replace(/_/g, " ");
 }
 
