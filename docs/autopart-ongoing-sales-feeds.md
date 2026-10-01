@@ -27,6 +27,10 @@ SUM(TRM21QC.Sales)  ≈  504.Goods     (NET to NET, ±1p)
 
 Do not compare TRM21QC Sales to 504 gross Value.
 
+### TRM21QC Description quoting (Autopart inch marks)
+
+Autopart sometimes emits an unescaped `"` (inch) inside an already-quoted Description, e.g. `"14" Phoenix…"`. Strict CSV would shift Qty/Sales. The TRM21QC parser recovers these rows by taking the first five fields (Cust…Part Number) and the last five financial fields (Qty…Perc%) from structural boundaries; the middle is Description. If the five trailing financial tokens cannot be identified confidently, the row is rejected as `PARSE_ERROR` — never with an invented Sales value. `INVALID_NET_SALES` is reserved for blank/invalid Sales after confident recovery.
+
 ## Credits
 
 Credit notes are first-class:
