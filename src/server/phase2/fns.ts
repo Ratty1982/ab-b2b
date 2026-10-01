@@ -3519,6 +3519,42 @@ export const getCustomerRangeOpportunitiesFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getSalesRepPortfolioFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const portfolio = await import("@/server/sales-intelligence/portfolio");
+      return { ok: true as const, data: await portfolio.getSalesRepPortfolio(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportSalesRepPortfolioCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const portfolio = await import("@/server/sales-intelligence/portfolio");
+      return { ok: true as const, data: await portfolio.exportSalesRepPortfolioCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPortfolioCustomerDetailFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const portfolio = await import("@/server/sales-intelligence/portfolio");
+      return { ok: true as const, data: await portfolio.getPortfolioCustomerDetail(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const exportCustomerRangeOpportunitiesCsvFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

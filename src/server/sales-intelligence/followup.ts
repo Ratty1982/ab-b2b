@@ -62,6 +62,7 @@ const previewSchema = z.object({
     "GAP_ANALYSIS",
     "RANGE_OPPORTUNITY",
     "REBATE_ANALYSIS",
+    "PORTFOLIO",
   ]),
   sourceReason: z
     .enum([
@@ -73,6 +74,10 @@ const previewSchema = z.object({
       "NET_SPEND_REVIEW",
       "CUSTOMER",
       "PRODUCT",
+      "PURCHASE_GAP",
+      "DORMANT",
+      "DECLINING",
+      "CROSS_SELL",
     ])
     .optional(),
   companyId: z.string().min(1),
@@ -264,6 +269,78 @@ async function buildSnapshot(
         from: input.from ?? undefined,
         to: input.to ?? undefined,
         q: row.sku,
+      })}`,
+      capturedAt,
+    };
+  }
+
+  if (input.sourceModule === "PORTFOLIO") {
+    const { getPortfolioCustomerDetail } = await import("@/server/sales-intelligence/portfolio");
+    const detail = await getPortfolioCustomerDetail(actorUserId, {
+      companyId: input.companyId,
+      period: input.period ?? "THIS_MONTH",
+      from: input.from ?? null,
+      to: input.to ?? null,
+    });
+    const reason = (input.sourceReason ?? "CUSTOMER") as SiFollowupReason;
+    const allowed = [
+      "PURCHASE_GAP",
+      "DORMANT",
+      "DECLINING",
+      "STOPPED",
+      "CROSS_SELL",
+      "RANGE_GAP",
+      "CUSTOMER",
+    ];
+    if (!allowed.includes(reason)) {
+      throw new AuthError("Unsupported portfolio follow-up reason", "BAD_REQUEST", 400);
+    }
+    let productId: string | null = null;
+    const sku = input.sku?.trim() || null;
+    if (sku) {
+      const v = await prisma.productVariant.findFirst({
+        where: { sku: { equals: sku, mode: "insensitive" } },
+        select: { productId: true },
+      });
+      productId = v?.productId ?? null;
+    }
+    return {
+      sourceModule: "PORTFOLIO",
+      sourceReason: reason,
+      companyId: company.id,
+      companyName: company.name,
+      autopartCustomerCode: company.autopartCustomerCode,
+      productId,
+      sku,
+      productName: null,
+      brandName: null,
+      categoryName: null,
+      historicOnly: false,
+      selectedPeriod: {
+        from: detail.period.displayFrom,
+        to: detail.period.displayTo,
+        label: detail.period.label,
+      },
+      comparisonPeriod: detail.comparison
+        ? {
+            from: detail.comparison.from,
+            to: detail.comparison.to,
+            label: detail.comparison.label,
+          }
+        : null,
+      metrics: {
+        "Current net sales": detail.customer.currentNetSales,
+        "Previous net sales": detail.customer.previousNetSales,
+        Movement: detail.customer.movement,
+        Cadence: detail.customer.cadenceSummary,
+        "Stopped products": detail.customer.stoppedProductCount,
+        Opportunities: detail.customer.opportunityCount,
+      },
+      deepLinkPath: `${ROUTES.salesIntelligencePortfolio}${qs({
+        companyId: company.id,
+        period: input.period ?? "THIS_MONTH",
+        from: input.from ?? undefined,
+        to: input.to ?? undefined,
       })}`,
       capturedAt,
     };
@@ -621,7 +698,14 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
       q: z.string().max(200).optional().nullable(),
       status: z.enum(["OPEN", "IN_PROGRESS", "DONE", "CANCELLED", "OPEN_ACTIVE"]).optional().nullable(),
       sourceModule: z
-        .enum(["SALES_ENQUIRY", "GAP_ANALYSIS", "RANGE_OPPORTUNITY", "REBATE_ANALYSIS", "ALL"])
+        .enum([
+          "SALES_ENQUIRY",
+          "GAP_ANALYSIS",
+          "RANGE_OPPORTUNITY",
+          "REBATE_ANALYSIS",
+          "PORTFOLIO",
+          "ALL",
+        ])
         .optional()
         .nullable(),
       assigneeId: z.string().optional().nullable(),

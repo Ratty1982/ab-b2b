@@ -12,7 +12,9 @@ Internal staff module for factual Autopart historic sales enquiry, period gap co
 
 **Phase 5 ships:** Sales Actions / Follow-Ups — human-initiated CRM Task creation from Sales Intelligence evidence (no automatic CRM actions).
 
-**Not yet built:** Cross-sell UI, AI recommendations, forecasting, churn scoring, salesperson scoring, rebate schemes / percentages / accruals, management dashboards, follow-up conversion analytics.
+**Phase 6 ships:** Sales Rep Portfolio — daily workspace for assigned (or all) customers: needs-attention, cadence/dormancy, growth/decline, stopped products, explainable cross-sell/brand-gap opportunities, CRM follow-up bridge, CSV export.
+
+**Not yet built:** AI recommendations, forecasting, churn scoring, salesperson scoring, rebate schemes / percentages / accruals, follow-up conversion analytics.
 
 ## Route & navigation
 
@@ -22,9 +24,10 @@ Internal staff module for factual Autopart historic sales enquiry, period gap co
 | Gap Analysis | `/sales/sales-intelligence/gaps` |
 | Range Opportunities | `/sales/sales-intelligence/opportunities` |
 | Rebate Analysis | `/sales/sales-intelligence/rebates` |
+| Sales Rep Portfolio | `/sales/sales-intelligence/portfolio` |
 | CRM Tasks (incl. SI follow-ups) | `/crm/tasks` |
 
-Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis | Range Opportunities | Rebate Analysis**
+Nav section: **Sales Intelligence → Sales Enquiry | Sales Rep Portfolio | Gap Analysis | Range Opportunities | Rebate Analysis**
 
 CRM remains separate. Do not move the Sales Enquiry route unnecessarily.
 
@@ -50,7 +53,7 @@ URL-backed state examples:
 
 ## RBAC
 
-Permission: `sales_intelligence.view` (shared by Enquiry, Gap Analysis, Range Opportunities, and Rebate Analysis).
+Permission: `sales_intelligence.view` (shared by Enquiry, Sales Rep Portfolio, Gap Analysis, Range Opportunities, and Rebate Analysis).
 
 Granted to:
 

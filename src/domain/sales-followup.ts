@@ -10,6 +10,7 @@ export const SI_FOLLOWUP_SOURCE_MODULES = [
   "GAP_ANALYSIS",
   "RANGE_OPPORTUNITY",
   "REBATE_ANALYSIS",
+  "PORTFOLIO",
 ] as const;
 
 export type SiFollowupSourceModule = (typeof SI_FOLLOWUP_SOURCE_MODULES)[number];
@@ -23,6 +24,10 @@ export const SI_FOLLOWUP_REASONS = [
   "NET_SPEND_REVIEW",
   "CUSTOMER",
   "PRODUCT",
+  "PURCHASE_GAP",
+  "DORMANT",
+  "DECLINING",
+  "CROSS_SELL",
 ] as const;
 
 export type SiFollowupReason = (typeof SI_FOLLOWUP_REASONS)[number];
@@ -66,6 +71,8 @@ export function siFollowupSourceLabel(module: SiFollowupSourceModule): string {
       return "Range Opportunity";
     case "REBATE_ANALYSIS":
       return "Rebate Analysis";
+    case "PORTFOLIO":
+      return "Sales Rep Portfolio";
   }
 }
 
@@ -87,6 +94,14 @@ export function siFollowupReasonLabel(reason: SiFollowupReason): string {
       return "Customer follow-up";
     case "PRODUCT":
       return "Product follow-up";
+    case "PURCHASE_GAP":
+      return "Purchasing gap";
+    case "DORMANT":
+      return "Dormant customer";
+    case "DECLINING":
+      return "Sales decline";
+    case "CROSS_SELL":
+      return "Cross-sell opportunity";
   }
 }
 
@@ -112,6 +127,14 @@ export function defaultFollowupSubject(input: {
         : "Net spend review";
     case "CUSTOMER":
       return input.companyName ? `Follow up — ${input.companyName}` : "Follow up";
+    case "PURCHASE_GAP":
+      return "Follow up — purchasing gap";
+    case "DORMANT":
+      return "Follow up — dormant customer";
+    case "DECLINING":
+      return "Follow up — sales decline";
+    case "CROSS_SELL":
+      return product ? `Follow up — range opportunity (${product})` : "Follow up — range opportunity";
   }
 }
 

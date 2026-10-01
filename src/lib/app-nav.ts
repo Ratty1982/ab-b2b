@@ -79,6 +79,7 @@ export const ROUTES = {
   adminOrder: (id: string) => `/admin/orders/${id}` as const,
 
   salesIntelligence: "/sales/sales-intelligence",
+  salesIntelligencePortfolio: "/sales/sales-intelligence/portfolio",
   salesIntelligenceGaps: "/sales/sales-intelligence/gaps",
   salesIntelligenceOpportunities: "/sales/sales-intelligence/opportunities",
   salesIntelligenceRebates: "/sales/sales-intelligence/rebates",
@@ -398,10 +399,20 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: ROUTES.salesIntelligence,
         matchPrefixes: [ROUTES.salesIntelligence],
         excludePrefixes: [
+          ROUTES.salesIntelligencePortfolio,
           ROUTES.salesIntelligenceGaps,
           ROUTES.salesIntelligenceOpportunities,
           ROUTES.salesIntelligenceRebates,
         ],
+        permission: "sales_intelligence.view",
+        implemented: true,
+      },
+      {
+        id: "sales-rep-portfolio",
+        label: "Sales Rep Portfolio",
+        icon: "bar-chart-3",
+        to: ROUTES.salesIntelligencePortfolio,
+        matchPrefixes: [ROUTES.salesIntelligencePortfolio],
         permission: "sales_intelligence.view",
         implemented: true,
       },
