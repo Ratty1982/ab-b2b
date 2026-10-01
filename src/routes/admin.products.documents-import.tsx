@@ -110,6 +110,10 @@ function BulkSdsImportPage() {
     if (res.ok) setSpSettings(res.data);
   }, []);
 
+  const onSharePointSettingsChanged = useCallback((s: SpSettings) => {
+    setSpSettings(s);
+  }, []);
+
   useEffect(() => {
     void loadSpSettings();
   }, [loadSpSettings]);
@@ -501,9 +505,7 @@ function BulkSdsImportPage() {
             {showSpConfig || !spSettings?.folderResolved ? (
               <SharePointSdsSettingsPanel
                 compact
-                onChanged={(s) => {
-                  setSpSettings(s);
-                }}
+                onChanged={onSharePointSettingsChanged}
               />
             ) : null}
 

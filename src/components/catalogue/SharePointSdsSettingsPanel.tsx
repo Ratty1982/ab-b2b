@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { InstantText } from "@/components/ab/InstantText";
+import {
+  buildSharePointSdsSavePayload,
+  clientSecretFieldPlaceholder,
+  emptySharePointSdsFormDraft,
+  formDraftFromSettings,
+  updateFormDraftField,
+  type SharePointSdsFormDraft,
+} from "@/domain/sharepoint-sds-form";
 import { cn } from "@/lib/utils";
 import {
   getSharePointSdsSettingsFn,
@@ -25,86 +33,98 @@ export function SharePointSdsSettingsPanel({
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [tenantId, setTenantId] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [upn, setUpn] = useState("");
-  const [folderUrl, setFolderUrl] = useState("");
-  const [folderName, setFolderName] = useState("Power Maxed SDS 2025");
-  const [sourceLabel, setSourceLabel] = useState("Power Maxed SDS");
+  const [draft, setDraft] = useState<SharePointSdsFormDraft>(emptySharePointSdsFormDraft);
+  const [hydrated, setHydrated] = useState(false);
 
-  const load = useCallback(async () => {
+  // Parent often passes an inline onChanged — keep it out of effect deps so we never
+  // re-fetch/re-hydrate (which was wiping Tenant ID and other fields while typing).
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getSharePointSdsSettingsFn();
+      if (cancelled) return;
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setError(null);
+      setSettings(res.data);
+      setDraft(formDraftFromSettings(res.data));
+      setHydrated(true);
+      onChangedRef.current?.(res.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function setField<K extends keyof SharePointSdsFormDraft>(
+    field: K,
+    value: SharePointSdsFormDraft[K],
+  ) {
+    setDraft((prev) => updateFormDraftField(prev, field, value));
+  }
+
+  /** Refresh connection status only — do not reset form draft. */
+  async function refreshStatus() {
     const res = await getSharePointSdsSettingsFn();
     if (!res.ok) {
       setError(res.error);
-      return;
+      return null;
     }
     setError(null);
     setSettings(res.data);
-    setTenantId(res.data.tenantId ?? "");
-    setClientId(res.data.clientId ?? "");
-    setUpn(res.data.userPrincipalName ?? "");
-    setFolderUrl(res.data.folderUrlHint ?? "");
-    setFolderName(res.data.folderDisplayName);
-    setSourceLabel(res.data.sourceLabel);
-    onChanged?.(res.data);
-  }, [onChanged]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    onChangedRef.current?.(res.data);
+    return res.data;
+  }
 
   async function save() {
     setBusy("save");
     const res = await updateSharePointSdsSettingsFn({
-      data: {
-        enabled: true,
-        sourceLabel,
-        folderDisplayName: folderName,
-        folderUrlHint: folderUrl || null,
-        tenantId: tenantId || null,
-        clientId: clientId || null,
-        clientSecret: clientSecret.trim() || undefined,
-        userPrincipalName: upn || null,
-      },
+      data: buildSharePointSdsSavePayload(draft),
     });
     setBusy(null);
     if (!res.ok) {
       toast.error(res.error);
       return;
     }
-    setClientSecret("");
     setSettings(res.data);
-    onChanged?.(res.data);
+    // Re-sync non-secret fields from server; always clear write-only secret input.
+    setDraft(formDraftFromSettings(res.data));
+    onChangedRef.current?.(res.data);
     toast.success("SharePoint SDS settings saved");
   }
 
   async function resolveFolder() {
     setBusy("resolve");
     const saveFirst = await updateSharePointSdsSettingsFn({
-      data: {
-        folderUrlHint: folderUrl || null,
-        userPrincipalName: upn || null,
-        folderDisplayName: folderName,
-        tenantId: tenantId || null,
-        clientId: clientId || null,
-        clientSecret: clientSecret.trim() || undefined,
-      },
+      data: buildSharePointSdsSavePayload(draft),
     });
     if (!saveFirst.ok) {
       setBusy(null);
       toast.error(saveFirst.error);
       return;
     }
+    // Keep typed secret until resolve finishes; clear only after successful save path above
+    // already persisted it. Clear local secret copy now that it was sent.
+    setDraft((prev) => ({ ...prev, clientSecret: "" }));
+    setSettings(saveFirst.data);
+    onChangedRef.current?.(saveFirst.data);
+
     const res = await resolveSharePointSdsFolderFn();
     setBusy(null);
     if (!res.ok) {
       toast.error(res.error);
-      await load();
+      // Failed Graph auth must not wipe saved settings or in-progress form fields.
+      await refreshStatus();
       return;
     }
     setSettings(res.data);
-    onChanged?.(res.data);
+    setDraft(formDraftFromSettings(res.data));
+    onChangedRef.current?.(res.data);
     toast.success("Folder resolved");
   }
 
@@ -114,15 +134,16 @@ export function SharePointSdsSettingsPanel({
     setBusy(null);
     if (!res.ok) {
       toast.error(res.error);
-      await load();
+      // Update last-tested status only — keep Tenant ID / Client ID / etc.
+      await refreshStatus();
       return;
     }
     setSettings(res.data);
-    onChanged?.(res.data);
+    onChangedRef.current?.(res.data);
     toast.success("Connected");
   }
 
-  if (!settings && !error) {
+  if (!hydrated && !error) {
     return <p className="text-[13px] text-steel">Loading SharePoint settings…</p>;
   }
 
@@ -164,6 +185,13 @@ export function SharePointSdsSettingsPanel({
             <dt className="uppercase text-steel">Folder</dt>
             <dd className="font-semibold">{settings.folderDisplayName}</dd>
           </div>
+          <div>
+            <dt className="uppercase text-steel">Client secret</dt>
+            <dd className="font-semibold">
+              {settings.hasClientSecret ? "Secret configured" : "Not set"}
+              {settings.secretFromEnv ? " (env)" : null}
+            </dd>
+          </div>
           {settings.lastConnectionTestAt ? (
             <div>
               <dt className="uppercase text-steel">Last tested</dt>
@@ -180,55 +208,67 @@ export function SharePointSdsSettingsPanel({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Source label">
-          <input className={inputClass} value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} />
+          <input
+            className={inputClass}
+            value={draft.sourceLabel}
+            onChange={(e) => setField("sourceLabel", e.target.value)}
+          />
         </Field>
         <Field label="Folder display name">
-          <input className={inputClass} value={folderName} onChange={(e) => setFolderName(e.target.value)} />
+          <input
+            className={inputClass}
+            value={draft.folderDisplayName}
+            onChange={(e) => setField("folderDisplayName", e.target.value)}
+          />
         </Field>
         <Field label="Directory (tenant) ID">
           <input
             className={inputClass}
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value)}
+            value={draft.tenantId}
+            onChange={(e) => setField("tenantId", e.target.value)}
             autoComplete="off"
+            spellCheck={false}
             placeholder={settings?.secretFromEnv ? "May also come from env" : ""}
           />
         </Field>
         <Field label="Application (client) ID">
           <input
             className={inputClass}
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
+            value={draft.clientId}
+            onChange={(e) => setField("clientId", e.target.value)}
             autoComplete="off"
+            spellCheck={false}
           />
         </Field>
         <Field label="Client secret (write-only)">
           <input
             type="password"
             className={inputClass}
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={settings?.hasClientSecret ? "•••••••• (unchanged)" : "Paste secret"}
+            value={draft.clientSecret}
+            onChange={(e) => setField("clientSecret", e.target.value)}
+            placeholder={clientSecretFieldPlaceholder(Boolean(settings?.hasClientSecret))}
             autoComplete="new-password"
           />
         </Field>
         <Field label="OneDrive user (UPN)">
           <input
             className={inputClass}
-            value={upn}
-            onChange={(e) => setUpn(e.target.value)}
+            value={draft.userPrincipalName}
+            onChange={(e) => setField("userPrincipalName", e.target.value)}
             placeholder="george.parker@automotivebrands.co.uk"
             autoComplete="off"
+            spellCheck={false}
           />
         </Field>
         <div className="sm:col-span-2">
           <Field label="Folder URL (helper — resolved to stable Graph IDs)">
             <input
               className={inputClass}
-              value={folderUrl}
-              onChange={(e) => setFolderUrl(e.target.value)}
+              value={draft.folderUrlHint}
+              onChange={(e) => setField("folderUrlHint", e.target.value)}
               placeholder="Paste OneDrive/SharePoint folder browser URL"
               autoComplete="off"
+              spellCheck={false}
             />
           </Field>
         </div>

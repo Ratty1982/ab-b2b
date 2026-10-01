@@ -13,10 +13,13 @@ import {
 } from "@/server/catalogue/product-documents";
 import {
   getSharePointSdsSettingsForActor,
+  SHAREPOINT_SDS_SETTINGS_ID,
+  testSharePointSdsConnection,
   updateSharePointSdsSettings,
 } from "@/server/catalogue/sharepoint-sds-settings";
 import { buildSharePointSourceMetadata } from "@/domain/sharepoint-sds";
 import { sha256Hex } from "@/domain/product-documents";
+import { decryptSecret } from "@/server/crypto/secret";
 
 const prisma = new PrismaClient();
 const stamp = Date.now();
@@ -121,11 +124,111 @@ describe("SharePoint SDS settings RBAC", () => {
       clientId: "11111111-1111-1111-1111-111111111111",
       clientSecret: "unit-test-secret-not-for-production",
       userPrincipalName: "george.parker@automotivebrands.co.uk",
+      folderUrlHint: "https://example.invalid/sds-folder",
     });
     expect(saved.hasClientSecret).toBe(true);
+    expect(saved.tenantId).toBe("00000000-0000-0000-0000-000000000001");
+    expect(saved.clientId).toBe("11111111-1111-1111-1111-111111111111");
+    expect(saved.userPrincipalName).toBe("george.parker@automotivebrands.co.uk");
+    expect(saved.folderUrlHint).toBe("https://example.invalid/sds-folder");
     expect(JSON.stringify(saved)).not.toContain("unit-test-secret");
     expect(saved).not.toHaveProperty("clientSecret");
     expect(saved).not.toHaveProperty("clientSecretEncrypted");
+
+    const reloaded = await getSharePointSdsSettingsForActor(adminId);
+    expect(reloaded.tenantId).toBe("00000000-0000-0000-0000-000000000001");
+    expect(reloaded.clientId).toBe("11111111-1111-1111-1111-111111111111");
+    expect(reloaded.hasClientSecret).toBe(true);
+    expect(JSON.stringify(reloaded)).not.toContain("unit-test-secret");
+  });
+
+  it("preserves encrypted secret when later save omits clientSecret", async () => {
+    await updateSharePointSdsSettings(adminId, {
+      tenantId: "tenant-preserve-1",
+      clientId: "client-preserve-1",
+      clientSecret: "original-secret-value-abc",
+      userPrincipalName: "george.parker@automotivebrands.co.uk",
+    });
+    const before = await prisma.sharePointSdsSettings.findUniqueOrThrow({
+      where: { id: SHAREPOINT_SDS_SETTINGS_ID },
+    });
+    expect(before.clientSecretEncrypted).toBeTruthy();
+    const originalPlain = decryptSecret(before.clientSecretEncrypted);
+    expect(originalPlain).toBe("original-secret-value-abc");
+
+    const saved = await updateSharePointSdsSettings(adminId, {
+      tenantId: "tenant-preserve-2",
+      clientId: "client-preserve-2",
+      sourceLabel: "Updated label only",
+      // clientSecret intentionally omitted
+    });
+    expect(saved.tenantId).toBe("tenant-preserve-2");
+    expect(saved.clientId).toBe("client-preserve-2");
+    expect(saved.hasClientSecret).toBe(true);
+    expect(JSON.stringify(saved)).not.toContain("original-secret");
+
+    const after = await prisma.sharePointSdsSettings.findUniqueOrThrow({
+      where: { id: SHAREPOINT_SDS_SETTINGS_ID },
+    });
+    expect(decryptSecret(after.clientSecretEncrypted)).toBe("original-secret-value-abc");
+  });
+
+  it("replaces encrypted secret when a new secret is provided", async () => {
+    await updateSharePointSdsSettings(adminId, {
+      clientSecret: "first-secret-value",
+    });
+    await updateSharePointSdsSettings(adminId, {
+      clientSecret: "second-secret-value",
+    });
+    const row = await prisma.sharePointSdsSettings.findUniqueOrThrow({
+      where: { id: SHAREPOINT_SDS_SETTINGS_ID },
+    });
+    expect(decryptSecret(row.clientSecretEncrypted)).toBe("second-secret-value");
+    const pub = await getSharePointSdsSettingsForActor(adminId);
+    expect(JSON.stringify(pub)).not.toContain("second-secret");
+  });
+
+  it("failed Test Connection does not wipe saved settings", async () => {
+    await updateSharePointSdsSettings(adminId, {
+      enabled: true,
+      tenantId: "tenant-keep-on-fail",
+      clientId: "client-keep-on-fail",
+      clientSecret: "secret-keep-on-fail",
+      userPrincipalName: "george.parker@automotivebrands.co.uk",
+      folderUrlHint: "https://example.invalid/keep-me",
+      folderDisplayName: "Keep Folder Name",
+      sourceLabel: "Keep Source Label",
+    });
+    // Force resolved folder IDs so testConnection hits Graph with bogus credentials
+    // rather than short-circuiting on "not configured".
+    await prisma.sharePointSdsSettings.update({
+      where: { id: SHAREPOINT_SDS_SETTINGS_ID },
+      data: {
+        driveId: "drive-fake-for-test",
+        folderItemId: "folder-fake-for-test",
+      },
+    });
+
+    await expect(testSharePointSdsConnection(adminId)).rejects.toBeInstanceOf(AuthError);
+
+    const pub = await getSharePointSdsSettingsForActor(adminId);
+    expect(pub.tenantId).toBe("tenant-keep-on-fail");
+    expect(pub.clientId).toBe("client-keep-on-fail");
+    expect(pub.userPrincipalName).toBe("george.parker@automotivebrands.co.uk");
+    expect(pub.folderUrlHint).toBe("https://example.invalid/keep-me");
+    expect(pub.folderDisplayName).toBe("Keep Folder Name");
+    expect(pub.sourceLabel).toBe("Keep Source Label");
+    expect(pub.hasClientSecret).toBe(true);
+    expect(pub.lastConnectionTestOk).toBe(false);
+    expect(pub.lastConnectionTestError).toBeTruthy();
+
+    const row = await prisma.sharePointSdsSettings.findUniqueOrThrow({
+      where: { id: SHAREPOINT_SDS_SETTINGS_ID },
+    });
+    expect(decryptSecret(row.clientSecretEncrypted)).toBe("secret-keep-on-fail");
+    expect(row.tenantId).toBe("tenant-keep-on-fail");
+    expect(row.driveId).toBe("drive-fake-for-test");
+    expect(row.folderItemId).toBe("folder-fake-for-test");
   });
 });
 
