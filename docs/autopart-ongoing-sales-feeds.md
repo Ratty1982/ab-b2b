@@ -73,11 +73,78 @@ Sales Intelligence shows latest successful 504 / TRM21QC import times. If feeds 
 
 Settings → **Autopart ongoing sales feeds**:
 
-- Manual upload + preview + confirm for 504 and TRM21QC
+- Manual upload + **preview** + **confirm** for 504 and TRM21QC
 - Poll Now (requires configured + enabled)
-- Import history
+- Import history with run detail / diagnostics / CSV export
 
 Legacy **Autopart invoice / despatch feed (504C)** panel remains above.
+
+### Preview workflow
+
+1. Choose a 504 or TRM21QC file.
+2. The server parses with the **same** rules as commit (no financial writes).
+3. Preview shows would-insert / would-update / already-known / would-skip / warnings / errors, with reason codes for skip/warning/error rows.
+4. Confirm only after review (`Confirm 504 import` / `Confirm TRM21QC import`).
+
+### Commit workflow
+
+Confirm creates an `AutopartCustomerImportRun`, writes `AutopartSalesDocument` / `AutopartSalesLine` idempotently, and persists row diagnostics in `AutopartImportDiagnostic`.
+
+Re-uploading the same report must not create duplicate financial sales (document + stable line keys).
+
+### Import statuses (run)
+
+| Status | Meaning |
+| --- | --- |
+| PROCESSING | Confirm in progress |
+| COMMITTED | Finished successfully |
+| FAILED | Aborted; no reliance on partial financial writes |
+
+### Diagnostic row statuses
+
+| Status | Meaning |
+| --- | --- |
+| INSERTED | New document/line written |
+| UPDATED | Existing row enriched/changed |
+| UNCHANGED | Identical data already present (`ALREADY_IMPORTED`) |
+| SKIPPED | Not written (e.g. unmapped customer lines) |
+| WARNING | Processed with a warning flag (e.g. SKU not in catalogue) |
+| ERROR | Parse / malformed failure |
+
+### Diagnostic reason codes (real importer behaviour)
+
+| Code | When |
+| --- | --- |
+| `INSERTED` | New financial row |
+| `UPDATED` | Existing row refreshed |
+| `ALREADY_IMPORTED` | Idempotent re-import; values unchanged |
+| `BLANK_ROW` | Empty source row |
+| `PARSE_ERROR` / `MALFORMED_ROW` / `MISSING_DOCUMENT` | Invalid source row |
+| `UNMAPPED_CUSTOMER` | Autopart account not linked to an AB company — **TRM21QC lines are skipped** (headers may still be retained) |
+| `NOT_IN_AB_CATALOGUE` | Exact SKU match failed; line **is still imported** with unmatched status (warning) |
+
+### Investigating skipped records
+
+Open **Import history → run** and filter **Skipped**.
+
+For TRM21QC, skipped lines are almost always `UNMAPPED_CUSTOMER` (lines require `companyId`). Map the Autopart account on the customer record, then re-import — already-written lines stay idempotent; previously skipped lines can insert once mapped.
+
+Historic runs created before row diagnostics: the UI shows an aggregate explanation and does **not** invent row-level history. Use **Export run diagnostics CSV** for future runs.
+
+### Warning vs skip vs error
+
+- **Skip** — not written to financial lines/documents (except retained unmapped document headers).
+- **Warning** — written, but needs attention (e.g. SKU not in catalogue).
+- **Error** — source row invalid / unparseable.
+
+### 504 vs 504C
+
+| Feed | Role |
+| --- | --- |
+| **504** | Ongoing Autopart invoice/credit **documents** (Goods net, VAT, Value, Customer Order Number) |
+| **504C** | Legacy/fallback **despatch/status** feed — kept until 504 is proven |
+
+Parsers and detectors remain distinct. Do not treat a 504 upload as 504C.
 
 ## Automatic import
 

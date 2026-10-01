@@ -2757,6 +2757,60 @@ export const listOngoingSalesImportRunsFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getOngoingSalesImportRunDetailFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return {
+        ok: true as const,
+        data: await feed.getOngoingSalesImportRunDetail(userId, data.runId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listOngoingSalesImportDiagnosticsFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        runId: string;
+        filter?: string;
+        q?: string;
+        page?: number;
+        pageSize?: number;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return {
+        ok: true as const,
+        data: await feed.listOngoingSalesImportDiagnostics(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportOngoingSalesImportDiagnosticsCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/companies/autopart-ongoing-sales");
+      return {
+        ok: true as const,
+        data: await feed.exportOngoingSalesImportDiagnosticsCsv(userId, data.runId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getOngoingSalesFreshnessFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

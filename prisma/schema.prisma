@@ -265,6 +265,16 @@ enum AutopartCustomerImportStatus {
   BLOCKED
 }
 
+/// Row-level outcome for ongoing 504 / TRM21QC import runs (operational diagnostics).
+enum AutopartImportDiagnosticStatus {
+  INSERTED
+  UPDATED
+  UNCHANGED
+  SKIPPED
+  WARNING
+  ERROR
+}
+
 enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
@@ -2031,15 +2041,51 @@ model AutopartCustomerImportRun {
   createdAt       DateTime                     @default(now())
   completedAt     DateTime?
 
-  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdBy User?   @relation("AutopartCustomerImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  documents AutopartSalesDocument[]
-  lines     AutopartSalesLine[]
+  company             Company?                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy           User?                      @relation("AutopartCustomerImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  documents           AutopartSalesDocument[]
+  lines               AutopartSalesLine[]
+  rowDiagnostics      AutopartImportDiagnostic[]
 
   @@index([companyId, createdAt])
   @@index([companyId, type, status])
   @@index([type, status, createdAt])
   @@index([fileHash])
+}
+
+/// Per-row / per-line diagnostic for ongoing Autopart sales imports.
+/// Historic runs before this table may have none — do not fabricate them.
+model AutopartImportDiagnostic {
+  id                   String                         @id @default(cuid())
+  importRunId          String
+  status               AutopartImportDiagnosticStatus
+  reasonCode           String
+  reason               String
+  rowNumber            Int?
+  customerAccount      String?
+  documentReference    String?
+  documentDate         String?
+  sku                  String?
+  description          String?
+  /// Signed quantity as reported (credits negative).
+  quantity             String?
+  /// NET / EX VAT sales as reported (credits negative).
+  salesNet             String?
+  abOrderReference     String?
+  customerOrderNumber  String?
+  companyId            String?
+  abOrderId            String?
+  isWarning            Boolean                        @default(false)
+  createdAt            DateTime                       @default(now())
+
+  importRun AutopartCustomerImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+
+  @@index([importRunId, status])
+  @@index([importRunId, reasonCode])
+  @@index([importRunId, documentReference])
+  @@index([importRunId, customerAccount])
+  @@index([importRunId, sku])
+  @@index([importRunId, isWarning])
 }
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────

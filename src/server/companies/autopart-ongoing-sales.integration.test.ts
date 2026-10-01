@@ -7,9 +7,19 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import {
   confirmAutopart504Import,
   confirmAutopartTrm21qcImport,
+  previewAutopart504Import,
+  previewAutopartTrm21qcImport,
 } from "@/server/companies/autopart-ongoing-sales";
+import {
+  exportOngoingSalesImportDiagnosticsCsv,
+  getOngoingSalesImportRunDetail,
+  listOngoingSalesImportDiagnostics,
+} from "@/server/companies/autopart-ongoing-sales-diagnostics";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
+import { AuthError } from "@/server/rbac/guards";
 import { loadHistoricSalesLines, summarizeHistoricLines } from "@/server/sales-intelligence/historic-lines";
+import { isAutopart504Report } from "@/domain/autopart-504";
+import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
 
 const prisma = new PrismaClient();
 
@@ -294,5 +304,142 @@ ACCOUNT,${waitDoc},29/09/2026,13:00,EXAMPLE,10.00,2.00,12.00,WR,${orderNumber}
       where: { documentReference: waitDoc },
     });
     expect(doc?.reconciliationStatus).toBe("AWAITING_LINES");
+  });
+
+  it("preview does not commit and matches commit classification for 504/TRM21QC", async () => {
+    const docP = `SSP${String(stamp).slice(-7)}`;
+    const text504 = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${docP},29/09/2026,13:05,EXAMPLE MOTOR FACTORS,10.00,2.00,12.00,WR,${orderNumber}
+`;
+    const beforeDocs = await prisma.autopartSalesDocument.count({
+      where: { documentReference: docP },
+    });
+    const preview = await previewAutopart504Import(adminId, {
+      text: text504,
+      filename: "504-preview.csv",
+    });
+    expect(preview.wouldInsert).toBeGreaterThanOrEqual(1);
+    expect(
+      await prisma.autopartSalesDocument.count({ where: { documentReference: docP } }),
+    ).toBe(beforeDocs);
+
+    const committed = await confirmAutopart504Import(adminId, {
+      text: text504,
+      filename: "504-preview.csv",
+      source: "MANUAL",
+    });
+    expect(committed.rowsImported).toBe(preview.wouldInsert);
+
+    const diag = await prisma.autopartImportDiagnostic.findMany({
+      where: { importRunId: committed.id },
+    });
+    expect(diag.length).toBeGreaterThan(0);
+    expect(diag.every((d) => d.reasonCode)).toBe(true);
+    const tally = diag.reduce(
+      (acc, d) => {
+        acc[d.status] = (acc[d.status] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+    expect(tally["INSERTED"] ?? 0).toBe(committed.rowsImported);
+    expect(tally["UPDATED"] ?? 0).toBe(committed.rowsUpdated);
+
+    const unmappedAcct = `ZZ${String(stamp).slice(-6)}`;
+    const docT = `SST${String(stamp).slice(-7)}`;
+    const textTrm = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${unmappedAcct},GRP,${docT},29/09/2026,${skuA},Widget A,1,10.00,5.00,5.00,50.000
+${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.000
+`;
+    const linesBefore = await prisma.autopartSalesLine.count({
+      where: { documentReference: docT },
+    });
+    const trmPreview = await previewAutopartTrm21qcImport(adminId, {
+      text: textTrm,
+      filename: "trm-preview.csv",
+    });
+    expect(trmPreview.wouldSkip).toBeGreaterThanOrEqual(1);
+    expect(trmPreview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
+    expect(
+      await prisma.autopartSalesLine.count({ where: { documentReference: docT } }),
+    ).toBe(linesBefore);
+
+    const trmRun = await confirmAutopartTrm21qcImport(adminId, {
+      text: textTrm,
+      filename: "trm-preview.csv",
+      source: "MANUAL",
+    });
+    expect(trmRun.rowsSkipped).toBeGreaterThanOrEqual(1);
+    const skipped = await prisma.autopartImportDiagnostic.findMany({
+      where: { importRunId: trmRun.id, reasonCode: "UNMAPPED_CUSTOMER" },
+    });
+    expect(skipped.length).toBeGreaterThanOrEqual(1);
+    expect(Number(skipped[0]?.salesNet)).toBeCloseTo(10, 2);
+
+    // Idempotent re-import — financial rows not duplicated; unchanged diagnostics appear
+    const again = await confirmAutopartTrm21qcImport(adminId, {
+      text: textTrm,
+      filename: "trm-preview-again.csv",
+      source: "MANUAL",
+    });
+    const unchanged = await prisma.autopartImportDiagnostic.count({
+      where: { importRunId: again.id, status: "UNCHANGED" },
+    });
+    expect(unchanged).toBeGreaterThanOrEqual(1);
+    const lineCount = await prisma.autopartSalesLine.count({
+      where: { companyId, documentReference: docInv, sku: skuA },
+    });
+    expect(lineCount).toBe(1);
+
+    const detail = await getOngoingSalesImportRunDetail(adminId, trmRun.id);
+    expect(detail.hasRowDiagnostics).toBe(true);
+    expect(detail.counts.skipped).toBeGreaterThanOrEqual(1);
+
+    const csv = await exportOngoingSalesImportDiagnosticsCsv(adminId, trmRun.id);
+    expect(csv.csv).toContain("Reason Code");
+    expect(csv.csv).toContain("UNMAPPED_CUSTOMER");
+    expect(csv.csv).not.toContain("unit-test-secret");
+  });
+
+  it("run detail RBAC blocks trade users; historic run without diagnostics does not fabricate rows", async () => {
+    const trade = await ensureUser(`og-sales.trade.${stamp}@example.invalid`, []);
+    await prisma.user.update({
+      where: { id: trade },
+      data: { actorType: "TRADE" },
+    });
+    const run = await prisma.autopartCustomerImportRun.create({
+      data: {
+        type: "ONGOING_TRM21QC",
+        status: "COMMITTED",
+        filename: "historic-no-diag.csv",
+        dryRun: false,
+        rowsRead: 177,
+        rowsImported: 110,
+        rowsUpdated: 0,
+        rowsSkipped: 67,
+        rowsUnmatched: 12,
+        diagnostics: { source: "MANUAL" },
+        completedAt: new Date(),
+      },
+    });
+    const detail = await getOngoingSalesImportRunDetail(adminId, run.id);
+    expect(detail.hasRowDiagnostics).toBe(false);
+    expect(detail.aggregateNote).toContain("Detailed row diagnostics were not recorded");
+    expect(detail.aggregateNote).toContain("67");
+    const list = await listOngoingSalesImportDiagnostics(adminId, { runId: run.id });
+    expect(list.hasRowDiagnostics).toBe(false);
+    expect(list.items).toHaveLength(0);
+
+    await expect(getOngoingSalesImportRunDetail(trade, run.id)).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      exportOngoingSalesImportDiagnosticsCsv(trade, run.id),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("keeps 504 distinct from 504C content detection", () => {
+    const text504 = sample504();
+    expect(isAutopart504Report(text504)).toBe(true);
+    expect(text504.toUpperCase()).not.toContain("504C");
+    expect(text504.toUpperCase()).not.toContain(AUTOPART_504C_REPORT_TITLE.toUpperCase());
   });
 });

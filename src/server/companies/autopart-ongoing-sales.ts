@@ -23,8 +23,23 @@ import {
   parseAutopartTrm21qcReport,
 } from "@/domain/autopart-trm21qc";
 import { reconcile504GoodsToTrmSales } from "@/domain/autopart-504-trm21qc-reconcile";
+import {
+  decimalStringsEqual,
+  makeDiagnostic,
+  type AutopartImportDiagnosticDraft,
+} from "@/domain/autopart-import-diagnostics";
+import {
+  countsFromDrafts,
+  persistImportDiagnostics,
+} from "@/server/companies/autopart-ongoing-sales-diagnostics";
 import { applyAutopart504cFile } from "@/server/orders/autopart-504c";
 import { format504cDataRow, AUTOPART_504C_HEADER, AUTOPART_504C_SEPARATOR } from "@/domain/autopart-504c-fixture";
+
+export {
+  getOngoingSalesImportRunDetail,
+  listOngoingSalesImportDiagnostics,
+  exportOngoingSalesImportDiagnosticsCsv,
+} from "@/server/companies/autopart-ongoing-sales-diagnostics";
 
 async function requireOngoingSalesAdmin(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
@@ -141,6 +156,12 @@ export type Ongoing504Preview = {
   existingDocuments: number;
   newDocuments: number;
   invalidRows: number;
+  wouldInsert: number;
+  wouldUpdate: number;
+  wouldSkip: number;
+  warningCount: number;
+  errorCount: number;
+  diagnostics: AutopartImportDiagnosticDraft[];
   rows: Array<{
     document: string;
     type: string;
@@ -152,6 +173,8 @@ export type Ongoing504Preview = {
     value: string | null;
     customerOrderNumber: string;
     abMatch: string;
+    status: string;
+    reasonCode: string;
   }>;
 };
 
@@ -169,10 +192,10 @@ export async function previewAutopart504Import(
   const existing = refs.length
     ? await prisma.autopartSalesDocument.findMany({
         where: { documentReference: { in: refs } },
-        select: { documentReference: true },
+        select: { documentReference: true, goodsNet: true, vat: true, grossTotal: true },
       })
     : [];
-  const existingSet = new Set(existing.map((e) => e.documentReference));
+  const existingByRef = new Map(existing.map((e) => [e.documentReference, e]));
   let netGoods = 0;
   let vat = 0;
   let gross = 0;
@@ -184,6 +207,95 @@ export async function previewAutopart504Import(
   const unmatchedAbLooking = docs.filter(
     (r) => r.isAbOrderReference && r.classification !== "AB_INVOICE" && r.classification !== "AB_CREDIT",
   ).length;
+
+  const diagnostics: AutopartImportDiagnosticDraft[] = [];
+  for (const row of parsed.rows) {
+    if (row.classification === "BLANK") {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: "BLANK_ROW",
+          rowNumber: row.lineNumber,
+        }),
+      );
+      continue;
+    }
+    if (!row.documentNumber || row.classification === "MALFORMED") {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "ERROR",
+          reasonCode: row.documentNumber ? "MALFORMED_ROW" : "MISSING_DOCUMENT",
+          rowNumber: row.lineNumber,
+          documentReference: row.documentNumber || null,
+          documentDate: row.documentDate,
+          customerOrderNumber: row.customerOrderNumber || null,
+          abOrderReference: row.abOrderNumber,
+          salesNet: row.goods,
+        }),
+      );
+      continue;
+    }
+    const prev = existingByRef.get(row.documentNumber);
+    if (!prev) {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "INSERTED",
+          reasonCode: "INSERTED",
+          rowNumber: row.lineNumber,
+          documentReference: row.documentNumber,
+          documentDate: row.documentDate,
+          customerOrderNumber: row.customerOrderNumber || null,
+          abOrderReference: row.abOrderNumber,
+          salesNet: row.goods,
+        }),
+      );
+    } else if (
+      decimalStringsEqual(prev.goodsNet?.toString(), row.goods) &&
+      decimalStringsEqual(prev.vat?.toString(), row.vat) &&
+      decimalStringsEqual(prev.grossTotal?.toString(), row.value)
+    ) {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "UNCHANGED",
+          reasonCode: "ALREADY_IMPORTED",
+          rowNumber: row.lineNumber,
+          documentReference: row.documentNumber,
+          documentDate: row.documentDate,
+          customerOrderNumber: row.customerOrderNumber || null,
+          abOrderReference: row.abOrderNumber,
+          salesNet: row.goods,
+        }),
+      );
+    } else {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "UPDATED",
+          reasonCode: "UPDATED",
+          rowNumber: row.lineNumber,
+          documentReference: row.documentNumber,
+          documentDate: row.documentDate,
+          customerOrderNumber: row.customerOrderNumber || null,
+          abOrderReference: row.abOrderNumber,
+          salesNet: row.goods,
+        }),
+      );
+    }
+  }
+  const counts = countsFromDrafts(diagnostics);
+
+  await recordAuditEvent({
+    action: "autopart.ongoing_504_previewed",
+    entityType: "AutopartCustomerImportRun",
+    entityId: null,
+    actorUserId,
+    metadata: {
+      filename: raw.filename ?? null,
+      documents: docs.length,
+      wouldInsert: counts.inserted,
+      wouldUpdate: counts.updated,
+      wouldSkip: counts.skipped,
+    },
+  });
 
   return {
     headerFound: parsed.headerFound,
@@ -198,21 +310,34 @@ export async function previewAutopart504Import(
     netGoods: netGoods.toFixed(2),
     vat: vat.toFixed(2),
     grossValue: gross.toFixed(2),
-    existingDocuments: docs.filter((d) => existingSet.has(d.documentNumber)).length,
-    newDocuments: docs.filter((d) => !existingSet.has(d.documentNumber)).length,
+    existingDocuments: docs.filter((d) => existingByRef.has(d.documentNumber)).length,
+    newDocuments: docs.filter((d) => !existingByRef.has(d.documentNumber)).length,
     invalidRows: parsed.malformedRows,
-    rows: docs.slice(0, 100).map((r) => ({
-      document: r.documentNumber,
-      type: r.kind,
-      date: r.documentDate,
-      time: r.documentTime,
-      customer: r.customerName,
-      goods: r.goods,
-      vat: r.vat,
-      value: r.value,
-      customerOrderNumber: r.customerOrderNumber,
-      abMatch: r.abOrderNumber ?? (r.isAbOrderReference ? "UNMATCHED" : "NON_AB"),
-    })),
+    wouldInsert: counts.inserted,
+    wouldUpdate: counts.updated + counts.unchanged,
+    wouldSkip: counts.skipped + counts.errors,
+    warningCount: counts.warnings,
+    errorCount: counts.errors,
+    diagnostics: diagnostics.filter((d) => d.reasonCode !== "BLANK_ROW").slice(0, 300),
+    rows: docs.slice(0, 100).map((r) => {
+      const d = diagnostics.find(
+        (x) => x.rowNumber === r.lineNumber && x.documentReference === r.documentNumber,
+      );
+      return {
+        document: r.documentNumber,
+        type: r.kind,
+        date: r.documentDate,
+        time: r.documentTime,
+        customer: r.customerName,
+        goods: r.goods,
+        vat: r.vat,
+        value: r.value,
+        customerOrderNumber: r.customerOrderNumber,
+        abMatch: r.abOrderNumber ?? (r.isAbOrderReference ? "UNMATCHED" : "NON_AB"),
+        status: d?.status ?? "INSERTED",
+        reasonCode: d?.reasonCode ?? "INSERTED",
+      };
+    }),
   };
 }
 
@@ -232,6 +357,12 @@ export type OngoingTrmPreview = {
   existingLines: number;
   newLines: number;
   invalidRows: number;
+  wouldInsert: number;
+  wouldUpdate: number;
+  wouldSkip: number;
+  warningCount: number;
+  errorCount: number;
+  diagnostics: AutopartImportDiagnosticDraft[];
   sample: Array<{
     customerAccount: string;
     document: string;
@@ -242,6 +373,8 @@ export type OngoingTrmPreview = {
     salesNet: string | null;
     productMatch: string;
     customerMatch: string;
+    status: string;
+    reasonCode: string;
   }>;
 };
 
@@ -256,12 +389,17 @@ export async function previewAutopartTrm21qcImport(
   const parsed = parseAutopartTrm21qcReport(raw.text);
   const ok = parsed.rows.filter((r) => r.classification === "OK");
   const skuMap = await resolveSkuMap(ok.map((r) => r.partNumber));
+  const accountCache = new Map<string, Awaited<ReturnType<typeof resolveCompanyByAutopartCode>>>();
+  async function mappedAccount(code: string) {
+    const key = code.trim().toUpperCase();
+    if (!accountCache.has(key)) accountCache.set(key, await resolveCompanyByAutopartCode(key));
+    return accountCache.get(key) ?? null;
+  }
   const accounts = [...new Set(ok.map((r) => r.customerAccount.toUpperCase()))];
   let matchedCustomers = 0;
   let unmatchedCustomers = 0;
   for (const acct of accounts) {
-    const mapped = await resolveCompanyByAutopartCode(acct);
-    if (mapped) matchedCustomers += 1;
+    if (await mappedAccount(acct)) matchedCustomers += 1;
     else unmatchedCustomers += 1;
   }
   let netSales = 0;
@@ -273,10 +411,51 @@ export async function previewAutopartTrm21qcImport(
     if (skuMap.has(r.partNumber.toUpperCase())) matchedSkus += 1;
   }
   const stable = assignStableTrm21qcLineNumbers(ok);
+  const diagnostics: AutopartImportDiagnosticDraft[] = [];
+  for (const row of parsed.rows) {
+    if (row.classification === "BLANK") {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: "BLANK_ROW",
+          rowNumber: row.lineNumber,
+        }),
+      );
+    } else if (row.classification === "MALFORMED") {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "ERROR",
+          reasonCode: "PARSE_ERROR",
+          rowNumber: row.lineNumber,
+          customerAccount: row.customerAccount || null,
+          documentReference: row.documentNumber || null,
+          sku: row.partNumber || null,
+        }),
+      );
+    }
+  }
   let existingLines = 0;
-  for (const r of stable.slice(0, 500)) {
-    const mapped = await resolveCompanyByAutopartCode(r.customerAccount);
-    if (!mapped) continue;
+  let newLines = 0;
+  for (const r of stable) {
+    const mapped = await mappedAccount(r.customerAccount);
+    const inCatalogue = skuMap.has(r.partNumber.toUpperCase());
+    if (!mapped) {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: "UNMAPPED_CUSTOMER",
+          rowNumber: r.lineNumber,
+          customerAccount: r.customerAccount,
+          documentReference: r.documentNumber,
+          documentDate: r.documentDate,
+          sku: r.partNumber,
+          description: r.description,
+          quantity: r.qty,
+          salesNet: r.salesNet,
+        }),
+      );
+      continue;
+    }
     const found = await prisma.autopartSalesLine.findUnique({
       where: {
         companyId_documentType_documentReference_lineNumber: {
@@ -286,10 +465,65 @@ export async function previewAutopartTrm21qcImport(
           lineNumber: r.stableLineNumber,
         },
       },
-      select: { id: true },
+      select: { id: true, units: true, salesNet: true, sku: true },
     });
-    if (found) existingLines += 1;
+    if (found) {
+      existingLines += 1;
+      const identical =
+        decimalStringsEqual(found.units.toString(), r.qty) &&
+        decimalStringsEqual(found.salesNet.toString(), r.salesNet) &&
+        found.sku.toUpperCase() === r.partNumber.toUpperCase();
+      diagnostics.push(
+        makeDiagnostic({
+          status: identical ? "UNCHANGED" : "UPDATED",
+          reasonCode: identical ? "ALREADY_IMPORTED" : "UPDATED",
+          rowNumber: r.lineNumber,
+          customerAccount: r.customerAccount,
+          documentReference: r.documentNumber,
+          documentDate: r.documentDate,
+          sku: r.partNumber,
+          description: r.description,
+          quantity: r.qty,
+          salesNet: r.salesNet,
+          companyId: mapped.companyId,
+          isWarning: !inCatalogue,
+        }),
+      );
+    } else {
+      newLines += 1;
+      diagnostics.push(
+        makeDiagnostic({
+          status: "INSERTED",
+          reasonCode: inCatalogue ? "INSERTED" : "NOT_IN_AB_CATALOGUE",
+          rowNumber: r.lineNumber,
+          customerAccount: r.customerAccount,
+          documentReference: r.documentNumber,
+          documentDate: r.documentDate,
+          sku: r.partNumber,
+          description: r.description,
+          quantity: r.qty,
+          salesNet: r.salesNet,
+          companyId: mapped.companyId,
+          isWarning: !inCatalogue,
+        }),
+      );
+    }
   }
+  const counts = countsFromDrafts(diagnostics);
+
+  await recordAuditEvent({
+    action: "autopart.ongoing_trm21qc_previewed",
+    entityType: "AutopartCustomerImportRun",
+    entityId: null,
+    actorUserId,
+    metadata: {
+      filename: raw.filename ?? null,
+      rows: ok.length,
+      wouldInsert: counts.inserted,
+      wouldUpdate: counts.updated,
+      wouldSkip: counts.skipped,
+    },
+  });
 
   return {
     headerFound: parsed.headerFound,
@@ -305,19 +539,34 @@ export async function previewAutopartTrm21qcImport(
     matchedCustomers,
     unmatchedCustomers,
     existingLines,
-    newLines: Math.max(0, ok.length - existingLines),
+    newLines,
     invalidRows: parsed.malformedRows,
-    sample: ok.slice(0, 80).map((r) => ({
-      customerAccount: r.customerAccount,
-      document: r.documentNumber,
-      date: r.documentDate,
-      sku: r.partNumber,
-      description: r.description,
-      qty: r.qty,
-      salesNet: r.salesNet,
-      productMatch: skuMap.has(r.partNumber.toUpperCase()) ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
-      customerMatch: "PENDING",
-    })),
+    wouldInsert: counts.inserted,
+    wouldUpdate: counts.updated + counts.unchanged,
+    wouldSkip: counts.skipped + counts.errors,
+    warningCount: counts.warnings,
+    errorCount: counts.errors,
+    diagnostics: diagnostics.filter((d) => d.reasonCode !== "BLANK_ROW").slice(0, 300),
+    sample: diagnostics
+      .filter((d) => d.reasonCode !== "BLANK_ROW")
+      .slice(0, 80)
+      .map((d) => ({
+        customerAccount: d.customerAccount ?? "",
+        document: d.documentReference ?? "",
+        date: d.documentDate ?? null,
+        sku: d.sku ?? "",
+        description: d.description ?? null,
+        qty: d.quantity ?? null,
+        salesNet: d.salesNet ?? null,
+        productMatch: d.reasonCode === "NOT_IN_AB_CATALOGUE" || d.isWarning
+          ? "NOT_IN_AB_CATALOGUE"
+          : d.sku
+            ? "MATCHED"
+            : "—",
+        customerMatch: d.reasonCode === "UNMAPPED_CUSTOMER" ? "UNMAPPED" : "MATCHED",
+        status: d.status,
+        reasonCode: d.reasonCode,
+      })),
   };
 }
 
@@ -418,12 +667,37 @@ export async function confirmAutopart504Import(
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+  let unchanged = 0;
+  const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds: string[] = [];
 
   try {
     for (const row of parsed.rows) {
-      if (!row.documentNumber || row.classification === "BLANK" || row.classification === "MALFORMED") {
+      if (row.classification === "BLANK") {
         skipped += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "SKIPPED",
+            reasonCode: "BLANK_ROW",
+            rowNumber: row.lineNumber,
+          }),
+        );
+        continue;
+      }
+      if (!row.documentNumber || row.classification === "MALFORMED") {
+        skipped += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "ERROR",
+            reasonCode: row.documentNumber ? "MALFORMED_ROW" : "MISSING_DOCUMENT",
+            rowNumber: row.lineNumber,
+            documentReference: row.documentNumber || null,
+            documentDate: row.documentDate,
+            customerOrderNumber: row.customerOrderNumber || null,
+            abOrderReference: row.abOrderNumber,
+            salesNet: row.goods,
+          }),
+        );
         continue;
       }
       const documentType = historicTypeFrom504(row);
@@ -465,6 +739,10 @@ export async function confirmAutopart504Import(
         }));
 
       if (existing) {
+        const identical =
+          decimalStringsEqual(existing.goodsNet?.toString(), row.goods) &&
+          decimalStringsEqual(existing.vat?.toString(), row.vat) &&
+          decimalStringsEqual(existing.grossTotal?.toString(), row.value);
         await prisma.autopartSalesDocument.update({
           where: { id: existing.id },
           data: {
@@ -494,7 +772,39 @@ export async function confirmAutopart504Import(
           },
         });
         touchedDocIds.push(existing.id);
-        updated += 1;
+        if (identical) {
+          unchanged += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "UNCHANGED",
+              reasonCode: "ALREADY_IMPORTED",
+              rowNumber: row.lineNumber,
+              documentReference: row.documentNumber,
+              documentDate: row.documentDate,
+              customerOrderNumber: row.customerOrderNumber || null,
+              abOrderReference: row.abOrderNumber,
+              companyId: companyId ?? existing.companyId,
+              abOrderId: abOrderId ?? existing.abOrderId,
+              salesNet: row.goods,
+            }),
+          );
+        } else {
+          updated += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "UPDATED",
+              reasonCode: "UPDATED",
+              rowNumber: row.lineNumber,
+              documentReference: row.documentNumber,
+              documentDate: row.documentDate,
+              customerOrderNumber: row.customerOrderNumber || null,
+              abOrderReference: row.abOrderNumber,
+              companyId: companyId ?? existing.companyId,
+              abOrderId: abOrderId ?? existing.abOrderId,
+              salesNet: row.goods,
+            }),
+          );
+        }
       } else {
         const created = await prisma.autopartSalesDocument.create({
           data: {
@@ -521,6 +831,20 @@ export async function confirmAutopart504Import(
         });
         touchedDocIds.push(created.id);
         imported += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "INSERTED",
+            reasonCode: "INSERTED",
+            rowNumber: row.lineNumber,
+            documentReference: row.documentNumber,
+            documentDate: row.documentDate,
+            customerOrderNumber: row.customerOrderNumber || null,
+            abOrderReference: row.abOrderNumber,
+            companyId,
+            abOrderId,
+            salesNet: row.goods,
+          }),
+        );
       }
     }
 
@@ -551,6 +875,9 @@ export async function confirmAutopart504Import(
       }
     }
 
+    await persistImportDiagnostics(run.id, diagnosticDrafts);
+    const counts = countsFromDrafts(diagnosticDrafts);
+
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
       data: {
@@ -559,13 +886,15 @@ export async function confirmAutopart504Import(
         rowsImported: imported,
         rowsUpdated: updated,
         rowsSkipped: skipped,
-        rowsValid: imported + updated,
+        rowsValid: imported + updated + unchanged,
         diagnostics: {
           source: raw.source ?? "MANUAL",
           headerFound: parsed.headerFound,
           errors: parsed.errors,
           abInvoices: parsed.abInvoiceRows.length,
           abCredits: parsed.abCreditRows.length,
+          counts,
+          hasRowDiagnostics: true,
         },
       },
     });
@@ -580,7 +909,13 @@ export async function confirmAutopart504Import(
       entityType: "AutopartCustomerImportRun",
       entityId: run.id,
       actorUserId: actorUserId ?? null,
-      metadata: { imported, updated, filename: raw.filename ?? null },
+      metadata: {
+        imported,
+        updated,
+        unchanged,
+        skipped,
+        filename: raw.filename ?? null,
+      },
     });
 
     return finished;
@@ -630,10 +965,36 @@ export async function confirmAutopartTrm21qcImport(
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+  let unchanged = 0;
   let unmatchedCustomers = 0;
+  const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds = new Set<string>();
 
   try {
+    for (const row of parsed.rows) {
+      if (row.classification === "BLANK") {
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "SKIPPED",
+            reasonCode: "BLANK_ROW",
+            rowNumber: row.lineNumber,
+          }),
+        );
+      } else if (row.classification === "MALFORMED") {
+        skipped += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "ERROR",
+            reasonCode: "PARSE_ERROR",
+            rowNumber: row.lineNumber,
+            customerAccount: row.customerAccount || null,
+            documentReference: row.documentNumber || null,
+            sku: row.partNumber || null,
+          }),
+        );
+      }
+    }
+
     // Group by document for header upsert
     const byDoc = new Map<string, typeof stable>();
     for (const row of stable) {
@@ -710,6 +1071,22 @@ export async function confirmAutopartTrm21qcImport(
         }
         // Lines require companyId today — retain document; surface unmapped for review.
         skipped += lines.length;
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "SKIPPED",
+              reasonCode: "UNMAPPED_CUSTOMER",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              documentDate: line.documentDate,
+              sku: line.partNumber,
+              description: line.description,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+            }),
+          );
+        }
         continue;
       }
 
@@ -786,11 +1163,67 @@ export async function confirmAutopartTrm21qcImport(
           },
         });
         if (existingLine) {
+          const identical =
+            decimalStringsEqual(existingLine.units.toString(), line.qty) &&
+            decimalStringsEqual(existingLine.salesNet.toString(), line.salesNet) &&
+            existingLine.sku.toUpperCase() === line.partNumber.toUpperCase();
           await prisma.autopartSalesLine.update({ where: { id: existingLine.id }, data });
-          updated += 1;
+          if (identical) {
+            unchanged += 1;
+            diagnosticDrafts.push(
+              makeDiagnostic({
+                status: "UNCHANGED",
+                reasonCode: "ALREADY_IMPORTED",
+                rowNumber: line.lineNumber,
+                customerAccount: line.customerAccount,
+                documentReference: documentNumber,
+                documentDate: line.documentDate,
+                sku: line.partNumber,
+                description: line.description,
+                quantity: line.qty,
+                salesNet: line.salesNet,
+                companyId,
+                isWarning: !variantId,
+              }),
+            );
+          } else {
+            updated += 1;
+            diagnosticDrafts.push(
+              makeDiagnostic({
+                status: "UPDATED",
+                reasonCode: "UPDATED",
+                rowNumber: line.lineNumber,
+                customerAccount: line.customerAccount,
+                documentReference: documentNumber,
+                documentDate: line.documentDate,
+                sku: line.partNumber,
+                description: line.description,
+                quantity: line.qty,
+                salesNet: line.salesNet,
+                companyId,
+                isWarning: !variantId,
+              }),
+            );
+          }
         } else {
           await prisma.autopartSalesLine.create({ data });
           imported += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "INSERTED",
+              reasonCode: variantId ? "INSERTED" : "NOT_IN_AB_CATALOGUE",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              documentDate: line.documentDate,
+              sku: line.partNumber,
+              description: line.description,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId,
+              isWarning: !variantId,
+            }),
+          );
         }
       }
     }
@@ -798,6 +1231,9 @@ export async function confirmAutopartTrm21qcImport(
     for (const id of touchedDocIds) {
       await refreshDocumentReconciliation(id);
     }
+
+    await persistImportDiagnostics(run.id, diagnosticDrafts);
+    const counts = countsFromDrafts(diagnosticDrafts);
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -807,7 +1243,7 @@ export async function confirmAutopartTrm21qcImport(
         rowsImported: imported,
         rowsUpdated: updated,
         rowsSkipped: skipped,
-        rowsValid: imported + updated,
+        rowsValid: imported + updated + unchanged,
         rowsUnmatched: unmatchedCustomers,
         diagnostics: {
           source: raw.source ?? "MANUAL",
@@ -815,6 +1251,8 @@ export async function confirmAutopartTrm21qcImport(
           errors: parsed.errors,
           unmatchedCustomers,
           documents: parsed.documents.length,
+          counts,
+          hasRowDiagnostics: true,
         },
       },
     });
@@ -829,7 +1267,14 @@ export async function confirmAutopartTrm21qcImport(
       entityType: "AutopartCustomerImportRun",
       entityId: run.id,
       actorUserId: actorUserId ?? null,
-      metadata: { imported, updated, unmatchedCustomers, filename: raw.filename ?? null },
+      metadata: {
+        imported,
+        updated,
+        unchanged,
+        skipped,
+        unmatchedCustomers,
+        filename: raw.filename ?? null,
+      },
     });
 
     return finished;
@@ -848,7 +1293,7 @@ export async function confirmAutopartTrm21qcImport(
 
 export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25) {
   await requireOngoingSalesAdmin(actorUserId);
-  return prisma.autopartCustomerImportRun.findMany({
+  const runs = await prisma.autopartCustomerImportRun.findMany({
     where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
     orderBy: { createdAt: "desc" },
     take: Math.min(100, Math.max(1, limit)),
@@ -866,7 +1311,46 @@ export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25
       rowsUnmatched: true,
       diagnostics: true,
       dryRun: true,
+      _count: { select: { rowDiagnostics: true } },
     },
+  });
+  return runs.map((run) => {
+    const diag = (run.diagnostics ?? {}) as Record<string, unknown>;
+    const counts = diag["counts"] as
+      | {
+          inserted?: number;
+          updated?: number;
+          unchanged?: number;
+          skipped?: number;
+          warnings?: number;
+          errors?: number;
+        }
+      | undefined;
+    return {
+      id: run.id,
+      type: run.type,
+      feed: run.type === "ONGOING_504" ? "504" : "TRM21QC",
+      status: run.status,
+      filename: run.filename,
+      createdAt: run.createdAt,
+      completedAt: run.completedAt,
+      rowsRead: run.rowsRead,
+      rowsImported: run.rowsImported,
+      rowsUpdated: run.rowsUpdated,
+      rowsSkipped: run.rowsSkipped,
+      rowsUnmatched: run.rowsUnmatched,
+      rowsUnchanged: counts?.unchanged ?? 0,
+      warnings: counts?.warnings ?? 0,
+      errors: counts?.errors ?? 0,
+      source:
+        diag["source"] === "EMAIL" || diag["source"] === "EMAIL_POLL"
+          ? "EMAIL_POLL"
+          : diag["source"] === "SCHEDULE" || diag["source"] === "SCHEDULED_POLL"
+            ? "SCHEDULED_POLL"
+            : "MANUAL_UPLOAD",
+      hasRowDiagnostics: run._count.rowDiagnostics > 0 || Boolean(diag["hasRowDiagnostics"]),
+      dryRun: run.dryRun,
+    };
   });
 }
 
