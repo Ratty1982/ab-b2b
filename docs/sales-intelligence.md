@@ -485,6 +485,27 @@ Accounts may view SI but cannot create follow-ups unless CRM task permissions ar
 
 Task follow-up indexes: `(companyId, sourceModule, sourceReason, sourceSku, status)`, `(sourceModule, status)`, `(productId)`.
 
+## Phase 6 — Sales Rep Portfolio
+
+Daily workspace at `/sales/sales-intelligence/portfolio` (default period `THIS_MONTH`).
+
+### Rules (deterministic)
+
+| Concern | Rule |
+|---------|------|
+| Cadence | Median gap (days) between consecutive distinct **INVOICE** document dates; ≥ 3 dates required. Credits never create purchase events. |
+| Purchase gap | `daysSinceLastPurchase ≥ max(14, ceil(typicalInterval × 1.5))` when cadence exists. |
+| Dormant | `daysSinceLastPurchase ≥ max(45, ceil(typicalInterval × 2))`. Insufficient history is never dormant. |
+| Comparison | `previousEquivalentPeriod()` — partial current month vs same-length prior window. |
+| Stopped products | Invoice presence in previous comparable period, none in current (Gap STOPPED semantics). |
+| Cross-sell | Cohort ≥ 8 buyers of seed SKU; ≥ 4 co-buyers; ≥ 40% adoption; denominator always shown. |
+| Brand gap | Within Customer Group: ≥ 3 other members buy brand Y; target has no invoice history for Y. |
+| Category peer-gap | Deferred — needs a defensible category peer cohort beyond group/brand (not invented). |
+
+### Scale
+
+Portfolio aggregations use SQL/`groupBy` + `prisma-in-chunks` over company IDs. Financial lines are not loaded wholesale into Node for portfolio KPIs.
+
 ## Architecture
 
 | Layer | Role |
@@ -495,6 +516,9 @@ Task follow-up indexes: `(companyId, sourceModule, sourceReason, sourceSku, stat
 | `src/domain/sales-opportunity.ts` | Similarity, adoption, range match, opportunity URL/config |
 | `src/domain/sales-rebate.ts` | Rebate URL state, eligibility stub, document-count helpers |
 | `src/domain/sales-followup.ts` | Follow-up subjects, due presets, snapshot helpers |
+| `src/domain/sales-cadence.ts` | Purchase cadence median + dormancy thresholds |
+| `src/domain/sales-attention.ts` | Decline/growth movement + attention reason aggregation |
+| `src/domain/sales-portfolio.ts` | Portfolio URL/filter state + opportunity builders |
 | `src/server/sales-intelligence/historic-lines.ts` | Shared DB loaders + summarizers |
 | `src/server/sales-intelligence/scope.ts` | Shared company scope |
 | `src/server/sales-intelligence/enquiry.ts` | Sales Enquiry service |
@@ -502,13 +526,14 @@ Task follow-up indexes: `(companyId, sourceModule, sourceReason, sourceSku, stat
 | `src/server/sales-intelligence/opportunity.ts` | Range Opportunities service + CSV |
 | `src/server/sales-intelligence/rebate.ts` | Rebate / Net Spend service + CSV |
 | `src/server/sales-intelligence/followup.ts` | SI → CRM Task preview/create + CRM task list/detail/complete |
+| `src/server/sales-intelligence/portfolio.ts` | Sales Rep Portfolio service + CSV |
 | `src/components/sales-intelligence/create-followup-drawer.tsx` | Shared Create Follow-up drawer |
 
-Query approach: one scoped historic-line load for the selected period, then in-process document/SKU/brand/category (or multi-customer) aggregation — not one query per customer/document/SKU.
+Query approach: Enquiry/Gap/Opportunity/Rebate use scoped historic-line loads then in-process aggregation. Portfolio uses DB `groupBy` aggregation + chunked IN lists for large portfolios.
 
 ## Future phases (do not implement here)
 
-1. Cross-sell UI (co-purchase foundation already computed server-side)
+1. Category / range peer-gap opportunities (when a defensible cohort dimension exists)
 2. **Rebate Schemes** — date range, customer/group, brand/category/SKU inclusion/exclusion, spend thresholds, tier/fixed percentages, accruals/payments (on top of trusted Net Spend)
 3. Salesperson performance
 4. Management dashboards / Sales-i style analysis
