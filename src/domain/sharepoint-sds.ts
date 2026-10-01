@@ -167,7 +167,13 @@ export function isPdfFilename(name: string): boolean {
 export function publicMicrosoftErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
   const lower = msg.toLowerCase();
-  if (lower.includes("invalid_client") || lower.includes("aadb2c") || lower.includes("unauthorized")) {
+  if (
+    lower.includes("invalid_client") ||
+    lower.includes("client secret") ||
+    lower.includes("aadb2c") ||
+    lower.includes("unauthorized") ||
+    lower.includes("authentication failed")
+  ) {
     return "Authentication failed — check tenant ID, client ID and client secret";
   }
   if (lower.includes("accessdenied") || lower.includes("forbidden") || lower.includes("403")) {

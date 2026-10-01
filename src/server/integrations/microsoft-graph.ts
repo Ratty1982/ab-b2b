@@ -69,10 +69,11 @@ export function createMicrosoftGraphClient(
       error_description?: string;
     };
     if (!res.ok || !json.access_token) {
+      const combined = [json.error, json.error_description, `Token HTTP ${res.status}`]
+        .filter(Boolean)
+        .join(": ");
       throw new MicrosoftGraphError(
-        publicMicrosoftErrorMessage(
-          new Error(json.error_description || json.error || `Token HTTP ${res.status}`),
-        ),
+        publicMicrosoftErrorMessage(new Error(combined)),
         res.status === 401 || res.status === 400 ? 401 : 502,
         "AUTH_FAILED",
       );
