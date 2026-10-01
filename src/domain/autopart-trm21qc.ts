@@ -4,7 +4,16 @@
  * Sales column is NET / EX VAT (signed; credits negative).
  */
 
+import type { AutopartImportReasonCode } from "@/domain/autopart-import-diagnostics";
+
 export type AutopartTrm21qcLineKind = "INVOICE" | "CREDIT" | "UNKNOWN";
+
+/** Why a non-blank row failed to become a financial line. */
+export type AutopartTrm21qcMalformedReason =
+  | "MISSING_DOCUMENT"
+  | "MISSING_PART_NUMBER"
+  | "INVALID_NET_SALES"
+  | "UNRECOGNISED_ROW_TYPE";
 
 export type AutopartTrm21qcRow = {
   lineNumber: number;
@@ -22,6 +31,10 @@ export type AutopartTrm21qcRow = {
   kind: AutopartTrm21qcLineKind;
   sourceFingerprint: string;
   classification: "OK" | "MALFORMED" | "BLANK";
+  /** Set when classification is MALFORMED — drives specific diagnostic reason codes. */
+  malformedReason?: AutopartTrm21qcMalformedReason;
+  /** True when the Sales cell was present but not a parseable Autopart amount. */
+  salesRawPresent?: boolean;
   rawLine: string;
 };
 
@@ -49,6 +62,10 @@ const HEADER_ALIASES: Record<string, string[]> = {
   perc: ["perc%", "perc", "percent", "%", "margin %"],
 };
 
+const NON_PRODUCT_PART_RE =
+  /^(TOTAL|SUBTOTAL|SUB-TOTAL|PAGE|REPORT|CUSTOMER|ACCOUNT|COUNT|AVERAGE|AVG|BALANCE|CARRIED|BROUGHT)$/i;
+const NON_PRODUCT_DOC_RE = /^(TOTAL|SUBTOTAL|SUB-TOTAL|PAGE|REPORT|BALANCE)$/i;
+
 function normaliseHeader(h: string): string {
   return h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -64,16 +81,42 @@ function parseUkDate(raw: string): string | null {
   return `${year}-${month}-${day}`;
 }
 
-function parseSignedDecimal(raw: string, places: number): string | null {
-  const t = raw.replace(/,/g, "").trim();
+/**
+ * Parse Autopart signed decimal tokens used on TRM21QC Qty / Sales / Cost / Margin / Perc%.
+ * Aligns with historic Autopart money handling (£, CR/DR, unicode minus, invisible chars)
+ * without inventing values from blank or non-numeric cells.
+ */
+export function parseTrm21qcSignedDecimal(raw: string, places: number): string | null {
+  let t = String(raw ?? "")
+    .replace(/^\uFEFF/, "")
+    // Zero-width / BOM / NBSP that Excel/CSV exports sometimes embed in numeric cells
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+    .replace(/,/g, "")
+    .trim();
+  t = t.replace(/[£$€]/g, "").replace(/\s+/g, "");
   if (!t) return null;
-  const neg = /^\(.*\)$/.test(t) || /-$/.test(t);
-  const cleaned = t.replace(/[()]/g, "").replace(/-$/, "");
-  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
+  // Unicode minus / en-dash / em-dash → ASCII minus
+  t = t.replace(/[\u2212\u2012\u2013\u2014]/g, "-");
+
+  const upper = t.toUpperCase();
+  let forcedNeg = false;
+  if (upper.endsWith("CR") && /[\d.]/.test(t)) {
+    forcedNeg = true;
+    t = t.slice(0, -2);
+  } else if (upper.endsWith("DR") && /[\d.]/.test(t)) {
+    t = t.slice(0, -2);
+  }
+
+  const parenNeg = /^\(.*\)$/.test(t);
+  const trailingNeg = /-$/.test(t);
+  const leadingNeg = t.startsWith("-");
+  const neg = forcedNeg || parenNeg || trailingNeg || leadingNeg;
+  const cleaned = t.replace(/[()]/g, "").replace(/-$/, "").replace(/^-/, "");
+  if (!cleaned || !/^\d+(\.\d+)?$/.test(cleaned)) return null;
   const n = Number(cleaned);
   if (!Number.isFinite(n)) return null;
   const abs = Math.abs(n).toFixed(places);
-  return neg || n < 0 ? `-${abs}` : abs;
+  return neg ? `-${abs}` : abs;
 }
 
 function detectDelimiter(headerLine: string): "," | "\t" | "|" | ";" {
@@ -128,6 +171,39 @@ function mapHeaders(cells: string[]): Record<string, number> | null {
     return null;
   }
   return idx;
+}
+
+function looksLikeNonProductRow(input: {
+  documentNumber: string;
+  partNumber: string;
+  description: string | null;
+  customerAccount: string;
+}): boolean {
+  const part = input.partNumber.trim();
+  const doc = input.documentNumber.trim();
+  const desc = (input.description ?? "").trim();
+  if (part && NON_PRODUCT_PART_RE.test(part)) return true;
+  if (doc && NON_PRODUCT_DOC_RE.test(doc)) return true;
+  if (!part && !doc && /^(TOTAL|SUBTOTAL|PAGE\s+\d+)/i.test(desc)) return true;
+  if (!part && /^TOTAL\b/i.test(input.customerAccount)) return true;
+  return false;
+}
+
+export function trm21qcMalformedToReasonCode(
+  reason: AutopartTrm21qcMalformedReason | undefined,
+): AutopartImportReasonCode {
+  switch (reason) {
+    case "MISSING_DOCUMENT":
+      return "MISSING_DOCUMENT";
+    case "MISSING_PART_NUMBER":
+      return "MISSING_PART_NUMBER";
+    case "INVALID_NET_SALES":
+      return "INVALID_NET_SALES";
+    case "UNRECOGNISED_ROW_TYPE":
+      return "UNRECOGNISED_ROW_TYPE";
+    default:
+      return "PARSE_ERROR";
+  }
 }
 
 export function isAutopartTrm21qcReport(text: string): boolean {
@@ -192,6 +268,27 @@ export function assignStableTrm21qcLineNumbers(
   return out;
 }
 
+function blankRow(lineNumber: number, line: string): AutopartTrm21qcRow {
+  return {
+    lineNumber,
+    customerAccount: "",
+    group: null,
+    documentNumber: "",
+    documentDate: null,
+    partNumber: "",
+    description: null,
+    qty: null,
+    salesNet: null,
+    cost: null,
+    margin: null,
+    perc: null,
+    kind: "UNKNOWN",
+    sourceFingerprint: "",
+    classification: "BLANK",
+    rawLine: line,
+  };
+}
+
 export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseResult {
   const lines = text
     .replace(/^\uFEFF/, "")
@@ -228,46 +325,68 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
     const customerAccount = get("cust");
     const documentNumber = get("document");
     const partNumber = get("part");
+    const description = get("description") || null;
     if (!customerAccount && !documentNumber && !partNumber) {
-      rows.push({
-        lineNumber,
-        customerAccount: "",
-        group: null,
-        documentNumber: "",
-        documentDate: null,
-        partNumber: "",
-        description: null,
-        qty: null,
-        salesNet: null,
-        cost: null,
-        margin: null,
-        perc: null,
-        kind: "UNKNOWN",
-        sourceFingerprint: "",
-        classification: "BLANK",
-        rawLine: line,
-      });
+      rows.push(blankRow(lineNumber, line));
       continue;
     }
-    const qty = parseSignedDecimal(get("qty"), 3);
-    const salesNet = parseSignedDecimal(get("sales"), 2);
-    if (!documentNumber || !partNumber || salesNet == null) {
+
+    const salesRaw = get("sales");
+    const salesRawPresent = Boolean(salesRaw.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").trim());
+    const qty = parseTrm21qcSignedDecimal(get("qty"), 3);
+    const salesNet = parseTrm21qcSignedDecimal(salesRaw, 2);
+    const cost = parseTrm21qcSignedDecimal(get("cost"), 2);
+    const margin = parseTrm21qcSignedDecimal(get("margin"), 2);
+    const perc = parseTrm21qcSignedDecimal(get("perc"), 3);
+    const documentDate = parseUkDate(get("date"));
+
+    if (looksLikeNonProductRow({ documentNumber, partNumber, description, customerAccount })) {
       rows.push({
         lineNumber,
         customerAccount,
         group: get("group") || null,
         documentNumber,
-        documentDate: parseUkDate(get("date")),
+        documentDate,
         partNumber,
-        description: get("description") || null,
+        description,
         qty,
         salesNet,
-        cost: parseSignedDecimal(get("cost"), 2),
-        margin: parseSignedDecimal(get("margin"), 2),
-        perc: parseSignedDecimal(get("perc"), 3),
+        cost,
+        margin,
+        perc,
         kind: "UNKNOWN",
         sourceFingerprint: "",
         classification: "MALFORMED",
+        malformedReason: "UNRECOGNISED_ROW_TYPE",
+        salesRawPresent,
+        rawLine: line,
+      });
+      continue;
+    }
+
+    if (!documentNumber || !partNumber || salesNet == null) {
+      let malformedReason: AutopartTrm21qcMalformedReason = "INVALID_NET_SALES";
+      if (!documentNumber) malformedReason = "MISSING_DOCUMENT";
+      else if (!partNumber) malformedReason = "MISSING_PART_NUMBER";
+      else malformedReason = "INVALID_NET_SALES";
+      rows.push({
+        lineNumber,
+        customerAccount,
+        group: get("group") || null,
+        documentNumber,
+        documentDate,
+        partNumber,
+        description,
+        qty,
+        salesNet,
+        cost,
+        margin,
+        perc,
+        kind: "UNKNOWN",
+        sourceFingerprint: "",
+        classification: "MALFORMED",
+        malformedReason,
+        salesRawPresent,
         rawLine: line,
       });
       continue;
@@ -279,7 +398,7 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
     else if (salesN > 0 || qtyN > 0) kind = "INVOICE";
     else kind = "INVOICE"; // zero line — treat as invoice presence-neutral
 
-    const baseFp = `${documentNumber}|${partNumber}|${qty ?? ""}|${salesNet}|${get("description")}`;
+    const baseFp = `${documentNumber}|${partNumber}|${qty ?? ""}|${salesNet}|${description ?? ""}`;
     const occurrence = (fingerprintCounts.get(baseFp) ?? 0) + 1;
     fingerprintCounts.set(baseFp, occurrence);
     const sourceFingerprint = trm21qcLineFingerprint({
@@ -287,7 +406,7 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
       partNumber,
       qty,
       salesNet,
-      description: get("description") || null,
+      description,
       occurrence,
     });
 
@@ -296,14 +415,14 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
       customerAccount,
       group: get("group") || null,
       documentNumber,
-      documentDate: parseUkDate(get("date")),
+      documentDate,
       partNumber,
-      description: get("description") || null,
+      description,
       qty,
       salesNet,
-      cost: parseSignedDecimal(get("cost"), 2),
-      margin: parseSignedDecimal(get("margin"), 2),
-      perc: parseSignedDecimal(get("perc"), 3),
+      cost,
+      margin,
+      perc,
       kind,
       sourceFingerprint,
       classification: "OK",

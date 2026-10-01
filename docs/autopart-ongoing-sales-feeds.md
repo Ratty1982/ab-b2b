@@ -119,7 +119,10 @@ Re-uploading the same report must not create duplicate financial sales (document
 | `UPDATED` | Existing row refreshed |
 | `ALREADY_IMPORTED` | Idempotent re-import; values unchanged |
 | `BLANK_ROW` | Empty source row |
-| `PARSE_ERROR` / `MALFORMED_ROW` / `MISSING_DOCUMENT` | Invalid source row |
+| `PARSE_ERROR` / `MALFORMED_ROW` | Generic invalid source row (prefer field-specific codes below) |
+| `MISSING_DOCUMENT` / `MISSING_PART_NUMBER` | Required identity field missing |
+| `INVALID_NET_SALES` / `INVALID_QUANTITY` / `INVALID_DOCUMENT` | Field present but blank/unparseable — no financial value invented |
+| `UNRECOGNISED_ROW_TYPE` | Total / subtotal / page / non-product report artefact |
 | `UNMAPPED_CUSTOMER` | Autopart account not linked to an AB company — **TRM21QC lines are skipped** (headers may still be retained) |
 | `NOT_IN_AB_CATALOGUE` | Exact SKU match failed; line **is still imported** with unmatched status (warning) |
 
@@ -191,7 +194,7 @@ Raw report text is not retained after import. After mapping, **re-upload** the T
 
 ### Errors vs catalogue warnings
 
-Filter **Errors** on a run to see the exact row (`PARSE_ERROR` / `MALFORMED_ROW` / `MISSING_DOCUMENT`).
+Filter **Errors** on a run to see the exact row and reason (`INVALID_NET_SALES`, `MISSING_DOCUMENT`, `UNRECOGNISED_ROW_TYPE`, etc.).
 
 `NOT_IN_AB_CATALOGUE` is an **informational warning**, not an error and not an import failure:
 

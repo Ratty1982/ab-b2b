@@ -23,6 +23,11 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "BLANK_ROW",
   "PARSE_ERROR",
   "MISSING_DOCUMENT",
+  "MISSING_PART_NUMBER",
+  "INVALID_NET_SALES",
+  "INVALID_QUANTITY",
+  "INVALID_DOCUMENT",
+  "UNRECOGNISED_ROW_TYPE",
   "UNMAPPED_CUSTOMER",
   "NOT_IN_AB_CATALOGUE",
   "MALFORMED_ROW",
@@ -37,6 +42,13 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
   BLANK_ROW: "Empty or header-only source row ignored.",
   PARSE_ERROR: "Row could not be parsed into a valid document or line.",
   MISSING_DOCUMENT: "Document number missing from the source row.",
+  MISSING_PART_NUMBER: "Part Number / SKU missing from the source row.",
+  INVALID_NET_SALES:
+    "Sales (NET / EX VAT) was blank or not a recognised Autopart amount. Row was not imported; no financial value was invented.",
+  INVALID_QUANTITY: "Quantity was blank or not a recognised Autopart numeric value.",
+  INVALID_DOCUMENT: "Document number was present but not a usable sales document identity.",
+  UNRECOGNISED_ROW_TYPE:
+    "Row looks like a total, subtotal, page, or other non-product report artefact rather than a sale/credit line.",
   UNMAPPED_CUSTOMER:
     "Autopart customer account is not linked to an AB company. Lines require a mapped company and were not imported.",
   NOT_IN_AB_CATALOGUE:

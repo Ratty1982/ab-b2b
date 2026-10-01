@@ -21,6 +21,7 @@ import {
   assignStableTrm21qcLineNumbers,
   isAutopartTrm21qcReport,
   parseAutopartTrm21qcReport,
+  trm21qcMalformedToReasonCode,
 } from "@/domain/autopart-trm21qc";
 import { reconcile504GoodsToTrmSales } from "@/domain/autopart-504-trm21qc-reconcile";
 import {
@@ -425,11 +426,15 @@ export async function previewAutopartTrm21qcImport(
       diagnostics.push(
         makeDiagnostic({
           status: "ERROR",
-          reasonCode: "PARSE_ERROR",
+          reasonCode: trm21qcMalformedToReasonCode(row.malformedReason),
           rowNumber: row.lineNumber,
           customerAccount: row.customerAccount || null,
           documentReference: row.documentNumber || null,
           sku: row.partNumber || null,
+          description: row.description,
+          quantity: row.qty,
+          // Never invent Sales — only persist when the parser produced a value.
+          salesNet: row.salesNet,
         }),
       );
     }
@@ -985,11 +990,14 @@ export async function confirmAutopartTrm21qcImport(
         diagnosticDrafts.push(
           makeDiagnostic({
             status: "ERROR",
-            reasonCode: "PARSE_ERROR",
+            reasonCode: trm21qcMalformedToReasonCode(row.malformedReason),
             rowNumber: row.lineNumber,
             customerAccount: row.customerAccount || null,
             documentReference: row.documentNumber || null,
             sku: row.partNumber || null,
+            description: row.description,
+            quantity: row.qty,
+            salesNet: row.salesNet,
           }),
         );
       }

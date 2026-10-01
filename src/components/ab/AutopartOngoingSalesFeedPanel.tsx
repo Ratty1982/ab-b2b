@@ -487,9 +487,11 @@ export function AutopartOngoingSalesFeedPanel() {
                   {detail.errors} error{detail.errors === 1 ? "" : "s"} in this run
                 </p>
                 <p className="mt-1 text-steel">
-                  Filter <span className="font-semibold">Errors</span> for row-level{" "}
-                  <span className="font-semibold">PARSE_ERROR</span> / malformed rows. Unmapped
-                  customers and NOT_IN_AB_CATALOGUE warnings are not counted as errors.
+                  Filter <span className="font-semibold">Errors</span> for row-level parse failures
+                  (e.g. <span className="font-semibold">INVALID_NET_SALES</span>,{" "}
+                  <span className="font-semibold">MISSING_DOCUMENT</span>,{" "}
+                  <span className="font-semibold">UNRECOGNISED_ROW_TYPE</span>). Unmapped customers
+                  and NOT_IN_AB_CATALOGUE warnings are not counted as errors.
                 </p>
                 {detail.parserErrors?.length ? (
                   <ul className="mt-2 list-disc space-y-1 pl-4 text-steel">
