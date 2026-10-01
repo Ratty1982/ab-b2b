@@ -21,7 +21,15 @@ type PreviewItem = Extract<
   { ok: true }
 >["data"]["items"][number];
 
-type RowState = PreviewItem & {
+type RowStatus =
+  | PreviewItem["status"]
+  | "IMPORTED"
+  | "REPLACED"
+  | "FAILED"
+  | "SKIPPED";
+
+type RowState = Omit<PreviewItem, "status"> & {
+  status: RowStatus;
   action: "IMPORT" | "REPLACE" | "SKIP";
   selectedProductId: string | null;
 };

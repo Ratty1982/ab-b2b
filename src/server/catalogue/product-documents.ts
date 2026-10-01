@@ -157,7 +157,7 @@ export async function uploadProductDocument(actorUserId: string, raw: unknown) {
   const bytes = decodeBase64Body(input.base64);
   const validated = validateProductDocumentPdf({
     filename: input.filename,
-    contentType: input.contentType,
+    contentType: input.contentType ?? null,
     bytes,
   });
   if (!validated.ok) throw new AuthError(validated.error, "VALIDATION", 400);
@@ -369,7 +369,7 @@ export async function previewBulkSdsImport(
     const bytes = decodeBase64Body(file.base64);
     const validated = validateProductDocumentPdf({
       filename: file.filename,
-      contentType: file.contentType,
+      contentType: file.contentType ?? null,
       bytes,
     });
     if (!validated.ok) {
