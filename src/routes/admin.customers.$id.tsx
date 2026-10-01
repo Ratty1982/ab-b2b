@@ -24,11 +24,13 @@ import {
   inviteCompanyUserFn,
   linkAndVerifyCompanyAutopartCustomerCodeFn,
   listCompanyActivityFn,
+  listCompanyAutopartAccountsFn,
   listCustomerPricesFn,
   listPriceListsFn,
   listSalesRepsFn,
   searchPricingVariantsFn,
   setCompanyAutopartCustomerCodeFn,
+  unmapAutopartCustomerAccountFn,
   updateCompanyFn,
   upsertCustomerPriceFn,
   verifyCompanyAutopartCustomerCodeFn,
@@ -791,20 +793,41 @@ function AutopartAccountEditor({
 }) {
   const [code, setCode] = useState(account.code ?? "");
   const [saving, setSaving] = useState(false);
+  const [accounts, setAccounts] = useState<
+    Array<{
+      accountCode: string;
+      kind: "PRIMARY" | "ALIAS";
+      verifiedAt: string | null;
+      mappedAt: string | null;
+      mappedBy: string | null;
+      source: string;
+      note: string | null;
+    }>
+  >([]);
+
+  async function reloadAccounts() {
+    const res = await listCompanyAutopartAccountsFn({ data: { companyId } });
+    if (res.ok) setAccounts(res.data.accounts);
+  }
 
   useEffect(() => {
     setCode(account.code ?? "");
   }, [account.code]);
+
+  useEffect(() => {
+    void reloadAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, account.code, account.verifiedAt]);
 
   const linked = Boolean(account.code && account.verified);
 
   return (
     <section className="max-w-xl space-y-4 rounded-lg border border-border bg-surface/30 p-4 sm:p-5">
       <div>
-        <h3 className="font-display text-lg font-semibold uppercase">Autopart</h3>
+        <h3 className="font-display text-lg font-semibold uppercase">Autopart accounts</h3>
         <p className="mt-1 text-[13px] text-steel">
-          Verified Autopart customer/account code for order CSV export. Internal only — never shown
-          in the customer portal. Registration claims are untrusted until staff verifies them.
+          Primary Autopart customer code and verified aliases used by ongoing 504 / TRM21QC matching.
+          Internal only — never shown in the customer portal.
         </p>
       </div>
 
@@ -967,6 +990,71 @@ function AutopartAccountEditor({
           </button>
         </div>
       ) : null}
+
+      <div className="space-y-2 border-t border-border pt-4">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-steel">
+          Mapped accounts
+        </h4>
+        {accounts.length === 0 ? (
+          <p className="text-[12px] text-steel">No Autopart accounts mapped yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {accounts.map((a) => (
+              <li
+                key={`${a.kind}-${a.accountCode}`}
+                className="rounded-md border border-border px-3 py-2 text-[12px]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-semibold">{a.accountCode}</span>
+                    <span className="ml-2 text-steel">{a.kind}</span>
+                  </div>
+                  {canEdit && a.kind === "ALIAS" ? (
+                    <button
+                      type="button"
+                      className="text-[10px] font-semibold uppercase text-bad"
+                      disabled={saving}
+                      onClick={() => {
+                        setSaving(true);
+                        void unmapAutopartCustomerAccountFn({
+                          data: { accountCode: a.accountCode, companyId },
+                        }).then(async (r) => {
+                          setSaving(false);
+                          if (!r.ok) toast.error(r.error);
+                          else {
+                            toast.success("Alias removed");
+                            await reloadAccounts();
+                            await onChanged();
+                          }
+                        });
+                      }}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-1 text-steel">
+                  {a.source}
+                  {a.mappedBy ? ` · ${a.mappedBy}` : ""}
+                  {a.mappedAt ? (
+                    <>
+                      {" · "}
+                      <InstantText value={a.mappedAt} variant="audit" />
+                    </>
+                  ) : null}
+                </div>
+                {a.note ? <div className="mt-1 text-steel">{a.note}</div> : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        <a
+          href={ROUTES.adminAutopartAccounts}
+          className="inline-block text-[11px] font-semibold uppercase text-cyan underline"
+        >
+          Autopart Account Mapping workspace
+        </a>
+      </div>
     </section>
   );
 }

@@ -27,6 +27,7 @@ export const ROUTES = {
   adminCostIntelligence: "/admin/cost-intelligence",
   adminCustomers: "/admin/customers",
   adminCustomer: (id: string) => `/admin/customers/${id}` as const,
+  adminAutopartAccounts: "/admin/customers/autopart-accounts",
   adminApplications: "/admin/applications",
   adminApplication: (id: string) => `/admin/applications/${id}` as const,
   adminPricing: "/admin/pricing",

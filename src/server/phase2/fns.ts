@@ -2174,6 +2174,127 @@ export const linkAndVerifyCompanyAutopartCustomerCodeFn = createServerFn({ metho
     }
   });
 
+export const searchCompaniesForAutopartMappingFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string; limit?: number } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return {
+        ok: true as const,
+        data: await mod.searchCompaniesForAutopartMapping(userId, data ?? {}),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getAutopartAccountMappingStatusFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { accountCode: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return {
+        ok: true as const,
+        data: await mod.getAutopartAccountMappingStatus(userId, data.accountCode),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const mapAutopartCustomerAccountFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return { ok: true as const, data: await mod.mapAutopartCustomerAccount(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const unmapAutopartCustomerAccountFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { accountCode: string; companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return { ok: true as const, data: await mod.unmapAutopartCustomerAccount(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listAutopartAccountMappingWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as
+        | { status?: string; q?: string; sort?: string; page?: number; pageSize?: number }
+        | undefined,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return {
+        ok: true as const,
+        data: await mod.listAutopartAccountMappingWorkspace(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCompanyAutopartAccountsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return {
+        ok: true as const,
+        data: await mod.listCompanyAutopartAccounts(userId, data.companyId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCompanyAndMapAutopartAccountFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return {
+        ok: true as const,
+        data: await mod.createCompanyAndMapAutopartAccount(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const reprocessSkippedAutopartSalesFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { text: string; filename?: string; accountCode?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-mapping");
+      return {
+        ok: true as const,
+        data: await mod.reprocessSkippedAutopartSales(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getPublicTeamPageFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const team = await import("@/server/team/service");

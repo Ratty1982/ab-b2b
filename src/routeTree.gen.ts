@@ -69,6 +69,7 @@ import { Route as AdminContentMediaRouteImport } from './routes/admin.content.me
 import { Route as AdminContentTeamRouteImport } from './routes/admin.content.team'
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
+import { Route as AdminCustomersAutopartAccountsRouteImport } from './routes/admin.customers.autopart-accounts'
 import { Route as AdminOrdersIndexRouteImport } from './routes/admin.orders.index'
 import { Route as AdminOrdersOrderIdRouteImport } from './routes/admin.orders.$orderId'
 import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.index'
@@ -405,6 +406,12 @@ const AdminCustomersIdRoute = AdminCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminCustomersAutopartAccountsRoute =
+  AdminCustomersAutopartAccountsRouteImport.update({
+    id: '/customers/autopart-accounts',
+    path: '/customers/autopart-accounts',
+    getParentRoute: () => AdminRoute,
+  } as any)
 const AdminOrdersIndexRoute = AdminOrdersIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -648,6 +655,7 @@ export interface FileRoutesByFullPath {
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -733,6 +741,7 @@ export interface FileRoutesByTo {
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -829,6 +838,7 @@ export interface FileRoutesById {
   '/admin/content/media': typeof AdminContentMediaRoute
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
+  '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -928,6 +938,7 @@ export interface FileRouteTypes {
     | '/admin/content/media'
     | '/admin/content/team'
     | '/admin/customers/$id'
+    | '/admin/customers/autopart-accounts'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1013,6 +1024,7 @@ export interface FileRouteTypes {
     | '/admin/content/media'
     | '/admin/content/team'
     | '/admin/customers/$id'
+    | '/admin/customers/autopart-accounts'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1108,6 +1120,7 @@ export interface FileRouteTypes {
     | '/admin/content/media'
     | '/admin/content/team'
     | '/admin/customers/$id'
+    | '/admin/customers/autopart-accounts'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1600,6 +1613,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/customers/autopart-accounts': {
+      id: '/admin/customers/autopart-accounts'
+      path: '/customers/autopart-accounts'
+      fullPath: '/admin/customers/autopart-accounts'
+      preLoaderRoute: typeof AdminCustomersAutopartAccountsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/orders/': {
       id: '/admin/orders/'
       path: '/'
@@ -1966,6 +1986,7 @@ interface AdminRouteChildren {
   AdminVersionUpdatesRoute: typeof AdminVersionUpdatesRouteWithChildren
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCustomersIdRoute: typeof AdminCustomersIdRoute
+  AdminCustomersAutopartAccountsRoute: typeof AdminCustomersAutopartAccountsRoute
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
   AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
 }
@@ -1983,6 +2004,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminVersionUpdatesRoute: AdminVersionUpdatesRouteWithChildren,
   AdminIndexRoute: AdminIndexRoute,
   AdminCustomersIdRoute: AdminCustomersIdRoute,
+  AdminCustomersAutopartAccountsRoute: AdminCustomersAutopartAccountsRoute,
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
   AdminCustomersIndexRoute: AdminCustomersIndexRoute,
 }

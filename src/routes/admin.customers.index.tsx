@@ -35,6 +35,11 @@ type CompanyRow = {
   phone: string | null;
   salesperson: { name: string } | null;
   paymentTerms: string | null;
+  autopartAccount?: {
+    code: string | null;
+    verified: boolean;
+    aliasCount?: number;
+  } | null;
 };
 
 function AdminCustomers() {
@@ -90,14 +95,22 @@ function AdminCustomers() {
         sub={`${total} companies`}
         crumbs={[{ label: "Sales" }, { label: "Customers", to: ROUTES.adminCustomers }]}
         actions={
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-[13px] font-bold uppercase tracking-wide text-primary-foreground"
-          >
-            <Plus className="size-4" aria-hidden />
-            Create customer
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to="/admin/customers/autopart-accounts"
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+            >
+              Autopart accounts
+            </Link>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-[13px] font-bold uppercase tracking-wide text-primary-foreground"
+            >
+              <Plus className="size-4" aria-hidden />
+              Create customer
+            </button>
+          </div>
         }
       />
 
@@ -184,6 +197,7 @@ function AdminCustomers() {
                 <tr>
                   <th className="px-4 py-3">Company</th>
                   <th className="px-4 py-3">Account</th>
+                  <th className="px-4 py-3">Autopart</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Salesperson</th>
                   <th className="px-4 py-3">Contact</th>
@@ -205,6 +219,25 @@ function AdminCustomers() {
                       ) : null}
                     </td>
                     <td className="num px-4 py-3 text-steel">{c.accountNumber ?? "—"}</td>
+                    <td className="num px-4 py-3 text-steel">
+                      {c.autopartAccount?.code ? (
+                        <>
+                          <span className="font-semibold text-foreground">
+                            {c.autopartAccount.code}
+                          </span>
+                          {(c.autopartAccount.aliasCount ?? 0) > 0 ? (
+                            <div className="text-[11px]">
+                              +{c.autopartAccount.aliasCount} alias
+                              {c.autopartAccount.aliasCount === 1 ? "" : "es"}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (c.autopartAccount?.aliasCount ?? 0) > 0 ? (
+                        <span>+{c.autopartAccount?.aliasCount} alias</span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge
                         tone={

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
+import { MapAutopartAccountDrawer } from "@/components/ab/MapAutopartAccountDrawer";
 import { formatOperationalDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import {
@@ -92,6 +93,10 @@ export function AutopartOngoingSalesFeedPanel() {
   const [diagPage, setDiagPage] = useState<DiagPage | null>(null);
   const [diagFilter, setDiagFilter] = useState<(typeof DIAG_FILTERS)[number]>("ALL");
   const [diagQ, setDiagQ] = useState("");
+  const [mapAccount, setMapAccount] = useState<{
+    accountCode: string;
+    diagnosticId?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const [s, history] = await Promise.all([
@@ -476,6 +481,43 @@ export function AutopartOngoingSalesFeedPanel() {
               </p>
             ) : null}
 
+            {detail.errors > 0 ? (
+              <div className="rounded-md border border-bad/40 bg-bad/5 px-3 py-2 text-[12px]">
+                <p className="font-semibold text-bad">
+                  {detail.errors} error{detail.errors === 1 ? "" : "s"} in this run
+                </p>
+                <p className="mt-1 text-steel">
+                  Filter <span className="font-semibold">Errors</span> for row-level{" "}
+                  <span className="font-semibold">PARSE_ERROR</span> / malformed rows. Unmapped
+                  customers and NOT_IN_AB_CATALOGUE warnings are not counted as errors.
+                </p>
+                {detail.parserErrors?.length ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-steel">
+                    {detail.parserErrors.slice(0, 5).map((msg, i) => (
+                      <li key={`${i}-${msg.slice(0, 40)}`}>{msg}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <button
+                  type="button"
+                  className="mt-2 text-[11px] font-semibold uppercase text-cyan underline"
+                  onClick={() => {
+                    setDiagFilter("ERRORS");
+                    if (selectedRunId) void loadRunDetail(selectedRunId, "ERRORS", diagQ);
+                  }}
+                >
+                  Show errors
+                </button>
+              </div>
+            ) : null}
+
+            <p className="text-[12px]">
+              <a href="/admin/customers/autopart-accounts" className="font-semibold text-cyan underline">
+                Open Autopart Account Mapping workspace
+              </a>{" "}
+              <span className="text-steel">to resolve multiple unmapped accounts.</span>
+            </p>
+
             {detail.hasRowDiagnostics ? (
               <>
                 <div className="flex flex-wrap gap-2">
@@ -557,10 +599,19 @@ export function AutopartOngoingSalesFeedPanel() {
                                     Customer
                                   </a>
                                 ) : null}
-                                {row.reasonCode === "UNMAPPED_CUSTOMER" ? (
-                                  <a className="text-cyan underline" href="/admin/customers">
+                                {row.reasonCode === "UNMAPPED_CUSTOMER" && row.customerAccount ? (
+                                  <button
+                                    type="button"
+                                    className="text-left text-cyan underline"
+                                    onClick={() =>
+                                      setMapAccount({
+                                        accountCode: row.customerAccount!,
+                                        diagnosticId: row.id,
+                                      })
+                                    }
+                                  >
                                     Map account
-                                  </a>
+                                  </button>
                                 ) : null}
                                 {row.links.productsSearch &&
                                 (row.reasonCode === "NOT_IN_AB_CATALOGUE" || row.isWarning) ? (
@@ -597,6 +648,17 @@ export function AutopartOngoingSalesFeedPanel() {
           <p className="p-4 text-[13px] text-steel">Loading…</p>
         )}
       </Drawer>
+
+      <MapAutopartAccountDrawer
+        open={Boolean(mapAccount)}
+        accountCode={mapAccount?.accountCode ?? ""}
+        {...(selectedRunId ? { importRunId: selectedRunId } : {})}
+        {...(mapAccount?.diagnosticId ? { diagnosticId: mapAccount.diagnosticId } : {})}
+        onClose={() => setMapAccount(null)}
+        onMapped={() => {
+          if (selectedRunId) void loadRunDetail(selectedRunId, diagFilter, diagQ);
+        }}
+      />
     </section>
   );
 }

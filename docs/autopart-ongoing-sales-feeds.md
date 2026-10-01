@@ -127,9 +127,57 @@ Re-uploading the same report must not create duplicate financial sales (document
 
 Open **Import history → run** and filter **Skipped**.
 
-For TRM21QC, skipped lines are almost always `UNMAPPED_CUSTOMER` (lines require `companyId`). Map the Autopart account on the customer record, then re-import — already-written lines stay idempotent; previously skipped lines can insert once mapped.
+For TRM21QC, skipped lines are almost always `UNMAPPED_CUSTOMER` (lines require `companyId`).
+
+Use **Map account** on the diagnostic row (keeps the Autopart account context) or open:
+
+**Customers → Autopart accounts** (`/admin/customers/autopart-accounts`)
+
+to work through unique unmapped accounts sorted by net sales affected.
 
 Historic runs created before row diagnostics: the UI shows an aggregate explanation and does **not** invent row-level history. Use **Export run diagnostics CSV** for future runs.
+
+### Customer account mapping
+
+Ongoing 504 / TRM21QC matching is deterministic:
+
+1. Exact Autopart account → `Company.autopartCustomerCode` (case-insensitive)
+2. Exact Autopart account → `AutopartCustomerAccountAlias.alias`
+3. For AB-originated 504 rows: `Customer Order Number` → `Order.orderNumber` → Company (unchanged)
+
+No fuzzy name matching. Staff must explicitly map.
+
+**Map existing customer**
+
+Search by company name, Autopart account, contact, email, postcode, VAT → select company → confirm **Map account**.
+
+- Company with no primary Autopart code → set + verify primary
+- Company with a different verified primary → add as alias
+- Same Autopart code cannot silently point at two companies; reassignment requires explicit confirmation and is audited
+
+**Create missing customer**
+
+From the mapping drawer: **Create new customer** retains the originating Autopart account, creates the company with staff-entered details only (nothing invented from TRM rows), then maps the account.
+
+**Recover previously skipped lines**
+
+Raw report text is not retained after import. After mapping, **re-upload** the TRM21QC/504 file (from the mapping drawer or Settings import). The standard pipeline runs again:
+
+- already-written lines → `UNCHANGED`
+- newly mapped accounts → `INSERTED`
+- remaining unmapped accounts stay `SKIPPED`
+- no duplicate financial sales
+
+### Errors vs catalogue warnings
+
+Filter **Errors** on a run to see the exact row (`PARSE_ERROR` / `MALFORMED_ROW` / `MISSING_DOCUMENT`).
+
+`NOT_IN_AB_CATALOGUE` is an **informational warning**, not an error and not an import failure:
+
+- common for retail-only Autopart products not stocked in B2B
+- line is still written when the customer is mapped
+- no automatic Product / ProductVariant creation
+- no fuzzy SKU matching
 
 ### Warning vs skip vs error
 

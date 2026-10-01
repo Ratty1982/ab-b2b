@@ -70,6 +70,11 @@ function companySelect() {
         },
       },
     },
+    autopartAccountAliases: {
+      select: { id: true, alias: true },
+      orderBy: { alias: "asc" },
+      take: 12,
+    },
   } satisfies Prisma.CompanySelect;
 }
 
@@ -127,6 +132,8 @@ export async function listCompaniesForActor(
       { primaryEmail: { contains: q, mode: "insensitive" } },
       { vatNumber: { contains: q, mode: "insensitive" } },
       { companyNumber: { contains: q, mode: "insensitive" } },
+      { autopartCustomerCode: { contains: q, mode: "insensitive" } },
+      { autopartAccountAliases: { some: { alias: { contains: q, mode: "insensitive" } } } },
     ];
   }
 
@@ -182,9 +189,11 @@ function serializeCompany(row: {
       user: { id: string; name: string | null; email: string };
     };
   }>;
+  autopartAccountAliases?: Array<{ id: string; alias: string }>;
 }) {
   const assignment = row.assignments?.[0];
   const autopartVerified = Boolean(row.autopartCustomerCode && row.autopartCustomerCodeVerifiedAt);
+  const aliases = row.autopartAccountAliases ?? [];
   return {
     id: row.id,
     accountNumber: row.accountNumber,
@@ -212,6 +221,8 @@ function serializeCompany(row: {
             email: row.autopartCustomerCodeVerifiedBy.email,
           }
         : null,
+      aliasCount: aliases.length,
+      aliases: aliases.map((a) => a.alias),
     },
     website: row.website,
     phone: row.phone,
