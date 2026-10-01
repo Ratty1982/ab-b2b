@@ -40,6 +40,7 @@ type CompanyRow = {
     verified: boolean;
     aliasCount?: number;
   } | null;
+  customerGroup?: { id: string; name: string; active: boolean } | null;
 };
 
 function AdminCustomers() {
@@ -96,6 +97,12 @@ function AdminCustomers() {
         crumbs={[{ label: "Sales" }, { label: "Customers", to: ROUTES.adminCustomers }]}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link
+              to="/admin/customers/groups"
+              className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
+            >
+              Customer Groups
+            </Link>
             <Link
               to="/admin/customers/autopart-accounts"
               className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase tracking-wide"
@@ -196,6 +203,7 @@ function AdminCustomers() {
               <thead className="border-b border-border bg-surface/60 text-[11px] uppercase tracking-wider text-steel">
                 <tr>
                   <th className="px-4 py-3">Company</th>
+                  <th className="px-4 py-3">Group</th>
                   <th className="px-4 py-3">Account</th>
                   <th className="px-4 py-3">Autopart</th>
                   <th className="px-4 py-3">Status</th>
@@ -217,6 +225,19 @@ function AdminCustomers() {
                       {c.tradingName ? (
                         <div className="text-[12px] text-steel">t/a {c.tradingName}</div>
                       ) : null}
+                    </td>
+                    <td className="px-4 py-3 text-steel">
+                      {c.customerGroup ? (
+                        <Link
+                          to="/admin/customers/groups/$groupId"
+                          params={{ groupId: c.customerGroup.id }}
+                          className="text-cyan underline"
+                        >
+                          {c.customerGroup.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="num px-4 py-3 text-steel">{c.accountNumber ?? "—"}</td>
                     <td className="num px-4 py-3 text-steel">

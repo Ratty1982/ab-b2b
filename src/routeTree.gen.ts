@@ -101,6 +101,8 @@ import { Route as SalesSalesIntelligenceGapsRouteImport } from './routes/sales.s
 import { Route as SalesSalesIntelligenceOpportunitiesRouteImport } from './routes/sales.sales-intelligence.opportunities'
 import { Route as SalesSalesIntelligenceRebatesRouteImport } from './routes/sales.sales-intelligence.rebates'
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
+import { Route as AdminCustomersGroupsIndexRouteImport } from './routes/admin.customers.groups.index'
+import { Route as AdminCustomersGroupsGroupIdRouteImport } from './routes/admin.customers.groups.$groupId'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
 import { Route as PortalOrdersOrderIdIndexRouteImport } from './routes/portal.orders.$orderId.index'
@@ -573,6 +575,18 @@ const AdminContentSlugPreviewRoute = AdminContentSlugPreviewRouteImport.update({
   path: '/preview',
   getParentRoute: () => AdminContentSlugRoute,
 } as any)
+const AdminCustomersGroupsIndexRoute =
+  AdminCustomersGroupsIndexRouteImport.update({
+    id: '/customers/groups/',
+    path: '/customers/groups/',
+    getParentRoute: () => AdminRoute,
+  } as any)
+const AdminCustomersGroupsGroupIdRoute =
+  AdminCustomersGroupsGroupIdRouteImport.update({
+    id: '/customers/groups/$groupId',
+    path: '/customers/groups/$groupId',
+    getParentRoute: () => AdminRoute,
+  } as any)
 const AdminProductsImportsIndexRoute =
   AdminProductsImportsIndexRouteImport.update({
     id: '/',
@@ -690,8 +704,10 @@ export interface FileRoutesByFullPath {
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
+  '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
+  '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
   '/portal/orders/$orderId/': typeof PortalOrdersOrderIdIndexRoute
 }
@@ -774,8 +790,10 @@ export interface FileRoutesByTo {
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
+  '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
+  '/admin/customers/groups': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports': typeof AdminProductsImportsIndexRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdIndexRoute
 }
@@ -873,8 +891,10 @@ export interface FileRoutesById {
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
+  '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
+  '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
   '/portal/orders/$orderId/': typeof PortalOrdersOrderIdIndexRoute
 }
@@ -973,8 +993,10 @@ export interface FileRouteTypes {
     | '/sales/quotes/'
     | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
+    | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
+    | '/admin/customers/groups/'
     | '/admin/products/imports/'
     | '/portal/orders/$orderId/'
   fileRoutesByTo: FileRoutesByTo
@@ -1057,8 +1079,10 @@ export interface FileRouteTypes {
     | '/sales/quotes'
     | '/sales/sales-intelligence'
     | '/admin/content/$slug/preview'
+    | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
+    | '/admin/customers/groups'
     | '/admin/products/imports'
     | '/portal/orders/$orderId'
   id:
@@ -1155,8 +1179,10 @@ export interface FileRouteTypes {
     | '/sales/quotes/'
     | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
+    | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
     | '/portal/orders/$orderId/confirmation'
+    | '/admin/customers/groups/'
     | '/admin/products/imports/'
     | '/portal/orders/$orderId/'
   fileRoutesById: FileRoutesById
@@ -1837,6 +1863,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminContentSlugPreviewRouteImport
       parentRoute: typeof AdminContentSlugRoute
     }
+    '/admin/customers/groups/': {
+      id: '/admin/customers/groups/'
+      path: '/customers/groups'
+      fullPath: '/admin/customers/groups/'
+      preLoaderRoute: typeof AdminCustomersGroupsIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/customers/groups/$groupId': {
+      id: '/admin/customers/groups/$groupId'
+      path: '/customers/groups/$groupId'
+      fullPath: '/admin/customers/groups/$groupId'
+      preLoaderRoute: typeof AdminCustomersGroupsGroupIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/products/imports/': {
       id: '/admin/products/imports/'
       path: '/'
@@ -1989,6 +2029,8 @@ interface AdminRouteChildren {
   AdminCustomersAutopartAccountsRoute: typeof AdminCustomersAutopartAccountsRoute
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
   AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
+  AdminCustomersGroupsGroupIdRoute: typeof AdminCustomersGroupsGroupIdRoute
+  AdminCustomersGroupsIndexRoute: typeof AdminCustomersGroupsIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
@@ -2007,6 +2049,8 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminCustomersAutopartAccountsRoute: AdminCustomersAutopartAccountsRoute,
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
   AdminCustomersIndexRoute: AdminCustomersIndexRoute,
+  AdminCustomersGroupsGroupIdRoute: AdminCustomersGroupsGroupIdRoute,
+  AdminCustomersGroupsIndexRoute: AdminCustomersGroupsIndexRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)

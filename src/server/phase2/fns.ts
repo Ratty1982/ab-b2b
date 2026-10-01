@@ -2295,6 +2295,140 @@ export const reprocessSkippedAutopartSalesFn = createServerFn({ method: "POST" }
     }
   });
 
+export const listCustomerGroupsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string; includeInactive?: boolean } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.listCustomerGroups(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCustomerGroupFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { groupId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.getCustomerGroup(userId, data.groupId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createCustomerGroupFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.createCustomerGroup(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateCustomerGroupFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as Record<string, unknown>)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.updateCustomerGroup(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const addCompanyToCustomerGroupFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { groupId: string; companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.addCompanyToCustomerGroup(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const removeCompanyFromCustomerGroupFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string; groupId?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.removeCompanyFromCustomerGroup(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setCompanyCustomerGroupFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { companyId: string; customerGroupId: string | null },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-groups");
+      return { ok: true as const, data: await mod.setCompanyCustomerGroup(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCustomerGroupSalesSummaryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-sales");
+      return { ok: true as const, data: await mod.getCustomerGroupSalesSummary(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCustomerGroupDocumentsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-sales");
+      return { ok: true as const, data: await mod.listCustomerGroupDocuments(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCustomerGroupProductLinesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-sales");
+      return { ok: true as const, data: await mod.listCustomerGroupProductLines(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCustomerGroupSalesCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/customer-group-sales");
+      return { ok: true as const, data: await mod.exportCustomerGroupSalesCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getPublicTeamPageFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const team = await import("@/server/team/service");

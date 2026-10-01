@@ -12,6 +12,11 @@ export const PERMISSIONS = [
   "companies.delete",
   "companies.manage_users",
 
+  /// Internal Customer Group reporting (aggregation layer above Company).
+  "customer_groups.view",
+  /// Create/rename/deactivate groups and manage Company membership.
+  "customer_groups.manage",
+
   "contacts.view",
   "contacts.create",
   "contacts.edit",

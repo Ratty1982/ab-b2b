@@ -137,6 +137,27 @@ to work through unique unmapped accounts sorted by net sales affected.
 
 Historic runs created before row diagnostics: the UI shows an aggregate explanation and does **not** invent row-level history. Use **Export run diagnostics CSV** for future runs.
 
+### Customer Groups (reporting layer)
+
+Customer Groups are an **Automotive Brands-owned** commercial/reporting aggregation:
+
+```
+Customer Group  →  Company  →  MAM account(s)  →  documents  →  product lines
+```
+
+Examples: **Vertu** (many dealership companies) and **Retail Accounts** (independent MAM accounts grouped for AB reporting only).
+
+Customer Groups do **not**:
+
+- represent or modify Autopart/MAM parent–child hierarchy
+- rewrite financial ownership (sales stay on the resolved Company)
+- grant trade users cross-company portal access
+- auto-create from Autopart names
+
+Independent customers may remain ungrouped (`customerGroupId = null`).
+
+Manage via **Customers → Customer Groups**. Account mapping still always targets a **Company** first; the Company's optional group is shown informationally.
+
 ### Customer account mapping
 
 Ongoing 504 / TRM21QC matching is deterministic:

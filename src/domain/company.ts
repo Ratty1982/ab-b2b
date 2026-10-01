@@ -75,6 +75,8 @@ export const companyListQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
   status: z.enum(COMPANY_STATUSES).optional(),
   salesRepId: z.string().cuid().optional(),
+  /** Customer Group id, or "__none__" for ungrouped companies. */
+  customerGroupId: z.string().optional(),
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
 });

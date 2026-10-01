@@ -75,6 +75,8 @@ function companySelect() {
       orderBy: { alias: "asc" },
       take: 12,
     },
+    customerGroupId: true,
+    customerGroup: { select: { id: true, name: true, active: true } },
   } satisfies Prisma.CompanySelect;
 }
 
@@ -122,6 +124,11 @@ export async function listCompaniesForActor(
   if (query.status) where.status = query.status;
   if (query.salesRepId) {
     where.assignments = { some: { salesRepId: query.salesRepId } };
+  }
+  if (query.customerGroupId === "__none__") {
+    where.customerGroupId = null;
+  } else if (query.customerGroupId) {
+    where.customerGroupId = query.customerGroupId;
   }
   if (query.q) {
     const q = query.q;
@@ -190,6 +197,8 @@ function serializeCompany(row: {
     };
   }>;
   autopartAccountAliases?: Array<{ id: string; alias: string }>;
+  customerGroupId?: string | null;
+  customerGroup?: { id: string; name: string; active: boolean } | null;
 }) {
   const assignment = row.assignments?.[0];
   const autopartVerified = Boolean(row.autopartCustomerCode && row.autopartCustomerCodeVerifiedAt);
@@ -202,6 +211,9 @@ function serializeCompany(row: {
     companyNumber: row.companyNumber,
     vatNumber: row.vatNumber,
     status: row.status as CompanyStatusKey,
+    customerGroup: row.customerGroup
+      ? { id: row.customerGroup.id, name: row.customerGroup.name, active: row.customerGroup.active }
+      : null,
     taxStatus: row.taxStatus,
     paymentTerms: row.paymentTerms,
     currency: row.currency,

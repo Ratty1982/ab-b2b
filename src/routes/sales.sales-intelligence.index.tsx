@@ -39,8 +39,10 @@ import {
 } from "@/components/sales-intelligence/create-followup-drawer";
 import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import {
+  exportCustomerGroupSalesCsvFn,
   exportCustomerSalesEnquiryCsvFn,
   exportProductSalesEnquiryCsvFn,
+  getCustomerGroupSalesSummaryFn,
   getCustomerSalesEnquiryFn,
   getProductSalesEnquiryFn,
   searchSalesIntelligenceCustomersFn,
@@ -69,7 +71,14 @@ type CustomerHit = {
   accountNumber: string | null;
   paymentTerms: string | null;
   salesperson: { name: string } | null;
+  kind?: "COMPANY" | "GROUP";
+  companyCount?: number;
 };
+
+type GroupSummary = Extract<
+  Awaited<ReturnType<typeof getCustomerGroupSalesSummaryFn>>,
+  { ok: true }
+>["data"];
 
 type ProductHit = {
   sku: string;
@@ -107,6 +116,7 @@ function SalesEnquiryPage() {
   const [customerHits, setCustomerHits] = useState<CustomerHit[]>([]);
   const [productHits, setProductHits] = useState<ProductHit[]>([]);
   const [customerData, setCustomerData] = useState<CustomerEnquiry | null>(null);
+  const [groupData, setGroupData] = useState<GroupSummary | null>(null);
   const [productData, setProductData] = useState<ProductEnquiry | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +128,7 @@ function SalesEnquiryPage() {
   function patch(next: {
     mode?: "customers" | "products";
     companyId?: string | null;
+    customerGroupId?: string | null;
     sku?: string | null;
     period?: SalesEnquiryPeriodPreset;
     from?: string | null;
@@ -136,6 +147,10 @@ function SalesEnquiryPage() {
     const nextMode = next.mode ?? mode;
     const nextCompanyId =
       next.companyId === null ? undefined : (next.companyId ?? search.companyId);
+    const nextGroupId =
+      next.customerGroupId === null
+        ? undefined
+        : (next.customerGroupId ?? search.customerGroupId);
     const nextSku = next.sku === null ? undefined : (next.sku ?? search.sku);
     const nextPeriod = next.period ?? period;
     const nextFrom = next.from === null ? undefined : (next.from ?? search.from);
@@ -154,7 +169,11 @@ function SalesEnquiryPage() {
     const nextTxPage = next.txPage ?? search.txPage;
     const draft: SalesEnquiryUrlSearch = {};
     if (nextMode !== "customers") draft.mode = nextMode;
-    if (nextCompanyId) draft.companyId = nextCompanyId;
+    if (nextGroupId) {
+      draft.customerGroupId = nextGroupId;
+    } else if (nextCompanyId) {
+      draft.companyId = nextCompanyId;
+    }
     if (nextSku) draft.sku = nextSku;
     if (nextPeriod !== "LAST_30") draft.period = nextPeriod;
     if (nextPeriod === "CUSTOM") {
@@ -228,11 +247,48 @@ function SalesEnquiryPage() {
     setProductQ("");
     setCustomerHits([]);
     setProductHits([]);
-  }, [search.companyId, search.sku, mode]);
+  }, [search.companyId, search.customerGroupId, search.sku, mode]);
 
   useEffect(() => {
-    if (mode !== "customers" || !search.companyId) {
-      setCustomerData(null);
+    if (mode !== "customers" || !search.customerGroupId) {
+      setGroupData(null);
+      return;
+    }
+    void (async () => {
+      setLoading(true);
+      const mappedPeriod =
+        period === "LAST_30"
+          ? "LAST_30"
+          : period === "LAST_90"
+            ? "LAST_90"
+            : period === "LAST_180" || period === "YTD" || period === "LAST_YEAR"
+              ? "LAST_365"
+              : period === "CUSTOM"
+                ? "CUSTOM"
+                : "LAST_30";
+      const r = await getCustomerGroupSalesSummaryFn({
+        data: {
+          groupId: search.customerGroupId,
+          period: mappedPeriod,
+          from: search.from ?? null,
+          to: search.to ?? null,
+        },
+      });
+      if (!r.ok) {
+        setError(r.error);
+        setGroupData(null);
+      } else {
+        setError(null);
+        setGroupData(r.data);
+        setCustomerData(null);
+      }
+      setLoading(false);
+    })();
+  }, [mode, search.customerGroupId, period, search.from, search.to]);
+
+  useEffect(() => {
+    if (mode !== "customers" || !search.companyId || search.customerGroupId) {
+      if (!search.companyId) setCustomerData(null);
       return;
     }
     void (async () => {
@@ -268,6 +324,7 @@ function SalesEnquiryPage() {
   }, [
     mode,
     search.companyId,
+    search.customerGroupId,
     period,
     search.from,
     search.to,
@@ -344,7 +401,8 @@ function SalesEnquiryPage() {
     return 1;
   }, [mode, customerData, productData]);
 
-  const customerSelected = mode === "customers" && Boolean(search.companyId);
+  const customerSelected =
+    mode === "customers" && Boolean(search.companyId || search.customerGroupId);
   const productSelected = mode === "products" && Boolean(search.sku);
   const showCustomerHits = shouldShowEntitySuggestions({
     entitySelected: customerSelected,
@@ -360,6 +418,24 @@ function SalesEnquiryPage() {
   });
 
   async function exportCsv() {
+    if (mode === "customers" && search.customerGroupId) {
+      const mappedPeriod =
+        period === "LAST_90" ? "LAST_90" : period === "CUSTOM" ? "CUSTOM" : "LAST_30";
+      const r = await exportCustomerGroupSalesCsvFn({
+        data: {
+          groupId: search.customerGroupId,
+          period: mappedPeriod,
+          from: search.from ?? null,
+          to: search.to ?? null,
+        },
+      });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      downloadBlob(r.data.csv, r.data.filename);
+      return;
+    }
     if (mode === "customers" && search.companyId) {
       const r = await exportCustomerSalesEnquiryCsvFn({
         data: {
@@ -400,7 +476,7 @@ function SalesEnquiryPage() {
   }
 
   const canExport =
-    (mode === "customers" && Boolean(search.companyId)) ||
+    (mode === "customers" && Boolean(search.companyId || search.customerGroupId)) ||
     (mode === "products" && Boolean(search.sku));
 
   return (
@@ -427,7 +503,19 @@ function SalesEnquiryPage() {
         />
 
         {mode === "customers" ? (
-          customerSelected && customerData && !changingEntity ? (
+          customerSelected && groupData && search.customerGroupId && !changingEntity ? (
+            <SiEntityContext
+              eyebrow="Customer Group"
+              title={groupData.group.name}
+              meta={[
+                `${groupData.group.companyCount} companies`,
+                `${groupData.group.mamAccountCount} MAM accounts`,
+                "AB reporting group — not Autopart hierarchy",
+              ]}
+              onChange={() => setChangingEntity(true)}
+              changeLabel="Change customer / group"
+            />
+          ) : customerSelected && customerData && !changingEntity ? (
             <div className="flex flex-wrap items-start justify-between gap-3">
               <SiEntityContext
                 eyebrow="Customer"
@@ -459,7 +547,7 @@ function SalesEnquiryPage() {
             <SiField label="Customer" className="max-w-xl">
               <input
                 className={siControlClassName()}
-                placeholder="Search name, Autopart account, postcode…"
+                placeholder="Search company, Customer Group, Autopart account…"
                 value={customerQ}
                 onChange={(e) => setCustomerQ(e.target.value)}
                 autoFocus={changingEntity}
@@ -467,7 +555,7 @@ function SalesEnquiryPage() {
               {showCustomerHits ? (
                 <ul className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-card text-[13px]">
                   {customerHits.map((c) => (
-                    <li key={c.id}>
+                    <li key={`${c.kind ?? "COMPANY"}-${c.id}`}>
                       <button
                         type="button"
                         className="flex w-full flex-col px-3 py-2 text-left hover:bg-secondary/60"
@@ -475,12 +563,20 @@ function SalesEnquiryPage() {
                           setCustomerQ("");
                           setCustomerHits([]);
                           setChangingEntity(false);
-                          patch({ companyId: c.id, page: 1 });
+                          if (c.kind === "GROUP") {
+                            patch({ customerGroupId: c.id, companyId: null, page: 1 });
+                          } else {
+                            patch({ companyId: c.id, customerGroupId: null, page: 1 });
+                          }
                         }}
                       >
-                        <span className="font-medium">{c.name}</span>
+                        <span className="font-medium">
+                          {c.kind === "GROUP" ? `Group · ${c.name}` : c.name}
+                        </span>
                         <span className="text-[11px] text-steel">
-                          {c.autopartCustomerCode || c.accountNumber || "No Autopart code"}
+                          {c.kind === "GROUP"
+                            ? `${c.companyCount ?? 0} companies`
+                            : c.autopartCustomerCode || c.accountNumber || "No Autopart code"}
                           {c.salesperson ? ` · ${c.salesperson.name}` : ""}
                         </span>
                       </button>
@@ -635,6 +731,65 @@ function SalesEnquiryPage() {
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
         {loading ? <p className="text-[13px] text-steel">Loading enquiry…</p> : null}
 
+        {mode === "customers" && groupData && search.customerGroupId ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {(
+                [
+                  ["Net Sales", formatGbp(groupData.summary.netSales)],
+                  ["Invoice Sales", formatGbp(groupData.summary.invoiceSales)],
+                  ["Credits", formatGbp(groupData.summary.credits)],
+                  ["Units", String(groupData.summary.units)],
+                ] as const
+              ).map(([label, value]) => (
+                <SiMetricCard key={label} label={label} value={value} />
+              ))}
+            </div>
+            <p className="text-[12px] text-steel">
+              Consolidated across member companies (no double counting).{" "}
+              <a
+                href={`/admin/customers/groups/${search.customerGroupId}`}
+                className="font-semibold text-cyan underline"
+              >
+                Open full Customer Group workspace
+              </a>{" "}
+              for MAM / document / product-line drill-down.
+            </p>
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="min-w-full text-left text-[12px]">
+                <thead className="border-b border-border bg-surface/60 text-[10px] uppercase text-steel">
+                  <tr>
+                    <th className="px-3 py-2">Company</th>
+                    <th className="px-3 py-2">Net Sales</th>
+                    <th className="px-3 py-2">Salesperson</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupData.byCompany.map((c) => (
+                    <tr key={c.companyId} className="border-b border-border/60">
+                      <td className="px-3 py-2 font-semibold">{c.name}</td>
+                      <td className="num px-3 py-2">{formatGbp(c.netSales)}</td>
+                      <td className="px-3 py-2 text-steel">{c.salesperson ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold uppercase text-cyan underline"
+                          onClick={() =>
+                            patch({ companyId: c.companyId, customerGroupId: null, page: 1 })
+                          }
+                        >
+                          Open company enquiry
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
         {mode === "customers" && customerData ? (
           <CustomerEnquiryView
             data={customerData}
@@ -699,7 +854,7 @@ function SalesEnquiryPage() {
           />
         ) : null}
 
-        {!loading && mode === "customers" && !search.companyId ? (
+        {!loading && mode === "customers" && !search.companyId && !search.customerGroupId ? (
           <p className="text-[14px] text-steel">Search and select a customer to begin.</p>
         ) : null}
         {!loading && mode === "products" && !search.sku ? (

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
@@ -25,11 +25,13 @@ import {
   linkAndVerifyCompanyAutopartCustomerCodeFn,
   listCompanyActivityFn,
   listCompanyAutopartAccountsFn,
+  listCustomerGroupsFn,
   listCustomerPricesFn,
   listPriceListsFn,
   listSalesRepsFn,
   searchPricingVariantsFn,
   setCompanyAutopartCustomerCodeFn,
+  setCompanyCustomerGroupFn,
   unmapAutopartCustomerAccountFn,
   updateCompanyFn,
   upsertCustomerPriceFn,
@@ -216,6 +218,22 @@ function CustomerWorkspace() {
                 />
                 <Row label="Payment terms" value={company.paymentTerms} />
                 <Row label="Tax status" value={company.taxStatus} />
+                <Row
+                  label="Customer Group"
+                  value={
+                    company.customerGroup ? (
+                      <Link
+                        to="/admin/customers/groups/$groupId"
+                        params={{ groupId: company.customerGroup.id }}
+                        className="text-cyan underline"
+                      >
+                        {company.customerGroup.name}
+                      </Link>
+                    ) : (
+                      "—"
+                    )
+                  }
+                />
                 <Row
                   label="Autopart account"
                   value={
@@ -438,6 +456,12 @@ function CustomerWorkspace() {
               }
             }}
           />
+          <CustomerGroupEditor
+            companyId={company.id}
+            canEdit={permissions.canEdit}
+            current={company.customerGroup ?? null}
+            onChanged={reload}
+          />
           <AutopartAccountEditor
             companyId={company.id}
             canEdit={permissions.canEdit}
@@ -543,7 +567,13 @@ function CustomerWorkspace() {
   );
 }
 
-function Row({ label, value }: { label: string; value: string | null | undefined }) {
+function Row({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
   return (
     <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
       <dt className="text-steel">{label}</dt>
@@ -764,6 +794,106 @@ function CommercialEditor({
         </button>
       ) : null}
     </form>
+  );
+}
+
+function CustomerGroupEditor({
+  companyId,
+  canEdit,
+  current,
+  onChanged,
+}: {
+  companyId: string;
+  canEdit: boolean;
+  current: { id: string; name: string; active: boolean } | null;
+  onChanged: () => Promise<void>;
+}) {
+  const [groups, setGroups] = useState<Array<{ id: string; name: string }>>([]);
+  const [selected, setSelected] = useState(current?.id ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setSelected(current?.id ?? "");
+  }, [current?.id]);
+
+  useEffect(() => {
+    void listCustomerGroupsFn({ data: { includeInactive: false } }).then((r) => {
+      if (r.ok) setGroups(r.data.items.map((g) => ({ id: g.id, name: g.name })));
+    });
+  }, []);
+
+  return (
+    <section className="max-w-xl space-y-3 rounded-lg border border-border bg-surface/30 p-4 sm:p-5">
+      <div>
+        <h3 className="font-display text-lg font-semibold uppercase">Customer Group</h3>
+        <p className="mt-1 text-[13px] text-steel">
+          Optional Automotive Brands reporting group. Does not change Autopart hierarchy, financial
+          ownership, salesperson assignment, or trade portal access.
+        </p>
+      </div>
+      {current ? (
+        <p className="text-[13px]">
+          Current:{" "}
+          <Link
+            to="/admin/customers/groups/$groupId"
+            params={{ groupId: current.id }}
+            className="font-semibold text-cyan underline"
+          >
+            {current.name}
+          </Link>
+        </p>
+      ) : (
+        <p className="text-[13px] text-steel">Not in a Customer Group.</p>
+      )}
+      {canEdit ? (
+        <div className="flex flex-wrap gap-2">
+          <select
+            className={cn(inputClass, "max-w-xs")}
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            <option value="">— Ungrouped —</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={saving}
+            className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+            onClick={() => {
+              setSaving(true);
+              void setCompanyCustomerGroupFn({
+                data: {
+                  companyId,
+                  customerGroupId: selected || null,
+                },
+              }).then(async (r) => {
+                setSaving(false);
+                if (!r.ok) toast.error(r.error);
+                else {
+                  toast.success(selected ? "Customer Group updated" : "Removed from Customer Group");
+                  await onChanged();
+                }
+              });
+            }}
+          >
+            {saving ? "Saving…" : selected ? "Change group" : "Remove from group"}
+          </button>
+          {current ? (
+            <Link
+              to="/admin/customers/groups/$groupId"
+              params={{ groupId: current.id }}
+              className="inline-flex h-10 items-center rounded-md border border-border px-3 text-[11px] font-semibold uppercase"
+            >
+              View group
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

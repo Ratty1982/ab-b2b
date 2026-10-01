@@ -471,6 +471,7 @@ model User {
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
+  customerGroupsCreated CustomerGroup[] @relation("CustomerGroupCreator")
   ownedLeads         Lead[]
   ownedOpportunities Opportunity[]
   sessions           AuthSession[]
@@ -599,6 +600,24 @@ model UserRole {
 
 // ─── Companies & people ──────────────────────────────────────────────────────
 
+/// Automotive Brands-owned reporting/commercial aggregation above Company.
+/// Does NOT model Autopart/MAM parent–child account hierarchy.
+model CustomerGroup {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+
+  createdBy User?      @relation("CustomerGroupCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  companies Company[]
+
+  @@index([name])
+  @@index([active])
+}
+
 model Company {
   id             String        @id @default(cuid())
   accountNumber  String?       @unique
@@ -611,6 +630,8 @@ model Company {
   paymentTerms   String?
   currency       String        @default("GBP")
   priceListId    String?
+  /// Optional AB Customer Group for consolidated reporting. Null = ungrouped.
+  customerGroupId String?
   /// Generic external ERP reference (legacy / non-Autopart). Prefer autopartCustomerCode for Autopart.
   externalRef    String?       @unique
   /// Verified Autopart customer/account code for future order handoff. Never a login secret.
@@ -624,6 +645,7 @@ model Company {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  customerGroup  CustomerGroup? @relation(fields: [customerGroupId], references: [id], onDelete: SetNull)
   priceList      PriceList?    @relation(fields: [priceListId], references: [id])
   autopartCustomerCodeVerifiedBy User? @relation("AutopartCodeVerifier", fields: [autopartCustomerCodeVerifiedById], references: [id], onDelete: SetNull)
   users          CompanyUser[]
@@ -654,6 +676,7 @@ model Company {
   @@index([name])
   @@index([primaryEmail])
   @@index([autopartCustomerCode])
+  @@index([customerGroupId])
 }
 
 model CompanyUser {
@@ -1915,6 +1938,8 @@ model AutopartCustomerAccountAlias {
   companyId String
   /// Normalised uppercase exact alias (e.g. YORKMOTO when verified code is YORKMOT).
   alias     String
+  /// Optional internal label (e.g. Birmingham, Retail eBay). Never used for matching.
+  label        String?
   verifiedById String
   verifiedAt   DateTime @default(now())
   note         String?

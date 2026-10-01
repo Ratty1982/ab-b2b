@@ -16,6 +16,8 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "companies.edit",
   "companies.delete",
   "companies.manage_users",
+  "customer_groups.view",
+  "customer_groups.manage",
   "contacts.view",
   "contacts.create",
   "contacts.edit",
@@ -49,6 +51,8 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
 
 const SALES_MANAGER_PERMS: PermissionKey[] = [
   "companies.view",
+  "customer_groups.view",
+  "customer_groups.manage",
   "contacts.view",
   "contacts.create",
   "contacts.edit",
@@ -84,6 +88,7 @@ const SALES_MANAGER_PERMS: PermissionKey[] = [
 
 const SALES_REP_PERMS: PermissionKey[] = [
   "companies.view",
+  "customer_groups.view",
   "contacts.view",
   "contacts.create",
   "contacts.edit",
@@ -112,6 +117,7 @@ const SALES_REP_PERMS: PermissionKey[] = [
 
 const CUSTOMER_SERVICE_PERMS: PermissionKey[] = [
   "companies.view",
+  "customer_groups.view",
   "contacts.view",
   "products.view",
   "pricing.view",
@@ -127,6 +133,7 @@ const CUSTOMER_SERVICE_PERMS: PermissionKey[] = [
 
 const ACCOUNTS_PERMS: PermissionKey[] = [
   "companies.view",
+  "customer_groups.view",
   "contacts.view",
   "products.view",
   "products.cost.view",

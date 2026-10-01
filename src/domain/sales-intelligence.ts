@@ -189,6 +189,8 @@ export function compareSalesTotals(
 export type SalesEnquiryUrlSearch = {
   mode?: SalesEnquiryMode;
   companyId?: string;
+  /** Customer Group aggregation (mutually exclusive with companyId in UI). */
+  customerGroupId?: string;
   sku?: string;
   period?: SalesEnquiryPeriodPreset;
   from?: string;
@@ -225,6 +227,9 @@ export function parseSalesEnquiryUrlSearch(
   }
   if (typeof search["companyId"] === "string" && search["companyId"]) {
     out.companyId = search["companyId"];
+  }
+  if (typeof search["customerGroupId"] === "string" && search["customerGroupId"]) {
+    out.customerGroupId = search["customerGroupId"];
   }
   if (typeof search["sku"] === "string" && search["sku"].trim()) {
     out.sku = search["sku"].trim();
@@ -271,6 +276,7 @@ export function compactSalesEnquiryUrlSearch(search: SalesEnquiryUrlSearch): Sal
   const out: SalesEnquiryUrlSearch = {};
   if (search.mode && search.mode !== "customers") out.mode = search.mode;
   if (search.companyId) out.companyId = search.companyId;
+  if (search.customerGroupId) out.customerGroupId = search.customerGroupId;
   if (search.sku) out.sku = search.sku;
   if (search.period && search.period !== "LAST_30") out.period = search.period;
   if (search.period === "CUSTOM" || search.from) {

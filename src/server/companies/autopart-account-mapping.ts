@@ -171,6 +171,7 @@ export async function searchCompaniesForAutopartMapping(
           },
         },
       },
+      customerGroup: { select: { id: true, name: true } },
     },
   });
 
@@ -194,6 +195,7 @@ export async function searchCompaniesForAutopartMapping(
           ? `${contact.firstName} ${contact.lastName}`.trim()
           : null,
         postcode: r.addresses[0]?.postcode ?? null,
+        customerGroup: r.customerGroup,
       };
     }),
   };
@@ -450,6 +452,8 @@ export type UnmappedAccountWorkspaceRow = {
   mappedCompanyId: string | null;
   mappedCompanyName: string | null;
   mappingKind: "PRIMARY" | "ALIAS" | null;
+  customerGroupId: string | null;
+  customerGroupName: string | null;
 };
 
 export async function listAutopartAccountMappingWorkspace(
@@ -460,6 +464,7 @@ export async function listAutopartAccountMappingWorkspace(
     sort?: string;
     page?: number;
     pageSize?: number;
+    customerGroupId?: string;
   },
 ) {
   await requireMappingView(actorUserId);
@@ -468,6 +473,7 @@ export async function listAutopartAccountMappingWorkspace(
   const page = Math.max(1, raw?.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, raw?.pageSize ?? 50));
   const sort = raw?.sort ?? "netSales";
+  const groupFilter = raw?.customerGroupId?.trim() || null;
 
   // Aggregate from diagnostics (authoritative for skipped lines + net sales).
   const skipped = await prisma.autopartImportDiagnostic.findMany({
@@ -568,7 +574,12 @@ export async function listAutopartAccountMappingWorkspace(
             autopartCustomerCode: { equals: c, mode: "insensitive" as const },
           })),
         },
-        select: { id: true, name: true, autopartCustomerCode: true },
+        select: {
+          id: true,
+          name: true,
+          autopartCustomerCode: true,
+          customerGroup: { select: { id: true, name: true } },
+        },
       })
     : [];
   const aliases = codes.length
@@ -577,7 +588,12 @@ export async function listAutopartAccountMappingWorkspace(
         select: {
           alias: true,
           companyId: true,
-          company: { select: { name: true } },
+          company: {
+            select: {
+              name: true,
+              customerGroup: { select: { id: true, name: true } },
+            },
+          },
         },
       })
     : [];
@@ -589,11 +605,17 @@ export async function listAutopartAccountMappingWorkspace(
   );
   const aliasByCode = new Map(aliases.map((a) => [a.alias, a]));
 
-  let rows: UnmappedAccountWorkspaceRow[] = codes.map((code) => {
+  type WorkspaceRow = UnmappedAccountWorkspaceRow & {
+    customerGroupId: string | null;
+    customerGroupName: string | null;
+  };
+
+  let rows: WorkspaceRow[] = codes.map((code) => {
     const agg = byAccount.get(code)!;
     const primary = primaryByCode.get(code);
     const alias = aliasByCode.get(code);
     const mapped = Boolean(primary || alias);
+    const group = primary?.customerGroup ?? alias?.company.customerGroup ?? null;
     return {
       accountCode: code,
       customerNameSnapshot: agg.customerNameSnapshot,
@@ -606,6 +628,8 @@ export async function listAutopartAccountMappingWorkspace(
       mappedCompanyId: primary?.id ?? alias?.companyId ?? null,
       mappedCompanyName: primary?.name ?? alias?.company.name ?? null,
       mappingKind: primary ? ("PRIMARY" as const) : alias ? ("ALIAS" as const) : null,
+      customerGroupId: group?.id ?? null,
+      customerGroupName: group?.name ?? null,
     };
   });
 
@@ -616,12 +640,17 @@ export async function listAutopartAccountMappingWorkspace(
     rows = rows.filter((r) => r.status === "MAPPED" && r.unmappedLines > 0);
   }
 
+  if (groupFilter) {
+    rows = rows.filter((r) => r.customerGroupId === groupFilter);
+  }
+
   if (q) {
     rows = rows.filter(
       (r) =>
         r.accountCode.includes(q) ||
         (r.customerNameSnapshot ?? "").toUpperCase().includes(q) ||
-        (r.mappedCompanyName ?? "").toUpperCase().includes(q),
+        (r.mappedCompanyName ?? "").toUpperCase().includes(q) ||
+        (r.customerGroupName ?? "").toUpperCase().includes(q),
     );
   }
 

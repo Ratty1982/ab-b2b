@@ -334,6 +334,7 @@ export function MapAutopartAccountDrawer({
                             : h.aliasCount
                               ? `${h.aliasCount} alias${h.aliasCount === 1 ? "" : "es"}`
                               : "No Autopart account"}
+                          {h.customerGroup ? ` · Group ${h.customerGroup.name}` : ""}
                           {h.salesperson ? ` · ${h.salesperson}` : ""}
                           {h.postcode ? ` · ${h.postcode}` : ""}
                           {h.primaryContact ? ` · ${h.primaryContact}` : ""}
@@ -352,9 +353,15 @@ export function MapAutopartAccountDrawer({
                   <div className="rounded-md border border-border px-3 py-3">
                     <div className="text-[10px] font-semibold uppercase text-steel">Will be linked to</div>
                     <div className="mt-1 font-semibold">{selected.name}</div>
+                    {selected.customerGroup ? (
+                      <div className="mt-1 text-[12px]">
+                        Customer Group:{" "}
+                        <span className="font-semibold">{selected.customerGroup.name}</span>
+                      </div>
+                    ) : null}
                     <div className="mt-1 text-[12px] text-steel">
                       Autopart account <span className="font-semibold text-foreground">{accountCode}</span>{" "}
-                      → {selected.name}
+                      → Company (not directly to a Customer Group)
                     </div>
                   </div>
                 ) : null}

@@ -115,7 +115,8 @@ function AutopartAccountMappingPage() {
             <thead className="border-b border-border bg-surface/60 text-[10px] uppercase tracking-wide text-steel">
               <tr>
                 <th className="px-3 py-2">Autopart account</th>
-                <th className="px-3 py-2">Customer name</th>
+                <th className="px-3 py-2">Company</th>
+                <th className="px-3 py-2">Customer Group</th>
                 <th className="px-3 py-2">Docs</th>
                 <th className="px-3 py-2">Lines</th>
                 <th className="px-3 py-2">Net sales</th>
@@ -131,18 +132,30 @@ function AutopartAccountMappingPage() {
                   <tr key={row.accountCode} className="border-b border-border/70">
                     <td className="px-3 py-2 font-semibold">{row.accountCode}</td>
                     <td className="px-3 py-2 text-steel">
-                      {row.customerNameSnapshot ?? "—"}
-                      {row.mappedCompanyName ? (
-                        <div>
-                          <Link
-                            to="/admin/customers/$id"
-                            params={{ id: row.mappedCompanyId! }}
-                            className="text-cyan underline"
-                          >
-                            {row.mappedCompanyName}
-                          </Link>
-                        </div>
-                      ) : null}
+                      {row.mappedCompanyId && row.mappedCompanyName ? (
+                        <Link
+                          to="/admin/customers/$id"
+                          params={{ id: row.mappedCompanyId }}
+                          className="text-cyan underline"
+                        >
+                          {row.mappedCompanyName}
+                        </Link>
+                      ) : (
+                        (row.customerNameSnapshot ?? "—")
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-steel">
+                      {row.customerGroupId && row.customerGroupName ? (
+                        <Link
+                          to="/admin/customers/groups/$groupId"
+                          params={{ groupId: row.customerGroupId }}
+                          className="text-cyan underline"
+                        >
+                          {row.customerGroupName}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="num px-3 py-2">{row.unmappedDocuments}</td>
                     <td className="num px-3 py-2">{row.unmappedLines}</td>
@@ -189,7 +202,7 @@ function AutopartAccountMappingPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-3 py-6 text-steel">
+                  <td colSpan={10} className="px-3 py-6 text-steel">
                     No Autopart accounts match this filter.
                   </td>
                 </tr>

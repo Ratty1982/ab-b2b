@@ -21,6 +21,7 @@ import {
 
 export type HistoricLineRow = {
   companyId: string;
+  autopartCustomerCode: string;
   sku: string;
   units: { toString(): string } | number;
   salesNet: { toString(): string } | number;
@@ -56,6 +57,7 @@ export async function loadHistoricSalesLines(args: {
     },
     select: {
       companyId: true,
+      autopartCustomerCode: true,
       sku: true,
       units: true,
       salesNet: true,

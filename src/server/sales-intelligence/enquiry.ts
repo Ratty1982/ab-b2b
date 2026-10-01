@@ -147,12 +147,24 @@ export async function searchSalesIntelligenceCustomers(actorUserId: string, raw:
         autopartCustomerCode: string | null;
         paymentTerms: string | null;
         salesperson: { id: string; code: string | null; name: string } | null;
+        kind: "COMPANY" | "GROUP";
+        companyCount?: number;
       }>,
     };
   }
   const scope = await resolveSalesIntelligenceCompanyScope(profile);
   const companyFilter =
     scope === "all" ? {} : { id: { in: scope.length ? scope : ["__none__"] } };
+
+  const groups = await prisma.customerGroup.findMany({
+    where: {
+      active: true,
+      name: { contains: q, mode: "insensitive" },
+    },
+    take: Math.min(input.limit ?? 20, 10),
+    orderBy: { name: "asc" },
+    include: { _count: { select: { companies: true } } },
+  });
 
   const rows = await prisma.company.findMany({
     where: {
@@ -190,26 +202,39 @@ export async function searchSalesIntelligenceCustomers(actorUserId: string, raw:
     take: input.limit ?? 20,
   });
 
-  return {
-    items: rows.map((r) => {
-      const rep = r.assignments[0]?.salesRep;
-      return {
-        id: r.id,
-        name: r.name,
-        tradingName: r.tradingName,
-        accountNumber: r.accountNumber,
-        autopartCustomerCode: r.autopartCustomerCode,
-        paymentTerms: r.paymentTerms,
-        salesperson: rep
-          ? {
-              id: rep.id,
-              code: rep.code,
-              name: rep.displayName || rep.user.name || rep.user.email,
-            }
-          : null,
-      };
-    }),
-  };
+  const companyItems = rows.map((r) => {
+    const rep = r.assignments[0]?.salesRep;
+    return {
+      id: r.id,
+      name: r.name,
+      tradingName: r.tradingName,
+      accountNumber: r.accountNumber,
+      autopartCustomerCode: r.autopartCustomerCode,
+      paymentTerms: r.paymentTerms,
+      kind: "COMPANY" as const,
+      salesperson: rep
+        ? {
+            id: rep.id,
+            code: rep.code,
+            name: rep.displayName || rep.user.name || rep.user.email,
+          }
+        : null,
+    };
+  });
+
+  const groupItems = groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    tradingName: null as string | null,
+    accountNumber: null as string | null,
+    autopartCustomerCode: null as string | null,
+    paymentTerms: null as string | null,
+    kind: "GROUP" as const,
+    companyCount: g._count.companies,
+    salesperson: null as { id: string; code: string | null; name: string } | null,
+  }));
+
+  return { items: [...groupItems, ...companyItems] };
 }
 
 export async function searchSalesIntelligenceProducts(actorUserId: string, raw: unknown) {

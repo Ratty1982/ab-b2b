@@ -28,9 +28,18 @@ Nav section: **Sales Intelligence → Sales Enquiry | Gap Analysis | Range Oppor
 
 CRM remains separate. Do not move the Sales Enquiry route unnecessarily.
 
+### Customer Groups
+
+Sales Enquiry customer search can return **Customer Groups** (kind `GROUP`) alongside companies.
+
+Selecting a group loads consolidated Autopart realised sales across member companies (same NET / EX VAT lines, credits negative, no Company+MAM double counting). Drill into a company for the normal company enquiry, or open the Customer Group workspace for MAM / document / product-line drill-down.
+
+Customer Groups are an Automotive Brands reporting layer — they are **not** Autopart account hierarchy and do not change CompanyUser access.
+
 URL-backed state examples:
 
 - Enquiry: `?mode=customers&companyId=…&period=LAST_30`
+- Enquiry: `?mode=customers&customerGroupId=…&period=LAST_30`
 - Enquiry: `?mode=products&sku=…&period=CUSTOM&from=2026-01-01&to=2026-09-29&compare=PREVIOUS`
 - Gaps: `?mode=customers&companyId=…&period=LAST_30&compare=PREVIOUS_YEAR&status=ALL_CHANGES&sort=NET_DECREASE`
 - Gaps: `?mode=products&sku=…&compare=CUSTOM&compareFrom=…&compareTo=…&salesRepId=…`
