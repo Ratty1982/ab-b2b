@@ -5,8 +5,12 @@ import {
   assignStableTrm21qcLineNumbers,
   detectAutopartTrm21qcFilename,
   isAutopartTrm21qcReport,
+  normaliseTrmDescription,
   parseAutopartTrm21qcReport,
+  parseLeadingCsvFields,
+  peelTrailingFinancialFields,
   parseTrm21qcSignedDecimal,
+  resolveTrm21qcRowCells,
   trm21qcMalformedToReasonCode,
 } from "@/domain/autopart-trm21qc";
 import { classifyOngoingSalesAttachment } from "@/server/companies/autopart-ongoing-sales-poll";
@@ -22,6 +26,26 @@ const RETAIL_FIXTURE = readFileSync(
   resolve(import.meta.dirname, "fixtures/autopart-trm21qc-retail-parse-cases.csv"),
   "utf8",
 );
+
+const HEADER_MAP = {
+  cust: 0,
+  group: 1,
+  document: 2,
+  date: 3,
+  part: 4,
+  description: 5,
+  qty: 6,
+  sales: 7,
+  cost: 8,
+  margin: 9,
+  perc: 10,
+};
+
+/** Exact production Autopart lines (unescaped inch mark in Description). */
+const PROD_SS306120 =
+  `"RETAIL","WT","SS306120","01 Oct 26","SWUX101","14" Phoenix Premium Boxed Whee","1","24.99","9.99","15.00","60.02"`;
+const PROD_SC506090 =
+  `"RETAIL","WT","SC506090","01 Oct 26","SWUX101","14" Phoenix Premium Boxed Whee","-1","-24.99","-9.99","-15.00","60.02"`;
 
 describe("Autopart TRM21QC parser", () => {
   it("parses invoice and credit lines with signed qty/sales", () => {
@@ -58,10 +82,83 @@ describe("Autopart TRM21QC parser", () => {
     expect(parseTrm21qcSignedDecimal("****", 2)).toBeNull();
   });
 
-  it("classifies RETAIL SS306120 / SC506090 blank-Sales structural cases as INVALID_NET_SALES", () => {
-    const parsed = parseAutopartTrm21qcReport(RETAIL_FIXTURE);
+  it("recovers exact production SS306120 / SC506090 rows with unescaped inch marks", () => {
+    const text = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%\n${PROD_SS306120}\n${PROD_SC506090}\n`;
+    const parsed = parseAutopartTrm21qcReport(text);
     const ss = parsed.rows.find((r) => r.documentNumber === "SS306120");
     const sc = parsed.rows.find((r) => r.documentNumber === "SC506090");
+    expect(ss).toMatchObject({
+      customerAccount: "RETAIL",
+      group: "WT",
+      partNumber: "SWUX101",
+      classification: "OK",
+      kind: "INVOICE",
+      qty: "1.000",
+      salesNet: "24.99",
+      documentDate: "2026-10-01",
+      description: '14" Phoenix Premium Boxed Whee',
+    });
+    expect(sc).toMatchObject({
+      customerAccount: "RETAIL",
+      group: "WT",
+      partNumber: "SWUX101",
+      classification: "OK",
+      kind: "CREDIT",
+      qty: "-1.000",
+      salesNet: "-24.99",
+      documentDate: "2026-10-01",
+      description: '14" Phoenix Premium Boxed Whee',
+    });
+    expect(parsed.documents).toContain("SS306120");
+    expect(parsed.documents).toContain("SC506090");
+    expect(ss?.malformedReason).toBeUndefined();
+    expect(sc?.malformedReason).toBeUndefined();
+  });
+
+  it("recovers 14/15/16 inch descriptions and keeps normal / 500ml rows", () => {
+    const parsed = parseAutopartTrm21qcReport(RETAIL_FIXTURE);
+    expect(parsed.rows.find((r) => r.documentNumber === "SS306120")).toMatchObject({
+      classification: "OK",
+      salesNet: "24.99",
+      description: '14" Phoenix Premium Boxed Whee',
+    });
+    expect(parsed.rows.find((r) => r.documentNumber === "SS306122")).toMatchObject({
+      classification: "OK",
+      salesNet: "10.00",
+      description: '15" Alloy Wheel Cap',
+    });
+    expect(parsed.rows.find((r) => r.documentNumber === "SS306123")).toMatchObject({
+      classification: "OK",
+      salesNet: "8.50",
+      description: '16" Spare Cover',
+    });
+    expect(parsed.rows.find((r) => r.documentNumber === "SS306124")).toMatchObject({
+      classification: "OK",
+      salesNet: "15.00",
+      description: "500ml Interior Cleaner",
+    });
+    expect(parsed.rows.find((r) => r.documentNumber === "SS306125")).toMatchObject({
+      classification: "OK",
+      salesNet: "5.00",
+      description: "Normal description without quotes",
+    });
+  });
+
+  it("rejects genuinely corrupt rows as PARSE_ERROR not INVALID_NET_SALES", () => {
+    const parsed = parseAutopartTrm21qcReport(RETAIL_FIXTURE);
+    const corrupt = parsed.rows.find((r) => r.documentNumber === "SS306199");
+    expect(corrupt).toMatchObject({
+      classification: "MALFORMED",
+      malformedReason: "ROW_STRUCTURE_INVALID",
+    });
+    expect(trm21qcMalformedToReasonCode(corrupt?.malformedReason)).toBe("PARSE_ERROR");
+    expect(parsed.documents).not.toContain("SS306199");
+  });
+
+  it("classifies blank Sales (after confident recovery) as INVALID_NET_SALES", () => {
+    const parsed = parseAutopartTrm21qcReport(RETAIL_FIXTURE);
+    const ss = parsed.rows.find((r) => r.documentNumber === "SS306121");
+    const sc = parsed.rows.find((r) => r.documentNumber === "SC506091");
     expect(ss).toMatchObject({
       customerAccount: "RETAIL",
       partNumber: "SWUX101",
@@ -79,10 +176,8 @@ describe("Autopart TRM21QC parser", () => {
       qty: "-1.000",
     });
     expect(trm21qcMalformedToReasonCode(ss?.malformedReason)).toBe("INVALID_NET_SALES");
-    expect(trm21qcMalformedToReasonCode(sc?.malformedReason)).toBe("INVALID_NET_SALES");
-    // Blank Sales must not become financial lines
-    expect(parsed.documents).not.toContain("SS306120");
-    expect(parsed.documents).not.toContain("SC506090");
+    expect(parsed.documents).not.toContain("SS306121");
+    expect(parsed.documents).not.toContain("SC506091");
   });
 
   it("parses valid Autopart Sales variants that previously failed strict decimal checks", () => {
@@ -114,7 +209,7 @@ describe("Autopart TRM21QC parser", () => {
     expect(trm21qcMalformedToReasonCode(total?.malformedReason)).toBe("UNRECOGNISED_ROW_TYPE");
   });
 
-  it("keeps truncated rows with missing Sales column out of financials", () => {
+  it("keeps truncated rows with missing trailing financial fields out of financials", () => {
     const text = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
 RETAIL,RETAIL,SS306120,29/09/2026,SWUX101,Power Maxed UX Cleaner,1
 `;
@@ -123,8 +218,20 @@ RETAIL,RETAIL,SS306120,29/09/2026,SWUX101,Power Maxed UX Cleaner,1
       documentNumber: "SS306120",
       partNumber: "SWUX101",
       classification: "MALFORMED",
-      malformedReason: "INVALID_NET_SALES",
+      malformedReason: "ROW_STRUCTURE_INVALID",
       salesRawPresent: false,
     });
+    expect(trm21qcMalformedToReasonCode(parsed.rows[0]?.malformedReason)).toBe("PARSE_ERROR");
+  });
+
+  it("structural helpers peel leading/trailing fields without shifting money", () => {
+    const leading = parseLeadingCsvFields(PROD_SS306120, ",", 5);
+    expect(leading?.fields).toEqual(["RETAIL", "WT", "SS306120", "01 Oct 26", "SWUX101"]);
+    const trailing = peelTrailingFinancialFields(leading!.rest, ",", 5);
+    expect(trailing?.fields).toEqual(["1", "24.99", "9.99", "15.00", "60.02"]);
+    expect(normaliseTrmDescription(trailing!.descriptionRaw)).toBe('14" Phoenix Premium Boxed Whee');
+    const resolved = resolveTrm21qcRowCells(PROD_SS306120, ",", HEADER_MAP);
+    expect(resolved?.resolution).toBe("structural");
+    expect(resolved?.sales).toBe("24.99");
   });
 });

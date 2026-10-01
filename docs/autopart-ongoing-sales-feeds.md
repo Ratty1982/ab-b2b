@@ -119,9 +119,9 @@ Re-uploading the same report must not create duplicate financial sales (document
 | `UPDATED` | Existing row refreshed |
 | `ALREADY_IMPORTED` | Idempotent re-import; values unchanged |
 | `BLANK_ROW` | Empty source row |
-| `PARSE_ERROR` / `MALFORMED_ROW` | Generic invalid source row (prefer field-specific codes below) |
+| `PARSE_ERROR` / `MALFORMED_ROW` | Generic invalid source row (prefer field-specific codes below). Includes TRM21QC rows whose Description quoting is too corrupt to recover the five trailing financial fields. |
 | `MISSING_DOCUMENT` / `MISSING_PART_NUMBER` | Required identity field missing |
-| `INVALID_NET_SALES` / `INVALID_QUANTITY` / `INVALID_DOCUMENT` | Field present but blank/unparseable — no financial value invented |
+| `INVALID_NET_SALES` / `INVALID_QUANTITY` / `INVALID_DOCUMENT` | After confident column recovery, Sales (or qty/doc) is blank/unparseable — no financial value invented. Not used for Description quote-shift failures. |
 | `UNRECOGNISED_ROW_TYPE` | Total / subtotal / page / non-product report artefact |
 | `UNMAPPED_CUSTOMER` | Autopart account not linked to an AB company — **TRM21QC lines are skipped** (headers may still be retained) |
 | `NOT_IN_AB_CATALOGUE` | Exact SKU match failed; line **is still imported** with unmatched status (warning) |

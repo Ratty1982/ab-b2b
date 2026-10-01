@@ -2,9 +2,15 @@
  * Autopart TRM21QC — ongoing product-line sales/credit feed.
  *
  * Sales column is NET / EX VAT (signed; credits negative).
+ *
+ * Autopart sometimes emits an unescaped inch mark inside an already-quoted
+ * Description (e.g. `"14" Phoenix…"`). Strict CSV then shifts columns. We
+ * recover those rows from stable leading/trailing field boundaries — never by
+ * inventing financial values.
  */
 
 import type { AutopartImportReasonCode } from "@/domain/autopart-import-diagnostics";
+import { parseAutopartDateOnly } from "@/domain/autopart-report-money";
 
 export type AutopartTrm21qcLineKind = "INVOICE" | "CREDIT" | "UNKNOWN";
 
@@ -13,7 +19,12 @@ export type AutopartTrm21qcMalformedReason =
   | "MISSING_DOCUMENT"
   | "MISSING_PART_NUMBER"
   | "INVALID_NET_SALES"
-  | "UNRECOGNISED_ROW_TYPE";
+  | "UNRECOGNISED_ROW_TYPE"
+  /** Row quoting/structure could not be recovered confidently (not a Sales-value issue). */
+  | "ROW_STRUCTURE_INVALID";
+
+/** Canonical TRM21QC logical column count. */
+export const TRM21QC_COLUMN_COUNT = 11;
 
 export type AutopartTrm21qcRow = {
   lineNumber: number;
@@ -71,6 +82,9 @@ function normaliseHeader(h: string): string {
 }
 
 function parseUkDate(raw: string): string | null {
+  // Prefer shared Autopart date parser ("01 Oct 26", DD/MM/YYYY, ISO).
+  const viaShared = parseAutopartDateOnly(raw);
+  if (viaShared) return viaShared;
   const t = raw.trim();
   const m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
   if (!m) return null;
@@ -156,6 +170,221 @@ function splitCsvLine(line: string, delimiter: string): string[] {
   return out;
 }
 
+/**
+ * Parse the first `count` CSV fields with strict quote rules, returning the
+ * remainder of the line (which may contain Autopart's broken Description quoting).
+ */
+export function parseLeadingCsvFields(
+  line: string,
+  delimiter: string,
+  count: number,
+): { fields: string[]; rest: string } | null {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  let i = 0;
+  for (; i < line.length && fields.length < count; i++) {
+    const ch = line[i]!;
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === delimiter && !inQuotes) {
+      fields.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (fields.length === count) {
+    // Consumed delimiter after the Nth field; rest starts at i.
+    return { fields, rest: line.slice(i) };
+  }
+  if (fields.length === count - 1 && !inQuotes) {
+    // Line ended exactly on the Nth field (no trailing delimiter).
+    fields.push(cur.trim());
+    return { fields, rest: "" };
+  }
+  return null;
+}
+
+/** True when a trailing TRM financial token is blank or a recognised Autopart amount. */
+function isTrmTrailingFinancialToken(raw: string): boolean {
+  const t = raw.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").trim();
+  if (!t) return true; // blank allowed (e.g. empty Perc%) — does not invent a value
+  return parseTrm21qcSignedDecimal(t, 3) != null || parseTrm21qcSignedDecimal(t, 2) != null;
+}
+
+/**
+ * Peel `count` trailing delimiter-separated fields from the end of `segment`.
+ * Each field may be quoted (`"24.99"`) or bare (`24.99` / empty).
+ * Returns null when any field is not a confident blank-or-numeric financial token.
+ *
+ * Walks from the end: each field is either `"…"` (no internal quotes) or a bare
+ * token with no delimiter; bare tokens must be blank or Autopart-numeric.
+ */
+export function peelTrailingFinancialFields(
+  segment: string,
+  delimiter: string,
+  count: number,
+): { fields: string[]; descriptionRaw: string } | null {
+  let rest = segment.replace(/\s+$/, "");
+  const fields: string[] = [];
+
+  for (let n = 0; n < count; n++) {
+    if (rest.length === 0) return null;
+
+    if (rest.endsWith('"')) {
+      // Find the opening quote of this trailing quoted field.
+      const end = rest.length - 1;
+      let open = -1;
+      for (let i = end - 1; i >= 0; i--) {
+        if (rest[i] === '"') {
+          // Escaped "" inside a well-formed field — skip pair.
+          if (i > 0 && rest[i - 1] === '"') {
+            i -= 1;
+            continue;
+          }
+          open = i;
+          break;
+        }
+      }
+      if (open < 0) return null;
+      const value = rest.slice(open + 1, end);
+      // For financial fields Autopart does not put inch marks inside Qty/Sales/etc.
+      // Reject if the quoted value itself contains a raw " (should have been "").
+      if (value.includes('"')) return null;
+      if (!isTrmTrailingFinancialToken(value)) return null;
+      fields.unshift(value.trim());
+      rest = rest.slice(0, open).replace(/\s+$/, "");
+      if (rest.endsWith(delimiter)) {
+        rest = rest.slice(0, -delimiter.length);
+      } else if (rest.length > 0) {
+        return null;
+      }
+      continue;
+    }
+
+    // Bare field: take back to previous delimiter (or start).
+    const delimAt = rest.lastIndexOf(delimiter);
+    const value = delimAt < 0 ? rest : rest.slice(delimAt + delimiter.length);
+    if (!isTrmTrailingFinancialToken(value)) return null;
+    fields.unshift(value.trim());
+    if (delimAt < 0) {
+      rest = "";
+      if (n !== count - 1) return null;
+    } else {
+      rest = rest.slice(0, delimAt);
+    }
+  }
+
+  return { fields, descriptionRaw: rest };
+}
+
+/** Strip a single outer Autopart Description quote wrapper when present. */
+export function normaliseTrmDescription(raw: string): string {
+  let d = raw.trim();
+  if (d.startsWith('"') && d.endsWith('"') && d.length >= 2) {
+    d = d.slice(1, -1);
+  } else if (d.startsWith('"') && !d.endsWith('"')) {
+    d = d.slice(1);
+  } else if (!d.startsWith('"') && d.endsWith('"')) {
+    d = d.slice(0, -1);
+  }
+  // Autopart sometimes doubles quotes correctly — collapse CSV escapes.
+  d = d.replace(/""/g, '"');
+  return d.trim();
+}
+
+export type Trm21qcResolvedCells = {
+  cust: string;
+  group: string;
+  document: string;
+  date: string;
+  part: string;
+  description: string;
+  qty: string;
+  sales: string;
+  cost: string;
+  margin: string;
+  perc: string;
+  /** How cells were obtained. */
+  resolution: "standard" | "structural";
+};
+
+/**
+ * Resolve a TRM21QC data row into the 11 logical columns.
+ *
+ * Prefer structural recovery (first 5 + last 5) when strict CSV would shift
+ * financial columns because of an unescaped inch mark in Description.
+ * Returns null only when neither path can confidently identify the trailing
+ * financial fields — callers must not invent Sales.
+ */
+export function resolveTrm21qcRowCells(
+  line: string,
+  delimiter: string,
+  headerMap: Record<string, number>,
+): Trm21qcResolvedCells | null {
+  const standard = splitCsvLine(line, delimiter);
+  const getStd = (key: string) => {
+    const at = headerMap[key];
+    return at == null ? "" : (standard[at] ?? "").trim();
+  };
+
+  const stdSales = getStd("sales");
+  const stdSalesOk = parseTrm21qcSignedDecimal(stdSales, 2) != null;
+  const expectedCols = Math.max(...Object.values(headerMap), 0) + 1;
+  const stdLooksAligned =
+    standard.length >= expectedCols &&
+    stdSalesOk &&
+    // Description should not absorb trailing financial commas when quoting breaks.
+    !(standard.length > expectedCols + 2);
+
+  if (stdLooksAligned) {
+    return {
+      cust: getStd("cust"),
+      group: getStd("group"),
+      document: getStd("document"),
+      date: getStd("date"),
+      part: getStd("part"),
+      description: getStd("description"),
+      qty: getStd("qty"),
+      sales: stdSales,
+      cost: getStd("cost"),
+      margin: getStd("margin"),
+      perc: getStd("perc"),
+      resolution: "standard",
+    };
+  }
+
+  // Structural recovery: Cust,Group,Document,Date,Part | Description | Qty,Sales,Cost,Margin,Perc%
+  const leading = parseLeadingCsvFields(line, delimiter, 5);
+  if (!leading || leading.fields.length !== 5) return null;
+  const trailing = peelTrailingFinancialFields(leading.rest, delimiter, 5);
+  if (!trailing || trailing.fields.length !== 5) return null;
+
+  const [qty, sales, cost, margin, perc] = trailing.fields;
+  return {
+    cust: leading.fields[0]!,
+    group: leading.fields[1]!,
+    document: leading.fields[2]!,
+    date: leading.fields[3]!,
+    part: leading.fields[4]!,
+    description: normaliseTrmDescription(trailing.descriptionRaw),
+    qty: qty ?? "",
+    sales: sales ?? "",
+    cost: cost ?? "",
+    margin: margin ?? "",
+    perc: perc ?? "",
+    resolution: "structural",
+  };
+}
+
 function mapHeaders(cells: string[]): Record<string, number> | null {
   const idx: Record<string, number> = {};
   const normalised = cells.map(normaliseHeader);
@@ -201,6 +430,8 @@ export function trm21qcMalformedToReasonCode(
       return "INVALID_NET_SALES";
     case "UNRECOGNISED_ROW_TYPE":
       return "UNRECOGNISED_ROW_TYPE";
+    case "ROW_STRUCTURE_INVALID":
+      return "PARSE_ERROR";
     default:
       return "PARSE_ERROR";
   }
@@ -317,34 +548,73 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
       }
       continue;
     }
-    const cells = splitCsvLine(line, delimiter);
-    const get = (key: string) => {
-      const at = headerMap![key];
-      return at == null ? "" : (cells[at] ?? "").trim();
-    };
-    const customerAccount = get("cust");
-    const documentNumber = get("document");
-    const partNumber = get("part");
-    const description = get("description") || null;
+    const resolved = resolveTrm21qcRowCells(line, delimiter, headerMap!);
+    if (!resolved) {
+      // Cannot confidently identify Qty/Sales/Cost/Margin/Perc% — do not guess Sales.
+      // Still classify TOTAL/subtotal artefacts from the stable leading five fields.
+      const leading = parseLeadingCsvFields(line, delimiter, 5);
+      const rough = splitCsvLine(line, delimiter);
+      const roughCust = (leading?.fields[0] ?? rough[headerMap!["cust"] ?? 0] ?? "").trim();
+      const roughGroup = (leading?.fields[1] ?? "").trim();
+      const roughDoc = (leading?.fields[2] ?? rough[headerMap!["document"] ?? 2] ?? "").trim();
+      const roughDate = (leading?.fields[3] ?? "").trim();
+      const roughPart = (leading?.fields[4] ?? rough[headerMap!["part"] ?? 4] ?? "").trim();
+      if (!roughCust && !roughDoc && !roughPart) {
+        rows.push(blankRow(lineNumber, line));
+        continue;
+      }
+      const artefact = looksLikeNonProductRow({
+        documentNumber: roughDoc,
+        partNumber: roughPart,
+        description: null,
+        customerAccount: roughCust,
+      });
+      rows.push({
+        lineNumber,
+        customerAccount: roughCust,
+        group: roughGroup || null,
+        documentNumber: roughDoc,
+        documentDate: parseUkDate(roughDate),
+        partNumber: roughPart,
+        description: null,
+        qty: null,
+        salesNet: null,
+        cost: null,
+        margin: null,
+        perc: null,
+        kind: "UNKNOWN",
+        sourceFingerprint: "",
+        classification: "MALFORMED",
+        malformedReason: artefact ? "UNRECOGNISED_ROW_TYPE" : "ROW_STRUCTURE_INVALID",
+        salesRawPresent: false,
+        rawLine: line,
+      });
+      continue;
+    }
+
+    const customerAccount = resolved.cust;
+    const documentNumber = resolved.document;
+    const partNumber = resolved.part;
+    const description = resolved.description || null;
     if (!customerAccount && !documentNumber && !partNumber) {
       rows.push(blankRow(lineNumber, line));
       continue;
     }
 
-    const salesRaw = get("sales");
+    const salesRaw = resolved.sales;
     const salesRawPresent = Boolean(salesRaw.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").trim());
-    const qty = parseTrm21qcSignedDecimal(get("qty"), 3);
+    const qty = parseTrm21qcSignedDecimal(resolved.qty, 3);
     const salesNet = parseTrm21qcSignedDecimal(salesRaw, 2);
-    const cost = parseTrm21qcSignedDecimal(get("cost"), 2);
-    const margin = parseTrm21qcSignedDecimal(get("margin"), 2);
-    const perc = parseTrm21qcSignedDecimal(get("perc"), 3);
-    const documentDate = parseUkDate(get("date"));
+    const cost = parseTrm21qcSignedDecimal(resolved.cost, 2);
+    const margin = parseTrm21qcSignedDecimal(resolved.margin, 2);
+    const perc = parseTrm21qcSignedDecimal(resolved.perc, 3);
+    const documentDate = parseUkDate(resolved.date);
 
     if (looksLikeNonProductRow({ documentNumber, partNumber, description, customerAccount })) {
       rows.push({
         lineNumber,
         customerAccount,
-        group: get("group") || null,
+        group: resolved.group || null,
         documentNumber,
         documentDate,
         partNumber,
@@ -365,14 +635,14 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
     }
 
     if (!documentNumber || !partNumber || salesNet == null) {
-      let malformedReason: AutopartTrm21qcMalformedReason = "INVALID_NET_SALES";
+      let malformedReason: AutopartTrm21qcMalformedReason;
       if (!documentNumber) malformedReason = "MISSING_DOCUMENT";
       else if (!partNumber) malformedReason = "MISSING_PART_NUMBER";
-      else malformedReason = "INVALID_NET_SALES";
+      else malformedReason = "INVALID_NET_SALES"; // Sales blank/invalid after confident column recovery
       rows.push({
         lineNumber,
         customerAccount,
-        group: get("group") || null,
+        group: resolved.group || null,
         documentNumber,
         documentDate,
         partNumber,
@@ -413,7 +683,7 @@ export function parseAutopartTrm21qcReport(text: string): AutopartTrm21qcParseRe
     rows.push({
       lineNumber,
       customerAccount,
-      group: get("group") || null,
+      group: resolved.group || null,
       documentNumber,
       documentDate,
       partNumber,
