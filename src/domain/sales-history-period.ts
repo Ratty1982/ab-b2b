@@ -4,12 +4,15 @@
  * Authoritative for:
  * - Purchase History purchased windows
  * - Sales Intelligence enquiry periods
+ * - Customer Group / business reporting periods (`resolveBusinessPeriod`)
  *
  * Semantics:
- * - Compare calendar YYYY-MM-DD strings (no UTC wall-clock shift of date-only values)
- * - Inclusive [from, to] bounds
+ * - Civil calendar days in Europe/London (not hardcoded UTC offsets)
+ * - Display ranges are inclusive [displayFrom, displayTo]
+ * - Database queries prefer half-open [start, endExclusive) to avoid end-of-day bugs
  * - Bounded periods exclude undated documents
  * - LAST_N days includes today (from = today − (N − 1))
+ * - In-progress calendar periods (This Month / Quarter / Year) end on London today
  */
 
 export type DateOnlyRange = { from: string; to: string };
@@ -246,6 +249,20 @@ export function documentDatePrismaBounds(range: DateOnlyRange): { gte: Date; lte
   };
 }
 
+/**
+ * Half-open Prisma bounds: documentDate >= start AND documentDate < endExclusive.
+ * Preferred for calendar reporting; equivalent to inclusive date-only for UTC-noon storage.
+ */
+export function documentDatePrismaHalfOpenBounds(range: DateOnlyRange): {
+  gte: Date;
+  lt: Date;
+} {
+  return {
+    gte: new Date(`${range.from}T00:00:00.000Z`),
+    lt: new Date(`${addDaysIso(range.to, 1)}T00:00:00.000Z`),
+  };
+}
+
 export function isDocumentDateInRange(
   documentDate: Date | null | undefined,
   range: DateOnlyRange | null,
@@ -254,4 +271,251 @@ export function isDocumentDateInRange(
   if (!documentDate) return false;
   const iso = dateOnlyIsoFromDate(documentDate);
   return iso >= range.from && iso <= range.to;
+}
+
+// ─── Shared business / Customer Group period resolver ────────────────────────
+
+/**
+ * Canonical reporting presets for Customer Groups (and future SI reuse).
+ * Calendar “this” periods end on London today; completed periods are full ranges.
+ */
+export type BusinessPeriodPreset =
+  | "THIS_MONTH"
+  | "LAST_MONTH"
+  | "THIS_QUARTER"
+  | "LAST_QUARTER"
+  | "THIS_YEAR"
+  | "LAST_YEAR"
+  | "LAST_7"
+  | "LAST_30"
+  | "LAST_90"
+  | "LAST_365"
+  | "ALL"
+  | "CUSTOM";
+
+export const BUSINESS_PERIOD_PRESETS: readonly BusinessPeriodPreset[] = [
+  "THIS_MONTH",
+  "LAST_MONTH",
+  "THIS_QUARTER",
+  "LAST_QUARTER",
+  "THIS_YEAR",
+  "LAST_YEAR",
+  "LAST_7",
+  "LAST_30",
+  "LAST_90",
+  "LAST_365",
+  "ALL",
+  "CUSTOM",
+] as const;
+
+export type ResolvedBusinessPeriod = {
+  period: BusinessPeriodPreset;
+  /** Inclusive London date-only start (YYYY-MM-DD). */
+  displayFrom: string;
+  /** Inclusive London date-only end (YYYY-MM-DD). */
+  displayTo: string;
+  /** Half-open DB lower bound (UTC instant). */
+  start: Date;
+  /** Half-open DB upper bound exclusive (UTC instant). */
+  endExclusive: Date;
+  /** Human label, e.g. "This Month". */
+  label: string;
+  /** Short UK display range, e.g. "1 Oct – 1 Oct 2026". */
+  displayRangeLabel: string;
+  /** Inclusive date-only range (for helpers that still use [from, to]). */
+  range: DateOnlyRange;
+};
+
+export function businessPeriodLabel(period: BusinessPeriodPreset): string {
+  switch (period) {
+    case "THIS_MONTH":
+      return "This Month";
+    case "LAST_MONTH":
+      return "Last Month";
+    case "THIS_QUARTER":
+      return "This Quarter";
+    case "LAST_QUARTER":
+      return "Last Quarter";
+    case "THIS_YEAR":
+      return "This Year";
+    case "LAST_YEAR":
+      return "Last Year";
+    case "LAST_7":
+      return "Last 7 Days";
+    case "LAST_30":
+      return "Last 30 Days";
+    case "LAST_90":
+      return "Last 90 Days";
+    case "LAST_365":
+      return "Last 12 Months";
+    case "ALL":
+      return "All Time";
+    case "CUSTOM":
+      return "Custom";
+    default:
+      return period;
+  }
+}
+
+/** Format YYYY-MM-DD as UK short date (1 Oct 2026). Uses UTC civil day. */
+export function formatUkDateOnly(iso: string): string {
+  if (!isDateOnlyIso(iso) || isSentinelDateOnly(iso)) return iso;
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d!));
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(dt);
+}
+
+export function formatUkDateRangeLabel(from: string, to: string): string {
+  if (isSentinelDateOnly(from) && isSentinelDateOnly(to)) return "All dated history";
+  const a = formatUkDateOnly(from);
+  const b = formatUkDateOnly(to);
+  if (a === b) return a;
+  // Collapse year when both ends share it: "1 Sep – 30 Sep 2026"
+  const fromYear = from.slice(0, 4);
+  const toYear = to.slice(0, 4);
+  if (fromYear === toYear && isDateOnlyIso(from) && isDateOnlyIso(to)) {
+    const fromNoYear = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      timeZone: "UTC",
+    }).format(new Date(`${from}T12:00:00.000Z`));
+    return `${fromNoYear} – ${b}`;
+  }
+  return `${a} – ${b}`;
+}
+
+/** Parse UK DD/MM/YYYY (or ISO YYYY-MM-DD) into YYYY-MM-DD. */
+export function parseUkOrIsoDateOnly(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (isDateOnlyIso(trimmed)) return trimmed;
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  // Reject impossible calendar days (e.g. 31/02/2026).
+  const [yy, mm, dd] = iso.split("-").map(Number);
+  const check = new Date(Date.UTC(yy!, mm! - 1, dd!));
+  if (
+    check.getUTCFullYear() !== yy ||
+    check.getUTCMonth() !== mm! - 1 ||
+    check.getUTCDate() !== dd
+  ) {
+    return null;
+  }
+  return iso;
+}
+
+export type ResolveBusinessPeriodError = {
+  ok: false;
+  code: "INVALID_PERIOD" | "CUSTOM_REQUIRED" | "CUSTOM_ORDER";
+  message: string;
+};
+
+export type ResolveBusinessPeriodOk = { ok: true; value: ResolvedBusinessPeriod };
+
+/**
+ * Canonical business reporting period resolver (Europe/London civil calendar).
+ * Use for Customer Groups now; reuse later in Sales Enquiry / Gap / Rebate UIs.
+ */
+export function resolveBusinessPeriod(input: {
+  period?: string | null | undefined;
+  from?: string | null | undefined;
+  to?: string | null | undefined;
+  now?: Date | undefined;
+  /** Defaults to THIS_MONTH for Customer Group management views. */
+  defaultPeriod?: BusinessPeriodPreset | undefined;
+}): ResolveBusinessPeriodOk | ResolveBusinessPeriodError {
+  const today = todayLondonDateOnly(input.now ?? new Date());
+  const fallback = input.defaultPeriod ?? "THIS_MONTH";
+  const raw = (input.period ?? fallback).trim().toUpperCase();
+  // Accept rebate alias
+  const normalised =
+    raw === "PREVIOUS_QUARTER"
+      ? "LAST_QUARTER"
+      : raw === "YTD"
+        ? "THIS_YEAR"
+        : raw;
+  const period = (BUSINESS_PERIOD_PRESETS as readonly string[]).includes(normalised)
+    ? (normalised as BusinessPeriodPreset)
+    : fallback;
+
+  let range: DateOnlyRange;
+
+  if (period === "ALL") {
+    range = ALL_DATED_HISTORY_QUERY_RANGE;
+  } else if (period === "CUSTOM") {
+    const from = parseUkOrIsoDateOnly(input.from);
+    const to = parseUkOrIsoDateOnly(input.to);
+    if (!from || !to) {
+      return {
+        ok: false,
+        code: "CUSTOM_REQUIRED",
+        message: "Custom period requires both From and To dates (DD/MM/YYYY).",
+      };
+    }
+    if (to < from) {
+      return {
+        ok: false,
+        code: "CUSTOM_ORDER",
+        message: "Custom period To date must be on or after From date.",
+      };
+    }
+    range = { from, to };
+  } else if (period === "THIS_MONTH") {
+    range = { from: monthStart(today), to: today };
+  } else if (period === "LAST_MONTH") {
+    const [y, m] = today.split("-").map(Number);
+    const prevMonth = m === 1 ? 12 : m! - 1;
+    const prevYear = m === 1 ? y! - 1 : y!;
+    const from = `${prevYear}-${String(prevMonth).padStart(2, "0")}-01`;
+    range = { from, to: lastDayOfMonth(prevYear, prevMonth) };
+  } else if (period === "THIS_QUARTER") {
+    const q = calendarQuarterRange(today);
+    range = { from: q.from, to: today };
+  } else if (period === "LAST_QUARTER") {
+    range = previousCalendarQuarterRange(today);
+  } else if (period === "THIS_YEAR") {
+    range = { from: `${today.slice(0, 4)}-01-01`, to: today };
+  } else if (period === "LAST_YEAR") {
+    const y = Number(today.slice(0, 4)) - 1;
+    range = { from: `${y}-01-01`, to: `${y}-12-31` };
+  } else if (period === "LAST_7") {
+    range = lastNDaysRange(today, 7);
+  } else if (period === "LAST_30") {
+    range = lastNDaysRange(today, 30);
+  } else if (period === "LAST_90") {
+    range = lastNDaysRange(today, 90);
+  } else if (period === "LAST_365") {
+    range = lastNDaysRange(today, 365);
+  } else {
+    return {
+      ok: false,
+      code: "INVALID_PERIOD",
+      message: `Unsupported reporting period: ${input.period}`,
+    };
+  }
+
+  const half = documentDatePrismaHalfOpenBounds(range);
+  return {
+    ok: true,
+    value: {
+      period,
+      displayFrom: range.from,
+      displayTo: range.to,
+      start: half.gte,
+      endExclusive: half.lt,
+      label: businessPeriodLabel(period),
+      displayRangeLabel: formatUkDateRangeLabel(range.from, range.to),
+      range,
+    },
+  };
 }

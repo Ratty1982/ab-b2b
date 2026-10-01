@@ -16,10 +16,13 @@ import {
   updateCustomerGroup,
 } from "@/server/companies/customer-groups";
 import {
+  CUSTOMER_GROUP_DEFAULT_PERIOD,
   exportCustomerGroupSalesCsv,
   getCustomerGroupSalesSummary,
+  listCustomerGroupDocuments,
   listCustomerGroupProductLines,
 } from "@/server/companies/customer-group-sales";
+import { resolveBusinessPeriod } from "@/domain/sales-history-period";
 import { searchSalesIntelligenceCustomers } from "@/server/sales-intelligence/enquiry";
 import { verifyAutopartAccountAlias } from "@/server/companies/autopart-history";
 
@@ -285,7 +288,139 @@ describe("customer groups", () => {
     });
     expect(csv.csv).toContain("Customer Group");
     expect(csv.csv).toContain("MAM Account");
+    expect(csv.csv).toContain("Period");
+    expect(csv.csv).toContain("Custom");
+    expect(csv.csv).toContain("2026-09-01");
     expect(csv.csv).toContain(skuRetail);
+    expect(csv.period?.period).toBe("CUSTOM");
+  });
+
+  it("applies selected business period consistently across summary, drill-downs, and CSV", async () => {
+    expect(CUSTOMER_GROUP_DEFAULT_PERIOD).toBe("THIS_MONTH");
+
+    // Seed an October line so THIS_MONTH (relative to real now) may or may not include Sept —
+    // use explicit CUSTOM + LAST_MONTH-style window via resolver for deterministic asserts.
+    const lastMonth = resolveBusinessPeriod({
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(lastMonth.ok).toBe(true);
+
+    const summary = await getCustomerGroupSalesSummary(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(summary.period.period).toBe("CUSTOM");
+    expect(summary.period.from).toBe("2026-09-01");
+    expect(summary.period.to).toBe("2026-09-30");
+    expect(summary.period.label).toBe("Custom");
+    expect(Number(summary.summary.netSales)).toBeCloseTo(120, 2);
+
+    // Outside range → empty
+    const empty = await getCustomerGroupSalesSummary(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-08-01",
+      to: "2026-08-31",
+    });
+    expect(Number(empty.summary.netSales)).toBe(0);
+
+    // Company drill preserves period
+    const drilled = await getCustomerGroupSalesSummary(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      companyId: companyAId,
+    });
+    expect(drilled.period.from).toBe("2026-09-01");
+    expect(drilled.period.to).toBe("2026-09-30");
+    expect(Number(drilled.summary.netSales)).toBeCloseTo(140, 2);
+
+    // MAM drill
+    const mam = await getCustomerGroupSalesSummary(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      mamAccount: acctAlias,
+    });
+    expect(mam.period.to).toBe("2026-09-30");
+    expect(Number(mam.summary.netSales)).toBeCloseTo(40, 2);
+
+    const docs = await listCustomerGroupDocuments(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(docs.period.period).toBe("CUSTOM");
+    expect(docs.total).toBeGreaterThan(0);
+    expect(
+      docs.items.every(
+        (d) => d.documentDate != null && d.documentDate >= "2026-09-01" && d.documentDate <= "2026-09-30",
+      ),
+    ).toBe(true);
+
+    const lines = await listCustomerGroupProductLines(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(lines.period.from).toBe("2026-09-01");
+    expect(lines.items.every((l) => (l.documentDate ?? "") <= "2026-09-30")).toBe(true);
+
+    // Boundary: document exactly on end day included; day after excluded
+    await seedLine({
+      companyId: companyAId,
+      account: acctA,
+      ref: `INV-BOUND-${stamp}`,
+      type: "INVOICE",
+      sku: skuCat,
+      units: 1,
+      net: 5,
+      date: "2026-09-30",
+    });
+    await seedLine({
+      companyId: companyAId,
+      account: acctA,
+      ref: `INV-AFTER-${stamp}`,
+      type: "INVOICE",
+      sku: skuCat,
+      units: 1,
+      net: 999,
+      date: "2026-10-01",
+    });
+    const boundary = await getCustomerGroupSalesSummary(adminId, {
+      groupId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      companyId: companyAId,
+    });
+    expect(Number(boundary.summary.netSales)).toBeCloseTo(145, 2); // 140 + 5, not +999
+
+    await expect(
+      getCustomerGroupSalesSummary(adminId, {
+        groupId,
+        period: "CUSTOM",
+        from: "2026-09-30",
+        to: "2026-09-01",
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    // Calendar preset wiring (relative to London today — shape only)
+    const thisMonth = await getCustomerGroupSalesSummary(adminId, {
+      groupId,
+      period: "THIS_MONTH",
+    });
+    expect(thisMonth.period.period).toBe("THIS_MONTH");
+    expect(thisMonth.period.label).toBe("This Month");
+    expect(thisMonth.period.displayRangeLabel.length).toBeGreaterThan(0);
   });
 
   it("maps MAM account to Company not Group; SI search finds groups; RBAC + audit", async () => {

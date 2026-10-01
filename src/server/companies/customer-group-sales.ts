@@ -7,11 +7,9 @@ import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import {
-  ALL_DATED_HISTORY_QUERY_RANGE,
-  documentDatePrismaBounds,
-  lastNDaysRange,
-  todayLondonDateOnly,
-  type DateOnlyRange,
+  BUSINESS_PERIOD_PRESETS,
+  resolveBusinessPeriod,
+  type ResolvedBusinessPeriod,
 } from "@/domain/sales-history-period";
 import {
   buildCsv,
@@ -45,27 +43,38 @@ async function resolveGroupReportingScope(
   return scope;
 }
 
-const groupPeriodSchema = z.enum(["LAST_7", "LAST_30", "LAST_90", "LAST_365", "ALL", "CUSTOM"]);
+const groupPeriodSchema = z.enum(
+  BUSINESS_PERIOD_PRESETS as unknown as [string, ...string[]],
+);
 
-function resolveGroupPeriod(
+/** Default Customer Group management view: This Month (not rolling 30D). */
+export const CUSTOMER_GROUP_DEFAULT_PERIOD = "THIS_MONTH" as const;
+
+function requireGroupBusinessPeriod(
   periodRaw?: string | null,
   fromRaw?: string | null,
   toRaw?: string | null,
-): DateOnlyRange {
-  const today = todayLondonDateOnly();
-  const parsed = groupPeriodSchema.safeParse(periodRaw ?? "LAST_30");
-  const period = parsed.success ? parsed.data : "LAST_30";
-  if (period === "ALL") return ALL_DATED_HISTORY_QUERY_RANGE;
-  if (period === "CUSTOM") {
-    return {
-      from: fromRaw && /^\d{4}-\d{2}-\d{2}$/.test(fromRaw) ? fromRaw : "0001-01-01",
-      to: toRaw && /^\d{4}-\d{2}-\d{2}$/.test(toRaw) ? toRaw : "9999-12-31",
-    };
+): ResolvedBusinessPeriod {
+  const resolved = resolveBusinessPeriod({
+    period: periodRaw ?? null,
+    from: fromRaw ?? null,
+    to: toRaw ?? null,
+    defaultPeriod: CUSTOMER_GROUP_DEFAULT_PERIOD,
+  });
+  if (!resolved.ok) {
+    throw new AuthError(resolved.message, resolved.code, 400);
   }
-  if (period === "LAST_7") return lastNDaysRange(today, 7);
-  if (period === "LAST_90") return lastNDaysRange(today, 90);
-  if (period === "LAST_365") return lastNDaysRange(today, 365);
-  return lastNDaysRange(today, 30);
+  return resolved.value;
+}
+
+function periodDto(resolved: ResolvedBusinessPeriod) {
+  return {
+    period: resolved.period,
+    label: resolved.label,
+    from: resolved.displayFrom,
+    to: resolved.displayTo,
+    displayRangeLabel: resolved.displayRangeLabel,
+  };
 }
 
 async function requireGroupReporting(userId: string) {
@@ -141,9 +150,9 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
     companyIds = [input.companyId];
   }
 
-  const range = resolveGroupPeriod(input.period, input.from, input.to);
+  const businessPeriod = requireGroupBusinessPeriod(input.period, input.from, input.to);
+  const range = businessPeriod.range;
   const mamFilter = input.mamAccount?.trim().toUpperCase() || null;
-  const bounds = documentDatePrismaBounds(range);
 
   const companies = companyIds.length
     ? await prisma.company.findMany({
@@ -182,7 +191,7 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
           document: {
             is: {
               companyId: { not: null },
-              documentDate: { gte: bounds.gte, lte: bounds.lte },
+              documentDate: { gte: businessPeriod.start, lt: businessPeriod.endExclusive },
             },
           },
         };
@@ -297,8 +306,8 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
         FROM "AutopartSalesLine" l
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
         WHERE l."companyId" IN (${Prisma.join(companyIds)})
-          AND d."documentDate" >= ${bounds.gte}
-          AND d."documentDate" <= ${bounds.lte}
+          AND d."documentDate" >= ${businessPeriod.start}
+          AND d."documentDate" < ${businessPeriod.endExclusive}
           ${mamFilter ? Prisma.sql`AND UPPER(l."autopartCustomerCode") = ${mamFilter}` : Prisma.empty}
         GROUP BY l."companyId", l."documentType", l."documentReference"
       ) t
@@ -306,7 +315,7 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
     const lastDoc = await prisma.autopartSalesDocument.findFirst({
       where: {
         companyId: { in: companyIds },
-        documentDate: { gte: bounds.gte, lte: bounds.lte },
+        documentDate: { gte: businessPeriod.start, lt: businessPeriod.endExclusive },
         ...(mamFilter
           ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" } }
           : {}),
@@ -441,7 +450,7 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
       companyCount: resolved.companyIds.length,
       mamAccountCount,
     },
-    period: range,
+    period: periodDto(businessPeriod),
     filter: {
       companyId: input.companyId ?? null,
       mamAccount: mamFilter,
@@ -484,8 +493,7 @@ export async function listCustomerGroupDocuments(actorUserId: string, raw: unkno
     }
     companyIds = [input.companyId];
   }
-  const range = resolveGroupPeriod(input.period, input.from, input.to);
-  const bounds = documentDatePrismaBounds(range);
+  const businessPeriod = requireGroupBusinessPeriod(input.period, input.from, input.to);
   const mamFilter = input.mamAccount?.trim().toUpperCase() || null;
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 50;
@@ -495,6 +503,7 @@ export async function listCustomerGroupDocuments(actorUserId: string, raw: unkno
       total: 0,
       page,
       pageSize,
+      period: periodDto(businessPeriod),
       items: [] as Array<{
         companyId: string;
         companyName: string;
@@ -512,7 +521,7 @@ export async function listCustomerGroupDocuments(actorUserId: string, raw: unkno
   // Paginate documents in the DB — never load tens of thousands of lines into Node.
   const docWhere: Prisma.AutopartSalesDocumentWhereInput = {
     companyId: { in: companyIds },
-    documentDate: { gte: bounds.gte, lte: bounds.lte },
+    documentDate: { gte: businessPeriod.start, lt: businessPeriod.endExclusive },
     ...(mamFilter
       ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" as const } }
       : {}),
@@ -567,6 +576,7 @@ export async function listCustomerGroupDocuments(actorUserId: string, raw: unkno
     total,
     page,
     pageSize,
+    period: periodDto(businessPeriod),
     items: docs.map((d) => {
       const agg = aggByDocId.get(d.id) ?? {
         units: 0,
@@ -613,8 +623,7 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
     }
     companyIds = [input.companyId];
   }
-  const range = resolveGroupPeriod(input.period, input.from, input.to);
-  const bounds = documentDatePrismaBounds(range);
+  const businessPeriod = requireGroupBusinessPeriod(input.period, input.from, input.to);
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 100;
   const mamFilter = input.mamAccount?.trim().toUpperCase() || null;
@@ -625,6 +634,7 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
       total: 0,
       page,
       pageSize,
+      period: periodDto(businessPeriod),
       items: [] as Array<{
         companyId: string;
         companyName: string;
@@ -651,7 +661,7 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
     document: {
       is: {
         companyId: { not: null },
-        documentDate: { gte: bounds.gte, lte: bounds.lte },
+        documentDate: { gte: businessPeriod.start, lt: businessPeriod.endExclusive },
       },
     },
   };
@@ -687,6 +697,7 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
     total,
     page,
     pageSize,
+    period: periodDto(businessPeriod),
     items: lines.map((l) => ({
       companyId: l.companyId,
       companyName: nameById.get(l.companyId) ?? l.companyId,
@@ -713,8 +724,12 @@ export async function exportCustomerGroupSalesCsv(actorUserId: string, raw: unkn
       mamAccount: z.string().max(80).optional().nullable(),
     })
     .parse(raw ?? {});
+  const businessPeriod = requireGroupBusinessPeriod(input.period, input.from, input.to);
   const all = await listCustomerGroupProductLines(actorUserId, {
     ...input,
+    period: businessPeriod.period,
+    from: businessPeriod.displayFrom,
+    to: businessPeriod.displayTo,
     page: 1,
     pageSize: 5000,
   });
@@ -724,6 +739,9 @@ export async function exportCustomerGroupSalesCsv(actorUserId: string, raw: unkn
   });
   const headers = [
     "Customer Group",
+    "Period",
+    "Period From",
+    "Period To",
     "Company",
     "MAM Account",
     "Document",
@@ -736,6 +754,9 @@ export async function exportCustomerGroupSalesCsv(actorUserId: string, raw: unkn
   ];
   const rows = all.items.map((r) => [
     group?.name ?? input.groupId,
+    businessPeriod.label,
+    businessPeriod.displayFrom,
+    businessPeriod.displayTo,
     r.companyName,
     r.mamAccount,
     r.documentReference,
@@ -746,10 +767,15 @@ export async function exportCustomerGroupSalesCsv(actorUserId: string, raw: unkn
     String(r.units),
     r.netSales,
   ]);
+  const periodSlug = `${businessPeriod.displayFrom}_${businessPeriod.displayTo}`.replace(
+    /[^\w.-]+/g,
+    "_",
+  );
   return {
-    filename: `customer-group-${(group?.name ?? input.groupId).replace(/[^\w.-]+/g, "_")}-sales.csv`,
+    filename: `customer-group-${(group?.name ?? input.groupId).replace(/[^\w.-]+/g, "_")}-${periodSlug}.csv`,
     csv: buildCsv(headers, rows),
     rowCount: rows.length,
     truncated: all.total > rows.length,
+    period: periodDto(businessPeriod),
   };
 }

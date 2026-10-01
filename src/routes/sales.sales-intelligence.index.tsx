@@ -256,16 +256,25 @@ function SalesEnquiryPage() {
     }
     void (async () => {
       setLoading(true);
+      // Map SI enquiry presets onto shared business periods (Customer Group resolver).
       const mappedPeriod =
-        period === "LAST_30"
-          ? "LAST_30"
-          : period === "LAST_90"
-            ? "LAST_90"
-            : period === "LAST_180" || period === "YTD" || period === "LAST_YEAR"
-              ? "LAST_365"
-              : period === "CUSTOM"
-                ? "CUSTOM"
-                : "LAST_30";
+        period === "THIS_MONTH"
+          ? "THIS_MONTH"
+          : period === "LAST_MONTH"
+            ? "LAST_MONTH"
+            : period === "YTD"
+              ? "THIS_YEAR"
+              : period === "LAST_YEAR"
+                ? "LAST_YEAR"
+                : period === "LAST_90"
+                  ? "LAST_90"
+                  : period === "LAST_180"
+                    ? "LAST_90"
+                    : period === "CUSTOM"
+                      ? "CUSTOM"
+                      : period === "LAST_30"
+                        ? "LAST_30"
+                        : "THIS_MONTH";
       const r = await getCustomerGroupSalesSummaryFn({
         data: {
           groupId: search.customerGroupId,
@@ -420,7 +429,21 @@ function SalesEnquiryPage() {
   async function exportCsv() {
     if (mode === "customers" && search.customerGroupId) {
       const mappedPeriod =
-        period === "LAST_90" ? "LAST_90" : period === "CUSTOM" ? "CUSTOM" : "LAST_30";
+        period === "THIS_MONTH"
+          ? "THIS_MONTH"
+          : period === "LAST_MONTH"
+            ? "LAST_MONTH"
+            : period === "YTD"
+              ? "THIS_YEAR"
+              : period === "LAST_YEAR"
+                ? "LAST_YEAR"
+                : period === "LAST_90"
+                  ? "LAST_90"
+                  : period === "CUSTOM"
+                    ? "CUSTOM"
+                    : period === "LAST_30"
+                      ? "LAST_30"
+                      : "THIS_MONTH";
       const r = await exportCustomerGroupSalesCsvFn({
         data: {
           groupId: search.customerGroupId,

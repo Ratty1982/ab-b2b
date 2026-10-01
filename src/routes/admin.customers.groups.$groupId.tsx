@@ -6,6 +6,11 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { formatGbp } from "@/domain/sales-intelligence";
 import {
+  parseUkOrIsoDateOnly,
+  type BusinessPeriodPreset,
+} from "@/domain/sales-history-period";
+import type { SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
+import {
   addCompanyToCustomerGroupFn,
   exportCustomerGroupSalesCsvFn,
   getCustomerGroupFn,
@@ -32,11 +37,39 @@ type SalesSummary = Extract<
   { ok: true }
 >["data"];
 
+function isoToUkDisplay(iso: string | null | undefined): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+/** Map resolved Customer Group period onto Sales Enquiry URL search (preserve dates). */
+function businessPeriodToEnquirySearch(p: {
+  period: string;
+  from: string;
+  to: string;
+}): {
+  period: SalesEnquiryPeriodPreset;
+  from?: string;
+  to?: string;
+} {
+  if (p.period === "THIS_MONTH") return { period: "THIS_MONTH" };
+  if (p.period === "LAST_MONTH") return { period: "LAST_MONTH" };
+  if (p.period === "THIS_YEAR") return { period: "YTD" };
+  if (p.period === "LAST_YEAR") return { period: "LAST_YEAR" };
+  if (p.period === "LAST_30") return { period: "LAST_30" };
+  if (p.period === "LAST_90") return { period: "LAST_90" };
+  // Quarters, 7D, 12M, All, Custom → explicit CUSTOM range so enquiry matches CG.
+  return { period: "CUSTOM", from: p.from, to: p.to };
+}
+
 function CustomerGroupWorkspace() {
   const { groupId } = Route.useParams();
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [sales, setSales] = useState<SalesSummary | null>(null);
-  const [period, setPeriod] = useState("LAST_30");
+  const [period, setPeriod] = useState<BusinessPeriodPreset>("THIS_MONTH");
+  const [customFromUk, setCustomFromUk] = useState("");
+  const [customToUk, setCustomToUk] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [drillCompanyId, setDrillCompanyId] = useState<string | null>(null);
   const [drillMam, setDrillMam] = useState<string | null>(null);
@@ -53,13 +86,34 @@ function CustomerGroupWorkspace() {
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
 
+  const periodQuery = useCallback(() => {
+    if (period !== "CUSTOM") {
+      return { period, from: null as string | null, to: null as string | null };
+    }
+    const from = parseUkOrIsoDateOnly(customFromUk);
+    const to = parseUkOrIsoDateOnly(customToUk);
+    return { period, from, to };
+  }, [period, customFromUk, customToUk]);
+
   const load = useCallback(async () => {
+    const pq = periodQuery();
+    if (pq.period === "CUSTOM" && (!pq.from || !pq.to)) {
+      setError("Custom period requires From and To dates (DD/MM/YYYY).");
+      return;
+    }
+    if (pq.period === "CUSTOM" && pq.from && pq.to && pq.to < pq.from) {
+      setError("Custom period To date must be on or after From date.");
+      return;
+    }
+
     const [g, s] = await Promise.all([
       getCustomerGroupFn({ data: { groupId } }),
       getCustomerGroupSalesSummaryFn({
         data: {
           groupId,
-          period,
+          period: pq.period,
+          from: pq.from,
+          to: pq.to,
           companyId: drillCompanyId,
           mamAccount: drillMam,
         },
@@ -73,13 +127,24 @@ function CustomerGroupWorkspace() {
     setGroup(g.data);
     setEditName(g.data.name);
     setEditDesc(g.data.description ?? "");
-    if (s.ok) setSales(s.data);
-    else setError(s.error);
+    if (s.ok) {
+      setSales(s.data);
+      setError(null);
+      // Keep Custom UK inputs aligned with server-resolved ISO when applied.
+      if (s.data.period?.period === "CUSTOM") {
+        setCustomFromUk(isoToUkDisplay(s.data.period.from));
+        setCustomToUk(isoToUkDisplay(s.data.period.to));
+      }
+    } else {
+      setError(s.error);
+    }
 
     const d = await listCustomerGroupDocumentsFn({
       data: {
         groupId,
-        period,
+        period: pq.period,
+        from: pq.from,
+        to: pq.to,
         companyId: drillCompanyId,
         mamAccount: drillMam,
         page: docsPage,
@@ -90,7 +155,9 @@ function CustomerGroupWorkspace() {
     const l = await listCustomerGroupProductLinesFn({
       data: {
         groupId,
-        period,
+        period: pq.period,
+        from: pq.from,
+        to: pq.to,
         companyId: drillCompanyId,
         mamAccount: drillMam,
         page: linesPage,
@@ -98,12 +165,12 @@ function CustomerGroupWorkspace() {
       },
     });
     if (l.ok) setLines(l.data);
-  }, [groupId, period, drillCompanyId, drillMam, docsPage, linesPage]);
+  }, [groupId, periodQuery, drillCompanyId, drillMam, docsPage, linesPage]);
 
   useEffect(() => {
     setDocsPage(1);
     setLinesPage(1);
-  }, [period, drillCompanyId, drillMam]);
+  }, [period, customFromUk, customToUk, drillCompanyId, drillMam]);
 
   useEffect(() => {
     void load();
@@ -140,8 +207,16 @@ function CustomerGroupWorkspace() {
             type="button"
             className="h-10 rounded-md border border-border px-3 text-[11px] font-semibold uppercase"
             onClick={() => {
+              const pq = periodQuery();
               void exportCustomerGroupSalesCsvFn({
-                data: { groupId, period, companyId: drillCompanyId, mamAccount: drillMam },
+                data: {
+                  groupId,
+                  period: pq.period,
+                  from: pq.from,
+                  to: pq.to,
+                  companyId: drillCompanyId,
+                  mamAccount: drillMam,
+                },
               }).then((r) => {
                 if (!r.ok) {
                   toast.error(r.error);
@@ -163,16 +238,53 @@ function CustomerGroupWorkspace() {
       />
 
       <div className="space-y-6 px-4 py-4 sm:px-6">
-        <div className="flex flex-wrap items-end gap-2">
+        <div className="flex flex-wrap items-end gap-3">
           <Field label="Period">
-            <select className={inputClass} value={period} onChange={(e) => setPeriod(e.target.value)}>
-              <option value="LAST_7">7D</option>
-              <option value="LAST_30">30D</option>
-              <option value="LAST_90">90D</option>
-              <option value="LAST_365">12M</option>
-              <option value="ALL">ALL</option>
+            <select
+              className={inputClass}
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as BusinessPeriodPreset)}
+            >
+              <optgroup label="Calendar periods">
+                <option value="THIS_MONTH">This Month</option>
+                <option value="LAST_MONTH">Last Month</option>
+                <option value="THIS_QUARTER">This Quarter</option>
+                <option value="LAST_QUARTER">Last Quarter</option>
+                <option value="THIS_YEAR">This Year</option>
+                <option value="LAST_YEAR">Last Year</option>
+              </optgroup>
+              <optgroup label="Rolling periods">
+                <option value="LAST_7">Last 7 Days</option>
+                <option value="LAST_30">Last 30 Days</option>
+                <option value="LAST_90">Last 90 Days</option>
+                <option value="LAST_365">Last 12 Months</option>
+              </optgroup>
+              <optgroup label="Other">
+                <option value="ALL">All Time</option>
+                <option value="CUSTOM">Custom</option>
+              </optgroup>
             </select>
           </Field>
+          {period === "CUSTOM" ? (
+            <>
+              <Field label="From (DD/MM/YYYY)">
+                <input
+                  className={inputClass}
+                  value={customFromUk}
+                  placeholder="DD/MM/YYYY"
+                  onChange={(e) => setCustomFromUk(e.target.value)}
+                />
+              </Field>
+              <Field label="To (DD/MM/YYYY)">
+                <input
+                  className={inputClass}
+                  value={customToUk}
+                  placeholder="DD/MM/YYYY"
+                  onChange={(e) => setCustomToUk(e.target.value)}
+                />
+              </Field>
+            </>
+          ) : null}
           {drillCompanyId || drillMam ? (
             <button
               type="button"
@@ -189,6 +301,27 @@ function CustomerGroupWorkspace() {
             {group.active ? "Active" : "Inactive"}
           </StatusBadge>
         </div>
+
+        {sales?.period ? (
+          <div
+            className="rounded-md border border-border bg-surface/40 px-3 py-2 text-[12px]"
+            data-period={sales.period.period}
+          >
+            <span className="font-semibold uppercase tracking-wide">
+              {sales.period.label}
+            </span>
+            <span className="ml-2 text-steel">{sales.period.displayRangeLabel}</span>
+            {drillCompanyId || drillMam ? (
+              <span className="ml-2 text-steel">
+                · Drill
+                {drillMam ? ` MAM ${drillMam}` : ""}
+                {drillCompanyId ? ` company` : ""}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {error ? <p className="text-[12px] text-bad">{error}</p> : null}
 
         {sales ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -241,16 +374,32 @@ function CustomerGroupWorkspace() {
                     <td className="num px-3 py-2">{formatGbp(c.netSales)}</td>
                     <td className="num px-3 py-2">{c.documents}</td>
                     <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        className="text-[10px] font-semibold uppercase text-cyan underline"
-                        onClick={() => {
-                          setDrillCompanyId(c.companyId);
-                          setDrillMam(null);
-                        }}
-                      >
-                        Drill
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold uppercase text-cyan underline"
+                          onClick={() => {
+                            // Preserve selected reporting period (incl. Custom from/to).
+                            setDrillCompanyId(c.companyId);
+                            setDrillMam(null);
+                          }}
+                        >
+                          Drill
+                        </button>
+                        {sales?.period ? (
+                          <Link
+                            to={ROUTES.salesIntelligence}
+                            search={{
+                              mode: "customers" as const,
+                              companyId: c.companyId,
+                              ...businessPeriodToEnquirySearch(sales.period),
+                            }}
+                            className="text-[10px] font-semibold uppercase text-steel underline"
+                          >
+                            Enquiry
+                          </Link>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -281,16 +430,31 @@ function CustomerGroupWorkspace() {
                     <td className="px-3 py-2 text-steel">{a.companyName ?? "—"}</td>
                     <td className="num px-3 py-2">{formatGbp(a.netSales)}</td>
                     <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        className="text-[10px] font-semibold uppercase text-cyan underline"
-                        onClick={() => {
-                          setDrillCompanyId(a.companyId);
-                          setDrillMam(a.accountCode);
-                        }}
-                      >
-                        Drill
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold uppercase text-cyan underline"
+                          onClick={() => {
+                            setDrillCompanyId(a.companyId);
+                            setDrillMam(a.accountCode);
+                          }}
+                        >
+                          Drill
+                        </button>
+                        {sales?.period ? (
+                          <Link
+                            to={ROUTES.salesIntelligence}
+                            search={{
+                              mode: "customers" as const,
+                              companyId: a.companyId,
+                              ...businessPeriodToEnquirySearch(sales.period),
+                            }}
+                            className="text-[10px] font-semibold uppercase text-steel underline"
+                          >
+                            Enquiry
+                          </Link>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
