@@ -160,3 +160,106 @@ describe("RETAILA SSAMZ / SSAMZ-1 historic import + SI", () => {
     expect(Number(a.summary.netSales)).not.toBeCloseTo(Number(b.summary.netSales), 2);
   });
 });
+
+describe("RETAILA repeated Inv & Ln line numbers (SSAMZ collision)", () => {
+  const stamp2 = stamp + 1;
+  const account2 = `RB${String(stamp2).slice(-8)}`;
+  const skuSsamz = `SSAMZ${String(stamp2).slice(-5)}`;
+  const skuOther = `TFR${String(stamp2).slice(-5)}`;
+  let company2 = "";
+
+  const file561Collision = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${account2},I/SS263805/1,${skuSsamz},Steel Seal Amazon LISTIN,70,2419.67
+${account2},I/SS263805/1,${skuOther},Traffic Film Remover 5L,45,674.63
+${account2},I/OIN022100/,${skuSsamz},Steel Seal Amazon LISTIN,2,62.48
+${account2},I/OIN022100/,${skuOther},Traffic Film Remover 5L,1,14.99
+${account2},I/SS263805/2,${skuSsamz},Steel Seal Amazon LISTIN,1,40.00
+${account2},C/OC000099/1,${skuSsamz},Steel Seal Amazon LISTIN,-1,-31.24
+${account2},C/OC000099/1,${skuOther},Traffic Film Remover 5L,-1,-14.99
+`;
+
+  const fileSlrbCollision = `A/C,Name,Sacct,Type,Ref,Date,Goods,VAT,Value,Run Bal
+${account2},RETAIL AMAZON,,INV,SS263805,01 Oct 26,3134.30,626.86,3761.16,0
+${account2},RETAIL AMAZON,,INV,OIN022100,01 Oct 26,77.47,15.49,92.96,0
+${account2},RETAIL AMAZON,,CRN,OC000099,01 Oct 26,-46.23,-9.25,-55.48,0
+`;
+
+  beforeAll(async () => {
+    const company = await prisma.company.create({
+      data: {
+        name: `RETAILA collision ${stamp2}`,
+        status: "ACTIVE",
+        paymentTerms: "30 Days",
+      },
+    });
+    company2 = company.id;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
+      companyId: company2,
+      code: account2,
+    });
+  });
+
+  it("keeps both SKUs when Autopart repeats /1 on the same document", async () => {
+    const first = await confirmAutopartHistoryImport(adminId, {
+      companyId: company2,
+      file561l: file561Collision,
+      fileSlrb: fileSlrbCollision,
+      filename561l: "561L-RETAILA.CSV",
+      filenameSlrb: "SLRB-RETAILA.CSV",
+    });
+    expect(first.lineCount).toBe(7);
+
+    const ssDoc = await prisma.autopartSalesLine.findMany({
+      where: { companyId: company2, documentReference: "SS263805" },
+      select: { sku: true, lineNumber: true, units: true, salesNet: true },
+      orderBy: [{ lineNumber: "asc" }, { sku: "asc" }],
+    });
+    expect(ssDoc).toHaveLength(3);
+    expect(ssDoc.map((r) => r.sku).sort()).toEqual([skuOther, skuSsamz, skuSsamz].sort());
+    expect(new Set(ssDoc.map((r) => r.lineNumber)).size).toBe(3);
+
+    const oinDoc = await prisma.autopartSalesLine.findMany({
+      where: { companyId: company2, documentReference: "OIN022100" },
+      select: { sku: true, lineNumber: true },
+      orderBy: { lineNumber: "asc" },
+    });
+    expect(oinDoc).toHaveLength(2);
+    expect(new Set(oinDoc.map((r) => r.lineNumber)).size).toBe(2);
+
+    const creditDoc = await prisma.autopartSalesLine.findMany({
+      where: { companyId: company2, documentReference: "OC000099", documentType: "CREDIT" },
+      select: { sku: true, lineNumber: true, units: true, salesNet: true },
+    });
+    expect(creditDoc).toHaveLength(2);
+    expect(creditDoc.every((r) => Number(r.units) < 0 && Number(r.salesNet) < 0)).toBe(true);
+
+    const ssamzAgg = await prisma.$queryRawUnsafe<Array<{ units: string; sales: string; n: number }>>(
+      `SELECT COUNT(*)::int as n, SUM(units)::text as units, SUM("salesNet")::text as sales
+       FROM "AutopartSalesLine" WHERE "companyId" = $1 AND sku = $2`,
+      company2,
+      skuSsamz,
+    );
+    expect(ssamzAgg[0]!.n).toBe(4); // 70 + 2 + 1 + (-1)
+    expect(Number(ssamzAgg[0]!.units)).toBeCloseTo(72, 3);
+    expect(Number(ssamzAgg[0]!.sales)).toBeCloseTo(2490.91, 2);
+
+    // Idempotent second identical import — totals unchanged, no double count
+    await confirmAutopartHistoryImport(adminId, {
+      companyId: company2,
+      file561l: file561Collision,
+      fileSlrb: fileSlrbCollision,
+      filename561l: "561L-RETAILA.CSV",
+      filenameSlrb: "SLRB-RETAILA.CSV",
+    });
+    const again = await prisma.$queryRawUnsafe<Array<{ units: string; sales: string; n: number }>>(
+      `SELECT COUNT(*)::int as n, SUM(units)::text as units, SUM("salesNet")::text as sales
+       FROM "AutopartSalesLine" WHERE "companyId" = $1 AND sku = $2`,
+      company2,
+      skuSsamz,
+    );
+    expect(again[0]!.n).toBe(4);
+    expect(Number(again[0]!.units)).toBeCloseTo(72, 3);
+    expect(Number(again[0]!.sales)).toBeCloseTo(2490.91, 2);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: company2 } })).toBe(7);
+  });
+});

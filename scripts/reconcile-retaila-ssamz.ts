@@ -311,15 +311,22 @@ for (const l of sourceLines) {
   byDoc.set(key, arr);
 }
 
-/** Simulate importer line-number assignment (same algorithm as autopart-history.ts). */
+/**
+ * Simulate importer line-number assignment (autopart-history.ts):
+ * first claim of an explicit source line keeps it; colliding explicit lines and
+ * blank OIN lines are reassigned to the smallest unused integer ≥ 1.
+ */
 function assignLineNumbers(rows: DocLine[]): Array<DocLine & { assigned: number }> {
   const used = new Set<number>();
   const out: Array<DocLine & { assigned: number }> = [];
   const pending: DocLine[] = [];
   for (const r of rows) {
     if (r.sourceLineNumber != null && r.sourceLineNumber >= 1) {
-      used.add(r.sourceLineNumber);
-      out.push({ ...r, assigned: r.sourceLineNumber });
+      if (used.has(r.sourceLineNumber)) pending.push(r);
+      else {
+        used.add(r.sourceLineNumber);
+        out.push({ ...r, assigned: r.sourceLineNumber });
+      }
     } else pending.push(r);
   }
   for (const r of pending) {
@@ -413,17 +420,24 @@ try {
   let companyId = cfg.companyId;
   if (!companyId) {
     const company = await prisma.company.findFirst({
-      where: {
-        OR: [
-          { autopartCustomerCode: { equals: cfg.account, mode: "insensitive" } },
-          { aliases: { some: { alias: { equals: cfg.account, mode: "insensitive" } } } },
-        ],
-      },
+      where: { autopartCustomerCode: { equals: cfg.account, mode: "insensitive" } },
       select: { id: true, name: true, autopartCustomerCode: true },
     });
     if (company) {
       companyId = company.id;
       dbCompanyLabel = `${company.name} (${company.autopartCustomerCode})`;
+    } else {
+      const alias = await prisma.autopartCustomerAccountAlias.findFirst({
+        where: { alias: { equals: cfg.account, mode: "insensitive" } },
+        select: {
+          companyId: true,
+          company: { select: { name: true, autopartCustomerCode: true } },
+        },
+      });
+      if (alias) {
+        companyId = alias.companyId;
+        dbCompanyLabel = `${alias.company.name} (${alias.company.autopartCustomerCode})`;
+      }
     }
   }
   if (companyId) {

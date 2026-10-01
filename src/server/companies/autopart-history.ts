@@ -1662,9 +1662,26 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
 
     if (line.sourceLineNumber != null && line.sourceLineNumber >= 1) {
       const used = usedLineNumbersByDoc.get(key) ?? new Set<number>();
-      used.add(line.sourceLineNumber);
-      usedLineNumbersByDoc.set(key, used);
-      preparedLines.push({ ...base, lineNumber: line.sourceLineNumber });
+      if (used.has(line.sourceLineNumber)) {
+        // Autopart RETAILA/Amazon often repeats "/1" across distinct product lines
+        // on the same document. Last-wins upsert would drop earlier SKUs (e.g. SSAMZ).
+        // Reassign colliding explicit line numbers like blank-line OIN rows.
+        pendingLineNumbers.push({
+          documentType,
+          documentReference: line.documentReference,
+          sku: base.sku,
+          descriptionSnapshot: base.descriptionSnapshot,
+          units: base.units,
+          salesNet: base.salesNet,
+          matchedVariantId: base.matchedVariantId,
+          matchStatus: base.matchStatus,
+          rawInvAndLn: base.rawInvAndLn,
+        });
+      } else {
+        used.add(line.sourceLineNumber);
+        usedLineNumbersByDoc.set(key, used);
+        preparedLines.push({ ...base, lineNumber: line.sourceLineNumber });
+      }
     } else {
       // I/OIN022047/ — Autopart omitted source line number; assign after explicit lines.
       pendingLineNumbers.push({
