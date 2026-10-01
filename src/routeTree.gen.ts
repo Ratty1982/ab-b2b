@@ -98,6 +98,7 @@ import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.inde
 import { Route as SalesQuotesQuoteIdRouteImport } from './routes/sales.quotes.$quoteId'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
 import { Route as SalesSalesIntelligenceIndexRouteImport } from './routes/sales.sales-intelligence.index'
+import { Route as SalesSalesIntelligenceDailyBriefRouteImport } from './routes/sales.sales-intelligence.daily-brief'
 import { Route as SalesSalesIntelligenceGapsRouteImport } from './routes/sales.sales-intelligence.gaps'
 import { Route as SalesSalesIntelligenceOpportunitiesRouteImport } from './routes/sales.sales-intelligence.opportunities'
 import { Route as SalesSalesIntelligencePortfolioRouteImport } from './routes/sales.sales-intelligence.portfolio'
@@ -559,6 +560,12 @@ const SalesSalesIntelligenceIndexRoute =
     path: '/',
     getParentRoute: () => SalesSalesIntelligenceRoute,
   } as any)
+const SalesSalesIntelligenceDailyBriefRoute =
+  SalesSalesIntelligenceDailyBriefRouteImport.update({
+    id: '/daily-brief',
+    path: '/daily-brief',
+    getParentRoute: () => SalesSalesIntelligenceRoute,
+  } as any)
 const SalesSalesIntelligenceGapsRoute =
   SalesSalesIntelligenceGapsRouteImport.update({
     id: '/gaps',
@@ -702,6 +709,7 @@ export interface FileRoutesByFullPath {
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/sales/sales-intelligence/daily-brief': typeof SalesSalesIntelligenceDailyBriefRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
   '/sales/sales-intelligence/opportunities': typeof SalesSalesIntelligenceOpportunitiesRoute
   '/sales/sales-intelligence/portfolio': typeof SalesSalesIntelligencePortfolioRoute
@@ -790,6 +798,7 @@ export interface FileRoutesByTo {
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/sales/sales-intelligence/daily-brief': typeof SalesSalesIntelligenceDailyBriefRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
   '/sales/sales-intelligence/opportunities': typeof SalesSalesIntelligenceOpportunitiesRoute
   '/sales/sales-intelligence/portfolio': typeof SalesSalesIntelligencePortfolioRoute
@@ -893,6 +902,7 @@ export interface FileRoutesById {
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
+  '/sales/sales-intelligence/daily-brief': typeof SalesSalesIntelligenceDailyBriefRoute
   '/sales/sales-intelligence/gaps': typeof SalesSalesIntelligenceGapsRoute
   '/sales/sales-intelligence/opportunities': typeof SalesSalesIntelligenceOpportunitiesRoute
   '/sales/sales-intelligence/portfolio': typeof SalesSalesIntelligencePortfolioRoute
@@ -997,6 +1007,7 @@ export interface FileRouteTypes {
     | '/sales/customers/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
+    | '/sales/sales-intelligence/daily-brief'
     | '/sales/sales-intelligence/gaps'
     | '/sales/sales-intelligence/opportunities'
     | '/sales/sales-intelligence/portfolio'
@@ -1085,6 +1096,7 @@ export interface FileRouteTypes {
     | '/sales/customers/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
+    | '/sales/sales-intelligence/daily-brief'
     | '/sales/sales-intelligence/gaps'
     | '/sales/sales-intelligence/opportunities'
     | '/sales/sales-intelligence/portfolio'
@@ -1187,6 +1199,7 @@ export interface FileRouteTypes {
     | '/sales/customers/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
+    | '/sales/sales-intelligence/daily-brief'
     | '/sales/sales-intelligence/gaps'
     | '/sales/sales-intelligence/opportunities'
     | '/sales/sales-intelligence/portfolio'
@@ -1867,6 +1880,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesSalesIntelligenceIndexRouteImport
       parentRoute: typeof SalesSalesIntelligenceRoute
     }
+    '/sales/sales-intelligence/daily-brief': {
+      id: '/sales/sales-intelligence/daily-brief'
+      path: '/daily-brief'
+      fullPath: '/sales/sales-intelligence/daily-brief'
+      preLoaderRoute: typeof SalesSalesIntelligenceDailyBriefRouteImport
+      parentRoute: typeof SalesSalesIntelligenceRoute
+    }
     '/sales/sales-intelligence/gaps': {
       id: '/sales/sales-intelligence/gaps'
       path: '/gaps'
@@ -2191,6 +2211,7 @@ const PortalRouteWithChildren =
   PortalRoute._addFileChildren(PortalRouteChildren)
 
 interface SalesSalesIntelligenceRouteChildren {
+  SalesSalesIntelligenceDailyBriefRoute: typeof SalesSalesIntelligenceDailyBriefRoute
   SalesSalesIntelligenceGapsRoute: typeof SalesSalesIntelligenceGapsRoute
   SalesSalesIntelligenceOpportunitiesRoute: typeof SalesSalesIntelligenceOpportunitiesRoute
   SalesSalesIntelligencePortfolioRoute: typeof SalesSalesIntelligencePortfolioRoute
@@ -2200,6 +2221,8 @@ interface SalesSalesIntelligenceRouteChildren {
 
 const SalesSalesIntelligenceRouteChildren: SalesSalesIntelligenceRouteChildren =
   {
+    SalesSalesIntelligenceDailyBriefRoute:
+      SalesSalesIntelligenceDailyBriefRoute,
     SalesSalesIntelligenceGapsRoute: SalesSalesIntelligenceGapsRoute,
     SalesSalesIntelligenceOpportunitiesRoute:
       SalesSalesIntelligenceOpportunitiesRoute,

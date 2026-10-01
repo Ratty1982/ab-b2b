@@ -3531,6 +3531,30 @@ export const getSalesRepPortfolioFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getDailySalesBriefFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const brief = await import("@/server/sales-intelligence/daily-brief");
+      return { ok: true as const, data: await brief.getDailySalesBrief(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const completeDailyBriefFollowUpFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const brief = await import("@/server/sales-intelligence/daily-brief");
+      return { ok: true as const, data: await brief.completeDailyBriefFollowUp(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const exportSalesRepPortfolioCsvFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
