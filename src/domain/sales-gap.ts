@@ -263,8 +263,9 @@ export function resolveGapPeriods(input: {
   compareTo?: string | null | undefined;
   today?: string;
 }): { selected: DateOnlyRange; comparison: DateOnlyRange } {
+  const period = (input.period as never) ?? "LAST_30";
   const selected = resolveEnquiryPrimaryPeriod({
-    period: (input.period as never) ?? "LAST_30",
+    period,
     from: input.from,
     to: input.to,
     today: input.today,
@@ -273,9 +274,10 @@ export function resolveGapPeriods(input: {
     resolveEnquiryComparisonPeriod({
       compare: input.compare ?? "PREVIOUS",
       primary: selected,
+      period,
       compareFrom: input.compareFrom,
       compareTo: input.compareTo,
     }) ??
-    resolveEnquiryComparisonPeriod({ compare: "PREVIOUS", primary: selected })!;
+    resolveEnquiryComparisonPeriod({ compare: "PREVIOUS", primary: selected, period })!;
   return { selected, comparison };
 }

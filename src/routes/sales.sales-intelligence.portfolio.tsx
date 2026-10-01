@@ -360,7 +360,8 @@ function SalesRepPortfolioPage() {
               <div className="space-y-2">
                 {data.rows.filter((r) => r.needsAttention).length === 0 ? (
                   <p className="text-[12px] text-steel">
-                    No customers need attention for the current filters.
+                    No customers need attention for the current filters. Opportunities alone do
+                    not create attention.
                   </p>
                 ) : (
                   data.rows
@@ -398,14 +399,10 @@ function SalesRepPortfolioPage() {
                               {a.label}
                             </StatusBadge>
                           ))}
-                          {r.stoppedProductCount > 0 ? (
-                            <StatusBadge tone="neutral">
-                              {r.stoppedProductCount} stopped
-                            </StatusBadge>
-                          ) : null}
                           {r.opportunityCount > 0 ? (
-                            <StatusBadge tone="neutral">
-                              {r.opportunityCount} opportunities
+                            <StatusBadge tone="info">
+                              {r.opportunityCount} opportunit
+                              {r.opportunityCount === 1 ? "y" : "ies"}
                             </StatusBadge>
                           ) : null}
                         </div>
@@ -448,6 +445,111 @@ function SalesRepPortfolioPage() {
                         </div>
                       </article>
                     ))
+                )}
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+                <h2 className="font-display text-sm font-semibold uppercase tracking-wide">
+                  Top opportunities
+                </h2>
+                <button
+                  type="button"
+                  className="text-[11px] font-bold uppercase tracking-wide text-steel hover:text-foreground"
+                  onClick={() => patchSearch({ filter: "HAS_OPPORTUNITIES", page: 1 })}
+                >
+                  View all with opportunities
+                </button>
+              </div>
+              <div className="space-y-2">
+                {(data.topOpportunities ?? []).length === 0 ? (
+                  <p className="text-[12px] text-steel">
+                    No evidence-based opportunities for the current filters.
+                  </p>
+                ) : (
+                  (data.topOpportunities ?? []).map((r) => (
+                    <article
+                      key={`opp-${r.companyId}`}
+                      className="rounded-md border border-border px-3 py-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <h3 className="font-display text-base font-semibold uppercase">
+                            {r.companyName}
+                          </h3>
+                          <p className="text-[11px] text-steel">
+                            {[r.mamAccount, r.customerGroupName, r.salesRepName]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        </div>
+                        <div className="text-right text-[12px]">
+                          <p className="font-semibold">{formatGbp(r.currentNetSales)}</p>
+                          <p className="text-[11px] text-steel">
+                            {r.opportunityCount} opportunit
+                            {r.opportunityCount === 1 ? "y" : "ies"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {[...new Set(r.opportunities.map((o) => o.type))].map((t) => (
+                          <StatusBadge key={t} tone="info">
+                            {t === "STOPPED_PRODUCT"
+                              ? "Not bought this period"
+                              : t === "BRAND_GAP"
+                                ? "Brand gap"
+                                : "Cross-sell"}
+                          </StatusBadge>
+                        ))}
+                      </div>
+                      <ul className="mt-2 space-y-1.5 text-[12px]">
+                        {r.opportunities.slice(0, 3).map((o, i) => (
+                          <li key={`${o.type}-${o.sku ?? o.brandName ?? i}`}>
+                            <span className="font-semibold">{o.title}</span>
+                            <span className="text-steel"> — {o.explanation}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="h-8 rounded-md border border-border px-2.5 text-[10px] font-bold uppercase"
+                          onClick={() => {
+                            setExpandedId(r.companyId);
+                            patchSearch({ filter: "HAS_OPPORTUNITIES", page: 1 });
+                          }}
+                        >
+                          View opportunities
+                        </button>
+                        <Link
+                          to="/admin/customers/$id"
+                          params={{ id: r.companyId }}
+                          className="h-8 rounded-md border border-border px-2.5 text-[10px] font-bold uppercase leading-8"
+                        >
+                          View customer
+                        </Link>
+                        <SiCreateFollowUpButton
+                          onClick={() =>
+                            setFollowUp({
+                              sourceModule: "PORTFOLIO",
+                              sourceReason:
+                                r.opportunities[0]?.type === "CROSS_SELL"
+                                  ? "CROSS_SELL"
+                                  : r.opportunities[0]?.type === "BRAND_GAP"
+                                    ? "RANGE_GAP"
+                                    : "STOPPED",
+                              companyId: r.companyId,
+                              sku: r.opportunities[0]?.sku ?? null,
+                              period: query.period,
+                              from: query.from,
+                              to: query.to,
+                            })
+                          }
+                        />
+                      </div>
+                    </article>
+                  ))
                 )}
               </div>
             </section>
@@ -509,15 +611,16 @@ function SalesRepPortfolioPage() {
                                 money
                               />
                             </td>
-                            <td className="px-3 py-2">
-                              {r.lastPurchaseDate
-                                ? r.lastPurchaseDate.split("-").reverse().join("/")
-                                : "—"}
+                            <td className="px-3 py-2 text-[11px]">
+                              {r.cadenceLastPurchaseLabel}
+                              {r.lastPurchaseDate ? (
+                                <p className="text-[10px] text-steel">
+                                  {r.lastPurchaseDate.split("-").reverse().join("/")}
+                                </p>
+                              ) : null}
                             </td>
                             <td className="max-w-[14rem] px-3 py-2 text-[11px] text-steel">
-                              {r.typicalIntervalDays != null
-                                ? `~${r.typicalIntervalDays}d · ${r.daysSinceLastPurchase ?? "—"}d since`
-                                : "Insufficient history"}
+                              <p>{r.cadenceIntervalLabel}</p>
                             </td>
                             <td className="px-3 py-2">{r.stoppedProductCount}</td>
                             <td className="px-3 py-2">{r.opportunityCount}</td>
@@ -532,6 +635,11 @@ function SalesRepPortfolioPage() {
                                     {a.label}
                                   </StatusBadge>
                                 ))}
+                                {r.opportunityCount > 0 ? (
+                                  <StatusBadge tone="info">
+                                    {r.opportunityCount} opp
+                                  </StatusBadge>
+                                ) : null}
                                 {r.growing && !r.needsAttention ? (
                                   <StatusBadge tone="good">Growing</StatusBadge>
                                 ) : null}

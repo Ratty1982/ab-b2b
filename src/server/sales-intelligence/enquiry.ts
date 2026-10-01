@@ -105,6 +105,7 @@ function resolvePeriods(raw: z.infer<typeof periodInputSchema>, today = todayLon
   const comparison = resolveEnquiryComparisonPeriod({
     compare: raw.compare,
     primary,
+    period: raw.period,
     compareFrom: raw.compareFrom,
     compareTo: raw.compareTo,
   });

@@ -64,13 +64,89 @@ export function daysInclusive(range: DateOnlyRange): number {
 
 /**
  * Previous equivalent period: same length, ending the day before primary.from.
+ * Used for rolling windows and custom ranges.
  * Example: 01/01/2026–30/06/2026 → 04/07/2025–31/12/2025 (181 inclusive days).
+ *
+ * For calendar presets (This Month / Quarter / Year), prefer
+ * {@link previousComparableBusinessPeriod} so “This Month” on 1 Oct compares
+ * 1 Oct vs 1 Sep — not a one-day window ending 30 Sep.
  */
 export function previousEquivalentPeriod(primary: DateOnlyRange): DateOnlyRange {
   const len = daysInclusive(primary);
   const to = addDaysIso(primary.from, -1);
   const from = addDaysIso(to, -(len - 1));
   return { from, to };
+}
+
+function minIsoDate(a: string, b: string): string {
+  return a <= b ? a : b;
+}
+
+/**
+ * Commercially meaningful previous period for a business/reporting preset.
+ *
+ * Calendar in-progress (THIS_*): same ordinal elapsed portion of the previous
+ * calendar period (day-of-month / days-into-quarter / YTD dates), with safe
+ * month-length clamping.
+ *
+ * Calendar complete (LAST_*): immediately preceding complete calendar period.
+ *
+ * Rolling / CUSTOM / unknown: {@link previousEquivalentPeriod} length window.
+ */
+export function previousComparableBusinessPeriod(
+  primary: DateOnlyRange,
+  period: string | null | undefined,
+): DateOnlyRange {
+  const p = (period ?? "").trim().toUpperCase();
+
+  if (p === "THIS_MONTH") {
+    const fromY = Number(primary.from.slice(0, 4));
+    const fromM = Number(primary.from.slice(5, 7));
+    const day = Number(primary.to.slice(8, 10));
+    const py = fromM === 1 ? fromY - 1 : fromY;
+    const pm = fromM === 1 ? 12 : fromM - 1;
+    const from = `${py}-${String(pm).padStart(2, "0")}-01`;
+    const last = Number(lastDayOfMonth(py, pm).slice(8, 10));
+    const toDay = Math.min(day, last);
+    return {
+      from,
+      to: `${py}-${String(pm).padStart(2, "0")}-${String(toDay).padStart(2, "0")}`,
+    };
+  }
+
+  if (p === "LAST_MONTH") {
+    const fromY = Number(primary.from.slice(0, 4));
+    const fromM = Number(primary.from.slice(5, 7));
+    const py = fromM === 1 ? fromY - 1 : fromY;
+    const pm = fromM === 1 ? 12 : fromM - 1;
+    return {
+      from: `${py}-${String(pm).padStart(2, "0")}-01`,
+      to: lastDayOfMonth(py, pm),
+    };
+  }
+
+  if (p === "THIS_QUARTER") {
+    const elapsed = daysInclusive(primary);
+    const prevQ = previousCalendarQuarterRange(primary.from);
+    const rawTo = addDaysIso(prevQ.from, elapsed - 1);
+    return { from: prevQ.from, to: minIsoDate(rawTo, prevQ.to) };
+  }
+
+  if (p === "LAST_QUARTER" || p === "PREVIOUS_QUARTER") {
+    return previousCalendarQuarterRange(primary.from);
+  }
+
+  if (p === "THIS_YEAR" || p === "YTD") {
+    return samePeriodPreviousYear(primary);
+  }
+
+  if (p === "LAST_YEAR") {
+    const y = Number(primary.from.slice(0, 4)) - 1;
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+
+  // Rolling, CUSTOM, ALL callers should not use this for ALL — length-based default.
+  return previousEquivalentPeriod(primary);
 }
 
 /**

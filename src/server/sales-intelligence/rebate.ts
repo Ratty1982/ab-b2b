@@ -96,6 +96,7 @@ function resolvePeriods(
     const comparison = resolveRebateComparisonPeriod({
       compare: raw.compare,
       primary,
+      period: raw.period,
       compareFrom: raw.compareFrom,
       compareTo: raw.compareTo,
     });

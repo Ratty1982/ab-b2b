@@ -6,6 +6,9 @@ import type { AttentionReason, AttentionReasonCode } from "@/domain/sales-attent
 import type { PurchaseCadence } from "@/domain/sales-cadence";
 import { RANGE_OPPORTUNITY_CONFIG } from "@/domain/sales-opportunity";
 
+/** Max customers shown in the Top Opportunities strip. */
+export const PORTFOLIO_TOP_OPPORTUNITIES_LIMIT = 8;
+
 /** Cross-sell / brand-gap evidence thresholds (deterministic). */
 export const PORTFOLIO_CROSS_SELL_CONFIG = {
   /** Minimum companies in the cohort that bought the seed SKU. */
@@ -67,8 +70,14 @@ export type PortfolioCustomerRow = {
   typicalIntervalDays: number | null;
   daysSinceLastPurchase: number | null;
   cadenceSummary: string;
+  /** Table cell: “Every ~30 days”. */
+  cadenceIntervalLabel: string;
+  /** Table cell: “Purchased today” / “Last purchased 3 days ago”. */
+  cadenceLastPurchaseLabel: string;
   productsPurchased: number;
   stoppedProductCount: number;
+  /** True when stopped products qualify for Needs Attention (stronger than opportunity). */
+  significantStoppedBuying: boolean;
   opportunityCount: number;
   openFollowUpCount: number;
   attentionReasons: AttentionReason[];
@@ -76,6 +85,42 @@ export type PortfolioCustomerRow = {
   dormant: boolean;
   opportunities: PortfolioOpportunity[];
 };
+
+/**
+ * Deterministic Top Opportunities ordering (no £ estimates / probabilities).
+ * Higher tuple wins.
+ */
+export function opportunitySortTuple(row: PortfolioCustomerRow): [number, number, number, number] {
+  const bestCrossAdoption = row.opportunities.reduce((best, o) => {
+    if (
+      o.type !== "CROSS_SELL" ||
+      o.evidenceNumerator == null ||
+      o.evidenceDenominator == null ||
+      o.evidenceDenominator <= 0
+    ) {
+      return best;
+    }
+    return Math.max(best, o.evidenceNumerator / o.evidenceDenominator);
+  }, 0);
+  const stoppedOpp = row.opportunities.some((o) => o.type === "STOPPED_PRODUCT")
+    ? row.stoppedProductCount
+    : 0;
+  return [
+    row.opportunityCount,
+    bestCrossAdoption,
+    stoppedOpp,
+    Number(row.currentNetSales) || 0,
+  ];
+}
+
+export function compareOpportunityRows(a: PortfolioCustomerRow, b: PortfolioCustomerRow): number {
+  const ta = opportunitySortTuple(a);
+  const tb = opportunitySortTuple(b);
+  for (let i = 0; i < ta.length; i++) {
+    if (tb[i]! !== ta[i]!) return tb[i]! - ta[i]!;
+  }
+  return a.companyName.localeCompare(b.companyName);
+}
 
 export type PortfolioKpis = {
   netSales: string;
@@ -237,16 +282,23 @@ export function buildCrossSellOpportunity(input: {
 export function buildStoppedProductOpportunity(input: {
   count: number;
   sampleSkus?: string[];
+  /** When false, softer “not bought this period” wording (short/calendar windows). */
+  significantForAttention?: boolean;
 }): PortfolioOpportunity | null {
   if (input.count <= 0) return null;
   const sample =
     input.sampleSkus && input.sampleSkus.length
       ? ` (e.g. ${input.sampleSkus.slice(0, 3).join(", ")})`
       : "";
+  const strong = input.significantForAttention === true;
   return {
     type: "STOPPED_PRODUCT",
-    title: `${input.count} stopped product${input.count === 1 ? "" : "s"}`,
-    explanation: `Previously purchased SKU(s) with no invoice purchase in the current period${sample}.`,
+    title: strong
+      ? `${input.count} stopped product${input.count === 1 ? "" : "s"}`
+      : `${input.count} not bought this period`,
+    explanation: strong
+      ? `Previously purchased SKU(s) with no invoice purchase in the current period${sample}.`
+      : `SKU(s) bought in the comparable period have no invoice purchase yet in the selected period${sample}.`,
   };
 }
 

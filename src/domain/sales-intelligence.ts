@@ -9,6 +9,7 @@
 import type { DateOnlyRange, SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
 import {
   isDateOnlyIso,
+  previousComparableBusinessPeriod,
   previousEquivalentPeriod,
   resolveSalesEnquiryPeriod,
   samePeriodPreviousYear,
@@ -318,11 +319,18 @@ function lastNDaysFallback(today: string): DateOnlyRange {
 export function resolveEnquiryComparisonPeriod(input: {
   compare?: SalesEnquiryCompareMode | null | undefined;
   primary: DateOnlyRange;
+  /** When set, PREVIOUS uses calendar-aware comparison for THIS_MONTH / Quarter / Year. */
+  period?: string | null | undefined;
   compareFrom?: string | null | undefined;
   compareTo?: string | null | undefined;
 }): DateOnlyRange | null {
   if (!input.compare || input.compare === "OFF") return null;
-  if (input.compare === "PREVIOUS") return previousEquivalentPeriod(input.primary);
+  if (input.compare === "PREVIOUS") {
+    // Calendar presets → same ordinal portion of previous calendar period.
+    // Rolling / custom → length-equivalent window (previousEquivalentPeriod).
+    if (input.period) return previousComparableBusinessPeriod(input.primary, input.period);
+    return previousEquivalentPeriod(input.primary);
+  }
   if (input.compare === "PREVIOUS_YEAR") return samePeriodPreviousYear(input.primary);
   if (input.compare === "CUSTOM") {
     if (!input.compareFrom && !input.compareTo) return null;

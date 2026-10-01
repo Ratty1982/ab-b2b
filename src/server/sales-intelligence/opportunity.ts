@@ -89,56 +89,89 @@ type CatalogueSku = {
   tradeEligible: boolean;
 };
 
+const catalogueSkuSelect = {
+  id: true,
+  sku: true,
+  isActive: true,
+  product: {
+    select: {
+      name: true,
+      isActive: true,
+      isTradeVisible: true,
+      status: true,
+      brandId: true,
+      categoryId: true,
+      brand: { select: { id: true, name: true } },
+      category: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+function putCatalogueSku(
+  map: Map<string, CatalogueSku>,
+  v: {
+    id: string;
+    sku: string;
+    isActive: boolean;
+    product: {
+      name: string;
+      isActive: boolean;
+      isTradeVisible: boolean;
+      status: string;
+      brandId: string | null;
+      categoryId: string | null;
+      brand: { id: string; name: string } | null;
+      category: { id: string; name: string } | null;
+    };
+  },
+) {
+  const p = v.product;
+  const tradeEligible =
+    v.isActive && p.isActive && p.isTradeVisible && p.status === "ACTIVE";
+  map.set(v.sku.trim().toUpperCase(), {
+    sku: v.sku.trim(),
+    skuKey: v.sku.trim().toUpperCase(),
+    variantId: v.id,
+    name: p.name,
+    brandId: p.brandId,
+    brandName: p.brand?.name ?? null,
+    categoryId: p.categoryId,
+    categoryName: p.category?.name ?? null,
+    inCatalogue: true,
+    tradeEligible,
+  });
+}
+
+/**
+ * Catalogue lookup by SKU. ProductVariant.sku is stored uppercase in practice;
+ * prefer `IN` (fast) and fall back to case-insensitive OR only for misses.
+ */
 async function loadCatalogueBySkus(skus: string[]): Promise<Map<string, CatalogueSku>> {
-  const keys = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
+  const upperKeys = [...new Set(skus.map((s) => s.trim().toUpperCase()).filter(Boolean))];
   const map = new Map<string, CatalogueSku>();
-  if (!keys.length) return map;
-  // Chunk OR to avoid huge queries
-  const chunkSize = 80;
-  for (let i = 0; i < keys.length; i += chunkSize) {
-    const chunk = keys.slice(i, i + chunkSize);
+  if (!upperKeys.length) return map;
+
+  const chunkSize = 200;
+  for (let i = 0; i < upperKeys.length; i += chunkSize) {
+    const chunk = upperKeys.slice(i, i + chunkSize);
+    const variants = await prisma.productVariant.findMany({
+      where: { sku: { in: chunk } },
+      select: catalogueSkuSelect,
+    });
+    for (const v of variants) putCatalogueSku(map, v);
+  }
+
+  const missing = upperKeys.filter((k) => !map.has(k));
+  const fbChunk = 80;
+  for (let i = 0; i < missing.length; i += fbChunk) {
+    const chunk = missing.slice(i, i + fbChunk);
     const variants = await prisma.productVariant.findMany({
       where: {
         OR: chunk.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
       },
-      select: {
-        id: true,
-        sku: true,
-        isActive: true,
-        product: {
-          select: {
-            name: true,
-            isActive: true,
-            isTradeVisible: true,
-            status: true,
-            brandId: true,
-            categoryId: true,
-            brand: { select: { id: true, name: true } },
-            category: { select: { id: true, name: true } },
-          },
-        },
-      },
+      select: catalogueSkuSelect,
     });
-    for (const v of variants) {
-      const p = v.product;
-      const tradeEligible =
-        v.isActive &&
-        p.isActive &&
-        p.isTradeVisible &&
-        p.status === "ACTIVE";
-      map.set(v.sku.trim().toUpperCase(), {
-        sku: v.sku.trim(),
-        skuKey: v.sku.trim().toUpperCase(),
-        variantId: v.id,
-        name: p.name,
-        brandId: p.brandId,
-        brandName: p.brand?.name ?? null,
-        categoryId: p.categoryId,
-        categoryName: p.category?.name ?? null,
-        inCatalogue: true,
-        tradeEligible,
-      });
-    }
+    for (const v of variants) putCatalogueSku(map, v);
   }
   return map;
 }

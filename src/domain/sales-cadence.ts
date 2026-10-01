@@ -130,6 +130,36 @@ export function derivePurchaseCadence(
   };
 }
 
+export function formatTypicalIntervalLabel(typicalIntervalDays: number | null | undefined): string {
+  if (typicalIntervalDays == null || typicalIntervalDays < 1) return "Insufficient history";
+  if (typicalIntervalDays === 1) return "Every ~1 day";
+  return `Every ~${typicalIntervalDays} days`;
+}
+
+export function formatLastPurchasedLabel(
+  daysSinceLastPurchase: number | null | undefined,
+  hasPurchaseDate: boolean,
+): string {
+  if (!hasPurchaseDate || daysSinceLastPurchase == null) return "No purchase history";
+  if (daysSinceLastPurchase === 0) return "Purchased today";
+  if (daysSinceLastPurchase === 1) return "Last purchased yesterday";
+  return `Last purchased ${daysSinceLastPurchase} days ago`;
+}
+
+/** Compact two-line table wording (no “0d / ~1d” shorthand). */
+export function formatCadenceTableLines(cadence: PurchaseCadence): {
+  interval: string;
+  last: string;
+} {
+  if (!cadence.hasCadence || cadence.typicalIntervalDays == null) {
+    return { interval: "Insufficient history", last: formatLastPurchasedLabel(cadence.daysSinceLastPurchase, Boolean(cadence.lastPurchaseDate)) };
+  }
+  return {
+    interval: formatTypicalIntervalLabel(cadence.typicalIntervalDays),
+    last: formatLastPurchasedLabel(cadence.daysSinceLastPurchase, Boolean(cadence.lastPurchaseDate)),
+  };
+}
+
 export function evaluateCadenceAttention(cadence: PurchaseCadence): CadenceAttention {
   if (!cadence.hasCadence || cadence.typicalIntervalDays == null || cadence.daysSinceLastPurchase == null) {
     return {
@@ -146,15 +176,14 @@ export function evaluateCadenceAttention(cadence: PurchaseCadence): CadenceAtten
 
   const purchaseGap = since >= gapThreshold;
   const dormant = since >= dormantThreshold;
+  const human = `${formatTypicalIntervalLabel(typical).replace(/^Every /, "Usually orders every ")} · ${formatLastPurchasedLabel(since, true)}`;
 
   return {
     purchaseGap,
     dormant,
-    purchaseGapExplanation: purchaseGap
-      ? `Usually orders every ~${typical} days · Last purchase ${since} days ago`
-      : null,
+    purchaseGapExplanation: purchaseGap ? human : null,
     dormantExplanation: dormant
-      ? `Dormant — usually orders every ~${typical} days · Last purchase ${since} days ago (threshold ${dormantThreshold} days)`
+      ? `Dormant — ${human} (threshold ${dormantThreshold} days)`
       : null,
   };
 }
@@ -163,7 +192,13 @@ export function formatCadenceSummary(cadence: PurchaseCadence): string {
   if (!cadence.hasCadence || cadence.typicalIntervalDays == null) {
     return cadence.insufficientHistoryReason ?? "Insufficient history to determine purchasing cadence";
   }
-  const since =
-    cadence.daysSinceLastPurchase != null ? `${cadence.daysSinceLastPurchase} days ago` : "unknown";
-  return `Usually orders every ~${cadence.typicalIntervalDays} days · Last purchase ${since}`;
+  const interval = formatTypicalIntervalLabel(cadence.typicalIntervalDays).replace(
+    /^Every /,
+    "Usually orders every ",
+  );
+  const last = formatLastPurchasedLabel(
+    cadence.daysSinceLastPurchase,
+    Boolean(cadence.lastPurchaseDate),
+  );
+  return `${interval} · ${last}`;
 }

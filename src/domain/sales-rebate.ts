@@ -267,6 +267,7 @@ export function resolveRebatePrimaryPeriod(input: {
 export function resolveRebateComparisonPeriod(input: {
   compare?: SalesEnquiryCompareMode | null | undefined;
   primary: ResolvedRebatePeriod | DateOnlyRange;
+  period?: string | null | undefined;
   compareFrom?: string | null | undefined;
   compareTo?: string | null | undefined;
 }): DateOnlyRange | null {
@@ -304,9 +305,13 @@ export function resolveRebateComparisonPeriod(input: {
     return { from, to };
   }
 
+  const period =
+    input.period ??
+    ("preset" in input.primary ? (input.primary as ResolvedRebatePeriod).preset : null);
   return resolveEnquiryComparisonPeriod({
     compare,
     primary: primaryRange,
+    period,
     compareFrom: input.compareFrom,
     compareTo: input.compareTo,
   });

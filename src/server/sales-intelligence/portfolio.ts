@@ -13,27 +13,33 @@ import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligenc
 import { chunkArray, SAFE_IN_LIST_CHUNK } from "@/server/db/prisma-in-chunks";
 import {
   addDaysIso,
-  previousEquivalentPeriod,
+  daysInclusive,
+  formatUkDateRangeLabel,
+  previousComparableBusinessPeriod,
   resolveBusinessPeriod,
   todayLondonDateOnly,
   type DateOnlyRange,
   type ResolvedBusinessPeriod,
 } from "@/domain/sales-history-period";
 import { moneyMinorToDto, parseSalesNetMinor, percentChangeMinor } from "@/domain/sales-intelligence";
-import { derivePurchaseCadence } from "@/domain/sales-cadence";
+import { derivePurchaseCadence, formatCadenceTableLines } from "@/domain/sales-cadence";
 import {
+  attentionSortKey,
   buildAttentionReasons,
   cadenceLineForCard,
   classifyPeriodMovement,
+  isSignificantStoppedBuying,
   needsAttention,
 } from "@/domain/sales-attention";
 import {
   buildBrandGapOpportunity,
   buildCrossSellOpportunity,
   buildStoppedProductOpportunity,
+  compareOpportunityRows,
   PORTFOLIO_CROSS_SELL_CONFIG,
   PORTFOLIO_DEFAULT_PERIOD,
   PORTFOLIO_PAGE_SIZE,
+  PORTFOLIO_TOP_OPPORTUNITIES_LIMIT,
   rowMatchesPortfolioFilter,
   type PortfolioCustomerRow,
   type PortfolioFilter,
@@ -405,7 +411,8 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
   const previousRange =
     current.period === "ALL"
       ? null
-      : previousEquivalentPeriod(current.range);
+      : previousComparableBusinessPeriod(current.range, current.period);
+  const currentPeriodDays = daysInclusive(current.range);
 
   const { companyIds, salesRepFilterLabel } = await resolvePortfolioCompanyIds(profile, input);
   const asOf = todayLondonDateOnly();
@@ -527,9 +534,18 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
 
     const life = lifetimeSkus.get(c.id) ?? new Set();
     const opportunities: PortfolioOpportunity[] = [];
+    const significantStopped = isSignificantStoppedBuying({
+      stoppedCount: stopped.length,
+      previousSkuCount: prevSet.size,
+      daysSinceLastPurchase: cadence.daysSinceLastPurchase,
+      growing: movement.growing,
+      currentPeriodDays,
+    });
+
     const stoppedOpp = buildStoppedProductOpportunity({
       count: stopped.length,
       sampleSkus: stopped.slice(0, 3),
+      significantForAttention: significantStopped,
     });
     if (stoppedOpp) opportunities.push(stoppedOpp);
 
@@ -560,12 +576,14 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
       cadence,
       movement,
       stoppedProductCount: stopped.length,
-      opportunityCount: opportunities.length,
+      previousSkuCount: prevSet.size,
+      currentPeriodDays,
     });
     const dormant = reasons.some((r) => r.code === "DORMANT");
     const attention = needsAttention(reasons);
     const follow = followUps.get(c.id) ?? 0;
     const primary = c.assignments[0];
+    const cadenceLines = formatCadenceTableLines(cadence);
 
     const row: PortfolioCustomerRow = {
       companyId: c.id,
@@ -585,8 +603,11 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
       typicalIntervalDays: cadence.typicalIntervalDays,
       daysSinceLastPurchase: cadence.daysSinceLastPurchase,
       cadenceSummary: cadenceLineForCard(cadence),
+      cadenceIntervalLabel: cadenceLines.interval,
+      cadenceLastPurchaseLabel: cadenceLines.last,
       productsPurchased: productCounts.get(c.id) ?? 0,
       stoppedProductCount: stopped.length,
+      significantStoppedBuying: significantStopped,
       opportunityCount: opportunities.length,
       openFollowUpCount: follow,
       attentionReasons: reasons,
@@ -610,8 +631,16 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
 
   rows.sort((a, b) => {
     if (a.needsAttention !== b.needsAttention) return a.needsAttention ? -1 : 1;
+    const ka = attentionSortKey(a.attentionReasons);
+    const kb = attentionSortKey(b.attentionReasons);
+    if (ka !== kb) return ka - kb;
     return Number(b.currentNetSales) - Number(a.currentNetSales) || a.companyName.localeCompare(b.companyName);
   });
+
+  const topOpportunities = [...rows]
+    .filter((r) => r.opportunityCount > 0)
+    .sort(compareOpportunityRows)
+    .slice(0, PORTFOLIO_TOP_OPPORTUNITIES_LIMIT);
 
   const total = rows.length;
   const page = input.page ?? 1;
@@ -664,13 +693,14 @@ export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
       ? {
           from: previousRange.from,
           to: previousRange.to,
-          label: `Comparable previous period (${previousRange.from} → ${previousRange.to})`,
+          label: formatUkDateRangeLabel(previousRange.from, previousRange.to),
         }
       : null,
     salesRepFilterLabel,
     canSelectSalesRep: canSelectSalesRep(profile),
     actorSalesRepId,
     kpis,
+    topOpportunities,
     rows: pageRows,
     page,
     pageSize,
@@ -699,17 +729,21 @@ export const PORTFOLIO_METHODOLOGY = {
   salesSource:
     "Autopart realised sales (AutopartSalesLine / AutopartSalesDocument). AB Order lines are not used (avoids double counting).",
   comparison:
-    "Selected period vs the immediately preceding equivalent-length period (e.g. 1–15 Oct vs 1–15 Sep). Partial current months are never compared to a full previous month.",
+    "Calendar presets compare the same ordinal portion of the previous calendar period (e.g. This Month on 1 Oct → 1 Oct vs 1 Sep; on 10 Oct → 1–10 Oct vs 1–10 Sep, with month-length clamping). Complete Last Month/Quarter/Year compare the prior complete calendar period. Rolling periods use an immediately preceding equal-length window.",
+  attentionVsOpportunity:
+    "Needs Attention means investigation may be required (dormant, purchase gap, material decline, or significant stopped buying). Opportunities are positive selling leads (cross-sell, brand gap, milder not-bought-this-period). Opportunity alone never places a customer in Needs Attention.",
   cadence:
     "Typical purchase interval = median gap (days) between consecutive distinct INVOICE document dates. Requires at least 3 invoice purchase dates. Credits do not create purchase events.",
   purchaseGap:
     "Needs attention when days since last invoice purchase ≥ max(14, ceil(typicalInterval × 1.5)).",
   dormant:
     "Dormant when days since last invoice purchase ≥ max(45, ceil(typicalInterval × 2)). Insufficient history is never labelled dormant.",
+  materialDecline:
+    "Needs Attention decline requires both ≥ 20% fall and ≥ £100 absolute fall vs the comparable period. Smaller %/£ movements are not attention cases (they may still show as movement in the table).",
   stoppedProducts:
-    "SKU had invoice purchase presence in the comparable previous period and none in the current period (Gap Analysis STOPPED semantics). Credits do not create presence.",
+    "Gap STOPPED (invoice presence previous, none current) can appear as an opportunity (“not bought this period”). Needs Attention “Stopped buying” only when ≥ 3 stopped SKUs and ≥ 25% of previous-period SKUs (or ≥ 5 absolute), and not for growing daily buyers on a very short current period.",
   crossSell:
-    `Shown only when ≥ ${PORTFOLIO_CROSS_SELL_CONFIG.minCohortBuyers} comparable customers bought seed SKU and ≥ ${PORTFOLIO_CROSS_SELL_CONFIG.minCoBuyers} of them also bought the suggestion (≥ ${Math.round(PORTFOLIO_CROSS_SELL_CONFIG.minAdoption * 100)}% adoption). Denominator is always shown.`,
+    `Shown only when ≥ ${PORTFOLIO_CROSS_SELL_CONFIG.minCohortBuyers} comparable customers bought seed SKU and ≥ ${PORTFOLIO_CROSS_SELL_CONFIG.minCoBuyers} of them also bought the suggestion (≥ ${Math.round(PORTFOLIO_CROSS_SELL_CONFIG.minAdoption * 100)}% adoption). Denominator is always shown. No estimated £ value.`,
   brandGap:
     `Within a Customer Group, brand Y is suggested when ≥ ${PORTFOLIO_CROSS_SELL_CONFIG.minBrandGapPeers} other members buy Y and this company has no invoice history for Y.`,
   credits: "Credits remain signed negative financial activity and never create invoice purchase presence or cadence events.",

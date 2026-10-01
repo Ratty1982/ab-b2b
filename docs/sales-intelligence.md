@@ -489,28 +489,42 @@ Task follow-up indexes: `(companyId, sourceModule, sourceReason, sourceSku, stat
 
 Daily workspace at `/sales/sales-intelligence/portfolio` (default period `THIS_MONTH`).
 
+### Attention vs Opportunity
+
+| Concept | Meaning |
+|---------|---------|
+| **Needs Attention** | Evidence the account may need investigation/contact (dormant, purchase gap, material decline, significant stopped buying). |
+| **Opportunity** | Positive commercial selling evidence (cross-sell, brand gap, milder “not bought this period”). |
+
+Having an opportunity alone **never** places a customer in Needs Attention. KPI “Needing attention” uses the same qualification.
+
+Customers may appear in both **Needs Attention** and **Top Opportunities** when both concepts apply.
+
 ### Rules (deterministic)
 
 | Concern | Rule |
 |---------|------|
-| Cadence | Median gap (days) between consecutive distinct **INVOICE** document dates; ≥ 3 dates required. Credits never create purchase events. |
+| Cadence | Median gap (days) between consecutive distinct **INVOICE** document dates; ≥ 3 dates required. Credits never create purchase events. UI: “Every ~N days” / “Purchased today” / “Last purchased yesterday” (no `0d` / `~1d` shorthand). |
 | Purchase gap | `daysSinceLastPurchase ≥ max(14, ceil(typicalInterval × 1.5))` when cadence exists. |
 | Dormant | `daysSinceLastPurchase ≥ max(45, ceil(typicalInterval × 2))`. Insufficient history is never dormant. |
-| Comparison | `previousEquivalentPeriod()` — partial current month vs same-length prior window. |
-| Stopped products | Invoice presence in previous comparable period, none in current (Gap STOPPED semantics). |
-| Cross-sell | Cohort ≥ 8 buyers of seed SKU; ≥ 4 co-buyers; ≥ 40% adoption; denominator always shown. |
+| Material decline | Needs Attention only when **both** ≥ **20%** fall **and** ≥ **£100** absolute fall vs comparable period. |
+| Comparison | Calendar presets use `previousComparableBusinessPeriod()` — same ordinal portion of the previous calendar period (e.g. This Month on 1 Oct → 1 Oct vs **1 Sep**, not 30 Sep; month-length clamping). Complete Last Month/Quarter/Year → prior complete period. Rolling → `previousEquivalentPeriod()` equal-length window. Shared by Enquiry / Gap / Rebate / Portfolio. |
+| Stopped products (opportunity) | Invoice presence in previous comparable period, none in current (Gap STOPPED). Soft UI: “not bought this period”. |
+| Stopped buying (attention) | ≥ 3 stopped SKUs **and** ≥ 25% of previous-period SKUs, **or** ≥ 5 absolute. Not applied to growing / purchased-today buyers on a very short current period (≤ 3 days). |
+| Cross-sell | Cohort ≥ 8 buyers of seed SKU; ≥ 4 co-buyers; ≥ 40% adoption; denominator always shown. No estimated £. |
 | Brand gap | Within Customer Group: ≥ 3 other members buy brand Y; target has no invoice history for Y. |
+| Top Opportunities order | Deterministic tuple: opportunity count → best cross-sell adoption → stopped count → current net sales (no scores / probabilities). |
 | Category peer-gap | Deferred — needs a defensible category peer cohort beyond group/brand (not invented). |
 
 ### Scale
 
-Portfolio aggregations use SQL/`groupBy` + `prisma-in-chunks` over company IDs. Financial lines are not loaded wholesale into Node for portfolio KPIs.
+Portfolio aggregations use SQL/`groupBy` + `prisma-in-chunks` over company IDs. Financial lines are not loaded wholesale into Node for portfolio KPIs. Top Opportunities reuses the same in-memory portfolio rows (no per-customer N+1).
 
 ## Architecture
 
 | Layer | Role |
 |-------|------|
-| `src/domain/sales-history-period.ts` | Date presets, quarters, previous equivalent, same-period-previous-year |
+| `src/domain/sales-history-period.ts` | Date presets, quarters, previousEquivalentPeriod, previousComparableBusinessPeriod, same-period-previous-year |
 | `src/domain/sales-intelligence.ts` | Money totals, line aggregation, enquiry URL helpers |
 | `src/domain/sales-gap.ts` | Gap classification, URL state, period resolution |
 | `src/domain/sales-opportunity.ts` | Similarity, adoption, range match, opportunity URL/config |
