@@ -2319,6 +2319,53 @@ model SharePointSdsScanItem {
   @@index([productId])
 }
 
+enum VersionUpdateStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Internal platform release notes ("What's New"). Super Admin manages; staff consume.
+model VersionUpdate {
+  id          String              @id @default(cuid())
+  /// Human-readable release id controlled by Super Admin (e.g. "1.4").
+  version     String
+  title       String
+  summary     String?
+  /// Structured content: { intro?: string, sections: [{ heading, body }] }
+  content     Json
+  status      VersionUpdateStatus @default(DRAFT)
+  /// ALL_INTERNAL | ROLES — see domain/version-updates.ts
+  audience    Json
+  priority    Int                 @default(0)
+  publishedAt DateTime?
+  createdById String?
+  updatedById String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  reads VersionUpdateRead[]
+
+  @@index([status, publishedAt])
+  @@index([createdAt])
+}
+
+model VersionUpdateRead {
+  id              String    @id @default(cuid())
+  versionUpdateId String
+  userId          String
+  firstSeenAt     DateTime  @default(now())
+  acknowledgedAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  versionUpdate VersionUpdate @relation(fields: [versionUpdateId], references: [id], onDelete: Cascade)
+
+  @@unique([versionUpdateId, userId])
+  @@index([userId, acknowledgedAt])
+  @@index([versionUpdateId])
+}
+
 model AuditEvent {
   id           String   @id @default(cuid())
   actorUserId  String?

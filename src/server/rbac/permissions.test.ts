@@ -17,6 +17,7 @@ describe("permission catalogue", () => {
       "cms.page.publish",
       "impersonation.order_for_customer",
       "audit.view",
+      "version_updates.manage",
     ];
     for (const key of required) {
       expect(isPermissionKey(key)).toBe(true);
@@ -25,6 +26,23 @@ describe("permission catalogue", () => {
 
   it("maps SUPER_ADMIN to every permission", () => {
     expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toEqual(ALL_PERMISSIONS);
+  });
+
+  it("does not grant version_updates.manage to ordinary internal roles", () => {
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("version_updates.manage");
+    for (const key of [
+      "MANAGEMENT",
+      "SALES_MANAGER",
+      "SALES_REPRESENTATIVE",
+      "CUSTOMER_SERVICE",
+      "ACCOUNTS",
+      "MARKETING",
+    ] as const) {
+      expect(SYSTEM_ROLE_PERMISSIONS[key]).not.toContain("version_updates.manage");
+    }
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("version_updates.manage");
+    }
   });
 
   it("does not give marketing invoice rights", () => {

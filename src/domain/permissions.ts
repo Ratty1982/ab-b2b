@@ -87,6 +87,9 @@ export const PERMISSIONS = [
 
   "settings.view",
   "settings.edit",
+
+  /// Super Admin only — manage Version Updates / What's New (via ALL_PERMISSIONS).
+  "version_updates.manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number];

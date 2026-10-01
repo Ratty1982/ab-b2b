@@ -36,6 +36,7 @@ import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
 import { Route as AdminRolesRouteImport } from './routes/admin.roles'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
+import { Route as AdminVersionUpdatesRouteImport } from './routes/admin.version-updates'
 import { Route as ApiBuildRouteImport } from './routes/api/build'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
@@ -77,6 +78,9 @@ import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id
 import { Route as AdminProductsDocumentsImportRouteImport } from './routes/admin.products.documents-import'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
 import { Route as AdminProductsStockRouteImport } from './routes/admin.products.stock'
+import { Route as AdminVersionUpdatesIndexRouteImport } from './routes/admin.version-updates.index'
+import { Route as AdminVersionUpdatesIdRouteImport } from './routes/admin.version-updates.$id'
+import { Route as AdminVersionUpdatesNewRouteImport } from './routes/admin.version-updates.new'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
@@ -234,6 +238,11 @@ const AdminRolesRoute = AdminRolesRouteImport.update({
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminVersionUpdatesRoute = AdminVersionUpdatesRouteImport.update({
+  id: '/version-updates',
+  path: '/version-updates',
   getParentRoute: () => AdminRoute,
 } as any)
 const ApiBuildRoute = ApiBuildRouteImport.update({
@@ -442,6 +451,22 @@ const AdminProductsStockRoute = AdminProductsStockRouteImport.update({
   path: '/stock',
   getParentRoute: () => AdminProductsRoute,
 } as any)
+const AdminVersionUpdatesIndexRoute =
+  AdminVersionUpdatesIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AdminVersionUpdatesRoute,
+  } as any)
+const AdminVersionUpdatesIdRoute = AdminVersionUpdatesIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AdminVersionUpdatesRoute,
+} as any)
+const AdminVersionUpdatesNewRoute = AdminVersionUpdatesNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => AdminVersionUpdatesRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -592,6 +617,7 @@ export interface FileRoutesByFullPath {
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/version-updates': typeof AdminVersionUpdatesRouteWithChildren
   '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
@@ -628,6 +654,8 @@ export interface FileRoutesByFullPath {
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
+  '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
@@ -647,6 +675,7 @@ export interface FileRoutesByFullPath {
   '/admin/orders/': typeof AdminOrdersIndexRoute
   '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
+  '/admin/version-updates/': typeof AdminVersionUpdatesIndexRoute
   '/portal/orders/': typeof PortalOrdersIndexRoute
   '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
@@ -709,6 +738,8 @@ export interface FileRoutesByTo {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
+  '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
@@ -727,6 +758,7 @@ export interface FileRoutesByTo {
   '/admin/orders': typeof AdminOrdersIndexRoute
   '/admin/pricing': typeof AdminPricingIndexRoute
   '/admin/products': typeof AdminProductsIndexRoute
+  '/admin/version-updates': typeof AdminVersionUpdatesIndexRoute
   '/portal/orders': typeof PortalOrdersIndexRoute
   '/portal/quotes': typeof PortalQuotesIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
@@ -766,6 +798,7 @@ export interface FileRoutesById {
   '/admin/products': typeof AdminProductsRouteWithChildren
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/version-updates': typeof AdminVersionUpdatesRouteWithChildren
   '/api/build': typeof ApiBuildRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
@@ -802,6 +835,8 @@ export interface FileRoutesById {
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
+  '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
@@ -821,6 +856,7 @@ export interface FileRoutesById {
   '/admin/orders/': typeof AdminOrdersIndexRoute
   '/admin/pricing/': typeof AdminPricingIndexRoute
   '/admin/products/': typeof AdminProductsIndexRoute
+  '/admin/version-updates/': typeof AdminVersionUpdatesIndexRoute
   '/portal/orders/': typeof PortalOrdersIndexRoute
   '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
@@ -861,6 +897,7 @@ export interface FileRouteTypes {
     | '/admin/products'
     | '/admin/roles'
     | '/admin/settings'
+    | '/admin/version-updates'
     | '/api/build'
     | '/brands/$slug'
     | '/crm/activities'
@@ -897,6 +934,8 @@ export interface FileRouteTypes {
     | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
+    | '/admin/version-updates/$id'
+    | '/admin/version-updates/new'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
@@ -916,6 +955,7 @@ export interface FileRouteTypes {
     | '/admin/orders/'
     | '/admin/pricing/'
     | '/admin/products/'
+    | '/admin/version-updates/'
     | '/portal/orders/'
     | '/portal/quotes/'
     | '/sales/customers/'
@@ -978,6 +1018,8 @@ export interface FileRouteTypes {
     | '/admin/products/$id'
     | '/admin/products/documents-import'
     | '/admin/products/stock'
+    | '/admin/version-updates/$id'
+    | '/admin/version-updates/new'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
@@ -996,6 +1038,7 @@ export interface FileRouteTypes {
     | '/admin/orders'
     | '/admin/pricing'
     | '/admin/products'
+    | '/admin/version-updates'
     | '/portal/orders'
     | '/portal/quotes'
     | '/sales/customers'
@@ -1034,6 +1077,7 @@ export interface FileRouteTypes {
     | '/admin/products'
     | '/admin/roles'
     | '/admin/settings'
+    | '/admin/version-updates'
     | '/api/build'
     | '/brands/$slug'
     | '/crm/activities'
@@ -1070,6 +1114,8 @@ export interface FileRouteTypes {
     | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
+    | '/admin/version-updates/$id'
+    | '/admin/version-updates/new'
     | '/api/auth/$'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
@@ -1089,6 +1135,7 @@ export interface FileRouteTypes {
     | '/admin/orders/'
     | '/admin/pricing/'
     | '/admin/products/'
+    | '/admin/version-updates/'
     | '/portal/orders/'
     | '/portal/quotes/'
     | '/sales/customers/'
@@ -1320,6 +1367,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/version-updates': {
+      id: '/admin/version-updates'
+      path: '/version-updates'
+      fullPath: '/admin/version-updates'
+      preLoaderRoute: typeof AdminVersionUpdatesRouteImport
       parentRoute: typeof AdminRoute
     }
     '/api/build': {
@@ -1609,6 +1663,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsStockRouteImport
       parentRoute: typeof AdminProductsRoute
     }
+    '/admin/version-updates/': {
+      id: '/admin/version-updates/'
+      path: '/'
+      fullPath: '/admin/version-updates/'
+      preLoaderRoute: typeof AdminVersionUpdatesIndexRouteImport
+      parentRoute: typeof AdminVersionUpdatesRoute
+    }
+    '/admin/version-updates/$id': {
+      id: '/admin/version-updates/$id'
+      path: '/$id'
+      fullPath: '/admin/version-updates/$id'
+      preLoaderRoute: typeof AdminVersionUpdatesIdRouteImport
+      parentRoute: typeof AdminVersionUpdatesRoute
+    }
+    '/admin/version-updates/new': {
+      id: '/admin/version-updates/new'
+      path: '/new'
+      fullPath: '/admin/version-updates/new'
+      preLoaderRoute: typeof AdminVersionUpdatesNewRouteImport
+      parentRoute: typeof AdminVersionUpdatesRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -1863,6 +1938,21 @@ const AdminProductsRouteWithChildren = AdminProductsRoute._addFileChildren(
   AdminProductsRouteChildren,
 )
 
+interface AdminVersionUpdatesRouteChildren {
+  AdminVersionUpdatesIdRoute: typeof AdminVersionUpdatesIdRoute
+  AdminVersionUpdatesNewRoute: typeof AdminVersionUpdatesNewRoute
+  AdminVersionUpdatesIndexRoute: typeof AdminVersionUpdatesIndexRoute
+}
+
+const AdminVersionUpdatesRouteChildren: AdminVersionUpdatesRouteChildren = {
+  AdminVersionUpdatesIdRoute: AdminVersionUpdatesIdRoute,
+  AdminVersionUpdatesNewRoute: AdminVersionUpdatesNewRoute,
+  AdminVersionUpdatesIndexRoute: AdminVersionUpdatesIndexRoute,
+}
+
+const AdminVersionUpdatesRouteWithChildren =
+  AdminVersionUpdatesRoute._addFileChildren(AdminVersionUpdatesRouteChildren)
+
 interface AdminRouteChildren {
   AdminBrandsRoute: typeof AdminBrandsRoute
   AdminCategoriesRoute: typeof AdminCategoriesRoute
@@ -1873,6 +1963,7 @@ interface AdminRouteChildren {
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
   AdminRolesRoute: typeof AdminRolesRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminVersionUpdatesRoute: typeof AdminVersionUpdatesRouteWithChildren
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCustomersIdRoute: typeof AdminCustomersIdRoute
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
@@ -1889,6 +1980,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminProductsRoute: AdminProductsRouteWithChildren,
   AdminRolesRoute: AdminRolesRoute,
   AdminSettingsRoute: AdminSettingsRoute,
+  AdminVersionUpdatesRoute: AdminVersionUpdatesRouteWithChildren,
   AdminIndexRoute: AdminIndexRoute,
   AdminCustomersIdRoute: AdminCustomersIdRoute,
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,

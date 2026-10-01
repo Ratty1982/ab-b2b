@@ -38,6 +38,9 @@ export const ROUTES = {
   adminMedia: "/admin/content/media",
   adminTeam: "/admin/content/team",
   adminSettings: "/admin/settings",
+  adminVersionUpdates: "/admin/version-updates",
+  adminVersionUpdate: (id: string) => `/admin/version-updates/${id}` as const,
+  adminVersionUpdateNew: "/admin/version-updates/new",
 
   sales: "/sales",
   salesCustomers: "/sales/customers",
@@ -124,6 +127,7 @@ export type NavIconName =
   | "files"
   | "bar-chart-3"
   | "scroll-text"
+  | "sparkles"
   | "settings"
   | "store"
   | "heart"
@@ -530,6 +534,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: "/admin/audit",
         permission: "audit.view",
         implemented: false,
+      },
+      {
+        id: "version-updates",
+        label: "Version Updates",
+        icon: "sparkles",
+        to: ROUTES.adminVersionUpdates,
+        permission: "version_updates.manage",
+        adminShellOnly: true,
+        implemented: true,
       },
       {
         id: "settings",

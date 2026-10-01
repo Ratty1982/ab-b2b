@@ -78,6 +78,13 @@ describe("canonical navigation contract", () => {
     expect(visible.map((i) => i.id)).toContain("crm-leads");
     expect(visible.map((i) => i.id)).toContain("activities");
     expect(visible.map((i) => i.id)).not.toContain("audit-log");
+    expect(visible.map((i) => i.id)).toContain("version-updates");
+    expect(visible.find((i) => i.id === "version-updates")?.to).toBe(ROUTES.adminVersionUpdates);
+  });
+
+  it("hides Version Updates from non–Super Admin staff", () => {
+    const ids = flattenVisible(backOfficeNavForUser(salesRep)).map((i) => i.id);
+    expect(ids).not.toContain("version-updates");
   });
 
   it("gives SUPER_ADMIN Website Pages, Homepage, Team and Media", () => {

@@ -8,10 +8,15 @@ import {
   type VisibleNavSection,
 } from "@/lib/app-nav";
 
-export function shellUserFromSession(user: SafeSessionUser): { name: string; role: string } {
+export function shellUserFromSession(user: SafeSessionUser): {
+  name: string;
+  role: string;
+  actorType: "INTERNAL" | "TRADE";
+} {
   return {
     name: user.name,
     role: user.actingFor ? `Ordering for ${user.actingFor.companyName}` : user.displayRole,
+    actorType: user.actorType,
   };
 }
 

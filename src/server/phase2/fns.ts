@@ -1097,6 +1097,124 @@ export const confirmSharePointSdsImportFn = createServerFn({ method: "POST" })
     }
   });
 
+/* ─── Version Updates / What's New ────────────────────────────────────────── */
+
+export const listVersionUpdatesAdminFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { status?: string } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.listVersionUpdatesAdmin(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getVersionUpdateAdminFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.getVersionUpdateAdmin(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const upsertVersionUpdateFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.upsertVersionUpdate(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const publishVersionUpdateFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.publishVersionUpdate(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const archiveVersionUpdateFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.archiveVersionUpdate(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewVersionUpdateFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.previewVersionUpdate(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPendingWhatsNewFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const mod = await import("@/server/system/version-updates");
+    return { ok: true as const, data: await mod.getPendingWhatsNew(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const acknowledgeWhatsNewFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.acknowledgeWhatsNew(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listWhatsNewHistoryFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const mod = await import("@/server/system/version-updates");
+    return { ok: true as const, data: await mod.listWhatsNewHistory(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getWhatsNewItemFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.getWhatsNewItem(userId, data.id) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const bulkUpdateBackorderPolicyFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

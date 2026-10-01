@@ -28,6 +28,7 @@ import {
   Shield,
   ShoppingBag,
   ShoppingCart,
+  Sparkles,
   Store,
   Tags,
   UserPlus,
@@ -38,6 +39,7 @@ import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
 import { signOutCurrent } from "@/server/auth/session";
 import { isItemActive, type NavIconName, type VisibleNavItem, type VisibleNavSection } from "@/lib/app-nav";
+import { WhatsNewHost, WhatsNewTriggerButton } from "@/components/system/WhatsNewHost";
 
 const ICONS: Record<NavIconName, typeof LayoutDashboard> = {
   "layout-dashboard": LayoutDashboard,
@@ -64,6 +66,7 @@ const ICONS: Record<NavIconName, typeof LayoutDashboard> = {
   files: Files,
   "bar-chart-3": BarChart3,
   "scroll-text": ScrollText,
+  sparkles: Sparkles,
   settings: Settings,
   store: Store,
   heart: Heart,
@@ -154,12 +157,15 @@ export function AppShell({
   sections: VisibleNavSection[];
   homeTo: string;
   areaLabel: string;
-  user: { name: string; role: string };
+  user: { name: string; role: string; actorType?: "INTERNAL" | "TRADE" };
   children: React.ReactNode;
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [whatsNewHistoryOpen, setWhatsNewHistoryOpen] = useState(false);
+  const [whatsNewUnread, setWhatsNewUnread] = useState(0);
+  const showWhatsNew = user.actorType === "INTERNAL";
 
   useEffect(() => {
     try {
@@ -220,6 +226,13 @@ export function AppShell({
             </span>
           )}
         </div>
+        {showWhatsNew ? (
+          <WhatsNewTriggerButton
+            unreadCount={whatsNewUnread}
+            collapsed={iconMode}
+            onClick={() => setWhatsNewHistoryOpen(true)}
+          />
+        ) : null}
         <button
           type="button"
           className={cn(
@@ -246,6 +259,14 @@ export function AppShell({
 
   return (
     <div className="flex h-svh bg-ink text-foreground">
+      {showWhatsNew ? (
+        <WhatsNewHost
+          enabled
+          historyOpen={whatsNewHistoryOpen}
+          onHistoryOpenChange={setWhatsNewHistoryOpen}
+          onUnreadChange={setWhatsNewUnread}
+        />
+      ) : null}
       <aside
         className={cn(
           "sticky top-0 hidden h-svh shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex",
