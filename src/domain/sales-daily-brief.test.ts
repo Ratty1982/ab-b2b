@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activityStatus,
+  dailyBriefCardGridClassName,
   formatLondonBriefDate,
   formatPurchaseDateLabel,
   humanComparisonPhrase,
@@ -9,12 +10,14 @@ import {
   isEarlyCalendarPeriod,
   isNewCustomerToday,
   isReturnedCustomerFromCadence,
+  isStoppedProductBeforeReorderPoint,
   londonDayGreeting,
   personalisedGreetingLine,
   pickDailyBriefPriorities,
   pickNeedsAttention,
   presentOpportunityLine,
   previousLondonCivilDay,
+  shouldSuppressDailyBriefPriority,
   toAttentionItem,
 } from "@/domain/sales-daily-brief";
 import type { PortfolioCustomerRow, PortfolioOpportunity } from "@/domain/sales-portfolio";
@@ -82,7 +85,7 @@ describe("sales-daily-brief domain", () => {
     expect(isEarlyCalendarPeriod({ periodKey: "LAST_30", elapsedDays: 1 })).toBe(false);
   });
 
-  it("suppresses decline-only priorities in early period; keeps dormant/gap/stopped", () => {
+  it("suppresses decline-only and stopped-only in early period; keeps dormant/gap", () => {
     const declineOnly = row({
       companyId: "dec",
       companyName: "Decline Only",
@@ -113,6 +116,8 @@ describe("sales-daily-brief domain", () => {
       companyName: "Stopped Co",
       needsAttention: true,
       significantStoppedBuying: true,
+      typicalIntervalDays: 2,
+      daysSinceLastPurchase: 2,
       attentionReasons: [
         { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "stopped" },
       ],
@@ -133,13 +138,157 @@ describe("sales-daily-brief domain", () => {
       [declineOnly, dormant, gap, stopped, declinePlusGap],
       { earlyPeriod: true, limit: 10 },
     );
-    expect(early.map((r) => r.companyId).sort()).toEqual(["both", "dorm", "gap", "stop"]);
+    expect(early.map((r) => r.companyId).sort()).toEqual(["both", "dorm", "gap"]);
 
     const late = pickDailyBriefPriorities([declineOnly, dormant], {
       earlyPeriod: false,
       limit: 10,
     });
     expect(late.map((r) => r.companyId)).toContain("dec");
+  });
+
+  it("suppresses stopped-product-only within cadence and early period (Power Maxed case)", () => {
+    const powerMaxed = row({
+      companyId: "pm",
+      companyName: "Power Maxed Website Orders",
+      needsAttention: true,
+      significantStoppedBuying: true,
+      typicalIntervalDays: 2,
+      daysSinceLastPurchase: 2,
+      currentNetSales: "0.00",
+      attentionReasons: [
+        { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "not reordered" },
+      ],
+    });
+
+    expect(
+      shouldSuppressDailyBriefPriority({
+        reasons: powerMaxed.attentionReasons,
+        typicalIntervalDays: 2,
+        daysSinceLastPurchase: 2,
+        earlyPeriod: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      pickDailyBriefPriorities([powerMaxed], { earlyPeriod: true, limit: 10 }),
+    ).toHaveLength(0);
+
+    // Day 2 of month, cadence 7, last purchase 2 days ago → still within cadence
+    expect(
+      isStoppedProductBeforeReorderPoint({
+        reasons: [
+          { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "x" },
+        ],
+        typicalIntervalDays: 7,
+        daysSinceLastPurchase: 2,
+      }),
+    ).toBe(true);
+    expect(
+      pickDailyBriefPriorities(
+        [
+          row({
+            companyId: "c7",
+            companyName: "Cadence 7",
+            needsAttention: true,
+            typicalIntervalDays: 7,
+            daysSinceLastPurchase: 2,
+            attentionReasons: [
+              { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "x" },
+            ],
+          }),
+        ],
+        { earlyPeriod: true, limit: 10 },
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps dormant and purchase gap in early period", () => {
+    const dormant = row({
+      companyId: "d",
+      companyName: "Dormant",
+      needsAttention: true,
+      typicalIntervalDays: 7,
+      daysSinceLastPurchase: 30,
+      attentionReasons: [{ code: "DORMANT", label: "Dormant", explanation: "dormant" }],
+    });
+    const gap = row({
+      companyId: "g",
+      companyName: "Gap",
+      needsAttention: true,
+      typicalIntervalDays: 14,
+      daysSinceLastPurchase: 24,
+      attentionReasons: [
+        { code: "PURCHASE_GAP", label: "Purchase gap", explanation: "gap" },
+      ],
+    });
+    const picked = pickDailyBriefPriorities([dormant, gap], { earlyPeriod: true, limit: 10 });
+    expect(picked.map((r) => r.companyId).sort()).toEqual(["d", "g"]);
+  });
+
+  it("allows significant stopped buying later when beyond cadence", () => {
+    const later = row({
+      companyId: "late",
+      companyName: "Later Stopped",
+      needsAttention: true,
+      significantStoppedBuying: true,
+      typicalIntervalDays: 5,
+      daysSinceLastPurchase: 12,
+      attentionReasons: [
+        { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "stopped" },
+      ],
+    });
+    expect(
+      pickDailyBriefPriorities([later], { earlyPeriod: false, limit: 10 }).map((r) => r.companyId),
+    ).toEqual(["late"]);
+  });
+
+  it("no-cadence stopped-only: suppress early, allow later", () => {
+    const noCadence = row({
+      companyId: "nc",
+      companyName: "No Cadence",
+      needsAttention: true,
+      typicalIntervalDays: null,
+      daysSinceLastPurchase: 2,
+      attentionReasons: [
+        { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "stopped" },
+      ],
+    });
+    expect(pickDailyBriefPriorities([noCadence], { earlyPeriod: true, limit: 5 })).toHaveLength(0);
+    expect(pickDailyBriefPriorities([noCadence], { earlyPeriod: false, limit: 5 })).toHaveLength(1);
+  });
+
+  it("summary count uses final suppressed priority set", () => {
+    const stopped = row({
+      companyId: "s",
+      companyName: "Stopped",
+      needsAttention: true,
+      typicalIntervalDays: 2,
+      daysSinceLastPurchase: 2,
+      attentionReasons: [
+        { code: "STOPPED_BUYING", label: "Stopped buying", explanation: "x" },
+      ],
+    });
+    const dormant = row({
+      companyId: "d",
+      companyName: "Dormant",
+      needsAttention: true,
+      attentionReasons: [{ code: "DORMANT", label: "Dormant", explanation: "d" }],
+    });
+    const eligible = pickDailyBriefPriorities([stopped, dormant], {
+      earlyPeriod: true,
+      limit: 100,
+    });
+    expect(eligible).toHaveLength(1);
+    expect(eligible[0]!.companyId).toBe("d");
+  });
+
+  it("card grid class: single vs multi", () => {
+    expect(dailyBriefCardGridClassName(0)).toContain("max-w-3xl");
+    expect(dailyBriefCardGridClassName(1)).toContain("max-w-3xl");
+    expect(dailyBriefCardGridClassName(1)).not.toContain("md:grid-cols-2");
+    expect(dailyBriefCardGridClassName(2)).toContain("md:grid-cols-2");
+    expect(dailyBriefCardGridClassName(2)).not.toContain("max-w-3xl");
   });
 
   it("pickNeedsAttention excludes opportunity-only and sorts by attention priority", () => {

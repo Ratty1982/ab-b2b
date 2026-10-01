@@ -21,6 +21,7 @@ import {
   type PortfolioFilter,
   type PortfolioUrlSearch,
 } from "@/domain/sales-portfolio";
+import { dailyBriefCardGridClassName } from "@/domain/sales-daily-brief";
 import {
   completeDailyBriefFollowUpFn,
   getDailySalesBriefFn,
@@ -292,12 +293,18 @@ function DailySalesBriefPage() {
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-steel">
-                <span>
-                  <span className="font-semibold text-foreground">{data.summary.needAttention}</span>{" "}
-                  {data.summary.needAttention === 1
-                    ? "customer worth checking"
-                    : "customers worth checking"}
-                </span>
+                {data.summary.needAttention === 0 ? (
+                  <span className="text-good">No customers need attention</span>
+                ) : (
+                  <span>
+                    <span className="font-semibold text-foreground">
+                      {data.summary.needAttention}
+                    </span>{" "}
+                    {data.summary.needAttention === 1
+                      ? "customer worth checking"
+                      : "customers worth checking"}
+                  </span>
+                )}
                 <span>
                   <span className="font-semibold text-foreground">
                     {data.summary.newOpportunities}
@@ -338,9 +345,12 @@ function DailySalesBriefPage() {
                 </Link>
               </div>
               {data.needsAttention.length === 0 ? (
-                <p className="text-[13px] text-steel">No customers currently require attention.</p>
+                <div className="max-w-3xl text-[13px]">
+                  <p className="font-semibold text-good">You&apos;re all caught up</p>
+                  <p className="text-steel">No customers need your attention right now.</p>
+                </div>
               ) : (
-                <div className="grid gap-2 md:grid-cols-2">
+                <div className={dailyBriefCardGridClassName(data.needsAttention.length)}>
                   {data.needsAttention.map((r) => (
                     <article
                       key={r.companyId}
@@ -471,7 +481,7 @@ function DailySalesBriefPage() {
                   No supported sales opportunities identified from current data.
                 </p>
               ) : (
-                <div className="grid gap-2 md:grid-cols-2">
+                <div className={dailyBriefCardGridClassName(data.opportunities.length)}>
                   {data.opportunities.map((r) => (
                     <article
                       key={`opp-${r.companyId}`}

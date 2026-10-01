@@ -243,6 +243,86 @@ export function isDeclineOnlyAttention(reasons: AttentionReason[]): boolean {
   return reasons.length > 0 && reasons.every((r) => r.code === "DECLINING");
 }
 
+/** True when the only attention reason is significant stopped buying / not reordered. */
+export function isStoppedBuyingOnlyAttention(reasons: AttentionReason[]): boolean {
+  return reasons.length > 0 && reasons.every((r) => r.code === "STOPPED_BUYING");
+}
+
+/** Dormant or purchase gap — always meaningful Daily Brief priorities. */
+export function hasIndependentCadencePriority(reasons: AttentionReason[]): boolean {
+  return reasons.some((r) => r.code === "DORMANT" || r.code === "PURCHASE_GAP");
+}
+
+/**
+ * Early-period noise: decline and/or stopped-product without dormant/gap.
+ * A calendar rollover alone must not create a salesperson chase.
+ */
+export function isEarlyPeriodReorderNoise(reasons: AttentionReason[]): boolean {
+  if (reasons.length === 0) return false;
+  if (hasIndependentCadencePriority(reasons)) return false;
+  return reasons.every((r) => r.code === "DECLINING" || r.code === "STOPPED_BUYING");
+}
+
+/**
+ * Stopped-product-only is not yet commercially meaningful when the customer
+ * is still within their normal purchasing cadence (or cadence is unknown and
+ * we are in an early calendar period — handled separately).
+ */
+export function isStoppedProductBeforeReorderPoint(input: {
+  reasons: AttentionReason[];
+  typicalIntervalDays: number | null | undefined;
+  daysSinceLastPurchase: number | null | undefined;
+}): boolean {
+  if (!isStoppedBuyingOnlyAttention(input.reasons)) return false;
+  const typical = input.typicalIntervalDays;
+  const since = input.daysSinceLastPurchase;
+  if (typical == null || typical < 1 || since == null) return false;
+  return since <= typical;
+}
+
+/**
+ * Daily Brief presentation filter — does not change Portfolio classifications.
+ *
+ * Suppress when:
+ * - early THIS_* period and reasons are only decline and/or stopped-product
+ * - stopped-product-only while still within typical purchase cadence
+ *
+ * Always keep dormant / purchase gap.
+ */
+export function shouldSuppressDailyBriefPriority(input: {
+  reasons: AttentionReason[];
+  typicalIntervalDays: number | null | undefined;
+  daysSinceLastPurchase: number | null | undefined;
+  earlyPeriod: boolean;
+}): boolean {
+  if (input.reasons.length === 0) return true;
+  if (hasIndependentCadencePriority(input.reasons)) return false;
+
+  if (input.earlyPeriod && isEarlyPeriodReorderNoise(input.reasons)) {
+    return true;
+  }
+
+  if (
+    isStoppedProductBeforeReorderPoint({
+      reasons: input.reasons,
+      typicalIntervalDays: input.typicalIntervalDays,
+      daysSinceLastPurchase: input.daysSinceLastPurchase,
+    })
+  ) {
+    return true;
+  }
+
+  // No-cadence stopped-only outside early period: allow existing Portfolio evidence.
+  // Decline-only outside early period: allow.
+  return false;
+}
+
+/** Responsive card grid: one card uses a balanced max width; 2+ use two columns. */
+export function dailyBriefCardGridClassName(count: number): string {
+  if (count <= 1) return "grid max-w-3xl grid-cols-1 gap-2";
+  return "grid gap-2 md:grid-cols-2";
+}
+
 export function humanPriorityLabel(code: AttentionReasonCode): string {
   switch (code) {
     case "DORMANT":
@@ -489,8 +569,7 @@ export function pickNeedsAttention(
 }
 
 /**
- * Daily Brief priority selection.
- * When earlyPeriod, suppress customers whose only Portfolio attention reason is DECLINING.
+ * Daily Brief priority selection with conservative presentation filtering.
  * Portfolio classifications themselves are unchanged.
  */
 export function pickDailyBriefPriorities(
@@ -500,10 +579,15 @@ export function pickDailyBriefPriorities(
   const limit = opts.limit ?? DAILY_BRIEF_ATTENTION_LIMIT;
   return [...rows]
     .filter((r) => r.needsAttention)
-    .filter((r) => {
-      if (!opts.earlyPeriod) return true;
-      return !isDeclineOnlyAttention(r.attentionReasons);
-    })
+    .filter(
+      (r) =>
+        !shouldSuppressDailyBriefPriority({
+          reasons: r.attentionReasons,
+          typicalIntervalDays: r.typicalIntervalDays,
+          daysSinceLastPurchase: r.daysSinceLastPurchase,
+          earlyPeriod: opts.earlyPeriod,
+        }),
+    )
     .sort((a, b) => {
       const ka = attentionSortKey(a.attentionReasons);
       const kb = attentionSortKey(b.attentionReasons);
@@ -640,7 +724,7 @@ export const DAILY_BRIEF_METHODOLOGY = {
   attention:
     "Priorities reuse Sales Rep Portfolio classifications (dormant, purchase gap, material decline, significant stopped buying). Opportunity alone never creates a priority.",
   earlyPeriodSuppression:
-    `On THIS_MONTH / THIS_QUARTER / THIS_YEAR when elapsed calendar days ≤ ${DAILY_BRIEF_EARLY_PERIOD_DAYS}, Daily Brief hides priorities that are decline-only. Dormant, purchase gap, and significant stopped buying still appear. Portfolio classifications are unchanged.`,
+    `Daily Brief applies conservative presentation filtering on top of Portfolio. Early in THIS_MONTH / THIS_QUARTER / THIS_YEAR (≤ ${DAILY_BRIEF_EARLY_PERIOD_DAYS} days), missing reorders or a soft month-start decline alone are not treated as a chase. Customer purchasing cadence is also considered: stopped-product-only priorities are held back while days since last invoice purchase are still within the typical cadence. Dormant and purchase-gap priorities still appear. Detailed analysis remains in Portfolio; underlying classifications are unchanged.`,
   opportunities:
     "Opportunities reuse Portfolio evidence (stopped-product re-engagement, brand gap, cross-sell). Product names come from the current catalogue when mapped; otherwise SKU is shown. No probability, opportunity £, or AI score.",
   crossSellEvidence:
