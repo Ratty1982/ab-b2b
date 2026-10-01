@@ -137,12 +137,15 @@ const uploadSchema = z.object({
   title: z.string().trim().max(200).optional().nullable(),
   filename: z.string().min(1),
   contentType: z.string().optional().nullable(),
-  base64: z.string().min(1),
+  base64: z.string().min(1).optional(),
+  /** Server-side path (SharePoint) — mutually exclusive with base64 for callers. */
+  bytesBase64Internal: z.string().min(1).optional(),
   revision: z.string().trim().max(80).optional().nullable(),
   documentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
   /** When true and a current doc of same type exists, archive it. */
   replaceExisting: z.boolean().optional(),
+  sourceMetadata: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
 export async function uploadProductDocument(actorUserId: string, raw: unknown) {
@@ -154,7 +157,9 @@ export async function uploadProductDocument(actorUserId: string, raw: unknown) {
   });
   if (!product) throw new AuthError("Product not found", "NOT_FOUND", 404);
 
-  const bytes = decodeBase64Body(input.base64);
+  const rawB64 = input.base64 ?? input.bytesBase64Internal;
+  if (!rawB64) throw new AuthError("PDF payload required", "VALIDATION", 400);
+  const bytes = decodeBase64Body(rawB64);
   const validated = validateProductDocumentPdf({
     filename: input.filename,
     contentType: input.contentType ?? null,
@@ -239,11 +244,19 @@ export async function uploadProductDocument(actorUserId: string, raw: unknown) {
           revision: input.revision?.trim() || null,
           documentDate: utcNoon(input.documentDate),
           notes: input.notes?.trim() || null,
+          ...(input.sourceMetadata
+            ? { sourceMetadata: input.sourceMetadata as Prisma.InputJsonValue }
+            : {}),
           uploadedById: actorUserId,
           replacesDocumentId: existingCurrent && input.replaceExisting ? existingCurrent.id : null,
         },
       });
     });
+
+    const sourceLabel =
+      input.sourceMetadata && typeof input.sourceMetadata["source"] === "string"
+        ? input.sourceMetadata["source"]
+        : "UPLOAD";
 
     await recordAuditEvent({
       action: existingCurrent && input.replaceExisting
@@ -260,6 +273,7 @@ export async function uploadProductDocument(actorUserId: string, raw: unknown) {
         checksum,
         replacedDocumentId:
           existingCurrent && input.replaceExisting ? existingCurrent.id : null,
+        source: sourceLabel,
       },
     });
 
@@ -304,39 +318,35 @@ export async function archiveProductDocument(actorUserId: string, documentId: st
   return toAdminDto(updated);
 }
 
+export type BulkPreviewStatus =
+  | "MATCHED"
+  | "REVIEW"
+  | "NO_MATCH"
+  | "ALREADY_ATTACHED"
+  | "EXISTING_SDS"
+  | "UPDATED_SOURCE"
+  | "SOURCE_MISSING"
+  | "INVALID"
+  | "DOWNLOAD_FAILED";
+
 export type BulkPreviewItem = {
   clientKey: string;
   filename: string;
   sizeBytes: number;
   checksumSha256: string;
-  status:
-    | "MATCHED"
-    | "REVIEW"
-    | "NO_MATCH"
-    | "ALREADY_ATTACHED"
-    | "EXISTING_SDS"
-    | "INVALID";
+  status: BulkPreviewStatus;
   message: string;
   productId: string | null;
   productName: string | null;
   sku: string | null;
   candidates: ProductMatchCandidate[];
-  /** Present for valid files — used on confirm. */
+  existingDocumentId?: string | null;
+  /** Present for local upload confirm — never used for SharePoint browser payloads. */
   base64?: string;
   contentType?: string;
 };
 
-export async function previewBulkSdsImport(
-  actorUserId: string,
-  raw: { files: Array<{ filename: string; contentType?: string; base64: string; clientKey?: string }> },
-) {
-  await requireDocumentsManage(actorUserId);
-  const files = raw.files ?? [];
-  if (!files.length) throw new AuthError("No files provided", "VALIDATION", 400);
-  if (files.length > 40) {
-    throw new AuthError("Preview up to 40 PDFs at a time", "VALIDATION", 400);
-  }
-
+export async function loadCatalogueMatchCandidates(): Promise<ProductMatchCandidate[]> {
   const variants = await prisma.productVariant.findMany({
     where: { isActive: true, product: { isActive: true } },
     select: {
@@ -347,7 +357,6 @@ export async function previewBulkSdsImport(
     },
     take: 20000,
   });
-  // Prefer default variant SKU per product.
   const byProduct = new Map<string, ProductMatchCandidate>();
   for (const v of variants) {
     const existing = byProduct.get(v.productId);
@@ -360,23 +369,79 @@ export async function previewBulkSdsImport(
       });
     }
   }
-  const catalogueFinal = [...byProduct.values()];
+  return [...byProduct.values()];
+}
 
+export type PreviewByteFile = {
+  clientKey: string;
+  filename: string;
+  contentType?: string | null;
+  bytes: Buffer | null;
+  /** When bytes are null — e.g. download failed. */
+  downloadError?: string | null;
+  /** SharePoint item id for UPDATED_SOURCE detection. */
+  sharepointItemId?: string | null;
+  sharepointEtag?: string | null;
+  sharepointLastModified?: string | null;
+};
+
+/**
+ * Shared SDS preview builder used by local upload and SharePoint scan.
+ * Does not publish documents.
+ */
+export async function buildSdsPreviewItems(
+  files: PreviewByteFile[],
+  catalogue: ProductMatchCandidate[],
+): Promise<BulkPreviewItem[]> {
   const items: BulkPreviewItem[] = [];
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]!;
-    const clientKey = file.clientKey ?? `f-${i}`;
-    const bytes = decodeBase64Body(file.base64);
+
+  // Preload current SDS docs for SharePoint item matching.
+  const currentSds = await prisma.productDocument.findMany({
+    where: { type: "SAFETY_DATA_SHEET", status: "CURRENT" },
+    select: {
+      id: true,
+      productId: true,
+      checksumSha256: true,
+      title: true,
+      sourceMetadata: true,
+    },
+  });
+  const byProductCurrent = new Map(currentSds.map((d) => [d.productId, d]));
+  const bySharepointItem = new Map<string, (typeof currentSds)[number]>();
+  for (const d of currentSds) {
+    const meta = d.sourceMetadata as { source?: string; itemId?: string } | null;
+    if (meta?.source === "SHAREPOINT" && typeof meta.itemId === "string") {
+      bySharepointItem.set(meta.itemId, d);
+    }
+  }
+
+  for (const file of files) {
+    if (file.downloadError || !file.bytes) {
+      items.push({
+        clientKey: file.clientKey,
+        filename: file.filename,
+        sizeBytes: 0,
+        checksumSha256: "",
+        status: "DOWNLOAD_FAILED",
+        message: file.downloadError || "Download failed",
+        productId: null,
+        productName: null,
+        sku: null,
+        candidates: [],
+      });
+      continue;
+    }
+
     const validated = validateProductDocumentPdf({
       filename: file.filename,
       contentType: file.contentType ?? null,
-      bytes,
+      bytes: file.bytes,
     });
     if (!validated.ok) {
       items.push({
-        clientKey,
+        clientKey: file.clientKey,
         filename: file.filename,
-        sizeBytes: bytes.length,
+        sizeBytes: file.bytes.length,
         checksumSha256: "",
         status: "INVALID",
         message: validated.error,
@@ -387,15 +452,17 @@ export async function previewBulkSdsImport(
       });
       continue;
     }
-    const checksum = sha256Hex(bytes);
-    const match = matchFilenameToProducts(validated.filename, catalogueFinal);
+
+    const checksum = sha256Hex(file.bytes);
+    const match = matchFilenameToProducts(validated.filename, catalogue);
 
     let productId: string | null = null;
     let productName: string | null = null;
     let sku: string | null = null;
     let candidates: ProductMatchCandidate[] = [];
-    let status: BulkPreviewItem["status"] = "NO_MATCH";
+    let status: BulkPreviewStatus = "NO_MATCH";
     let message = match.reason;
+    let existingDocumentId: string | null = null;
 
     if (match.status === "MATCHED") {
       productId = match.product.productId;
@@ -407,25 +474,49 @@ export async function previewBulkSdsImport(
       status = "REVIEW";
     }
 
-    if (productId) {
-      const dup = await prisma.productDocument.findFirst({
-        where: {
-          productId,
-          type: "SAFETY_DATA_SHEET",
+    // Same SharePoint item already imported — detect unchanged vs updated content.
+    if (file.sharepointItemId) {
+      const byItem = bySharepointItem.get(file.sharepointItemId);
+      if (byItem) {
+        existingDocumentId = byItem.id;
+        productId = byItem.productId;
+        const prod = catalogue.find((c) => c.productId === byItem.productId);
+        productName = prod?.name ?? byItem.title;
+        sku = prod?.sku ?? sku;
+        if (byItem.checksumSha256 === checksum) {
+          status = "ALREADY_ATTACHED";
+          message = "Exact PDF already attached from this SharePoint file";
+        } else {
+          status = "UPDATED_SOURCE";
+          message =
+            "SharePoint file changed since last import — review and Replace to update";
+        }
+        items.push({
+          clientKey: file.clientKey,
+          filename: validated.filename,
+          sizeBytes: file.bytes.length,
           checksumSha256: checksum,
-          status: "CURRENT",
-        },
-        select: { id: true },
-      });
-      if (dup) {
-        status = "ALREADY_ATTACHED";
-        message = "Exact PDF already attached";
-      } else {
-        const existing = await prisma.productDocument.findFirst({
-          where: { productId, type: "SAFETY_DATA_SHEET", status: "CURRENT" },
-          select: { id: true, title: true },
+          status,
+          message,
+          productId,
+          productName,
+          sku,
+          candidates,
+          existingDocumentId,
+          contentType: validated.contentType,
         });
-        if (existing) {
+        continue;
+      }
+    }
+
+    if (productId) {
+      const existing = byProductCurrent.get(productId);
+      if (existing) {
+        existingDocumentId = existing.id;
+        if (existing.checksumSha256 === checksum) {
+          status = "ALREADY_ATTACHED";
+          message = "Exact PDF already attached";
+        } else {
           status = "EXISTING_SDS";
           message = "Product already has a current SDS — choose Replace or Skip";
         }
@@ -433,9 +524,9 @@ export async function previewBulkSdsImport(
     }
 
     items.push({
-      clientKey,
+      clientKey: file.clientKey,
       filename: validated.filename,
-      sizeBytes: bytes.length,
+      sizeBytes: file.bytes.length,
       checksumSha256: checksum,
       status,
       message,
@@ -443,13 +534,45 @@ export async function previewBulkSdsImport(
       productName,
       sku,
       candidates,
-      base64: file.base64,
+      existingDocumentId,
       contentType: validated.contentType,
     });
   }
 
+  return items;
+}
+
+export async function previewBulkSdsImport(
+  actorUserId: string,
+  raw: { files: Array<{ filename: string; contentType?: string; base64: string; clientKey?: string }> },
+) {
+  await requireDocumentsManage(actorUserId);
+  const files = raw.files ?? [];
+  if (!files.length) throw new AuthError("No files provided", "VALIDATION", 400);
+  if (files.length > 40) {
+    throw new AuthError("Preview up to 40 PDFs at a time", "VALIDATION", 400);
+  }
+
+  const catalogueFinal = await loadCatalogueMatchCandidates();
+  const prepared = files.map((file, i) => ({
+    clientKey: file.clientKey ?? `f-${i}`,
+    filename: file.filename,
+    contentType: file.contentType ?? null,
+    bytes: decodeBase64Body(file.base64),
+    base64: file.base64,
+  }));
+  const built = await buildSdsPreviewItems(prepared, catalogueFinal);
+  const b64ByKey = new Map(prepared.map((f) => [f.clientKey, f.base64]));
+  const items: BulkPreviewItem[] = built.map((item) => {
+    const b64 = b64ByKey.get(item.clientKey);
+    return b64 ? { ...item, base64: b64 } : item;
+  });
+
   return { items, catalogueSize: catalogueFinal.length };
 }
+
+/** Exported for SharePoint import RBAC reuse. */
+export { requireDocumentsManage, requireDocumentsView, decodeBase64Body };
 
 const confirmBulkSchema = z.object({
   items: z.array(

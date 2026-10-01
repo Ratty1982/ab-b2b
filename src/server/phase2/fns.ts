@@ -995,6 +995,108 @@ export const searchProductsForDocumentAttachFn = createServerFn({ method: "GET" 
     }
   });
 
+/* ─── SharePoint SDS import ───────────────────────────────────────────────── */
+
+export const getSharePointSdsSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const mod = await import("@/server/catalogue/sharepoint-sds-settings");
+    return { ok: true as const, data: await mod.getSharePointSdsSettingsForActor(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const updateSharePointSdsSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/catalogue/sharepoint-sds-settings");
+      return { ok: true as const, data: await mod.updateSharePointSdsSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const testSharePointSdsConnectionFn = createServerFn({ method: "POST" }).handler(
+  async () => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/catalogue/sharepoint-sds-settings");
+      return { ok: true as const, data: await mod.testSharePointSdsConnection(userId) };
+    } catch (e) {
+      return toError(e);
+    }
+  },
+);
+
+export const resolveSharePointSdsFolderFn = createServerFn({ method: "POST" }).handler(
+  async () => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/catalogue/sharepoint-sds-settings");
+      return { ok: true as const, data: await mod.resolveSharePointSdsFolder(userId) };
+    } catch (e) {
+      return toError(e);
+    }
+  },
+);
+
+export const scanSharePointSdsFolderFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const mod = await import("@/server/catalogue/sharepoint-sds-import");
+    return { ok: true as const, data: await mod.scanSharePointSdsFolder(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const listSharePointSdsScanFn = createServerFn({ method: "GET" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { sessionId: string; page?: number; pageSize?: number; status?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/catalogue/sharepoint-sds-import");
+      return { ok: true as const, data: await mod.listSharePointScanPage(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateSharePointSdsScanItemFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { sessionId: string; clientKey: string; productId: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/catalogue/sharepoint-sds-import");
+      return {
+        ok: true as const,
+        data: await mod.updateSharePointScanItemProduct(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmSharePointSdsImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/catalogue/sharepoint-sds-import");
+      return { ok: true as const, data: await mod.confirmSharePointSdsImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const bulkUpdateBackorderPolicyFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

@@ -2245,6 +2245,80 @@ model ProductDocument {
   @@index([uploadedById])
 }
 
+/// Microsoft Graph connection for Power Maxed SDS SharePoint/OneDrive folder.
+/// Client secret is write-only (AES encrypted or env-backed). Singleton row.
+model SharePointSdsSettings {
+  id                      String    @id @default("singleton")
+  enabled                 Boolean   @default(false)
+  sourceLabel             String    @default("Power Maxed SDS")
+  folderDisplayName       String    @default("Power Maxed SDS 2025")
+  /// Optional helper URL used once to resolve stable Graph IDs.
+  folderUrlHint           String?
+  tenantId                String?
+  clientId                String?
+  clientSecretEncrypted   String?
+  /// OneDrive/SharePoint user whose drive holds the folder (UPN).
+  userPrincipalName       String?
+  driveId                 String?
+  folderItemId            String?
+  lastConnectionTestAt    DateTime?
+  lastConnectionTestOk    Boolean?
+  lastConnectionTestError String?
+  lastScanAt              DateTime?
+  lastScanError           String?
+  lastScanFileCount       Int?
+  updatedByUserId         String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+}
+
+/// Server-side SharePoint SDS scan preview (bytes stay off the browser).
+model SharePointSdsScanSession {
+  id              String   @id @default(cuid())
+  status          String   @default("READY")
+  createdByUserId String
+  driveId         String
+  folderItemId    String
+  folderName      String?
+  summaryJson     Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  completedAt     DateTime?
+
+  items SharePointSdsScanItem[]
+
+  @@index([createdByUserId, createdAt])
+  @@index([status])
+}
+
+model SharePointSdsScanItem {
+  id                 String   @id @default(cuid())
+  sessionId          String
+  clientKey          String
+  filename           String
+  graphItemId        String?
+  graphEtag          String?
+  graphCtag          String?
+  graphLastModified  DateTime?
+  sizeBytes          Int      @default(0)
+  checksumSha256     String   @default("")
+  status             String
+  message            String   @default("")
+  productId          String?
+  productName        String?
+  sku                String?
+  candidatesJson     Json?
+  /// Existing ProductDocument id when ALREADY_ATTACHED / UPDATED_SOURCE / SOURCE_MISSING.
+  existingDocumentId String?
+  createdAt          DateTime @default(now())
+
+  session SharePointSdsScanSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, clientKey])
+  @@index([sessionId, status])
+  @@index([productId])
+}
+
 model AuditEvent {
   id           String   @id @default(cuid())
   actorUserId  String?
