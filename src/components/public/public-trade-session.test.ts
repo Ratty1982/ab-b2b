@@ -140,6 +140,7 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     isFeatured: false,
     variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
     ordering: null,
+    internalStock: null,
     ...partial,
   };
 }
@@ -617,6 +618,7 @@ describe("admin / internal ordering context (PMPC1 regression)", () => {
             isFeatured: false,
             variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
             ordering: null,
+            internalStock: null,
           },
           sku: "PMPC1",
           variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
@@ -702,7 +704,8 @@ describe("authenticated orderable PDP render condition", () => {
       }),
     );
     expect(markup).toMatch(/data-internal-stock="true"/);
-    expect(markup).toContain(">17<");
+    expect(markup).toContain("17 available");
+    expect(markup).not.toMatch(/>17</);
     expect(markup).toMatch(/In Stock/i);
   });
 });

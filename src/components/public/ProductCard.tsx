@@ -1,9 +1,25 @@
 import { Link } from "@tanstack/react-router";
 import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
+import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { CatalogueRrp, CatalogueYourPrice, TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
 import { CatalogueListQuickOrder } from "@/components/public/CatalogueListQuickOrder";
 import type { PublicProductCard } from "@/server/catalogue/products";
+
+/** Band badge, or badge + exact qty when server gated internalStock for inventory.view. */
+function CatalogueStockLine({ product }: { product: PublicProductCard }) {
+  if (product.internalStock) {
+    return (
+      <InternalStockDisplay
+        qty={product.internalStock.sellableQty}
+        availability={product.availability}
+        stale={product.internalStock.stale}
+        className="justify-start"
+      />
+    );
+  }
+  return <AvailabilityBadge availability={product.availability} />;
+}
 
 export const CATALOGUE_GRID_KIND = "product-card-grid";
 export const CATALOGUE_LIST_KIND = "product-list-rows";
@@ -48,8 +64,8 @@ export function ProductCard({ product }: { product: PublicProductCard }) {
         <div className="mt-2">
           <TradePrice trade={product.price.trade} rrp={product.price.rrp} size="sm" ctaMode="text" />
         </div>
-        <div className="mt-2">
-          <AvailabilityBadge availability={product.availability} />
+        <div className="mt-2" data-catalogue-stock="true">
+          <CatalogueStockLine product={product} />
         </div>
       </div>
     </Link>
@@ -92,8 +108,8 @@ export function ProductListRow({
           <span aria-hidden> · </span>
           <span className="num">{product.sku}</span>
         </p>
-        <div className="mt-1 lg:hidden">
-          <AvailabilityBadge availability={product.availability} />
+        <div className="mt-1 lg:hidden" data-catalogue-stock="true">
+          <CatalogueStockLine product={product} />
         </div>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 lg:hidden">
           <CatalogueYourPrice trade={product.price.trade} ctaMode="link" />
@@ -112,8 +128,8 @@ export function ProductListRow({
           </div>
         ) : null}
       </div>
-      <div className="hidden lg:flex lg:items-center">
-        <AvailabilityBadge availability={product.availability} />
+      <div className="hidden lg:flex lg:items-center" data-catalogue-stock="true">
+        <CatalogueStockLine product={product} />
       </div>
       <div className="hidden lg:block lg:text-right">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-steel">RRP</div>

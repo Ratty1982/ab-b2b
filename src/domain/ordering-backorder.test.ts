@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assessBasketLineQuantity,
+  canDecrementQuantity,
   canIncrementQuantity,
   isOrderableByStockPolicy,
   maxOrderableQuantity,
@@ -124,6 +125,9 @@ describe("backorder ordering scenarios", () => {
     const state = resolveCustomerOrdering(base);
     expect(state.isFinalPartCase).toBe(true);
     expect(state.backordersAllowed).toBe(true);
+    expect(state.defaultQuantity).toBe(5);
+    expect(state.step).toBe(1);
+    expect(state.defaultQuantity).not.toBe(12);
     expect(validateOrderQuantity({ ...base, requestedQuantity: 3 }).ok).toBe(true);
     expect(validateOrderQuantity({ ...base, requestedQuantity: 5 }).ok).toBe(true);
     expect(validateOrderQuantity({ ...base, requestedQuantity: 6 }).ok).toBe(false);
@@ -131,6 +135,20 @@ describe("backorder ordering scenarios", () => {
     const split = allocateOrderLineQuantities({ orderedQty: 12, sellableQty: 5 });
     expect(split.availableQtyAtOrder).toBe(5);
     expect(split.backorderQtyAtOrder).toBe(7);
+  });
+
+  it("final stock 6 / case 12 defaults to 6 available units, not case MOQ", () => {
+    const base = { caseQty: 12, sellableQty: 6, backorderPolicy: "ALLOW" as const };
+    const state = resolveCustomerOrdering(base);
+    expect(state.isFinalPartCase).toBe(true);
+    expect(state.defaultQuantity).toBe(6);
+    expect(state.step).toBe(1);
+    expect(state.remainingSellable).toBe(6);
+    expect(canIncrementQuantity({ currentQuantity: 6, ...base })).toBe(false);
+    expect(canDecrementQuantity({ currentQuantity: 6, ...base })).toBe(true);
+    expect(canIncrementQuantity({ currentQuantity: 5, ...base })).toBe(true);
+    expect(validateOrderQuantity({ ...base, requestedQuantity: 6 }).ok).toBe(true);
+    expect(validateOrderQuantity({ ...base, requestedQuantity: 12 }).ok).toBe(true);
   });
 
   it("basket revalidation — stock drop with ALLOW stays VALID", () => {

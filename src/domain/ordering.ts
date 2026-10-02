@@ -213,16 +213,17 @@ export function resolveCustomerOrdering(input: {
   if (sellable < rules.caseQty) {
     if (backordersAllowed) {
       // Preserve final-part purchase of 1..sellable AND allow case multiples beyond.
-      // UI defaults to MOQ case (trade backorder path); remainingSellable for messaging.
+      // Default/step follow the individual-unit exception so the UI never opens on an
+      // impossible case MOQ when only a partial case remains (case multiples still valid).
       return {
         mode: "CASE",
         caseQty: rules.caseQty,
         minimumQuantity: 1,
-        step: rules.increment,
+        step: 1,
         maximumQuantity: null,
         isFinalPartCase: true,
         remainingSellable: sellable,
-        defaultQuantity: rules.minimumOrderQty,
+        defaultQuantity: sellable,
         reason: null,
         backordersAllowed: true,
       };

@@ -187,6 +187,41 @@ describe("FINAL PART-CASE STOCK EXCEPTION", () => {
     expect(canIncrementQuantity({ currentQuantity: 7, caseQty: 12, sellableQty: 7 })).toBe(false);
     expect(canIncrementQuantity({ currentQuantity: 5, caseQty: 12, sellableQty: 7 })).toBe(true);
   });
+
+  it("sellable 6 / case 12 never defaults order quantity to 12", () => {
+    const deny = resolveCustomerOrdering({ caseQty: 12, sellableQty: 6, backorderPolicy: "DENY" });
+    expect(deny.mode).toBe("FINAL_PART_CASE");
+    expect(deny.defaultQuantity).toBe(6);
+    expect(deny.step).toBe(1);
+
+    const allow = resolveCustomerOrdering({ caseQty: 12, sellableQty: 6, backorderPolicy: "ALLOW" });
+    expect(allow.isFinalPartCase).toBe(true);
+    expect(allow.defaultQuantity).toBe(6);
+    expect(allow.step).toBe(1);
+    expect(allow.defaultQuantity).not.toBe(12);
+    expect(
+      validateOrderQuantity({
+        requestedQuantity: 6,
+        caseQty: 12,
+        sellableQty: 6,
+        backorderPolicy: "ALLOW",
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("normal case-multiple ordering unchanged when stock >= caseQty", () => {
+    const state = resolveCustomerOrdering({
+      caseQty: 12,
+      sellableQty: 36,
+      backorderPolicy: "DENY",
+    });
+    expect(state.mode).toBe("CASE");
+    expect(state.isFinalPartCase).toBe(false);
+    expect(state.defaultQuantity).toBe(12);
+    expect(state.step).toBe(12);
+    expect(validateOrderQuantity({ requestedQuantity: 12, caseQty: 12, sellableQty: 36 }).ok).toBe(true);
+    expect(validateOrderQuantity({ requestedQuantity: 6, caseQty: 12, sellableQty: 36 }).ok).toBe(false);
+  });
 });
 
 describe("case count labels", () => {

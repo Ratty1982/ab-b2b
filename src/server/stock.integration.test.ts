@@ -180,29 +180,48 @@ describe("Phase 5 Autopart inventory integration", () => {
     const pub = await listPublicProducts({ userId: null, q: skus.in });
     const card = pub.items.find((item) => item.sku === skus.in);
     expect(card?.availability).toBe("in");
+    expect(card?.internalStock).toBeNull();
     expect(card).not.toHaveProperty("stockQty");
     expect(card).not.toHaveProperty("qtyOnHand");
     expect(JSON.stringify(card)).not.toMatch(/qtyOnHand|stockQty|"avail"\s*:/);
+    expect(JSON.stringify(card)).not.toMatch(/"sellableQty"\s*:\s*\d/);
+
+    const tradeList = await listPublicProducts({ userId: tradeUserId, q: skus.low });
+    const tradeCard = tradeList.items.find((item) => item.sku === skus.low);
+    expect(tradeCard?.availability).toBe("low");
+    expect(tradeCard?.internalStock).toBeNull();
+    expect(JSON.stringify(tradeCard)).not.toMatch(/"sellableQty"\s*:\s*\d/);
+
+    const salesList = await listPublicProducts({ userId: salesRepId, q: skus.low });
+    const salesCard = salesList.items.find((item) => item.sku === skus.low);
+    expect(salesCard?.availability).toBe("low");
+    expect(salesCard?.internalStock?.sellableQty).toBe(20);
+    expect(typeof salesCard?.internalStock?.stale).toBe("boolean");
 
     const customer = await getPublicProduct(tradeUserId, skus.low);
     expect(customer?.card.availability).toBe("low");
+    expect(customer?.card.internalStock).toBeNull();
     expect(customer?.card).not.toHaveProperty("qtyOnHand");
     expect(customer?.card).not.toHaveProperty("stockQty");
     expect(JSON.stringify(customer?.card)).not.toMatch(/qtyOnHand|stockQty/);
+    expect(JSON.stringify(customer?.card)).not.toMatch(/"sellableQty"\s*:\s*\d/);
     expect(customer?.internalStock).toBeNull();
 
     const salesView = await getPublicProduct(salesRepId, skus.low);
     expect(salesView?.card.availability).toBe("low");
     expect(salesView?.card).not.toHaveProperty("stockQty");
+    expect(salesView?.card.internalStock?.sellableQty).toBe(20);
     expect(salesView?.internalStock?.sellableQty).toBe(20);
     expect(typeof salesView?.internalStock?.stale).toBe("boolean");
 
     const related = await getPublicProduct(null, skus.one);
     expect(related?.card.availability).toBe("low");
     expect(related?.internalStock).toBeNull();
+    expect(related?.card.internalStock).toBeNull();
     for (const item of related?.related ?? []) {
       expect(item).not.toHaveProperty("stockQty");
       expect(item).not.toHaveProperty("qtyOnHand");
+      expect(item.internalStock).toBeNull();
     }
 
     const workspace = await getProductWorkspace(adminId, (await prisma.product.findFirstOrThrow({

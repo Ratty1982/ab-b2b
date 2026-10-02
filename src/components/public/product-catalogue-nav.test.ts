@@ -68,6 +68,7 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     isFeatured: false,
     variantId: null,
     ordering: null,
+    internalStock: null,
     ...partial,
   };
 }

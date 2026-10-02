@@ -2,6 +2,7 @@ import { createElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ProductResultGrid,
   ProductResultList,
   PRODUCT_LIST_ROW_CLASS,
   PRODUCT_LIST_ROW_ORDER_CLASS,
@@ -104,6 +105,7 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     isFeatured: false,
     variantId: "clxxxxxxxxxxxxxxxxxxxxxx",
     ordering: null,
+    internalStock: null,
     ...partial,
   };
 }
@@ -151,6 +153,46 @@ describe("catalogue list quick ordering presentation", () => {
     expect(markup).toContain(">12<");
     expect(markup).toContain(">1<");
     expect(markup).not.toMatch(/17 available|qtyOnHand|sourceAvailRaw/i);
+    expect(markup).not.toMatch(/data-internal-stock-qty/);
+  });
+
+  it("shows exact stock on catalogue cards only when internalStock is authorised", () => {
+    const trade = html(
+      createElement(ProductResultGrid, {
+        items: [card({ availability: "low", internalStock: null })],
+      }),
+    );
+    expect(trade).toContain("Low Stock");
+    expect(trade).not.toContain("6 available");
+    expect(trade).not.toMatch(/data-internal-stock-qty/);
+
+    const staff = html(
+      createElement(ProductResultGrid, {
+        items: [
+          card({
+            availability: "low",
+            internalStock: { sellableQty: 6, stale: false },
+          }),
+        ],
+      }),
+    );
+    expect(staff).toContain("Low Stock");
+    expect(staff).toContain("6 available");
+    expect(staff).toMatch(/data-internal-stock-qty="true"/);
+    expect(staff).not.toMatch(/>6</);
+
+    const listStaff = html(
+      createElement(ProductResultList, {
+        items: [
+          card({
+            availability: "in",
+            internalStock: { sellableQty: 146, stale: false },
+          }),
+        ],
+      }),
+    );
+    expect(listStaff).toContain("146 available");
+    expect(listStaff).toContain("In Stock");
   });
 
   it("shows Unavailable for out-of-stock rows without Add controls", () => {

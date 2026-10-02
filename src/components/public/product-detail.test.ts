@@ -55,6 +55,7 @@ function card(partial: Partial<PublicProductCard> = {}): PublicProductCard {
     isFeatured: false,
     variantId: null,
     ordering: null,
+    internalStock: null,
     ...partial,
   };
 }
@@ -114,7 +115,8 @@ describe("public product detail sections", () => {
     const trade = html(createElement(ProductDetailView, { data: detail({ internalStock: null }) }));
     expect(trade).toContain(PUBLIC_AVAILABILITY_LABEL.in);
     expect(trade).not.toMatch(/data-internal-stock/);
-    expect(trade).not.toContain(">42<");
+    expect(trade).not.toContain("42 available");
+    expect(trade).not.toMatch(/data-internal-stock-qty/);
 
     const staff = html(
       createElement(ProductDetailView, {
@@ -122,8 +124,35 @@ describe("public product detail sections", () => {
       }),
     );
     expect(staff).toMatch(/data-internal-stock="true"/);
-    expect(staff).toContain(">42<");
+    expect(staff).toContain("42 available");
+    expect(staff).not.toMatch(/>42</);
     expect(staff).toContain(PUBLIC_AVAILABILITY_LABEL.in);
+  });
+
+  it("labels internal exact stock as available and shows stale warning", () => {
+    const low = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          card: card({ availability: "low" }),
+          internalStock: { sellableQty: 6, stale: false },
+        }),
+      }),
+    );
+    expect(low).toContain("6 available");
+    expect(low).toContain(PUBLIC_AVAILABILITY_LABEL.low);
+    expect(low).not.toMatch(/>6</);
+    expect(low).not.toContain("Qty: 6");
+
+    const stale = html(
+      createElement(ProductDetailView, {
+        data: detail({
+          card: card({ availability: "low" }),
+          internalStock: { sellableQty: 6, stale: true },
+        }),
+      }),
+    );
+    expect(stale).toContain("6 available");
+    expect(stale).toContain("Stock update may be delayed");
   });
 
   it("renders benefits when populated and hides them when empty", () => {

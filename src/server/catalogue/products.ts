@@ -931,7 +931,31 @@ export type PublicProductCard = {
    * Null when the viewer has no ordering context (anonymous / no test level).
    */
   ordering: import("@/server/basket/service").ProductOrderingPanel | null;
+  /**
+   * Exact sellable qty for authorised internal staff (inventory.view) only.
+   * Always null for trade/anonymous — never populate from the client.
+   */
+  internalStock: InternalProductStockView | null;
 };
+
+function sellableQtyFromInventory(
+  inventory: Array<{ qtyOnHand: number; qtyReserved?: number }>,
+): number {
+  return inventory.reduce(
+    (sum, inv) => sum + Math.max(0, inv.qtyOnHand - (inv.qtyReserved ?? 0)),
+    0,
+  );
+}
+
+/** Batch-safe: uses inventory already loaded on the variant — no per-card query. */
+function internalStockForVariant(
+  canSee: boolean,
+  variant: { inventory: Array<{ qtyOnHand: number; qtyReserved?: number }> } | undefined,
+  stale: boolean,
+): InternalProductStockView | null {
+  if (!canSee || !variant?.inventory.length) return null;
+  return { sellableQty: sellableQtyFromInventory(variant.inventory), stale };
+}
 
 function toPublicCard(
   row: {
@@ -965,12 +989,11 @@ function toPublicCard(
   stale = false,
   ordering: import("@/server/basket/service").ProductOrderingPanel | null = null,
   globalBackorderPolicy: EffectiveBackorderPolicy = "ALLOW",
+  internalStock: InternalProductStockView | null = null,
 ): PublicProductCard {
   const variant = defaultVariant(row.variants);
   const hasInv = Boolean(variant?.inventory.length);
-  const qty = hasInv
-    ? variant!.inventory.reduce((sum, inv) => sum + Math.max(0, inv.qtyOnHand - (inv.qtyReserved ?? 0)), 0)
-    : null;
+  const qty = hasInv ? sellableQtyFromInventory(variant!.inventory) : null;
   const bandQty = stale && (qty ?? 0) > 0 ? 0 : (qty ?? 0);
   const backorderAllowed =
     resolveBackorderPolicy({
@@ -1007,6 +1030,7 @@ function toPublicCard(
     isFeatured: row.isFeatured,
     variantId: variant?.id ?? null,
     ordering,
+    internalStock,
   };
 }
 
@@ -1106,10 +1130,11 @@ export async function listPublicProducts(input: {
       take: pageSize,
     }),
   ]);
-  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy] = await Promise.all([
+  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy, canSeeInternalQty] = await Promise.all([
     displayPricesForProductRows(input.userId, rows),
     stockFreshness(),
     getGlobalBackorderPolicy(),
+    actorCanSeeInternalStockQty(input.userId),
   ]);
 
   const orderingInputs = rows
@@ -1146,6 +1171,7 @@ export async function listPublicProducts(input: {
         freshness.stale,
         variant ? (orderingByVariantId.get(variant.id) ?? null) : null,
         globalBackorderPolicy,
+        internalStockForVariant(canSeeInternalQty, variant, freshness.stale),
       );
     }),
     total,
@@ -1187,16 +1213,17 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     getGlobalBackorderPolicy(),
     actorCanSeeInternalStockQty(userId),
   ]);
-  let internalStock: InternalProductStockView | null = null;
-  if (canSeeInternalQty && variant?.inventory.length) {
-    const sellableQty = variant.inventory.reduce(
-      (sum, inv) => sum + Math.max(0, inv.qtyOnHand - (inv.qtyReserved ?? 0)),
-      0,
-    );
-    internalStock = { sellableQty, stale: freshness.stale };
-  }
+  const internalStock = internalStockForVariant(canSeeInternalQty, variant, freshness.stale);
   return {
-    card: toPublicCard(product, priced.viewer, variant ? priced.byVariantId.get(variant.id) : undefined, freshness.stale, null, globalBackorderPolicy),
+    card: toPublicCard(
+      product,
+      priced.viewer,
+      variant ? priced.byVariantId.get(variant.id) : undefined,
+      freshness.stale,
+      null,
+      globalBackorderPolicy,
+      internalStock,
+    ),
     description: product.description,
     shortDescription: product.shortDescription,
     specifications: specsFromJson(product.specifications),
@@ -1216,7 +1243,15 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     internalStock,
     related: related.map((row) => {
       const rel = defaultVariant(row.variants);
-      return toPublicCard(row, priced.viewer, rel ? priced.byVariantId.get(rel.id) : undefined, freshness.stale, null, globalBackorderPolicy);
+      return toPublicCard(
+        row,
+        priced.viewer,
+        rel ? priced.byVariantId.get(rel.id) : undefined,
+        freshness.stale,
+        null,
+        globalBackorderPolicy,
+        internalStockForVariant(canSeeInternalQty, rel, freshness.stale),
+      );
     }),
     nav: { brands: nav.brands, categories: nav.categories },
   };
@@ -1268,14 +1303,23 @@ export async function listFeaturedPublicProducts(userId: string | null, take = 8
   if (!rows.length) {
     return listRecentPublicProducts(userId, take);
   }
-  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy] = await Promise.all([
+  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy, canSeeInternalQty] = await Promise.all([
     displayPricesForProductRows(userId, rows),
     stockFreshness(),
     getGlobalBackorderPolicy(),
+    actorCanSeeInternalStockQty(userId),
   ]);
   return rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale, null, globalBackorderPolicy);
+    return toPublicCard(
+      row,
+      viewer,
+      variant ? byVariantId.get(variant.id) : undefined,
+      freshness.stale,
+      null,
+      globalBackorderPolicy,
+      internalStockForVariant(canSeeInternalQty, variant, freshness.stale),
+    );
   });
 }
 
@@ -1289,14 +1333,23 @@ export async function getPublicProductsBySkus(userId: string | null, skus: strin
     },
     include: publicInclude,
   });
-  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy] = await Promise.all([
+  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy, canSeeInternalQty] = await Promise.all([
     displayPricesForProductRows(userId, rows),
     stockFreshness(),
     getGlobalBackorderPolicy(),
+    actorCanSeeInternalStockQty(userId),
   ]);
   const cards = rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale, null, globalBackorderPolicy);
+    return toPublicCard(
+      row,
+      viewer,
+      variant ? byVariantId.get(variant.id) : undefined,
+      freshness.stale,
+      null,
+      globalBackorderPolicy,
+      internalStockForVariant(canSeeInternalQty, variant, freshness.stale),
+    );
   });
   const bySku = new Map(cards.map((card) => [card.sku.toUpperCase(), card]));
   return wanted.map((sku) => bySku.get(sku.toUpperCase())).filter((card): card is PublicProductCard => Boolean(card));
@@ -1309,14 +1362,23 @@ export async function listRecentPublicProducts(userId: string | null, take = 6) 
     orderBy: [{ isNew: "desc" }, { createdAt: "desc" }],
     take: Math.min(12, Math.max(1, take)),
   });
-  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy] = await Promise.all([
+  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy, canSeeInternalQty] = await Promise.all([
     displayPricesForProductRows(userId, rows),
     stockFreshness(),
     getGlobalBackorderPolicy(),
+    actorCanSeeInternalStockQty(userId),
   ]);
   return rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale, null, globalBackorderPolicy);
+    return toPublicCard(
+      row,
+      viewer,
+      variant ? byVariantId.get(variant.id) : undefined,
+      freshness.stale,
+      null,
+      globalBackorderPolicy,
+      internalStockForVariant(canSeeInternalQty, variant, freshness.stale),
+    );
   });
 }
 
@@ -1327,14 +1389,23 @@ export async function listPublicProductIndex(userId: string | null, take = 80) {
     orderBy: [{ isFeatured: "desc" }, { createdAt: "desc" }],
     take: Math.min(120, Math.max(1, take)),
   });
-  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy] = await Promise.all([
+  const [{ viewer, byVariantId }, freshness, globalBackorderPolicy, canSeeInternalQty] = await Promise.all([
     displayPricesForProductRows(userId, rows),
     stockFreshness(),
     getGlobalBackorderPolicy(),
+    actorCanSeeInternalStockQty(userId),
   ]);
   return rows.map((row) => {
     const variant = defaultVariant(row.variants);
-    return toPublicCard(row, viewer, variant ? byVariantId.get(variant.id) : undefined, freshness.stale, null, globalBackorderPolicy);
+    return toPublicCard(
+      row,
+      viewer,
+      variant ? byVariantId.get(variant.id) : undefined,
+      freshness.stale,
+      null,
+      globalBackorderPolicy,
+      internalStockForVariant(canSeeInternalQty, variant, freshness.stale),
+    );
   });
 }
 
