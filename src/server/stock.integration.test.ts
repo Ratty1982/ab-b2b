@@ -189,9 +189,17 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(customer?.card).not.toHaveProperty("qtyOnHand");
     expect(customer?.card).not.toHaveProperty("stockQty");
     expect(JSON.stringify(customer?.card)).not.toMatch(/qtyOnHand|stockQty/);
+    expect(customer?.internalStock).toBeNull();
+
+    const salesView = await getPublicProduct(salesRepId, skus.low);
+    expect(salesView?.card.availability).toBe("low");
+    expect(salesView?.card).not.toHaveProperty("stockQty");
+    expect(salesView?.internalStock?.sellableQty).toBe(20);
+    expect(typeof salesView?.internalStock?.stale).toBe("boolean");
 
     const related = await getPublicProduct(null, skus.one);
     expect(related?.card.availability).toBe("low");
+    expect(related?.internalStock).toBeNull();
     for (const item of related?.related ?? []) {
       expect(item).not.toHaveProperty("stockQty");
       expect(item).not.toHaveProperty("qtyOnHand");

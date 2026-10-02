@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
+import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
 import { ProductCard } from "@/components/public/ProductCard";
@@ -17,7 +18,7 @@ import {
   selectPublicProductDetailRows,
 } from "@/domain/product-spec-display";
 import { cn } from "@/lib/utils";
-import type { PublicProductCard } from "@/server/catalogue/products";
+import type { InternalProductStockView, PublicProductCard } from "@/server/catalogue/products";
 import type { ProductSellingContent } from "@/domain/product-specifications";
 
 export type PublicProductDocument = {
@@ -55,6 +56,11 @@ export type PublicProductDetail = {
   orderingPanel?: ProductOrderingPanelView | null;
   /** Current public product documents (SDS, TDS, …). Omit/empty = no section. */
   documents?: PublicProductDocument[];
+  /**
+   * Exact sellable quantity for authorised internal staff (sales/admin).
+   * Null/omitted for trade customers and anonymous visitors.
+   */
+  internalStock?: InternalProductStockView | null;
 };
 
 export function ProductDetailView({ data }: { data: PublicProductDetail }) {
@@ -145,9 +151,22 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
           {product.name}
         </h1>
         <p className="num mt-2 text-[13px] text-steel">{data.sku}</p>
-        {product.availability ? (
-          <div className="mt-3" data-product-availability={product.availability}>
-            <AvailabilityBadge availability={product.availability} />
+        {product.availability || data.internalStock ? (
+          <div
+            className="mt-3"
+            data-product-availability={product.availability ?? undefined}
+            data-internal-stock={data.internalStock ? "true" : undefined}
+          >
+            {data.internalStock ? (
+              <InternalStockDisplay
+                qty={data.internalStock.sellableQty}
+                availability={product.availability}
+                stale={data.internalStock.stale}
+                className="justify-start"
+              />
+            ) : product.availability ? (
+              <AvailabilityBadge availability={product.availability} />
+            ) : null}
             {product.availability === "backorder" ? (
               <p className="mt-2 max-w-xl text-[13px] text-steel">
                 This item is currently awaiting stock but can still be ordered. It will be

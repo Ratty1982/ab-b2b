@@ -21,7 +21,7 @@ import { AUTOPART_FEED_SOURCE, customerAvailabilityForStock } from "@/domain/sto
 import { stockFreshness } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { resolveBackorderPolicy, type VariantBackorderPolicy, type EffectiveBackorderPolicy, effectiveBackorderPolicyLabel } from "@/domain/backorder";
-import { hasPermission } from "@/server/rbac/access";
+import { hasPermission, loadAccessProfile } from "@/server/rbac/access";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   moneyNumber,
@@ -86,6 +86,19 @@ export type CatalogueListQuery = {
 function defaultVariant<T extends { isDefault: boolean; createdAt: Date }>(variants: T[]): T | undefined {
   return variants.find((v) => v.isDefault) ?? variants[0];
 }
+
+/** Exact sellable qty for authorised internal staff only — never trade/anonymous. */
+async function actorCanSeeInternalStockQty(userId: string | null | undefined): Promise<boolean> {
+  if (!userId) return false;
+  const profile = await loadAccessProfile(userId);
+  if (!profile || profile.actorType === "TRADE") return false;
+  return hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access");
+}
+
+export type InternalProductStockView = {
+  sellableQty: number;
+  stale: boolean;
+};
 
 export async function listCataloguePage(actorUserId: string, raw: CatalogueListQuery) {
   const profile = await requireSystemPermission(actorUserId, "products.view");
@@ -1169,10 +1182,19 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     listPublicProductDocuments(product.id),
   ]);
   const priced = await displayPricesForProductRows(userId, [product, ...related]);
-  const [freshness, globalBackorderPolicy] = await Promise.all([
+  const [freshness, globalBackorderPolicy, canSeeInternalQty] = await Promise.all([
     stockFreshness(),
     getGlobalBackorderPolicy(),
+    actorCanSeeInternalStockQty(userId),
   ]);
+  let internalStock: InternalProductStockView | null = null;
+  if (canSeeInternalQty && variant?.inventory.length) {
+    const sellableQty = variant.inventory.reduce(
+      (sum, inv) => sum + Math.max(0, inv.qtyOnHand - (inv.qtyReserved ?? 0)),
+      0,
+    );
+    internalStock = { sellableQty, stale: freshness.stale };
+  }
   return {
     card: toPublicCard(product, priced.viewer, variant ? priced.byVariantId.get(variant.id) : undefined, freshness.stale, null, globalBackorderPolicy),
     description: product.description,
@@ -1190,6 +1212,8 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
     unit: variant?.unit ?? "EA",
     ...publicOrderingFromVariant(variant),
     documents,
+    /** Authorised internal staff only. Omitted/null for trade and anonymous. */
+    internalStock,
     related: related.map((row) => {
       const rel = defaultVariant(row.variants);
       return toPublicCard(row, priced.viewer, rel ? priced.byVariantId.get(rel.id) : undefined, freshness.stale, null, globalBackorderPolicy);

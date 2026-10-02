@@ -692,6 +692,18 @@ describe("authenticated orderable PDP render condition", () => {
   it("does not expose exact stock figures in the purchasing UI", () => {
     const markup = html(createElement(ProductDetailView, { data: detail() }));
     expect(markup).not.toMatch(/17 available|qtyOnHand|sellableQty/i);
+    expect(markup).not.toMatch(/data-internal-stock/);
+  });
+
+  it("shows exact stock quantity for authorised internal staff only", () => {
+    const markup = html(
+      createElement(ProductDetailView, {
+        data: detail({ internalStock: { sellableQty: 17, stale: false } }),
+      }),
+    );
+    expect(markup).toMatch(/data-internal-stock="true"/);
+    expect(markup).toContain(">17<");
+    expect(markup).toMatch(/In Stock/i);
   });
 });
 

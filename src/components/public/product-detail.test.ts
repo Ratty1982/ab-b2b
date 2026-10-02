@@ -91,6 +91,7 @@ function detail(partial: Partial<PublicProductDetail> = {}): PublicProductDetail
     minimumOrderQty: 2,
     orderIncrement: 1,
     unit: "EA",
+    internalStock: null,
     ...partial,
   };
 }
@@ -107,6 +108,22 @@ describe("public product detail sections", () => {
     expect(markup).toContain('data-product-section="description"');
     expect(markup).toContain("Full product description");
     expect(markup.indexOf("data-product-short-description")).toBeLessThan(markup.indexOf("data-product-section=\"description\""));
+  });
+
+  it("shows exact stock qty only when internalStock is provided", () => {
+    const trade = html(createElement(ProductDetailView, { data: detail({ internalStock: null }) }));
+    expect(trade).toContain(PUBLIC_AVAILABILITY_LABEL.in);
+    expect(trade).not.toMatch(/data-internal-stock/);
+    expect(trade).not.toContain(">42<");
+
+    const staff = html(
+      createElement(ProductDetailView, {
+        data: detail({ internalStock: { sellableQty: 42, stale: false } }),
+      }),
+    );
+    expect(staff).toMatch(/data-internal-stock="true"/);
+    expect(staff).toContain(">42<");
+    expect(staff).toContain(PUBLIC_AVAILABILITY_LABEL.in);
   });
 
   it("renders benefits when populated and hides them when empty", () => {
