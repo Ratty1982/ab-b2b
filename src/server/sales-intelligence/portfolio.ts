@@ -396,7 +396,19 @@ function buildCrossSellForCustomer(
 
 export async function getSalesRepPortfolio(actorUserId: string, raw: unknown) {
   const profile = await requirePortfolioActor(actorUserId);
-  const input = querySchema.parse(raw ?? {});
+  const rawObj = (raw ?? {}) as Record<string, unknown>;
+  const skipWorkspaceOpen = rawObj["skipWorkspaceOpen"] === true;
+  const queryRaw = { ...rawObj };
+  delete queryRaw["skipWorkspaceOpen"];
+  const input = querySchema.parse(queryRaw);
+  if (!skipWorkspaceOpen) {
+    const { recordStaffWorkspaceOpen } = await import("@/server/audit/staff-workspace-open");
+    void recordStaffWorkspaceOpen({
+      actorUserId: profile.userId,
+      action: "si.portfolio.opened",
+      detail: "Opened portfolio",
+    });
+  }
 
   const resolved = resolveBusinessPeriod({
     period: input.period,

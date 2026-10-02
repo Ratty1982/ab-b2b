@@ -34,6 +34,13 @@ export type StaffUserRecord = {
   actorType: string;
   createdAt: string;
   lastLoginAt: string | null;
+  lastActiveAt: string | null;
+  /** Super Admin only — null for other users.manage viewers. */
+  lastLoginLabel: string | null;
+  /** Super Admin only — null for other users.manage viewers. */
+  lastActiveLabel: string | null;
+  /** Super Admin only — meaningful actions in last 30 days. */
+  actions30d: number | null;
   invitationStatus: StaffInvitationStatus;
   invitationExpiresAt: string | null;
   invitationCreatedAt: string | null;
@@ -105,6 +112,7 @@ function mapUser(
     actorType: string;
     createdAt: Date;
     lastLoginAt: Date | null;
+    lastActiveAt?: Date | null;
     userRoles: Array<{ role: { key: string } }>;
     invitations?: Array<{
       status: string;
@@ -114,6 +122,11 @@ function mapUser(
     }>;
   },
   deletion: { safe: boolean; reasons: string[] },
+  activity?: {
+    lastLoginLabel: string | null;
+    lastActiveLabel: string | null;
+    actions30d: number | null;
+  },
 ): StaffUserRecord {
   const role = (user.userRoles[0]?.role.key as SystemRoleKey | undefined) ?? null;
   const pendingInvite =
@@ -131,6 +144,10 @@ function mapUser(
     actorType: user.actorType,
     createdAt: user.createdAt.toISOString(),
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    lastActiveAt: user.lastActiveAt?.toISOString() ?? null,
+    lastLoginLabel: activity?.lastLoginLabel ?? null,
+    lastActiveLabel: activity?.lastActiveLabel ?? null,
+    actions30d: activity?.actions30d ?? null,
     invitationStatus: inv.invitationStatus,
     invitationExpiresAt: pendingInvite?.expiresAt.toISOString() ?? null,
     invitationCreatedAt: pendingInvite?.createdAt.toISOString() ?? null,
@@ -242,8 +259,16 @@ export async function listStaffUsers(actorUserId: string): Promise<{
   items: StaffUserRecord[];
   currentUserId: string;
   canGrantSuperAdmin: boolean;
+  /** Present only for Super Admin — factual usage counts, not rankings. */
+  activityOverview: {
+    internalUsers: number;
+    loggedInToday: number;
+    activeToday: number;
+    meaningfulActionsToday: number;
+  } | null;
 }> {
   const profile = await requireSystemPermission(actorUserId, "users.manage");
+  const isSuperAdmin = profile.systemRoles.includes("SUPER_ADMIN");
   const rows = await prisma.user.findMany({
     where: { actorType: "INTERNAL" },
     include: staffInclude,
@@ -251,16 +276,43 @@ export async function listStaffUsers(actorUserId: string): Promise<{
     take: 500,
   });
 
+  const activityByUser = isSuperAdmin
+    ? await (
+        await import("@/server/audit/staff-activity-service")
+      ).staffActivitySummariesForUsers(
+        actorUserId,
+        rows.map((row) => row.id),
+      )
+    : null;
+
   const items: StaffUserRecord[] = [];
   for (const row of rows) {
     const deletion = await evaluateUserDeletionSafety(row.id);
-    items.push(mapUser(row, deletion));
+    const summary = activityByUser?.get(row.id);
+    items.push(
+      mapUser(
+        row,
+        deletion,
+        isSuperAdmin
+          ? {
+              lastLoginLabel: summary?.lastLoginLabel ?? "Never",
+              lastActiveLabel: summary?.lastActiveLabel ?? "—",
+              actions30d: summary?.actions30d ?? 0,
+            }
+          : undefined,
+      ),
+    );
   }
+
+  const activityOverview = isSuperAdmin
+    ? await (await import("@/server/audit/staff-activity-service")).getStaffActivityOverview(actorUserId)
+    : null;
 
   return {
     items,
     currentUserId: actorUserId,
-    canGrantSuperAdmin: profile.systemRoles.includes("SUPER_ADMIN"),
+    canGrantSuperAdmin: isSuperAdmin,
+    activityOverview,
   };
 }
 
@@ -540,6 +592,26 @@ export async function updateStaffUser(actorUserId: string, raw: unknown) {
     after: { role: input.role, status: input.status, name: input.name },
   });
 
+  if (input.status && input.status !== existing.status) {
+    if (input.status === "DISABLED") {
+      await recordAuditEvent({
+        action: "ACCOUNT_DEACTIVATED",
+        entityType: "User",
+        entityId: existing.id,
+        actorUserId,
+        targetUserId: existing.id,
+      });
+    } else if (input.status === "ACTIVE" && existing.status === "DISABLED") {
+      await recordAuditEvent({
+        action: "ACCOUNT_ACTIVATED",
+        entityType: "User",
+        entityId: existing.id,
+        actorUserId,
+        targetUserId: existing.id,
+      });
+    }
+  }
+
   return mapStaffUser(existing.id);
 }
 
@@ -589,6 +661,13 @@ export async function deactivateStaffUser(actorUserId: string, raw: unknown) {
     actorUserId,
     targetUserId: existing.id,
   });
+  await recordAuditEvent({
+    action: "ACCOUNT_DEACTIVATED",
+    entityType: "User",
+    entityId: existing.id,
+    actorUserId,
+    targetUserId: existing.id,
+  });
 
   return mapStaffUser(existing.id);
 }
@@ -627,6 +706,15 @@ export async function reactivateStaffUser(actorUserId: string, raw: unknown) {
     targetUserId: existing.id,
     after: { status: nextStatus },
   });
+  if (nextStatus === "ACTIVE") {
+    await recordAuditEvent({
+      action: "ACCOUNT_ACTIVATED",
+      entityType: "User",
+      entityId: existing.id,
+      actorUserId,
+      targetUserId: existing.id,
+    });
+  }
 
   return mapStaffUser(existing.id);
 }

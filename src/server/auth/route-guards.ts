@@ -11,6 +11,7 @@ import {
 } from "@/server/rbac/guards";
 import { getClientSession, type ClientSession } from "@/server/auth/session";
 import { isPrivilegedMfaEnforced } from "@/domain/mfa-policy";
+import { scheduleTouchLastActive } from "@/server/audit/last-active";
 
 export type GuardResult =
   | { ok: true; session: ClientSession & { signedIn: true }; userId: string }
@@ -28,6 +29,7 @@ async function currentUserId(): Promise<string | null> {
 
 async function runGuard(
   check: (userId: string | null) => Promise<{ userId: string }>,
+  options?: { touchActive?: boolean },
 ): Promise<GuardResult> {
   const userId = await currentUserId();
   const session = await getClientSession();
@@ -35,6 +37,9 @@ async function runGuard(
     const profile = await check(userId);
     if (!session.signedIn) {
       return { ok: false, reason: "unauthenticated", session };
+    }
+    if (options?.touchActive !== false) {
+      scheduleTouchLastActive(profile.userId);
     }
     return { ok: true, session, userId: profile.userId };
   } catch (error) {
@@ -46,7 +51,8 @@ async function runGuard(
 }
 
 export const ensurePortalAccess = createServerFn({ method: "GET" }).handler(async () =>
-  runGuard((id) => requireTradePortalAccess(id)),
+  // Trade portal — do not treat as internal staff presence.
+  runGuard((id) => requireTradePortalAccess(id), { touchActive: false }),
 );
 
 export const ensureSalesAccess = createServerFn({ method: "GET" }).handler(async () =>

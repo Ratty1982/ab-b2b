@@ -447,7 +447,11 @@ model User {
   twoFactorEnabled Boolean @default(false)
   twoFactorFactors TwoFactor[]
 
+  /// Most recent successful authentication (session create). UTC.
   lastLoginAt DateTime?
+  /// Throttled presence metadata for authenticated internal use. UTC.
+  /// Updated at most every ~12 minutes — not an AuditEvent clickstream.
+  lastActiveAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -486,6 +490,8 @@ model User {
 
   @@index([actorType, status])
   @@index([tradeTestPriceListId])
+  @@index([lastLoginAt])
+  @@index([lastActiveAt])
 }
 
 /// Better Auth–compatible session table shape (wired in Phase 1)

@@ -142,6 +142,12 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
   const profile = await requireSi(actorUserId);
   const input = customerGapSchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
+  const { recordStaffWorkspaceOpen } = await import("@/server/audit/staff-workspace-open");
+  void recordStaffWorkspaceOpen({
+    actorUserId: profile.userId,
+    action: "si.gaps.opened",
+    detail: "Opened gap analysis",
+  });
   const compareBy = (input.compareBy ?? "UNITS") as GapCompareBy;
   const { selected, comparison } = resolveGapPeriods({
     period: input.period,

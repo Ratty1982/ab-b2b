@@ -309,6 +309,12 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
   const profile = await requireSalesIntelligence(actorUserId);
   const input = customerSchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
+  const { recordStaffWorkspaceOpen } = await import("@/server/audit/staff-workspace-open");
+  void recordStaffWorkspaceOpen({
+    actorUserId: profile.userId,
+    action: "si.rebate.opened",
+    detail: "Opened rebate analysis",
+  });
   const { primary, comparison: comparisonRange } = resolvePeriods(input);
   const company = await loadCompanyContext(input.companyId);
 

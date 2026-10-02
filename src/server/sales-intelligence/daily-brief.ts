@@ -396,6 +396,13 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
   const yesterday = previousLondonCivilDay(today);
   const briefDateLabel = formatLondonBriefDate(today);
 
+  const { recordStaffWorkspaceOpen } = await import("@/server/audit/staff-workspace-open");
+  void recordStaffWorkspaceOpen({
+    actorUserId: profile.userId,
+    action: "si.daily_brief.opened",
+    detail: "Viewed sales brief",
+  });
+
   // Reuse Portfolio engine for attention / opportunities / growth (THIS_MONTH comparable period).
   const portfolio = await getSalesRepPortfolio(actorUserId, {
     period: PORTFOLIO_DEFAULT_PERIOD,
@@ -405,6 +412,7 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
     filter: "ALL",
     page: 1,
     allRows: true,
+    skipWorkspaceOpen: true,
   });
 
   const companyIds = portfolio.rows.map((r) => r.companyId);

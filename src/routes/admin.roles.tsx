@@ -19,6 +19,11 @@ import {
   sendUserPasswordResetEmailFn,
   updateStaffUserFn,
 } from "@/server/phase2/fns";
+import {
+  StaffActivityOverviewBar,
+  StaffActivityPanel,
+} from "@/components/admin/StaffActivityPanel";
+import { InstantText } from "@/components/ab/InstantText";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/roles")({
@@ -84,6 +89,17 @@ type StaffUserRow = {
   canResendInvitation?: boolean;
   canSendPasswordReset?: boolean;
   lastLoginAt?: string | null;
+  lastActiveAt?: string | null;
+  lastLoginLabel?: string | null;
+  lastActiveLabel?: string | null;
+  actions30d?: number | null;
+};
+
+type ActivityOverview = {
+  internalUsers: number;
+  loggedInToday: number;
+  activeToday: number;
+  meaningfulActionsToday: number;
 };
 
 function statusTone(status: string) {
@@ -119,6 +135,7 @@ function AdminRoles() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [canGrantSuperAdmin, setCanGrantSuperAdmin] = useState(false);
+  const [activityOverview, setActivityOverview] = useState<ActivityOverview | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [manageUser, setManageUser] = useState<StaffUserRow | null>(null);
@@ -133,10 +150,12 @@ function AdminRoles() {
     if (!result.ok) {
       setError(result.error);
       setUsers([]);
+      setActivityOverview(null);
     } else {
       setUsers(result.data.items);
       setCanGrantSuperAdmin(result.data.canGrantSuperAdmin);
       setCurrentUserId(result.data.currentUserId);
+      setActivityOverview(result.data.activityOverview ?? null);
     }
     setLoading(false);
   }, []);
@@ -189,6 +208,8 @@ function AdminRoles() {
             users={users}
             loading={loading}
             error={error}
+            showActivity={canGrantSuperAdmin}
+            activityOverview={activityOverview}
             onRetry={() => void load()}
             onAdd={() => setAddOpen(true)}
             onManage={setManageUser}
@@ -236,6 +257,7 @@ function AdminRoles() {
         users={users}
         currentUserId={currentUserId}
         roleOptions={roleOptions}
+        showActivity={canGrantSuperAdmin}
         onClose={() => setManageUser(null)}
         onSaved={async () => {
           setManageUser(null);
@@ -264,6 +286,8 @@ function UsersPanel({
   users,
   loading,
   error,
+  showActivity,
+  activityOverview,
   onRetry,
   onAdd,
   onManage,
@@ -271,10 +295,27 @@ function UsersPanel({
   users: StaffUserRow[];
   loading: boolean;
   error: string | null;
+  showActivity: boolean;
+  activityOverview: ActivityOverview | null;
   onRetry: () => void;
   onAdd: () => void;
   onManage: (user: StaffUserRow) => void;
 }) {
+  const [sortBy, setSortBy] = useState<"name" | "lastLogin" | "lastActive">("name");
+
+  const sorted = useMemo(() => {
+    const rows = [...users];
+    if (!showActivity || sortBy === "name") {
+      return rows.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const key = sortBy === "lastLogin" ? "lastLoginAt" : "lastActiveAt";
+    return rows.sort((a, b) => {
+      const av = a[key] ? new Date(a[key]!).getTime() : 0;
+      const bv = b[key] ? new Date(b[key]!).getTime() : 0;
+      return bv - av;
+    });
+  }, [users, showActivity, sortBy]);
+
   if (loading) {
     return <p className="text-[13px] text-steel">Loading users…</p>;
   }
@@ -312,41 +353,93 @@ function UsersPanel({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full min-w-[720px] text-[13px]">
-        <thead>
-          <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
-            <th className="px-3 py-2 font-semibold">Name</th>
-            <th className="px-3 py-2 font-semibold">Email</th>
-            <th className="px-3 py-2 font-semibold">Role</th>
-            <th className="px-3 py-2 font-semibold">Status</th>
-            <th className="px-3 py-2 font-semibold">Invitation</th>
-            <th className="px-3 py-2 text-right font-semibold">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u, i) => (
-            <tr key={u.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
-              <td className="px-3 py-2 font-medium">{u.name}</td>
-              <td className="px-3 py-2 text-steel">{u.email}</td>
-              <td className="px-3 py-2">{u.roleLabel}</td>
-              <td className="px-3 py-2">
-                <StatusBadge tone={statusTone(u.status)}>{statusLabel(u.status)}</StatusBadge>
-              </td>
-              <td className="px-3 py-2 text-[12px] text-steel">{u.invitationLabel ?? "—"}</td>
-              <td className="px-3 py-2 text-right">
-                <button
-                  type="button"
-                  onClick={() => onManage(u)}
-                  className="text-[12px] font-semibold text-primary hover:underline"
-                >
-                  Manage
-                </button>
-              </td>
-            </tr>
+    <div>
+      {showActivity ? <StaffActivityOverviewBar overview={activityOverview} /> : null}
+      {showActivity ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-[12px]">
+          <span className="text-steel">Sort by</span>
+          {(
+            [
+              ["name", "Name"],
+              ["lastLogin", "Last login"],
+              ["lastActive", "Last active"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSortBy(key)}
+              className={cn(
+                "h-8 rounded-md border px-3 font-semibold",
+                sortBy === key ? "border-primary text-foreground" : "border-border text-steel",
+              )}
+            >
+              {label}
+            </button>
           ))}
-        </tbody>
-      </table>
+        </div>
+      ) : null}
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className={cn("w-full text-[13px]", showActivity ? "min-w-[980px]" : "min-w-[720px]")}>
+          <thead>
+            <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
+              <th className="px-3 py-2 font-semibold">User</th>
+              {!showActivity ? <th className="px-3 py-2 font-semibold">Email</th> : null}
+              <th className="px-3 py-2 font-semibold">Role</th>
+              <th className="px-3 py-2 font-semibold">Status</th>
+              {showActivity ? (
+                <>
+                  <th className="px-3 py-2 font-semibold">Last login</th>
+                  <th className="px-3 py-2 font-semibold">Last active</th>
+                  <th className="px-3 py-2 font-semibold">Activity (30 days)</th>
+                </>
+              ) : (
+                <th className="px-3 py-2 font-semibold">Invitation</th>
+              )}
+              <th className="px-3 py-2 text-right font-semibold">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((u, i) => (
+              <tr key={u.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
+                <td className="px-3 py-2">
+                  <div className="font-medium">{u.name}</div>
+                  {showActivity ? <div className="text-[12px] text-steel">{u.email}</div> : null}
+                </td>
+                {!showActivity ? <td className="px-3 py-2 text-steel">{u.email}</td> : null}
+                <td className="px-3 py-2">{u.roleLabel}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge tone={statusTone(u.status)}>{statusLabel(u.status)}</StatusBadge>
+                </td>
+                {showActivity ? (
+                  <>
+                    <td className="px-3 py-2 text-[12px]">
+                      {u.lastLoginAt ? <InstantText value={u.lastLoginAt} variant="audit" /> : "Never"}
+                    </td>
+                    <td className="px-3 py-2 text-[12px]">
+                      {u.lastActiveAt ? <InstantText value={u.lastActiveAt} variant="audit" /> : "—"}
+                    </td>
+                    <td className="num px-3 py-2">
+                      {u.actions30d != null ? `${u.actions30d} actions` : "—"}
+                    </td>
+                  </>
+                ) : (
+                  <td className="px-3 py-2 text-[12px] text-steel">{u.invitationLabel ?? "—"}</td>
+                )}
+                <td className="px-3 py-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onManage(u)}
+                    className="text-[12px] font-semibold text-primary hover:underline"
+                  >
+                    Manage
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -487,6 +580,7 @@ function ManageUserDrawer({
   users,
   currentUserId,
   roleOptions,
+  showActivity,
   onClose,
   onSaved,
   onPasswordReset,
@@ -496,6 +590,7 @@ function ManageUserDrawer({
   users: StaffUserRow[];
   currentUserId: string | null;
   roleOptions: typeof STAFF_ROLE_OPTIONS;
+  showActivity: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
   onPasswordReset: (issued: { email: string; password: string }) => Promise<void>;
@@ -514,6 +609,7 @@ function ManageUserDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [transferToUserId, setTransferToUserId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<"details" | "activity">("details");
 
   useEffect(() => {
     if (user) {
@@ -530,6 +626,7 @@ function ManageUserDrawer({
       setDeleteOpen(false);
       setTransferToUserId("");
       setBusy(false);
+      setDrawerTab("details");
     }
   }, [user]);
 
@@ -545,6 +642,37 @@ function ManageUserDrawer({
 
   return (
     <Drawer open title="Manage user" sub={user.email} onClose={onClose}>
+      {showActivity ? (
+        <div className="mb-4 flex gap-1 border-b border-border">
+          {(
+            [
+              ["details", "Details"],
+              ["activity", "Activity"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setDrawerTab(key)}
+              className={cn(
+                "border-b-2 px-3 py-2 text-[13px] font-semibold",
+                drawerTab === key
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-steel hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {showActivity && drawerTab === "activity" ? (
+        <StaffActivityPanel userId={user.id} enabled />
+      ) : null}
+
+      {!showActivity || drawerTab === "details" ? (
+      <>
       <form
         className="grid gap-4"
         onSubmit={(e) => {
@@ -570,10 +698,22 @@ function ManageUserDrawer({
           </p>
           <p className="mt-1">Invitation: {user.invitationLabel ?? "—"}</p>
           {user.lastLoginAt ? (
-            <p className="mt-1">Last login: {new Date(user.lastLoginAt).toLocaleString("en-GB")}</p>
+            <p className="mt-1">
+              Last login: <InstantText value={user.lastLoginAt} variant="audit" />
+            </p>
           ) : (
             <p className="mt-1">Last login: Never</p>
           )}
+          {showActivity ? (
+            <p className="mt-1">
+              Last active:{" "}
+              {user.lastActiveAt ? (
+                <InstantText value={user.lastActiveAt} variant="audit" />
+              ) : (
+                "—"
+              )}
+            </p>
+          ) : null}
         </div>
         <Field label="Name" htmlFor="manage-name">
           <input
@@ -848,6 +988,8 @@ function ManageUserDrawer({
             {resetting ? "Resetting…" : confirmReset ? "Confirm force set password" : "Force set password"}
           </button>
         </div>
+      ) : null}
+      </>
       ) : null}
 
       <ConfirmAction

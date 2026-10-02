@@ -234,6 +234,12 @@ export async function getCustomerRangeOpportunities(actorUserId: string, raw: un
   const profile = await requireSi(actorUserId);
   const input = inputSchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
+  const { recordStaffWorkspaceOpen } = await import("@/server/audit/staff-workspace-open");
+  void recordStaffWorkspaceOpen({
+    actorUserId: profile.userId,
+    action: "si.opportunities.opened",
+    detail: "Opened range opportunities",
+  });
 
   const analysisPeriod = resolveOpportunityAnalysisPeriod({
     period: (input.period ?? RANGE_OPPORTUNITY_CONFIG.defaultAnalysisPeriod) as OpportunityAnalysisPeriod,

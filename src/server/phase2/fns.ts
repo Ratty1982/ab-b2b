@@ -1472,6 +1472,43 @@ export const listStaffUsersFn = createServerFn({ method: "GET" }).handler(async 
   }
 });
 
+export const getStaffUserActivityFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { getStaffUserActivity } = await import("@/server/audit/staff-activity-service");
+      const result = await getStaffUserActivity(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listStaffLoginHistoryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { listStaffLoginHistory } = await import("@/server/audit/staff-activity-service");
+      const result = await listStaffLoginHistory(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const touchLastActiveFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const { touchLastActive } = await import("@/server/audit/last-active");
+    await touchLastActive(userId);
+    return { ok: true as const };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 export const createStaffUserFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

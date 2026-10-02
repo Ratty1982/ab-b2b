@@ -357,6 +357,12 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
   const profile = await requireSalesIntelligence(actorUserId);
   const input = customerEnquirySchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
+  const { recordStaffWorkspaceOpen } = await import("@/server/audit/staff-workspace-open");
+  void recordStaffWorkspaceOpen({
+    actorUserId: profile.userId,
+    action: "si.enquiry.opened",
+    detail: "Opened sales enquiry",
+  });
   const { primary, comparison: comparisonRange } = resolvePeriods(input);
 
   const company = await prisma.company.findUnique({
