@@ -175,7 +175,8 @@ function ProductTradeOrderingCard({
 
   const showControls = interactive && panel && (panel.orderable || panel.insufficientFullCase);
   const activeQty = quantity ?? panel?.quantity ?? panel?.minimumQuantity;
-  const step = panel?.quantityStep ?? panel?.caseQty;
+  // Final-part-case exception orders individual units — never step by caseQty here.
+  const step = panel?.isFinalPartCase ? 1 : (panel?.quantityStep ?? panel?.caseQty);
   const cases =
     activeQty != null && panel?.caseQty && panel.orderable && !panel.isFinalPartCase
       ? formatCaseCountLabel(activeQty / panel.caseQty)

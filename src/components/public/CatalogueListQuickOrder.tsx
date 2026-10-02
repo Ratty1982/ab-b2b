@@ -87,7 +87,8 @@ export function CatalogueListQuickOrder({
     );
   }
 
-  const step = panel.quantityStep ?? panel.caseQty;
+  // Final-part-case exception orders individual units — never step by caseQty here.
+  const step = panel.isFinalPartCase ? 1 : (panel.quantityStep ?? panel.caseQty);
   const caseHint = panel.isFinalPartCase
     ? panel.remainingQty != null
       ? `Final stock · ${panel.remainingQty} left`
