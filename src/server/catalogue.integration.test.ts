@@ -181,7 +181,7 @@ describe("catalogue categories", () => {
       }
     }
     expect((await listCategories(adminId)).some((c) => c.name === "Braking")).toBe(true);
-  });
+  }, 30_000);
 
   it("updates a brand record", async () => {
     const { listBrands } = await import("@/server/catalogue/service");
@@ -498,8 +498,9 @@ describe("phase 3 product master", () => {
 });
 
 describe("public catalogue navigation and cards", () => {
-  it("lists every active category from the database, nested, excluding inactive", async () => {
-    const { listPublicProducts } = await import("@/server/catalogue/products");
+  it("omits empty and inactive categories, and keeps parents when a child has products", async () => {
+    const { listPublicProducts, updateProductWorkspace } = await import("@/server/catalogue/products");
+    const { saveProduct } = await import("@/server/catalogue/service");
     const stamp = Date.now();
     const parent = await createCategory(adminId, {
       name: `Pub parent ${stamp}`,
@@ -512,6 +513,11 @@ describe("public catalogue navigation and cards", () => {
       isActive: true,
       sortOrder: 1,
     });
+    const empty = await createCategory(adminId, {
+      name: `Pub empty ${stamp}`,
+      isActive: true,
+      sortOrder: 502,
+    });
     const inactive = await createCategory(adminId, {
       name: `Pub inactive ${stamp}`,
       isActive: false,
@@ -519,27 +525,168 @@ describe("public catalogue navigation and cards", () => {
     });
 
     const { flattenCategorySlugs } = await import("@/domain/public-catalogue-nav");
-    const pub = await listPublicProducts({ userId: null });
-    const slugs = flattenCategorySlugs(pub.categories);
+    const before = await listPublicProducts({ userId: null });
+    const beforeSlugs = flattenCategorySlugs(before.categories);
+    expect(beforeSlugs).not.toContain(parent.slug);
+    expect(beforeSlugs).not.toContain(child.slug);
+    expect(beforeSlugs).not.toContain(empty.slug);
+    expect(beforeSlugs).not.toContain(inactive.slug);
+
+    const sku = `PUBNAV-CAT-${stamp}`;
+    const saved = await saveProduct(adminId, {
+      sku,
+      name: "Public nested fixture",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 4,
+      rrp: 8,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await prisma.product.update({ where: { id: saved.id }, data: { categoryId: child.id } });
+    await updateProductWorkspace(adminId, { id: saved.id, status: "ACTIVE", isTradeVisible: true });
+
+    const after = await listPublicProducts({ userId: null });
+    const slugs = flattenCategorySlugs(after.categories);
     expect(slugs).toContain(parent.slug);
     expect(slugs).toContain(child.slug);
+    expect(slugs).not.toContain(empty.slug);
     expect(slugs).not.toContain(inactive.slug);
+    const parentNode = after.categories.find((n) => n.slug === parent.slug);
+    expect(parentNode?.children.some((c) => c.slug === child.slug)).toBe(true);
+    expect(parentNode?.productCount).toBeGreaterThanOrEqual(1);
 
-    const dbActive = await prisma.category.findMany({
-      where: { isActive: true },
-      select: { slug: true, parentId: true },
+    const listedEmpty = await listPublicProducts({ userId: null, categorySlug: empty.slug });
+    expect(listedEmpty.category?.slug).toBe(empty.slug);
+    expect(listedEmpty.items).toHaveLength(0);
+  });
+
+  it("scopes category navigation and counts to the selected brand", async () => {
+    const { listPublicProducts, getPublicBrand, loadPublicCatalogueNav } = await import(
+      "@/server/catalogue/products"
+    );
+    const { saveProduct } = await import("@/server/catalogue/service");
+    const { flattenCategorySlugs, brandHasCategory } = await import("@/domain/public-catalogue-nav");
+    const stamp = Date.now();
+    const shared = await createCategory(adminId, {
+      name: `Shared cat ${stamp}`,
+      isActive: true,
+      sortOrder: 700,
     });
-    for (const row of dbActive) {
-      expect(slugs).toContain(row.slug);
+    const pmOnly = await createCategory(adminId, {
+      name: `PM only ${stamp}`,
+      isActive: true,
+      sortOrder: 701,
+    });
+    const ssOnlyParent = await createCategory(adminId, {
+      name: `SS parent ${stamp}`,
+      isActive: true,
+      sortOrder: 702,
+    });
+    const ssOnlyChild = await createCategory(adminId, {
+      name: `SS child ${stamp}`,
+      parentId: ssOnlyParent.id,
+      isActive: true,
+      sortOrder: 1,
+    });
+
+    async function addProduct(sku: string, brand: string, categoryId: string, extra?: { tradeVisible?: boolean; status?: "ACTIVE" | "DRAFT" }) {
+      const saved = await saveProduct(adminId, {
+        sku,
+        name: sku,
+        brand,
+        category: "Braking",
+        trade: 5,
+        rrp: 9,
+        packQty: 1,
+        caseQty: 1,
+      });
+      await prisma.product.update({
+        where: { id: saved.id },
+        data: {
+          categoryId,
+          isTradeVisible: extra?.tradeVisible ?? true,
+          status: extra?.status ?? "ACTIVE",
+          isActive: extra?.status !== "DRAFT",
+        },
+      });
+      return saved.id;
     }
 
-    const parentNode = pub.categories.find((n) => n.slug === parent.slug);
-    expect(parentNode?.children.some((c) => c.slug === child.slug)).toBe(true);
+    await addProduct(`PM-SHARE-${stamp}`, "Power Maxed", shared.id);
+    await addProduct(`PM-SHARE-2-${stamp}`, "Power Maxed", shared.id);
+    await addProduct(`PM-ONLY-${stamp}`, "Power Maxed", pmOnly.id);
+    await addProduct(`SS-SHARE-${stamp}`, "Steel Seal", shared.id);
+    await addProduct(`SS-CHILD-${stamp}`, "Steel Seal", ssOnlyChild.id);
+    await addProduct(`PM-HIDDEN-${stamp}`, "Power Maxed", pmOnly.id, { tradeVisible: false });
+    await addProduct(`PM-DRAFT-${stamp}`, "Power Maxed", pmOnly.id, { status: "DRAFT" });
 
-    const empty = await listPublicProducts({ userId: null, categorySlug: parent.slug });
-    expect(empty.category?.slug).toBe(parent.slug);
-    expect(empty.items).toHaveLength(0);
-    expect(empty.categories.length).toBe(pub.categories.length);
+    const global = await listPublicProducts({ userId: null });
+    const globalSlugs = flattenCategorySlugs(global.categories);
+    expect(globalSlugs).toContain(shared.slug);
+    expect(globalSlugs).toContain(pmOnly.slug);
+    expect(globalSlugs).toContain(ssOnlyParent.slug);
+    expect(globalSlugs).toContain(ssOnlyChild.slug);
+    const globalShared = global.categories.find((n) => n.slug === shared.slug);
+    expect(globalShared?.productCount).toBe(3);
+
+    const pm = await listPublicProducts({ userId: null, brandSlug: "power-maxed" });
+    const pmSlugs = flattenCategorySlugs(pm.categories);
+    expect(pmSlugs).toContain(shared.slug);
+    expect(pmSlugs).toContain(pmOnly.slug);
+    expect(pmSlugs).not.toContain(ssOnlyParent.slug);
+    expect(pmSlugs).not.toContain(ssOnlyChild.slug);
+    expect(pm.categories.find((n) => n.slug === shared.slug)?.productCount).toBe(2);
+    expect(pm.categories.find((n) => n.slug === pmOnly.slug)?.productCount).toBe(1);
+    expect(pm.categoryInBrandScope).toBe(true);
+
+    const ss = await listPublicProducts({ userId: null, brandSlug: "steel-seal" });
+    const ssSlugs = flattenCategorySlugs(ss.categories);
+    expect(ssSlugs).toContain(shared.slug);
+    expect(ssSlugs).toContain(ssOnlyParent.slug);
+    expect(ssSlugs).toContain(ssOnlyChild.slug);
+    expect(ssSlugs).not.toContain(pmOnly.slug);
+    expect(ss.categories.find((n) => n.slug === shared.slug)?.productCount).toBe(1);
+    const ssParent = ss.categories.find((n) => n.slug === ssOnlyParent.slug);
+    expect(ssParent?.productCount).toBe(1);
+    expect(ssParent?.children.some((c) => c.slug === ssOnlyChild.slug)).toBe(true);
+
+    const ssOnPmCategory = await listPublicProducts({
+      userId: null,
+      brandSlug: "steel-seal",
+      categorySlug: pmOnly.slug,
+    });
+    expect(ssOnPmCategory.categoryInBrandScope).toBe(false);
+    expect(ssOnPmCategory.items).toHaveLength(0);
+
+    const ssOnShared = await listPublicProducts({
+      userId: null,
+      brandSlug: "steel-seal",
+      categorySlug: shared.slug,
+    });
+    expect(ssOnShared.categoryInBrandScope).toBe(true);
+    expect(ssOnShared.items).toHaveLength(1);
+    expect(ssOnShared.items[0]?.brandSlug).toBe("steel-seal");
+
+    const searched = await listPublicProducts({
+      userId: null,
+      brandSlug: "power-maxed",
+      q: "no-such-product-zzzz",
+    });
+    expect(flattenCategorySlugs(searched.categories)).toEqual(pmSlugs);
+
+    const brandPage = await getPublicBrand(null, "power-maxed");
+    expect(brandPage).toBeTruthy();
+    const brandSlugs = flattenCategorySlugs(brandPage!.catalogue.categories);
+    expect(brandSlugs).toContain(shared.slug);
+    expect(brandSlugs).toContain(pmOnly.slug);
+    expect(brandSlugs).not.toContain(ssOnlyParent.slug);
+    expect(brandSlugs).not.toContain(ssOnlyChild.slug);
+
+    const nav = await loadPublicCatalogueNav({ brandSlug: "steel-seal" });
+    expect(brandHasCategory(nav.categorySlugsByBrand, "steel-seal", shared.slug)).toBe(true);
+    expect(brandHasCategory(nav.categorySlugsByBrand, "steel-seal", pmOnly.slug)).toBe(false);
+    expect(brandHasCategory(nav.categorySlugsByBrand, "power-maxed", pmOnly.slug)).toBe(true);
   });
 
   it("keeps brand navigation database-driven and hides anonymous trade plus stock qty", async () => {

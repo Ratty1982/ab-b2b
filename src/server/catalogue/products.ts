@@ -1048,14 +1048,18 @@ export type PublicCatalogueNav = {
   brands: Array<{ slug: string; name: string }>;
   categories: import("@/domain/public-catalogue-nav").PublicCategoryNavNode[];
   categoryRows: import("@/domain/public-catalogue-nav").PublicCategoryRow[];
+  /** Visible category slugs (rolled, pruned) per brand — used for brand-switch preservation. */
+  categorySlugsByBrand: Record<string, string[]>;
 };
 
 /** Single nav assembly for listing + product detail — no per-section fetches. */
-export async function loadPublicCatalogueNav(): Promise<PublicCatalogueNav> {
+export async function loadPublicCatalogueNav(input?: {
+  brandSlug?: string | undefined;
+}): Promise<PublicCatalogueNav> {
   const { ensureLaunchPublicBrands } = await import("@/server/catalogue/service");
   await ensureLaunchPublicBrands();
 
-  const [categoryRows, brands, categoryCounts] = await Promise.all([
+  const [categoryRows, brandRows, brandCategoryCounts] = await Promise.all([
     prisma.category.findMany({
       where: { isActive: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -1064,24 +1068,44 @@ export async function loadPublicCatalogueNav(): Promise<PublicCatalogueNav> {
     prisma.brand.findMany({
       where: { isActive: true, products: { some: publicWhere } },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      select: { slug: true, name: true },
+      select: { id: true, slug: true, name: true },
     }),
     prisma.product.groupBy({
-      by: ["categoryId"],
+      by: ["brandId", "categoryId"],
       where: { ...publicWhere, categoryId: { not: null } },
       _count: { _all: true },
     }),
   ]);
-  const { nestPublicCategories } = await import("@/domain/public-catalogue-nav");
-  const countsById = new Map(
-    categoryCounts
-      .filter((row) => row.categoryId)
-      .map((row) => [row.categoryId as string, row._count._all]),
+  const { nestPublicCategories, pruneEmptyCategoryBranches, flattenCategorySlugs } = await import(
+    "@/domain/public-catalogue-nav"
   );
+
+  const countsForBrand = (brandId: string | null): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const row of brandCategoryCounts) {
+      if (!row.categoryId) continue;
+      if (brandId && row.brandId !== brandId) continue;
+      counts.set(row.categoryId, (counts.get(row.categoryId) ?? 0) + row._count._all);
+    }
+    return counts;
+  };
+
+  const categorySlugsByBrand: Record<string, string[]> = {};
+  for (const brand of brandRows) {
+    const tree = pruneEmptyCategoryBranches(nestPublicCategories(categoryRows, countsForBrand(brand.id)));
+    categorySlugsByBrand[brand.slug] = flattenCategorySlugs(tree);
+  }
+
+  const scopedBrandId = input?.brandSlug
+    ? (brandRows.find((brand) => brand.slug === input.brandSlug)?.id ?? "__none__")
+    : null;
+  const scopedCounts = countsForBrand(scopedBrandId);
+
   return {
-    brands,
-    categories: nestPublicCategories(categoryRows, countsById),
+    brands: brandRows.map(({ slug, name }) => ({ slug, name })),
+    categories: pruneEmptyCategoryBranches(nestPublicCategories(categoryRows, scopedCounts)),
     categoryRows,
+    categorySlugsByBrand,
   };
 }
 
@@ -1101,11 +1125,12 @@ export async function listPublicProducts(input: {
           select: { id: true, slug: true, name: true, isActive: true },
         })
       : Promise.resolve(null),
-    loadPublicCatalogueNav(),
+    loadPublicCatalogueNav({ brandSlug: input.brandSlug }),
   ]);
-  const { categoryIdsForFilter } = await import("@/domain/public-catalogue-nav");
+  const { categoryIdsForFilter, navContainsCategory } = await import("@/domain/public-catalogue-nav");
   const activeCategory = requestedCategory?.isActive ? requestedCategory : null;
   const categoryIds = activeCategory ? categoryIdsForFilter(nav.categoryRows, activeCategory.id) : undefined;
+  const categoryInBrandScope = navContainsCategory(nav.categories, activeCategory?.slug);
 
   const where: Prisma.ProductWhereInput = {
     ...publicWhere,
@@ -1179,6 +1204,8 @@ export async function listPublicProducts(input: {
     pageSize,
     brands: nav.brands,
     categories: nav.categories,
+    categorySlugsByBrand: nav.categorySlugsByBrand,
+    categoryInBrandScope,
     category: activeCategory ? { slug: activeCategory.slug, name: activeCategory.name } : null,
   };
 }
@@ -1204,7 +1231,7 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
       take: 4,
       orderBy: { name: "asc" },
     }),
-    loadPublicCatalogueNav(),
+    loadPublicCatalogueNav({ brandSlug: product.brand.slug }),
     listPublicProductDocuments(product.id),
   ]);
   const priced = await displayPricesForProductRows(userId, [product, ...related]);
@@ -1253,7 +1280,11 @@ export async function getPublicProduct(userId: string | null, slugOrSku: string)
         internalStockForVariant(canSeeInternalQty, rel, freshness.stale),
       );
     }),
-    nav: { brands: nav.brands, categories: nav.categories },
+    nav: {
+      brands: nav.brands,
+      categories: nav.categories,
+      categorySlugsByBrand: nav.categorySlugsByBrand,
+    },
   };
 }
 

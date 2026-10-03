@@ -53,6 +53,7 @@ function ProductPage() {
       context={{
         brandSlug: data.card.brandSlug,
         categorySlug: data.card.categorySlug,
+        categorySlugsByBrand: data.nav.categorySlugsByBrand,
       }}
       breadcrumbs={[
         { label: "Home", to: "/" },

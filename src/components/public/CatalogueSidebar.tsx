@@ -1,5 +1,11 @@
 import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import type { PublicCategoryNavNode } from "@/domain/public-catalogue-nav";
+import {
+  resolveAllBrandsTarget,
+  resolveBrandSwitchTarget,
+  type CatalogueLinkTarget,
+} from "@/domain/public-catalogue-nav";
 import { cn } from "@/lib/utils";
 
 export type CatalogueContext = {
@@ -7,6 +13,7 @@ export type CatalogueContext = {
   categorySlug?: string | null | undefined;
   q?: string | undefined;
   brandRoute?: boolean;
+  categorySlugsByBrand?: Record<string, string[]>;
 };
 
 export function catalogueSearch(ctx: CatalogueContext, extra?: { page?: number }) {
@@ -62,20 +69,45 @@ export function CatalogueSidebar({
   );
 }
 
-function AllBrandsLink({ context }: { context: CatalogueContext }) {
-  const className = cn("block rounded-sm px-1 py-0.5 hover:text-primary", !context.brandSlug && "font-semibold text-primary");
-  const current = !context.brandSlug ? ("true" as const) : undefined;
-  if (context.categorySlug && !context.brandRoute) {
+function CatalogueNavLink({
+  target,
+  className,
+  current,
+  children,
+}: {
+  target: CatalogueLinkTarget;
+  className: string;
+  current?: "page" | "true" | undefined;
+  children: ReactNode;
+}) {
+  if (target.to === "/products/category/$slug") {
     return (
-      <Link to="/products/category/$slug" params={{ slug: context.categorySlug }} search={context.q ? { q: context.q } : {}} className={className} aria-current={current}>
-        All Brands
+      <Link to={target.to} params={target.params} search={target.search} className={className} aria-current={current}>
+        {children}
+      </Link>
+    );
+  }
+  if (target.to === "/brands/$slug") {
+    return (
+      <Link to={target.to} params={target.params} search={target.search} className={className} aria-current={current}>
+        {children}
       </Link>
     );
   }
   return (
-    <Link to="/products" search={context.q ? { q: context.q } : {}} className={className} aria-current={current}>
-      All Brands
+    <Link to="/products" search={target.search} className={className} aria-current={current}>
+      {children}
     </Link>
+  );
+}
+
+function AllBrandsLink({ context }: { context: CatalogueContext }) {
+  const className = cn("block rounded-sm px-1 py-0.5 hover:text-primary", !context.brandSlug && "font-semibold text-primary");
+  const current = !context.brandSlug ? ("true" as const) : undefined;
+  return (
+    <CatalogueNavLink target={resolveAllBrandsTarget(context)} className={className} current={current}>
+      All Brands
+    </CatalogueNavLink>
   );
 }
 
@@ -89,37 +121,10 @@ function BrandLink({
   const active = context.brandSlug === brand.slug;
   const className = cn("block rounded-sm px-1 py-0.5 hover:text-primary", active && "font-semibold text-primary");
   const current = active ? ("page" as const) : undefined;
-  const q = context.q ? { q: context.q } : {};
-  if (context.brandRoute) {
-    return (
-      <Link
-        to="/brands/$slug"
-        params={{ slug: brand.slug }}
-        search={{ ...q, ...(context.categorySlug ? { category: context.categorySlug } : {}) }}
-        className={className}
-        aria-current={current}
-      >
-        {brand.name}
-      </Link>
-    );
-  }
-  if (context.categorySlug) {
-    return (
-      <Link
-        to="/products/category/$slug"
-        params={{ slug: context.categorySlug }}
-        search={{ ...q, brand: brand.slug }}
-        className={className}
-        aria-current={current}
-      >
-        {brand.name}
-      </Link>
-    );
-  }
   return (
-    <Link to="/products" search={{ ...q, brand: brand.slug }} className={className} aria-current={current}>
+    <CatalogueNavLink target={resolveBrandSwitchTarget(context, brand.slug)} className={className} current={current}>
       {brand.name}
-    </Link>
+    </CatalogueNavLink>
   );
 }
 

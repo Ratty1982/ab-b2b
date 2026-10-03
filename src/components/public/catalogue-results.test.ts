@@ -46,6 +46,15 @@ describe("catalogue grid vs list presentation", () => {
       q: "glass",
       brand: "power-maxed",
     });
+    expect(catalogueSearch({ ...context, brandRoute: true })).toEqual({
+      q: "glass",
+      category: "vehicle-cleaning",
+    });
+    expect(catalogueSearch(context, { page: 2 })).toEqual({
+      q: "glass",
+      brand: "power-maxed",
+      page: 2,
+    });
     expect(catalogueResultsKind("list")).not.toBe(catalogueResultsKind("grid"));
     expect(catalogueSearch(context)).toEqual(catalogueSearch(context));
   });

@@ -23,6 +23,7 @@ export type PublicCatalogueData = {
   pageSize: number;
   brands: Array<{ slug: string; name: string }>;
   categories: PublicCategoryNavNode[];
+  categorySlugsByBrand?: Record<string, string[]>;
   category: { slug: string; name: string } | null;
   error?: string | null;
 };
@@ -122,6 +123,10 @@ export function PublicCatalogueShell({
   leading?: ReactNode;
   requestSession?: ClientSession;
 }) {
+  const sidebarContext: CatalogueContext = {
+    ...context,
+    ...(data.categorySlugsByBrand ? { categorySlugsByBrand: data.categorySlugsByBrand } : {}),
+  };
   const [view, setView] = useState<"grid" | "list">("grid");
   const [query, setQuery] = useState(context.q ?? "");
   const pageCount = Math.max(1, Math.ceil(data.total / Math.max(1, data.pageSize)));
@@ -146,7 +151,7 @@ export function PublicCatalogueShell({
               {intro ? <p className="mt-2 max-w-2xl text-sm text-steel">{intro}</p> : null}
             </div>
             <div className="flex items-center gap-2">
-              <CatalogueMobileNav brands={data.brands} categories={data.categories} context={context} />
+              <CatalogueMobileNav brands={data.brands} categories={data.categories} context={sidebarContext} />
               <div className="flex items-center gap-1 rounded-md border border-border p-1" role="group" aria-label="Catalogue layout">
                 <button
                   type="button"
@@ -196,7 +201,7 @@ export function PublicCatalogueShell({
       </div>
       <div className={CATALOGUE_SHELL_GRID_CLASS} data-catalogue-shell="listing">
         <aside className={CATALOGUE_SIDEBAR_ASIDE_CLASS} data-catalogue-sidebar="desktop">
-          <CatalogueSidebar brands={data.brands} categories={data.categories} context={context} />
+          <CatalogueSidebar brands={data.brands} categories={data.categories} context={sidebarContext} />
         </aside>
         <div className="min-w-0">
           {data.items.length === 0 ? (
@@ -211,7 +216,7 @@ export function PublicCatalogueShell({
             <ol className="mt-8 flex flex-wrap gap-2">
               {Array.from({ length: pageCount }, (_, i) => i + 1).map((page) => (
                 <li key={page}>
-                  <PaginationLink page={page} current={data.page} context={context} />
+                  <PaginationLink page={page} current={data.page} context={sidebarContext} />
                 </li>
               ))}
             </ol>

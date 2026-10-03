@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
 import { getClientSession } from "@/server/auth/session";
 import { listPublicCatalogueFn } from "@/server/phase2/fns";
@@ -25,6 +25,15 @@ export const Route = createFileRoute("/products/category/$slug")({
       }),
     ]);
     if (!result.ok || !result.data.category) throw notFound();
+    if (search.brand && result.data.categoryInBrandScope === false) {
+      throw redirect({
+        to: "/products",
+        search: {
+          brand: search.brand,
+          ...(search.q ? { q: search.q } : {}),
+        },
+      });
+    }
     return { ...result.data, error: null as string | null, requestSession };
   },
   headers: () => ({

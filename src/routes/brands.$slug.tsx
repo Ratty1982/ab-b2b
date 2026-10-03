@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound, redirect } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
 import { mediaContainClass } from "@/lib/media-presentation";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,15 @@ export const Route = createFileRoute("/brands/$slug")({
       }),
     ]);
     if (!result.ok || !result.data) throw notFound();
+    if (search.category && result.data.catalogue.categoryInBrandScope === false) {
+      throw redirect({
+        to: "/brands/$slug",
+        params: { slug: params.slug },
+        search: {
+          ...(search.q ? { q: search.q } : {}),
+        },
+      });
+    }
     return { ...result.data, requestSession };
   },
   headers: () => ({

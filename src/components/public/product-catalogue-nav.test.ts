@@ -149,6 +149,8 @@ describe("product detail catalogue navigation", () => {
     expect(markup).toMatch(/aria-current="page"[^>]*>Steel Seal/);
     expect(markup).toMatch(/aria-current="page"[^>]*>Additives/);
     expect(markup).toContain("font-semibold");
+    expect(markup).not.toMatch(/aria-current="true"[^>]*>All Brands/);
+    expect(markup).not.toMatch(/All Brands<\/a>[^<]*aria-current/);
   });
 
   it("wraps product content in the shared catalogue layout grid and desktop sidebar", () => {
@@ -209,7 +211,10 @@ describe("product detail catalogue navigation", () => {
     expect(routeSrc).not.toContain("Car Care");
     expect(routeSrc).not.toContain("Power Maxed");
     const productSrc = readFileSync(path.join(process.cwd(), "src/server/catalogue/products.ts"), "utf8");
+    expect(routeSrc).toContain("data.nav.categorySlugsByBrand");
     expect(productSrc).toContain("loadPublicCatalogueNav");
-    expect(productSrc).toContain("nav: { brands: nav.brands, categories: nav.categories }");
+    expect(productSrc).toContain("categorySlugsByBrand: nav.categorySlugsByBrand");
+    expect(productSrc).toContain('by: ["brandId", "categoryId"]');
+    expect(productSrc).toContain("loadPublicCatalogueNav({ brandSlug: input.brandSlug })");
   });
 });
