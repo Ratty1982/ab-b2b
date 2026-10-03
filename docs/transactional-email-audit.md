@@ -9,7 +9,9 @@ All production transactional mail uses:
 
 Shared HTML shell (`src/server/email/shell.ts`): navy header with Automotive Brands logo + wordmark,
 supporting Power Maxed and Steel Seal logos (absolute `/brand/*` URLs via `APP_URL`), red CTA, plain-text
-bodies on every purpose.
+bodies on every purpose. Shared fragments in `src/server/email/layout.ts`. Internal mail uses the compact
+shell variant. Super Admin preview/test centre lives under Admin → Settings → Email
+(`src/server/email/preview/`).
 
 | WORKFLOW | EMAIL PURPOSE | RECIPIENT | TRIGGER | WIRED? | NOTES |
 | --- | --- | --- | --- | --- | --- |
@@ -28,7 +30,8 @@ bodies on every purpose.
 | Order placed | `ORDER_RECEIVED` | Order contact snapshot | After order commit | YES | Historical snapshots only |
 | Order placed | `ORDER_RECEIVED_INTERNAL` | Order notification recipients | After order commit | YES | Env fallback transitional |
 | Motorsport partnership enquiry | `MOTORSPORT_PARTNERSHIP_INTERNAL` | Motorsport enquiry recipients | Form submit → Lead | YES | Skipped if no recipients |
-| SMTP diagnostic | `EMAIL_TEST` | Admin-chosen | Settings → Send test email | YES | May bypass delivery toggle |
+| SMTP diagnostic | `EMAIL_TEST` | Admin-chosen | Settings → Send test email | YES | May bypass delivery toggle; excluded from email health |
+| Template preview test | `EMAIL_TEST` | Super Admin-chosen | Settings → Email Preview & Test Centre | YES | Fixture render only; `[TEST]` + TEST EMAIL callout; `entityType: EmailTemplatePreview`; never writes Order/Quote/Application; excluded from email health |
 | Contact page callback | `CALLBACK_REQUEST_INTERNAL` | SalesRep + trade-application recipients (order recipients fallback) | Form submit → Activity/Task or Lead | YES | Email secondary; persistence authoritative |
 | Portal support message | — | — | Form submit | FUTURE | Mailto only |
 | Quote send | `QUOTE_SENT` | Quote contact | Staff send quote | YES | Branded shell; portal CTA |
@@ -59,5 +62,20 @@ Use a safe test mailbox (not a real customer):
 7. Place B2B order → customer + internal order emails  
 8. Motorsport form (with recipients configured) → internal alert  
 9. Settings → Send test email (branded shell + From Name)
+10. Super Admin → Settings → Email → Preview & Test Centre (fixture preview + TEST send)
+
+Invoice emails and CRM marketing remain FUTURE / out of scope.
+
+## Template tests vs live transactional emails
+
+| | Live send | Template test |
+| --- | --- | --- |
+| Trigger | Business workflow | Super Admin Preview Centre |
+| Data | Order / quote / application snapshots | In-memory fixtures |
+| Purpose | Operational (`ORDER_RECEIVED`, …) | `EMAIL_TEST` |
+| Recipient | Customer or configured staff | Explicit Super Admin address only |
+| Subject | Production subject | Prefixed `[TEST]` |
+| Body | Production HTML | Production HTML + TEST EMAIL callout |
+| Email health | Counts FAILED | Never counts |
 
 Confirm Outlook From display name is **Automotive Brands** (or set M365 mailbox display name if directory rewrite still shows `b2b` for internal recipients).

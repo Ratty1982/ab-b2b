@@ -8,15 +8,20 @@ import { moneyToString, parseMoney } from "@/domain/money";
 import { dateOnlyFromValidUntil } from "@/domain/quote";
 import { getServerEnv } from "@/server/env";
 import { getEmailFooterMeta } from "@/server/email/settings";
+import { renderTransactionalEmailShell } from "@/server/email/shell";
 import {
-  escapeEmailHtml,
-  renderTransactionalEmailShell,
-} from "@/server/email/shell";
+  emailAccountManagerCard,
+  emailHero,
+  emailParagraph,
+  emailReferencePanel,
+  type EmailAccountManager,
+} from "@/server/email/layout";
 import {
   safeAttemptDetailed,
   upsertPendingEmail,
   attemptSend,
 } from "@/server/email/transactional";
+import type { EmailFooterMeta } from "@/server/orders/email";
 
 async function safeAttempt(emailId: string): Promise<boolean> {
   const result = await safeAttemptDetailed(emailId);
@@ -39,6 +44,111 @@ function formatValidUntil(d: Date | null): string {
   return `${day}/${m}/${y}`;
 }
 
+export type QuoteSentEmailSnapshot = {
+  quoteNumber: string;
+  companyName: string;
+  currency: string;
+  grandTotal: string;
+  expiresAt: Date | null;
+  contactName: string;
+  portalUrl: string;
+  preparedBy: EmailAccountManager | null;
+};
+
+export type QuoteDeclinedEmailSnapshot = {
+  quoteNumber: string;
+  companyName: string;
+  reason: string;
+  adminUrl: string;
+};
+
+export function buildQuoteSentBodies(
+  snap: QuoteSentEmailSnapshot,
+  footer?: EmailFooterMeta,
+): { subject: string; text: string; html: string } {
+  const validUntil = formatValidUntil(snap.expiresAt);
+  const total = formatGbp(String(snap.grandTotal));
+  const greeting = snap.contactName.trim() || "there";
+  const prepared = snap.preparedBy?.name?.trim() ? snap.preparedBy : null;
+  const preparedByLines: string[] = [];
+  if (prepared?.name) {
+    preparedByLines.push(`Prepared by: ${prepared.name}`);
+    if (prepared.jobTitle) preparedByLines.push(prepared.jobTitle);
+    if (prepared.email) preparedByLines.push(prepared.email);
+    if (prepared.phone) preparedByLines.push(prepared.phone);
+    if (prepared.mobile) preparedByLines.push(prepared.mobile);
+  }
+
+  const subject = `Your Automotive Brands quotation ${snap.quoteNumber}`;
+  const text = [
+    "YOUR QUOTATION IS READY",
+    "",
+    `Hello ${greeting},`,
+    "",
+    `Quote: ${snap.quoteNumber}`,
+    `Prepared for: ${snap.companyName}`,
+    `TOTAL: £${total} ${snap.currency} inc VAT`,
+    `VALID UNTIL: ${validUntil}`,
+    ...preparedByLines,
+    "",
+    `VIEW QUOTATION: ${snap.portalUrl}`,
+    "",
+    "Automotive Brands",
+    "https://automotivebrands.co.uk",
+  ].join("\n");
+
+  const bodyHtml = `
+${emailHero("Your quotation is ready", `Hello ${greeting}`)}
+${emailReferencePanel([
+  { label: "Quote", value: snap.quoteNumber },
+  { label: "Prepared for", value: snap.companyName },
+  { label: "Total", value: `£${total} ${snap.currency} inc VAT` },
+  { label: "Valid until", value: validUntil },
+])}
+${emailParagraph("Open the quotation in your trade portal to accept or decline.")}
+${emailAccountManagerCard(prepared, "Prepared by / your account manager")}`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Quotation ${snap.quoteNumber} — valid until ${validUntil}`,
+    bodyHtml,
+    cta: { label: "View quotation", href: snap.portalUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
+  return { subject, text, html };
+}
+
+export function buildQuoteDeclinedInternalBodies(
+  snap: QuoteDeclinedEmailSnapshot,
+  footer?: EmailFooterMeta,
+): { subject: string; text: string; html: string } {
+  const subject = `Quote declined ${snap.quoteNumber} — ${snap.companyName}`;
+  const text = [
+    "QUOTE DECLINED",
+    "",
+    `${snap.quoteNumber}`,
+    snap.companyName,
+    `Reason: ${snap.reason}`,
+    "",
+    `Open quote: ${snap.adminUrl}`,
+  ].join("\n");
+
+  const bodyHtml = `
+${emailHero("Quote declined", snap.quoteNumber)}
+${emailReferencePanel([
+  { label: "Company", value: snap.companyName },
+  { label: "Reason", value: snap.reason },
+])}`;
+
+  const html = renderTransactionalEmailShell({
+    variant: "internal",
+    preheader: `Quote ${snap.quoteNumber} declined`,
+    bodyHtml,
+    cta: { label: "Open quote", href: snap.adminUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
+  return { subject, text, html };
+}
+
 export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Promise<boolean> {
   const quote = await prisma.quote.findUnique({
     where: { id: quoteId },
@@ -53,8 +163,6 @@ export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Prom
   const contact = (quote.contactSnapshot ?? {}) as { name?: string | null };
   const greeting = contact.name?.trim() || "there";
   const portalUrl = `${appBaseUrl()}/portal/quotes/${quote.id}`;
-  const validUntil = formatValidUntil(quote.expiresAt);
-  const total = formatGbp(String(quote.grandTotal));
 
   // Prefer historical prepared-by snapshot frozen at send; fall back to live AM.
   const preparedSnap =
@@ -87,56 +195,28 @@ export async function sendQuoteSentEmail(quoteId: string, toEmail: string): Prom
     preparedPhone = preparedPhone || am?.phone || null;
     preparedMobile = preparedMobile || am?.mobile || null;
   }
-  const preparedByLines: string[] = [];
-  if (preparedByName) {
-    preparedByLines.push(`Prepared by: ${preparedByName}`);
-    if (preparedJobTitle) preparedByLines.push(preparedJobTitle);
-    if (preparedEmail) preparedByLines.push(preparedEmail);
-    if (preparedPhone) preparedByLines.push(preparedPhone);
-    if (preparedMobile) preparedByLines.push(preparedMobile);
-  }
-  const preparedByHtml = preparedByName
-    ? `<br/><strong>Prepared by:</strong> ${escapeEmailHtml(preparedByName)}${
-        preparedJobTitle ? ` — ${escapeEmailHtml(preparedJobTitle)}` : ""
-      }${preparedEmail ? `<br/>${escapeEmailHtml(preparedEmail)}` : ""}${
-        preparedPhone ? `<br/>${escapeEmailHtml(preparedPhone)}` : ""
-      }${preparedMobile ? `<br/>${escapeEmailHtml(preparedMobile)}` : ""}`
-    : "";
 
-  const subject = `Your Automotive Brands quotation ${quote.quoteNumber}`;
-  const text = [
-    `Hello ${greeting},`,
-    "",
-    `Please find your Automotive Brands quotation ${quote.quoteNumber} for ${quote.company.name}.`,
-    "",
-    `Valid until: ${validUntil}`,
-    `Total (inc VAT): £${total} ${quote.currency}`,
-    ...preparedByLines,
-    "",
-    `VIEW QUOTE: ${portalUrl}`,
-    "",
-    "If you have questions, reply to this email or contact your account manager.",
-    "",
-    "Automotive Brands",
-    "https://automotivebrands.co.uk",
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n");
-
-  const bodyHtml = `
-<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(greeting)},</p>
-<p style="margin:0 0 16px;">Please find your Automotive Brands quotation <strong>${escapeEmailHtml(quote.quoteNumber)}</strong> for <strong>${escapeEmailHtml(quote.company.name)}</strong>.</p>
-<p style="margin:0 0 8px;"><strong>Valid until:</strong> ${escapeEmailHtml(validUntil)}<br/>
-<strong>Total (inc VAT):</strong> £${escapeEmailHtml(total)} ${escapeEmailHtml(quote.currency)}
-${preparedByHtml}</p>
-<p style="margin:16px 0 0;">Open the quotation in your trade portal to accept or decline.</p>`;
-
-  const html = renderTransactionalEmailShell({
-    preheader: `Quotation ${quote.quoteNumber} — valid until ${validUntil}`,
-    bodyHtml,
-    cta: { label: "View quote", href: portalUrl },
-    footer: footer ?? { fromName: "Automotive Brands" },
-  });
+  const { subject, text, html } = buildQuoteSentBodies(
+    {
+      quoteNumber: quote.quoteNumber,
+      companyName: quote.company.name,
+      currency: quote.currency,
+      grandTotal: String(quote.grandTotal),
+      expiresAt: quote.expiresAt,
+      contactName: greeting,
+      portalUrl,
+      preparedBy: preparedByName
+        ? {
+            name: preparedByName,
+            jobTitle: preparedJobTitle,
+            email: preparedEmail,
+            phone: preparedPhone,
+            mobile: preparedMobile,
+          }
+        : null,
+    },
+    footer,
+  );
 
   // First send uses stable key; resend after failure retries; successful prior
   // send creates a new outbox row so staff can resend without duplicating the quote.
@@ -224,27 +304,17 @@ export async function sendQuoteDeclinedInternalEmail(quoteId: string): Promise<b
   if (!toEmail) return false;
 
   const footer = await getEmailFooterMeta();
-  const subject = `Quote declined ${quote.quoteNumber} — ${quote.company.name}`;
   const reason = quote.declineReason?.trim() || "No reason provided";
   const adminUrl = `${appBaseUrl()}/sales/quotes/${quote.id}`;
-
-  const text = [
-    `Quotation ${quote.quoteNumber} for ${quote.company.name} was declined.`,
-    `Reason: ${reason}`,
-    "",
-    `Open quote: ${adminUrl}`,
-  ].join("\n");
-
-  const bodyHtml = `
-<p style="margin:0 0 16px;">Quotation <strong>${escapeEmailHtml(quote.quoteNumber)}</strong> for <strong>${escapeEmailHtml(quote.company.name)}</strong> was declined.</p>
-<p style="margin:0 0 8px;"><strong>Reason:</strong> ${escapeEmailHtml(reason)}</p>`;
-
-  const html = renderTransactionalEmailShell({
-    preheader: `Quote ${quote.quoteNumber} declined`,
-    bodyHtml,
-    cta: { label: "Open quote", href: adminUrl },
-    footer: footer ?? { fromName: "Automotive Brands" },
-  });
+  const { subject, text, html } = buildQuoteDeclinedInternalBodies(
+    {
+      quoteNumber: quote.quoteNumber,
+      companyName: quote.company.name,
+      reason,
+      adminUrl,
+    },
+    footer,
+  );
 
   const upsert = await upsertPendingEmail({
     purpose: "QUOTE_DECLINED_INTERNAL",

@@ -2,10 +2,8 @@
  * Admin staff invitation + set-password email templates.
  */
 
-import {
-  escapeEmailHtml,
-  renderTransactionalEmailShell,
-} from "@/server/email/shell";
+import { renderTransactionalEmailShell } from "@/server/email/shell";
+import { emailHero, emailParagraph, emailReferencePanel } from "@/server/email/layout";
 import type { EmailFooterMeta } from "@/server/orders/email";
 
 export function buildUserInvitationBodies(
@@ -18,13 +16,13 @@ export function buildUserInvitationBodies(
   footer?: EmailFooterMeta,
 ): { subject: string; text: string; html: string } {
   const subject = "Your Automotive Brands account is ready";
-  const text = `YOUR AUTOMOTIVE BRANDS ACCOUNT
+  const text = `YOUR AUTOMOTIVE BRANDS ACCOUNT IS READY
 
 An account has been created for you on Automotive Brands.
 
-Email: ${input.email}
 Name: ${input.displayName}
-Account type: ${input.roleLabel}
+Email: ${input.email}
+Role: ${input.roleLabel}
 
 Use the link below to set your password and activate your account:
 
@@ -36,16 +34,17 @@ Automotive Brands
 https://automotivebrands.co.uk`;
 
   const bodyHtml = `
-<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#666;">Your Automotive Brands account</p>
-<p style="margin:0 0 16px;">An account has been created for you on Automotive Brands.</p>
-<p style="margin:0 0 16px;">
-Email: <strong>${escapeEmailHtml(input.email)}</strong><br/>
-Name: ${escapeEmailHtml(input.displayName)}<br/>
-Account type: ${escapeEmailHtml(input.roleLabel)}
-</p>
-<p style="margin:0;">Use the button below to set your password and activate your account.</p>`;
+${emailHero("Your Automotive Brands account is ready", input.displayName || input.email)}
+${emailReferencePanel([
+  { label: "Name", value: input.displayName },
+  { label: "Email", value: input.email },
+  { label: "Role", value: input.roleLabel },
+])}
+${emailParagraph("Use the button below to set your password and activate your account.")}
+${emailParagraph("If you were not expecting this invitation, you can ignore this email.", true)}`;
 
   const html = renderTransactionalEmailShell({
+    variant: "internal",
     preheader: "Set your Automotive Brands password",
     bodyHtml,
     cta: { label: "Set your password", href: input.activationUrl },

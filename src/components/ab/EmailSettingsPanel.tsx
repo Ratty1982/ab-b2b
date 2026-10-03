@@ -15,6 +15,7 @@ import {
   sendTestEmailFn,
   testSmtpConnectionFn,
 } from "@/server/phase2/fns";
+import { EmailTemplatePreviewCentre } from "@/components/ab/EmailTemplatePreviewCentre";
 
 type EmailSettingsDto = {
   enabled: boolean;
@@ -71,6 +72,12 @@ function purposeLabel(purpose: string): string {
       return "New B2B Order (internal)";
     case "ORDER_DESPATCHED":
       return "Order Despatched";
+    case "ORDER_PART_DESPATCHED":
+      return "Order Part Despatched";
+    case "QUOTE_SENT":
+      return "Quote Ready";
+    case "QUOTE_DECLINED_INTERNAL":
+      return "Quote Declined (internal)";
     case "TRADE_APPLICATION_RECEIVED":
       return "Application Received";
     case "TRADE_APPLICATION_INTERNAL_NOTIFICATION":
@@ -635,6 +642,8 @@ export function EmailSettingsPanel() {
         ) : null}
       </div>
 
+      <EmailTemplatePreviewCentre />
+
       {/* Recent emails */}
       <div className="space-y-3 border-t border-border pt-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -668,6 +677,9 @@ export function EmailSettingsPanel() {
               <option value="ORDER_RECEIVED">Order Received</option>
               <option value="ORDER_RECEIVED_INTERNAL">Order Internal</option>
               <option value="ORDER_DESPATCHED">Order Despatched</option>
+              <option value="ORDER_PART_DESPATCHED">Part Despatched</option>
+              <option value="QUOTE_SENT">Quote Ready</option>
+              <option value="QUOTE_DECLINED_INTERNAL">Quote Declined</option>
               <option value="TRADE_APPLICATION_RECEIVED">Application Received</option>
               <option value="TRADE_APPLICATION_INTERNAL_NOTIFICATION">Application Internal</option>
               <option value="TRADE_APPLICATION_APPROVED">Application Approved</option>

@@ -2855,6 +2855,45 @@ export const sendTestEmailFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getEmailPreviewCentreFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const preview = await import("@/server/email/preview/service");
+    return { ok: true as const, data: await preview.getEmailPreviewCentre(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const previewEmailTemplateFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { templateId: string; scenarioId?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const preview = await import("@/server/email/preview/service");
+      return {
+        ok: true as const,
+        data: await preview.previewEmailTemplate(userId, data.templateId, data.scenarioId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const sendEmailTemplateTestFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { templateId: string; scenarioId?: string; toEmail: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const preview = await import("@/server/email/preview/service");
+      return { ok: true as const, data: await preview.sendEmailTemplateTest(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listTransactionalEmailsFn = createServerFn({ method: "GET" })
   .inputValidator(
     (data: unknown) => data as { status?: string; purpose?: string; limit?: number } | undefined,

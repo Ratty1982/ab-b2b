@@ -3,10 +3,13 @@
  */
 
 import { createHash } from "node:crypto";
+import { renderTransactionalEmailShell } from "@/server/email/shell";
 import {
-  escapeEmailHtml,
-  renderTransactionalEmailShell,
-} from "@/server/email/shell";
+  emailHero,
+  emailParagraph,
+  emailReferencePanel,
+  emailStatusCallout,
+} from "@/server/email/layout";
 import type { EmailFooterMeta } from "@/server/orders/email";
 
 export function buildPasswordResetBodies(
@@ -14,20 +17,23 @@ export function buildPasswordResetBodies(
   footer?: EmailFooterMeta,
 ): { subject: string; text: string; html: string } {
   const subject = "Reset your Automotive Brands password";
-  const text = `We received a request to reset the password for your Automotive Brands trade account.
+  const text = `RESET YOUR PASSWORD
+
+We received a request to reset the password for your Automotive Brands trade account.
 
 Reset your password using this link:
 
 ${input.resetUrl}
 
-If you did not request this, you can ignore this email.
+If you didn't request this, you can safely ignore this email.
 
 Automotive Brands
 https://automotivebrands.co.uk`;
 
   const bodyHtml = `
-<p style="margin:0 0 16px;">We received a request to reset the password for your Automotive Brands trade account.</p>
-<p style="margin:0 0 16px;">Use the button below to choose a new password. If you did not request this, you can ignore this email.</p>`;
+${emailHero("Reset your password", "A password reset was requested")}
+${emailParagraph("We received a request to reset the password for your Automotive Brands trade account. Use the button below to choose a new password.")}
+${emailParagraph("If you didn't request this, you can safely ignore this email.", true)}`;
 
   const html = renderTransactionalEmailShell({
     preheader: "Reset your Automotive Brands password",
@@ -54,7 +60,11 @@ export function buildCompanyUserInviteBodies(
   footer?: EmailFooterMeta,
 ): { subject: string; text: string; html: string } {
   const subject = `You're invited to the Automotive Brands trade portal — ${input.companyName}`;
-  const text = `You have been invited to join ${input.companyName} on the Automotive Brands trade portal (${input.role}).
+  const text = `YOU'VE BEEN INVITED
+
+You have been invited to join ${input.companyName} on the Automotive Brands trade portal.
+
+Role: ${input.role}
 
 Activate your account:
 ${input.activationPath}
@@ -63,10 +73,12 @@ Automotive Brands
 https://automotivebrands.co.uk`;
 
   const bodyHtml = `
-<p style="margin:0 0 16px;">You have been invited to join <strong>${escapeEmailHtml(input.companyName)}</strong>
-on the Automotive Brands trade portal.</p>
-<p style="margin:0 0 16px;">Role: ${escapeEmailHtml(input.role)}</p>
-<p style="margin:0;">Use the button below to activate your account and set your password.</p>`;
+${emailHero("You've been invited", input.companyName)}
+${emailReferencePanel([
+  { label: "Company", value: input.companyName },
+  { label: "Account / role", value: input.role },
+])}
+${emailParagraph("Use the button below to activate your account and set your password.", true)}`;
 
   const html = renderTransactionalEmailShell({
     preheader: `Portal invite — ${input.companyName}`,
@@ -91,7 +103,7 @@ export function buildMotorsportEnquiryInternalBodies(
   footer?: EmailFooterMeta,
 ): { subject: string; text: string; html: string } {
   const subject = `Motorsport partnership enquiry — ${input.companyName}`;
-  const text = `New motorsport partnership enquiry
+  const text = `MOTORSPORT PARTNERSHIP ENQUIRY
 
 Company: ${input.companyName}
 Contact: ${input.contactName}
@@ -107,17 +119,16 @@ Review: ${input.adminLeadUrl}
 Automotive Brands`;
 
   const bodyHtml = `
-<p style="margin:0 0 16px;"><strong>New motorsport partnership enquiry</strong></p>
-<p style="margin:0 0 12px;">
-Company: ${escapeEmailHtml(input.companyName)}<br/>
-Contact: ${escapeEmailHtml(input.contactName)}<br/>
-Email: ${escapeEmailHtml(input.email)}<br/>
-Telephone: ${escapeEmailHtml(input.telephone ?? "—")}<br/>
-Submitted: ${escapeEmailHtml(input.submittedAtLabel)}
-</p>
-<p style="margin:0 0 12px;white-space:pre-wrap;">${escapeEmailHtml(input.messagePreview)}</p>`;
+${emailHero("Motorsport partnership enquiry", input.companyName)}
+${emailReferencePanel([
+  { label: "Contact", value: `${input.contactName} <${input.email}>` },
+  { label: "Telephone", value: input.telephone ?? "—" },
+  { label: "Submitted", value: input.submittedAtLabel },
+])}
+${emailStatusCallout("Message", input.messagePreview, "neutral")}`;
 
   const html = renderTransactionalEmailShell({
+    variant: "internal",
     preheader: `Motorsport enquiry — ${input.companyName}`,
     bodyHtml,
     cta: { label: "View enquiry", href: input.adminLeadUrl },
@@ -144,7 +155,7 @@ export function buildCallbackRequestInternalBodies(
   const company = input.companyName || "—";
   const subject = `Request a callback — ${input.customerName}${input.companyName ? ` · ${input.companyName}` : ""}`;
   const amLine = input.accountManagerName ?? "Trade team";
-  const text = `REQUEST A CALLBACK
+  const text = `CALLBACK REQUEST
 
 Customer: ${input.customerName}
 Company: ${company}
@@ -162,20 +173,19 @@ ${input.ctaLabel}: ${input.ctaUrl}
 Automotive Brands`;
 
   const bodyHtml = `
-<p style="margin:0 0 16px;"><strong>REQUEST A CALLBACK</strong></p>
-<p style="margin:0 0 12px;">
-Customer: ${escapeEmailHtml(input.customerName)}<br/>
-Company: ${escapeEmailHtml(company)}<br/>
-Email: ${escapeEmailHtml(input.email || "—")}<br/>
-Telephone: ${escapeEmailHtml(input.telephone || "—")}<br/>
-Account: ${escapeEmailHtml(input.accountLabel)}<br/>
-Account Manager: ${escapeEmailHtml(amLine)}<br/>
-Submitted: ${escapeEmailHtml(input.submittedAtLabel)}
-</p>
-<p style="margin:0 0 4px;"><strong>Message</strong></p>
-<p style="margin:0 0 12px;white-space:pre-wrap;">${escapeEmailHtml(input.message)}</p>`;
+${emailHero("Callback request", input.customerName)}
+${emailReferencePanel([
+  { label: "Company", value: company },
+  { label: "Email", value: input.email || "—" },
+  { label: "Telephone", value: input.telephone || "—" },
+  { label: "Account", value: input.accountLabel },
+  { label: "Account manager", value: amLine },
+  { label: "Submitted", value: input.submittedAtLabel },
+])}
+${emailStatusCallout("Message", input.message, "neutral")}`;
 
   const html = renderTransactionalEmailShell({
+    variant: "internal",
     preheader: `Callback request — ${input.customerName}`,
     bodyHtml,
     cta: { label: input.ctaLabel, href: input.ctaUrl },

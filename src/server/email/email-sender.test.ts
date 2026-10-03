@@ -221,6 +221,9 @@ describe("branded transactional email shell", () => {
     expect(bodies.text).toContain("Delivery: FREE");
     expect(bodies.text).toContain("VIEW YOUR ORDER");
     expect(bodies.html).not.toContain("smtp.office365");
+    expect(bodies.html).not.toContain("TEST EMAIL");
+    expect(bodies.html).toContain("We're now preparing your order");
+    expect(bodies.html).not.toContain("This confirmation does not mean");
   });
 
   it("trade application email uses shared shell", () => {

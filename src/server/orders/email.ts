@@ -1,15 +1,28 @@
 /**
- * Order received email builders (customer + internal).
+ * Order received / despatch email builders (customer + internal).
  * Bodies use ORDER SNAPSHOT prices only — never live catalogue prices.
  * Customer copy must not claim Autopart stock reservation or despatch.
  */
 
 import { moneyToString, parseMoney } from "@/domain/money";
 import type { EmailMessage } from "@/infra/email";
+import { formatDate } from "@/lib/datetime";
+import { renderTransactionalEmailShell } from "@/server/email/shell";
 import {
-  escapeEmailHtml,
-  renderTransactionalEmailShell,
-} from "@/server/email/shell";
+  emailAccountManagerCard,
+  emailHero,
+  emailInfoPanel,
+  emailParagraph,
+  emailProductTable,
+  emailProgressSteps,
+  emailQtyList,
+  emailReferencePanel,
+  emailStatusCallout,
+  emailTotalsBlock,
+  firstNameFrom,
+  type EmailAccountManager,
+  type EmailOrderLine,
+} from "@/server/email/layout";
 
 export type OrderEmailLine = {
   sku: string;
@@ -67,11 +80,42 @@ function formatGbp(raw: string): string {
   return m ? moneyToString(m, 2) : raw;
 }
 
-function formatDelivery(order: OrderEmailSnapshot): string {
+function formatDeliveryLines(order: OrderEmailSnapshot): string[] {
   const a = order.deliveryAddress;
-  if (!a) return "as provided";
-  const parts = [a.line1, a.line2, a.town, a.county, a.postcode].filter(Boolean);
-  return parts.join(", ");
+  if (!a) return ["as provided"];
+  return [a.line1, a.line2, a.town, a.county, a.postcode].filter((v): v is string => Boolean(v));
+}
+
+function formatDelivery(order: OrderEmailSnapshot): string {
+  return formatDeliveryLines(order).join(", ");
+}
+
+function snapshotAccountManager(order: OrderEmailSnapshot): EmailAccountManager | null {
+  const name = order.salesRepNameSnapshot?.trim();
+  if (!name) return null;
+  return { name };
+}
+
+function toProductLines(order: OrderEmailSnapshot): EmailOrderLine[] {
+  return order.items.map((item) => ({
+    sku: item.sku,
+    name: item.name,
+    qty: item.qty,
+    unitPrice: formatGbp(item.customerUnitPrice),
+    lineTotal: formatGbp(item.lineTotal),
+    availableQty: item.availableQtyAtOrder,
+    backorderQty: item.backorderQtyAtOrder,
+  }));
+}
+
+function totalsFrom(order: OrderEmailSnapshot) {
+  return {
+    goods: formatGbp(order.subtotal),
+    delivery: formatGbp(order.deliveryTotal),
+    vat: formatGbp(order.vatTotal),
+    orderTotal: formatGbp(order.grandTotal),
+    currency: order.currency,
+  };
 }
 
 function itemsPlain(order: OrderEmailSnapshot, mode: "customer" | "internal" = "customer"): string {
@@ -85,73 +129,21 @@ function itemsPlain(order: OrderEmailSnapshot, mode: "customer" | "internal" = "
           `  Ordered: ${item.qty} · Available: ${avail} · Backorder: ${bo} @ £${formatGbp(item.customerUnitPrice)} = £${formatGbp(item.lineTotal)}`
         );
       }
+      const skuLine = `  SKU: ${item.sku} · Qty: ${item.qty} · £${formatGbp(item.customerUnitPrice)} · Line total £${formatGbp(item.lineTotal)}`;
       if (bo <= 0) {
-        return `- ${item.name}\n  Qty: ${item.qty}\n  Available`;
+        return `- ${item.name}\n${skuLine}`;
       }
-      return (
-        `- ${item.name}\n` +
-        `  Qty: ${item.qty}\n` +
-        `  ${avail} available\n` +
-        `  ${bo} on backorder`
-      );
+      return `- ${item.name}\n${skuLine}\n  ${avail} available · ${bo} on backorder`;
     })
     .join("\n");
 }
 
-/** Email-safe order summary: Product (+SKU), Qty, Unit Price, Total. */
-function orderSummaryTableHtml(order: OrderEmailSnapshot): string {
-  const rows = order.items
-    .map(
-      (item) => `<tr>
-  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;vertical-align:top;">
-    <strong>${escapeEmailHtml(item.name)}</strong><br/>
-    <span style="font-family:Consolas,monospace;font-size:12px;color:#5c6578;">${escapeEmailHtml(item.sku)}</span>
-    ${
-      (item.backorderQtyAtOrder ?? 0) > 0
-        ? `<br/><span style="font-size:12px;color:#b45309;">${item.backorderQtyAtOrder} currently on backorder</span>`
-        : ""
-    }
-  </td>
-  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">${item.qty}</td>
-  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">£${escapeEmailHtml(formatGbp(item.customerUnitPrice))}</td>
-  <td style="padding:10px 8px;border-bottom:1px solid #d7dbe3;font-family:Arial,Helvetica,sans-serif;font-size:14px;text-align:right;vertical-align:top;">£${escapeEmailHtml(formatGbp(item.lineTotal))}</td>
-</tr>`,
-    )
-    .join("\n");
+function hasBackorder(order: OrderEmailSnapshot): boolean {
+  return order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0);
+}
 
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-collapse:collapse;margin:20px 0 8px;">
-<thead>
-<tr>
-  <th align="left" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Product</th>
-  <th align="right" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Qty</th>
-  <th align="right" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Unit Price</th>
-  <th align="right" style="padding:8px;border-bottom:2px solid #101826;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;">Total</th>
-</tr>
-</thead>
-<tbody>${rows}</tbody>
-</table>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin:8px 0 16px;">
-  <tr>
-    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">Goods ex VAT</td>
-    <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">£${escapeEmailHtml(formatGbp(order.subtotal))}</td>
-  </tr>
-  <tr>
-    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">Delivery</td>
-    <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">${
-      formatGbp(order.deliveryTotal) === "0.00"
-        ? "FREE"
-        : `£${escapeEmailHtml(formatGbp(order.deliveryTotal))}`
-    }</td>
-  </tr>
-  <tr>
-    <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#5c6578;">VAT</td>
-    <td align="right" style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1f2c;">£${escapeEmailHtml(formatGbp(order.vatTotal))}</td>
-  </tr>
-  <tr>
-    <td style="padding:10px 8px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#1a1f2c;border-top:1px solid #d7dbe3;">Total (inc VAT)</td>
-    <td align="right" style="padding:10px 8px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:#1a1f2c;border-top:1px solid #d7dbe3;">£${escapeEmailHtml(formatGbp(order.grandTotal))} ${escapeEmailHtml(order.currency)}</td>
-  </tr>
-</table>`;
+function placedLabel(order: OrderEmailSnapshot): string {
+  return formatDate(order.placedAt) ?? "—";
 }
 
 export function buildOrderReceivedCustomerBodies(
@@ -162,70 +154,81 @@ export function buildOrderReceivedCustomerBodies(
   text: string;
   html: string;
 } {
-  const ref = order.poNumber ? ` (your reference: ${order.poNumber})` : "";
+  const first = firstNameFrom(order.contact.name);
+  const delivery = formatDelivery(order);
+  const subject = `We've received your Automotive Brands order ${order.orderNumber}`;
+  const am = snapshotAccountManager(order);
   const quoteLine = order.sourceQuoteNumber
     ? `Created from quotation ${order.sourceQuoteNumber}`
     : null;
-  const delivery = formatDelivery(order);
-  const subject = `We've received your Automotive Brands order ${order.orderNumber}`;
 
   const text = [
-    `Hello ${order.contact.name},`,
+    "ORDER RECEIVED",
     "",
-    `We've received your Automotive Brands order ${order.orderNumber}${ref}.`,
-    ...(quoteLine ? [quoteLine, ""] : [""]),
-    `Company: ${order.companyName}`,
-    `Delivery address: ${delivery}`,
+    `Thanks ${first} — we've got your order.`,
     "",
-    "Items:",
+    `Order: ${order.orderNumber}`,
+    `Placed: ${placedLabel(order)}`,
+    ...(order.poNumber ? [`Your reference: ${order.poNumber}`] : []),
+    ...(quoteLine ? [quoteLine] : []),
+    "",
+    "STATUS",
+    "✓ Order received",
+    "  Processing",
+    "  Despatched",
+    "",
+    "ORDER ITEMS",
     itemsPlain(order, "customer"),
     "",
     `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
     `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
     `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
-    `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
+    `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
-    ...(order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0)
+    "DELIVERY TO",
+    delivery,
+    "",
+    ...(hasBackorder(order)
       ? [
-          "BACKORDER INFORMATION",
-          "Some items on your order are currently awaiting stock. You do not need to place another order for these items. They will remain on your order and will be supplied when available.",
-          "Backordered items will be supplied when stock becomes available.",
+          "SOME ITEMS ARE ON BACKORDER",
+          "You don't need to place another order for these items. They will remain on your order and we'll update you when they are despatched.",
           "",
         ]
       : []),
-    "Your order has been received and is pending processing.",
-    "This confirmation does not mean the order has been despatched.",
+    "We're now preparing your order. We'll email you again when it has been despatched.",
     "",
     `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
-    "",
-    "If you have questions, reply to this email or contact your account manager.",
+    ...(am ? ["", "YOUR ACCOUNT MANAGER", am.name] : []),
     "",
     "Automotive Brands",
     "https://automotivebrands.co.uk",
   ].join("\n");
 
+  const refRows = [
+    { label: "Order", value: order.orderNumber },
+    { label: "Placed", value: placedLabel(order) },
+    ...(order.poNumber ? [{ label: "Your reference", value: order.poNumber }] : []),
+    ...(quoteLine ? [{ label: "Quotation", value: order.sourceQuoteNumber! }] : []),
+  ];
+
   const bodyHtml = `
-<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
-<p style="margin:0 0 16px;">We've received your Automotive Brands order <strong>${escapeEmailHtml(order.orderNumber)}</strong>${escapeEmailHtml(ref)}.</p>
+${emailHero("Order received", `Thanks ${first} — we've got your order`)}
+${emailReferencePanel(refRows)}
+${emailProgressSteps("Order received", ["Order received", "Processing", "Despatched"])}
+${emailProductTable(toProductLines(order))}
+${emailTotalsBlock(totalsFrom(order))}
+${emailInfoPanel("Delivery to", formatDeliveryLines(order))}
 ${
-  quoteLine
-    ? `<p style="margin:0 0 16px;">${escapeEmailHtml(quoteLine)}.</p>`
+  hasBackorder(order)
+    ? emailStatusCallout(
+        "Some items are on backorder",
+        "You don't need to place another order for these items. They will remain on your order and we'll update you when they are despatched.",
+        "warning",
+      )
     : ""
 }
-<p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}<br/>
-<strong>Delivery address:</strong> ${escapeEmailHtml(delivery)}</p>
-${orderSummaryTableHtml(order)}
-${
-  order.items.some((i) => (i.backorderQtyAtOrder ?? 0) > 0)
-    ? `<div style="margin:0 0 16px;padding:14px;background:#fff7ed;border:1px solid #fdba74;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#9a3412;">
-<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"><strong>Backorder information</strong></p>
-<p style="margin:0 0 8px;">Some items on your order are currently awaiting stock. You do not need to place another order for these items. They will remain on your order and will be supplied when available.</p>
-<p style="margin:0;">Backordered items will be supplied when stock becomes available.</p>
-</div>`
-    : ""
-}
-<p style="margin:0 0 8px;">Your order has been received and is pending processing.<br/>
-This confirmation does not mean the order has been despatched.</p>`;
+${emailParagraph("We're now preparing your order. We'll email you again when it has been despatched.")}
+${emailAccountManagerCard(am)}`;
 
   const html = renderTransactionalEmailShell({
     preheader: `Order ${order.orderNumber} received`,
@@ -251,28 +254,31 @@ export function buildOrderReceivedInternalBodies(
       ? `${order.salesRepNameSnapshot ?? "—"}${order.salesRepCodeSnapshot ? ` (${order.salesRepCodeSnapshot})` : ""}`
       : "—";
   const codeSnap = order.autopartCustomerCodeSnapshot ?? "—";
-
   const quoteOrigin = order.sourceQuoteNumber
     ? `Created from quotation ${order.sourceQuoteNumber}`
     : null;
 
   const text = [
-    `Order ${order.orderNumber} received for ${order.companyName}.`,
+    "NEW B2B ORDER",
+    "",
+    order.orderNumber,
+    order.companyName,
+    `£${formatGbp(order.grandTotal)}`,
+    `PO: ${order.poNumber ?? "—"}`,
+    `Sales Rep: ${salesRep}`,
     ...(quoteOrigin ? [quoteOrigin] : []),
     `Contact: ${order.contact.name} <${order.contact.email}>`,
-    `PO/reference: ${order.poNumber ?? "—"}`,
     `Payment terms: ${order.paymentTerms ?? "—"}`,
     `Autopart linked: ${order.autopartAccountLinked ? "Yes" : "No"}`,
     `Autopart code snapshot: ${codeSnap}`,
-    `Sales rep: ${salesRep}`,
     "",
     "Items:",
     itemsPlain(order, "internal"),
     "",
-    `Subtotal: £${formatGbp(order.subtotal)}`,
+    `Goods ex VAT: £${formatGbp(order.subtotal)}`,
     `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)}`}`,
     `VAT: £${formatGbp(order.vatTotal)}`,
-    `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
+    `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
     "Status: SUBMITTED (received / pending Autopart handoff — not despatched).",
     `REVIEW ORDER: ${order.adminOrderUrl}`,
@@ -281,20 +287,24 @@ export function buildOrderReceivedInternalBodies(
   ].join("\n");
 
   const bodyHtml = `
-<p style="margin:0 0 16px;">Order <strong>${escapeEmailHtml(order.orderNumber)}</strong> received for <strong>${escapeEmailHtml(order.companyName)}</strong>.</p>
-<p style="margin:0 0 12px;">
-${quoteOrigin ? `${escapeEmailHtml(quoteOrigin)}<br/>` : ""}
-Contact: ${escapeEmailHtml(order.contact.name)} &lt;${escapeEmailHtml(order.contact.email)}&gt;<br/>
-PO/reference: ${escapeEmailHtml(order.poNumber ?? "—")}<br/>
-Payment terms: ${escapeEmailHtml(order.paymentTerms ?? "—")}<br/>
-Autopart linked: <strong>${order.autopartAccountLinked ? "Yes" : "No"}</strong><br/>
-Autopart code snapshot: <span style="font-family:Consolas,monospace;">${escapeEmailHtml(codeSnap)}</span><br/>
-Sales rep: ${escapeEmailHtml(salesRep)}
-</p>
-${orderSummaryTableHtml(order)}
-<p style="margin:0 0 8px;">Status: SUBMITTED (received / pending Autopart handoff — not despatched).</p>`;
+${emailHero("New B2B order", order.orderNumber)}
+${emailReferencePanel([
+  { label: "Company", value: order.companyName },
+  { label: "Total", value: `£${formatGbp(order.grandTotal)}` },
+  { label: "PO", value: order.poNumber ?? "—" },
+  { label: "Sales rep", value: salesRep },
+  { label: "Contact", value: `${order.contact.name} <${order.contact.email}>` },
+  { label: "Payment terms", value: order.paymentTerms ?? "—" },
+  { label: "Autopart linked", value: order.autopartAccountLinked ? "Yes" : "No" },
+  { label: "Autopart code", value: codeSnap },
+  ...(quoteOrigin ? [{ label: "Quotation", value: order.sourceQuoteNumber! }] : []),
+])}
+${emailProductTable(toProductLines(order))}
+${emailTotalsBlock(totalsFrom(order))}
+${emailParagraph("Status: SUBMITTED (received / pending Autopart handoff — not despatched).", true)}`;
 
   const html = renderTransactionalEmailShell({
+    variant: "internal",
     preheader: `New B2B order ${order.orderNumber}`,
     bodyHtml,
     cta: { label: "Review order", href: order.adminOrderUrl },
@@ -303,7 +313,6 @@ ${orderSummaryTableHtml(order)}
 
   return { subject, text, html };
 }
-
 
 /**
  * Partial despatch notification.
@@ -317,46 +326,37 @@ export function buildOrderPartDespatchedCustomerBodies(
   text: string;
   html: string;
 } {
+  const first = firstNameFrom(order.contact.name);
   const subject = `Part of your Automotive Brands order ${order.orderNumber} has been despatched`;
   const backorderItems = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) > 0);
-  const availableItems = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) <= 0);
 
-  const despatchedBlock = opts.lineQuantitiesKnown
+  const despatchedLines = opts.lineQuantitiesKnown
     ? order.items
-        .filter((i) => (i.availableQtyAtOrder ?? 0) > 0 || (i.backorderQtyAtOrder ?? 0) < i.qty)
         .map((i) => {
           const despatched = Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
           return despatched > 0 ? `${despatched} × ${i.name}` : null;
         })
-        .filter(Boolean)
-        .join("\n")
-    : availableItems.map((i) => `${i.qty} × ${i.name}`).join("\n") ||
-      "Part of this order (exact line quantities will be confirmed on your order detail).";
+        .filter((line): line is string => Boolean(line))
+    : [];
 
-  const stillBackorderBlock = backorderItems
-    .map((i) => `${i.backorderQtyAtOrder} × ${i.name}`)
-    .join("\n");
+  const stillLines = backorderItems.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`);
+
+  const unknownNote =
+    "Part of this order has been despatched. Exact item quantities will appear on your order detail when confirmed.";
 
   const text = [
-    `Hello ${order.contact.name},`,
+    "PART OF YOUR ORDER IS ON ITS WAY",
     "",
-    `Part of your Automotive Brands order ${order.orderNumber} has been despatched.`,
+    `Hello ${first},`,
+    "",
+    `Order ${order.orderNumber}`,
     "",
     "DESPATCHED",
-    despatchedBlock || "—",
+    opts.lineQuantitiesKnown ? despatchedLines.join("\n") || "—" : unknownNote,
     "",
-    ...(stillBackorderBlock
-      ? ["STILL ON BACKORDER", stillBackorderBlock, ""]
-      : []),
-    "We'll keep any remaining items on backorder and update you when they are despatched.",
-    "You do not need to place another order for these items.",
+    ...(stillLines.length ? ["STILL TO COME", stillLines.join("\n"), ""] : []),
+    "You don't need to reorder the remaining items. We'll keep them on your order and let you know when they are despatched.",
     "",
-    ...(opts.lineQuantitiesKnown
-      ? []
-      : [
-          "Note: Autopart invoice confirmation is order-level. Exact SKU despatch quantities will appear on your order detail when confirmed.",
-          "",
-        ]),
     `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
     "",
     "Automotive Brands",
@@ -364,22 +364,18 @@ export function buildOrderPartDespatchedCustomerBodies(
   ].join("\n");
 
   const bodyHtml = `
-<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
-<p style="margin:0 0 16px;">Part of your Automotive Brands order <strong>${escapeEmailHtml(order.orderNumber)}</strong> has been despatched.</p>
-<p style="margin:16px 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#5c6578;"><strong>Despatched</strong></p>
-<p style="margin:0 0 16px;white-space:pre-line;">${escapeEmailHtml(despatchedBlock || "—")}</p>
-${
-  stillBackorderBlock
-    ? `<p style="margin:16px 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#9a3412;"><strong>Still on backorder</strong></p>
-<p style="margin:0 0 16px;white-space:pre-line;">${escapeEmailHtml(stillBackorderBlock)}</p>`
-    : ""
-}
-<p style="margin:0 0 8px;">We'll keep any remaining items on backorder and update you when they are despatched. You do not need to place another order for these items.</p>
+${emailHero("Part of your order is on its way", `Order ${order.orderNumber}`)}
+${emailParagraph(`Hello ${first},`)}
 ${
   opts.lineQuantitiesKnown
-    ? ""
-    : `<p style="margin:12px 0 8px;font-size:13px;color:#5c6578;">Autopart invoice confirmation is order-level. Exact SKU despatch quantities will appear on your order detail when confirmed.</p>`
-}`;
+    ? emailQtyList("Despatched", despatchedLines.length ? despatchedLines : ["—"])
+    : emailStatusCallout("Despatched", unknownNote, "neutral")
+}
+${stillLines.length ? emailQtyList("Still to come", stillLines) : ""}
+${emailParagraph(
+  "You don't need to reorder the remaining items. We'll keep them on your order and let you know when they are despatched.",
+  true,
+)}`;
 
   const html = renderTransactionalEmailShell({
     preheader: `Part of order ${order.orderNumber} despatched`,
@@ -402,19 +398,22 @@ export function buildOrderRemainingDespatchedCustomerBodies(
   text: string;
   html: string;
 } {
+  const first = firstNameFrom(order.contact.name);
   const subject = `Your remaining Automotive Brands order ${order.orderNumber} has been despatched`;
   const remaining = order.items.filter((i) => (i.backorderQtyAtOrder ?? 0) > 0);
-  const lines =
+  const remainingLines =
     remaining.length > 0
-      ? remaining.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`).join("\n")
-      : itemsPlain(order, "customer");
+      ? remaining.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`)
+      : order.items.map((i) => `${i.qty} × ${i.name}`);
 
   const text = [
-    `Hello ${order.contact.name},`,
+    "THE REST OF YOUR ORDER IS ON ITS WAY",
     "",
-    `The remaining items from your order ${order.orderNumber} have now been despatched.`,
+    `Hello ${first},`,
     "",
-    lines,
+    `Order ${order.orderNumber}`,
+    "",
+    remainingLines.join("\n"),
     "",
     "Your order is now fully despatched.",
     "",
@@ -425,10 +424,10 @@ export function buildOrderRemainingDespatchedCustomerBodies(
   ].join("\n");
 
   const bodyHtml = `
-<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
-<p style="margin:0 0 16px;">The remaining items from your order <strong>${escapeEmailHtml(order.orderNumber)}</strong> have now been despatched.</p>
-<p style="margin:0 0 16px;white-space:pre-line;">${escapeEmailHtml(lines)}</p>
-<p style="margin:0 0 8px;">Your order is now fully despatched.</p>`;
+${emailHero("The rest of your order is on its way", `Order ${order.orderNumber}`)}
+${emailParagraph(`Hello ${first},`)}
+${emailQtyList("Despatched", remainingLines)}
+${emailStatusCallout("Your order is now fully despatched.", "We'll email you if anything further is needed.", "success")}`;
 
   const html = renderTransactionalEmailShell({
     preheader: `Remaining items on ${order.orderNumber} despatched`,
@@ -452,40 +451,43 @@ export function buildOrderDespatchedCustomerBodies(
   text: string;
   html: string;
 } {
-  const ref = order.poNumber ? ` (your reference: ${order.poNumber})` : "";
+  const first = firstNameFrom(order.contact.name);
   const subject = `Your Automotive Brands order ${order.orderNumber} has been despatched`;
 
   const text = [
-    `Hello ${order.contact.name},`,
+    "YOUR ORDER IS ON ITS WAY",
     "",
-    `Your order ${order.orderNumber}${ref} has been despatched.`,
+    `Hello ${first},`,
     "",
-    `Company: ${order.companyName}`,
+    `Order ${order.orderNumber}${order.poNumber ? `\nYour reference: ${order.poNumber}` : ""}`,
     "",
-    "Items:",
+    "ORDER ITEMS",
     itemsPlain(order),
     "",
     `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
     `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
     `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
-    `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
+    `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
     "Tracking information, where available, may follow separately.",
     "",
     `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
-    "",
-    "If you have questions, reply to this email or contact your account manager.",
     "",
     "Automotive Brands",
     "https://automotivebrands.co.uk",
   ].join("\n");
 
   const bodyHtml = `
-<p style="margin:0 0 16px;">Hello ${escapeEmailHtml(order.contact.name)},</p>
-<p style="margin:0 0 16px;">Your order <strong>${escapeEmailHtml(order.orderNumber)}</strong>${escapeEmailHtml(ref)} has been despatched.</p>
-<p style="margin:0 0 8px;"><strong>Company:</strong> ${escapeEmailHtml(order.companyName)}</p>
-${orderSummaryTableHtml(order)}
-<p style="margin:0 0 8px;">Tracking information, where available, may follow separately.</p>`;
+${emailHero("Your order is on its way", `Order ${order.orderNumber}`)}
+${emailParagraph(`Hello ${first},`)}
+${emailReferencePanel([
+  { label: "Order", value: order.orderNumber },
+  ...(order.poNumber ? [{ label: "Your reference", value: order.poNumber }] : []),
+  { label: "Company", value: order.companyName },
+])}
+${emailProductTable(toProductLines(order))}
+${emailTotalsBlock(totalsFrom(order))}
+${emailParagraph("Tracking information, where available, may follow separately.", true)}`;
 
   const html = renderTransactionalEmailShell({
     preheader: `Order ${order.orderNumber} despatched`,
@@ -535,7 +537,7 @@ export function buildOrderReceivedEmail(order: OrderReceivedEmailInput): EmailMe
     `Total (inc VAT): £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
     "Your order has been received and is pending processing.",
-    "This confirmation does not mean the order has been despatched.",
+    "We're now preparing your order. We'll email you again when it has been despatched.",
     "",
     "Automotive Brands",
   ].join("\n");

@@ -65,9 +65,18 @@ When **Transactional email** is disabled:
 | `TRADE_APPLICATION_APPROVED` | Staff approves (includes existing activation link) |
 | `TRADE_APPLICATION_REJECTED` | Staff rejects |
 | `TRADE_ACCOUNT_ACTIVATED` | Customer completes activation |
+| `COMPANY_USER_INVITED` | Admin invites a company user |
+| `USER_INVITATION` | Admin invites staff |
+| `PASSWORD_RESET` | Forgot-password / admin reset |
 | `ORDER_RECEIVED` | B2B order placed (customer contact) |
 | `ORDER_RECEIVED_INTERNAL` | B2B order placed (staff recipients) |
-| `EMAIL_TEST` | Admin diagnostic test email |
+| `ORDER_PART_DESPATCHED` | Partial despatch (504C / fulfilment) |
+| `ORDER_DESPATCHED` | Full or remaining despatch |
+| `QUOTE_SENT` | Staff send quotation |
+| `QUOTE_DECLINED_INTERNAL` | Customer declines quotation |
+| `CALLBACK_REQUEST_INTERNAL` | Public callback form |
+| `MOTORSPORT_PARTNERSHIP_INTERNAL` | Motorsport enquiry form |
+| `EMAIL_TEST` | SMTP diagnostic **or** Super Admin template test |
 
 ## Failure behaviour
 
@@ -88,8 +97,9 @@ Retry rebuilds content from the authoritative Order / Application snapshot and
 - SMTP password is never returned to the browser (`smtpPasswordConfigured: true` only).
 - Encryption/decryption is server-only.
 - Passwords are never logged or written to `AuditEvent` metadata.
-- Access requires `settings.view` (read) / `settings.edit` (mutate, test, retry).
+- Access requires `settings.view` (read) / `settings.edit` (mutate, SMTP test, retry).
 - Trade customers and sales users without settings permissions have no access.
+- **Email Preview & Test Centre** (template gallery, HTML preview, template test send) is **Super Admin only**, enforced server-side. Settings permission alone is not enough.
 
 ## Sender display name (Microsoft 365)
 
@@ -112,7 +122,50 @@ From Name. If Outlook still shows `b2b` after this fix, set the mailbox display 
 ## Branded HTML shell
 
 All transactional HTML emails share `renderTransactionalEmailShell`
-(navy header, logo, red CTA, ~600px table layout). Plain-text alternatives are always included.
+(`src/server/email/shell.ts`) — navy header, Automotive Brands logo, red CTA, ~600px
+table layout, inline CSS, Outlook/Gmail/Apple Mail compatible. No JavaScript.
+
+Customer emails include supporting Power Maxed / Steel Seal marks. Internal emails use
+the same identity in a **compact** variant (no supporting logos).
+
+Reusable fragments live in `src/server/email/layout.ts`:
+
+- Hero heading
+- Reference / status panel
+- Information panel (addresses, account details)
+- Product table (SKU secondary on narrow screens via `@media`)
+- Totals block (Goods ex VAT, Delivery, VAT, Order total)
+- Status callout (neutral / success / warning)
+- Account manager card (only when a genuine name is present)
+- Numbered / bullet lists
+- Primary CTA (shell) and secondary text link
+
+Plain-text alternatives are always included. Order emails use **historical snapshots**
+only. Quote emails prefer the frozen prepared-by snapshot.
+
+The TEST EMAIL callout is injected only by `decorateAsTemplateTest` for Super Admin
+template tests — never by live workflow sends.
+
+## Email Preview & Test Centre
+
+**Admin → Settings → Email** (not a sidebar item). Super Admin only.
+
+- Gallery of every currently implemented outbound template (customer vs internal).
+- Preview uses the **same production builders** with in-memory fixture objects
+  (`src/server/email/preview/fixtures.ts`). Nothing is written to Order, Quote,
+  Application or CRM tables.
+- Desktop (~600px) and mobile (~375px) sandboxed iframe preview.
+- **Send test** posts a diagnostic `EMAIL_TEST` row (`entityType: EmailTemplatePreview`)
+  to the address you type. Subject is prefixed `[TEST]`. Body includes a TEST EMAIL
+  callout. The sample customer / sales-rep / notification recipients are never used.
+- Template tests appear under Recent template tests and in diagnostic email history.
+  They **do not** count toward operational email-health / Needs Attention
+  (`EMAIL_TEST` is excluded from dashboard health).
+
+Template tests are not live transactional emails: they do not create orders,
+applications, quotes, reservations, Autopart events, or CRM records.
+
+Invoice emails and CRM marketing/digests remain out of scope.
 
 ## Encryption
 

@@ -538,11 +538,22 @@ export async function sendTradeAccountActivatedEmail(input: {
   companyName: string;
 }): Promise<boolean> {
   const footer = await getEmailFooterMeta();
+  const { resolveAccountManagerForCompany } = await import("@/server/sales/account-manager");
+  const am = await resolveAccountManagerForCompany(input.companyId);
   const bodies = buildTradeAccountActivatedBodies(
     {
       contactName: input.contactName,
       contactEmail: input.contactEmail,
       companyName: input.companyName,
+      accountManager: am
+        ? {
+            name: am.name,
+            jobTitle: am.jobTitle,
+            email: am.email,
+            phone: am.phone,
+            mobile: am.mobile,
+          }
+        : null,
     },
     footer,
   );
