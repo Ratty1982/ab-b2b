@@ -4,6 +4,8 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import {
   EmptyState,
   ErrorState,
+  ForecastConfidenceBadge,
+  ForecastCoverageBanner,
   FreshnessBanner,
   LoadingState,
   Pager,
@@ -172,11 +174,18 @@ function PurchasePlannerPage() {
         }
       />
       {data ? (
-        <FreshnessBanner
-          stockUpdated={data.freshness.stockUpdated}
-          salesUpdated={data.freshness.salesUpdated}
-          stockStale={data.freshness.stockStale}
-        />
+        <>
+          <FreshnessBanner
+            stockUpdated={data.freshness.stockUpdated}
+            salesUpdated={data.freshness.salesUpdated}
+            stockStale={data.freshness.stockStale}
+          />
+          <ForecastCoverageBanner
+            coverageDays={data.forecastCoverage.coverageDays}
+            confidence={data.forecastCoverage.confidence}
+            historyFrom={data.forecastCoverage.historyFrom}
+          />
+        </>
       ) : null}
       {error ? <ErrorState message={error} /> : null}
       <div className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
@@ -244,6 +253,7 @@ function PurchasePlannerPage() {
                   <th className="px-3 py-2">Forecast demand</th>
                   <th className="px-3 py-2">Target stock</th>
                   <th className="px-3 py-2">Suggested qty</th>
+                  <th className="px-3 py-2">Confidence</th>
                   <th className="px-3 py-2">MOQ</th>
                   <th className="px-3 py-2">Multiple</th>
                   <th className="px-3 py-2">Latest cost</th>
@@ -270,6 +280,13 @@ function PurchasePlannerPage() {
                       <td className="px-3 py-2">{qty(row.horizonDemand)}</td>
                       <td className="px-3 py-2">{qty(row.targetStock)}</td>
                       <td className="px-3 py-2">{qty(row.purchase.suggestedQty)}</td>
+                      <td className="px-3 py-2">
+                        <ForecastConfidenceBadge
+                          confidence={row.forecastConfidence}
+                          coverageDays={row.salesHistoryCoverageDays}
+                          warning={row.forecastConfidenceWarning}
+                        />
+                      </td>
                       <td className="px-3 py-2">{row.purchasing.minimumOrderQty ?? "—"}</td>
                       <td className="px-3 py-2">{row.purchasing.orderMultiple ?? "—"}</td>
                       <td className="px-3 py-2">{gbp(row.latestCost)}</td>

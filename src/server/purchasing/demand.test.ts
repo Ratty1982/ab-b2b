@@ -10,7 +10,9 @@ describe("purchasing demand SQL contract", () => {
     expect(demand).toMatch(/GROUP BY 1/);
     expect(demand).not.toMatch(/findMany\(\s*\{[^}]*sku:/s);
     expect(service).toMatch(/loadPurchasingDemandMaps/);
+    expect(service).toMatch(/salesHistoryCoverageDays/);
     expect(service).not.toMatch(/netUnitsBySku\([^)]*sku/);
+    expect(service).not.toMatch(/MIN\(d\."documentDate"\)/);
   });
 });
 

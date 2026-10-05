@@ -14,11 +14,13 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import {
   ErrorState,
+  ForecastConfidenceBadge,
   FreshnessBanner,
   LoadingState,
   PurchasingStatusBadge,
   btnClass,
   coverLabel,
+  demandComponentLabel,
   gbp,
   incomingNote,
   INCOMING_SOURCE_HINT,
@@ -153,8 +155,36 @@ function PurchasingSkuPage() {
         <div className="grid gap-6 px-4 py-5 sm:px-6">
           <div className="flex flex-wrap items-center gap-3">
             <PurchasingStatusBadge status={forecast.status} />
+            <ForecastConfidenceBadge
+              confidence={forecast.forecastConfidence}
+              coverageDays={forecast.salesHistoryCoverageDays}
+              warning={forecast.forecastConfidenceWarning}
+            />
             <span className="text-[13px] text-steel">{forecast.statusReason}</span>
           </div>
+          {forecast.forecastConfidenceWarning ? (
+            <p className="border border-warn/40 bg-warn/10 px-3 py-2 text-[13px]">{forecast.forecastConfidenceWarning}</p>
+          ) : null}
+
+          <section className="grid gap-3">
+            <h2 className="font-display text-lg font-semibold uppercase">Forecast confidence</h2>
+            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-[13px]">
+              <Fact label="Forecast confidence" value={forecast.forecastConfidenceLabel} />
+              <Fact
+                label="Sales history available"
+                value={
+                  forecast.salesHistoryCoverageDays >= 365
+                    ? "365+ days"
+                    : `${forecast.salesHistoryCoverageDays} days`
+                }
+              />
+              <Fact
+                label="Earliest Autopart document"
+                value={forecast.salesHistoryFrom ?? "None in database"}
+              />
+            </dl>
+            <p className="text-[13px] text-steel">{forecast.forecastConfidenceCopy}</p>
+          </section>
 
           <section className="grid gap-3">
             <h2 className="font-display text-lg font-semibold uppercase">Current position</h2>
@@ -185,21 +215,48 @@ function PurchasingSkuPage() {
                 label="Last 90 days"
                 value={`${qty(forecast.rates.last90.netUnits)}${forecast.rates.last90.complete ? "" : " (partial history)"}`}
               />
-              <Fact
-                label="Last 365 days"
-                value={`${qty(forecast.rates.last365.netUnits)}${forecast.rates.last365.complete ? "" : " (partial history)"}`}
-              />
-              <Fact label="30-day rate" value={rate(forecast.rates.last30.weeklyRate)} />
-              <Fact label="90-day rate" value={rate(forecast.rates.last90.weeklyRate)} />
-              <Fact label="365-day rate" value={rate(forecast.rates.last365.weeklyRate)} />
-              <Fact label="Recommended" value={rate(forecast.recommendedWeekly)} />
-              <Fact label="Trend" value={trendLabel(forecast.trend)} />
-              <Fact
-                label="Comparable last year"
-                value={rate(forecast.rates.samePeriodLastYear?.weeklyRate ?? null)}
-              />
+              <Fact label="Last 365 days" value={`${qty(forecast.rates.last365.netUnits)}${forecast.rates.last365.complete ? "" : " (partial history)"}`} />
             </dl>
-            <p className="text-[13px] text-steel">{forecast.demandReason}</p>
+            <div className="overflow-x-auto border border-border">
+              <table className="w-full text-left text-[13px]">
+                <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+                  <tr>
+                    <th className="px-3 py-2">Component</th>
+                    <th className="px-3 py-2">Rate</th>
+                    <th className="px-3 py-2">Coverage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-border/70">
+                    <td className="px-3 py-2">30-day rate</td>
+                    <td className="px-3 py-2">{rate(forecast.rates.last30.weeklyRate)}</td>
+                    <td className="px-3 py-2">{demandComponentLabel(forecast.demandComponents.last30)}</td>
+                  </tr>
+                  <tr className="border-t border-border/70">
+                    <td className="px-3 py-2">90-day rate</td>
+                    <td className="px-3 py-2">{rate(forecast.rates.last90.weeklyRate)}</td>
+                    <td className="px-3 py-2">{demandComponentLabel(forecast.demandComponents.last90)}</td>
+                  </tr>
+                  <tr className="border-t border-border/70">
+                    <td className="px-3 py-2">365-day rate</td>
+                    <td className="px-3 py-2">{rate(forecast.rates.last365.weeklyRate)}</td>
+                    <td className="px-3 py-2">{demandComponentLabel(forecast.demandComponents.last365)}</td>
+                  </tr>
+                  <tr className="border-t border-border/70">
+                    <td className="px-3 py-2">Last year comparison</td>
+                    <td className="px-3 py-2">{rate(forecast.rates.samePeriodLastYear?.weeklyRate ?? null)}</td>
+                    <td className="px-3 py-2">
+                      {forecast.demandComponents.seasonalAvailable ? "Available" : "Not yet available"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[13px]">
+              <Fact label="Recommended demand" value={rate(forecast.recommendedWeekly)} />
+              <Fact label="Trend" value={trendLabel(forecast.trend)} />
+            </dl>
+            <p className="text-[13px] text-steel">{forecast.demandReason} Based on available periods only.</p>
             <ul className="grid gap-1 text-[13px] text-steel">
               {forecast.demandBasis.map((part) => (
                 <li key={part.label}>

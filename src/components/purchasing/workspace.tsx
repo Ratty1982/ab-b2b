@@ -2,9 +2,16 @@ import { Link } from "@tanstack/react-router";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { formatDate } from "@/lib/datetime";
 import {
+  DEMAND_COMPONENT_AVAILABILITY_LABEL,
   DEMAND_TREND_LABEL,
+  FORECAST_CONFIDENCE_HELP,
+  FORECAST_CONFIDENCE_LABEL,
   PURCHASING_STATUS_LABEL,
+  formatSalesHistoryCoverage,
+  isLimitedForecastConfidence,
+  type DemandComponentAvailability,
   type DemandTrend,
+  type ForecastConfidence,
   type PurchasingStatus,
 } from "@/domain/purchasing-forecast";
 
@@ -46,6 +53,77 @@ export function statusTone(status: PurchasingStatus): Tone {
 
 export function PurchasingStatusBadge({ status }: { status: PurchasingStatus }) {
   return <StatusBadge tone={statusTone(status)}>{PURCHASING_STATUS_LABEL[status]}</StatusBadge>;
+}
+
+function confidenceTone(confidence: ForecastConfidence): Tone {
+  if (confidence === "VERY_LOW") return "bad";
+  if (confidence === "LOW") return "warn";
+  if (confidence === "BUILDING") return "info";
+  if (confidence === "GOOD") return "brand";
+  return "good";
+}
+
+export function ForecastConfidenceBadge({
+  confidence,
+  coverageDays,
+  warning,
+}: {
+  confidence: ForecastConfidence;
+  coverageDays?: number;
+  warning?: string | null;
+}) {
+  const title =
+    warning ||
+    (coverageDays != null
+      ? coverageDays <= 0
+        ? "No dated Autopart sales history is currently available."
+        : `Based on ${coverageDays >= 365 ? "365+" : coverageDays} days of available sales history.`
+      : FORECAST_CONFIDENCE_HELP);
+  return (
+    <StatusBadge tone={confidenceTone(confidence)} className="normal-case tracking-normal">
+      <span title={title}>{FORECAST_CONFIDENCE_LABEL[confidence]}</span>
+    </StatusBadge>
+  );
+}
+
+export function ForecastCoverageBanner({
+  coverageDays,
+  confidence,
+  historyFrom,
+}: {
+  coverageDays: number;
+  confidence: ForecastConfidence;
+  historyFrom?: string | null;
+}) {
+  const building = isLimitedForecastConfidence(confidence) || confidence === "BUILDING";
+  return (
+    <div className="border-b border-border/70 px-4 py-3 text-[13px] text-steel sm:px-6">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="font-semibold uppercase tracking-[0.12em] text-[10px] text-ink">Forecast data coverage</span>
+        <ForecastConfidenceBadge confidence={confidence} coverageDays={coverageDays} />
+        <span>{formatSalesHistoryCoverage(coverageDays)}</span>
+      </div>
+      <p className="mt-1 max-w-3xl">
+        {building
+          ? "Sales history is still building. Purchasing recommendations use the history currently available and will become more reliable as additional Autopart sales data is imported."
+          : "Purchasing recommendations use the Autopart sales history currently available."}{" "}
+        Confidence does not measure stock accuracy — stock freshness is shown separately.
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[12px] text-primary">What does confidence mean?</summary>
+        <p className="mt-1 max-w-3xl text-[12px]">{FORECAST_CONFIDENCE_HELP}</p>
+        {historyFrom ? (
+          <p className="mt-1 text-[12px]">Earliest dated Autopart sales document in this database: {historyFrom}.</p>
+        ) : null}
+      </details>
+    </div>
+  );
+}
+
+export function demandComponentLabel(availability: DemandComponentAvailability): string {
+  if (availability === "full") return `✓ ${DEMAND_COMPONENT_AVAILABILITY_LABEL[availability]}`;
+  if (availability === "partial") return DEMAND_COMPONENT_AVAILABILITY_LABEL[availability];
+  return DEMAND_COMPONENT_AVAILABILITY_LABEL[availability];
 }
 
 export function trendLabel(trend: DemandTrend): string {

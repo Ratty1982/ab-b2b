@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PURCHASING_SETTINGS,
+  buildForecastConfidenceCopy,
   buildWhyCopy,
+  demandComponentAvailability,
   detectUnusualDemand,
   estimatedStockoutDate,
+  forecastConfidenceWarning,
   formatPurchasingGbp,
+  formatSalesHistoryCoverage,
   leadTimeDemandUnits,
+  quietSaleFilterLabel,
   periodDemand,
   projectedWeeksOfCover,
   reorderPointUnits,
   resolveDemandTrend,
+  resolveForecastConfidence,
   resolvePurchasingStatus,
   resolveRecommendedWeeklyDemand,
+  salesHistoryCoverageDays,
+  seasonalComparisonAvailable,
   stockValueAtLatestCost,
   suggestedPurchaseQty,
   suggestedPurchaseValue,
@@ -342,5 +350,192 @@ describe("why copy", () => {
     expect(buildWhyCopy({ weeksCover: 0.6, incomingQty: 120, suggestedQty: 168, targetCoverWeeks: 8 })).toMatch(
       /additional 168 units/i,
     );
+  });
+});
+
+describe("forecast confidence and sales-history coverage", () => {
+  it("maps coverage-day thresholds without treating missing history as zero demand", () => {
+    expect(resolveForecastConfidence(0)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(29)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(30)).toBe("LOW");
+    expect(resolveForecastConfidence(89)).toBe("LOW");
+    expect(resolveForecastConfidence(90)).toBe("BUILDING");
+    expect(resolveForecastConfidence(179)).toBe("BUILDING");
+    expect(resolveForecastConfidence(180)).toBe("GOOD");
+    expect(resolveForecastConfidence(364)).toBe("GOOD");
+    expect(resolveForecastConfidence(365)).toBe("STRONG");
+    expect(salesHistoryCoverageDays(null, "2026-10-05")).toBe(0);
+    expect(salesHistoryCoverageDays("2026-09-22", "2026-10-05")).toBe(14);
+    expect(periodDemand(0, 90, 3).weeklyRate).toBeNull();
+    expect(periodDemand(0, 90, 90).weeklyRate).toBe(0);
+    expect(periodDemand(0, 90, 90).complete).toBe(true);
+  });
+
+  it("exposes 30/90/365 and seasonal component eligibility from genuine coverage", () => {
+    expect(demandComponentAvailability(periodDemand(12, 30, 6))).toBe("unavailable");
+    expect(periodDemand(12, 30, 6).weeklyRate).toBeNull();
+    expect(demandComponentAvailability(periodDemand(12, 30, 7))).toBe("partial");
+    expect(periodDemand(12, 30, 7).weeklyRate).not.toBeNull();
+    expect(demandComponentAvailability(periodDemand(12, 30, 30))).toBe("full");
+    expect(demandComponentAvailability(periodDemand(12, 90, 6))).toBe("unavailable");
+    expect(demandComponentAvailability(periodDemand(12, 90, 7))).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 90, 74))).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 90, 90))).toBe("full");
+    expect(demandComponentAvailability(periodDemand(40, 365, 6))).toBe("unavailable");
+    expect(demandComponentAvailability(periodDemand(40, 365, 7))).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(40, 365, 40))).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(40, 365, 365))).toBe("full");
+    const shortSpy = periodDemand(10, 30, 20);
+    expect(seasonalComparisonAvailable(shortSpy)).toBe(false);
+    expect(seasonalComparisonAvailable(periodDemand(10, 30, 23))).toBe(false);
+    expect(seasonalComparisonAvailable(periodDemand(10, 30, 24))).toBe(true);
+    expect(seasonalComparisonAvailable(null)).toBe(false);
+  });
+
+  it("renormalises demand weights and does not let confidence change the recommended rate", () => {
+    const only30 = resolveRecommendedWeeklyDemand(
+      rates({
+        last30: periodDemand(30, 30, 14),
+        last90: periodDemand(0, 90, 3),
+        last365: periodDemand(0, 365, 3),
+      }),
+    );
+    expect(only30.recommendedWeekly).toBeCloseTo((30 / 14) * 7, 1);
+    expect(only30.basis.find((b) => b.label === "30-day rate")?.weight).toBe(1);
+    expect(only30.basis.find((b) => b.label === "90-day rate")?.weight).toBe(0);
+    expect(only30.basis.find((b) => b.label === "365-day rate")?.weight).toBe(0);
+    const before = only30.recommendedWeekly;
+    expect(resolveForecastConfidence(14)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(365)).toBe("STRONG");
+    expect(only30.recommendedWeekly).toBe(before);
+
+    const withSeasonal = resolveRecommendedWeeklyDemand(
+      rates({
+        last30: periodDemand(70, 30, 30),
+        last90: periodDemand(90, 90, 90),
+        last365: periodDemand(365, 365, 365),
+        samePeriodLastYear: periodDemand(14, 30, 30),
+      }),
+    );
+    const withoutSeasonal = resolveRecommendedWeeklyDemand(
+      rates({
+        last30: periodDemand(70, 30, 30),
+        last90: periodDemand(90, 90, 90),
+        last365: periodDemand(365, 365, 365),
+        samePeriodLastYear: periodDemand(14, 30, 10),
+      }),
+    );
+    expect(withSeasonal.seasonalBlendApplied).toBe(true);
+    expect(withoutSeasonal.seasonalBlendApplied).toBe(false);
+    const base = 0.5 * ((70 / 30) * 7) + 0.3 * ((90 / 90) * 7) + 0.2 * ((365 / 365) * 7);
+    expect(withSeasonal.recommendedWeekly).toBeCloseTo(0.85 * base + 0.15 * ((14 / 30) * 7), 1);
+    expect(withoutSeasonal.recommendedWeekly).toBeCloseTo(base, 1);
+  });
+
+  it("does not let confidence change Avail, Incoming, Latest Cost, or suggested-order maths", () => {
+    const availableQty = 36;
+    const incomingQty = 240;
+    const latestCost = "2.5000";
+    const purchase = suggestedPurchaseQty({
+      availableQty,
+      incomingQty,
+      recommendedWeekly: 12.1,
+      targetCoverWeeks: 8,
+      safetyStockQty: 0,
+      minimumOrderQty: 24,
+      orderMultiple: 12,
+    });
+    expect(resolveForecastConfidence(14)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(400)).toBe("STRONG");
+    const again = suggestedPurchaseQty({
+      availableQty,
+      incomingQty,
+      recommendedWeekly: 12.1,
+      targetCoverWeeks: 8,
+      safetyStockQty: 0,
+      minimumOrderQty: 24,
+      orderMultiple: 12,
+    });
+    expect(again.suggestedQty).toBe(purchase.suggestedQty);
+    expect(availableQty).toBe(36);
+    expect(incomingQty).toBe(240);
+    expect(latestCost).toBe("2.5000");
+    expect(suggestedPurchaseValue(purchase.suggestedQty, latestCost).costAvailable).toBe(true);
+  });
+
+  it("keeps low-confidence reorder and overstock visible with a warning, not a status change", () => {
+    const reorder = resolvePurchasingStatus({
+      availableQty: 10,
+      incomingQty: 0,
+      weeksCover: 0.4,
+      suggestedQty: 80,
+      reorderPoint: 40,
+      settings: DEFAULT_PURCHASING_SETTINGS,
+      recommendedWeekly: 42,
+      stockStale: false,
+      estimatedStockoutDate: "2026-10-06",
+      today: "2026-10-05",
+      salesHistoryCoverageDays: 14,
+    });
+    expect(reorder.status).toBe("CRITICAL");
+    expect(forecastConfidenceWarning({ confidence: "LOW", status: "REORDER", suggestedQty: 80 })).toMatch(
+      /Limited sales history — review before ordering/i,
+    );
+    const overstock = resolvePurchasingStatus({
+      availableQty: 1000,
+      incomingQty: 0,
+      weeksCover: 175,
+      suggestedQty: 0,
+      reorderPoint: null,
+      settings: DEFAULT_PURCHASING_SETTINGS,
+      recommendedWeekly: 5,
+      stockStale: false,
+      estimatedStockoutDate: "2028-01-01",
+      today: "2026-10-05",
+      salesHistoryCoverageDays: 14,
+    });
+    expect(overstock.status).toBe("OVERSTOCK");
+    expect(forecastConfidenceWarning({ confidence: "VERY_LOW", status: "OVERSTOCK", suggestedQty: 0 })).toMatch(
+      /Potential overstock/i,
+    );
+  });
+
+  it("does not claim a no-sale window longer than known coverage, and keeps DATA_STALE independent", () => {
+    const noDemand = resolvePurchasingStatus({
+      availableQty: 40,
+      incomingQty: 0,
+      weeksCover: null,
+      suggestedQty: 0,
+      reorderPoint: null,
+      settings: DEFAULT_PURCHASING_SETTINGS,
+      recommendedWeekly: 0,
+      stockStale: false,
+      estimatedStockoutDate: null,
+      today: "2026-10-05",
+      salesHistoryCoverageDays: 14,
+    });
+    expect(noDemand.status).toBe("NO_RECENT_DEMAND");
+    expect(noDemand.reason).toMatch(/14 days of available sales history/i);
+    expect(noDemand.reason).not.toMatch(/90 days/);
+    const stale = resolvePurchasingStatus({
+      availableQty: 10,
+      incomingQty: 0,
+      weeksCover: 0.4,
+      suggestedQty: 80,
+      reorderPoint: 40,
+      settings: DEFAULT_PURCHASING_SETTINGS,
+      recommendedWeekly: 42,
+      stockStale: true,
+      estimatedStockoutDate: "2026-10-06",
+      today: "2026-10-05",
+      salesHistoryCoverageDays: 365,
+    });
+    expect(stale.status).toBe("DATA_STALE");
+    expect(resolveForecastConfidence(365)).toBe("STRONG");
+    expect(buildForecastConfidenceCopy({ confidence: "BUILDING", coverageDays: 112 })).toMatch(/112 days of sales history/);
+    expect(formatSalesHistoryCoverage(365)).toBe("365+ days history");
+    expect(quietSaleFilterLabel(90, 14)).toBe("No sale in 14 days of available history");
+    expect(quietSaleFilterLabel(90, 90)).toBe("No sale in 90 days");
+    expect(quietSaleFilterLabel(30, 0)).toBe("No dated sales history");
   });
 });

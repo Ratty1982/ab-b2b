@@ -13,22 +13,30 @@ import { recordAuditEvent } from "@/server/audit/record";
 import {
   DEFAULT_PURCHASING_SETTINGS,
   EMPTY_VARIANT_PURCHASING,
+  FORECAST_CONFIDENCE_LABEL,
   PURCHASING_STATUS_LABEL,
+  buildForecastConfidenceCopy,
   buildWhyCopy,
+  demandComponentAvailability,
   detectUnusualDemand,
   estimatedStockoutDate,
+  forecastConfidenceWarning,
   leadTimeDemandUnits,
   periodDemand,
   projectedWeeksOfCover,
   reorderPointUnits,
   resolveDemandTrend,
+  resolveForecastConfidence,
   resolvePurchasingStatus,
   resolveRecommendedWeeklyDemand,
+  salesHistoryCoverageDays,
+  seasonalComparisonAvailable,
   stockValueAtLatestCost,
   suggestedPurchaseQty,
   suggestedPurchaseValue,
   weeksOfCover,
   type DemandRates,
+  type ForecastConfidence,
   type PurchasingStatus,
   type PurchasingSystemSettings,
   type VariantPurchasingParams,
@@ -185,6 +193,8 @@ function forecastSku(
     availableQty: row.availableQty,
     recommendedWeekly: demand.recommendedWeekly,
   });
+  const coverageDays = salesHistoryCoverageDays(maps.historyFrom, maps.windows.today);
+  const confidence = resolveForecastConfidence(coverageDays);
   const status = resolvePurchasingStatus({
     availableQty: row.availableQty,
     incomingQty: row.incomingQty,
@@ -196,10 +206,12 @@ function forecastSku(
     stockStale,
     estimatedStockoutDate: runout,
     today: maps.windows.today,
+    salesHistoryCoverageDays: coverageDays,
   });
   const value = suggestedPurchaseValue(purchase.suggestedQty, row.latestCost);
   const availValue = stockValueAtLatestCost(row.availableQty, row.latestCost);
   const incomingValue = stockValueAtLatestCost(row.incomingQty, row.latestCost);
+  const seasonalAvailable = seasonalComparisonAvailable(rates.samePeriodLastYear);
   return {
     variantId: row.variantId,
     sku: row.sku,
@@ -234,6 +246,22 @@ function forecastSku(
     availableStockValue: availValue ? moneyToString(availValue, 2) : null,
     incomingStockValue: incomingValue ? moneyToString(incomingValue, 2) : null,
     lastSale: maps.lastSale.get(row.sku.toUpperCase()) ?? null,
+    salesHistoryCoverageDays: coverageDays,
+    salesHistoryFrom: maps.historyFrom,
+    forecastConfidence: confidence,
+    forecastConfidenceLabel: FORECAST_CONFIDENCE_LABEL[confidence],
+    forecastConfidenceCopy: buildForecastConfidenceCopy({ confidence, coverageDays }),
+    forecastConfidenceWarning: forecastConfidenceWarning({
+      confidence,
+      status: status.status,
+      suggestedQty: purchase.suggestedQty,
+    }),
+    demandComponents: {
+      last30: demandComponentAvailability(rates.last30),
+      last90: demandComponentAvailability(rates.last90),
+      last365: demandComponentAvailability(rates.last365),
+      seasonalAvailable,
+    },
     why: buildWhyCopy({
       weeksCover: cover,
       incomingQty: row.incomingQty,
@@ -304,7 +332,10 @@ async function freshnessLabels() {
 export async function getPurchasingDashboard(actorUserId: string) {
   const workspace = await loadWorkspace(actorUserId);
   const rows = workspace.rows;
+  const coverageDays = salesHistoryCoverageDays(workspace.maps.historyFrom, workspace.maps.windows.today);
   const count = (status: PurchasingStatus) => rows.filter((r) => r.status === status).length;
+  const confidenceCount = (level: ForecastConfidence) =>
+    rows.filter((r) => r.forecastConfidence === level).length;
   const orderNow = rows.filter((r) => r.status === "CRITICAL" || r.status === "REORDER").slice(0, 8);
   let suggestedValueTotal = 0;
   let missingCost = 0;
@@ -325,6 +356,18 @@ export async function getPurchasingDashboard(actorUserId: string) {
       overstock: count("OVERSTOCK"),
       suggestedPurchaseValue: suggestedValueTotal ? suggestedValueTotal.toFixed(2) : null,
       suggestedValueMissingCost: missingCost,
+    },
+    forecastCoverage: {
+      coverageDays,
+      historyFrom: workspace.maps.historyFrom,
+      confidence: resolveForecastConfidence(coverageDays),
+      counts: {
+        STRONG: confidenceCount("STRONG"),
+        GOOD: confidenceCount("GOOD"),
+        BUILDING: confidenceCount("BUILDING"),
+        LOW: confidenceCount("LOW"),
+        VERY_LOW: confidenceCount("VERY_LOW"),
+      },
     },
     orderNow,
     runningLow: rows.filter((r) => r.status === "WATCH").slice(0, 8),
@@ -348,6 +391,7 @@ export async function listPurchasingForecast(actorUserId: string, raw: unknown) 
     canManage: workspace.canManage,
     brands: workspace.brands,
     suppliers: workspace.suppliers,
+    forecastCoverage: coverageSummary(workspace.maps),
     ...paginate(all, page, pageSize),
   };
 }
@@ -369,6 +413,15 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
     forecast,
     chart,
     sources,
+  };
+}
+
+function coverageSummary(maps: Awaited<ReturnType<typeof loadPurchasingDemandMaps>>) {
+  const coverageDays = salesHistoryCoverageDays(maps.historyFrom, maps.windows.today);
+  return {
+    coverageDays,
+    historyFrom: maps.historyFrom,
+    confidence: resolveForecastConfidence(coverageDays),
   };
 }
 
@@ -427,6 +480,7 @@ export async function listPurchasePlanner(actorUserId: string, raw: unknown) {
     brands: workspace.brands,
     suppliers: workspace.suppliers,
     horizonDays,
+    forecastCoverage: coverageSummary(workspace.maps),
     ...paginate(filtered, page, pageSize),
   };
 }
@@ -472,6 +526,7 @@ export async function listOverstock(actorUserId: string, raw: unknown) {
     brands: workspace.brands,
     suppliers: workspace.suppliers,
     quiet,
+    forecastCoverage: coverageSummary(workspace.maps),
     ...paginate(filtered, page, pageSize),
   };
 }
@@ -614,6 +669,12 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
     "Planned Qty",
     "Latest Cost",
     "Estimated Value",
+    "Forecast Confidence",
+    "Sales History Coverage Days",
+    "30d Coverage",
+    "90d Coverage",
+    "365d Coverage",
+    "Seasonal Comparison Available",
     "Purchasing Note",
   ];
   const lines = [
@@ -637,6 +698,12 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
         row.plannedQty ?? "",
         row.latestCost ?? "",
         row.suggestedValue ?? "",
+        csv(row.forecastConfidenceLabel),
+        row.salesHistoryCoverageDays,
+        row.demandComponents.last30,
+        row.demandComponents.last90,
+        row.demandComponents.last365,
+        row.demandComponents.seasonalAvailable ? "yes" : "no",
         csv(row.note),
       ].join(","),
     ),

@@ -5,6 +5,8 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import {
   EmptyState,
   ErrorState,
+  ForecastConfidenceBadge,
+  ForecastCoverageBanner,
   FreshnessBanner,
   LoadingState,
   PurchasingStatusBadge,
@@ -90,11 +92,18 @@ function PurchasingDashboardPage() {
         crumbs={[{ label: "Purchasing" }, { label: "Dashboard" }]}
       />
       {data ? (
-        <FreshnessBanner
-          stockUpdated={data.freshness.stockUpdated}
-          salesUpdated={data.freshness.salesUpdated}
-          stockStale={data.freshness.stockStale}
-        />
+        <>
+          <FreshnessBanner
+            stockUpdated={data.freshness.stockUpdated}
+            salesUpdated={data.freshness.salesUpdated}
+            stockStale={data.freshness.stockStale}
+          />
+          <ForecastCoverageBanner
+            coverageDays={data.forecastCoverage.coverageDays}
+            confidence={data.forecastCoverage.confidence}
+            historyFrom={data.forecastCoverage.historyFrom}
+          />
+        </>
       ) : null}
       {error ? <ErrorState message={error} /> : null}
       {!data && !error ? <LoadingState /> : null}
@@ -116,6 +125,14 @@ function PurchasingDashboardPage() {
               }
             />
           </div>
+
+          {data.forecastCoverage ? (
+            <p className="text-[12px] text-steel">
+              Strong {qty(data.forecastCoverage.counts.STRONG)} · Good {qty(data.forecastCoverage.counts.GOOD)} ·
+              Building {qty(data.forecastCoverage.counts.BUILDING)} · Low {qty(data.forecastCoverage.counts.LOW)} · Very
+              Low {qty(data.forecastCoverage.counts.VERY_LOW)} SKUs
+            </p>
+          ) : null}
 
           <PriorityTable
             title="Order now"
@@ -292,6 +309,7 @@ function PriorityTable({
                 <th className="px-3 py-2">Cover</th>
                 <th className="px-3 py-2">Suggested</th>
                 <th className="px-3 py-2">Value</th>
+                <th className="px-3 py-2">Confidence</th>
                 <th className="px-3 py-2">Status</th>
               </tr>
             </thead>
@@ -309,7 +327,19 @@ function PriorityTable({
                   <td className="px-3 py-2">{qty(row.purchase.suggestedQty)}</td>
                   <td className="px-3 py-2">{gbp(row.suggestedValue)}</td>
                   <td className="px-3 py-2">
+                    <ForecastConfidenceBadge
+                      confidence={row.forecastConfidence}
+                      coverageDays={row.salesHistoryCoverageDays}
+                      warning={row.forecastConfidenceWarning}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
                     <PurchasingStatusBadge status={row.status} />
+                    {row.status === "OVERSTOCK" && row.forecastConfidenceWarning ? (
+                      <div className="mt-1 text-[11px] text-warn">Potential overstock</div>
+                    ) : row.forecastConfidenceWarning ? (
+                      <div className="mt-1 text-[11px] text-warn">{row.forecastConfidenceWarning}</div>
+                    ) : null}
                   </td>
                 </tr>
               ))}

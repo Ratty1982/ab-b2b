@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import { saveProduct } from "@/server/catalogue/service";
+import { getPublicProduct } from "@/server/catalogue/products";
 import { applyStockFeed } from "@/server/stock/service";
 import { buildNative231Po3New } from "@/server/stock/fixtures/native-231po3new";
 import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
@@ -193,6 +194,8 @@ describe("purchasing forecast from AutopartSalesLine", () => {
     expect(row).toBeTruthy();
     expect(row!.availableQty).toBe(36);
     expect(row!.incomingQty).toBe(240);
+    expect(row!.forecastConfidence).toBeTruthy();
+    expect(row!.salesHistoryCoverageDays).toBeGreaterThanOrEqual(0);
     expect(row!.rates.last7.netUnits).toBe(60);
     expect(row!.weeksCover).not.toBeNull();
     expect(row!.projectedCover).toBeGreaterThan(row!.weeksCover ?? 0);
@@ -205,15 +208,27 @@ describe("purchasing forecast from AutopartSalesLine", () => {
     expect(quiet?.latestCost).toBeNull();
     expect(quiet?.suggestedValue).toBeNull();
     expect(quiet?.availableStockValue).toBeNull();
+    expect(quiet?.forecastConfidence).toBe(row!.forecastConfidence);
+
+    const dash = await getPurchasingDashboard(adminId);
+    expect(dash.forecastCoverage.coverageDays).toBe(row!.salesHistoryCoverageDays);
+    expect(dash.forecastCoverage.counts.STRONG + dash.forecastCoverage.counts.GOOD + dash.forecastCoverage.counts.BUILDING + dash.forecastCoverage.counts.LOW + dash.forecastCoverage.counts.VERY_LOW).toBeGreaterThan(0);
   });
 
   it("explains Incoming cover on SKU drill-down and keeps Latest Cost off trade-shaped payloads", async () => {
     const detail = await getPurchasingSku(adminId, skuA);
     expect(detail.forecast.availableQty).toBe(36);
     expect(detail.forecast.incomingQty).toBe(240);
+    expect(detail.forecast.forecastConfidence).toBeTruthy();
+    expect(detail.forecast.salesHistoryCoverageDays).toBeGreaterThanOrEqual(0);
+    expect(detail.forecast.demandComponents).toBeTruthy();
     expect(detail.forecast.why).toMatch(/on order|incoming/i);
     expect(detail.chart.length).toBeGreaterThan(0);
     expect(JSON.stringify(detail)).not.toMatch(/Arriving \d/);
+    const pub = await getPublicProduct(null, skuA);
+    expect(JSON.stringify(pub)).not.toMatch(/forecastConfidence/);
+    expect(JSON.stringify(pub)).not.toMatch(/salesHistoryCoverageDays/);
+    expect(JSON.stringify(pub)).not.toContain("incomingQty");
   });
 
   it("stores a planned qty without changing Incoming", async () => {
@@ -240,5 +255,11 @@ describe("purchasing forecast from AutopartSalesLine", () => {
     expect(csv.disclaimer).toMatch(/not an Autopart purchase-order import/i);
     expect(csv.csv).toContain(skuA);
     expect(csv.csv).toContain("Incoming");
+    expect(csv.csv).toContain("Forecast Confidence");
+    expect(csv.csv).toContain("Sales History Coverage Days");
+    expect(csv.csv).toContain("30d Coverage");
+    expect(csv.csv).toContain("90d Coverage");
+    expect(csv.csv).toContain("365d Coverage");
+    expect(csv.csv).toContain("Seasonal Comparison Available");
   });
 });

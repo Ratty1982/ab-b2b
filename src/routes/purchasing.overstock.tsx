@@ -4,6 +4,8 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import {
   EmptyState,
   ErrorState,
+  ForecastConfidenceBadge,
+  ForecastCoverageBanner,
   FreshnessBanner,
   LoadingState,
   Pager,
@@ -21,6 +23,7 @@ import {
   type ForecastSearchPatch,
 } from "@/components/purchasing/workspace";
 import { listPurchasingOverstockFn } from "@/server/phase2/fns";
+import { quietSaleFilterLabel } from "@/domain/purchasing-forecast";
 
 type OverstockSearch = ForecastSearch & { quiet?: "all" | "overstock" | "30" | "90" | "180" };
 type OverstockSearchPatch = ForecastSearchPatch & { quiet?: OverstockSearch["quiet"] | undefined };
@@ -99,11 +102,18 @@ function OverstockPage() {
         crumbs={[{ label: "Purchasing" }, { label: "Overstock" }]}
       />
       {data ? (
-        <FreshnessBanner
-          stockUpdated={data.freshness.stockUpdated}
-          salesUpdated={data.freshness.salesUpdated}
-          stockStale={data.freshness.stockStale}
-        />
+        <>
+          <FreshnessBanner
+            stockUpdated={data.freshness.stockUpdated}
+            salesUpdated={data.freshness.salesUpdated}
+            stockStale={data.freshness.stockStale}
+          />
+          <ForecastCoverageBanner
+            coverageDays={data.forecastCoverage.coverageDays}
+            confidence={data.forecastCoverage.confidence}
+            historyFrom={data.forecastCoverage.historyFrom}
+          />
+        </>
       ) : null}
       {error ? <ErrorState message={error} /> : null}
       <div className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
@@ -114,9 +124,9 @@ function OverstockPage() {
         >
           <option value="all">High cover + quiet SKUs</option>
           <option value="overstock">Overstock cover only</option>
-          <option value="30">No sale in 30 days</option>
-          <option value="90">No sale in 90 days</option>
-          <option value="180">No sale in 180 days</option>
+          <option value="30">{quietSaleFilterLabel(30, data?.forecastCoverage.coverageDays ?? 30)}</option>
+          <option value="90">{quietSaleFilterLabel(90, data?.forecastCoverage.coverageDays ?? 90)}</option>
+          <option value="180">{quietSaleFilterLabel(180, data?.forecastCoverage.coverageDays ?? 180)}</option>
         </select>
         <select
           className={controlClass}
@@ -154,6 +164,7 @@ function OverstockPage() {
                   <th className="px-3 py-2">Latest cost</th>
                   <th className="px-3 py-2">Stock value</th>
                   <th className="px-3 py-2">Incoming value</th>
+                  <th className="px-3 py-2">Confidence</th>
                   <th className="px-3 py-2">Status</th>
                 </tr>
               </thead>
@@ -174,7 +185,17 @@ function OverstockPage() {
                     <td className="px-3 py-2">{gbp(row.availableStockValue)}</td>
                     <td className="px-3 py-2">{gbp(row.incomingStockValue)}</td>
                     <td className="px-3 py-2">
+                      <ForecastConfidenceBadge
+                        confidence={row.forecastConfidence}
+                        coverageDays={row.salesHistoryCoverageDays}
+                        warning={row.forecastConfidenceWarning}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
                       <PurchasingStatusBadge status={row.status} />
+                      {row.status === "OVERSTOCK" && row.forecastConfidenceWarning ? (
+                        <div className="mt-1 text-[11px] text-warn">Potential overstock</div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

@@ -5,7 +5,7 @@
  * Incoming is on-order quantity with no ETA unless a source provides one.
  */
 
-import { addDaysIso } from "@/domain/sales-history-period";
+import { addDaysIso, daysInclusive } from "@/domain/sales-history-period";
 import { mulQty, parseMoney, roundGbpDisplay, moneyToString, type Money } from "@/domain/money";
 
 export const PURCHASING_STATUSES = [
@@ -32,6 +32,40 @@ export const DEMAND_TRENDS = [
 ] as const;
 
 export type DemandTrend = (typeof DEMAND_TRENDS)[number];
+
+/**
+ * Forecast confidence is a separate dimension from purchasing status and from
+ * 231PO3NEW stock freshness (DATA_STALE). It measures how much genuine Autopart
+ * sales-document history supports the demand forecast — not whether the math is
+ * “wrong”.
+ */
+export const FORECAST_CONFIDENCE_LEVELS = ["VERY_LOW", "LOW", "BUILDING", "GOOD", "STRONG"] as const;
+
+export type ForecastConfidence = (typeof FORECAST_CONFIDENCE_LEVELS)[number];
+
+export const FORECAST_CONFIDENCE_LABEL: Record<ForecastConfidence, string> = {
+  VERY_LOW: "Very Low",
+  LOW: "Low",
+  BUILDING: "Building",
+  GOOD: "Good",
+  STRONG: "Strong",
+};
+
+/** Inclusive coverage-day thresholds. Centralised — do not copy into UI. */
+export const FORECAST_CONFIDENCE_MIN_DAYS = {
+  LOW: 30,
+  BUILDING: 90,
+  GOOD: 180,
+  STRONG: 365,
+} as const;
+
+export type DemandComponentAvailability = "full" | "partial" | "unavailable";
+
+export const DEMAND_COMPONENT_AVAILABILITY_LABEL: Record<DemandComponentAvailability, string> = {
+  full: "Full coverage",
+  partial: "Partial coverage",
+  unavailable: "Insufficient history",
+};
 
 export type PurchasingSystemSettings = {
   defaultTargetCoverWeeks: number;
@@ -104,6 +138,95 @@ export function periodDemand(netUnits: number, requestedDays: number, coverageDa
   const weeklyRate =
     covered >= MIN_COVERAGE_DAYS_FOR_RATE ? (netUnits / covered) * 7 : null;
   return { requestedDays, coverageDays: covered, netUnits, weeklyRate, complete };
+}
+
+/**
+ * Genuine sales-history coverage for purchasing forecasts.
+ *
+ * This is the inclusive day count from the earliest Autopart sales document
+ * (`historyFrom`) through London today — the known import/source window — not
+ * “days since this SKU first sold”. Using SKU-first-sale would imply continuous
+ * coverage for periods when Autopart history had not yet been imported.
+ */
+export function salesHistoryCoverageDays(historyFrom: string | null, today: string): number {
+  if (!historyFrom || historyFrom > today) return 0;
+  return daysInclusive({ from: historyFrom, to: today });
+}
+
+export function resolveForecastConfidence(coverageDays: number): ForecastConfidence {
+  const days = Number.isFinite(coverageDays) ? Math.max(0, Math.floor(coverageDays)) : 0;
+  if (days < FORECAST_CONFIDENCE_MIN_DAYS.LOW) return "VERY_LOW";
+  if (days < FORECAST_CONFIDENCE_MIN_DAYS.BUILDING) return "LOW";
+  if (days < FORECAST_CONFIDENCE_MIN_DAYS.GOOD) return "BUILDING";
+  if (days < FORECAST_CONFIDENCE_MIN_DAYS.STRONG) return "GOOD";
+  return "STRONG";
+}
+
+export function isLimitedForecastConfidence(confidence: ForecastConfidence): boolean {
+  return confidence === "VERY_LOW" || confidence === "LOW";
+}
+
+export function formatSalesHistoryCoverage(coverageDays: number): string {
+  const days = Number.isFinite(coverageDays) ? Math.max(0, Math.floor(coverageDays)) : 0;
+  if (days <= 0) return "No sales history available";
+  if (days >= FORECAST_CONFIDENCE_MIN_DAYS.STRONG) return "365+ days history";
+  if (days >= 60) {
+    const months = Math.round((days / 30.4375) * 10) / 10;
+    return `${days} days history (${months} months)`;
+  }
+  return `${days} days history`;
+}
+
+export function demandComponentAvailability(period: PeriodDemand): DemandComponentAvailability {
+  if (period.weeklyRate == null) return "unavailable";
+  return period.complete ? "full" : "partial";
+}
+
+export function seasonalComparisonAvailable(period: PeriodDemand | null | undefined): boolean {
+  if (!period || period.weeklyRate == null || period.requestedDays <= 0) return false;
+  return period.coverageDays / period.requestedDays >= 0.8;
+}
+
+/** Quiet-sale filter labels must not claim a window longer than known coverage. */
+export function quietSaleFilterLabel(requestedDays: number, coverageDays: number): string {
+  const covered = Number.isFinite(coverageDays) ? Math.max(0, Math.floor(coverageDays)) : 0;
+  if (covered <= 0) return "No dated sales history";
+  const days = Math.min(requestedDays, covered);
+  if (days < requestedDays) return `No sale in ${days} days of available history`;
+  return `No sale in ${requestedDays} days`;
+}
+
+export function forecastConfidenceWarning(input: {
+  confidence: ForecastConfidence;
+  status: PurchasingStatus;
+  suggestedQty: number;
+}): string | null {
+  if (!isLimitedForecastConfidence(input.confidence)) return null;
+  if (input.status === "OVERSTOCK") {
+    return "Potential overstock — indication based on limited sales history.";
+  }
+  if (input.status === "CRITICAL" || input.status === "REORDER" || input.suggestedQty > 0) {
+    return "Limited sales history — review before ordering.";
+  }
+  return "Limited sales history. Recommendations will improve as more Autopart sales data is imported.";
+}
+
+export function buildForecastConfidenceCopy(input: {
+  confidence: ForecastConfidence;
+  coverageDays: number;
+}): string {
+  const label = FORECAST_CONFIDENCE_LABEL[input.confidence].toLowerCase();
+  if (input.coverageDays <= 0) {
+    return "Forecast confidence is very low because no dated Autopart sales history is currently available. Missing history is not treated as zero demand. The recommendation will improve automatically as history is imported.";
+  }
+  const days =
+    input.coverageDays >= FORECAST_CONFIDENCE_MIN_DAYS.STRONG
+      ? "365+ days of sales history"
+      : `${Math.floor(input.coverageDays)} day${input.coverageDays === 1 ? "" : "s"} of sales history`;
+  if (input.confidence === "STRONG" || input.confidence === "GOOD") {
+    return `Forecast confidence is ${label} because ${days} ${input.coverageDays === 1 ? "is" : "are"} currently available. The recommendation uses the periods with sufficient data.`;
+  }
+  return `Forecast confidence is still ${label} because ${days} ${input.coverageDays === 1 ? "is" : "are"} currently available. The recommendation uses the periods with sufficient data and will automatically improve as more history is collected.`;
 }
 
 /**
@@ -355,6 +478,8 @@ export function resolvePurchasingStatus(input: {
   stockStale: boolean;
   estimatedStockoutDate: string | null;
   today: string;
+  /** Inclusive Autopart document coverage days — used only for no-sale wording, not status. */
+  salesHistoryCoverageDays?: number;
 }): { status: PurchasingStatus; reason: string } {
   if (input.stockStale) {
     return {
@@ -366,11 +491,16 @@ export function resolvePurchasingStatus(input: {
     return { status: "INSUFFICIENT_DATA", reason: "Not enough sales history to make a useful forecast." };
   }
   if (input.recommendedWeekly <= 0) {
+    const coverage = input.salesHistoryCoverageDays;
+    const noSaleReason =
+      coverage != null && coverage > 0
+        ? `Stock is on hand but there is no meaningful net demand in ${coverage} day${coverage === 1 ? "" : "s"} of available sales history.`
+        : "Stock is on hand but there is no meaningful recent net demand.";
     return {
       status: input.availableQty > 0 ? "NO_RECENT_DEMAND" : "INSUFFICIENT_DATA",
       reason:
         input.availableQty > 0
-          ? "Stock is on hand but there is no meaningful recent net demand."
+          ? noSaleReason
           : "No recommended demand and no current stock.",
     };
   }
@@ -456,6 +586,9 @@ export const DEMAND_TREND_LABEL: Record<DemandTrend, string> = {
   STRONGLY_DECREASING: "Strongly decreasing",
   INSUFFICIENT_DATA: "Insufficient data",
 };
+
+export const FORECAST_CONFIDENCE_HELP =
+  "Confidence reflects how much genuine sales history is available for the forecast. It does not measure stock accuracy. Stock freshness is shown separately. Very Low: under 30 days. Low: 30–89 days. Building: 90–179 days. Good: 180–364 days. Strong: 365+ days. Low confidence does not mean the calculation is incorrect — it means it is based on limited historical sales data.";
 
 export function buildWhyCopy(input: {
   weeksCover: number | null;

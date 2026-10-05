@@ -4,6 +4,8 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import {
   EmptyState,
   ErrorState,
+  ForecastConfidenceBadge,
+  ForecastCoverageBanner,
   FreshnessBanner,
   LoadingState,
   Pager,
@@ -95,11 +97,18 @@ function StockForecastPage() {
         crumbs={[{ label: "Purchasing" }, { label: "Stock Forecast" }]}
       />
       {data ? (
-        <FreshnessBanner
-          stockUpdated={data.freshness.stockUpdated}
-          salesUpdated={data.freshness.salesUpdated}
-          stockStale={data.freshness.stockStale}
-        />
+        <>
+          <FreshnessBanner
+            stockUpdated={data.freshness.stockUpdated}
+            salesUpdated={data.freshness.salesUpdated}
+            stockStale={data.freshness.stockStale}
+          />
+          <ForecastCoverageBanner
+            coverageDays={data.forecastCoverage.coverageDays}
+            confidence={data.forecastCoverage.confidence}
+            historyFrom={data.forecastCoverage.historyFrom}
+          />
+        </>
       ) : null}
       {error ? <ErrorState message={error} /> : null}
       <form
@@ -217,6 +226,7 @@ function StockForecastPage() {
                   <th className="px-3 py-2">Suggested order</th>
                   <th className="px-3 py-2">Latest cost</th>
                   <th className="px-3 py-2">Suggested value</th>
+                  <th className="px-3 py-2">Confidence</th>
                   <th className="px-3 py-2">Status</th>
                 </tr>
               </thead>
@@ -242,6 +252,13 @@ function StockForecastPage() {
                     <td className="px-3 py-2">{qty(row.purchase.suggestedQty)}</td>
                     <td className="px-3 py-2">{gbp(row.latestCost)}</td>
                     <td className="px-3 py-2">{gbp(row.suggestedValue)}</td>
+                    <td className="px-3 py-2">
+                      <ForecastConfidenceBadge
+                        confidence={row.forecastConfidence}
+                        coverageDays={row.salesHistoryCoverageDays}
+                        warning={row.forecastConfidenceWarning}
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <PurchasingStatusBadge status={row.status} />
                     </td>
