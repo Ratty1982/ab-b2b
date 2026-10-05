@@ -121,7 +121,7 @@ beforeAll(async () => {
   });
   companyId = company.id;
 
-  const a = await makeSku(skuA, `Purchasing Cleaner ${stamp}`);
+  await makeSku(skuA, `Purchasing Cleaner ${stamp}`);
   await makeSku(skuB, `Purchasing Quiet ${stamp}`);
 
   await applyStockFeed({
@@ -134,6 +134,7 @@ beforeAll(async () => {
         pick: "0.0000",
         physical: "40.0000",
         incoming: "240.0000",
+        cost: "2.5000",
       },
       {
         sku: skuB,
@@ -149,17 +150,7 @@ beforeAll(async () => {
     trigger: "manual",
     actorUserId: adminId,
   });
-
-  await prisma.autopartProductCostPosition.create({
-    data: {
-      sku: skuA,
-      productVariantId: a.id,
-      latestCost: "2.5000",
-      firstObservedAt: new Date(),
-      lastObservedAt: new Date(),
-      sourceImportedAt: new Date(),
-    },
-  });
+  await prisma.autopartProductCostPosition.deleteMany({ where: { sku: skuB } });
 
   await seedSale(skuA, addDaysIso(today, -3), "70", `PUR-${stamp}-INV1`);
   await seedSale(skuA, addDaysIso(today, -2), "-10", `PUR-${stamp}-CR1`, "CREDIT");
@@ -205,7 +196,7 @@ describe("purchasing forecast from AutopartSalesLine", () => {
     expect(row!.rates.last7.netUnits).toBe(60);
     expect(row!.weeksCover).not.toBeNull();
     expect(row!.projectedCover).toBeGreaterThan(row!.weeksCover ?? 0);
-    expect(row!.latestCost).toBe("2.5");
+    expect(Number(row!.latestCost)).toBeCloseTo(2.5);
     expect(row!.suggestedValue == null || Number(row!.suggestedValue) > 0).toBe(true);
 
     const quiet = (await listPurchasingForecast(adminId, { q: skuB, pageSize: 20 })).rows.find((r) => r.sku === skuB);

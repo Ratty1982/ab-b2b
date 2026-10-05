@@ -80,6 +80,13 @@ function sliceField(line: string, start: number, end: number): string {
   return line.slice(start, Math.min(end, line.length));
 }
 
+function sliceIncomingValue(line: string, start: number, end: number): string {
+  let i = Math.max(0, start);
+  while (i < line.length && /[\d.,]/.test(line[i]!)) i += 1;
+  const regionEnd = Number.isFinite(end) ? Math.min(end, line.length) : line.length;
+  return line.slice(i, regionEnd).trim().split(/\s+/)[0] ?? "";
+}
+
 export function looksLikeSkuToken(raw: string): boolean {
   const s = raw.trim();
   if (!s || s.length > 64) return false;
@@ -268,15 +275,18 @@ function detectUsageLayout(headerLine: string, _physicalStkEnd: number): UsageLa
 function detectIncomingLayout(
   headerLine: string,
   availStart: number,
+  physicalStkEnd: number,
 ): { start: number; end: number } | null {
-  const start = findLabelStart(headerLine, "Incoming");
-  if (start < 0) return null;
-  if (availStart >= 0 && start < availStart) return null;
+  const labelStart = findLabelStart(headerLine, "Incoming");
+  if (labelStart < 0) return null;
+  if (availStart >= 0 && labelStart < availStart) return null;
+  // Header proves Incoming exists; the value sits after Physical Stk (same as a printed report).
+  const start = physicalStkEnd > 0 ? physicalStkEnd : labelStart;
   const nextLabels = ["Ryr", "Curr", "Mth1", "Mth2", "Mth3"];
   const nextStarts = nextLabels
     .map((label) => findLabelStart(headerLine, label))
     .filter((idx) => idx > start);
-  const end = nextStarts.length ? Math.min(...nextStarts) : Math.max(headerLine.length, start + 12);
+  const end = nextStarts.length ? Math.min(...nextStarts) : Number.POSITIVE_INFINITY;
   return { start, end };
 }
 
@@ -455,7 +465,11 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
   const numeric = detectNumericLayout(lines, identity);
   if (!numeric) return AVAIL_FAIL;
   const usageLayout = detectUsageLayout(headerLine, numeric.physicalStkEnd);
-  const incomingLayout = detectIncomingLayout(headerLine, findLabelStart(headerLine, "Avail"));
+  const incomingLayout = detectIncomingLayout(
+    headerLine,
+    findLabelStart(headerLine, "Avail"),
+    numeric.physicalStkEnd,
+  );
 
   const rows: StagedStockRow[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -473,7 +487,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       : parseAvailCell("");
     const commercial = extractCommercialFields(line, identity, numeric, usageLayout);
     const incoming = incomingLayout
-      ? parseIncomingCell(sliceField(line, incomingLayout.start, incomingLayout.end))
+      ? parseIncomingCell(sliceIncomingValue(line, incomingLayout.start, incomingLayout.end))
       : undefined;
     rows.push({
       line: i + 1,

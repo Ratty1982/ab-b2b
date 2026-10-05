@@ -16,8 +16,15 @@ export function buildNative231Po3New(rows: Array<{
     const cost = row.cost ?? "1.41";
     const left = `  01    AA    ${row.sku.padEnd(22)} C ${row.description.padEnd(33)}`;
     const nums = `${cost}   ${row.stk}  ${row.avail}   ${row.pick}    ${row.physical}`;
-    const incoming = withIncoming ? `   ${(row.incoming ?? "").padStart(8)}` : "";
-    return left + nums + incoming;
+    let line = left + nums;
+    if (withIncoming) {
+      const incomingStart = header.indexOf("Incoming");
+      if (incomingStart >= 0) {
+        if (line.length > incomingStart) line = line.slice(0, incomingStart);
+        line = line.padEnd(incomingStart) + (row.incoming ?? "").padStart(8);
+      }
+    }
+    return line;
   });
   return [
     "Page : 1",

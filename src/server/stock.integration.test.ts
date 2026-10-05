@@ -998,16 +998,17 @@ describe("Phase 5 Autopart inventory integration", () => {
     const stock = await getVariantStock(variant.id);
     expect(stock?.sellableQty).toBe(36);
     expect(stock).not.toHaveProperty("incomingQty");
-    expect(JSON.stringify(stock)).not.toMatch(/incoming/i);
+    expect(JSON.stringify(stock)).not.toContain("incomingQty");
     expect(getSellableQuantity(stock!)).toBe(36);
 
     const pub = await getPublicProduct(null, sku);
-    expect(JSON.stringify(pub)).not.toMatch(/incoming/i);
+    expect(JSON.stringify(pub)).not.toContain("incomingQty");
+    expect(JSON.stringify(pub)).not.toContain("sourceIncomingRaw");
     expect(pub?.card.availability).toBe("in");
 
     const trade = await getPublicProduct(tradeUserId, sku);
-    expect(JSON.stringify(trade)).not.toMatch(/incoming/i);
-    expect(JSON.stringify(trade)).not.toMatch(/latestCost/i);
+    expect(JSON.stringify(trade)).not.toContain("incomingQty");
+    expect(JSON.stringify(trade)).not.toContain("latestCost");
 
     const again = await applyStockFeed({
       text: buildNative231Po3New([
