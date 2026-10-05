@@ -86,7 +86,7 @@ describe("native 231PO3NEW Incoming column", () => {
     ]);
     const parsed = parseAutopart231Po3New(text);
     if ("code" in parsed) throw new Error(parsed.message);
-    expect(parsed.incomingHeader).toBe("Incoming");
+    expect(parsed.incomingHeader).toBe("P/Ord Qty");
     const gc = parsed.rows.find((r) => r.sku === "GC5000");
     expect(gc?.avail).toMatchObject({ ok: true, value: 36 });
     expect(gc?.incoming).toEqual({ ok: true, value: 240, raw: "240.0000" });

@@ -12,6 +12,7 @@ import {
   coverLabel,
   gbp,
   incomingNote,
+  INCOMING_SOURCE_HINT,
   primaryBtnClass,
   qty,
   rate,
@@ -285,7 +286,9 @@ function PriorityTable({
               <tr>
                 <th className="px-3 py-2">Product</th>
                 <th className="px-3 py-2">Avail</th>
-                <th className="px-3 py-2">Incoming</th>
+                <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
+                  Incoming
+                </th>
                 <th className="px-3 py-2">Cover</th>
                 <th className="px-3 py-2">Suggested</th>
                 <th className="px-3 py-2">Value</th>

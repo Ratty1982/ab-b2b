@@ -18,6 +18,7 @@ import {
   parseForecastSearch,
   primaryBtnClass,
   qty,
+  INCOMING_SOURCE_HINT,
   type ForecastSearch,
   type ForecastSearchPatch,
 } from "@/components/purchasing/workspace";
@@ -237,7 +238,9 @@ function PurchasePlannerPage() {
                   <th className="px-3 py-2">Product</th>
                   <th className="px-3 py-2">SKU</th>
                   <th className="px-3 py-2">Available</th>
-                  <th className="px-3 py-2">Incoming</th>
+                  <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
+                    Incoming
+                  </th>
                   <th className="px-3 py-2">Forecast demand</th>
                   <th className="px-3 py-2">Target stock</th>
                   <th className="px-3 py-2">Suggested qty</th>

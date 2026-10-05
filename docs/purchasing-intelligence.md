@@ -40,7 +40,7 @@ Audited actions (not table views/filters): purchasing defaults, SKU purchasing s
 | Question | Source |
 | --- | --- |
 | Current sellable stock | 231PO3NEW **Avail** → `Inventory.qtyOnHand` |
-| Incoming / on order | 231PO3NEW **Incoming** → `Inventory.incomingQty` |
+| Incoming / on order | 231PO3NEW **P/Ord Qty** → `Inventory.incomingQty` (UI: Incoming) |
 | Demand | `AutopartSalesLine` signed net units via `AutopartSalesDocument.documentDate` (same financial source as Sales Intelligence) |
 | Latest Cost | Cost Intelligence `AutopartProductCostPosition` |
 | SKU purchasing params | `VariantPurchasingSettings` (null = not configured) |
@@ -51,16 +51,22 @@ Audited actions (not table views/filters): purchasing defaults, SKU purchasing s
 
 ## 231PO3NEW Incoming
 
-Incoming is detected by **header label**, not a guessed column offset. If the feed has no Incoming column, previous `incomingQty` is left unchanged.
+Incoming is outstanding quantity on purchase orders. The **source field is `P/Ord Qty`**, located by that header label in the fixed-width 231PO3NEW report (tolerates concatenated labels such as `P/Ord QtySub Grp`).
+
+**Do not** take the field after Physical Stk — that is `Ryr` / usage history.
+
+If a 231PO3NEW file has no recognised `P/Ord Qty` column, Incoming is **not** derived from another position. Avail is still imported. Previous `incomingQty` is left unchanged and the run records that Incoming could not be refreshed.
+
+When `P/Ord Qty` **is** present, a successful import **replaces** `incomingQty` for matched SKUs (including `0`), so one full import repairs values previously taken from the wrong column.
 
 | Cell | Behaviour |
 | --- | --- |
 | Positive integer (including `.0000`) | Persist as incoming qty |
 | `0` | Persist 0 |
-| Blank | Persist null (displayed as 0 on-order) |
-| Malformed / negative | **Skip Incoming update**; Avail is still applied |
+| Blank | Persist null (displayed as 0 on-order) — clears a previously wrong value |
+| Malformed / negative | **Skip Incoming update**; Avail is still applied; diagnostic recorded |
 
-**Avail = 36, Incoming = 240 → sellable stock is 36, not 276.**
+**Avail = 36, P/Ord Qty = 240 → sellable stock is 36, not 276.**
 
 Incoming is never exposed on public/trade catalogue, basket, or order availability APIs.
 

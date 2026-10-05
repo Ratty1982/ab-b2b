@@ -267,6 +267,18 @@ export async function applyStockFeed(input: {
             : incomingField.reason === "blank"
               ? { kind: "set" as const, qty: null, raw: incomingField.raw }
               : { kind: "skip" as const };
+      // Malformed/negative P/Ord Qty must not silently become 0 or leave Avail unapplied.
+      if (incomingField != null && !incomingField.ok && incomingField.reason !== "blank") {
+        issues.push({
+          kind: "INVALID",
+          severity: "IGNORED",
+          sku: row.row.sku,
+          description: row.row.description,
+          availRaw: row.row.availRaw,
+          message: `Incoming P/Ord Qty was ${incomingField.reason} and ignored (Avail unaffected)`,
+          line: row.row.line,
+        });
+      }
       toApply.push({
         variantId: hit.id,
         productId: hit.productId,
@@ -333,7 +345,7 @@ export async function applyStockFeed(input: {
                   : {}),
               },
               // Never reset qtyReserved — AB order reservations survive Autopart Avail sync.
-              // Incoming is purchasing-only and is never added to qtyOnHand.
+              // Incoming is purchasing-only (P/Ord Qty) and is never added to qtyOnHand.
               update: {
                 qtyOnHand: sellable,
                 status,
@@ -423,6 +435,20 @@ export async function applyStockFeed(input: {
     // errorSummary is actionable attention only — ignored INVALID/DUPLICATE stay on counters + StockSyncIssue.
     const errorSummary = stockAttentionSummary(actionableIssueCount + fatalIssueCount);
     const summary = catalogueMatchSummary({ matched, unmatched, invalid, duplicates });
+    const incomingHeader = parsed.incomingHeader;
+    const incomingRefreshed = Boolean(incomingHeader);
+    if (parsed.delimiter === "native" && !incomingRefreshed) {
+      issues.push({
+        kind: "INVALID",
+        severity: "IGNORED",
+        sku: null,
+        description: null,
+        availRaw: null,
+        message:
+          "Incoming could not be refreshed because P/Ord Qty was not present. Avail was still imported. Previous incomingQty values were left unchanged.",
+        line: null,
+      });
+    }
 
     await prisma.stockSyncIssue.createMany({
       data: issues.slice(0, ISSUE_CAP).map((issue) => ({
@@ -464,6 +490,8 @@ export async function applyStockFeed(input: {
       duplicates,
       status: finalStatus,
       summary,
+      incomingHeader,
+      incomingRefreshed,
       commercial,
     });
 
@@ -492,6 +520,8 @@ export async function applyStockFeed(input: {
       duplicates,
       summary,
       errorSummary,
+      incomingHeader,
+      incomingRefreshed,
       wouldChanges: changeDrafts.slice(0, WOULD_CHANGE_CAP).map(serializeWouldChange),
       commercial,
     };

@@ -16,6 +16,7 @@ import {
   parseForecastSearch,
   qty,
   ukDate,
+  INCOMING_SOURCE_HINT,
   type ForecastSearch,
   type ForecastSearchPatch,
 } from "@/components/purchasing/workspace";
@@ -143,7 +144,9 @@ function OverstockPage() {
                   <th className="px-3 py-2">Product</th>
                   <th className="px-3 py-2">SKU</th>
                   <th className="px-3 py-2">Available</th>
-                  <th className="px-3 py-2">Incoming</th>
+                  <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
+                    Incoming
+                  </th>
                   <th className="px-3 py-2">Last sale</th>
                   <th className="px-3 py-2">30d units</th>
                   <th className="px-3 py-2">90d units</th>

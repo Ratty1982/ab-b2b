@@ -36,7 +36,14 @@ export const STOCK_SKU_HEADERS = [
 
 export const STOCK_AVAIL_HEADERS = ["avail", "available", "availableqty", "qtyavail", "free", "freeqty"];
 
-export const STOCK_INCOMING_HEADERS = ["incoming", "onorder", "onorderqty"];
+export const STOCK_INCOMING_HEADERS = [
+  "incoming",
+  "onorder",
+  "onorderqty",
+  "p/ordqty",
+  "pordqty",
+  "outstandingpoqty",
+];
 
 export const STOCK_DESC_HEADERS = ["description", "desc", "name", "product", "title"];
 

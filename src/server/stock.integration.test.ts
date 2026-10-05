@@ -990,10 +990,30 @@ describe("Phase 5 Autopart inventory integration", () => {
       actorUserId: adminId,
     });
     expect(first.status).toBe("SUCCESS");
+    expect(first.incomingHeader).toBe("P/Ord Qty");
+    expect(first.incomingRefreshed).toBe(true);
     const inv1 = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(inv1.qtyOnHand).toBe(36);
     expect(inv1.incomingQty).toBe(240);
     expect(inv1.sourceIncomingRaw).toBe("240.0000");
+
+    // Previously wrong Incoming (e.g. Physical Stk / Ryr) is replaced by this P/Ord Qty import.
+    await prisma.inventory.update({
+      where: { variantId_warehouseId: { variantId: variant.id, warehouseId: inv1.warehouseId } },
+      data: { incomingQty: 41 },
+    });
+    const repaired = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "36.0000", pick: "0.0000", physical: "93.0000", incoming: "240.0000" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(repaired.status).toBe("SUCCESS");
+    const invRepaired = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(invRepaired.incomingQty).toBe(240);
+    expect(invRepaired.qtyOnHand).toBe(36);
 
     const stock = await getVariantStock(variant.id);
     expect(stock?.sellableQty).toBe(36);
@@ -1068,5 +1088,26 @@ describe("Phase 5 Autopart inventory integration", () => {
     const invBlank = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(invBlank.qtyOnHand).toBe(8);
     expect(invBlank.incomingQty).toBeNull();
+
+    await prisma.inventory.update({
+      where: { variantId_warehouseId: { variantId: variant.id, warehouseId: invBlank.warehouseId } },
+      data: { incomingQty: 41 },
+    });
+    const missingColumn = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "5.0000", pick: "0.0000", physical: "93.0000" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(missingColumn.status).toBe("SUCCESS");
+    expect(missingColumn.incomingHeader).toBeNull();
+    expect(missingColumn.incomingRefreshed).toBe(false);
+    const invMissing = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(invMissing.qtyOnHand).toBe(5);
+    expect(invMissing.incomingQty).toBe(41);
+    const missingIssues = await prisma.stockSyncIssue.findMany({ where: { runId: missingColumn.runId } });
+    expect(missingIssues.some((row) => /P\/Ord Qty was not present/i.test(row.message))).toBe(true);
   });
 });

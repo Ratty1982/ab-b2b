@@ -21,6 +21,7 @@ import {
   coverLabel,
   gbp,
   incomingNote,
+  INCOMING_SOURCE_HINT,
   primaryBtnClass,
   qty,
   rate,
@@ -159,7 +160,7 @@ function PurchasingSkuPage() {
             <h2 className="font-display text-lg font-semibold uppercase">Current position</h2>
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[13px]">
               <Fact label="Available (Avail)" value={qty(forecast.availableQty)} />
-              <Fact label="Incoming" value={incomingNote(forecast.incomingQty)} />
+              <Fact label="Incoming" value={incomingNote(forecast.incomingQty)} title={INCOMING_SOURCE_HINT} />
               <Fact label="Current cover" value={coverLabel(forecast.weeksCover, forecast.recommendedWeekly)} />
               <Fact
                 label="Cover incl. incoming"
@@ -252,7 +253,7 @@ function PurchasingSkuPage() {
                 value={forecast.leadTimeDemand == null ? "Lead time not set" : qty(forecast.leadTimeDemand)}
               />
               <Fact label="Safety stock" value={qty(forecast.safetyStockQty)} />
-              <Fact label="Incoming" value={incomingNote(forecast.incomingQty)} />
+              <Fact label="Incoming" value={incomingNote(forecast.incomingQty)} title={INCOMING_SOURCE_HINT} />
               <Fact label="Arrival" value="Not available" />
             </dl>
           </section>
@@ -263,7 +264,7 @@ function PurchasingSkuPage() {
               <Fact label="Target cover" value={`${forecast.targetCoverWeeks} weeks`} />
               <Fact label="Forecast target" value={qty(forecast.purchase.targetStock)} />
               <Fact label="Current available" value={`−${qty(forecast.availableQty)}`} />
-              <Fact label="Incoming" value={`−${qty(forecast.incomingQty)}`} />
+              <Fact label="Incoming" value={`−${qty(forecast.incomingQty)}`} title={INCOMING_SOURCE_HINT} />
               <Fact label="Raw additional requirement" value={qty(forecast.purchase.rawRequirement)} />
               <Fact label="After MOQ" value={qty(forecast.purchase.afterMoq)} />
               <Fact label="Suggested additional purchase" value={qty(forecast.purchase.suggestedQty)} />
@@ -419,9 +420,9 @@ function PurchasingSkuPage() {
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="border border-border bg-surface/50 px-3 py-2">
+    <div className="border border-border bg-surface/50 px-3 py-2" title={title}>
       <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">{label}</dt>
       <dd className="mt-1">{value}</dd>
     </div>

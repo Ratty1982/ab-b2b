@@ -136,6 +136,9 @@ export function incomingNote(qtyValue: number): string {
   return `${qtyValue.toLocaleString("en-GB")} on order — arrival date not available`;
 }
 
+/** Source hint for Incoming — outstanding Autopart PO qty (P/Ord Qty). */
+export const INCOMING_SOURCE_HINT = "Outstanding quantity on purchase orders from Autopart";
+
 export const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "", label: "All statuses" },
   ...Object.entries(PURCHASING_STATUS_LABEL).map(([value, label]) => ({ value, label })),

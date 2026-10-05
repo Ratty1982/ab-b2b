@@ -71,7 +71,18 @@ function findHeaderLine(lines: string[]): string | null {
 }
 
 function findLabelStart(header: string, label: string): number {
-  return header.search(new RegExp(label.replace(/\s+/g, "\\s+"), "i"));
+  return findLabelStartFrom(header, label, 0);
+}
+
+function findLabelStartFrom(header: string, label: string, from: number): number {
+  const escaped = label
+    .split(/\s+/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s*");
+  const re = new RegExp(escaped, "i");
+  const slice = from > 0 ? header.slice(from) : header;
+  const match = re.exec(slice);
+  return match ? from + match.index : -1;
 }
 
 function sliceField(line: string, start: number, end: number): string {
@@ -80,11 +91,10 @@ function sliceField(line: string, start: number, end: number): string {
   return line.slice(start, Math.min(end, line.length));
 }
 
+/** Slice the P/Ord Qty fixed-width region. Do not skip leftover digits from earlier columns. */
 function sliceIncomingValue(line: string, start: number, end: number): string {
-  let i = Math.max(0, start);
-  while (i < line.length && /[\d.,]/.test(line[i]!)) i += 1;
   const regionEnd = Number.isFinite(end) ? Math.min(end, line.length) : line.length;
-  return line.slice(i, regionEnd).trim().split(/\s+/)[0] ?? "";
+  return sliceField(line, start, regionEnd).trim();
 }
 
 export function looksLikeSkuToken(raw: string): boolean {
@@ -268,25 +278,27 @@ function detectUsageLayout(headerLine: string, _physicalStkEnd: number): UsageLa
   };
 }
 
+const P_ORD_QTY_LABEL_RE = /P\s*\/\s*Ord\s*Qty/i;
+
 /**
- * Incoming is located by the header label, never by guessing offsets.
- * Refused if Incoming appears before Avail so it cannot collide with sellable qty.
+ * Outstanding PO qty is the 231PO3NEW **P/Ord Qty** column.
+ * Never use the field after Physical Stk (that is Ryr / usage history).
+ * Never invent Incoming from a positional fallback if P/Ord Qty is absent.
+ * Tolerates concatenated fixed-width labels such as `P/Ord QtySub Grp`.
  */
 function detectIncomingLayout(
   headerLine: string,
   availStart: number,
-  physicalStkEnd: number,
 ): { start: number; end: number } | null {
-  const labelStart = findLabelStart(headerLine, "Incoming");
-  if (labelStart < 0) return null;
-  if (availStart >= 0 && labelStart < availStart) return null;
-  // Header proves Incoming exists; the value sits after Physical Stk (same as a printed report).
-  const start = physicalStkEnd > 0 ? physicalStkEnd : labelStart;
-  const nextLabels = ["Ryr", "Curr", "Mth1", "Mth2", "Mth3"];
-  const nextStarts = nextLabels
-    .map((label) => findLabelStart(headerLine, label))
-    .filter((idx) => idx > start);
-  const end = nextStarts.length ? Math.min(...nextStarts) : Number.POSITIVE_INFINITY;
+  const match = P_ORD_QTY_LABEL_RE.exec(headerLine);
+  if (!match) return null;
+  const start = match.index;
+  if (availStart >= 0 && start < availStart) return null;
+  const after = start + match[0]!.length;
+  const subGrp = findLabelStartFrom(headerLine, "Sub Grp", after);
+  const group = findLabelStartFrom(headerLine, "GROUP", after);
+  const ends = [subGrp, group].filter((idx) => idx > start);
+  const end = ends.length ? Math.min(...ends) : Number.POSITIVE_INFINITY;
   return { start, end };
 }
 
@@ -465,11 +477,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
   const numeric = detectNumericLayout(lines, identity);
   if (!numeric) return AVAIL_FAIL;
   const usageLayout = detectUsageLayout(headerLine, numeric.physicalStkEnd);
-  const incomingLayout = detectIncomingLayout(
-    headerLine,
-    findLabelStart(headerLine, "Avail"),
-    numeric.physicalStkEnd,
-  );
+  const incomingLayout = detectIncomingLayout(headerLine, findLabelStart(headerLine, "Avail"));
 
   const rows: StagedStockRow[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -507,7 +515,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     delimiter: "native",
     skuHeader: "Part Number",
     availHeader: "Avail",
-    incomingHeader: incomingLayout ? "Incoming" : null,
+    incomingHeader: incomingLayout ? "P/Ord Qty" : null,
     rows,
   };
 }

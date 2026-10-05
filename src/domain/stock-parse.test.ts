@@ -4,11 +4,12 @@ import { classifyStockRows, parseAutopart231Po3New, parseAvailCell } from "@/dom
 const HEADER = "SKU,Description,Avail";
 
 describe("231PO3NEW parser", () => {
-  it("reads SKU and Avail with quoted fields", () => {
-    const parsed = parseAutopart231Po3New(`${HEADER}\n"GC5000","Cleaner, 5L",36`);
+  it("reads CSV P/Ord Qty as Incoming without changing Avail", () => {
+    const parsed = parseAutopart231Po3New("SKU,Description,Avail,P/Ord Qty\nGC5000,Cleaner,36,240");
     if ("code" in parsed) throw new Error(parsed.message);
-    expect(parsed.rows[0]?.sku).toBe("GC5000");
+    expect(parsed.incomingHeader).toBe("P/Ord Qty");
     expect(parsed.rows[0]?.avail).toEqual({ ok: true, value: 36, raw: "36" });
+    expect(parsed.rows[0]?.incoming).toEqual({ ok: true, value: 240, raw: "240" });
   });
 
   it("fails when Avail header is missing", () => {

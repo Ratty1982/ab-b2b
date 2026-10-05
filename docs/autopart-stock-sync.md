@@ -4,7 +4,7 @@ Automotive Brands treats **231PO3NEW `Avail`** as the authoritative sellable qua
 
 This is **not** physical stock minus LOCENQ. LOCENQ is not used. `Stk`, `Pick Qty`, and `Physical Stk` are never sellable.
 
-**Incoming** (on-order quantity) is captured from the same 231PO3NEW report when the Incoming header is present. It is **purchasing information only**. Incoming is never added to `qtyOnHand`, sellable stock, customer stock bands, basket availability, or order reservations. There is no invented ETA. See [purchasing-intelligence.md](./purchasing-intelligence.md).
+**Incoming** (outstanding purchase-order quantity) is captured from the same 231PO3NEW report **P/Ord Qty** column. The UI label is Incoming. It is **purchasing information only**. Incoming is never added to `qtyOnHand`, sellable stock, customer stock bands, basket availability, or order reservations. There is no invented ETA. The field immediately after Physical Stk is usage history (Ryr), not Incoming. See [purchasing-intelligence.md](./purchasing-intelligence.md).
 
 **Production source is EMAIL / IMAP**, matching the current AlphaOps mailbox architecture (reimplemented independently with `imapflow` + `mailparser`). FTP/HTTP/file remain diagnostic adapters only.
 
@@ -59,7 +59,7 @@ Dedupe: `Message-ID|UID` (UID required). Message-ID alone is not unique. Dry-run
 
 Printed Autopart report (fixed-width), not a simple CSV. Positive detection requires title `(231PO3NEW)` or a header with **Part Number + Stk + Avail + Pick Qty**. Filename is not enough.
 
-Native parser reads **Avail** as sellable stock authority. The same report also carries **Latest Cost** and stock/usage columns (`Stk`, `Pick Qty`, `Physical Stk`, and optionally `Ryr` / `Curr` / `Mth1…`) which AB captures for **internal commercial intelligence** only — see [Product cost intelligence](#product-cost-intelligence-from-231po3new) below. Manual CSV/TSV upload still uses the Phase 5 delimited parser (Avail only; no cost).
+Native parser reads **Avail** as sellable stock authority. The same report also carries **Latest Cost**, stock/usage columns (`Stk`, `Pick Qty`, `Physical Stk`, and optionally `Ryr` / `Curr` / `Mth1…`), and **P/Ord Qty** (outstanding PO → purchasing Incoming). Manual CSV/TSV upload still uses the Phase 5 delimited parser (Avail; Incoming only if a recognised Incoming/P/Ord Qty column is present).
 
 ## Avail rule
 

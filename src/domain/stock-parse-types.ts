@@ -39,7 +39,10 @@ export type StagedStockRow = {
   /** Present on native 231PO3NEW; absent on delimited CSV uploads. */
   latestCost?: ParsedLatestCost;
   usage?: StagedUsageFields;
-  /** Present when the feed has an Incoming column; independent of Avail. */
+  /**
+   * Present when the feed has outstanding-PO Incoming (native P/Ord Qty or CSV Incoming).
+   * Independent of Avail.
+   */
   incoming?: ParsedIncoming;
 };
 
@@ -52,7 +55,7 @@ export type StockParseSuccess = {
   delimiter: string;
   skuHeader: string;
   availHeader: string;
-  /** Header label when Incoming was detected; null if the feed has no Incoming column. */
+  /** Source header when Incoming was detected (`P/Ord Qty` on native 231PO3NEW); null if absent. */
   incomingHeader: string | null;
   rows: StagedStockRow[];
 };
@@ -70,8 +73,9 @@ export function parseAvailCell(raw: string): ParsedAvail {
 }
 
 /**
- * 231PO3NEW Incoming — on-order quantity. Independent of Avail.
- * blank/missing: not applied; invalid/negative: ignored (Avail still applied).
+ * Incoming — outstanding purchase-order quantity. Independent of Avail.
+ * Native 231PO3NEW source field is P/Ord Qty (UI label remains Incoming).
+ * blank: persist null (clears previous Incoming); invalid/negative: skip Incoming, Avail still applied.
  */
 export type ParsedIncoming =
   | { ok: true; value: number; raw: string }

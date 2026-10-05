@@ -1118,9 +1118,9 @@ model Inventory {
   externalSyncedAt DateTime?
   /// Raw Avail from 231PO3NEW for diagnostics (may be negative); qtyOnHand is the clamped Avail.
   sourceAvailRaw   String?
-  /// Latest 231PO3NEW Incoming (on-order qty). Purchasing only — never added to sellable stock.
+  /// Latest 231PO3NEW P/Ord Qty (outstanding PO). Purchasing Incoming — never added to sellable stock.
   incomingQty      Int?
-  /// Raw Incoming cell from 231PO3NEW for diagnostics.
+  /// Raw P/Ord Qty cell from 231PO3NEW for diagnostics.
   sourceIncomingRaw String?
 
   variant      ProductVariant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
