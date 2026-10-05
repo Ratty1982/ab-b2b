@@ -1,5 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
+import {
+  appliedCatalogueNav,
+  catalogueSidebarContext,
+  productsIndexLoaderDeps,
+  productsListingFnInput,
+} from "@/domain/public-catalogue-nav";
 import { getClientSession } from "@/server/auth/session";
 import { listPublicCatalogueFn } from "@/server/phase2/fns";
 
@@ -11,28 +17,34 @@ export const Route = createFileRoute("/products/")({
     if (typeof search["page"] === "string" || typeof search["page"] === "number") out.page = Number(search["page"]);
     return out;
   },
-  loader: async ({ location }) => {
-    const search = location.search as { brand?: string; q?: string; page?: number };
+  loaderDeps: ({ search }) => productsIndexLoaderDeps(search),
+  loader: async ({ deps }) => {
     const [requestSession, result] = await Promise.all([
       getClientSession(),
       listPublicCatalogueFn({
-        data: { brandSlug: search.brand, q: search.q, page: search.page },
+        data: productsListingFnInput(deps),
       }),
     ]);
+    const applied = {
+      appliedBrandSlug: deps.brand || null,
+      ...(deps.q ? { appliedQ: deps.q } : {}),
+    };
     if (!result.ok) {
       return {
         items: [],
         total: 0,
         brands: [],
         categories: [],
+        categorySlugsByBrand: {},
         category: null,
         page: 1,
         pageSize: 24,
         error: result.error,
         requestSession,
+        ...applied,
       };
     }
-    return { ...result.data, error: null, requestSession };
+    return { ...result.data, error: null, requestSession, ...applied };
   },
   headers: () => ({
     "Cache-Control": "private, no-store",
@@ -51,14 +63,21 @@ export const Route = createFileRoute("/products/")({
 
 function Catalogue() {
   const data = Route.useLoaderData();
-  const search = Route.useSearch();
-  const brandName = data.brands.find((b) => b.slug === search.brand)?.name;
+  const brandName = data.brands.find((b) => b.slug === data.appliedBrandSlug)?.name;
+  const context = catalogueSidebarContext(
+    appliedCatalogueNav({
+      brandSlug: data.appliedBrandSlug,
+      q: data.appliedQ,
+      categories: data.categories,
+      categorySlugsByBrand: data.categorySlugsByBrand,
+    }),
+  );
   return (
     <PublicCatalogueShell
       data={data}
       heading={brandName ? `${brandName} catalogue` : "Trade Catalogue"}
       breadcrumbs={[{ label: "Home", to: "/" }, { label: "Products" }]}
-      context={{ brandSlug: search.brand, q: search.q }}
+      context={context}
       searchAction="/products"
       requestSession={data.requestSession}
     />

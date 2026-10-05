@@ -173,3 +173,159 @@ export function resolveAllBrandsTarget(ctx: {
   }
   return { to: "/products", search };
 }
+
+function listingPage(page?: number): number {
+  return typeof page === "number" && Number.isFinite(page) && page > 1 ? page : 1;
+}
+
+export type ProductsListingLoaderDeps = {
+  brand: string;
+  q: string;
+  page: number;
+};
+
+export type ProductsCategoryLoaderDeps = ProductsListingLoaderDeps & {
+  categorySlug: string;
+};
+
+export type BrandPageLoaderDeps = {
+  q: string;
+  page: number;
+  category: string;
+};
+
+/** Search fields that must change the `/products/` loader cache key. */
+export function productsIndexLoaderDeps(search: {
+  brand?: string;
+  q?: string;
+  page?: number;
+}): ProductsListingLoaderDeps {
+  return { brand: search.brand ?? "", q: search.q ?? "", page: listingPage(search.page) };
+}
+
+/** Search fields that must change the `/products/category/$slug` loader cache key. */
+export function productsCategoryLoaderDeps(
+  search: { brand?: string; q?: string; page?: number },
+  categorySlug: string,
+): ProductsCategoryLoaderDeps {
+  return { ...productsIndexLoaderDeps(search), categorySlug };
+}
+
+/**
+ * Search fields that must change the `/brands/$slug` loader cache key.
+ * Path params already participate in the match id; category/q/page do not unless listed here.
+ */
+export function brandPageLoaderDeps(search: {
+  q?: string;
+  page?: number;
+  category?: string;
+}): BrandPageLoaderDeps {
+  return { q: search.q ?? "", page: listingPage(search.page), category: search.category ?? "" };
+}
+
+/** Same identity TanStack Router uses: route id + interpolated path + JSON.stringify(loaderDeps). */
+export function catalogueRouteMatchId(
+  routeId: string,
+  interpolatedPath: string,
+  loaderDeps: unknown,
+): string {
+  return routeId + interpolatedPath + (loaderDeps ? JSON.stringify(loaderDeps) : "");
+}
+
+export type AppliedCatalogueNav = {
+  brandSlug: string | null;
+  categorySlug: string | null;
+  q: string | undefined;
+  brandRoute: boolean;
+  categories: PublicCategoryNavNode[];
+  categorySlugsByBrand: Record<string, string[]>;
+};
+
+/** Chrome for a completed loader — never mix destination URL search into this object. */
+export function appliedCatalogueNav(input: {
+  brandSlug?: string | null | undefined;
+  categorySlug?: string | null | undefined;
+  q?: string | null | undefined;
+  brandRoute?: boolean;
+  categories: PublicCategoryNavNode[];
+  categorySlugsByBrand?: Record<string, string[]>;
+}): AppliedCatalogueNav {
+  return {
+    brandSlug: input.brandSlug || null,
+    categorySlug: input.categorySlug || null,
+    q: input.q || undefined,
+    brandRoute: Boolean(input.brandRoute),
+    categories: input.categories,
+    categorySlugsByBrand: input.categorySlugsByBrand ?? {},
+  };
+}
+
+export function catalogueSidebarContext(nav: AppliedCatalogueNav): {
+  brandSlug: string | undefined;
+  categorySlug: string | undefined;
+  q: string | undefined;
+  brandRoute: boolean;
+  categorySlugsByBrand: Record<string, string[]>;
+} {
+  return {
+    brandSlug: nav.brandSlug ?? undefined,
+    categorySlug: nav.categorySlug ?? undefined,
+    q: nav.q,
+    brandRoute: nav.brandRoute,
+    categorySlugsByBrand: nav.categorySlugsByBrand,
+  };
+}
+
+/**
+ * True when the highlighted brand cannot own the category tree currently being shown.
+ * Used to catch URL-search / stale-loader splits after a completed navigation.
+ */
+export function activeBrandMismatchesCategoryTree(nav: {
+  brandSlug: string | null;
+  categories: PublicCategoryNavNode[];
+  categorySlugsByBrand: Record<string, string[]>;
+}): boolean {
+  if (!nav.brandSlug) return false;
+  const allowed = nav.categorySlugsByBrand[nav.brandSlug];
+  if (!allowed) return false;
+  const allowedSet = new Set(allowed);
+  return flattenCategorySlugs(nav.categories).some((slug) => !allowedSet.has(slug));
+}
+
+export function productsListingFnInput(deps: ProductsListingLoaderDeps): {
+  brandSlug?: string;
+  q?: string;
+  page?: number;
+} {
+  return {
+    ...(deps.brand ? { brandSlug: deps.brand } : {}),
+    ...(deps.q ? { q: deps.q } : {}),
+    ...(deps.page > 1 ? { page: deps.page } : {}),
+  };
+}
+
+export function productsCategoryFnInput(deps: ProductsCategoryLoaderDeps): {
+  brandSlug?: string;
+  categorySlug: string;
+  q?: string;
+  page?: number;
+} {
+  return { ...productsListingFnInput(deps), categorySlug: deps.categorySlug };
+}
+
+export function brandPageFnInput(
+  slug: string,
+  deps: BrandPageLoaderDeps,
+): {
+  slug: string;
+  q?: string;
+  page?: number;
+  categorySlug?: string;
+} {
+  return {
+    slug,
+    ...(deps.q ? { q: deps.q } : {}),
+    ...(deps.page > 1 ? { page: deps.page } : {}),
+    ...(deps.category ? { categorySlug: deps.category } : {}),
+  };
+}

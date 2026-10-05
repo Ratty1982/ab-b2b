@@ -217,4 +217,36 @@ describe("product detail catalogue navigation", () => {
     expect(productSrc).toContain('by: ["brandId", "categoryId"]');
     expect(productSrc).toContain("loadPublicCatalogueNav({ brandSlug: input.brandSlug })");
   });
+
+  it("revalidates listing loaders from brand/search deps and wires categorySlugsByBrand into sidebar context", () => {
+    const productsIndex = readFileSync(path.join(process.cwd(), "src/routes/products.index.tsx"), "utf8");
+    const productsCategory = readFileSync(path.join(process.cwd(), "src/routes/products.category.$slug.tsx"), "utf8");
+    const brandPage = readFileSync(path.join(process.cwd(), "src/routes/brands.$slug.tsx"), "utf8");
+    const shellSrc = readFileSync(path.join(process.cwd(), "src/components/public/PublicCatalogueShell.tsx"), "utf8");
+
+    expect(productsIndex).toContain("loaderDeps:");
+    expect(productsIndex).toContain("productsIndexLoaderDeps");
+    expect(productsIndex).toContain("appliedBrandSlug");
+    expect(productsIndex).toContain("categorySlugsByBrand");
+    expect(productsIndex).toContain("catalogueSidebarContext");
+    expect(productsIndex).not.toContain("brandSlug: search.brand");
+    expect(productsIndex).not.toContain("location.search");
+
+    expect(productsCategory).toContain("loaderDeps:");
+    expect(productsCategory).toContain("productsIndexLoaderDeps");
+    expect(productsCategory).toContain("appliedBrandSlug");
+    expect(productsCategory).toContain("categorySlugsByBrand");
+    expect(productsCategory).not.toContain("brandSlug: search.brand");
+    expect(productsCategory).not.toContain("location.search");
+
+    expect(brandPage).toContain("loaderDeps:");
+    expect(brandPage).toContain("brandPageLoaderDeps");
+    expect(brandPage).toContain("categorySlugsByBrand");
+    expect(brandPage).toContain("brand.slug");
+    expect(brandPage).not.toContain("location.search");
+    expect(brandPage).not.toContain("categorySlug: search.category");
+
+    expect(shellSrc).toContain("data.categorySlugsByBrand");
+    expect(shellSrc).toContain("categorySlugsByBrand: data.categorySlugsByBrand");
+  });
 });

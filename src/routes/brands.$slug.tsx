@@ -1,5 +1,11 @@
 import { createFileRoute, Link, notFound, redirect } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
+import {
+  appliedCatalogueNav,
+  brandPageFnInput,
+  brandPageLoaderDeps,
+  catalogueSidebarContext,
+} from "@/domain/public-catalogue-nav";
 import { mediaContainClass } from "@/lib/media-presentation";
 import { cn } from "@/lib/utils";
 import { getClientSession } from "@/server/auth/session";
@@ -13,25 +19,34 @@ export const Route = createFileRoute("/brands/$slug")({
     if (typeof search["page"] === "string" || typeof search["page"] === "number") out.page = Number(search["page"]);
     return out;
   },
-  loader: async ({ params, location }) => {
-    const search = location.search as { q?: string; page?: number; category?: string };
+  loaderDeps: ({ search }) => brandPageLoaderDeps(search),
+  loader: async ({ params, deps }) => {
     const [requestSession, result] = await Promise.all([
       getClientSession(),
       getPublicBrandFn({
-        data: { slug: params.slug, q: search.q, page: search.page, categorySlug: search.category },
+        data: brandPageFnInput(params.slug, deps),
       }),
     ]);
     if (!result.ok || !result.data) throw notFound();
-    if (search.category && result.data.catalogue.categoryInBrandScope === false) {
+    if (deps.category && result.data.catalogue.categoryInBrandScope === false) {
       throw redirect({
         to: "/brands/$slug",
         params: { slug: params.slug },
         search: {
-          ...(search.q ? { q: search.q } : {}),
+          ...(deps.q ? { q: deps.q } : {}),
         },
       });
     }
-    return { ...result.data, requestSession };
+    return {
+      ...result.data,
+      requestSession,
+      ...(deps.q ? { appliedQ: deps.q } : {}),
+      ...(result.data.catalogue.category?.slug
+        ? { appliedCategorySlug: result.data.catalogue.category.slug }
+        : deps.category
+          ? { appliedCategorySlug: deps.category }
+          : {}),
+    };
   },
   headers: () => ({
     "Cache-Control": "private, no-store",
@@ -98,12 +113,21 @@ function BrandLanding({
 
 function BrandPage() {
   const brand = Route.useLoaderData();
-  const search = Route.useSearch();
+  const context = catalogueSidebarContext(
+    appliedCatalogueNav({
+      brandSlug: brand.slug,
+      q: brand.appliedQ,
+      brandRoute: true,
+      categorySlug: brand.appliedCategorySlug,
+      categories: brand.catalogue.categories,
+      categorySlugsByBrand: brand.catalogue.categorySlugsByBrand,
+    }),
+  );
   return (
     <PublicCatalogueShell
       data={{ ...brand.catalogue, error: null }}
       heading={
-        search.category && brand.catalogue.category
+        brand.appliedCategorySlug && brand.catalogue.category
           ? `${brand.name} · ${brand.catalogue.category.name}`
           : brand.name
       }
@@ -113,11 +137,11 @@ function BrandPage() {
         { label: "Brands", to: "/brands" },
         { label: brand.name },
       ]}
-      context={{ brandSlug: brand.slug, q: search.q, brandRoute: true, categorySlug: search.category }}
+      context={context}
       searchAction={`/brands/${brand.slug}`}
       requestSession={brand.requestSession}
       leading={
-        !search.category && !search.q ? (
+        !brand.appliedCategorySlug && !brand.appliedQ ? (
           <BrandLanding
             name={brand.name}
             slug={brand.slug}

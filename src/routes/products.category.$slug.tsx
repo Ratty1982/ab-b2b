@@ -1,5 +1,11 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { PublicCatalogueShell } from "@/components/public/PublicCatalogueShell";
+import {
+  appliedCatalogueNav,
+  catalogueSidebarContext,
+  productsCategoryFnInput,
+  productsIndexLoaderDeps,
+} from "@/domain/public-catalogue-nav";
 import { getClientSession } from "@/server/auth/session";
 import { listPublicCatalogueFn } from "@/server/phase2/fns";
 
@@ -11,30 +17,30 @@ export const Route = createFileRoute("/products/category/$slug")({
     if (typeof search["page"] === "string" || typeof search["page"] === "number") out.page = Number(search["page"]);
     return out;
   },
-  loader: async ({ params, location }) => {
-    const search = location.search as { brand?: string; q?: string; page?: number };
+  loaderDeps: ({ search }) => productsIndexLoaderDeps(search),
+  loader: async ({ params, deps }) => {
+    const listingDeps = { ...deps, categorySlug: params.slug };
     const [requestSession, result] = await Promise.all([
       getClientSession(),
       listPublicCatalogueFn({
-        data: {
-          categorySlug: params.slug,
-          brandSlug: search.brand,
-          q: search.q,
-          page: search.page,
-        },
+        data: productsCategoryFnInput(listingDeps),
       }),
     ]);
+    const applied = {
+      appliedBrandSlug: listingDeps.brand || null,
+      ...(listingDeps.q ? { appliedQ: listingDeps.q } : {}),
+    };
     if (!result.ok || !result.data.category) throw notFound();
-    if (search.brand && result.data.categoryInBrandScope === false) {
+    if (listingDeps.brand && result.data.categoryInBrandScope === false) {
       throw redirect({
         to: "/products",
         search: {
-          brand: search.brand,
-          ...(search.q ? { q: search.q } : {}),
+          brand: listingDeps.brand,
+          ...(listingDeps.q ? { q: listingDeps.q } : {}),
         },
       });
     }
-    return { ...result.data, error: null as string | null, requestSession };
+    return { ...result.data, error: null as string | null, requestSession, ...applied };
   },
   headers: () => ({
     "Cache-Control": "private, no-store",
@@ -47,8 +53,16 @@ export const Route = createFileRoute("/products/category/$slug")({
 
 function CategoryPage() {
   const data = Route.useLoaderData();
-  const search = Route.useSearch();
   const category = data.category!;
+  const context = catalogueSidebarContext(
+    appliedCatalogueNav({
+      brandSlug: data.appliedBrandSlug,
+      categorySlug: category.slug,
+      q: data.appliedQ,
+      categories: data.categories,
+      categorySlugsByBrand: data.categorySlugsByBrand,
+    }),
+  );
   return (
     <PublicCatalogueShell
       data={data}
@@ -58,7 +72,7 @@ function CategoryPage() {
         { label: "Products", to: "/products" },
         { label: category.name },
       ]}
-      context={{ brandSlug: search.brand, categorySlug: category.slug, q: search.q }}
+      context={context}
       searchAction={`/products/category/${category.slug}`}
       requestSession={data.requestSession}
     />
