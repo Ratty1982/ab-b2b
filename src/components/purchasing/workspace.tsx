@@ -56,6 +56,7 @@ export function PurchasingStatusBadge({ status }: { status: PurchasingStatus }) 
 }
 
 function confidenceTone(confidence: ForecastConfidence): Tone {
+  if (confidence === "UNVERIFIED") return "warn";
   if (confidence === "VERY_LOW") return "bad";
   if (confidence === "LOW") return "warn";
   if (confidence === "BUILDING") return "info";
@@ -67,18 +68,22 @@ export function ForecastConfidenceBadge({
   confidence,
   coverageDays,
   warning,
+  verified,
 }: {
   confidence: ForecastConfidence;
   coverageDays?: number;
   warning?: string | null;
+  verified?: boolean;
 }) {
   const title =
-    warning ||
-    (coverageDays != null
-      ? coverageDays <= 0
-        ? "No dated Autopart sales history is currently available."
-        : `Based on ${coverageDays >= 365 ? "365+" : coverageDays} days of available sales history.`
-      : FORECAST_CONFIDENCE_HELP);
+    confidence === "UNVERIFIED" || verified === false
+      ? "Historical sales records are present, but complete sales-data coverage has not yet been verified."
+      : warning ||
+        (coverageDays != null
+          ? coverageDays <= 0
+            ? "No verified Autopart sales-history window is currently configured."
+            : `Based on ${coverageDays >= 365 ? "365+" : coverageDays} days of verified sales history.`
+          : FORECAST_CONFIDENCE_HELP);
   return (
     <StatusBadge tone={confidenceTone(confidence)} className="normal-case tracking-normal">
       <span title={title}>{FORECAST_CONFIDENCE_LABEL[confidence]}</span>
@@ -90,30 +95,63 @@ export function ForecastCoverageBanner({
   coverageDays,
   confidence,
   historyFrom,
+  verified,
+  verifiedFrom,
+  verifiedTo,
 }: {
   coverageDays: number;
   confidence: ForecastConfidence;
   historyFrom?: string | null;
+  verified?: boolean;
+  verifiedFrom?: string | null;
+  verifiedTo?: string | null;
 }) {
+  const from = verifiedFrom ?? historyFrom ?? null;
+  const to = verifiedTo ?? null;
+  const unverified = confidence === "UNVERIFIED" || verified === false;
   const building = isLimitedForecastConfidence(confidence) || confidence === "BUILDING";
   return (
     <div className="border-b border-border/70 px-4 py-3 text-[13px] text-steel sm:px-6">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="font-semibold uppercase tracking-[0.12em] text-[10px] text-ink">Forecast data coverage</span>
-        <ForecastConfidenceBadge confidence={confidence} coverageDays={coverageDays} />
-        <span>{formatSalesHistoryCoverage(coverageDays)}</span>
+        <ForecastConfidenceBadge
+          confidence={confidence}
+          coverageDays={coverageDays}
+          verified={!unverified}
+        />
+        {unverified ? (
+          <span>Coverage not verified</span>
+        ) : (
+          <>
+            <span>{formatSalesHistoryCoverage(coverageDays, true)}</span>
+            {from && to ? (
+              <span>
+                Verified sales history: {ukDate(from)} → {ukDate(to)}
+              </span>
+            ) : null}
+          </>
+        )}
       </div>
       <p className="mt-1 max-w-3xl">
-        {building
-          ? "Sales history is still building. Purchasing recommendations use the history currently available and will become more reliable as additional Autopart sales data is imported."
-          : "Purchasing recommendations use the Autopart sales history currently available."}{" "}
+        {unverified
+          ? "Sales-history coverage has not yet been verified. Forecasts are based on the sales records currently available and should be reviewed before purchasing decisions."
+          : building
+            ? "Verified sales history is still building. Purchasing recommendations use the verified window currently configured and will become more reliable as that window grows."
+            : "Purchasing recommendations use the verified Autopart sales-history window currently configured."}{" "}
         Confidence does not measure stock accuracy — stock freshness is shown separately.
       </p>
       <details className="mt-1">
         <summary className="cursor-pointer text-[12px] text-primary">What does confidence mean?</summary>
         <p className="mt-1 max-w-3xl text-[12px]">{FORECAST_CONFIDENCE_HELP}</p>
-        {historyFrom ? (
-          <p className="mt-1 text-[12px]">Earliest dated Autopart sales document in this database: {historyFrom}.</p>
+        {unverified ? (
+          <p className="mt-1 text-[12px]">
+            An old Autopart invoice proves that invoice exists. It does not prove every invoice between that date and
+            today has been imported.
+          </p>
+        ) : from && to ? (
+          <p className="mt-1 text-[12px]">
+            Verified sales history: {ukDate(from)} → {ukDate(to)} ({coverageDays} day{coverageDays === 1 ? "" : "s"}).
+          </p>
         ) : null}
       </details>
     </div>

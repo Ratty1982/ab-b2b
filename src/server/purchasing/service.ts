@@ -8,7 +8,7 @@ import { AuthError, requirePurchasingAccess, requireSystemPermission } from "@/s
 import { AUTOPART_WAREHOUSE_CODE } from "@/domain/stock";
 import { stockFreshness } from "@/server/stock/service";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
-import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
+import { addDaysIso, dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
   DEFAULT_PURCHASING_SETTINGS,
@@ -22,6 +22,7 @@ import {
   estimatedStockoutDate,
   forecastConfidenceWarning,
   leadTimeDemandUnits,
+  parseVerifiedSalesHistoryFrom,
   periodDemand,
   projectedWeeksOfCover,
   reorderPointUnits,
@@ -42,6 +43,7 @@ import {
   type VariantPurchasingParams,
 } from "@/domain/purchasing-forecast";
 import {
+  clipRangeToVerified,
   coverageDaysForPeriod,
   demandSourcesForSku,
   latestSalesUpdatedAt,
@@ -77,6 +79,9 @@ export async function loadPurchasingSettings(): Promise<PurchasingSystemSettings
     criticalCoverWeeks: num(row.criticalCoverWeeks, DEFAULT_PURCHASING_SETTINGS.criticalCoverWeeks),
     watchCoverWeeks: num(row.watchCoverWeeks, DEFAULT_PURCHASING_SETTINGS.watchCoverWeeks),
     overstockCoverWeeks: num(row.overstockCoverWeeks, DEFAULT_PURCHASING_SETTINGS.overstockCoverWeeks),
+    verifiedSalesHistoryFrom: row.verifiedSalesHistoryFrom
+      ? dateOnlyIsoFromDate(row.verifiedSalesHistoryFrom)
+      : null,
   };
 }
 
@@ -169,8 +174,9 @@ function forecastSku(
   settings: PurchasingSystemSettings,
   stockStale: boolean,
 ) {
+  const verified = Boolean(maps.historyFrom);
   const rates = buildRates(row.sku, maps);
-  const demand = resolveRecommendedWeeklyDemand(rates);
+  const demand = resolveRecommendedWeeklyDemand(rates, verified);
   const trend = resolveDemandTrend(rates.last30, rates.previous30);
   const unusual = detectUnusualDemand(rates.last7.netUnits, rates.last90.weeklyRate);
   const targetCoverWeeks = row.purchasing.targetCoverWeeks ?? settings.defaultTargetCoverWeeks;
@@ -194,7 +200,7 @@ function forecastSku(
     recommendedWeekly: demand.recommendedWeekly,
   });
   const coverageDays = salesHistoryCoverageDays(maps.historyFrom, maps.windows.today);
-  const confidence = resolveForecastConfidence(coverageDays);
+  const confidence = resolveForecastConfidence(coverageDays, verified);
   const status = resolvePurchasingStatus({
     availableQty: row.availableQty,
     incomingQty: row.incomingQty,
@@ -206,12 +212,12 @@ function forecastSku(
     stockStale,
     estimatedStockoutDate: runout,
     today: maps.windows.today,
-    salesHistoryCoverageDays: coverageDays,
+    ...(verified ? { salesHistoryCoverageDays: coverageDays } : {}),
   });
   const value = suggestedPurchaseValue(purchase.suggestedQty, row.latestCost);
   const availValue = stockValueAtLatestCost(row.availableQty, row.latestCost);
   const incomingValue = stockValueAtLatestCost(row.incomingQty, row.latestCost);
-  const seasonalAvailable = seasonalComparisonAvailable(rates.samePeriodLastYear);
+  const seasonalAvailable = seasonalComparisonAvailable(rates.samePeriodLastYear, verified);
   return {
     variantId: row.variantId,
     sku: row.sku,
@@ -248,18 +254,25 @@ function forecastSku(
     lastSale: maps.lastSale.get(row.sku.toUpperCase()) ?? null,
     salesHistoryCoverageDays: coverageDays,
     salesHistoryFrom: maps.historyFrom,
+    salesHistoryTo: verified ? maps.windows.today : null,
+    salesHistoryVerified: verified,
     forecastConfidence: confidence,
     forecastConfidenceLabel: FORECAST_CONFIDENCE_LABEL[confidence],
-    forecastConfidenceCopy: buildForecastConfidenceCopy({ confidence, coverageDays }),
+    forecastConfidenceCopy: buildForecastConfidenceCopy({
+      confidence,
+      coverageDays,
+      verifiedFrom: maps.historyFrom,
+      today: maps.windows.today,
+    }),
     forecastConfidenceWarning: forecastConfidenceWarning({
       confidence,
       status: status.status,
       suggestedQty: purchase.suggestedQty,
     }),
     demandComponents: {
-      last30: demandComponentAvailability(rates.last30),
-      last90: demandComponentAvailability(rates.last90),
-      last365: demandComponentAvailability(rates.last365),
+      last30: demandComponentAvailability(rates.last30, verified),
+      last90: demandComponentAvailability(rates.last90, verified),
+      last365: demandComponentAvailability(rates.last365, verified),
       seasonalAvailable,
     },
     why: buildWhyCopy({
@@ -332,7 +345,7 @@ async function freshnessLabels() {
 export async function getPurchasingDashboard(actorUserId: string) {
   const workspace = await loadWorkspace(actorUserId);
   const rows = workspace.rows;
-  const coverageDays = salesHistoryCoverageDays(workspace.maps.historyFrom, workspace.maps.windows.today);
+  const coverage = coverageSummary(workspace.maps);
   const count = (status: PurchasingStatus) => rows.filter((r) => r.status === status).length;
   const confidenceCount = (level: ForecastConfidence) =>
     rows.filter((r) => r.forecastConfidence === level).length;
@@ -358,10 +371,9 @@ export async function getPurchasingDashboard(actorUserId: string) {
       suggestedValueMissingCost: missingCost,
     },
     forecastCoverage: {
-      coverageDays,
-      historyFrom: workspace.maps.historyFrom,
-      confidence: resolveForecastConfidence(coverageDays),
+      ...coverage,
       counts: {
+        UNVERIFIED: confidenceCount("UNVERIFIED"),
         STRONG: confidenceCount("STRONG"),
         GOOD: confidenceCount("GOOD"),
         BUILDING: confidenceCount("BUILDING"),
@@ -401,10 +413,16 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
   const row = workspace.catalogue.find((r) => r.sku.toUpperCase() === sku.toUpperCase());
   if (!row) throw new AuthError("SKU not found", "NOT_FOUND", 404);
   const forecast = forecastSku(row, workspace.maps, workspace.settings, workspace.freshness.stockStale);
-  const from = addDaysIso(workspace.maps.windows.today, -364);
+  const chartRange = clipRangeToVerified(
+    { from: addDaysIso(workspace.maps.windows.today, -364), to: workspace.maps.windows.today },
+    workspace.maps.historyFrom,
+  );
+  const sourceRange = clipRangeToVerified(workspace.maps.windows.last90, workspace.maps.historyFrom);
   const [chart, sources] = await Promise.all([
-    weeklyNetUnitsForSku(row.sku, from, workspace.maps.windows.today),
-    demandSourcesForSku(row.sku, workspace.maps.windows.last90),
+    chartRange
+      ? weeklyNetUnitsForSku(row.sku, chartRange.from, chartRange.to)
+      : Promise.resolve([]),
+    sourceRange ? demandSourcesForSku(row.sku, sourceRange) : Promise.resolve([]),
   ]);
   return {
     freshness: workspace.freshness,
@@ -417,19 +435,24 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
 }
 
 function coverageSummary(maps: Awaited<ReturnType<typeof loadPurchasingDemandMaps>>) {
-  const coverageDays = salesHistoryCoverageDays(maps.historyFrom, maps.windows.today);
+  const verifiedFrom = maps.historyFrom;
+  const verified = Boolean(verifiedFrom);
+  const coverageDays = salesHistoryCoverageDays(verifiedFrom, maps.windows.today);
   return {
     coverageDays,
-    historyFrom: maps.historyFrom,
-    confidence: resolveForecastConfidence(coverageDays),
+    historyFrom: verifiedFrom,
+    verified,
+    verifiedFrom,
+    verifiedTo: verified ? maps.windows.today : null,
+    confidence: resolveForecastConfidence(coverageDays, verified),
   };
 }
 
 async function loadWorkspace(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
-  const [settings, maps, catalogue, fresh] = await Promise.all([
-    loadPurchasingSettings(),
-    loadPurchasingDemandMaps(),
+  const settings = await loadPurchasingSettings();
+  const [maps, catalogue, fresh] = await Promise.all([
+    loadPurchasingDemandMaps(settings.verifiedSalesHistoryFrom),
     loadCatalogueRows(),
     freshnessLabels(),
   ]);
@@ -537,32 +560,64 @@ const settingsInput = z.object({
   criticalCoverWeeks: z.number().positive().max(52),
   watchCoverWeeks: z.number().positive().max(104),
   overstockCoverWeeks: z.number().positive().max(520),
+  verifiedSalesHistoryFrom: z.string().nullable().optional(),
 });
 
 export async function updatePurchasingSettings(actorUserId: string, raw: unknown) {
   await requireSystemPermission(actorUserId, "purchasing.manage");
   const input = settingsInput.parse(raw);
   const before = await loadPurchasingSettings();
+  let nextVerifiedFrom = before.verifiedSalesHistoryFrom;
+  if (input.verifiedSalesHistoryFrom !== undefined) {
+    const parsedFrom = parseVerifiedSalesHistoryFrom(
+      input.verifiedSalesHistoryFrom,
+      todayLondonDateOnly(),
+    );
+    if (!parsedFrom.ok) throw new AuthError(parsedFrom.error, "VALIDATION", 400);
+    nextVerifiedFrom = parsedFrom.value;
+  }
+  const verifiedDate = nextVerifiedFrom ? new Date(`${nextVerifiedFrom}T00:00:00.000Z`) : null;
   const row = await prisma.purchasingSettings.upsert({
     where: { id: SETTINGS_ID },
-    create: { id: SETTINGS_ID, ...input, updatedByUserId: actorUserId },
-    update: { ...input, updatedByUserId: actorUserId },
+    create: {
+      id: SETTINGS_ID,
+      defaultTargetCoverWeeks: input.defaultTargetCoverWeeks,
+      defaultSafetyStockQty: input.defaultSafetyStockQty,
+      criticalCoverWeeks: input.criticalCoverWeeks,
+      watchCoverWeeks: input.watchCoverWeeks,
+      overstockCoverWeeks: input.overstockCoverWeeks,
+      verifiedSalesHistoryFrom: verifiedDate,
+      updatedByUserId: actorUserId,
+    },
+    update: {
+      defaultTargetCoverWeeks: input.defaultTargetCoverWeeks,
+      defaultSafetyStockQty: input.defaultSafetyStockQty,
+      criticalCoverWeeks: input.criticalCoverWeeks,
+      watchCoverWeeks: input.watchCoverWeeks,
+      overstockCoverWeeks: input.overstockCoverWeeks,
+      verifiedSalesHistoryFrom: verifiedDate,
+      updatedByUserId: actorUserId,
+    },
   });
+  const after = {
+    defaultTargetCoverWeeks: num(row.defaultTargetCoverWeeks, input.defaultTargetCoverWeeks),
+    defaultSafetyStockQty: row.defaultSafetyStockQty,
+    criticalCoverWeeks: num(row.criticalCoverWeeks, input.criticalCoverWeeks),
+    watchCoverWeeks: num(row.watchCoverWeeks, input.watchCoverWeeks),
+    overstockCoverWeeks: num(row.overstockCoverWeeks, input.overstockCoverWeeks),
+    verifiedSalesHistoryFrom: row.verifiedSalesHistoryFrom
+      ? dateOnlyIsoFromDate(row.verifiedSalesHistoryFrom)
+      : null,
+  };
   await recordAuditEvent({
     action: "purchasing.settings.update",
     entityType: "PurchasingSettings",
     entityId: SETTINGS_ID,
     actorUserId,
     before,
-    after: input,
+    after,
   });
-  return {
-    defaultTargetCoverWeeks: num(row.defaultTargetCoverWeeks, input.defaultTargetCoverWeeks),
-    defaultSafetyStockQty: row.defaultSafetyStockQty,
-    criticalCoverWeeks: num(row.criticalCoverWeeks, input.criticalCoverWeeks),
-    watchCoverWeeks: num(row.watchCoverWeeks, input.watchCoverWeeks),
-    overstockCoverWeeks: num(row.overstockCoverWeeks, input.overstockCoverWeeks),
-  };
+  return after;
 }
 
 const skuSettingsInput = z.object({

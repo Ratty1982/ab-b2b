@@ -1342,6 +1342,9 @@ model PurchasingSettings {
   criticalCoverWeeks      Decimal  @default(1) @db.Decimal(6, 2)
   watchCoverWeeks         Decimal  @default(3) @db.Decimal(6, 2)
   overstockCoverWeeks     Decimal  @default(26) @db.Decimal(6, 2)
+  /// Earliest date Purchasing may treat Autopart sales history as complete/continuous.
+  /// Null = unverified. Never auto-filled from MIN(documentDate).
+  verifiedSalesHistoryFrom DateTime? @db.Date
   updatedByUserId         String?
   updatedAt               DateTime @updatedAt
 }

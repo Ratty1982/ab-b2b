@@ -52,16 +52,6 @@ export async function lastInvoiceSaleBySku(): Promise<Map<string, string>> {
   return map;
 }
 
-export async function earliestSalesDocumentDate(): Promise<string | null> {
-  const rows = await prisma.$queryRaw<Array<{ first_date: Date | null }>>(Prisma.sql`
-    SELECT MIN(d."documentDate") AS first_date
-    FROM "AutopartSalesDocument" d
-    WHERE d."documentDate" IS NOT NULL
-  `);
-  const first = rows[0]?.first_date;
-  return first ? first.toISOString().slice(0, 10) : null;
-}
-
 export async function latestSalesUpdatedAt(): Promise<Date | null> {
   const doc = await prisma.autopartSalesDocument.findFirst({
     where: { documentDate: { not: null } },
@@ -145,6 +135,17 @@ export function coverageDaysForPeriod(
   return Math.floor((b - a) / 86_400_000) + 1;
 }
 
+/** Clip a demand window to the verified coverage start. Null = window is entirely before verification. */
+export function clipRangeToVerified(
+  range: DateOnlyRange,
+  verifiedFrom: string | null,
+): DateOnlyRange | null {
+  if (!verifiedFrom) return range;
+  const from = verifiedFrom > range.from ? verifiedFrom : range.from;
+  if (from > range.to) return null;
+  return { from, to: range.to };
+}
+
 export function purchasingDemandWindows(today = todayLondonDateOnly()) {
   const last7 = lastNDaysRange(today, 7);
   const last30 = lastNDaysRange(today, 30);
@@ -159,30 +160,25 @@ export function purchasingDemandWindows(today = todayLondonDateOnly()) {
   return { today, last7, last30, last90, last365, previous30, previous90, samePeriodLastYear };
 }
 
-export async function loadPurchasingDemandMaps() {
+export async function loadPurchasingDemandMaps(verifiedFrom: string | null = null) {
   const windows = purchasingDemandWindows();
-  const [
-    u7,
-    u30,
-    u90,
-    u365,
-    prev30,
-    prev90,
-    spy,
-    lastSale,
-    historyFrom,
-  ] = await Promise.all([
-    netUnitsBySku(windows.last7),
-    netUnitsBySku(windows.last30),
-    netUnitsBySku(windows.last90),
-    netUnitsBySku(windows.last365),
-    netUnitsBySku(windows.previous30),
-    netUnitsBySku(windows.previous90),
-    netUnitsBySku(windows.samePeriodLastYear),
+  const clip = (range: DateOnlyRange) => clipRangeToVerified(range, verifiedFrom);
+  const units = async (range: DateOnlyRange) => {
+    const clipped = clip(range);
+    if (!clipped) return new Map<string, number>();
+    return netUnitsBySku(clipped);
+  };
+  const [u7, u30, u90, u365, prev30, prev90, spy, lastSale] = await Promise.all([
+    units(windows.last7),
+    units(windows.last30),
+    units(windows.last90),
+    units(windows.last365),
+    units(windows.previous30),
+    units(windows.previous90),
+    units(windows.samePeriodLastYear),
     lastInvoiceSaleBySku(),
-    earliestSalesDocumentDate(),
   ]);
-  return { windows, u7, u30, u90, u365, prev30, prev90, spy, lastSale, historyFrom };
+  return { windows, u7, u30, u90, u365, prev30, prev90, spy, lastSale, historyFrom: verifiedFrom };
 }
 
 export function unitsFor(map: Map<string, number>, sku: string): number {

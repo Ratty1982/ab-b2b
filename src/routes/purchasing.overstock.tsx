@@ -112,6 +112,9 @@ function OverstockPage() {
             coverageDays={data.forecastCoverage.coverageDays}
             confidence={data.forecastCoverage.confidence}
             historyFrom={data.forecastCoverage.historyFrom}
+            verified={data.forecastCoverage.verified}
+            verifiedFrom={data.forecastCoverage.verifiedFrom}
+            verifiedTo={data.forecastCoverage.verifiedTo}
           />
         </>
       ) : null}
@@ -124,9 +127,24 @@ function OverstockPage() {
         >
           <option value="all">High cover + quiet SKUs</option>
           <option value="overstock">Overstock cover only</option>
-          <option value="30">{quietSaleFilterLabel(30, data?.forecastCoverage.coverageDays ?? 30)}</option>
-          <option value="90">{quietSaleFilterLabel(90, data?.forecastCoverage.coverageDays ?? 90)}</option>
-          <option value="180">{quietSaleFilterLabel(180, data?.forecastCoverage.coverageDays ?? 180)}</option>
+          <option value="30">
+            {quietSaleFilterLabel(
+              30,
+              data?.forecastCoverage.verified ? data.forecastCoverage.coverageDays : 30,
+            )}
+          </option>
+          <option value="90">
+            {quietSaleFilterLabel(
+              90,
+              data?.forecastCoverage.verified ? data.forecastCoverage.coverageDays : 90,
+            )}
+          </option>
+          <option value="180">
+            {quietSaleFilterLabel(
+              180,
+              data?.forecastCoverage.verified ? data.forecastCoverage.coverageDays : 180,
+            )}
+          </option>
         </select>
         <select
           className={controlClass}
@@ -189,6 +207,7 @@ function OverstockPage() {
                         confidence={row.forecastConfidence}
                         coverageDays={row.salesHistoryCoverageDays}
                         warning={row.forecastConfidenceWarning}
+                        verified={row.salesHistoryVerified}
                       />
                     </td>
                     <td className="px-3 py-2">

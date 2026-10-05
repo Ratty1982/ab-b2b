@@ -159,6 +159,7 @@ function PurchasingSkuPage() {
               confidence={forecast.forecastConfidence}
               coverageDays={forecast.salesHistoryCoverageDays}
               warning={forecast.forecastConfidenceWarning}
+              verified={forecast.salesHistoryVerified}
             />
             <span className="text-[13px] text-steel">{forecast.statusReason}</span>
           </div>
@@ -171,16 +172,22 @@ function PurchasingSkuPage() {
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-[13px]">
               <Fact label="Forecast confidence" value={forecast.forecastConfidenceLabel} />
               <Fact
-                label="Sales history available"
+                label="Verified sales history"
                 value={
-                  forecast.salesHistoryCoverageDays >= 365
-                    ? "365+ days"
-                    : `${forecast.salesHistoryCoverageDays} days`
+                  forecast.salesHistoryVerified && forecast.salesHistoryFrom && forecast.salesHistoryTo
+                    ? `${ukDate(forecast.salesHistoryFrom)} → ${ukDate(forecast.salesHistoryTo)}`
+                    : "Not verified"
                 }
               />
               <Fact
-                label="Earliest Autopart document"
-                value={forecast.salesHistoryFrom ?? "None in database"}
+                label="Verified coverage"
+                value={
+                  forecast.salesHistoryVerified
+                    ? forecast.salesHistoryCoverageDays >= 365
+                      ? "365+ days"
+                      : `${forecast.salesHistoryCoverageDays} days`
+                    : "Coverage not verified"
+                }
               />
             </dl>
             <p className="text-[13px] text-steel">{forecast.forecastConfidenceCopy}</p>
@@ -209,13 +216,34 @@ function PurchasingSkuPage() {
               <Fact label="Last 7 days" value={qty(forecast.rates.last7.netUnits)} />
               <Fact
                 label="Last 30 days"
-                value={`${qty(forecast.rates.last30.netUnits)}${forecast.rates.last30.complete ? "" : " (partial history)"}`}
+                value={`${qty(forecast.rates.last30.netUnits)}${
+                  forecast.demandComponents.last30 === "unverified"
+                    ? " (coverage not verified)"
+                    : forecast.demandComponents.last30 === "partial"
+                      ? " (partial history)"
+                      : ""
+                }`}
               />
               <Fact
                 label="Last 90 days"
-                value={`${qty(forecast.rates.last90.netUnits)}${forecast.rates.last90.complete ? "" : " (partial history)"}`}
+                value={`${qty(forecast.rates.last90.netUnits)}${
+                  forecast.demandComponents.last90 === "unverified"
+                    ? " (coverage not verified)"
+                    : forecast.demandComponents.last90 === "partial"
+                      ? " (partial history)"
+                      : ""
+                }`}
               />
-              <Fact label="Last 365 days" value={`${qty(forecast.rates.last365.netUnits)}${forecast.rates.last365.complete ? "" : " (partial history)"}`} />
+              <Fact
+                label="Last 365 days"
+                value={`${qty(forecast.rates.last365.netUnits)}${
+                  forecast.demandComponents.last365 === "unverified"
+                    ? " (coverage not verified)"
+                    : forecast.demandComponents.last365 === "partial"
+                      ? " (partial history)"
+                      : ""
+                }`}
+              />
             </dl>
             <div className="overflow-x-auto border border-border">
               <table className="w-full text-left text-[13px]">
@@ -246,7 +274,11 @@ function PurchasingSkuPage() {
                     <td className="px-3 py-2">Last year comparison</td>
                     <td className="px-3 py-2">{rate(forecast.rates.samePeriodLastYear?.weeklyRate ?? null)}</td>
                     <td className="px-3 py-2">
-                      {forecast.demandComponents.seasonalAvailable ? "Available" : "Not yet available"}
+                      {forecast.demandComponents.seasonalAvailable
+                        ? "Available"
+                        : forecast.salesHistoryVerified
+                          ? "Not yet available"
+                          : "Coverage not verified"}
                     </td>
                   </tr>
                 </tbody>

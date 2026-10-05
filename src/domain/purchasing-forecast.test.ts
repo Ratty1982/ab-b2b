@@ -9,7 +9,9 @@ import {
   forecastConfidenceWarning,
   formatPurchasingGbp,
   formatSalesHistoryCoverage,
+  isLimitedForecastConfidence,
   leadTimeDemandUnits,
+  parseVerifiedSalesHistoryFrom,
   quietSaleFilterLabel,
   periodDemand,
   projectedWeeksOfCover,
@@ -354,42 +356,66 @@ describe("why copy", () => {
 });
 
 describe("forecast confidence and sales-history coverage", () => {
-  it("maps coverage-day thresholds without treating missing history as zero demand", () => {
-    expect(resolveForecastConfidence(0)).toBe("VERY_LOW");
-    expect(resolveForecastConfidence(29)).toBe("VERY_LOW");
-    expect(resolveForecastConfidence(30)).toBe("LOW");
-    expect(resolveForecastConfidence(89)).toBe("LOW");
-    expect(resolveForecastConfidence(90)).toBe("BUILDING");
-    expect(resolveForecastConfidence(179)).toBe("BUILDING");
-    expect(resolveForecastConfidence(180)).toBe("GOOD");
-    expect(resolveForecastConfidence(364)).toBe("GOOD");
-    expect(resolveForecastConfidence(365)).toBe("STRONG");
+  it("does not treat MIN(documentDate) or unconfigured verification as Strong", () => {
+    expect(resolveForecastConfidence(4383, false)).toBe("UNVERIFIED");
+    expect(resolveForecastConfidence(365, false)).toBe("UNVERIFIED");
+    expect(resolveForecastConfidence(0, false)).toBe("UNVERIFIED");
+    expect(isLimitedForecastConfidence("UNVERIFIED")).toBe(true);
     expect(salesHistoryCoverageDays(null, "2026-10-05")).toBe(0);
+    expect(salesHistoryCoverageDays("2014-10-06", "2026-10-05")).toBe(4383);
+  });
+
+  it("maps verified coverage-day thresholds without treating missing history as zero demand", () => {
+    expect(resolveForecastConfidence(0, true)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(14, true)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(29, true)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(30, true)).toBe("LOW");
+    expect(resolveForecastConfidence(89, true)).toBe("LOW");
+    expect(resolveForecastConfidence(90, true)).toBe("BUILDING");
+    expect(resolveForecastConfidence(179, true)).toBe("BUILDING");
+    expect(resolveForecastConfidence(180, true)).toBe("GOOD");
+    expect(resolveForecastConfidence(364, true)).toBe("GOOD");
+    expect(resolveForecastConfidence(365, true)).toBe("STRONG");
     expect(salesHistoryCoverageDays("2026-09-22", "2026-10-05")).toBe(14);
     expect(periodDemand(0, 90, 3).weeklyRate).toBeNull();
     expect(periodDemand(0, 90, 90).weeklyRate).toBe(0);
     expect(periodDemand(0, 90, 90).complete).toBe(true);
   });
 
-  it("exposes 30/90/365 and seasonal component eligibility from genuine coverage", () => {
-    expect(demandComponentAvailability(periodDemand(12, 30, 6))).toBe("unavailable");
+  it("does not claim 30/90/365 full coverage or seasonal comparison until verification is set", () => {
+    const last30 = periodDemand(12, 30, 30);
+    const last90 = periodDemand(12, 90, 90);
+    const last365 = periodDemand(40, 365, 365);
+    const spy = periodDemand(10, 30, 30);
+    expect(demandComponentAvailability(last30, false)).toBe("unverified");
+    expect(demandComponentAvailability(last90, false)).toBe("unverified");
+    expect(demandComponentAvailability(last365, false)).toBe("unverified");
+    expect(seasonalComparisonAvailable(spy, false)).toBe(false);
+    expect(demandComponentAvailability(periodDemand(12, 30, 6), false)).toBe("unavailable");
+  });
+
+  it("exposes 30/90/365 and seasonal component eligibility from verified coverage only", () => {
+    expect(demandComponentAvailability(periodDemand(12, 30, 6), true)).toBe("unavailable");
     expect(periodDemand(12, 30, 6).weeklyRate).toBeNull();
-    expect(demandComponentAvailability(periodDemand(12, 30, 7))).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 30, 7), true)).toBe("partial");
     expect(periodDemand(12, 30, 7).weeklyRate).not.toBeNull();
-    expect(demandComponentAvailability(periodDemand(12, 30, 30))).toBe("full");
-    expect(demandComponentAvailability(periodDemand(12, 90, 6))).toBe("unavailable");
-    expect(demandComponentAvailability(periodDemand(12, 90, 7))).toBe("partial");
-    expect(demandComponentAvailability(periodDemand(12, 90, 74))).toBe("partial");
-    expect(demandComponentAvailability(periodDemand(12, 90, 90))).toBe("full");
-    expect(demandComponentAvailability(periodDemand(40, 365, 6))).toBe("unavailable");
-    expect(demandComponentAvailability(periodDemand(40, 365, 7))).toBe("partial");
-    expect(demandComponentAvailability(periodDemand(40, 365, 40))).toBe("partial");
-    expect(demandComponentAvailability(periodDemand(40, 365, 365))).toBe("full");
+    expect(demandComponentAvailability(periodDemand(12, 30, 29), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 30, 30), true)).toBe("full");
+    expect(demandComponentAvailability(periodDemand(12, 90, 6), true)).toBe("unavailable");
+    expect(demandComponentAvailability(periodDemand(12, 90, 7), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 90, 74), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 90, 89), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(12, 90, 90), true)).toBe("full");
+    expect(demandComponentAvailability(periodDemand(40, 365, 6), true)).toBe("unavailable");
+    expect(demandComponentAvailability(periodDemand(40, 365, 7), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(40, 365, 40), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(40, 365, 364), true)).toBe("partial");
+    expect(demandComponentAvailability(periodDemand(40, 365, 365), true)).toBe("full");
     const shortSpy = periodDemand(10, 30, 20);
-    expect(seasonalComparisonAvailable(shortSpy)).toBe(false);
-    expect(seasonalComparisonAvailable(periodDemand(10, 30, 23))).toBe(false);
-    expect(seasonalComparisonAvailable(periodDemand(10, 30, 24))).toBe(true);
-    expect(seasonalComparisonAvailable(null)).toBe(false);
+    expect(seasonalComparisonAvailable(shortSpy, true)).toBe(false);
+    expect(seasonalComparisonAvailable(periodDemand(10, 30, 23), true)).toBe(false);
+    expect(seasonalComparisonAvailable(periodDemand(10, 30, 24), true)).toBe(true);
+    expect(seasonalComparisonAvailable(null, true)).toBe(false);
   });
 
   it("renormalises demand weights and does not let confidence change the recommended rate", () => {
@@ -405,8 +431,8 @@ describe("forecast confidence and sales-history coverage", () => {
     expect(only30.basis.find((b) => b.label === "90-day rate")?.weight).toBe(0);
     expect(only30.basis.find((b) => b.label === "365-day rate")?.weight).toBe(0);
     const before = only30.recommendedWeekly;
-    expect(resolveForecastConfidence(14)).toBe("VERY_LOW");
-    expect(resolveForecastConfidence(365)).toBe("STRONG");
+    expect(resolveForecastConfidence(14, true)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(365, true)).toBe("STRONG");
     expect(only30.recommendedWeekly).toBe(before);
 
     const withSeasonal = resolveRecommendedWeeklyDemand(
@@ -416,6 +442,7 @@ describe("forecast confidence and sales-history coverage", () => {
         last365: periodDemand(365, 365, 365),
         samePeriodLastYear: periodDemand(14, 30, 30),
       }),
+      true,
     );
     const withoutSeasonal = resolveRecommendedWeeklyDemand(
       rates({
@@ -424,12 +451,24 @@ describe("forecast confidence and sales-history coverage", () => {
         last365: periodDemand(365, 365, 365),
         samePeriodLastYear: periodDemand(14, 30, 10),
       }),
+      true,
+    );
+    const unverifiedSeasonal = resolveRecommendedWeeklyDemand(
+      rates({
+        last30: periodDemand(70, 30, 30),
+        last90: periodDemand(90, 90, 90),
+        last365: periodDemand(365, 365, 365),
+        samePeriodLastYear: periodDemand(14, 30, 30),
+      }),
+      false,
     );
     expect(withSeasonal.seasonalBlendApplied).toBe(true);
     expect(withoutSeasonal.seasonalBlendApplied).toBe(false);
+    expect(unverifiedSeasonal.seasonalBlendApplied).toBe(false);
     const base = 0.5 * ((70 / 30) * 7) + 0.3 * ((90 / 90) * 7) + 0.2 * ((365 / 365) * 7);
     expect(withSeasonal.recommendedWeekly).toBeCloseTo(0.85 * base + 0.15 * ((14 / 30) * 7), 1);
     expect(withoutSeasonal.recommendedWeekly).toBeCloseTo(base, 1);
+    expect(unverifiedSeasonal.recommendedWeekly).toBeCloseTo(base, 1);
   });
 
   it("does not let confidence change Avail, Incoming, Latest Cost, or suggested-order maths", () => {
@@ -445,8 +484,9 @@ describe("forecast confidence and sales-history coverage", () => {
       minimumOrderQty: 24,
       orderMultiple: 12,
     });
-    expect(resolveForecastConfidence(14)).toBe("VERY_LOW");
-    expect(resolveForecastConfidence(400)).toBe("STRONG");
+    expect(resolveForecastConfidence(14, true)).toBe("VERY_LOW");
+    expect(resolveForecastConfidence(400, true)).toBe("STRONG");
+    expect(resolveForecastConfidence(400, false)).toBe("UNVERIFIED");
     const again = suggestedPurchaseQty({
       availableQty,
       incomingQty,
@@ -481,6 +521,9 @@ describe("forecast confidence and sales-history coverage", () => {
     expect(forecastConfidenceWarning({ confidence: "LOW", status: "REORDER", suggestedQty: 80 })).toMatch(
       /Limited sales history — review before ordering/i,
     );
+    expect(forecastConfidenceWarning({ confidence: "UNVERIFIED", status: "REORDER", suggestedQty: 80 })).toMatch(
+      /has not yet been verified/i,
+    );
     const overstock = resolvePurchasingStatus({
       availableQty: 1000,
       incomingQty: 0,
@@ -498,6 +541,17 @@ describe("forecast confidence and sales-history coverage", () => {
     expect(forecastConfidenceWarning({ confidence: "VERY_LOW", status: "OVERSTOCK", suggestedQty: 0 })).toMatch(
       /Potential overstock/i,
     );
+    expect(forecastConfidenceWarning({ confidence: "UNVERIFIED", status: "OVERSTOCK", suggestedQty: 0 })).toMatch(
+      /Potential overstock/i,
+    );
+  });
+
+  it("parses verified sales-history dates without accepting a future start", () => {
+    expect(parseVerifiedSalesHistoryFrom(null, "2026-10-05")).toEqual({ ok: true, value: null });
+    expect(parseVerifiedSalesHistoryFrom("  ", "2026-10-05")).toEqual({ ok: true, value: null });
+    expect(parseVerifiedSalesHistoryFrom("2026-01-01", "2026-10-05")).toEqual({ ok: true, value: "2026-01-01" });
+    expect(parseVerifiedSalesHistoryFrom("05/10/2026", "2026-10-05").ok).toBe(false);
+    expect(parseVerifiedSalesHistoryFrom("2026-10-06", "2026-10-05").ok).toBe(false);
   });
 
   it("does not claim a no-sale window longer than known coverage, and keeps DATA_STALE independent", () => {
@@ -531,9 +585,15 @@ describe("forecast confidence and sales-history coverage", () => {
       salesHistoryCoverageDays: 365,
     });
     expect(stale.status).toBe("DATA_STALE");
-    expect(resolveForecastConfidence(365)).toBe("STRONG");
-    expect(buildForecastConfidenceCopy({ confidence: "BUILDING", coverageDays: 112 })).toMatch(/112 days of sales history/);
-    expect(formatSalesHistoryCoverage(365)).toBe("365+ days history");
+    expect(resolveForecastConfidence(365, true)).toBe("STRONG");
+    expect(buildForecastConfidenceCopy({ confidence: "UNVERIFIED", coverageDays: 0 })).toMatch(
+      /has not yet been verified/i,
+    );
+    expect(buildForecastConfidenceCopy({ confidence: "BUILDING", coverageDays: 112 })).toMatch(
+      /112 days of verified sales history/,
+    );
+    expect(formatSalesHistoryCoverage(365, false)).toBe("Coverage not verified");
+    expect(formatSalesHistoryCoverage(365, true)).toBe("365+ days verified history");
     expect(quietSaleFilterLabel(90, 14)).toBe("No sale in 14 days of available history");
     expect(quietSaleFilterLabel(90, 90)).toBe("No sale in 90 days");
     expect(quietSaleFilterLabel(30, 0)).toBe("No dated sales history");

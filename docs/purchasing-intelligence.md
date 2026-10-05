@@ -178,65 +178,71 @@ These are **different** signals. Do not combine them into one status.
 | Signal | Answers | Source |
 | --- | --- | --- |
 | Stock freshness (`DATA_STALE`) | Is **current 231PO3NEW stock** (Avail / Incoming) up to date? | Existing 36-hour stock freshness policy |
-| Forecast confidence | How much **genuine Autopart sales history** supports the demand forecast? | Inclusive days from the earliest dated `AutopartSalesDocument.documentDate` through London today |
+| Forecast confidence | How much **verified continuous Autopart sales history** supports the demand forecast? | Inclusive days from Purchasing setting `verifiedSalesHistoryFrom` through London today |
 
 A SKU can have fresh stock and low forecast confidence, or stale stock and strong historical coverage.
 
-**Low confidence does not mean the calculation is incorrect. It means the calculation is based on a limited amount of historical sales data.**
+**Low or unverified confidence does not mean the calculation is incorrect. It means complete historic coverage is limited or has not yet been confirmed.**
 
 Confidence is informational. It does **not** multiply recommended demand, change Avail, Incoming, Latest Cost, MOQ, order multiples, lead time, or suggested-order maths. Purchasing statuses (`CRITICAL`, `REORDER`, `OVERSTOCK`, …) stay as they are; confidence is shown beside them.
 
+Historic Autopart invoices outside the verified window remain in the database for Sales Intelligence, customer history, and financial reporting. Purchasing simply must not describe that older data as complete forecast coverage.
+
 ### Sales-history coverage
 
-Coverage is the known **source/import window**, not “days since this SKU first sold”.
+Coverage is a **verified continuous import window**, not “days since this SKU first sold” and not `MIN(AutopartSalesDocument.documentDate)`.
 
-1. Once per request, Purchasing loads `MIN(AutopartSalesDocument.documentDate)` (dated documents only).
+An old invoice proves that invoice exists. It does **not** prove every invoice between that date and today has been imported. Historic 561L/SLRB runs are per-customer file imports (`AutopartCustomerImportRun`) with filename/hash/row counts — they do not record a complete-dataset start date. Ongoing 504/TRM is incremental. Until a purchaser confirms the reliable start, coverage is **unverified**.
+
+1. Super Admin / Management set **Verified sales history from** on Purchasing defaults (`PurchasingSettings.verifiedSalesHistoryFrom`). Null is the default. Never auto-fill from the oldest document.
 2. Inclusive day count from that date through Europe/London today is `salesHistoryCoverageDays`.
-3. Each 7/30/90/365 window is then clipped to that global `historyFrom` (`coverageDaysForPeriod`). Missing history is **not** treated as zero sales.
+3. Each 7/30/90/365 demand window is clipped to that verified start for both SQL totals and `coverageDaysForPeriod`. Missing history is **not** treated as zero sales.
+4. Clearing verification returns confidence to **Unverified**. Changes are audited (actor, old value, new value, timestamp).
 
 SKU-first-sale is **not** used: that would imply continuous coverage for dates when Autopart history had not been imported.
 
-As genuine 561L / 504 / TRM documents accumulate, coverage lengthens automatically. No manual confidence maintenance.
-
-Human labels: `74 days history`, `8.5 months history`, or `365+ days history`.
+Human labels: `Coverage not verified`, `74 days verified history`, `8.5 months verified history`, or `365+ days verified history`.
 
 ### Confidence thresholds
 
 Centralised in `FORECAST_CONFIDENCE_MIN_DAYS` (`src/domain/purchasing-forecast.ts`). Do not copy magic numbers into UI.
 
-| Inclusive coverage | Level |
+| Inclusive verified coverage | Level |
 | --- | --- |
+| Not configured | Unverified |
 | 0–29 days | Very Low |
 | 30–89 days | Low |
 | 90–179 days | Building |
 | 180–364 days | Good |
 | 365+ days | Strong |
 
-Very Low / Low recommendations that would otherwise drive Critical, Reorder, Overstock, or a suggested purchase keep the recommendation **visible**, with a warning such as “Limited sales history — review before ordering.” Overstock + limited confidence is labelled **Potential overstock**.
+Unverified / Very Low / Low recommendations that would otherwise drive Critical, Reorder, Overstock, or a suggested purchase keep the recommendation **visible**, with a warning such as “Sales-history coverage has not yet been verified — review before ordering.” Overstock + limited or unverified confidence is labelled **Potential overstock**.
 
 ### Missing history vs genuine zero demand
 
-- **Missing history:** if the 90-day window only overlaps 14 imported days, the 90-day weekly rate is unknown (or partial), not “90 days of zero”. Weights are dropped and remaining 30/90/365 weights are renormalised. Same-period-last-year is unused until that comparable window has ≥80% coverage **and** a weekly rate (≥7 coverage days).
-- **Genuine zero:** if the verified window is long enough for a rate (`coverageDays ≥ 7`) and net units are 0, weekly rate is 0. That is evidence of no demand in the available history.
+- **Unverified:** sales records may exist, but Purchasing cannot confirm the start of a complete continuous window. 30/90/365 components show “Coverage not verified”, not Full. Same-period-last-year is not eligible.
+- **Missing history:** if a verified window only overlaps 14 days of a 90-day request, the 90-day weekly rate is partial, not “90 days of zero”. Weights are dropped and remaining 30/90/365 weights are renormalised. Same-period-last-year is unused until that comparable window lies inside verified history with ≥80% coverage **and** a weekly rate (≥7 coverage days).
+- **Genuine zero:** if the verified window is long enough for a rate (`coverageDays ≥ 7`) and net units are 0, weekly rate is 0. That is evidence of no demand in the available verified history.
 
-`NO_RECENT_DEMAND` copy names the known coverage (`No meaningful net demand in 14 days of available sales history`) and never claims “no sales in 90 days” when only 14 days exist.
+`NO_RECENT_DEMAND` copy names the known verified coverage (`No meaningful net demand in 14 days of available sales history`) and never claims “no sales in 90 days” when only 14 verified days exist. When verification is unset, that copy does not invent a coverage length.
 
 ### Demand-component eligibility
 
-A period contributes a weekly rate only when its clipped coverage is **≥ 7 days**. Full vs partial:
+A period contributes a weekly rate only when its clipped coverage is **≥ 7 days**. Full vs partial is claimed only inside a verified window:
 
-- 30-day: full at 30 days of coverage; partial from 7–29; unavailable below 7.
+- Unverified: 30/90/365 show “Coverage not verified” whenever a rate can be computed from currently available records; never Full.
+- 30-day: full at 30 verified days of coverage; partial from 7–29; unavailable below 7.
 - 90-day: full at 90; partial from 7–89; unavailable below 7.
 - 365-day: full at 365; partial from 7–364; unavailable below 7.
-- Last-year comparison: available when the comparable window has a weekly rate and ≥80% of its requested length.
+- Last-year comparison: available only when the comparable window is inside verified history, has a weekly rate, and ≥80% of its requested length.
 
-Insufficient components show “—” / “Insufficient history” on the SKU drill-down. They are not silently treated as zero. Recommended demand uses available periods only; longer windows become eligible automatically as history grows.
+Insufficient components show “—” / “Insufficient history” on the SKU drill-down. They are not silently treated as zero. Recommended demand uses available periods only; longer windows become eligible automatically as the verified window grows.
 
 ### SQL / performance
 
 Demand uses PostgreSQL `GROUP BY sku` over bounded `documentDate` ranges. Forecast list does **not** run a per-SKU sales-history query. Catalogue rows are joined in batches; purchasing math runs in-process on the grouped maps.
 
-Coverage uses the same grouped demand maps. Global `MIN(documentDate)` runs **once per workspace load**, not per SKU. Do not add per-SKU `MIN`/`MAX`/`COUNT` coverage queries.
+Coverage uses the configured verified start, loaded once with Purchasing settings — not `MIN(documentDate)`, and not per SKU. Do not add per-SKU `MIN`/`MAX`/`COUNT` coverage queries.
 
 ## Known limitations
 
@@ -245,4 +251,4 @@ Coverage uses the same grouped demand maps. Global `MIN(documentDate)` runs **on
 - No automatic purchase orders.
 - Demand sources (customer mix) on the SKU page is last-90-days grouped SQL, capped at 12 rows.
 - Forecast is explainable weighting, not a statistical guarantee.
-- During initial Autopart sales import, many SKUs share the same (short) source-window coverage. Confidence will look uniformly low until the document window grows; that is expected, not a per-SKU defect.
+- During initial Autopart sales import, confidence stays **Unverified** until a purchaser sets **Verified sales history from**. After that it is uniform across SKUs for the verified window length; that is expected, not a per-SKU defect.

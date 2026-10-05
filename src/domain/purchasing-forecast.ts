@@ -5,7 +5,7 @@
  * Incoming is on-order quantity with no ETA unless a source provides one.
  */
 
-import { addDaysIso, daysInclusive } from "@/domain/sales-history-period";
+import { addDaysIso, daysInclusive, isDateOnlyIso } from "@/domain/sales-history-period";
 import { mulQty, parseMoney, roundGbpDisplay, moneyToString, type Money } from "@/domain/money";
 
 export const PURCHASING_STATUSES = [
@@ -39,11 +39,19 @@ export type DemandTrend = (typeof DEMAND_TRENDS)[number];
  * sales-document history supports the demand forecast — not whether the math is
  * “wrong”.
  */
-export const FORECAST_CONFIDENCE_LEVELS = ["VERY_LOW", "LOW", "BUILDING", "GOOD", "STRONG"] as const;
+export const FORECAST_CONFIDENCE_LEVELS = [
+  "UNVERIFIED",
+  "VERY_LOW",
+  "LOW",
+  "BUILDING",
+  "GOOD",
+  "STRONG",
+] as const;
 
 export type ForecastConfidence = (typeof FORECAST_CONFIDENCE_LEVELS)[number];
 
 export const FORECAST_CONFIDENCE_LABEL: Record<ForecastConfidence, string> = {
+  UNVERIFIED: "Unverified",
   VERY_LOW: "Very Low",
   LOW: "Low",
   BUILDING: "Building",
@@ -59,12 +67,13 @@ export const FORECAST_CONFIDENCE_MIN_DAYS = {
   STRONG: 365,
 } as const;
 
-export type DemandComponentAvailability = "full" | "partial" | "unavailable";
+export type DemandComponentAvailability = "full" | "partial" | "unavailable" | "unverified";
 
 export const DEMAND_COMPONENT_AVAILABILITY_LABEL: Record<DemandComponentAvailability, string> = {
   full: "Full coverage",
   partial: "Partial coverage",
   unavailable: "Insufficient history",
+  unverified: "Coverage not verified",
 };
 
 export type PurchasingSystemSettings = {
@@ -73,6 +82,8 @@ export type PurchasingSystemSettings = {
   criticalCoverWeeks: number;
   watchCoverWeeks: number;
   overstockCoverWeeks: number;
+  /** YYYY-MM-DD. Null = Purchasing must not claim complete historic coverage. */
+  verifiedSalesHistoryFrom: string | null;
 };
 
 export const DEFAULT_PURCHASING_SETTINGS: PurchasingSystemSettings = {
@@ -81,6 +92,7 @@ export const DEFAULT_PURCHASING_SETTINGS: PurchasingSystemSettings = {
   criticalCoverWeeks: 1,
   watchCoverWeeks: 3,
   overstockCoverWeeks: 26,
+  verifiedSalesHistoryFrom: null,
 };
 
 export type VariantPurchasingParams = {
@@ -141,19 +153,20 @@ export function periodDemand(netUnits: number, requestedDays: number, coverageDa
 }
 
 /**
- * Genuine sales-history coverage for purchasing forecasts.
+ * Verified sales-history coverage for purchasing forecasts.
  *
- * This is the inclusive day count from the earliest Autopart sales document
- * (`historyFrom`) through London today — the known import/source window — not
- * “days since this SKU first sold”. Using SKU-first-sale would imply continuous
- * coverage for periods when Autopart history had not yet been imported.
+ * This is the inclusive day count from the configured `verifiedSalesHistoryFrom`
+ * through London today — not MIN(documentDate). An old Autopart invoice proves
+ * that invoice exists; it does not prove the dataset is complete from that date.
+ * When verification is unset, coverage is 0 and confidence is UNVERIFIED.
  */
 export function salesHistoryCoverageDays(historyFrom: string | null, today: string): number {
   if (!historyFrom || historyFrom > today) return 0;
   return daysInclusive({ from: historyFrom, to: today });
 }
 
-export function resolveForecastConfidence(coverageDays: number): ForecastConfidence {
+export function resolveForecastConfidence(coverageDays: number, verified: boolean): ForecastConfidence {
+  if (!verified) return "UNVERIFIED";
   const days = Number.isFinite(coverageDays) ? Math.max(0, Math.floor(coverageDays)) : 0;
   if (days < FORECAST_CONFIDENCE_MIN_DAYS.LOW) return "VERY_LOW";
   if (days < FORECAST_CONFIDENCE_MIN_DAYS.BUILDING) return "LOW";
@@ -163,26 +176,53 @@ export function resolveForecastConfidence(coverageDays: number): ForecastConfide
 }
 
 export function isLimitedForecastConfidence(confidence: ForecastConfidence): boolean {
-  return confidence === "VERY_LOW" || confidence === "LOW";
+  return confidence === "UNVERIFIED" || confidence === "VERY_LOW" || confidence === "LOW";
 }
 
-export function formatSalesHistoryCoverage(coverageDays: number): string {
+export function parseVerifiedSalesHistoryFrom(
+  raw: string | null | undefined,
+  today: string,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw == null) return { ok: true, value: null };
+  const value = String(raw).trim();
+  if (!value) return { ok: true, value: null };
+  if (!isDateOnlyIso(value)) {
+    return { ok: false, error: "Verified sales history from must be a calendar date." };
+  }
+  if (value > today) {
+    return { ok: false, error: "Verified sales history from cannot be after today." };
+  }
+  return { ok: true, value };
+}
+
+export function formatSalesHistoryCoverage(coverageDays: number, verified = true): string {
+  if (!verified) return "Coverage not verified";
   const days = Number.isFinite(coverageDays) ? Math.max(0, Math.floor(coverageDays)) : 0;
-  if (days <= 0) return "No sales history available";
-  if (days >= FORECAST_CONFIDENCE_MIN_DAYS.STRONG) return "365+ days history";
+  if (days <= 0) return "No verified sales history";
+  if (days >= FORECAST_CONFIDENCE_MIN_DAYS.STRONG) return "365+ days verified history";
   if (days >= 60) {
     const months = Math.round((days / 30.4375) * 10) / 10;
-    return `${days} days history (${months} months)`;
+    return `${days} days verified history (${months} months)`;
   }
-  return `${days} days history`;
+  return `${days} days verified history`;
 }
 
-export function demandComponentAvailability(period: PeriodDemand): DemandComponentAvailability {
+export function demandComponentAvailability(
+  period: PeriodDemand,
+  verified = true,
+): DemandComponentAvailability {
+  if (!verified) {
+    return period.weeklyRate == null ? "unavailable" : "unverified";
+  }
   if (period.weeklyRate == null) return "unavailable";
   return period.complete ? "full" : "partial";
 }
 
-export function seasonalComparisonAvailable(period: PeriodDemand | null | undefined): boolean {
+export function seasonalComparisonAvailable(
+  period: PeriodDemand | null | undefined,
+  verified = true,
+): boolean {
+  if (!verified) return false;
   if (!period || period.weeklyRate == null || period.requestedDays <= 0) return false;
   return period.coverageDays / period.requestedDays >= 0.8;
 }
@@ -201,6 +241,15 @@ export function forecastConfidenceWarning(input: {
   status: PurchasingStatus;
   suggestedQty: number;
 }): string | null {
+  if (input.confidence === "UNVERIFIED") {
+    if (input.status === "OVERSTOCK") {
+      return "Potential overstock — sales-history coverage has not yet been verified.";
+    }
+    if (input.status === "CRITICAL" || input.status === "REORDER" || input.suggestedQty > 0) {
+      return "Sales-history coverage has not yet been verified — review before ordering.";
+    }
+    return "Sales-history coverage has not yet been verified. Forecasts are based on the sales records currently available.";
+  }
   if (!isLimitedForecastConfidence(input.confidence)) return null;
   if (input.status === "OVERSTOCK") {
     return "Potential overstock — indication based on limited sales history.";
@@ -214,19 +263,24 @@ export function forecastConfidenceWarning(input: {
 export function buildForecastConfidenceCopy(input: {
   confidence: ForecastConfidence;
   coverageDays: number;
+  verifiedFrom?: string | null;
+  today?: string;
 }): string {
+  if (input.confidence === "UNVERIFIED") {
+    return "Historical sales records are present, but complete sales-data coverage has not yet been verified. Forecasts use the sales records currently available and should be reviewed before purchasing decisions.";
+  }
   const label = FORECAST_CONFIDENCE_LABEL[input.confidence].toLowerCase();
   if (input.coverageDays <= 0) {
-    return "Forecast confidence is very low because no dated Autopart sales history is currently available. Missing history is not treated as zero demand. The recommendation will improve automatically as history is imported.";
+    return "Forecast confidence is very low because no verified Autopart sales-history window is currently configured. Missing history is not treated as zero demand.";
   }
   const days =
     input.coverageDays >= FORECAST_CONFIDENCE_MIN_DAYS.STRONG
-      ? "365+ days of sales history"
-      : `${Math.floor(input.coverageDays)} day${input.coverageDays === 1 ? "" : "s"} of sales history`;
+      ? "365+ days of verified sales history"
+      : `${Math.floor(input.coverageDays)} day${input.coverageDays === 1 ? "" : "s"} of verified sales history`;
   if (input.confidence === "STRONG" || input.confidence === "GOOD") {
-    return `Forecast confidence is ${label} because ${days} ${input.coverageDays === 1 ? "is" : "are"} currently available. The recommendation uses the periods with sufficient data.`;
+    return `Forecast confidence is ${label} because ${days} ${input.coverageDays === 1 ? "is" : "are"} currently available. The recommendation uses the periods with sufficient verified coverage.`;
   }
-  return `Forecast confidence is still ${label} because ${days} ${input.coverageDays === 1 ? "is" : "are"} currently available. The recommendation uses the periods with sufficient data and will automatically improve as more history is collected.`;
+  return `Forecast confidence is still ${label} because ${days} ${input.coverageDays === 1 ? "is" : "are"} currently available. The recommendation uses the periods with sufficient verified coverage and will automatically improve as the verified window grows.`;
 }
 
 /**
@@ -240,7 +294,7 @@ export function buildForecastConfidenceCopy(input: {
  * Negative net (credits > invoices) is floored at 0 for ordering, but the
  * raw period nets remain visible to the purchaser.
  */
-export function resolveRecommendedWeeklyDemand(rates: DemandRates): {
+export function resolveRecommendedWeeklyDemand(rates: DemandRates, verified = true): {
   recommendedWeekly: number | null;
   basis: Array<{ label: string; weeklyRate: number | null; weight: number }>;
   seasonalBlendApplied: boolean;
@@ -270,7 +324,12 @@ export function resolveRecommendedWeeklyDemand(rates: DemandRates): {
 
   let seasonalBlendApplied = false;
   const spy = rates.samePeriodLastYear;
-  if (spy && spy.weeklyRate != null && spy.coverageDays / spy.requestedDays >= 0.8) {
+  if (
+    verified &&
+    spy &&
+    spy.weeklyRate != null &&
+    spy.coverageDays / spy.requestedDays >= 0.8
+  ) {
     base = 0.85 * base + 0.15 * spy.weeklyRate;
     seasonalBlendApplied = true;
   }
@@ -588,7 +647,7 @@ export const DEMAND_TREND_LABEL: Record<DemandTrend, string> = {
 };
 
 export const FORECAST_CONFIDENCE_HELP =
-  "Confidence reflects how much genuine sales history is available for the forecast. It does not measure stock accuracy. Stock freshness is shown separately. Very Low: under 30 days. Low: 30–89 days. Building: 90–179 days. Good: 180–364 days. Strong: 365+ days. Low confidence does not mean the calculation is incorrect — it means it is based on limited historical sales data.";
+  "Confidence reflects how much verified continuous Autopart sales history supports the forecast. It does not measure stock accuracy, and it is not the age of the oldest invoice. Stock freshness is shown separately. Unverified: complete coverage has not been confirmed. Very Low: under 30 verified days. Low: 30–89. Building: 90–179. Good: 180–364. Strong: 365+. Low or unverified confidence does not mean the calculation is incorrect — it means complete historic coverage is limited or not yet confirmed.";
 
 export function buildWhyCopy(input: {
   weeksCover: number | null;

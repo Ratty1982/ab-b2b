@@ -15,6 +15,7 @@ import {
   gbp,
   incomingNote,
   INCOMING_SOURCE_HINT,
+  btnClass,
   primaryBtnClass,
   qty,
   rate,
@@ -67,6 +68,7 @@ function PurchasingDashboardPage() {
     if (!data?.canManage) return;
     const form = new FormData(event.currentTarget);
     setSaving(true);
+    const verifiedRaw = String(form.get("verifiedSalesHistoryFrom") ?? "").trim();
     const result = await updatePurchasingSettingsFn({
       data: {
         defaultTargetCoverWeeks: Number(form.get("defaultTargetCoverWeeks")),
@@ -74,6 +76,28 @@ function PurchasingDashboardPage() {
         criticalCoverWeeks: Number(form.get("criticalCoverWeeks")),
         watchCoverWeeks: Number(form.get("watchCoverWeeks")),
         overstockCoverWeeks: Number(form.get("overstockCoverWeeks")),
+        verifiedSalesHistoryFrom: verifiedRaw || null,
+      },
+    });
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    load();
+  }
+
+  async function clearVerification() {
+    if (!data?.canManage) return;
+    setSaving(true);
+    const result = await updatePurchasingSettingsFn({
+      data: {
+        defaultTargetCoverWeeks: data.settings.defaultTargetCoverWeeks,
+        defaultSafetyStockQty: data.settings.defaultSafetyStockQty,
+        criticalCoverWeeks: data.settings.criticalCoverWeeks,
+        watchCoverWeeks: data.settings.watchCoverWeeks,
+        overstockCoverWeeks: data.settings.overstockCoverWeeks,
+        verifiedSalesHistoryFrom: null,
       },
     });
     setSaving(false);
@@ -102,6 +126,9 @@ function PurchasingDashboardPage() {
             coverageDays={data.forecastCoverage.coverageDays}
             confidence={data.forecastCoverage.confidence}
             historyFrom={data.forecastCoverage.historyFrom}
+            verified={data.forecastCoverage.verified}
+            verifiedFrom={data.forecastCoverage.verifiedFrom}
+            verifiedTo={data.forecastCoverage.verifiedTo}
           />
         </>
       ) : null}
@@ -128,9 +155,10 @@ function PurchasingDashboardPage() {
 
           {data.forecastCoverage ? (
             <p className="text-[12px] text-steel">
-              Strong {qty(data.forecastCoverage.counts.STRONG)} · Good {qty(data.forecastCoverage.counts.GOOD)} ·
-              Building {qty(data.forecastCoverage.counts.BUILDING)} · Low {qty(data.forecastCoverage.counts.LOW)} · Very
-              Low {qty(data.forecastCoverage.counts.VERY_LOW)} SKUs
+              Unverified {qty(data.forecastCoverage.counts.UNVERIFIED)} · Strong{" "}
+              {qty(data.forecastCoverage.counts.STRONG)} · Good {qty(data.forecastCoverage.counts.GOOD)} · Building{" "}
+              {qty(data.forecastCoverage.counts.BUILDING)} · Low {qty(data.forecastCoverage.counts.LOW)} · Very Low{" "}
+              {qty(data.forecastCoverage.counts.VERY_LOW)} SKUs
             </p>
           ) : null}
 
@@ -261,9 +289,36 @@ function PurchasingDashboardPage() {
                   />
                 </Field>
               </div>
-              <button type="submit" className={primaryBtnClass} disabled={saving}>
-                {saving ? "Saving…" : "Save defaults"}
-              </button>
+              <div className="grid gap-2 sm:max-w-md">
+                <Field label="Verified sales history from" htmlFor="verifiedSalesHistoryFrom">
+                  <input
+                    id="verifiedSalesHistoryFrom"
+                    name="verifiedSalesHistoryFrom"
+                    className={inputClass}
+                    type="date"
+                    defaultValue={data.settings.verifiedSalesHistoryFrom ?? ""}
+                    max={new Date().toISOString().slice(0, 10)}
+                  />
+                </Field>
+                <p className="text-[12px] text-steel">
+                  Forecast confidence only treats sales history from this date as complete. Set this to the earliest
+                  date from which the imported Autopart sales dataset is known to be reliable and continuous. Do not
+                  use the oldest invoice date unless that entire window has been verified.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="submit" className={primaryBtnClass} disabled={saving}>
+                  {saving ? "Saving…" : "Save defaults"}
+                </button>
+                <button
+                  type="button"
+                  className={btnClass}
+                  disabled={saving || !data.settings.verifiedSalesHistoryFrom}
+                  onClick={() => void clearVerification()}
+                >
+                  Clear verification
+                </button>
+              </div>
             </form>
           ) : null}
 
@@ -331,6 +386,7 @@ function PriorityTable({
                       confidence={row.forecastConfidence}
                       coverageDays={row.salesHistoryCoverageDays}
                       warning={row.forecastConfidenceWarning}
+                      verified={row.salesHistoryVerified}
                     />
                   </td>
                   <td className="px-3 py-2">

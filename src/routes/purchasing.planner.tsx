@@ -184,6 +184,9 @@ function PurchasePlannerPage() {
             coverageDays={data.forecastCoverage.coverageDays}
             confidence={data.forecastCoverage.confidence}
             historyFrom={data.forecastCoverage.historyFrom}
+            verified={data.forecastCoverage.verified}
+            verifiedFrom={data.forecastCoverage.verifiedFrom}
+            verifiedTo={data.forecastCoverage.verifiedTo}
           />
         </>
       ) : null}
@@ -285,6 +288,7 @@ function PurchasePlannerPage() {
                           confidence={row.forecastConfidence}
                           coverageDays={row.salesHistoryCoverageDays}
                           warning={row.forecastConfidenceWarning}
+                          verified={row.salesHistoryVerified}
                         />
                       </td>
                       <td className="px-3 py-2">{row.purchasing.minimumOrderQty ?? "—"}</td>

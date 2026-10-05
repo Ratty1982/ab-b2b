@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { coverageDaysForPeriod, purchasingDemandWindows } from "@/server/purchasing/demand";
+import { clipRangeToVerified, coverageDaysForPeriod, purchasingDemandWindows } from "@/server/purchasing/demand";
 
 describe("purchasing demand SQL contract", () => {
   it("aggregates AutopartSalesLine by SKU in SQL rather than per-SKU N+1", () => {
@@ -9,10 +9,14 @@ describe("purchasing demand SQL contract", () => {
     expect(demand).toMatch(/GROUP BY l\.sku/);
     expect(demand).toMatch(/GROUP BY 1/);
     expect(demand).not.toMatch(/findMany\(\s*\{[^}]*sku:/s);
+    expect(demand).not.toMatch(/earliestSalesDocumentDate/);
+    expect(demand).not.toMatch(/MIN\(d\."documentDate"\)/);
     expect(service).toMatch(/loadPurchasingDemandMaps/);
+    expect(service).toMatch(/verifiedSalesHistoryFrom/);
     expect(service).toMatch(/salesHistoryCoverageDays/);
     expect(service).not.toMatch(/netUnitsBySku\([^)]*sku/);
     expect(service).not.toMatch(/MIN\(d\."documentDate"\)/);
+    expect(service).not.toMatch(/earliestSalesDocumentDate/);
   });
 });
 
@@ -21,6 +25,19 @@ describe("purchasing coverage days", () => {
     expect(coverageDaysForPeriod("2026-01-01", "2026-01-30", "2026-01-20", "2026-01-30")).toBe(11);
     expect(coverageDaysForPeriod("2026-01-01", "2026-01-30", "2026-02-01", "2026-01-30")).toBe(0);
     expect(coverageDaysForPeriod("2026-01-01", "2026-01-30", "2025-01-01", "2026-01-30")).toBe(30);
+  });
+
+  it("clips demand windows to the verified start instead of the oldest invoice", () => {
+    expect(clipRangeToVerified({ from: "2026-09-01", to: "2026-10-05" }, null)).toEqual({
+      from: "2026-09-01",
+      to: "2026-10-05",
+    });
+    expect(clipRangeToVerified({ from: "2014-10-06", to: "2026-10-05" }, "2026-09-22")).toEqual({
+      from: "2026-09-22",
+      to: "2026-10-05",
+    });
+    expect(clipRangeToVerified({ from: "2014-10-06", to: "2014-10-31" }, "2026-01-01")).toBeNull();
+    expect(coverageDaysForPeriod("2025-10-06", "2026-10-05", "2026-09-22", "2026-10-05")).toBe(14);
   });
 
   it("builds bounded London windows for 7/30/90/365 and comparables", () => {
