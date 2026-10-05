@@ -5,6 +5,7 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { InstantText } from "@/components/ab/InstantText";
 import { WhatsNewModal, type WhatsNewViewModel } from "@/components/system/WhatsNewModal";
+import { QuickAddUpdate } from "@/components/system/QuickAddUpdate";
 import { ROUTES } from "@/lib/app-nav";
 import { ensureAdminAccess } from "@/server/auth/route-guards";
 import {
@@ -102,14 +103,16 @@ function VersionUpdatesAdminPage() {
         actions={
           <Link
             to={ROUTES.adminVersionUpdateNew}
-            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+            className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
           >
-            Create Update
+            Advanced options
           </Link>
         }
       />
 
       <div className="space-y-4 p-4 sm:p-6">
+        <QuickAddUpdate onCreated={() => load()} />
+
         <div className="flex flex-wrap gap-2">
           {(
             [

@@ -146,7 +146,7 @@ export function VersionUpdateEditor({ id }: { id?: string }) {
     <div>
       <PanelHeader
         title={id ? "Edit Version Update" : "Create Version Update"}
-        sub={status === "PUBLISHED" ? "Editing a published update does not reset acknowledgements." : "Save as draft, preview, then publish."}
+        sub={status === "PUBLISHED" ? "Editing a published update does not reset acknowledgements." : "Detailed editor. For a single paste, use Quick add on the Version Updates list."}
         actions={
           <Link
             to={ROUTES.adminVersionUpdates}

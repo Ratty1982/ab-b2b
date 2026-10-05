@@ -1135,6 +1135,18 @@ export const upsertVersionUpdateFn = createServerFn({ method: "POST" })
     }
   });
 
+export const createVersionUpdateFromPasteFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/system/version-updates");
+      return { ok: true as const, data: await mod.createVersionUpdateFromPaste(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const publishVersionUpdateFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { id: string })
   .handler(async ({ data }) => {

@@ -8,7 +8,9 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   acknowledgeWhatsNew,
   archiveVersionUpdate,
+  createVersionUpdateFromPaste,
   getPendingWhatsNew,
+  getVersionUpdateAdmin,
   listVersionUpdatesAdmin,
   listWhatsNewHistory,
   previewVersionUpdate,
@@ -195,5 +197,59 @@ describe("version updates", () => {
       take: 20,
     });
     expect(audits.length).toBeGreaterThan(0);
+  });
+
+  it("creates a What's New item from a simple paste using the existing model", async () => {
+    const paste = `
+Purchasing Intelligence
+
+We've added a new Purchasing Intelligence area to help plan future stock requirements.
+
+• See current stock and incoming purchase orders
+- Forecast demand using sales history
+* Identify products running low or potentially overstocked
+`;
+    await expect(createVersionUpdateFromPaste(salesId, { paste })).rejects.toBeInstanceOf(AuthError);
+    await expect(createVersionUpdateFromPaste(tradeUserId, { paste })).rejects.toBeInstanceOf(AuthError);
+    await expect(createVersionUpdateFromPaste(superAdminId, { paste: "   \n" })).rejects.toBeInstanceOf(AuthError);
+
+    const created = await createVersionUpdateFromPaste(superAdminId, { paste });
+    expect(created.status).toBe("DRAFT");
+    expect(created.title).toBe("Purchasing Intelligence");
+    expect(created.createdById).toBe(superAdminId);
+    expect(created.version).toMatch(/^\d{4}\.\d{2}\.\d{2}/);
+    expect(created.content.intro).toContain("We've added a new Purchasing Intelligence area");
+    expect(created.content.intro).toContain("• See current stock and incoming purchase orders");
+    expect(created.content.intro).toContain("• Forecast demand using sales history");
+    expect(created.content.intro).toContain("• Identify products running low or potentially overstocked");
+    expect(created.audience.mode).toBe("ALL_INTERNAL");
+    expect(new Date(created.createdAt).getTime()).toBeGreaterThan(Date.now() - 60_000);
+
+    const stored = await getVersionUpdateAdmin(superAdminId, created.id);
+    expect(stored.content).toEqual(created.content);
+    expect(stored.title).toBe(created.title);
+    const preview = await previewVersionUpdate(superAdminId, created.id);
+    expect(preview.title).toBe(created.title);
+    expect(preview.content.intro).toBe(created.content.intro);
+    expect(preview.isPreview).toBe(true);
+
+    const unsafe = await createVersionUpdateFromPaste(superAdminId, {
+      paste: "<script>alert(1)</script>Safe Title\n\nHello <b>staff</b>.",
+    });
+    expect(unsafe.title).toBe("Safe Title");
+    expect(unsafe.content.intro).toBe("Hello staff.");
+    expect(JSON.stringify(unsafe)).not.toMatch(/<script/i);
+
+    const published = await createVersionUpdateFromPaste(superAdminId, {
+      paste: "Published From Paste\n\nBody for staff.",
+      publish: true,
+    });
+    expect(published.status).toBe("PUBLISHED");
+    expect(published.publishedAt).toBeTruthy();
+    expect(new Date(published.publishedAt!).getTime()).toBeGreaterThan(Date.now() - 60_000);
+
+    const pending = await getPendingWhatsNew(salesId);
+    expect(pending?.title).toBe("Published From Paste");
+    expect(pending?.content.intro).toBe("Body for staff.");
   });
 });

@@ -106,3 +106,65 @@ export function validateVersionLabel(version: string): string | null {
   }
   return null;
 }
+
+/** Date-only YYYY-MM-DD → auto version label 2026.10.05 (existing architecture requires version). */
+export function quickUpdateVersionFromDate(isoDate: string): string {
+  const m = isoDate.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return isoDate.replace(/[^\dA-Za-z._-]/g, ".").slice(0, 40);
+  return `${m[1]}.${m[2]}.${m[3]}`;
+}
+
+export type QuickPasteParseResult =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      title: string;
+      intro: string;
+      content: VersionUpdateContent;
+      titleOnly: boolean;
+    };
+
+const BULLET_LINE = /^\s*(?:[•\u2022\-\*])\s+(.*)$/;
+
+export function normaliseQuickPasteBulletLine(line: string): string {
+  const match = line.match(BULLET_LINE);
+  if (!match) return line.replace(/[ \t]+$/g, "");
+  return `• ${match[1]!.replace(/[ \t]+$/g, "")}`;
+}
+
+/**
+ * Quick Add paste contract:
+ * first non-empty line = title; everything after = body.
+ * Bullet markers • - * are normalised to • . HTML/scripts are stripped.
+ */
+export function parseQuickPasteUpdate(raw: string): QuickPasteParseResult {
+  const source = String(raw ?? "")
+    .replace(/\u0000/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  if (!source.trim()) {
+    return { ok: false, error: "Paste an update. The first line is the title." };
+  }
+
+  const lines = source.split("\n");
+  const firstIdx = lines.findIndex((line) => line.trim().length > 0);
+  if (firstIdx < 0) {
+    return { ok: false, error: "Paste an update. The first line is the title." };
+  }
+
+  const title = sanitisePlainText(lines[firstIdx]!, 200);
+  if (!title) {
+    return { ok: false, error: "Paste an update. The first line is the title." };
+  }
+
+  const rawBody = lines.slice(firstIdx + 1).join("\n");
+  const cleanedBody = sanitisePlainText(rawBody, 4000);
+  const intro = cleanedBody.split("\n").map(normaliseQuickPasteBulletLine).join("\n").trim();
+  return {
+    ok: true,
+    title,
+    intro,
+    content: { intro, sections: [] },
+    titleOnly: !intro,
+  };
+}

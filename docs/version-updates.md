@@ -20,6 +20,10 @@ Server-side checks also require `systemRoles` to include `SUPER_ADMIN`.
 
 Actions: create/edit draft, preview, publish, archive.
 
+**Quick add:** paste a plain-text block on `/admin/version-updates`. First non-empty line is the title; everything after is the body. `•`, `-`, and `*` bullets are normalised to `•`. Version is auto-filled as `YYYY.MM.DD` (the existing model still requires a version). Audience defaults to all internal staff. Create as draft or publish now — both still go through the existing `VersionUpdate` draft/publish path.
+
+The detailed editor remains at `/admin/version-updates/new` (**Advanced options**) for version, audience, sections, and summary.
+
 ## Content model
 
 Structured JSON (not free HTML):

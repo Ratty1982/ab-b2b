@@ -11,13 +11,16 @@ import {
   audienceLabel,
   audienceTargetsUser,
   defaultAudience,
+  parseQuickPasteUpdate,
   parseVersionUpdateAudience,
   parseVersionUpdateContent,
+  quickUpdateVersionFromDate,
   sanitisePlainText,
   validateVersionLabel,
   type VersionUpdateAudience,
   type VersionUpdateContent,
 } from "@/domain/version-updates";
+import { todayLondonDateOnly } from "@/domain/sales-history-period";
 
 async function requireVersionUpdatesManage(userId: string) {
   const profile = await requireSystemPermission(userId, "version_updates.manage");
@@ -235,6 +238,67 @@ export async function upsertVersionUpdate(actorUserId: string, raw: unknown) {
     metadata: { version: created.version, title: created.title },
   });
   return toAdminDto(created);
+}
+
+async function nextQuickUpdateVersion(): Promise<string> {
+  const base = quickUpdateVersionFromDate(todayLondonDateOnly());
+  const existing = await prisma.versionUpdate.findMany({
+    where: { version: { startsWith: base } },
+    select: { version: true },
+    take: 80,
+  });
+  const used = new Set(existing.map((row) => row.version));
+  if (!used.has(base) && !validateVersionLabel(base)) return base;
+  for (let n = 2; n < 50; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!used.has(candidate) && !validateVersionLabel(candidate)) return candidate;
+  }
+  const fallback = `${base}-${Date.now().toString().slice(-4)}`;
+  if (validateVersionLabel(fallback)) return base;
+  return fallback;
+}
+
+const quickPasteSchema = z.object({
+  paste: z.string().max(12_000),
+  publish: z.boolean().optional(),
+});
+
+/** Super Admin Quick Add: first line = title, remainder = body. Uses the existing VersionUpdate model. */
+export async function createVersionUpdateFromPaste(actorUserId: string, raw: unknown) {
+  const profile = await requireVersionUpdatesManage(actorUserId);
+  const input = quickPasteSchema.parse(raw);
+  const parsed = parseQuickPasteUpdate(input.paste);
+  if (!parsed.ok) throw new AuthError(parsed.error, "VALIDATION", 400);
+
+  const version = await nextQuickUpdateVersion();
+  const content: VersionUpdateContent = parsed.content;
+  const created = await prisma.versionUpdate.create({
+    data: {
+      version,
+      title: parsed.title,
+      summary: null,
+      content: content as unknown as Prisma.InputJsonValue,
+      audience: defaultAudience() as unknown as Prisma.InputJsonValue,
+      status: "DRAFT",
+      createdById: profile.userId,
+      updatedById: profile.userId,
+    },
+  });
+  await recordAuditEvent({
+    action: "version_update.created",
+    entityType: "VersionUpdate",
+    entityId: created.id,
+    actorUserId: profile.userId,
+    metadata: { version: created.version, title: created.title, source: "quick_paste" },
+  });
+
+  if (input.publish) {
+    return publishVersionUpdate(actorUserId, created.id);
+  }
+  return toAdminDto({
+    ...created,
+    createdByName: profile.name || profile.email || null,
+  });
 }
 
 export async function publishVersionUpdate(actorUserId: string, id: string) {

@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InstantText } from "@/components/ab/InstantText";
+import type { ReactNode } from "react";
 import type { VersionUpdateContent } from "@/domain/version-updates";
 
 export type WhatsNewViewModel = {
@@ -20,18 +21,47 @@ export type WhatsNewViewModel = {
   isPreview?: boolean;
 };
 
+export function WhatsNewArticle({
+  title,
+  content,
+}: {
+  title: string;
+  content: VersionUpdateContent;
+}) {
+  return (
+    <>
+      <h3 className="font-display text-lg font-semibold uppercase tracking-tight">{title}</h3>
+      {content.intro ? (
+        <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/90">{content.intro}</p>
+      ) : null}
+      {content.sections.map((section) => (
+        <section key={`${section.heading}-${section.body.slice(0, 24)}`} className="mt-5">
+          {section.heading ? (
+            <h4 className="text-[12px] font-bold uppercase tracking-wide text-steel">{section.heading}</h4>
+          ) : null}
+          {section.body ? (
+            <p className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed">{section.body}</p>
+          ) : null}
+        </section>
+      ))}
+    </>
+  );
+}
+
 export function WhatsNewModal({
   open,
   update,
   busy,
   onAcknowledge,
   onOpenChange,
+  footer,
 }: {
   open: boolean;
   update: WhatsNewViewModel | null;
   busy?: boolean;
   onAcknowledge: () => void;
   onOpenChange: (open: boolean) => void;
+  footer?: ReactNode;
 }) {
   if (!update) return null;
   const { content } = update;
@@ -68,28 +98,7 @@ export function WhatsNewModal({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <h3 className="font-display text-lg font-semibold uppercase tracking-tight">
-            {update.title}
-          </h3>
-          {content.intro ? (
-            <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/90">
-              {content.intro}
-            </p>
-          ) : null}
-          {content.sections.map((section) => (
-            <section key={`${section.heading}-${section.body.slice(0, 24)}`} className="mt-5">
-              {section.heading ? (
-                <h4 className="text-[12px] font-bold uppercase tracking-wide text-steel">
-                  {section.heading}
-                </h4>
-              ) : null}
-              {section.body ? (
-                <p className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed">
-                  {section.body}
-                </p>
-              ) : null}
-            </section>
-          ))}
+          <WhatsNewArticle title={update.title} content={content} />
           {!update.isPreview && (update.earlierUnreadCount ?? 0) > 0 ? (
             <p className="mt-5 text-[12px] text-steel">
               {update.earlierUnreadCount} earlier update
@@ -99,14 +108,16 @@ export function WhatsNewModal({
         </div>
 
         <DialogFooter className="shrink-0 border-t border-border px-5 py-3 sm:justify-end">
-          <button
-            type="button"
-            className="h-10 rounded-md bg-primary px-5 text-[12px] font-bold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-            disabled={busy}
-            onClick={onAcknowledge}
-          >
-            {update.isPreview ? "Close preview" : "Got it"}
-          </button>
+          {footer ?? (
+            <button
+              type="button"
+              className="h-10 rounded-md bg-primary px-5 text-[12px] font-bold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+              disabled={busy}
+              onClick={onAcknowledge}
+            >
+              {update.isPreview ? "Close preview" : "Got it"}
+            </button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
