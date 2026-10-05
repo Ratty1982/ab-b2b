@@ -71,6 +71,10 @@ export const PERMISSIONS = [
   /// Internal Sales Intelligence (Sales Enquiry). Never for trade portal.
   "sales_intelligence.view",
 
+  /// Internal Purchasing Intelligence (never for trade portal).
+  "purchasing.view",
+  "purchasing.manage",
+
   "cms.view",
   "cms.edit",
   "cms.publish",

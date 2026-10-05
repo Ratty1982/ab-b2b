@@ -157,6 +157,19 @@ export async function requireCrmAccess(
   return profile;
 }
 
+export async function requirePurchasingAccess(
+  userId: string | undefined | null,
+): Promise<LoadedAccessProfile> {
+  const profile = await requireAuthenticatedUser(userId);
+  if (profile.actorType !== "INTERNAL") {
+    throw new AuthError("Purchasing Intelligence is internal only", "PURCHASING_FORBIDDEN", 403);
+  }
+  if (!hasPermission(profile, "purchasing.view") && !hasPermission(profile, "purchasing.manage")) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
+  return profile;
+}
+
 export async function requireAdminAccess(
   userId: string | undefined | null,
 ): Promise<LoadedAccessProfile> {

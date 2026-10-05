@@ -105,14 +105,15 @@ describe("canonical navigation contract", () => {
       "home",
       "sales",
       "catalogue",
+      "purchasing",
       "crm",
       "sales-intelligence",
       "website",
       "operations",
       "system",
     ]);
-    // CRM sits under Catalogue (stock tools / Cost Intelligence) and before Sales Intelligence.
-    expect(sections.indexOf("crm")).toBe(sections.indexOf("catalogue") + 1);
+    expect(sections.indexOf("purchasing")).toBe(sections.indexOf("catalogue") + 1);
+    expect(sections.indexOf("crm")).toBe(sections.indexOf("purchasing") + 1);
     expect(sections.indexOf("sales-intelligence")).toBe(sections.indexOf("crm") + 1);
   });
 
@@ -160,6 +161,8 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("website-team");
     expect(ids).not.toContain("website-media");
     expect(ids).not.toContain("products");
+    expect(ids).not.toContain("purchasing-dashboard");
+    expect(ids).not.toContain("purchasing-forecast");
     expect(ids).not.toContain("users");
     expect(ids).not.toContain("settings");
     expect(ids).not.toContain("sales-team");
@@ -183,8 +186,10 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("portal-downloads");
     expect(ids).not.toContain("portal-users");
     expect(ids).not.toContain("portal-quick-order");
+    expect(ids).not.toContain("purchasing-dashboard");
     const backoffice = flattenVisible(visibleNav(BACK_OFFICE_NAV, navCtxFromUser(tradeBuyer)));
     expect(backoffice.some((i) => i.id === "website-homepage")).toBe(false);
+    expect(backoffice.some((i) => i.id === "purchasing-dashboard")).toBe(false);
   });
 
   it("sends the logo to the correct area home", () => {

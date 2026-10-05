@@ -108,5 +108,8 @@ See [deployment-coolify.md](./deployment-coolify.md).
 | `/sales/*` | Internal + sales/CRM permissions |
 | `/crm/*` | Internal + CRM/sales permissions |
 | `/admin/*` | Internal + admin/CMS/product/credit admin permissions |
+| `/purchasing/*` | Internal + `purchasing.view` or `purchasing.manage` (trade denied) |
 
 Anonymous → `/login?returnTo=…` (safe relative paths only).
+
+Purchasing Intelligence (`purchasing.view` / `purchasing.manage`) is granted to Super Admin and Management (both), Accounts (view only), and is **not** granted to sales or trade roles. See [purchasing-intelligence.md](./purchasing-intelligence.md).

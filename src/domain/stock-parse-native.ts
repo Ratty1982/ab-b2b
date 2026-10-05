@@ -3,6 +3,7 @@ import { parseLatestCostCell, parseOptionalQuantityCell } from "@/domain/stock-p
 import {
   MAX_STOCK_FEED_BYTES,
   parseAvailCell,
+  parseIncomingCell,
   type StagedStockRow,
   type StagedUsageFields,
   type StockParseFailure,
@@ -260,6 +261,25 @@ function detectUsageLayout(headerLine: string, _physicalStkEnd: number): UsageLa
   };
 }
 
+/**
+ * Incoming is located by the header label, never by guessing offsets.
+ * Refused if Incoming appears before Avail so it cannot collide with sellable qty.
+ */
+function detectIncomingLayout(
+  headerLine: string,
+  availStart: number,
+): { start: number; end: number } | null {
+  const start = findLabelStart(headerLine, "Incoming");
+  if (start < 0) return null;
+  if (availStart >= 0 && start < availStart) return null;
+  const nextLabels = ["Ryr", "Curr", "Mth1", "Mth2", "Mth3"];
+  const nextStarts = nextLabels
+    .map((label) => findLabelStart(headerLine, label))
+    .filter((idx) => idx > start);
+  const end = nextStarts.length ? Math.min(...nextStarts) : Math.max(headerLine.length, start + 12);
+  return { start, end };
+}
+
 function sliceOptionalQty(line: string, start: number | null, end: number | null): string | null {
   if (start == null || start < 0) return null;
   const raw = end != null && end > start ? sliceField(line, start, end) : line.slice(start).trim().split(/\s+/)[0] ?? "";
@@ -435,6 +455,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
   const numeric = detectNumericLayout(lines, identity);
   if (!numeric) return AVAIL_FAIL;
   const usageLayout = detectUsageLayout(headerLine, numeric.physicalStkEnd);
+  const incomingLayout = detectIncomingLayout(headerLine, findLabelStart(headerLine, "Avail"));
 
   const rows: StagedStockRow[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -451,6 +472,9 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       ? { ok: true as const, value: extracted.value, raw: extracted.raw }
       : parseAvailCell("");
     const commercial = extractCommercialFields(line, identity, numeric, usageLayout);
+    const incoming = incomingLayout
+      ? parseIncomingCell(sliceField(line, incomingLayout.start, incomingLayout.end))
+      : undefined;
     rows.push({
       line: i + 1,
       sku,
@@ -460,6 +484,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       avail,
       latestCost: commercial.latestCost,
       usage: commercial.usage,
+      ...(incoming ? { incoming } : {}),
     });
   }
 
@@ -468,6 +493,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     delimiter: "native",
     skuHeader: "Part Number",
     availHeader: "Avail",
+    incomingHeader: incomingLayout ? "Incoming" : null,
     rows,
   };
 }

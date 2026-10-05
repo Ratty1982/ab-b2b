@@ -4,6 +4,8 @@ Automotive Brands treats **231PO3NEW `Avail`** as the authoritative sellable qua
 
 This is **not** physical stock minus LOCENQ. LOCENQ is not used. `Stk`, `Pick Qty`, and `Physical Stk` are never sellable.
 
+**Incoming** (on-order quantity) is captured from the same 231PO3NEW report when the Incoming header is present. It is **purchasing information only**. Incoming is never added to `qtyOnHand`, sellable stock, customer stock bands, basket availability, or order reservations. There is no invented ETA. See [purchasing-intelligence.md](./purchasing-intelligence.md).
+
 **Production source is EMAIL / IMAP**, matching the current AlphaOps mailbox architecture (reimplemented independently with `imapflow` + `mailparser`). FTP/HTTP/file remain diagnostic adapters only.
 
 AlphaOps was inspected in `Ratty1982/alphaops` (`backend/src/autopart-stock-email/`). AB does not import AlphaOps packages.

@@ -40,6 +40,8 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "applications.approve",
   "sales.view_all_accounts",
   "sales_intelligence.view",
+  "purchasing.view",
+  "purchasing.manage",
   "reports.view",
   "reports.management",
   "cms.view",
@@ -143,6 +145,7 @@ const ACCOUNTS_PERMS: PermissionKey[] = [
   "applications.view",
   "applications.review",
   "sales_intelligence.view",
+  "purchasing.view",
   "reports.view",
 ];
 

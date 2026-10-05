@@ -39,6 +39,8 @@ export type StagedStockRow = {
   /** Present on native 231PO3NEW; absent on delimited CSV uploads. */
   latestCost?: ParsedLatestCost;
   usage?: StagedUsageFields;
+  /** Present when the feed has an Incoming column; independent of Avail. */
+  incoming?: ParsedIncoming;
 };
 
 export type StockParseFailure = {
@@ -50,6 +52,8 @@ export type StockParseSuccess = {
   delimiter: string;
   skuHeader: string;
   availHeader: string;
+  /** Header label when Incoming was detected; null if the feed has no Incoming column. */
+  incomingHeader: string | null;
   rows: StagedStockRow[];
 };
 
@@ -63,4 +67,25 @@ export function parseAvailCell(raw: string): ParsedAvail {
   const value = Number(cleaned);
   if (!Number.isFinite(value)) return { ok: false, raw, reason: "non-numeric Avail" };
   return { ok: true, value, raw: trimmed };
+}
+
+/**
+ * 231PO3NEW Incoming — on-order quantity. Independent of Avail.
+ * blank/missing: not applied; invalid/negative: ignored (Avail still applied).
+ */
+export type ParsedIncoming =
+  | { ok: true; value: number; raw: string }
+  | { ok: false; raw: string; reason: "blank" | "invalid" | "negative" };
+
+export function parseIncomingCell(raw: string): ParsedIncoming {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false, raw, reason: "blank" };
+  const cleaned = trimmed.replace(/,/g, "");
+  if (!/^-?\d+(\.0+)?$/.test(cleaned)) {
+    return { ok: false, raw: trimmed, reason: "invalid" };
+  }
+  const value = Number(cleaned);
+  if (!Number.isFinite(value)) return { ok: false, raw: trimmed, reason: "invalid" };
+  if (value < 0) return { ok: false, raw: trimmed, reason: "negative" };
+  return { ok: true, value: Math.trunc(value), raw: trimmed };
 }

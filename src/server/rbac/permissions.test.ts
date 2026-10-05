@@ -13,6 +13,8 @@ describe("permission catalogue", () => {
       "orders.place_for_customer",
       "products.cost.view",
       "sales_intelligence.view",
+      "purchasing.view",
+      "purchasing.manage",
       "cms.publish",
       "cms.page.publish",
       "impersonation.order_for_customer",
@@ -64,6 +66,23 @@ describe("permission catalogue", () => {
     expect(SYSTEM_ROLE_PERMISSIONS.CUSTOMER_SERVICE).not.toContain("sales_intelligence.view");
     for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
       expect(perms).not.toContain("sales_intelligence.view");
+    }
+  });
+
+  it("grants purchasing permissions to Super Admin and Management, not sales or trade", () => {
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("purchasing.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("purchasing.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("purchasing.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("purchasing.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTS).toContain("purchasing.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTS).not.toContain("purchasing.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).not.toContain("purchasing.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("purchasing.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("purchasing.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("purchasing.view");
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("purchasing.view");
+      expect(perms).not.toContain("purchasing.manage");
     }
   });
 

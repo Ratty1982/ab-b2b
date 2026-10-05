@@ -6,6 +6,7 @@ import {
   requireAdminAccess,
   requireCrmAccess,
   requireInternalSalesAccess,
+  requirePurchasingAccess,
   requireTradePortalAccess,
   AuthError,
 } from "@/server/rbac/guards";
@@ -61,6 +62,10 @@ export const ensureSalesAccess = createServerFn({ method: "GET" }).handler(async
 
 export const ensureCrmAccess = createServerFn({ method: "GET" }).handler(async () =>
   runGuard((id) => requireCrmAccess(id)),
+);
+
+export const ensurePurchasingAccess = createServerFn({ method: "GET" }).handler(async () =>
+  runGuard((id) => requirePurchasingAccess(id)),
 );
 
 export const ensureAdminAccess = createServerFn({ method: "GET" }).handler(async () => {

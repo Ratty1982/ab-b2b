@@ -178,6 +178,7 @@ export async function applyStockFeed(input: {
       variantLabel: string | null;
       avail: number;
       raw: string;
+      incoming?: { kind: "set"; qty: number | null; raw: string } | { kind: "skip" };
     };
     const toApply: ApplyRow[] = [];
     const issues: Array<{
@@ -257,6 +258,15 @@ export async function applyStockFeed(input: {
       matched += 1;
       matchedFeedSkus.push(row.row.sku, hits[0]!.sku);
       const hit = hits[0]!;
+      const incomingField = row.row.incoming;
+      const incoming =
+        incomingField == null
+          ? undefined
+          : incomingField.ok
+            ? { kind: "set" as const, qty: incomingField.value, raw: incomingField.raw }
+            : incomingField.reason === "blank"
+              ? { kind: "set" as const, qty: null, raw: incomingField.raw }
+              : { kind: "skip" as const };
       toApply.push({
         variantId: hit.id,
         productId: hit.productId,
@@ -265,6 +275,7 @@ export async function applyStockFeed(input: {
         variantLabel: !hit.isDefault && hit.name ? hit.name : null,
         avail: row.avail,
         raw: row.row.availRaw,
+        ...(incoming ? { incoming } : {}),
       });
     }
 
@@ -317,13 +328,20 @@ export async function applyStockFeed(input: {
                 status,
                 externalSyncedAt: now,
                 sourceAvailRaw: String(row.avail),
+                ...(row.incoming?.kind === "set"
+                  ? { incomingQty: row.incoming.qty, sourceIncomingRaw: row.incoming.raw }
+                  : {}),
               },
               // Never reset qtyReserved — AB order reservations survive Autopart Avail sync.
+              // Incoming is purchasing-only and is never added to qtyOnHand.
               update: {
                 qtyOnHand: sellable,
                 status,
                 externalSyncedAt: now,
                 sourceAvailRaw: String(row.avail),
+                ...(row.incoming?.kind === "set"
+                  ? { incomingQty: row.incoming.qty, sourceIncomingRaw: row.incoming.raw }
+                  : {}),
               },
             });
           }),

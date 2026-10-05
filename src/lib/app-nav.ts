@@ -84,6 +84,12 @@ export const ROUTES = {
   salesIntelligenceGaps: "/sales/sales-intelligence/gaps",
   salesIntelligenceOpportunities: "/sales/sales-intelligence/opportunities",
   salesIntelligenceRebates: "/sales/sales-intelligence/rebates",
+
+  purchasing: "/purchasing",
+  purchasingForecast: "/purchasing/forecast",
+  purchasingForecastSku: (sku: string) => `/purchasing/forecast/${encodeURIComponent(sku)}` as const,
+  purchasingPlanner: "/purchasing/planner",
+  purchasingOverstock: "/purchasing/overstock",
 } as const;
 
 /**
@@ -338,7 +344,49 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
     ],
   },
-{
+  {
+    id: "purchasing",
+    label: "Purchasing",
+    items: [
+      {
+        id: "purchasing-dashboard",
+        label: "Dashboard",
+        icon: "layout-dashboard",
+        to: ROUTES.purchasing,
+        exact: true,
+        permission: "purchasing.view",
+        implemented: true,
+      },
+      {
+        id: "purchasing-forecast",
+        label: "Stock Forecast",
+        icon: "bar-chart-3",
+        to: ROUTES.purchasingForecast,
+        matchPrefixes: [ROUTES.purchasingForecast],
+        permission: "purchasing.view",
+        implemented: true,
+      },
+      {
+        id: "purchasing-planner",
+        label: "Purchase Planner",
+        icon: "clipboard-list",
+        to: ROUTES.purchasingPlanner,
+        matchPrefixes: [ROUTES.purchasingPlanner],
+        permission: "purchasing.view",
+        implemented: true,
+      },
+      {
+        id: "purchasing-overstock",
+        label: "Overstock",
+        icon: "package",
+        to: ROUTES.purchasingOverstock,
+        matchPrefixes: [ROUTES.purchasingOverstock],
+        permission: "purchasing.view",
+        implemented: true,
+      },
+    ],
+  },
+  {
     id: "crm",
     label: "CRM",
     items: [

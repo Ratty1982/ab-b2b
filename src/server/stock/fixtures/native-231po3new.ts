@@ -6,14 +6,18 @@ export function buildNative231Po3New(rows: Array<{
   pick: string;
   physical: string;
   cost?: string;
+  incoming?: string;
 }>): string {
-  const header =
-    "Branch  Group Part Number          C Description                     Latest Cost     Stk     Avail  Pick Qty Physical Stk";
+  const withIncoming = rows.some((row) => row.incoming != null);
+  const header = withIncoming
+    ? "Branch  Group Part Number          C Description                     Latest Cost     Stk     Avail  Pick Qty Physical Stk Incoming"
+    : "Branch  Group Part Number          C Description                     Latest Cost     Stk     Avail  Pick Qty Physical Stk";
   const body = rows.map((row) => {
     const cost = row.cost ?? "1.41";
     const left = `  01    AA    ${row.sku.padEnd(22)} C ${row.description.padEnd(33)}`;
     const nums = `${cost}   ${row.stk}  ${row.avail}   ${row.pick}    ${row.physical}`;
-    return left + nums;
+    const incoming = withIncoming ? `   ${(row.incoming ?? "").padStart(8)}` : "";
+    return left + nums + incoming;
   });
   return [
     "Page : 1",

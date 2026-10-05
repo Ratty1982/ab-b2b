@@ -1030,6 +1030,8 @@ model ProductVariant {
   autopartCostPosition AutopartProductCostPosition?
   autopartCostSnapshots AutopartProductCostSnapshot[]
   autopartUsageSnapshots AutopartProductUsageSnapshot[]
+  purchasingSettings VariantPurchasingSettings?
+  purchasingPlanLine PurchasingPlanLine?
 
   @@index([productId])
   @@index([barcode])
@@ -1116,6 +1118,10 @@ model Inventory {
   externalSyncedAt DateTime?
   /// Raw Avail from 231PO3NEW for diagnostics (may be negative); qtyOnHand is the clamped Avail.
   sourceAvailRaw   String?
+  /// Latest 231PO3NEW Incoming (on-order qty). Purchasing only — never added to sellable stock.
+  incomingQty      Int?
+  /// Raw Incoming cell from 231PO3NEW for diagnostics.
+  sourceIncomingRaw String?
 
   variant      ProductVariant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
   warehouse    Warehouse              @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -1326,6 +1332,52 @@ model StockScheduleWindow {
 
   @@index([businessDate])
   @@index([status])
+}
+
+/// Purchasing Intelligence defaults (decision support — never auto-orders).
+model PurchasingSettings {
+  id                      String   @id @default("singleton")
+  defaultTargetCoverWeeks Decimal  @default(8) @db.Decimal(6, 2)
+  defaultSafetyStockQty   Int      @default(0)
+  criticalCoverWeeks      Decimal  @default(1) @db.Decimal(6, 2)
+  watchCoverWeeks         Decimal  @default(3) @db.Decimal(6, 2)
+  overstockCoverWeeks     Decimal  @default(26) @db.Decimal(6, 2)
+  updatedByUserId         String?
+  updatedAt               DateTime @updatedAt
+}
+
+/// Lightweight per-SKU purchasing parameters. Null means not configured.
+model VariantPurchasingSettings {
+  id               String   @id @default(cuid())
+  variantId        String   @unique
+  /// Free-text supplier label — Phase 1 does not model a Supplier ERP.
+  supplierName     String?
+  supplierSku      String?
+  leadTimeDays     Int?
+  minimumOrderQty  Int?
+  orderMultiple    Int?
+  safetyStockQty   Int?
+  targetCoverWeeks Decimal? @db.Decimal(6, 2)
+  updatedByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([supplierName])
+}
+
+/// Purchaser planning override. Never written to Autopart; Incoming remains feed authority.
+model PurchasingPlanLine {
+  id              String   @id @default(cuid())
+  variantId       String   @unique
+  plannedQty      Int?
+  note            String?  @db.Text
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 }
 
 /// Outbound transactional email settings (Admin → Settings → Email).
@@ -2020,6 +2072,7 @@ model AutopartSalesDocument {
   /// WHERE has504 OR hasTrm21qc — see migration 20260930120000.
   @@unique([companyId, documentType, documentReference])
   @@index([companyId, documentDate])
+  @@index([documentDate])
   @@index([autopartCustomerCode])
   @@index([documentReference])
   @@index([importRunId])

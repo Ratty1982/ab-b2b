@@ -4,6 +4,7 @@ import { is231Po3NewReport, parseNative231Po3New } from "@/domain/stock-parse-na
 import {
   MAX_STOCK_FEED_BYTES,
   parseAvailCell,
+  parseIncomingCell,
   type ParsedAvail,
   type StagedStockRow,
   type StockParseFailure,
@@ -35,6 +36,8 @@ export const STOCK_SKU_HEADERS = [
 
 export const STOCK_AVAIL_HEADERS = ["avail", "available", "availableqty", "qtyavail", "free", "freeqty"];
 
+export const STOCK_INCOMING_HEADERS = ["incoming", "onorder", "onorderqty"];
+
 export const STOCK_DESC_HEADERS = ["description", "desc", "name", "product", "title"];
 
 export function headerKey(value: string): string {
@@ -56,6 +59,7 @@ export function parseAutopart231Po3New(text: string, byteLength?: number): Stock
   const skuIdx = keys.findIndex((key) => STOCK_SKU_HEADERS.includes(key));
   const availIdx = keys.findIndex((key) => STOCK_AVAIL_HEADERS.includes(key));
   const descIdx = keys.findIndex((key) => STOCK_DESC_HEADERS.includes(key));
+  const incomingIdx = keys.findIndex((key) => STOCK_INCOMING_HEADERS.includes(key));
   if (skuIdx < 0) return { code: "MISSING_SKU_HEADER", message: "Required SKU/code column is missing" };
   if (availIdx < 0) {
     return { code: "MISSING_AVAIL_HEADER", message: "Required Avail column is missing or renamed" };
@@ -67,6 +71,8 @@ export function parseAutopart231Po3New(text: string, byteLength?: number): Stock
     const sku = normalizeStockSku(rec[skuIdx] ?? "");
     const availRaw = rec[availIdx] ?? "";
     const description = descIdx >= 0 ? (rec[descIdx] ?? "").trim() || null : null;
+    const incoming =
+      incomingIdx >= 0 ? parseIncomingCell(rec[incomingIdx] ?? "") : undefined;
     rows.push({
       line: i + 1,
       sku,
@@ -74,12 +80,14 @@ export function parseAutopart231Po3New(text: string, byteLength?: number): Stock
       description,
       availRaw,
       avail: parseAvailCell(availRaw),
+      ...(incoming ? { incoming } : {}),
     });
   }
   return {
     delimiter,
     skuHeader: header[skuIdx] ?? "SKU",
     availHeader: header[availIdx] ?? "Avail",
+    incomingHeader: incomingIdx >= 0 ? (header[incomingIdx] ?? "Incoming") : null,
     rows,
   };
 }

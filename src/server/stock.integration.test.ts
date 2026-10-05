@@ -959,4 +959,113 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(parsed.errorSummary ?? "").toMatch(/231PO3NEW was detected|Avail column could not be parsed/i);
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(14);
   });
+
+  it("persists Incoming without changing Avail, bands, or public availability", async () => {
+    const { buildNative231Po3New } = await import("@/server/stock/fixtures/native-231po3new");
+    const stamp = Date.now();
+    const sku = `ST5IN-${stamp}`;
+    await saveProduct(adminId, {
+      sku,
+      name: "Incoming fixture",
+      brand: "Power Maxed",
+      category: "Braking",
+      trade: 3,
+      rrp: 6,
+      packQty: 1,
+      caseQty: 1,
+    });
+    const product = await prisma.product.findFirstOrThrow({ where: { variants: { some: { sku } } } });
+    await prisma.product.update({
+      where: { id: product.id },
+      data: { status: "ACTIVE", isActive: true, isTradeVisible: true },
+    });
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { sku } });
+
+    const first = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "36.0000", pick: "0.0000", physical: "93.0000", incoming: "240.0000" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(first.status).toBe("SUCCESS");
+    const inv1 = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv1.qtyOnHand).toBe(36);
+    expect(inv1.incomingQty).toBe(240);
+    expect(inv1.sourceIncomingRaw).toBe("240.0000");
+
+    const stock = await getVariantStock(variant.id);
+    expect(stock?.sellableQty).toBe(36);
+    expect(stock).not.toHaveProperty("incomingQty");
+    expect(JSON.stringify(stock)).not.toMatch(/incoming/i);
+    expect(getSellableQuantity(stock!)).toBe(36);
+
+    const pub = await getPublicProduct(null, sku);
+    expect(JSON.stringify(pub)).not.toMatch(/incoming/i);
+    expect(pub?.card.availability).toBe("in");
+
+    const trade = await getPublicProduct(tradeUserId, sku);
+    expect(JSON.stringify(trade)).not.toMatch(/incoming/i);
+    expect(JSON.stringify(trade)).not.toMatch(/latestCost/i);
+
+    const again = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "36.0000", pick: "0.0000", physical: "93.0000", incoming: "240.0000" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(again.status).toBe("SUCCESS");
+    const inv2 = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv2.qtyOnHand).toBe(36);
+    expect(inv2.incomingQty).toBe(240);
+
+    const zero = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "36.0000", pick: "0.0000", physical: "93.0000", incoming: "0.0000" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(zero.status).toBe("SUCCESS");
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).incomingQty).toBe(0);
+    expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(36);
+
+    await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "36.0000", pick: "0.0000", physical: "93.0000", incoming: "120.0000" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    const malformed = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "8.0000", pick: "0.0000", physical: "93.0000", incoming: "n/a" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(malformed.status).toBe("SUCCESS");
+    const invBad = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(invBad.qtyOnHand).toBe(8);
+    expect(invBad.incomingQty).toBe(120);
+
+    const blank = await applyStockFeed({
+      text: buildNative231Po3New([
+        { sku, description: "INCOMING ROW", stk: "93.0000", avail: "8.0000", pick: "0.0000", physical: "93.0000", incoming: "" },
+      ]),
+      dryRun: false,
+      trigger: "manual",
+      actorUserId: adminId,
+    });
+    expect(blank.status).toBe("SUCCESS");
+    const invBlank = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(invBlank.qtyOnHand).toBe(8);
+    expect(invBlank.incomingQty).toBeNull();
+  });
 });

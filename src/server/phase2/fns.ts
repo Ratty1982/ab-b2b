@@ -4015,4 +4015,111 @@ export const getCompanyCrmWorkspaceFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getPurchasingDashboardFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const purchasing = await import("@/server/purchasing/service");
+    return { ok: true as const, data: await purchasing.getPurchasingDashboard(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const listPurchasingForecastFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.listPurchasingForecast(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPurchasingSkuFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { sku: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.getPurchasingSku(userId, data.sku) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPurchasePlannerFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.listPurchasePlanner(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listPurchasingOverstockFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.listOverstock(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportPurchasePlannerCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.exportPurchasePlannerCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updatePurchasingSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.updatePurchasingSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateSkuPurchasingSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.updateSkuPurchasingSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updatePurchasingPlanFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.updatePurchasingPlan(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+
 
