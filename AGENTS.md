@@ -13,6 +13,12 @@ This repository is an independent Automotive Brands production codebase.
 
 Git history from the Lovable prototype era should be preserved. Do **not** force-push the production branch (`git push --force` / `--force-with-lease`) unless the user explicitly instructs it.
 
+## Cursor Cloud
+
+Cloud Agent machines use the saved environment, which installs Bun on `/usr/local/bin` (login shells do not load `~/.bashrc`) and PostgreSQL 16 locally. The dev database matches `.env.example`: user `ab`, database `automotive_brands`, port 5432. Docker Compose is not installed in that environment.
+
+On boot the environment applies `prisma migrate deploy`, runs `bun run db:seed` (development users `@example.invalid`), and starts `bun run dev` on port 43127. `AUTOPART_STOCK_ENABLE_SCHEDULER` defaults to off because Autopart IMAP credentials are not part of local development. App code already defaults `DATABASE_URL`, `APP_URL`, and `AUTH_SECRET` for development; do not commit a `.env` file.
+
 ## Git delivery (permanent)
 
 **Work is not considered delivered until the final commit has been successfully pushed to the authoritative GitHub repository and the remote branch has been verified.**
