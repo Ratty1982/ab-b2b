@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { filenameMatchesStockPattern } from "@/domain/stock-email";
 import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
+import { buildAutopart504DayEndFixture } from "@/domain/autopart-504-dayend-fixture";
 import {
   classifyOngoingSalesAttachment,
   detectOngoingSalesAttachmentType,
@@ -91,11 +92,23 @@ describe("ongoing sales content detection", () => {
     expect(detectOngoingSalesAttachmentType("trm21qc.csv", SAMPLE_TRM)).toBe("TRM21QC");
   });
 
+  it("detects production day-end 504 TXT content regardless of filename", () => {
+    const dayEnd = buildAutopart504DayEndFixture();
+    expect(detectOngoingSalesAttachmentType("504.txt", dayEnd)).toBe("ONGOING_504");
+    expect(detectOngoingSalesAttachmentType("504.TXT", dayEnd)).toBe("ONGOING_504");
+    expect(detectOngoingSalesAttachmentType("odd-name.txt", dayEnd)).toBe("ONGOING_504");
+    expect(classifyOngoingSalesAttachment("504.txt", dayEnd)).toBe("504");
+  });
+
   it("never treats legacy 504C TXT as ongoing 504", () => {
     expect(detectOngoingSalesAttachmentType("504.TXT", SAMPLE_504C)).toBe("LEGACY_504C");
     expect(detectOngoingSalesAttachmentType("504C.TXT", SAMPLE_504C)).toBe("LEGACY_504C");
+    expect(detectOngoingSalesAttachmentType("504C_20261005.txt", SAMPLE_504C)).toBe("LEGACY_504C");
     expect(classifyOngoingSalesAttachment("504C.CSV", SAMPLE_504C)).toBe("504C");
     expect(detectOngoingSalesAttachmentType("504.TXT", SAMPLE_504)).not.toBe("LEGACY_504C");
+    expect(detectOngoingSalesAttachmentType("504.txt", buildAutopart504DayEndFixture())).not.toBe(
+      "LEGACY_504C",
+    );
   });
 
   it("formats Super Admin diagnostics without credentials", () => {
@@ -109,6 +122,8 @@ describe("ongoing sales content detection", () => {
       skipReason: null,
     });
     expect(text).toContain("504.TXT");
+    expect(text).toContain("MIME text/plain");
+    expect(text).toContain("Candidate ONGOING_504");
     expect(text).toContain("Detected: ONGOING_504");
     expect(text).toContain("Result: Imported");
     expect(text).not.toMatch(/password|imap|message-id/i);

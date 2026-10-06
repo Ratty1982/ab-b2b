@@ -13,6 +13,9 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
+  describeAutopart504Malformed,
+  isAutopart504ArtefactRow,
+  isAutopart504ImportableRow,
   isAutopart504Report,
   parseAutopart504Report,
   type Autopart504Row,
@@ -188,7 +191,7 @@ export async function previewAutopart504Import(
     throw new AuthError("File does not look like an Autopart 504 report", "VALIDATION", 400);
   }
   const parsed = parseAutopart504Report(raw.text);
-  const docs = parsed.rows.filter((r) => r.documentNumber && r.classification !== "BLANK");
+  const docs = parsed.rows.filter(isAutopart504ImportableRow);
   const refs = docs.map((d) => d.documentNumber);
   const existing = refs.length
     ? await prisma.autopartSalesDocument.findMany({
@@ -221,6 +224,21 @@ export async function previewAutopart504Import(
       );
       continue;
     }
+    if (row.classification === "HEADER" || row.classification === "PAGE") {
+      continue;
+    }
+    if (row.classification === "SUBTOTAL" || row.classification === "TOTAL") {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: "UNRECOGNISED_ROW_TYPE",
+          rowNumber: row.lineNumber,
+          salesNet: row.goods,
+          reason: `Line ${row.lineNumber}: ${row.classification.toLowerCase()} ignored (not a document)`,
+        }),
+      );
+      continue;
+    }
     if (!row.documentNumber || row.classification === "MALFORMED") {
       diagnostics.push(
         makeDiagnostic({
@@ -232,6 +250,7 @@ export async function previewAutopart504Import(
           customerOrderNumber: row.customerOrderNumber || null,
           abOrderReference: row.abOrderNumber,
           salesNet: row.goods,
+          reason: describeAutopart504Malformed(row),
         }),
       );
       continue;
@@ -300,7 +319,7 @@ export async function previewAutopart504Import(
 
   return {
     headerFound: parsed.headerFound,
-    errors: parsed.errors,
+    errors: [...parsed.errors, ...parsed.warnings],
     documents: new Set(docs.map((d) => d.documentNumber)).size,
     invoices: parsed.invoiceRows.length,
     credits: parsed.creditRows.length,
@@ -664,7 +683,9 @@ export async function confirmAutopart504Import(
       diagnostics: {
         source: raw.source ?? "MANUAL",
         headerFound: parsed.headerFound,
+        layoutMode: parsed.layoutMode,
         errors: parsed.errors,
+        warnings: parsed.warnings,
       },
     },
   });
@@ -689,6 +710,22 @@ export async function confirmAutopart504Import(
         );
         continue;
       }
+      if (row.classification === "HEADER" || row.classification === "PAGE") {
+        continue;
+      }
+      if (isAutopart504ArtefactRow(row)) {
+        skipped += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "SKIPPED",
+            reasonCode: "UNRECOGNISED_ROW_TYPE",
+            rowNumber: row.lineNumber,
+            salesNet: row.goods,
+            reason: `Line ${row.lineNumber}: ${row.classification.toLowerCase()} ignored (not a document)`,
+          }),
+        );
+        continue;
+      }
       if (!row.documentNumber || row.classification === "MALFORMED") {
         skipped += 1;
         diagnosticDrafts.push(
@@ -701,6 +738,7 @@ export async function confirmAutopart504Import(
             customerOrderNumber: row.customerOrderNumber || null,
             abOrderReference: row.abOrderNumber,
             salesNet: row.goods,
+            reason: describeAutopart504Malformed(row),
           }),
         );
         continue;
@@ -895,7 +933,10 @@ export async function confirmAutopart504Import(
         diagnostics: {
           source: raw.source ?? "MANUAL",
           headerFound: parsed.headerFound,
+          layoutMode: parsed.layoutMode,
           errors: parsed.errors,
+          warnings: parsed.warnings,
+          grandTotal: parsed.grandTotal,
           abInvoices: parsed.abInvoiceRows.length,
           abCredits: parsed.abCreditRows.length,
           counts,

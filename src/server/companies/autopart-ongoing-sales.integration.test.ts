@@ -22,7 +22,11 @@ import { isAutopart504Report } from "@/domain/autopart-504";
 import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 import { processOngoingSalesEmailBatch } from "@/server/companies/autopart-ongoing-sales-poll";
-import { emailReceiptKey } from "@/domain/stock-email";
+import { attachmentReceiptKey, emailReceiptKey } from "@/domain/stock-email";
+import {
+  AUTOPART_504_DAYEND_TITLE,
+  format504DayEndRow,
+} from "@/domain/autopart-504-dayend-fixture";
 
 const prisma = new PrismaClient();
 
@@ -648,5 +652,184 @@ ${account},GRP,${lateInv},29/09/2026,${txtTrmSku},Late line,1,12.00,6.00,6.00,50
       ),
     ).toBe(true);
     expect(await prisma.autopartSalesDocument.count({ where: { documentReference: bogusDoc } })).toBe(0);
+  });
+
+  it("imports production day-end 504 TXT, keeps CONSOL, and does not import totals", async () => {
+    const oin = `OIN${String(stamp).slice(-6)}`;
+    const ssAcc = `SSDA${String(stamp).slice(-5)}`;
+    const ssConsol = `SSDC${String(stamp).slice(-5)}`;
+    const text504 = [
+      AUTOPART_504_DAYEND_TITLE,
+      "            [Select Branch ALL] [Start Date 06/10/2026] [Ending Date 06/10/2026]",
+      "Type      Document Date      Time  Name.............................   Goods      Vat       Value Inits  Customer Order Number",
+      "----------------------------------------------------------------------------------------------------------------------------------",
+      format504DayEndRow({
+        type: "ACCOUNT",
+        document: oin,
+        date: "06 Oct 26",
+        time: "10:54",
+        name: "Retail Amazon",
+        goods: "49.99",
+        vat: "10.00",
+        value: "59.99",
+        inits: "WR",
+        orderNumber: "206-1152538-1059517",
+      }),
+      format504DayEndRow({
+        type: "ACCOUNT",
+        document: ssAcc,
+        date: "06 Oct 26",
+        time: "08:06",
+        name: "Car Shop Pit Stop Ltd",
+        goods: "416.74",
+        vat: "83.35",
+        value: "500.09",
+        inits: "RS",
+        orderNumber: "KEITH051026",
+      }),
+      format504DayEndRow({
+        type: "CONSOL",
+        document: ssConsol,
+        date: "06 Oct 26",
+        time: "09:21",
+        name: "VERTU Motors",
+        goods: "116.40",
+        vat: "23.28",
+        value: "139.68",
+        inits: "RS",
+        orderNumber: "157286-9176672",
+      }),
+      "---------",
+      "         7779.09   1555.85    9334.94",
+    ].join("\n");
+    const textTrm = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${account},GRP,${ssAcc},06/10/2026,${txtTrmSku},Brake pad,1,416.74,200.00,216.74,51.000
+`;
+    expect(isAutopart504Report(text504)).toBe(true);
+
+    const email = {
+      uid: `uid-dayend-504-${txtStamp}`,
+      messageId: `<dayend-504-${txtStamp}@example.invalid>`,
+      from: "reports@example.invalid",
+      subject: "Autopart day end",
+      receivedAt: new Date(),
+      attachments: [
+        { filename: "504.txt", content: Buffer.from(text504), contentType: "text/plain" },
+        { filename: "TRM21QC.csv", content: Buffer.from(textTrm), contentType: "text/csv" },
+      ],
+    };
+
+    const first = await processOngoingSalesEmailBatch({
+      emails: [email],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.attachments.find((a) => a.filename === "504.txt")?.candidateType).toBe("ONGOING_504");
+    expect(first.attachments.find((a) => a.filename === "504.txt")?.detectedType).toBe("ONGOING_504");
+    expect(first.attachments.find((a) => a.filename === "504.txt")?.result).toBe("imported");
+    expect(first.processed504).toBe(1);
+    expect(first.processedTrm21qc).toBe(1);
+
+    const amazon = await prisma.autopartSalesDocument.findFirst({ where: { documentReference: oin } });
+    expect(amazon?.has504).toBe(true);
+    expect(amazon?.reportType504).toBe("ACCOUNT");
+    expect(Number(amazon?.goodsNet)).toBeCloseTo(49.99, 2);
+    expect(amazon?.customerNameSnapshot).toBe("Retail Amazon");
+    expect(amazon?.customerOrderNumber).toBe("206-1152538-1059517");
+    expect(amazon?.documentDate?.toISOString().startsWith("2026-10-06")).toBe(true);
+
+    const consol = await prisma.autopartSalesDocument.findFirst({
+      where: { documentReference: ssConsol },
+    });
+    expect(consol?.reportType504).toBe("CONSOL");
+    expect(consol?.documentType).toBe("INVOICE");
+    expect(Number(consol?.goodsNet)).toBeCloseTo(116.4, 2);
+
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: "7779.09" } })).toBe(0);
+
+    const matched = await prisma.autopartSalesDocument.findFirst({
+      where: { documentReference: ssAcc },
+      include: { lines: true },
+    });
+    expect(matched?.has504).toBe(true);
+    expect(matched?.hasTrm21qc).toBe(true);
+    expect(["MATCHED", "COMPLETE"]).toContain(matched?.reconciliationStatus);
+
+    const again = await processOngoingSalesEmailBatch({
+      emails: [email],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(again.processed504).toBe(0);
+    expect(again.processedTrm21qc).toBe(0);
+    expect(again.duplicatesIgnored).toBe(2);
+    expect(again.attachments.find((a) => a.filename === "504.txt")?.result).toBe("duplicate");
+    expect(again.attachments.find((a) => a.filename === "TRM21QC.csv")?.result).toBe("duplicate");
+  });
+
+  it("reconsiders a skipped UNKNOWN 504.txt after content becomes recognisable", async () => {
+    const lateDoc = `SSLU${String(stamp).slice(-5)}`;
+    const real504 = [
+      AUTOPART_504_DAYEND_TITLE,
+      "Type      Document Date      Time  Name.............................   Goods      Vat       Value Inits  Customer Order Number",
+      format504DayEndRow({
+        type: "ACCOUNT",
+        document: lateDoc,
+        date: "06 Oct 26",
+        time: "18:00",
+        name: "Retail Web Orders",
+        goods: "12.00",
+        vat: "2.40",
+        value: "14.40",
+        inits: "WB",
+        orderNumber: "SR-REPOLL",
+      }),
+    ].join("\n");
+    const emailUnknown = {
+      uid: `uid-unknown-repoll-${txtStamp}`,
+      messageId: `<unknown-repoll-${txtStamp}@example.invalid>`,
+      from: "reports@example.invalid",
+      subject: "Autopart day end",
+      receivedAt: new Date(),
+      attachments: [
+        {
+          filename: "504.txt",
+          content: Buffer.from("this is not a 504 report yet\n"),
+          contentType: "text/plain",
+        },
+      ],
+    };
+    const first = await processOngoingSalesEmailBatch({
+      emails: [emailUnknown],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.attachments.find((a) => a.filename === "504.txt")?.detectedType).toBe("UNKNOWN");
+    expect(first.attachments.find((a) => a.filename === "504.txt")?.result).toBe("skipped");
+    expect(first.processed504).toBe(0);
+    const attKey = attachmentReceiptKey(emailUnknown.messageId, emailUnknown.uid, "504.txt");
+    expect(attKey).toBeTruthy();
+    const receipt = await prisma.stockEmailReceipt.findUnique({ where: { receiptKey: attKey! } });
+    expect(receipt == null || receipt.consumed === false).toBe(true);
+
+    const emailRecognised = {
+      ...emailUnknown,
+      attachments: [{ filename: "504.txt", content: Buffer.from(real504), contentType: "text/plain" }],
+    };
+    const second = await processOngoingSalesEmailBatch({
+      emails: [emailRecognised],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(second.attachments.find((a) => a.filename === "504.txt")?.detectedType).toBe("ONGOING_504");
+    expect(second.attachments.find((a) => a.filename === "504.txt")?.result).toBe("imported");
+    expect(second.processed504).toBe(1);
+    const doc = await prisma.autopartSalesDocument.findFirst({ where: { documentReference: lateDoc } });
+    expect(doc?.has504).toBe(true);
+    expect(Number(doc?.goodsNet)).toBe(12);
   });
 });

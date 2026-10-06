@@ -90,11 +90,11 @@ Autopart day-end delivery is:
 | **504** invoice/credit documents | `.TXT` / `.txt` (CSV still accepted) |
 | **TRM21QC** product lines | `.CSV` / `.csv` |
 
-IMAP candidate filter accepts `.txt` / `.csv` plus `text/plain` and `application/octet-stream` when the filename is a plausible 504/TRM attachment. **Content detection is authoritative.** A `.txt` file is never imported as 504 unless `isAutopart504Report` matches. Legacy **504C** content/filenames are skipped (not financial 504). 231PO3NEW stock files are excluded.
+IMAP candidate filter accepts `.txt` / `.csv` plus `text/plain` and `application/octet-stream` when the filename is a plausible 504/TRM attachment. **Content detection is authoritative.** A `.txt` file is never imported as 504 unless `isAutopart504Report` matches. Production Autopart day-end 504 is a **fixed-width** TXT whose title is `LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)`. Column boundaries come from that report's header labels (`Type`, `Document`, `Date`, `Time`, `Name`, `Goods`, `Vat`, `Value`, `Inits`, `Customer Order Number`). The Document field is 9 characters, so `OIN02573006 Oct 26` is document `OIN025730` plus date `06 Oct 26` — not `OIN02573006`. ACCOUNT and CONSOL rows are both persisted (`reportType504`); page banners, separators, subtotals, and grand totals are not documents. Legacy **504C** content/filenames are skipped (not financial 504). 231PO3NEW stock files are excluded.
 
 Poll Now lists each attachment: filename, MIME, candidate type, content-detected type, imported / duplicate / skipped (+ reason). Credentials and message headers are not shown.
 
-Dedupe is per successfully handled attachment (file hash + attachment receipt). An email previously marked consumed because TRM CSV was imported will still be reconsidered for an unprocessed 504 TXT on Poll Now, as long as the message remains in the inbox. Auto-archive is off by default; if a message was moved out of INBOX, resend the 504 report.
+Dedupe is per successfully handled attachment (file hash + attachment receipt). UNKNOWN/skipped attachments are **not** marked consumed, so Poll Now can reconsider a previously unrecognised 504.txt after a detector fix. An email previously marked consumed because TRM CSV was imported will still be reconsidered for an unprocessed 504 TXT on Poll Now, as long as the message remains in the inbox. Auto-archive is off by default; if a message was moved out of INBOX, resend the 504 report.
 
 Legacy **Autopart invoice / despatch feed (504C)** panel remains above.
 

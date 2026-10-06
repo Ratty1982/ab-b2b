@@ -167,6 +167,8 @@ export type OngoingSalesAttachmentDiagnostic = {
 
 export function formatOngoingSalesAttachmentDiagnostic(row: OngoingSalesAttachmentDiagnostic): string {
   const detected = row.detectedType === "NOT_EXAMINED" ? "n/a" : row.detectedType;
+  const candidate = row.candidateType === "NOT_CANDIDATE" ? "no" : row.candidateType;
+  const mime = row.mime || "unknown";
   const outcome =
     row.result === "imported"
       ? "Imported"
@@ -175,7 +177,7 @@ export function formatOngoingSalesAttachmentDiagnostic(row: OngoingSalesAttachme
         : row.result === "failed"
           ? `Failed${row.skipReason ? ` — ${row.skipReason}` : ""}`
           : `Skipped${row.skipReason ? ` — ${row.skipReason}` : ""}`;
-  return `${row.filename}\nDetected: ${detected}\nResult: ${outcome}`;
+  return `${row.filename}\nMIME ${mime}\nCandidate ${candidate}\nDetected: ${detected}\nResult: ${outcome}`;
 }
 
 export function skipReasonForDetectedType(detected: OngoingSalesDetectedType): string {
