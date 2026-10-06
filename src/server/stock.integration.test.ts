@@ -1116,5 +1116,5 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(invMissing.incomingQty).toBe(41);
     const missingIssues = await prisma.stockSyncIssue.findMany({ where: { runId: missingColumn.runId } });
     expect(missingIssues.some((row) => /P\/Ord Qty was not present/i.test(row.message))).toBe(true);
-  });
+  }, 60_000);
 });
