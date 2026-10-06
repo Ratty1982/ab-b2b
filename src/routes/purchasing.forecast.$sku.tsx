@@ -15,6 +15,7 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import {
   ErrorState,
   ForecastConfidenceBadge,
+  ExternalBadge,
   FreshnessBanner,
   LoadingState,
   PurchasingStatusBadge,
@@ -135,7 +136,11 @@ function PurchasingSkuPage() {
     <>
       <PanelHeader
         title={forecast?.name ?? sku}
-        sub={`SKU ${sku} · purchasing decision support, not an Autopart purchase order`}
+        sub={
+          forecast?.productKind === "EXTERNAL"
+            ? `SKU ${sku} · External Autopart product · purchasing decision support, not an Autopart purchase order`
+            : `SKU ${sku} · purchasing decision support, not an Autopart purchase order`
+        }
         crumbs={[
           { label: "Purchasing", to: ROUTES.purchasing },
           { label: "Stock Forecast", to: ROUTES.purchasingForecast },
@@ -155,6 +160,7 @@ function PurchasingSkuPage() {
         <div className="grid gap-6 px-4 py-5 sm:px-6">
           <div className="flex flex-wrap items-center gap-3">
             <PurchasingStatusBadge status={forecast.status} />
+            <ExternalBadge kind={forecast.productKind} />
             <ForecastConfidenceBadge
               confidence={forecast.forecastConfidence}
               coverageDays={forecast.salesHistoryCoverageDays}

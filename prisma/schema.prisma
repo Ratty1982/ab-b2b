@@ -1027,6 +1027,7 @@ model ProductVariant {
   orderItems     OrderItem[]
   quoteItems       QuoteItem[]
   stockSyncChanges StockSyncChange[]
+  autopartProduct AutopartProduct?
   autopartCostPosition AutopartProductCostPosition?
   autopartCostSnapshots AutopartProductCostSnapshot[]
   autopartUsageSnapshots AutopartProductUsageSnapshot[]
@@ -1215,6 +1216,78 @@ model StockFeedUnmatched {
   reason           String
 
   @@index([lastSeenAt])
+}
+
+/// Internal Autopart product/stock master. Not a B2B catalogue ProductVariant.
+/// Every valid 231PO3NEW row is upserted here (catalogue-linked or external).
+/// NEVER expose to public/trade catalogue, search, basket, or ordering.
+model AutopartProduct {
+  id                  String    @id @default(cuid())
+  /// Latest trimmed feed casing. Matching uses matchKey (uppercase).
+  sku                 String
+  matchKey            String    @unique
+  description         String?
+  /// Authoritative 231PO3NEW Avail (sellable). Not reduced by AB reservations.
+  availQty            Int       @default(0)
+  /// 231PO3NEW Physical Stk when present. Diagnostic; Avail remains sellable authority.
+  physicalQty         Int?
+  /// 231PO3NEW P/Ord Qty (Incoming). Null = blank/unknown; 0 is a real zero.
+  incomingQty         Int?
+  sourceAvailRaw      String?
+  sourceIncomingRaw   String?
+  latestCost          Decimal?  @db.Decimal(12, 4)
+  sourceUpdatedAt     DateTime?
+  firstSeenAt         DateTime
+  lastSeenAt          DateTime
+  sourceSyncRunId     String?
+  /// True when this SKU appeared on the latest live 231PO3NEW apply.
+  presentInLatestFeed Boolean   @default(true)
+  /// Set only when exactly one ProductVariant matches. Never auto-created.
+  catalogueVariantId  String?   @unique
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  catalogueVariant     ProductVariant?                     @relation(fields: [catalogueVariantId], references: [id], onDelete: SetNull)
+  purchasingSettings   AutopartProductPurchasingSettings?
+  purchasingPlanLine   AutopartPurchasingPlanLine?
+
+  @@index([sku])
+  @@index([catalogueVariantId])
+  @@index([lastSeenAt])
+  @@index([presentInLatestFeed])
+}
+
+/// Per-SKU purchasing params for external Autopart products (no ProductVariant).
+model AutopartProductPurchasingSettings {
+  id                String   @id @default(cuid())
+  autopartProductId String   @unique
+  supplierName      String?
+  supplierSku       String?
+  leadTimeDays      Int?
+  minimumOrderQty   Int?
+  orderMultiple     Int?
+  safetyStockQty    Int?
+  targetCoverWeeks  Decimal? @db.Decimal(6, 2)
+  updatedByUserId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  autopartProduct AutopartProduct @relation(fields: [autopartProductId], references: [id], onDelete: Cascade)
+
+  @@index([supplierName])
+}
+
+/// Planner override for an external Autopart product.
+model AutopartPurchasingPlanLine {
+  id                String   @id @default(cuid())
+  autopartProductId String   @unique
+  plannedQty        Int?
+  note              String?  @db.Text
+  updatedByUserId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  autopartProduct AutopartProduct @relation(fields: [autopartProductId], references: [id], onDelete: Cascade)
 }
 
 /// Current Autopart Latest Cost position per SKU (internal commercial intelligence).

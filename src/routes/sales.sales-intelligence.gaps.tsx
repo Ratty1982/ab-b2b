@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
 import { StatusBadge } from "@/components/ab/Badges";
+import { SiInternalStockLines, SiSkuMeta } from "@/components/sales-intelligence/product-kind";
 import {
   SalesIntelligenceHeader,
   SiClearFiltersButton,
@@ -23,7 +23,6 @@ import {
 import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import { ROUTES } from "@/lib/app-nav";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
-import type { PublicAvailability } from "@/domain/availability";
 import type { SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
 import {
   compactGapUrlSearch,
@@ -74,7 +73,14 @@ type CustomerHit = {
   accountNumber: string | null;
   salesperson: { name: string } | null;
 };
-type ProductHit = { sku: string; name: string; brandName: string | null; inCatalogue: boolean };
+type ProductHit = {
+  sku: string;
+  name: string;
+  brandName: string | null;
+  inCatalogue: boolean;
+  productKind?: string;
+  productKindLabel?: string;
+};
 type CustomerGap = Extract<Awaited<ReturnType<typeof getCustomerGapAnalysisFn>>, { ok: true }>["data"];
 type ProductGap = Extract<Awaited<ReturnType<typeof getProductGapAnalysisFn>>, { ok: true }>["data"];
 
@@ -507,7 +513,9 @@ function GapAnalysisPage() {
             meta={[
               productData.product.sku,
               productData.product.brandName ?? "",
-              !productData.product.inCatalogue ? "Historic only" : "",
+              productData.product.productKindLabel && productData.product.productKind !== "CATALOGUE"
+                ? productData.product.productKindLabel
+                : "",
             ]}
             onChange={() => setChangingEntity(true)}
             changeLabel="Change product"
@@ -538,7 +546,11 @@ function GapAnalysisPage() {
                       <span className="font-medium">{p.name}</span>
                       <span className="font-mono text-[11px] text-steel">
                         {p.sku}
-                        {!p.inCatalogue ? " · Historic only" : p.brandName ? ` · ${p.brandName}` : ""}
+                        {p.productKindLabel && p.productKind !== "CATALOGUE"
+                          ? ` · ${p.productKindLabel}`
+                          : p.brandName
+                            ? ` · ${p.brandName}`
+                            : ""}
                       </span>
                     </button>
                   </li>
@@ -955,14 +967,22 @@ function CustomerGapView({
                     </td>
                     <td className="py-2 pr-2">
                       <div className="font-medium">{r.name}</div>
-                      <div className="font-mono text-[11px] text-steel">
-                        {r.sku}
-                        {!r.inCatalogue ? " · Historic only" : r.brandName ? ` · ${r.brandName}` : ""}
+                      <div>
+                        <SiSkuMeta
+                          sku={r.sku}
+                          brandName={r.brandName}
+                          productKind={r.productKind}
+                          productKindLabel={r.productKindLabel}
+                        />
                       </div>
-                      {r.availabilityBand === "historic" ? (
+                      {r.productKind === "HISTORIC_ONLY" ? (
                         <span className="text-[11px] text-steel">{r.availabilityLabel}</span>
                       ) : (
-                        <AvailabilityBadge availability={r.availabilityBand as PublicAvailability} />
+                        <SiInternalStockLines
+                          productKind={r.productKind}
+                          availLine={r.availLine}
+                          incomingLine={r.incomingLine}
+                        />
                       )}
                     </td>
                     <td className="py-2 pr-2 text-right tabular-nums">{r.comparisonQty}</td>
@@ -1008,7 +1028,19 @@ function CustomerGapView({
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-medium">{r.name}</div>
-                    <div className="font-mono text-[11px] text-steel">{r.sku}</div>
+                    <div>
+                      <SiSkuMeta
+                        sku={r.sku}
+                        brandName={r.brandName}
+                        productKind={r.productKind}
+                        productKindLabel={r.productKindLabel}
+                      />
+                    </div>
+                    <SiInternalStockLines
+                      productKind={r.productKind}
+                      availLine={r.availLine}
+                      incomingLine={r.incomingLine}
+                    />
                   </div>
                   <StatusBadge tone={statusTone(r.status)}>
                     {gapStatusLabel(r.status)}

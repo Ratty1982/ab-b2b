@@ -117,6 +117,7 @@ import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.pr
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
 import { Route as PortalOrdersOrderIdIndexRouteImport } from './routes/portal.orders.$orderId.index'
 import { Route as PortalOrdersOrderIdConfirmationRouteImport } from './routes/portal.orders.$orderId.confirmation'
+import { Route as AdminProductsStockProductSkuRouteImport } from './routes/admin.products.stock.product.$sku'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -672,6 +673,12 @@ const PortalOrdersOrderIdConfirmationRoute =
     path: '/confirmation',
     getParentRoute: () => PortalOrdersOrderIdRoute,
   } as any)
+const AdminProductsStockProductSkuRoute =
+  AdminProductsStockProductSkuRouteImport.update({
+    id: '/product/$sku',
+    path: '/product/$sku',
+    getParentRoute: () => AdminProductsStockRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -742,7 +749,7 @@ export interface FileRoutesByFullPath {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
-  '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/products/stock': typeof AdminProductsStockRouteWithChildren
   '/admin/security/mfa': typeof AdminSecurityMfaRoute
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
@@ -782,6 +789,7 @@ export interface FileRoutesByFullPath {
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
   '/portal/orders/$orderId/': typeof PortalOrdersOrderIdIndexRoute
+  '/admin/products/stock/product/$sku': typeof AdminProductsStockProductSkuRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -837,7 +845,7 @@ export interface FileRoutesByTo {
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
-  '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/products/stock': typeof AdminProductsStockRouteWithChildren
   '/admin/security/mfa': typeof AdminSecurityMfaRoute
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
@@ -876,6 +884,7 @@ export interface FileRoutesByTo {
   '/admin/customers/groups': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports': typeof AdminProductsImportsIndexRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdIndexRoute
+  '/admin/products/stock/product/$sku': typeof AdminProductsStockProductSkuRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -947,7 +956,7 @@ export interface FileRoutesById {
   '/admin/products/$id': typeof AdminProductsIdRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
-  '/admin/products/stock': typeof AdminProductsStockRoute
+  '/admin/products/stock': typeof AdminProductsStockRouteWithChildren
   '/admin/security/mfa': typeof AdminSecurityMfaRoute
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
@@ -987,6 +996,7 @@ export interface FileRoutesById {
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
   '/portal/orders/$orderId/': typeof PortalOrdersOrderIdIndexRoute
+  '/admin/products/stock/product/$sku': typeof AdminProductsStockProductSkuRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -1099,6 +1109,7 @@ export interface FileRouteTypes {
     | '/admin/customers/groups/'
     | '/admin/products/imports/'
     | '/portal/orders/$orderId/'
+    | '/admin/products/stock/product/$sku'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -1193,6 +1204,7 @@ export interface FileRouteTypes {
     | '/admin/customers/groups'
     | '/admin/products/imports'
     | '/portal/orders/$orderId'
+    | '/admin/products/stock/product/$sku'
   id:
     | '__root__'
     | '/'
@@ -1303,6 +1315,7 @@ export interface FileRouteTypes {
     | '/admin/customers/groups/'
     | '/admin/products/imports/'
     | '/portal/orders/$orderId/'
+    | '/admin/products/stock/product/$sku'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -2094,6 +2107,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalOrdersOrderIdConfirmationRouteImport
       parentRoute: typeof PortalOrdersOrderIdRoute
     }
+    '/admin/products/stock/product/$sku': {
+      id: '/admin/products/stock/product/$sku'
+      path: '/product/$sku'
+      fullPath: '/admin/products/stock/product/$sku'
+      preLoaderRoute: typeof AdminProductsStockProductSkuRouteImport
+      parentRoute: typeof AdminProductsStockRoute
+    }
   }
 }
 
@@ -2167,11 +2187,22 @@ const AdminProductsImportsRouteChildren: AdminProductsImportsRouteChildren = {
 const AdminProductsImportsRouteWithChildren =
   AdminProductsImportsRoute._addFileChildren(AdminProductsImportsRouteChildren)
 
+interface AdminProductsStockRouteChildren {
+  AdminProductsStockProductSkuRoute: typeof AdminProductsStockProductSkuRoute
+}
+
+const AdminProductsStockRouteChildren: AdminProductsStockRouteChildren = {
+  AdminProductsStockProductSkuRoute: AdminProductsStockProductSkuRoute,
+}
+
+const AdminProductsStockRouteWithChildren =
+  AdminProductsStockRoute._addFileChildren(AdminProductsStockRouteChildren)
+
 interface AdminProductsRouteChildren {
   AdminProductsIdRoute: typeof AdminProductsIdRoute
   AdminProductsDocumentsImportRoute: typeof AdminProductsDocumentsImportRoute
   AdminProductsImportsRoute: typeof AdminProductsImportsRouteWithChildren
-  AdminProductsStockRoute: typeof AdminProductsStockRoute
+  AdminProductsStockRoute: typeof AdminProductsStockRouteWithChildren
   AdminProductsIndexRoute: typeof AdminProductsIndexRoute
 }
 
@@ -2179,7 +2210,7 @@ const AdminProductsRouteChildren: AdminProductsRouteChildren = {
   AdminProductsIdRoute: AdminProductsIdRoute,
   AdminProductsDocumentsImportRoute: AdminProductsDocumentsImportRoute,
   AdminProductsImportsRoute: AdminProductsImportsRouteWithChildren,
-  AdminProductsStockRoute: AdminProductsStockRoute,
+  AdminProductsStockRoute: AdminProductsStockRouteWithChildren,
   AdminProductsIndexRoute: AdminProductsIndexRoute,
 }
 

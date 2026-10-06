@@ -20,6 +20,28 @@ function toNumber(value: Prisma.Decimal | number | string | null | undefined): n
   return Number.isFinite(n) ? n : 0;
 }
 
+export async function netUnitsForKeys(keys: string[], range: DateOnlyRange): Promise<Map<string, number>> {
+  const unique = [...new Set(keys.map((k) => k.trim().toUpperCase()).filter(Boolean))];
+  const map = new Map<string, number>();
+  if (!unique.length) return map;
+  const bounds = documentDatePrismaHalfOpenBounds(range);
+  for (let i = 0; i < unique.length; i += 500) {
+    const chunk = unique.slice(i, i + 500);
+    const rows = await prisma.$queryRaw<UnitsRow[]>(Prisma.sql`
+      SELECT UPPER(l.sku) AS sku, COALESCE(SUM(l.units), 0) AS units
+      FROM "AutopartSalesLine" l
+      INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+      WHERE d."documentDate" IS NOT NULL
+        AND d."documentDate" >= ${bounds.gte}
+        AND d."documentDate" < ${bounds.lt}
+        AND UPPER(l.sku) IN (${Prisma.join(chunk)})
+      GROUP BY UPPER(l.sku)
+    `);
+    for (const row of rows) map.set(String(row.sku).toUpperCase(), toNumber(row.units));
+  }
+  return map;
+}
+
 export async function netUnitsBySku(range: DateOnlyRange): Promise<Map<string, number>> {
   const bounds = documentDatePrismaHalfOpenBounds(range);
   const rows = await prisma.$queryRaw<UnitsRow[]>(Prisma.sql`

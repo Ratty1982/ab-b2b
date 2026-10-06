@@ -1959,6 +1959,42 @@ export const listUnmatchedStockSkusFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listAutopartProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { listAutopartProducts } = await import("@/server/stock/autopart-products");
+      return { ok: true as const, data: await listAutopartProducts(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getAutopartProductFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { sku: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { getAutopartProduct } = await import("@/server/stock/autopart-products");
+      return { ok: true as const, data: await getAutopartProduct(userId, data.sku) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const linkAutopartProductToVariantFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { sku: string; variantSku: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { linkAutopartProductToVariant } = await import("@/server/stock/autopart-products");
+      return { ok: true as const, data: await linkAutopartProductToVariant(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const runManualStockSyncFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as { dryRun?: boolean; csv?: string })
   .handler(async ({ data }) => {

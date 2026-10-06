@@ -146,7 +146,7 @@ export function catalogueMatchSummary(input: {
   const ignored = input.invalid + (input.duplicates ?? 0);
   const parts = [
     `Matched AB SKUs: ${input.matched}`,
-    `Not in AB catalogue: ${input.unmatched}`,
+    `External Autopart products: ${input.unmatched}`,
     `Ignored rows: ${ignored}`,
   ];
   return parts.join(". ");

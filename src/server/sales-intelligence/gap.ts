@@ -33,6 +33,7 @@ import {
   type PublicAvailability,
 } from "@/domain/availability";
 import { loadStockByVariantIds } from "@/server/stock/service";
+import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 
 async function requireSi(actorUserId: string): Promise<LoadedAccessProfile> {
   const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
@@ -218,6 +219,7 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
     : [];
   const variantBySku = new Map(variants.map((v) => [v.sku.trim().toUpperCase(), v]));
   const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
+  const intel = await loadIntelligenceByMatchKeys([...keys]);
 
   type Row = {
     status: GapStatus;
@@ -244,6 +246,13 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
     lastPurchasedDate: string | null;
     availabilityBand: PublicAvailability | "historic";
     availabilityLabel: string;
+    productKind: string;
+    productKindLabel: string;
+    availableQty: number | null;
+    incomingQty: number | null;
+    stockStale: boolean;
+    availLine: string;
+    incomingLine: string;
   };
 
   const allRows: Row[] = [];
@@ -265,7 +274,9 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
     const stock = v ? stockMap.get(v.id) : undefined;
     const band = (stock?.availability ?? null) as PublicAvailability | null;
     const displaySku = v?.sku ?? selEntry?.sku ?? cmpEntry?.sku ?? key;
-    const name = product?.name ?? selEntry?.desc ?? cmpEntry?.desc ?? displaySku;
+    const info = intel.get(key);
+    const kind = info?.kind ?? (product ? "CATALOGUE" : "HISTORIC_ONLY");
+    const name = product?.name ?? info?.description ?? selEntry?.desc ?? cmpEntry?.desc ?? displaySku;
     const lastPurchased =
       [selAct.lastInvoiceDate, cmpAct.lastInvoiceDate].filter(Boolean).sort().at(-1) ?? null;
 
@@ -277,7 +288,7 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
       brandName: product?.brand?.name ?? null,
       categoryId: product?.categoryId ?? null,
       categoryName: product?.category?.name ?? null,
-      inCatalogue: Boolean(product),
+      inCatalogue: kind === "CATALOGUE",
       comparisonQty: cmpAct.invoiceUnits,
       selectedQty: selAct.invoiceUnits,
       qtyChange: selAct.invoiceUnits - cmpAct.invoiceUnits,
@@ -292,12 +303,18 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
       netChange: moneyMinorToDto(selAct.netSalesMinor - cmpAct.netSalesMinor),
       netChangeMinor: selAct.netSalesMinor - cmpAct.netSalesMinor,
       lastPurchasedDate: lastPurchased,
-      availabilityBand: product ? band ?? "in" : "historic",
-      availabilityLabel: product
-        ? band
-          ? PUBLIC_AVAILABILITY_LABEL[band]
-          : "Available to order"
-        : "Historic Only",
+      availabilityBand: kind === "HISTORIC_ONLY" ? "historic" : band ?? "in",
+      availabilityLabel:
+        kind === "HISTORIC_ONLY"
+          ? "Historic Only"
+          : info?.availLine ?? (band ? PUBLIC_AVAILABILITY_LABEL[band] : "Available to order"),
+      productKind: kind,
+      productKindLabel: info?.kindLabel ?? (kind === "CATALOGUE" ? "Catalogue" : "Historic only"),
+      availableQty: info?.availQty ?? null,
+      incomingQty: info?.incomingQty ?? null,
+      stockStale: info?.stale ?? false,
+      availLine: info?.availLine ?? (kind === "CATALOGUE" ? "Available to order" : "Historic only"),
+      incomingLine: info?.incomingLine ?? "No incoming stock",
     });
   }
 
@@ -509,6 +526,9 @@ export async function getProductGapAnalysis(actorUserId: string, raw: unknown) {
     selectedLines.find((l) => l.descriptionSnapshot?.trim())?.descriptionSnapshot?.trim() ??
     comparisonLines.find((l) => l.descriptionSnapshot?.trim())?.descriptionSnapshot?.trim() ??
     null;
+  const intel = await loadIntelligenceByMatchKeys([input.sku]);
+  const info = intel.get(input.sku.trim().toUpperCase());
+  const kind = info?.kind ?? (variant ? "CATALOGUE" : "HISTORIC_ONLY");
 
   type Row = {
     status: GapStatus;
@@ -602,10 +622,17 @@ export async function getProductGapAnalysis(actorUserId: string, raw: unknown) {
       "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included in these totals.",
     product: {
       sku: variant?.sku ?? input.sku.trim(),
-      name: variant?.product.name ?? historicDesc ?? input.sku.trim(),
+      name: variant?.product.name ?? info?.description ?? historicDesc ?? input.sku.trim(),
       brandName: variant?.product.brand?.name ?? null,
       categoryName: variant?.product.category?.name ?? null,
-      inCatalogue: Boolean(variant),
+      inCatalogue: kind === "CATALOGUE",
+      productKind: kind,
+      productKindLabel: info?.kindLabel ?? (kind === "CATALOGUE" ? "Catalogue" : "Historic only"),
+      availableQty: info?.availQty ?? null,
+      incomingQty: info?.incomingQty ?? null,
+      stockStale: info?.stale ?? false,
+      availLine: info?.availLine ?? (kind === "CATALOGUE" ? "Available to order" : "Historic only"),
+      incomingLine: info?.incomingLine ?? "No incoming stock",
     },
     selectedPeriod: selected,
     comparisonPeriod: comparison,

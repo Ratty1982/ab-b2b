@@ -228,6 +228,9 @@ export function CreateFollowUpDrawer({
                 ) : null}
                 {preview.snapshot.historicOnly ? (
                   <span className="ml-2 text-[11px] text-steel">Historic only</span>
+                ) : preview.snapshot.productKindLabel &&
+                  preview.snapshot.productKindLabel !== "Catalogue" ? (
+                  <span className="ml-2 text-[11px] text-steel">{preview.snapshot.productKindLabel}</span>
                 ) : null}
               </p>
             ) : null}

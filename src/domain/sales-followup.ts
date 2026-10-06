@@ -46,6 +46,7 @@ export type SiFollowupSnapshot = {
   brandName: string | null;
   categoryName: string | null;
   historicOnly: boolean;
+  productKindLabel?: string | null;
   selectedPeriod: { from: string | null; to: string | null; label: string };
   comparisonPeriod: { from: string | null; to: string | null; label: string } | null;
   metrics: Record<string, string | number | null>;

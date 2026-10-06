@@ -100,7 +100,7 @@ Blank or non-numeric Avail → row `INVALID`, severity **`IGNORED`**. Previous q
 | Kind | Severity | Dashboard / run health |
 | --- | --- | --- |
 | `INVALID` / `DUPLICATE` | `IGNORED` | Recorded; SUCCESS; no Needs Attention |
-| Not in AB catalogue | *(unmatched counter)* | Informational; SUCCESS |
+| External Autopart products | *(unmatched counter)* | Informational; SUCCESS |
 | `CONFLICT` (ambiguous AB SKU) | `ACTION_REQUIRED` | PARTIAL; Needs Attention |
 | `PARSE` / feed failure | `FATAL` / FAILED run | Attention required |
 
@@ -120,7 +120,7 @@ Admin → Catalogue → **Autopart Stock**:
 
 Requires `products.import`, `products.edit`, or `admin.access`. Trade actors are refused.
 
-Dry run still records a `StockSyncRun` with `mode=dry-run` and issues. It does not upsert `Inventory` or unmatched SKUs.
+Dry run still records a `StockSyncRun` with `mode=dry-run` and issues. It does not upsert `Inventory` or `AutopartProduct`.
 
 ## Automatic schedule and timezone
 
@@ -157,7 +157,7 @@ Admin → Autopart Stock → Sync history: click a run for detail (Changed / Mat
 
 ## Unmatched SKUs
 
-`StockFeedUnmatched` is a **current-state upsert** (SKU primary key: latest Avail, firstSeenAt, lastSeenAt, lastRunId, occurrenceCount). Live syncs batch-upsert; they do not insert a historical row per four-a-day import. Admin → Unmatched Autopart SKUs is searchable and paginated. Summary copy uses **Not in AB catalogue**, not “need attention”.
+Valid Autopart SKUs that are not B2B catalogue products are stored on `AutopartProduct` as **External products**. They are not written to `StockFeedUnmatched`. Ambiguous catalogue matches remain `CONFLICT` issues. See [autopart-products.md](./autopart-products.md). Admin → Autopart products is searchable and paginated.
 
 ## Public availability
 

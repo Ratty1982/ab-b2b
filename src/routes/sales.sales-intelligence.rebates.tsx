@@ -896,6 +896,7 @@ function RebateAnalysisPage() {
                         >
                           <option value="ALL">All</option>
                           <option value="CATALOGUE">Current catalogue</option>
+                          <option value="EXTERNAL">External product</option>
                           <option value="HISTORIC">Historic only</option>
                         </select>
                       </SiField>
@@ -1064,7 +1065,11 @@ function RebateAnalysisPage() {
                               <tr key={p.sku} className="border-b border-border/60">
                                 <td className="py-2 pr-3">
                                   {p.name}
-                                  {p.historicOnly ? (
+                                  {p.productKind === "EXTERNAL" ? (
+                                    <StatusBadge tone="info" className="ml-2">
+                                      External product
+                                    </StatusBadge>
+                                  ) : p.historicOnly ? (
                                     <StatusBadge tone="neutral" className="ml-2">
                                       Historic only
                                     </StatusBadge>

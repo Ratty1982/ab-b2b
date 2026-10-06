@@ -78,7 +78,7 @@ describe("authoritative stock vs public availability", () => {
     expect(stockAttentionSummary(1)).toBe("1 row(s) need attention");
     expect(stockIgnoredDiagnosticsSummary(69, 0)).toBe("69 ignored row diagnostic(s)");
     expect(catalogueMatchSummary({ matched: 146, unmatched: 12671, invalid: 69 })).toBe(
-      "Matched AB SKUs: 146. Not in AB catalogue: 12671. Ignored rows: 69",
+      "Matched AB SKUs: 146. External Autopart products: 12671. Ignored rows: 69",
     );
   });
 

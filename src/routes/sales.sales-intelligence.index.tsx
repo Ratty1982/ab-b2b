@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
 import { StatusBadge } from "@/components/ab/Badges";
+import { SiInternalStockLines, SiSkuMeta } from "@/components/sales-intelligence/product-kind";
 import {
   SalesIntelligenceHeader,
   SiClearFiltersButton,
@@ -18,7 +18,6 @@ import {
   siControlClassName,
 } from "@/components/sales-intelligence/workspace";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
-import type { PublicAvailability } from "@/domain/availability";
 import {
   compactSalesEnquiryUrlSearch,
   formatGbp,
@@ -85,6 +84,8 @@ type ProductHit = {
   name: string;
   brandName: string | null;
   inCatalogue: boolean;
+  productKind?: string;
+  productKindLabel?: string;
 };
 
 type CustomerEnquiry = Extract<
@@ -616,7 +617,9 @@ function SalesEnquiryPage() {
             meta={[
               productData.product.sku,
               productData.product.brandName ?? "",
-              !productData.product.inCatalogue ? "Historic only" : "",
+              productData.product.productKindLabel && productData.product.productKind !== "CATALOGUE"
+                ? productData.product.productKindLabel
+                : "",
             ]}
             onChange={() => setChangingEntity(true)}
             changeLabel="Change product"
@@ -647,7 +650,11 @@ function SalesEnquiryPage() {
                       <span className="font-medium">{p.name}</span>
                       <span className="font-mono text-[11px] text-steel">
                         {p.sku}
-                        {!p.inCatalogue ? " · Historic only" : p.brandName ? ` · ${p.brandName}` : ""}
+                        {p.productKindLabel && p.productKind !== "CATALOGUE"
+                          ? ` · ${p.productKindLabel}`
+                          : p.brandName
+                            ? ` · ${p.brandName}`
+                            : ""}
                       </span>
                     </button>
                   </li>
@@ -1089,11 +1096,19 @@ function CustomerEnquiryView({
                     >
                       <td className="py-2.5 pr-3">
                         <div className="font-medium">{item.name}</div>
-                        <div className="font-mono text-[11px] text-steel">
-                          {item.sku}
-                          {item.brandName ? ` · ${item.brandName}` : ""}
-                          {!item.inCatalogue ? " · Historic only" : ""}
+                        <div>
+                          <SiSkuMeta
+                            sku={item.sku}
+                            brandName={item.brandName}
+                            productKind={item.productKind}
+                            productKindLabel={item.productKindLabel}
+                          />
                         </div>
+                        <SiInternalStockLines
+                          productKind={item.productKind}
+                          availLine={item.availLine}
+                          incomingLine={item.incomingLine}
+                        />
                         <div className="mt-1" onClick={(e) => e.stopPropagation()}>
                           <SiCreateFollowUpButton onClick={() => onFollowUpProduct(item.sku)} />
                         </div>
@@ -1113,12 +1128,13 @@ function CustomerEnquiryView({
                         {gbp(item.netSales)}
                       </td>
                       <td className="py-2.5">
-                        {item.availabilityBand === "historic" ? (
+                        {item.productKind === "HISTORIC_ONLY" || item.availabilityBand === "historic" ? (
                           <StatusBadge tone="neutral">{item.availabilityLabel}</StatusBadge>
                         ) : (
-                          <AvailabilityBadge
-                            availability={item.availabilityBand as PublicAvailability}
-                          />
+                          <>
+                            <div className="text-[13px]">{item.availLine}</div>
+                            <div className="text-[11px] text-steel">{item.incomingLine}</div>
+                          </>
                         )}
                       </td>
                     </tr>

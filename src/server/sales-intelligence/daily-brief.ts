@@ -45,6 +45,7 @@ import {
 import { getSalesRepPortfolio } from "@/server/sales-intelligence/portfolio";
 import { listCrmTasks, completeCrmTask } from "@/server/sales-intelligence/followup";
 import { siFollowupReasonLabel } from "@/domain/sales-followup";
+import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 
 async function requireBriefActor(actorUserId: string): Promise<LoadedAccessProfile> {
   const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
@@ -537,6 +538,7 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
     r.opportunities.flatMap((o) => [o.sku, o.seedSku].filter(Boolean) as string[]),
   );
   const meta = await resolveProductMeta([...firstSkuLimited.map((r) => r.sku), ...oppSkus]);
+  const intel = await loadIntelligenceByMatchKeys(oppSkus);
   const productNameBySku = new Map<string, string>();
   for (const [sku, m] of meta) {
     if (m.productName) productNameBySku.set(sku, m.productName);
@@ -710,9 +712,22 @@ export async function getDailySalesBrief(actorUserId: string, raw: unknown) {
         periodShortLabel,
       });
     }),
-    opportunities: opportunityRows.map((row) =>
-      toOpportunityItem(row, { productNameBySku, earlyPeriod }),
-    ),
+    opportunities: opportunityRows.map((row) => {
+      const item = toOpportunityItem(row, { productNameBySku, earlyPeriod });
+      return {
+        ...item,
+        lines: item.lines.map((line) => {
+          const info = line.sku ? intel.get(line.sku.trim().toUpperCase()) : undefined;
+          if (!info || info.historicOnly) return line;
+          const stockBits = [info.availLine, info.incomingLine].filter(Boolean);
+          if (!stockBits.length) return line;
+          return {
+            ...line,
+            secondaryText: [line.secondaryText, ...stockBits].filter(Boolean).join(" · "),
+          };
+        }),
+      };
+    }),
     positiveMovement: positive.slice(0, DAILY_BRIEF_POSITIVE_LIMIT),
     followUps: {
       overdue: followUps.overdue,

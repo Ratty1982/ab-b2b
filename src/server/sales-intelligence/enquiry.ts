@@ -51,6 +51,7 @@ import {
   type PublicAvailability,
 } from "@/domain/availability";
 import { loadStockByVariantIds } from "@/server/stock/service";
+import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 
 const periodPresetSchema = z.enum([
   "THIS_MONTH",
@@ -262,6 +263,8 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
     categoryName: string | null;
     inCatalogue: boolean;
     variantId: string | null;
+    productKind?: string;
+    productKindLabel?: string;
   };
   if (q.length < 1) return { items: [] as ProductSearchItem[] };
   const scope = await resolveSalesIntelligenceCompanyScope(profile);
@@ -329,7 +332,47 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
     if (items.length >= limit) break;
   }
 
-  return { items: items.slice(0, limit) };
+  if (items.length < limit) {
+    const extra = await prisma.autopartProduct.findMany({
+      where: {
+        OR: [
+          { sku: { contains: q, mode: "insensitive" } },
+          { description: { contains: q, mode: "insensitive" } },
+          { matchKey: { contains: q.toUpperCase() } },
+        ],
+      },
+      select: { sku: true, matchKey: true, description: true, catalogueVariantId: true, presentInLatestFeed: true },
+      take: limit,
+      orderBy: { sku: "asc" },
+    });
+    for (const row of extra) {
+      const key = row.matchKey ?? row.sku.trim().toUpperCase();
+      if (seen.has(key)) continue;
+      items.push({
+        sku: row.sku,
+        name: row.description?.trim() || row.sku,
+        brandName: null,
+        categoryName: null,
+        inCatalogue: Boolean(row.catalogueVariantId),
+        variantId: row.catalogueVariantId,
+      });
+      seen.add(key);
+      if (items.length >= limit) break;
+    }
+  }
+
+  const intel = await loadIntelligenceByMatchKeys(items.map((i) => i.sku));
+  return {
+    items: items.slice(0, limit).map((item) => {
+      const info = intel.get(item.sku.trim().toUpperCase());
+      return {
+        ...item,
+        inCatalogue: info?.inCatalogue ?? item.inCatalogue,
+        productKind: info?.kind ?? (item.inCatalogue ? "CATALOGUE" : "HISTORIC_ONLY"),
+        productKindLabel: info?.kindLabel ?? (item.inCatalogue ? "Catalogue" : "Historic only"),
+      };
+    }),
+  };
 }
 
 function groupBySku(lines: LineRow[]) {
@@ -514,6 +557,7 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
   }
   const variantBySku = new Map(variants.map((v) => [v.sku.trim().toUpperCase(), v]));
   const stockMap = await loadStockByVariantIds(variants.map((v) => v.id));
+  const intel = await loadIntelligenceByMatchKeys([...bySku.keys()]);
 
   type ProductRow = {
     sku: string;
@@ -532,6 +576,13 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
     availabilityBand: PublicAvailability | "historic";
     availabilityLabel: string;
     inCatalogue: boolean;
+    productKind: string;
+    productKindLabel: string;
+    availableQty: number | null;
+    incomingQty: number | null;
+    stockStale: boolean;
+    availLine: string;
+    incomingLine: string;
   };
 
   let products: ProductRow[] = [];
@@ -545,10 +596,12 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
     if (product?.category) categoryOptions.set(product.category.id, product.category.name);
     const stock = v ? stockMap.get(v.id) : undefined;
     const band = (stock?.availability ?? null) as PublicAvailability | null;
+    const info = intel.get(key);
+    const kind = info?.kind ?? (product ? "CATALOGUE" : "HISTORIC_ONLY");
     const { agg } = entry;
     products.push({
       sku: v?.sku ?? entry.sku,
-      name: product?.name ?? entry.desc ?? entry.sku,
+      name: product?.name ?? info?.description ?? entry.desc ?? entry.sku,
       brandId: product?.brandId ?? null,
       brandName: product?.brand?.name ?? null,
       categoryId: product?.categoryId ?? null,
@@ -560,13 +613,19 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
       credits: moneyMinorToDto(agg.creditsMinor),
       netSales: moneyMinorToDto(agg.netSalesMinor),
       netSalesMinor: agg.netSalesMinor,
-      availabilityBand: product ? band ?? "in" : "historic",
-      availabilityLabel: product
-        ? band
-          ? PUBLIC_AVAILABILITY_LABEL[band]
-          : "Available to order"
-        : "Historic Only",
-      inCatalogue: Boolean(product),
+      availabilityBand: kind === "HISTORIC_ONLY" ? "historic" : band ?? "in",
+      availabilityLabel:
+        kind === "HISTORIC_ONLY"
+          ? "Historic Only"
+          : info?.availLine ?? (band ? PUBLIC_AVAILABILITY_LABEL[band] : "Available to order"),
+      inCatalogue: kind === "CATALOGUE",
+      productKind: kind,
+      productKindLabel: info?.kindLabel ?? (kind === "CATALOGUE" ? "Catalogue" : "Historic only"),
+      availableQty: info?.availQty ?? null,
+      incomingQty: info?.incomingQty ?? null,
+      stockStale: info?.stale ?? false,
+      availLine: info?.availLine ?? (kind === "CATALOGUE" ? "Available to order" : "Historic only"),
+      incomingLine: info?.incomingLine ?? "No incoming stock",
     });
   }
 
@@ -1007,16 +1066,26 @@ export async function getProductSalesEnquiry(actorUserId: string, raw: unknown) 
 
   const historicDesc =
     primaryLines.find((l) => l.descriptionSnapshot?.trim())?.descriptionSnapshot?.trim() ?? null;
+  const intel = await loadIntelligenceByMatchKeys([input.sku]);
+  const info = intel.get(input.sku.trim().toUpperCase());
+  const kind = info?.kind ?? (variant ? "CATALOGUE" : "HISTORIC_ONLY");
 
   return {
     dataSource:
       "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included in these totals.",
     product: {
       sku: variant?.sku ?? input.sku.trim(),
-      name: variant?.product.name ?? historicDesc ?? input.sku.trim(),
+      name: variant?.product.name ?? info?.description ?? historicDesc ?? input.sku.trim(),
       brandName: variant?.product.brand?.name ?? null,
       categoryName: variant?.product.category?.name ?? null,
-      inCatalogue: Boolean(variant),
+      inCatalogue: kind === "CATALOGUE",
+      productKind: kind,
+      productKindLabel: info?.kindLabel ?? (kind === "CATALOGUE" ? "Catalogue" : "Historic only"),
+      availableQty: info?.availQty ?? null,
+      incomingQty: info?.incomingQty ?? null,
+      stockStale: info?.stale ?? false,
+      availLine: info?.availLine ?? (kind === "CATALOGUE" ? "Available to order" : "Historic only"),
+      incomingLine: info?.incomingLine ?? "No incoming stock",
       latestAutopartCost,
     },
     period: primary,

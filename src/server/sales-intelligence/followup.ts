@@ -179,7 +179,8 @@ async function buildSnapshot(
       productName: row.name,
       brandName: row.brandName,
       categoryName: row.categoryName,
-      historicOnly: !row.inCatalogue,
+      historicOnly: row.productKind === "HISTORIC_ONLY",
+      productKindLabel: row.productKindLabel ?? (row.inCatalogue ? null : "Historic only"),
       selectedPeriod: {
         from: gapForRow.selectedPeriod.from,
         to: gapForRow.selectedPeriod.to,
@@ -196,6 +197,8 @@ async function buildSnapshot(
         "Selected qty": row.selectedQty,
         "Selected net sales": row.selectedNetSales,
         "Last purchased": row.lastPurchasedDate,
+        Availability: row.availLine,
+        Incoming: row.incomingLine,
       },
       deepLinkPath: `${ROUTES.salesIntelligenceGaps}${qs({
         mode: "customers",
@@ -402,9 +405,12 @@ async function buildSnapshot(
   let brandName: string | null = null;
   let categoryName: string | null = null;
   let historicOnly = false;
+  let productKindLabel: string | null = null;
   let lastPurchased: string | null = null;
   let productNet: string | null = null;
   let productUnits: number | null = null;
+  let availLine: string | null = null;
+  let incomingLine: string | null = null;
   if (sku) {
     const row = enquiry.products.items.find((p) => p.sku.trim().toUpperCase() === sku.toUpperCase());
     if (!row) {
@@ -413,10 +419,13 @@ async function buildSnapshot(
     productName = row.name;
     brandName = row.brandName;
     categoryName = row.categoryName;
-    historicOnly = !row.inCatalogue;
+    historicOnly = row.productKind === "HISTORIC_ONLY";
+    productKindLabel = row.productKindLabel ?? null;
     lastPurchased = row.lastPurchasedDate;
     productNet = row.netSales;
     productUnits = row.units;
+    availLine = row.availLine ?? null;
+    incomingLine = row.incomingLine ?? null;
     if (row.inCatalogue) {
       const v = await prisma.productVariant.findFirst({
         where: { sku: { equals: row.sku, mode: "insensitive" } },
@@ -437,6 +446,7 @@ async function buildSnapshot(
     brandName,
     categoryName,
     historicOnly,
+    productKindLabel,
     selectedPeriod: {
       from: enquiry.period.from,
       to: enquiry.period.to,
@@ -448,6 +458,8 @@ async function buildSnapshot(
           "Net sales": productNet,
           Units: productUnits,
           "Last purchased": lastPurchased,
+          Availability: availLine,
+          Incoming: incomingLine,
         }
       : {
           "Invoice sales": enquiry.summary.invoiceSales,

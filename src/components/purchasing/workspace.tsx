@@ -168,13 +168,29 @@ export function trendLabel(trend: DemandTrend): string {
   return DEMAND_TREND_LABEL[trend];
 }
 
-export function SkuLink({ sku, name }: { sku: string; name: string }) {
+export function SkuLink({
+  sku,
+  name,
+  productKind,
+}: {
+  sku: string;
+  name: string;
+  productKind?: string;
+}) {
   return (
     <Link to="/purchasing/forecast/$sku" params={{ sku }} className="block min-w-0 hover:text-primary">
       <div className="truncate font-medium">{name}</div>
-      <div className="truncate font-mono text-[11px] text-steel">{sku}</div>
+      <div className="truncate font-mono text-[11px] text-steel">
+        {sku}
+        {productKind === "EXTERNAL" ? " · External" : ""}
+      </div>
     </Link>
   );
+}
+
+export function ExternalBadge({ kind }: { kind?: string }) {
+  if (kind !== "EXTERNAL") return null;
+  return <StatusBadge tone="info">External</StatusBadge>;
 }
 
 export function FreshnessBanner({
@@ -280,6 +296,7 @@ export type ForecastSearch = {
   supplier?: string;
   trend?: string;
   incoming?: "any" | "yes" | "no";
+  productType?: "all" | "catalogue" | "external";
   q?: string;
   sort?: (typeof SORT_OPTIONS)[number]["value"];
   page?: number;
@@ -301,6 +318,10 @@ export function parseForecastSearch(raw: Record<string, unknown>): ForecastSearc
   if (trend) out.trend = trend;
   const incoming = str("incoming");
   if (incoming === "yes" || incoming === "no" || incoming === "any") out.incoming = incoming;
+  const productType = str("productType");
+  if (productType === "catalogue" || productType === "external" || productType === "all") {
+    out.productType = productType;
+  }
   const q = str("q");
   if (q) out.q = q;
   const sort = str("sort");

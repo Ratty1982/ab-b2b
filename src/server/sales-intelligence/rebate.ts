@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
+import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 import type { LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import {
@@ -297,7 +298,7 @@ const customerSchema = periodInputSchema.extend({
   docType: z.enum(["ALL", "INVOICE", "CREDIT"]).optional().nullable(),
   brandId: z.string().optional().nullable(),
   categoryId: z.string().optional().nullable(),
-  catalogue: z.enum(["ALL", "CATALOGUE", "HISTORIC"]).optional().nullable(),
+  catalogue: z.enum(["ALL", "CATALOGUE", "EXTERNAL", "HISTORIC"]).optional().nullable(),
   docPage: z.number().int().min(1).max(10_000).optional(),
   page: z.number().int().min(1).max(10_000).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
@@ -349,7 +350,10 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
   }
 
   const skus = [...new Set(primaryLines.map((l) => l.sku.trim().toUpperCase()))];
-  const { variantBySku } = await attachCatalogueMeta(skus);
+  const [{ variantBySku }, intel] = await Promise.all([
+    attachCatalogueMeta(skus),
+    loadIntelligenceByMatchKeys(skus),
+  ]);
 
   // Enrich document lines with brand/category where catalogue maps.
   const documents = aggregateDocuments(primaryLines).map((doc) => ({
@@ -381,6 +385,8 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
     lastPurchasedDate: string | null;
     inCatalogue: boolean;
     historicOnly: boolean;
+    productKind: string;
+    productKindLabel: string;
   };
 
   let products: ProductRow[] = [];
@@ -391,9 +397,11 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
     const v = variantBySku.get(key);
     if (v?.brandId && v.brandName) brandOptions.set(v.brandId, v.brandName);
     if (v?.categoryId && v.categoryName) categoryOptions.set(v.categoryId, v.categoryName);
+    const info = intel.get(key);
+    const kind = info?.kind ?? (v ? "CATALOGUE" : "HISTORIC_ONLY");
     products.push({
       sku: v?.sku ?? entry.sku,
-      name: v?.name ?? entry.desc ?? entry.sku,
+      name: v?.name ?? info?.description ?? entry.desc ?? entry.sku,
       brandId: v?.brandId ?? null,
       brandName: v?.brandName ?? null,
       categoryId: v?.categoryId ?? null,
@@ -405,8 +413,10 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
       units: entry.agg.units,
       invoiceDocuments: entry.agg.invoiceRefs.size,
       lastPurchasedDate: entry.agg.lastPurchasedDate,
-      inCatalogue: Boolean(v),
-      historicOnly: !v,
+      inCatalogue: kind === "CATALOGUE",
+      historicOnly: kind === "HISTORIC_ONLY",
+      productKind: kind,
+      productKindLabel: info?.kindLabel ?? (kind === "CATALOGUE" ? "Catalogue" : "Historic only"),
     });
   }
 
@@ -458,6 +468,8 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
   }
   if (catalogue === "CATALOGUE") {
     filteredProducts = filteredProducts.filter((p) => p.inCatalogue);
+  } else if (catalogue === "EXTERNAL") {
+    filteredProducts = filteredProducts.filter((p) => p.productKind === "EXTERNAL");
   } else if (catalogue === "HISTORIC") {
     filteredProducts = filteredProducts.filter((p) => p.historicOnly);
   }

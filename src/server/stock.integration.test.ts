@@ -529,7 +529,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(first.unmatched).toBe(1);
     expect(first.invalid).toBe(0);
     expect(first.errorSummary).toBeNull();
-    expect(first.summary).toContain("Not in AB catalogue: 1");
+    expect(first.summary).toContain("External Autopart products: 1");
     expect(await prisma.stockSyncChange.count({ where: { runId: first.runId, skuSnapshot: absentSku } })).toBe(0);
     const detail = await getStockSyncRun(adminId, first.runId);
     expect(detail.issues).toHaveLength(0);
@@ -549,10 +549,12 @@ describe("Phase 5 Autopart inventory integration", () => {
       actorUserId: adminId,
     });
     expect(again.status).toBe("SUCCESS");
-    expect(await prisma.stockFeedUnmatched.count({ where: { sku: absentSku } })).toBe(1);
-    const afterUpsert = await prisma.stockFeedUnmatched.findUniqueOrThrow({ where: { sku: absentSku } });
-    expect(afterUpsert.lastAvailRaw).toBe("19");
-    expect(afterUpsert.occurrenceCount).toBe(2);
+    expect(await prisma.stockFeedUnmatched.count({ where: { sku: absentSku } })).toBe(0);
+    const afterUpsert = await prisma.autopartProduct.findUniqueOrThrow({
+      where: { matchKey: absentSku.toUpperCase() },
+    });
+    expect(afterUpsert.availQty).toBe(19);
+    expect(afterUpsert.catalogueVariantId).toBeNull();
     expect(afterUpsert.firstSeenAt.toISOString()).toBe(firstSeen);
 
     await saveProduct(adminId, {
@@ -578,6 +580,10 @@ describe("Phase 5 Autopart inventory integration", () => {
     const laterInv = await prisma.inventory.findFirstOrThrow({ where: { variantId: laterVariant.id } });
     expect(laterInv.qtyOnHand).toBe(19);
     expect(await prisma.stockFeedUnmatched.findUnique({ where: { sku: absentSku } })).toBeNull();
+    const linked = await prisma.autopartProduct.findUniqueOrThrow({
+      where: { matchKey: absentSku.toUpperCase() },
+    });
+    expect(linked.catalogueVariantId).toBe(laterVariant.id);
 
     const pub = await listPublicProducts({ userId: null, q: absentSku });
     const card = pub.items.find((item) => item.sku === absentSku);
@@ -616,7 +622,8 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(await prisma.productVariant.count({ where: { sku: { startsWith: `U${stamp}` } } })).toBe(0);
     expect(await prisma.inventory.count({ where: { variant: { sku: { startsWith: `U${stamp}` } } } })).toBe(0);
     const unmatchedCount = await prisma.stockFeedUnmatched.count({ where: { sku: { startsWith: `U${stamp}` } } });
-    expect(unmatchedCount).toBe(10000);
+    expect(unmatchedCount).toBe(0);
+    expect(await prisma.autopartProduct.count({ where: { sku: { startsWith: `U${stamp}` } } })).toBe(10000);
     const issues = await prisma.stockSyncIssue.count({ where: { runId: live.runId, kind: "UNMATCHED" } });
     expect(issues).toBe(0);
     expect(await prisma.stockSyncChange.count({ where: { runId: live.runId } })).toBe(1);

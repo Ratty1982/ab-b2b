@@ -9,6 +9,7 @@ import {
   listStockSyncChangesFn,
   listStockSyncRunsFn,
   listUnmatchedStockSkusFn,
+  listAutopartProductsFn,
   pollImapNowFn,
   runManualStockSyncFn,
   saveImapSettingsFn,
@@ -31,6 +32,8 @@ type Overview = Extract<Awaited<ReturnType<typeof stockOperationsOverviewFn>>, {
 type RunRow = Extract<Awaited<ReturnType<typeof listStockSyncRunsFn>>, { ok: true }>["data"][number];
 type UnmatchedList = Extract<Awaited<ReturnType<typeof listUnmatchedStockSkusFn>>, { ok: true }>["data"];
 type UnmatchedRow = UnmatchedList["items"][number];
+type AutopartProductList = Extract<Awaited<ReturnType<typeof listAutopartProductsFn>>, { ok: true }>["data"];
+type AutopartProductRow = AutopartProductList["items"][number];
 type RunDetail = Extract<Awaited<ReturnType<typeof getStockSyncRunFn>>, { ok: true }>["data"];
 type RunPane = "changed" | "matched" | "unmatched" | "invalid";
 type ChangeItem = RunDetail["changes"]["items"][number];
@@ -94,7 +97,7 @@ function noticeFromSync(kind: string, data: SyncResult): ActionNotice {
       `AB products matched: ${data.matched ?? 0}`,
       data.dryRun ? `Would update: ${data.wouldUpdate ?? 0}` : `Updated: ${data.updated ?? 0}`,
       `Unchanged: ${data.unchanged ?? 0}`,
-      `Not in AB catalogue: ${data.unmatched ?? 0}`,
+      `External Autopart products: ${data.unmatched ?? 0}`,
       `Invalid: ${data.invalid ?? 0}`,
       data.duplicates ? `Duplicates: ${data.duplicates}` : null,
     ]
@@ -151,11 +154,17 @@ function AutopartStockOps() {
   const [unmatchedTotal, setUnmatchedTotal] = useState(0);
   const [unmatchedPage, setUnmatchedPage] = useState(1);
   const [unmatchedQuery, setUnmatchedQuery] = useState("");
+  const [products, setProducts] = useState<AutopartProductRow[]>([]);
+  const [productsTotal, setProductsTotal] = useState(0);
+  const [productsPage, setProductsPage] = useState(1);
+  const [productsQuery, setProductsQuery] = useState("");
+  const [productType, setProductType] = useState<"all" | "catalogue" | "external">("all");
+  const [stockStatus, setStockStatus] = useState<"all" | "in" | "low" | "out" | "incoming">("all");
   const [selected, setSelected] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
-  const [tab, setTab] = useState<"history" | "unmatched" | "issues">("history");
+  const [tab, setTab] = useState<"history" | "products" | "issues">("history");
   const [runPane, setRunPane] = useState<RunPane>("changed");
   const [changeQuery, setChangeQuery] = useState("");
   const [runUnmatched, setRunUnmatched] = useState<UnmatchedRow[]>([]);
@@ -173,10 +182,19 @@ function AutopartStockOps() {
   const [enabled, setEnabled] = useState(false);
 
   const load = useCallback(async () => {
-    const [ov, history, unmatchedRows] = await Promise.all([
+    const [ov, history, unmatchedRows, productRows] = await Promise.all([
       stockOperationsOverviewFn(),
       listStockSyncRunsFn(),
       listUnmatchedStockSkusFn({ data: { q: unmatchedQuery, page: unmatchedPage, pageSize: 50 } }),
+      listAutopartProductsFn({
+        data: {
+          q: productsQuery,
+          productType,
+          stockStatus,
+          page: productsPage,
+          pageSize: 50,
+        },
+      }),
     ]);
     if (ov.ok) {
       setError(null);
@@ -201,7 +219,12 @@ function AutopartStockOps() {
       setUnmatchedTotal(unmatchedRows.data.total);
       setUnmatchedPage(unmatchedRows.data.page);
     }
-  }, [unmatchedPage, unmatchedQuery]);
+    if (productRows.ok) {
+      setProducts(productRows.data.items);
+      setProductsTotal(productRows.data.total);
+      setProductsPage(productRows.data.page);
+    }
+  }, [unmatchedPage, unmatchedQuery, productsPage, productsQuery, productType, stockStatus]);
 
   useEffect(() => {
     void load();
@@ -527,7 +550,7 @@ function AutopartStockOps() {
       </form>
 
       <div className="mt-6 flex gap-2 border-b border-border">
-        {(["history", "unmatched", "issues"] as const).map((id) => (
+        {(["history", "products", "issues"] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -539,8 +562,8 @@ function AutopartStockOps() {
           >
             {id === "history"
               ? "Sync history"
-              : id === "unmatched"
-                ? "Unmatched Autopart SKUs"
+              : id === "products"
+                ? "Autopart products"
                 : "Row diagnostics"}
           </button>
         ))}
@@ -549,8 +572,9 @@ function AutopartStockOps() {
       {tab === "history" ? (
         <div className="mt-4 space-y-3">
           <p className="text-[12px] text-steel">
-            231PO3NEW is Autopart’s master file. SKUs that Automotive Brands does not sell are skipped as
-            not in catalogue — they are not invalid and do not make a run PARTIAL. Exact Avail is internal only.
+            231PO3NEW is Autopart’s master file. Catalogue matches update Inventory. Valid SKUs without a
+            B2B ProductVariant are stored as External Autopart products for internal stock, sales, and
+            purchasing intelligence — they are not import errors and never become public catalogue products.
           </p>
           <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[960px] text-[13px]">
@@ -565,7 +589,7 @@ function AutopartStockOps() {
                 <th className="px-3 py-2 text-right">Matched</th>
                 <th className="px-3 py-2 text-right">Updated</th>
                 <th className="px-3 py-2 text-right">Unchanged</th>
-                <th className="px-3 py-2 text-right">Not in AB catalogue</th>
+                <th className="px-3 py-2 text-right">External products</th>
                 <th className="px-3 py-2 text-right">Invalid</th>
               </tr>
             </thead>
@@ -665,74 +689,122 @@ function AutopartStockOps() {
         </div>
       ) : null}
 
-      {tab === "unmatched" ? (
+      {tab === "products" ? (
         <div className="mt-4 space-y-3">
           <p className="text-[13px] text-steel">
-            {unmatchedTotal.toLocaleString("en-GB")} Autopart SKU(s) not in the AB catalogue. This is expected
-            for the master 231PO3NEW file. Rows are current-state diagnostics only — they are not import errors
-            and products are never auto-created. Add the SKU in AB and the next import will match Avail automatically.
+            Internal Autopart product master. Catalogue SKUs are linked to a B2B ProductVariant. External
+            products have live Autopart stock without a public listing. Historic-only SKUs drop off after they
+            leave 231PO3NEW. Exact Avail, Physical, Incoming, and Latest Cost stay internal.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <input
-              value={unmatchedQuery}
+              value={productsQuery}
               onChange={(e) => {
-                setUnmatchedQuery(e.target.value);
-                setUnmatchedPage(1);
+                setProductsQuery(e.target.value);
+                setProductsPage(1);
               }}
               className={inputClass}
-              placeholder="Search Autopart SKU or description"
-              aria-label="Search unmatched Autopart SKUs"
+              placeholder="Search SKU or description"
+              aria-label="Search Autopart products"
             />
+            <select
+              className={inputClass}
+              value={productType}
+              onChange={(e) => {
+                setProductType(e.target.value as typeof productType);
+                setProductsPage(1);
+              }}
+            >
+              <option value="all">All types</option>
+              <option value="catalogue">Catalogue</option>
+              <option value="external">External</option>
+            </select>
+            <select
+              className={inputClass}
+              value={stockStatus}
+              onChange={(e) => {
+                setStockStatus(e.target.value as typeof stockStatus);
+                setProductsPage(1);
+              }}
+            >
+              <option value="all">All stock</option>
+              <option value="in">In stock</option>
+              <option value="low">Low</option>
+              <option value="out">Out of stock</option>
+              <option value="incoming">Incoming</option>
+            </select>
             <p className="text-[12px] text-steel">
-              Page {unmatchedPage} of {Math.max(1, Math.ceil(unmatchedTotal / 50))}
+              Page {productsPage} of {Math.max(1, Math.ceil(productsTotal / 50))} · {productsTotal.toLocaleString("en-GB")} SKUs
             </p>
             <button
               type="button"
               className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase disabled:opacity-40"
-              disabled={unmatchedPage <= 1}
-              onClick={() => setUnmatchedPage((p) => Math.max(1, p - 1))}
+              disabled={productsPage <= 1}
+              onClick={() => setProductsPage((p) => Math.max(1, p - 1))}
             >
               Previous
             </button>
             <button
               type="button"
               className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase disabled:opacity-40"
-              disabled={unmatchedPage >= Math.ceil(unmatchedTotal / 50)}
-              onClick={() => setUnmatchedPage((p) => p + 1)}
+              disabled={productsPage >= Math.ceil(productsTotal / 50)}
+              onClick={() => setProductsPage((p) => p + 1)}
             >
               Next
             </button>
           </div>
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[800px] text-[13px]">
+          <table className="w-full min-w-[1100px] text-[13px]">
             <thead>
               <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
-                <th className="px-3 py-2">Autopart SKU</th>
+                <th className="px-3 py-2">SKU</th>
                 <th className="px-3 py-2">Description</th>
-                <th className="px-3 py-2">Latest Avail</th>
-                <th className="px-3 py-2">First seen</th>
-                <th className="px-3 py-2">Last seen</th>
-                <th className="px-3 py-2 text-right">Times seen</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2 text-right">Avail</th>
+                <th className="px-3 py-2 text-right">Physical</th>
+                <th className="px-3 py-2 text-right">Incoming</th>
+                <th className="px-3 py-2 text-right">Latest cost</th>
+                <th className="px-3 py-2 text-right">30d</th>
+                <th className="px-3 py-2 text-right">90d</th>
+                <th className="px-3 py-2 text-right">365d</th>
+                <th className="px-3 py-2">Last stock update</th>
               </tr>
             </thead>
             <tbody>
-              {unmatched.length === 0 ? (
+              {products.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-steel">
-                    {unmatchedTotal === 0
-                      ? "No unmatched Autopart SKUs from live syncs."
+                  <td colSpan={11} className="px-3 py-8 text-center text-steel">
+                    {productsTotal === 0
+                      ? "No Autopart products yet. The next live 231PO3NEW import populates this list."
                       : "No SKUs match this search."}
                   </td>
                 </tr>
               ) : (
-                unmatched.map((row) => (
+                products.map((row) => (
                   <tr key={row.sku} className="border-b border-border/60">
-                    <td className="num px-3 py-2">{row.sku}</td>
+                    <td className="num px-3 py-2">
+                      <Link
+                        to="/admin/products/stock/product/$sku"
+                        params={{ sku: row.sku }}
+                        className="font-mono text-primary hover:underline"
+                      >
+                        {row.sku}
+                      </Link>
+                    </td>
                     <td className="px-3 py-2">{row.description ?? "—"}</td>
-                    <td className="num px-3 py-2">{row.avail ?? "—"}</td>
-                    <td className="px-3 py-2"><InstantText value={row.firstSeenAt} /></td>
-                    <td className="px-3 py-2"><InstantText value={row.lastSeenAt} /></td>
-                    <td className="num px-3 py-2 text-right">{row.occurrenceCount}</td>
+                    <td className="px-3 py-2">
+                      <StatusBadge tone={row.kind === "EXTERNAL" ? "info" : row.kind === "CATALOGUE" ? "good" : "neutral"}>
+                        {row.kindLabel}
+                      </StatusBadge>
+                    </td>
+                    <td className="num px-3 py-2 text-right">{row.stale ? "Delayed" : row.availQty.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{row.physicalQty == null ? "—" : row.physicalQty.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{row.stale ? "Delayed" : row.incomingQty == null ? "—" : row.incomingQty.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{row.latestCost ?? "—"}</td>
+                    <td className="num px-3 py-2 text-right">{row.sales30.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{row.sales90.toLocaleString("en-GB")}</td>
+                    <td className="num px-3 py-2 text-right">{row.sales365.toLocaleString("en-GB")}</td>
+                    <td className="px-3 py-2"><InstantText value={row.sourceUpdatedAt ?? row.lastSeenAt} /></td>
                   </tr>
                 ))
               )}
@@ -854,7 +926,7 @@ function RunDetailPanel({
         <StatusCard label="Matched" value={selected.matched.toLocaleString("en-GB")} />
         <StatusCard label={dry ? "Would change" : "Updated"} value={(dry ? changed.total : selected.updated).toLocaleString("en-GB")} />
         <StatusCard label="Unchanged" value={selected.unchanged.toLocaleString("en-GB")} />
-        <StatusCard label="Not in AB catalogue" value={selected.unmatched.toLocaleString("en-GB")} />
+        <StatusCard label="External Autopart products" value={selected.unmatched.toLocaleString("en-GB")} />
         <StatusCard label="Ignored (invalid)" value={selected.invalid.toLocaleString("en-GB")} />
         <StatusCard label="Ignored (duplicates)" value={selected.duplicates.toLocaleString("en-GB")} />
       </div>
@@ -903,7 +975,7 @@ function RunDetailPanel({
           [
             ["changed", dry ? `Would change (${changed.total})` : `Changed (${selected.updated})`],
             ["matched", `Matched (${selected.matched})`],
-            ["unmatched", `Not in AB catalogue (${selected.unmatched})`],
+            ["unmatched", `External products (${selected.unmatched})`],
             ["invalid", `Ignored diagnostics (${selected.invalid + selected.duplicates})`],
           ] as const
         ).map(([id, label]) => (
@@ -965,11 +1037,8 @@ function RunDetailPanel({
       {runPane === "unmatched" ? (
         <div className="space-y-2">
           <p className="text-[12px] text-steel">
-            Valid Autopart SKUs not sold in AB. These are not import errors and have no stock-change history.
-            {selected.unmatched ? ` This run skipped ${selected.unmatched.toLocaleString("en-GB")}.` : ""}
-            {runUnmatchedTotal === 0
-              ? " Current unmatched diagnostics for this run are empty (list is current-state, not a full archive)."
-              : ""}
+            Valid Autopart SKUs stored as External products for this run. They are not import errors.
+            {selected.unmatched ? ` This run recorded ${selected.unmatched.toLocaleString("en-GB")} external SKU(s).` : ""}
           </p>
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[640px] text-[13px]">

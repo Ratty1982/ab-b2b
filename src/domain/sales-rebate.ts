@@ -24,7 +24,7 @@ export type RebateTab = "documents" | "products" | "brands" | "categories";
 
 export type RebateDocTypeFilter = "ALL" | "INVOICE" | "CREDIT";
 
-export type RebateCatalogueFilter = "ALL" | "CATALOGUE" | "HISTORIC";
+export type RebateCatalogueFilter = "ALL" | "CATALOGUE" | "EXTERNAL" | "HISTORIC";
 
 export type RebateCustomerSort =
   | "NET_DESC"
@@ -110,7 +110,7 @@ const PERIODS = new Set<RebatePeriodPreset>([
 const COMPARES = new Set(["OFF", "PREVIOUS", "PREVIOUS_YEAR", "CUSTOM"]);
 const TABS = new Set(["documents", "products", "brands", "categories"]);
 const DOC_TYPES = new Set(["ALL", "INVOICE", "CREDIT"]);
-const CATS = new Set(["ALL", "CATALOGUE", "HISTORIC"]);
+const CATS = new Set(["ALL", "CATALOGUE", "EXTERNAL", "HISTORIC"]);
 const SORTS = new Set(["NET_DESC", "NET_ASC", "INVOICE_DESC", "CREDITS_DESC", "NAME_AZ"]);
 
 const ALL_HISTORY_LABEL = "All history";

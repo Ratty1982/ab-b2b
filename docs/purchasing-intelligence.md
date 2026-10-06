@@ -39,13 +39,13 @@ Audited actions (not table views/filters): purchasing defaults, SKU purchasing s
 
 | Question | Source |
 | --- | --- |
-| Current sellable stock | 231PO3NEW **Avail** → `Inventory.qtyOnHand` |
-| Incoming / on order | 231PO3NEW **P/Ord Qty** → `Inventory.incomingQty` (UI: Incoming) |
+| Current sellable stock | 231PO3NEW **Avail** → `Inventory.qtyOnHand` for catalogue SKUs; `AutopartProduct.availQty` for external Autopart products |
+| Incoming / on order | 231PO3NEW **P/Ord Qty** → `Inventory.incomingQty` (catalogue) or `AutopartProduct.incomingQty` (external). UI: Incoming |
 | Demand | `AutopartSalesLine` signed net units via `AutopartSalesDocument.documentDate` (same financial source as Sales Intelligence) |
-| Latest Cost | Cost Intelligence `AutopartProductCostPosition` |
-| SKU purchasing params | `VariantPurchasingSettings` (null = not configured) |
+| Latest Cost | Cost Intelligence `AutopartProductCostPosition` (catalogue) or `AutopartProduct.latestCost` (external) |
+| SKU purchasing params | `VariantPurchasingSettings` for catalogue SKUs; `AutopartProductPurchasingSettings` for external Autopart products (null = not configured) |
 | System defaults | `PurchasingSettings` singleton |
-| Planned qty / note | `PurchasingPlanLine` (AB-only planning) |
+| Planned qty / note | `PurchasingPlanLine` (catalogue) or `AutopartPurchasingPlanLine` (external) |
 
 **Not used:** B2B `OrderItem` rows. Historic 561L and ongoing 504/TRM already land in `AutopartSalesLine`; they are not double-counted.
 
@@ -169,7 +169,9 @@ Latest Cost is internal only. Purchasing screens are internal-only; public APIs 
 
 Purchaser can enter **planned order qty** and a **note**. Stored on `PurchasingPlanLine` with actor and timestamp. Not written to Autopart. Incoming is never modified.
 
-CSV is a human worksheet (supplier, SKU, demand, suggested/planned qty, Latest Cost, note, forecast confidence, sales-history coverage days, 30/90/365 coverage, seasonal comparison). It is **not** an Autopart purchase-order import.
+CSV is a human worksheet (supplier, SKU, description, product type, demand, suggested/planned qty, Latest Cost, note, forecast confidence, sales-history coverage days, 30/90/365 coverage, seasonal comparison). It is **not** an Autopart purchase-order import.
+
+External Autopart products (Retail third-party SKUs with live 231PO3NEW stock but no B2B ProductVariant) use the same forecast algorithm. See [autopart-products.md](./autopart-products.md).
 
 ## Forecast confidence vs stock freshness
 
@@ -240,7 +242,7 @@ Insufficient components show “—” / “Insufficient history” on the SKU d
 
 ### SQL / performance
 
-Demand uses PostgreSQL `GROUP BY sku` over bounded `documentDate` ranges. Forecast list does **not** run a per-SKU sales-history query. Catalogue rows are joined in batches; purchasing math runs in-process on the grouped maps.
+Demand uses PostgreSQL `GROUP BY sku` over bounded `documentDate` ranges. Forecast list does **not** run a per-SKU sales-history query. Catalogue variants and current external Autopart products are loaded in batches; purchasing math runs in-process on the grouped maps.
 
 Coverage uses the configured verified start, loaded once with Purchasing settings — not `MIN(documentDate)`, and not per SKU. Do not add per-SKU `MIN`/`MAX`/`COUNT` coverage queries.
 

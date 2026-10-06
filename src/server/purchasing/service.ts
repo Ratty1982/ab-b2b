@@ -5,7 +5,11 @@ import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess, requireSystemPermission } from "@/server/rbac/guards";
-import { AUTOPART_WAREHOUSE_CODE } from "@/domain/stock";
+import { AUTOPART_WAREHOUSE_CODE, skuMatchKey } from "@/domain/stock";
+import {
+  AUTOPART_PRODUCT_KIND_LABEL,
+  type AutopartProductKind,
+} from "@/domain/autopart-product";
 import { stockFreshness } from "@/server/stock/service";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import { addDaysIso, dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
@@ -97,28 +101,63 @@ type CatalogueRow = {
   purchasing: VariantPurchasingParams;
   plannedQty: number | null;
   note: string | null;
+  productKind: AutopartProductKind;
+  productKindLabel: string;
+  autopartProductId: string | null;
 };
+
+function purchasingFromSettings(
+  p:
+    | {
+        supplierName: string | null;
+        supplierSku: string | null;
+        leadTimeDays: number | null;
+        minimumOrderQty: number | null;
+        orderMultiple: number | null;
+        safetyStockQty: number | null;
+        targetCoverWeeks: { toString(): string } | number | null;
+      }
+    | null
+    | undefined,
+): VariantPurchasingParams {
+  if (!p) return EMPTY_VARIANT_PURCHASING;
+  return {
+    supplierName: p.supplierName,
+    supplierSku: p.supplierSku,
+    leadTimeDays: p.leadTimeDays,
+    minimumOrderQty: p.minimumOrderQty,
+    orderMultiple: p.orderMultiple,
+    safetyStockQty: p.safetyStockQty,
+    targetCoverWeeks: optionalNum(p.targetCoverWeeks),
+  };
+}
 
 async function loadCatalogueRows(): Promise<CatalogueRow[]> {
   const warehouse = await prisma.warehouse.findUnique({ where: { code: AUTOPART_WAREHOUSE_CODE } });
-  const variants = await prisma.productVariant.findMany({
-    where: { isActive: true, product: { isActive: true } },
-    select: {
-      id: true,
-      sku: true,
-      name: true,
-      product: { select: { name: true, brand: { select: { name: true, slug: true } } } },
-      inventory: warehouse
-        ? { where: { warehouseId: warehouse.id }, select: { qtyOnHand: true, incomingQty: true } }
-        : { select: { qtyOnHand: true, incomingQty: true } },
-      purchasingSettings: true,
-      purchasingPlanLine: true,
-      autopartCostPosition: { select: { latestCost: true } },
-    },
-  });
-  return variants.map((v) => {
+  const [variants, externals] = await Promise.all([
+    prisma.productVariant.findMany({
+      where: { isActive: true, product: { isActive: true } },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        product: { select: { name: true, brand: { select: { name: true, slug: true } } } },
+        inventory: warehouse
+          ? { where: { warehouseId: warehouse.id }, select: { qtyOnHand: true, incomingQty: true } }
+          : { select: { qtyOnHand: true, incomingQty: true } },
+        purchasingSettings: true,
+        purchasingPlanLine: true,
+        autopartCostPosition: { select: { latestCost: true } },
+      },
+    }),
+    prisma.autopartProduct.findMany({
+      where: { presentInLatestFeed: true, catalogueVariantId: null },
+      include: { purchasingSettings: true, purchasingPlanLine: true },
+    }),
+  ]);
+  const catalogueKeys = new Set(variants.map((v) => skuMatchKey(v.sku)));
+  const variantRows: CatalogueRow[] = variants.map((v) => {
     const inv = v.inventory[0];
-    const p = v.purchasingSettings;
     return {
       variantId: v.id,
       sku: v.sku,
@@ -128,21 +167,33 @@ async function loadCatalogueRows(): Promise<CatalogueRow[]> {
       availableQty: inv?.qtyOnHand ?? 0,
       incomingQty: inv?.incomingQty ?? 0,
       latestCost: v.autopartCostPosition ? String(v.autopartCostPosition.latestCost) : null,
-      purchasing: p
-        ? {
-            supplierName: p.supplierName,
-            supplierSku: p.supplierSku,
-            leadTimeDays: p.leadTimeDays,
-            minimumOrderQty: p.minimumOrderQty,
-            orderMultiple: p.orderMultiple,
-            safetyStockQty: p.safetyStockQty,
-            targetCoverWeeks: optionalNum(p.targetCoverWeeks),
-          }
-        : EMPTY_VARIANT_PURCHASING,
+      purchasing: purchasingFromSettings(v.purchasingSettings),
       plannedQty: v.purchasingPlanLine?.plannedQty ?? null,
       note: v.purchasingPlanLine?.note ?? null,
+      productKind: "CATALOGUE",
+      productKindLabel: AUTOPART_PRODUCT_KIND_LABEL.CATALOGUE,
+      autopartProductId: null,
     };
   });
+  const externalRows: CatalogueRow[] = externals
+    .filter((p) => !catalogueKeys.has(p.matchKey))
+    .map((p) => ({
+      variantId: p.id,
+      sku: p.sku,
+      name: p.description?.trim() || p.sku,
+      brand: "External",
+      brandSlug: "external",
+      availableQty: p.availQty,
+      incomingQty: p.incomingQty ?? 0,
+      latestCost: p.latestCost ? String(p.latestCost) : null,
+      purchasing: purchasingFromSettings(p.purchasingSettings),
+      plannedQty: p.purchasingPlanLine?.plannedQty ?? null,
+      note: p.purchasingPlanLine?.note ?? null,
+      productKind: "EXTERNAL",
+      productKindLabel: AUTOPART_PRODUCT_KIND_LABEL.EXTERNAL,
+      autopartProductId: p.id,
+    }));
+  return [...variantRows, ...externalRows];
 }
 
 function buildRates(
@@ -251,6 +302,9 @@ function forecastSku(
     costAvailable: value.costAvailable,
     availableStockValue: availValue ? moneyToString(availValue, 2) : null,
     incomingStockValue: incomingValue ? moneyToString(incomingValue, 2) : null,
+    productKind: row.productKind,
+    productKindLabel: row.productKindLabel,
+    autopartProductId: row.autopartProductId,
     lastSale: maps.lastSale.get(row.sku.toUpperCase()) ?? null,
     salesHistoryCoverageDays: coverageDays,
     salesHistoryFrom: maps.historyFrom,
@@ -292,6 +346,7 @@ const listInput = z.object({
   supplier: z.string().optional().nullable(),
   trend: z.string().optional().nullable(),
   incoming: z.enum(["any", "yes", "no"]).optional().nullable(),
+  productType: z.enum(["all", "catalogue", "external"]).optional().nullable(),
   q: z.string().optional().nullable(),
   sort: z
     .enum(["cover", "suggestedValue", "demand", "stockout", "incoming", "overstock"])
@@ -312,6 +367,8 @@ function applyFilters(rows: PurchasingSkuRow[], input: z.infer<typeof listInput>
   if (input.trend) out = out.filter((r) => r.trend === input.trend);
   if (input.incoming === "yes") out = out.filter((r) => r.incomingQty > 0);
   if (input.incoming === "no") out = out.filter((r) => r.incomingQty <= 0);
+  if (input.productType === "catalogue") out = out.filter((r) => r.productKind === "CATALOGUE");
+  if (input.productType === "external") out = out.filter((r) => r.productKind === "EXTERNAL");
   if (q) {
     out = out.filter(
       (r) => r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q) || r.brand.toLowerCase().includes(q),
@@ -635,7 +692,6 @@ export async function updateSkuPurchasingSettings(actorUserId: string, raw: unkn
   await requireSystemPermission(actorUserId, "purchasing.manage");
   const input = skuSettingsInput.parse(raw);
   const variant = await prisma.productVariant.findFirst({ where: { sku: { equals: input.sku, mode: "insensitive" } } });
-  if (!variant) throw new AuthError("SKU not found", "NOT_FOUND", 404);
   const data = {
     supplierName: input.supplierName ?? null,
     supplierSku: input.supplierSku ?? null,
@@ -646,22 +702,46 @@ export async function updateSkuPurchasingSettings(actorUserId: string, raw: unkn
     targetCoverWeeks: input.targetCoverWeeks ?? null,
     updatedByUserId: actorUserId,
   };
-  const before = await prisma.variantPurchasingSettings.findUnique({ where: { variantId: variant.id } });
-  await prisma.variantPurchasingSettings.upsert({
-    where: { variantId: variant.id },
-    create: { variantId: variant.id, ...data },
+  if (variant) {
+    const before = await prisma.variantPurchasingSettings.findUnique({ where: { variantId: variant.id } });
+    await prisma.variantPurchasingSettings.upsert({
+      where: { variantId: variant.id },
+      create: { variantId: variant.id, ...data },
+      update: data,
+    });
+    await recordAuditEvent({
+      action: "purchasing.sku.settings.update",
+      entityType: "VariantPurchasingSettings",
+      entityId: variant.id,
+      actorUserId,
+      metadata: { sku: variant.sku },
+      before: before ?? null,
+      after: data,
+    });
+    return getPurchasingSku(actorUserId, variant.sku);
+  }
+  const autopart = await prisma.autopartProduct.findUnique({
+    where: { matchKey: skuMatchKey(input.sku) },
+  });
+  if (!autopart) throw new AuthError("SKU not found", "NOT_FOUND", 404);
+  const before = await prisma.autopartProductPurchasingSettings.findUnique({
+    where: { autopartProductId: autopart.id },
+  });
+  await prisma.autopartProductPurchasingSettings.upsert({
+    where: { autopartProductId: autopart.id },
+    create: { autopartProductId: autopart.id, ...data },
     update: data,
   });
   await recordAuditEvent({
     action: "purchasing.sku.settings.update",
-    entityType: "VariantPurchasingSettings",
-    entityId: variant.id,
+    entityType: "AutopartProductPurchasingSettings",
+    entityId: autopart.id,
     actorUserId,
-    metadata: { sku: variant.sku },
+    metadata: { sku: autopart.sku },
     before: before ?? null,
     after: data,
   });
-  return getPurchasingSku(actorUserId, variant.sku);
+  return getPurchasingSku(actorUserId, autopart.sku);
 }
 
 const planInput = z.object({
@@ -674,12 +754,44 @@ export async function updatePurchasingPlan(actorUserId: string, raw: unknown) {
   await requireSystemPermission(actorUserId, "purchasing.manage");
   const input = planInput.parse(raw);
   const variant = await prisma.productVariant.findFirst({ where: { sku: { equals: input.sku, mode: "insensitive" } } });
-  if (!variant) throw new AuthError("SKU not found", "NOT_FOUND", 404);
-  const before = await prisma.purchasingPlanLine.findUnique({ where: { variantId: variant.id } });
-  await prisma.purchasingPlanLine.upsert({
-    where: { variantId: variant.id },
+  if (variant) {
+    const before = await prisma.purchasingPlanLine.findUnique({ where: { variantId: variant.id } });
+    await prisma.purchasingPlanLine.upsert({
+      where: { variantId: variant.id },
+      create: {
+        variantId: variant.id,
+        plannedQty: input.plannedQty ?? null,
+        note: input.note ?? null,
+        updatedByUserId: actorUserId,
+      },
+      update: {
+        ...(input.plannedQty !== undefined ? { plannedQty: input.plannedQty } : {}),
+        ...(input.note !== undefined ? { note: input.note } : {}),
+        updatedByUserId: actorUserId,
+      },
+    });
+    await recordAuditEvent({
+      action: input.note !== undefined && input.plannedQty === undefined ? "purchasing.note.update" : "purchasing.plan.update",
+      entityType: "PurchasingPlanLine",
+      entityId: variant.id,
+      actorUserId,
+      metadata: { sku: variant.sku },
+      before: before ?? null,
+      after: { plannedQty: input.plannedQty, note: input.note },
+    });
+    return getPurchasingSku(actorUserId, variant.sku);
+  }
+  const autopart = await prisma.autopartProduct.findUnique({
+    where: { matchKey: skuMatchKey(input.sku) },
+  });
+  if (!autopart) throw new AuthError("SKU not found", "NOT_FOUND", 404);
+  const before = await prisma.autopartPurchasingPlanLine.findUnique({
+    where: { autopartProductId: autopart.id },
+  });
+  await prisma.autopartPurchasingPlanLine.upsert({
+    where: { autopartProductId: autopart.id },
     create: {
-      variantId: variant.id,
+      autopartProductId: autopart.id,
       plannedQty: input.plannedQty ?? null,
       note: input.note ?? null,
       updatedByUserId: actorUserId,
@@ -692,14 +804,14 @@ export async function updatePurchasingPlan(actorUserId: string, raw: unknown) {
   });
   await recordAuditEvent({
     action: input.note !== undefined && input.plannedQty === undefined ? "purchasing.note.update" : "purchasing.plan.update",
-    entityType: "PurchasingPlanLine",
-    entityId: variant.id,
+    entityType: "AutopartPurchasingPlanLine",
+    entityId: autopart.id,
     actorUserId,
-    metadata: { sku: variant.sku },
+    metadata: { sku: autopart.sku },
     before: before ?? null,
     after: { plannedQty: input.plannedQty, note: input.note },
   });
-  return getPurchasingSku(actorUserId, variant.sku);
+  return getPurchasingSku(actorUserId, autopart.sku);
 }
 
 export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown) {
@@ -710,7 +822,8 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
     "Supplier",
     "Supplier SKU",
     "SKU",
-    "Product",
+    "Description",
+    "Product Type",
     "Brand",
     "Available",
     "Incoming",
@@ -740,6 +853,7 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
         csv(row.purchasing.supplierSku),
         csv(row.sku),
         csv(row.name),
+        csv(row.productKindLabel),
         csv(row.brand),
         row.availableQty,
         row.incomingQty,

@@ -72,6 +72,7 @@ function PurchasePlannerPage() {
         status: search.status ?? null,
         brand: search.brand ?? null,
         supplier: search.supplier ?? null,
+        productType: search.productType ?? "all",
         q: search.q ?? null,
         sort: search.sort ?? "suggestedValue",
         page: search.page ?? 1,
@@ -149,6 +150,7 @@ function PurchasePlannerPage() {
         status: search.status ?? null,
         brand: search.brand ?? null,
         supplier: search.supplier ?? null,
+        productType: search.productType ?? "all",
         q: search.q ?? null,
         horizonDays: search.horizonDays ?? 90,
       },
@@ -236,6 +238,20 @@ function PurchasePlannerPage() {
             </option>
           ))}
         </select>
+        <select
+          className={controlClass}
+          value={search.productType ?? "all"}
+          onChange={(e) =>
+            patch({
+              productType: (e.target.value as PlannerSearch["productType"]) || undefined,
+              page: undefined,
+            })
+          }
+        >
+          <option value="all">All product types</option>
+          <option value="catalogue">Catalogue</option>
+          <option value="external">External</option>
+        </select>
       </div>
       {!data && !error ? <LoadingState /> : null}
       {data && data.rows.length === 0 ? (
@@ -275,7 +291,7 @@ function PurchasePlannerPage() {
                   return (
                     <tr key={row.sku} className="border-t border-border/70 align-top">
                       <td className="px-3 py-2">
-                        <SkuLink sku={row.sku} name={row.name} />
+                        <SkuLink sku={row.sku} name={row.name} productKind={row.productKind} />
                       </td>
                       <td className="px-3 py-2 font-mono text-[12px]">{row.sku}</td>
                       <td className="px-3 py-2">{qty(row.availableQty)}</td>

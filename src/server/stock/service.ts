@@ -1,5 +1,4 @@
 import type { StockIssueKind, StockStatus, StockSyncStatus } from "@prisma/client";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
@@ -14,7 +13,6 @@ import {
   getEffectiveSellableQuantity,
   internalStatusFromSellable,
   isStockStale,
-  NOT_IN_AB_CATALOGUE_REASON,
   sellableQuantityFromAvail,
   skuMatchKey,
   isActionableStockIssueSeverity,
@@ -34,13 +32,13 @@ import {
   persistAutopartProductCommercial,
   type CostPersistStats,
 } from "@/server/stock/cost-persist";
+import { persistAutopartProducts, stagedRowToPersistRow } from "@/server/stock/autopart-products";
 import type { PublicAvailability } from "@/domain/availability";
 import type { InboundStockEmail } from "@/server/stock/imap";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 
 const ISSUE_CAP = 400;
 const UPSERT_CHUNK = 200;
-const UNMATCHED_UPSERT_CHUNK = 500;
 const CHANGE_LIST_DEFAULT = 50;
 const WOULD_CHANGE_CAP = 80;
 
@@ -197,8 +195,8 @@ export async function applyStockFeed(input: {
     let duplicates = 0;
     let actionableIssueCount = 0;
     let fatalIssueCount = 0;
-    const unmatchedFeed: Array<{ sku: string; description: string | null; availRaw: string | null }> = [];
     const matchedFeedSkus: string[] = [];
+    const autopartPersist: Array<ReturnType<typeof stagedRowToPersistRow>> = [];
 
     for (const row of classified) {
       if (row.kind === "missing_sku" || row.kind === "invalid") {
@@ -232,11 +230,7 @@ export async function applyStockFeed(input: {
       const hits = bySku.get(row.row.matchKey) ?? [];
       if (hits.length === 0) {
         unmatched += 1;
-        unmatchedFeed.push({
-          sku: row.row.sku,
-          description: row.row.description,
-          availRaw: row.row.availRaw,
-        });
+        autopartPersist.push(stagedRowToPersistRow(row.row, row.avail, null));
         continue;
       }
       if (hits.length > 1) {
@@ -253,6 +247,7 @@ export async function applyStockFeed(input: {
           message: "Ambiguous SKU match — no inventory updated",
           line: row.row.line,
         });
+        autopartPersist.push(stagedRowToPersistRow(row.row, row.avail, null));
         continue;
       }
       matched += 1;
@@ -289,6 +284,7 @@ export async function applyStockFeed(input: {
         raw: row.row.availRaw,
         ...(incoming ? { incoming } : {}),
       });
+      autopartPersist.push(stagedRowToPersistRow(row.row, row.avail, hit.id));
     }
 
     const existing = await prisma.inventory.findMany({
@@ -378,7 +374,12 @@ export async function applyStockFeed(input: {
         ]);
       }
 
-      await upsertUnmatchedCurrentState(unmatchedFeed, run.id, now);
+      await persistAutopartProducts({
+        rows: autopartPersist,
+        runId: run.id,
+        observedAt: now,
+        dryRun: false,
+      });
       const matchedKeys = [...new Set(matchedFeedSkus.filter(Boolean))];
       if (matchedKeys.length) {
         await prisma.stockFeedUnmatched.deleteMany({ where: { sku: { in: matchedKeys } } });
@@ -541,41 +542,6 @@ export async function applyStockFeed(input: {
     throw error;
   } finally {
     await releaseStockSyncLock(lockHolder);
-  }
-}
-
-async function upsertUnmatchedCurrentState(
-  rows: Array<{ sku: string; description: string | null; availRaw: string | null }>,
-  runId: string,
-  now: Date,
-) {
-  const unique = new Map<string, { sku: string; description: string | null; availRaw: string | null }>();
-  for (const row of rows) {
-    if (!row.sku) continue;
-    unique.set(row.sku, row);
-  }
-  const list = [...unique.values()];
-  if (!list.length) return;
-  const reason = NOT_IN_AB_CATALOGUE_REASON;
-  for (let i = 0; i < list.length; i += UNMATCHED_UPSERT_CHUNK) {
-    const chunk = list.slice(i, i + UNMATCHED_UPSERT_CHUNK);
-    const values = Prisma.join(
-      chunk.map(
-        (row) =>
-          Prisma.sql`(${row.sku}, ${row.description}, ${row.availRaw}, ${now}, ${now}, ${runId}, 1, ${reason})`,
-      ),
-    );
-    await prisma.$executeRaw`
-      INSERT INTO "StockFeedUnmatched" ("sku", "description", "lastAvailRaw", "firstSeenAt", "lastSeenAt", "lastRunId", "occurrenceCount", "reason")
-      VALUES ${values}
-      ON CONFLICT ("sku") DO UPDATE SET
-        "description" = EXCLUDED."description",
-        "lastAvailRaw" = EXCLUDED."lastAvailRaw",
-        "lastSeenAt" = EXCLUDED."lastSeenAt",
-        "lastRunId" = EXCLUDED."lastRunId",
-        "occurrenceCount" = "StockFeedUnmatched"."occurrenceCount" + 1,
-        "reason" = EXCLUDED."reason"
-    `;
   }
 }
 
@@ -919,19 +885,22 @@ export async function listUnmatchedStockSkus(
   const pageSize = Math.min(100, Math.max(10, input?.pageSize ?? 50));
   const page = Math.max(1, input?.page ?? 1);
   const where = {
-    ...(input?.lastRunId ? { lastRunId: input.lastRunId } : {}),
+    catalogueVariantId: null,
+    presentInLatestFeed: true,
+    ...(input?.lastRunId ? { sourceSyncRunId: input.lastRunId } : {}),
     ...(q
       ? {
           OR: [
             { sku: { contains: q, mode: "insensitive" as const } },
             { description: { contains: q, mode: "insensitive" as const } },
+            { matchKey: { contains: q.toUpperCase() } },
           ],
         }
       : {}),
   };
   const [total, rows] = await Promise.all([
-    prisma.stockFeedUnmatched.count({ where }),
-    prisma.stockFeedUnmatched.findMany({
+    prisma.autopartProduct.count({ where }),
+    prisma.autopartProduct.findMany({
       where,
       orderBy: { lastSeenAt: "desc" },
       skip: (page - 1) * pageSize,
@@ -946,12 +915,13 @@ export async function listUnmatchedStockSkus(
     items: rows.map((row) => ({
       sku: row.sku,
       description: row.description,
-      avail: row.lastAvailRaw,
-      reason: row.reason,
+      avail: String(row.availQty),
+      incoming: row.incomingQty,
+      reason: "External Autopart product",
       firstSeenAt: row.firstSeenAt.toISOString(),
       lastSeenAt: row.lastSeenAt.toISOString(),
-      lastRunId: row.lastRunId,
-      occurrenceCount: row.occurrenceCount,
+      lastRunId: row.sourceSyncRunId,
+      occurrenceCount: 1,
     })),
   };
 }

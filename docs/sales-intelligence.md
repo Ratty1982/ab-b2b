@@ -195,7 +195,7 @@ Last actual **INVOICE** purchase date for the SKU/customer pair across the two l
 
 ### Historic-only SKUs
 
-Historic Autopart SKUs not in the AB catalogue remain in Customer Gap Analysis (critical for Stopped buying). Labelled **Historic only**. Availability does not alter classification. No Buy Again for non-catalogue SKUs; View Enquiry still works.
+Historic Autopart SKUs not in the current Autopart stock master remain in Customer Gap Analysis (critical for Stopped buying). Labelled **Historic only**. SKUs on the current 231PO3NEW master without a B2B ProductVariant are **External product**, with live Avail / Incoming for internal staff. Availability does not alter classification. Create Follow-Up still works. See [autopart-products.md](./autopart-products.md).
 
 ### Availability (optional enrichment)
 

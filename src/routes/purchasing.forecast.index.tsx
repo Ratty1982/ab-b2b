@@ -63,6 +63,7 @@ function StockForecastPage() {
         supplier: search.supplier ?? null,
         trend: search.trend ?? null,
         incoming: search.incoming ?? "any",
+        productType: search.productType ?? "all",
         q: search.q ?? null,
         sort: search.sort ?? "cover",
         page: search.page ?? 1,
@@ -164,6 +165,20 @@ function StockForecastPage() {
         </select>
         <select
           className={controlClass}
+          value={search.productType ?? "all"}
+          onChange={(e) =>
+            patch({
+              productType: (e.target.value as ForecastSearch["productType"]) || undefined,
+              page: undefined,
+            })
+          }
+        >
+          <option value="all">All product types</option>
+          <option value="catalogue">Catalogue</option>
+          <option value="external">External</option>
+        </select>
+        <select
+          className={controlClass}
           value={search.trend ?? ""}
           onChange={(e) => patch({ trend: e.target.value || undefined, page: undefined })}
         >
@@ -237,7 +252,7 @@ function StockForecastPage() {
                 {data.rows.map((row) => (
                   <tr key={row.sku} className="border-t border-border/70">
                     <td className="px-3 py-2">
-                      <SkuLink sku={row.sku} name={row.name} />
+                      <SkuLink sku={row.sku} name={row.name} productKind={row.productKind} />
                     </td>
                     <td className="px-3 py-2 font-mono text-[12px]">{row.sku}</td>
                     <td className="px-3 py-2">{row.brand}</td>
