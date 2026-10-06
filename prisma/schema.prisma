@@ -269,6 +269,34 @@ enum AutopartSalesReconciliationStatus {
   UNMAPPED_CUSTOMER
 }
 
+/// 504/TRM B2B order fulfilment mode. Default OFF avoids historic replay.
+enum Autopart504TrmFulfilmentMode {
+  OFF
+  PREVIEW
+  ACTIVE
+}
+
+/// Legacy 504C runtime. RETIRED disables mutation/polling while keeping history.
+enum Autopart504cRuntimeMode {
+  ACTIVE
+  RETIRED
+}
+
+/// Per-document 504/TRM fulfilment diagnostic (not a customer-facing status).
+enum AutopartDocumentFulfilmentStatus {
+  WAITING_FOR_504
+  WAITING_FOR_TRM
+  MATCHED
+  VALUE_MISMATCH
+  LINE_MATCH_REVIEW
+  FULFILMENT_APPLIED
+  REVIEW_REQUIRED
+  SKIPPED_CREDIT
+  SKIPPED_TERMINAL
+  SKIPPED_BEFORE_FROM
+  NOT_AB_ORDER
+}
+
 enum AutopartCustomerImportStatus {
   PREVIEWED
   /// Confirm import in progress (not yet successful).
@@ -1758,7 +1786,7 @@ model OrderFulfilmentEvent {
   occurredAt          DateTime                 @default(now())
   /// Customer-safe summary (no Autopart/MAM jargon).
   summary             String
-  /// ORDER_PLACE | AUTOPART_EXPORT | AUTOPART_504C | MANUAL
+  /// ORDER_PLACE | AUTOPART_EXPORT | AUTOPART_504C | AUTOPART_504_TRM | MANUAL
   source              String
   invoiceId           String?
   /// True only when line-level quantities were known for this event.
@@ -2057,6 +2085,8 @@ model Autopart504cFeedSettings {
   lastPolledAt       DateTime?
   lastSuccessAt      DateTime?
   lastError          String?
+  /// ACTIVE (legacy operational) or RETIRED (history only — no mutation/poll).
+  runtimeMode        Autopart504cRuntimeMode @default(ACTIVE)
   updatedAt          DateTime @updatedAt
   updatedByUserId    String?
 }
@@ -2113,6 +2143,12 @@ model AutopartOngoingSalesFeedSettings {
   lastSuccess504At           DateTime?
   lastSuccessTrm21qcAt       DateTime?
   lastError                  String?
+  /// OFF: 504C bridge may still despatch. PREVIEW: inspect only. ACTIVE: sole fulfilment mutator.
+  fulfilmentMode             Autopart504TrmFulfilmentMode @default(OFF)
+  /// Date-only activation boundary (UTC noon). Documents before this day are not auto-fulfilled.
+  fulfilmentFrom             DateTime?
+  fulfilmentLastPreviewAt    DateTime?
+  fulfilmentLastAppliedAt    DateTime?
   updatedAt                  DateTime @updatedAt
   updatedByUserId            String?
 }
@@ -2167,6 +2203,10 @@ model AutopartSalesDocument {
   reportType504        String?
   linesNetSum          Decimal?                    @db.Decimal(12, 2)
   valueMismatchMinor   Int?
+  fulfilmentStatus     AutopartDocumentFulfilmentStatus?
+  fulfilmentAppliedAt  DateTime?
+  fulfilmentFingerprint String?
+  fulfilmentWarning    String?
   createdAt            DateTime                    @default(now())
   updatedAt            DateTime                    @updatedAt
 
@@ -2186,12 +2226,14 @@ model AutopartSalesDocument {
   @@index([reconciliationStatus])
   @@index([abOrderNumber])
   @@index([has504, hasTrm21qc])
+  @@index([fulfilmentStatus])
 }
 
 /// Autopart product line (historic 561L + ongoing TRM21QC). Not an OrderItem.
 model AutopartSalesLine {
   id                   String                         @id @default(cuid())
-  companyId            String
+  /// Nullable so TRM lines can persist before 504/AB-order maps a Company.
+  companyId            String?
   documentId           String?
   autopartCustomerCode String
   documentType         AutopartHistoricDocumentType
@@ -2218,11 +2260,12 @@ model AutopartSalesLine {
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
 
-  company  Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company  Company?              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   document AutopartSalesDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
   importRun AutopartCustomerImportRun? @relation(fields: [importRunId], references: [id], onDelete: SetNull)
 
   @@unique([companyId, documentType, documentReference, lineNumber])
+  @@unique([documentId, lineNumber])
   @@index([companyId, sku])
   /// Product-first Sales Intelligence enquiry (SKU across companies in scope).
   @@index([sku, companyId])

@@ -132,6 +132,7 @@ export async function loadOrderEmailSnapshot(orderId: string): Promise<OrderEmai
       orderingMode: item.orderingMode,
       availableQtyAtOrder: item.availableQtyAtOrder,
       backorderQtyAtOrder: item.backorderQtyAtOrder ?? 0,
+      despatchedQty: item.despatchedQty ?? 0,
     })),
     autopartAccountLinked: order.autopartAccountLinked,
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot,
@@ -1088,7 +1089,7 @@ export async function retryTransactionalEmail(
       toEmail = snapshot.contact.email || row.toEmail;
     } else if (row.purpose === "ORDER_PART_DESPATCHED") {
       const bodies = buildOrderPartDespatchedCustomerBodies(snapshot, {
-        lineQuantitiesKnown: false,
+        lineQuantitiesKnown: snapshot.items.some((i) => (i.despatchedQty ?? 0) > 0),
         footer,
       });
       subject = bodies.subject;

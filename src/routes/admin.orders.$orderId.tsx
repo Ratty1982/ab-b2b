@@ -510,6 +510,109 @@ function AdminOrderDetailPage() {
             </tbody>
           </table>
         </div>
+        {order.autopartFulfilment ? (
+          <section
+            data-admin-section="autopart-fulfilment"
+            className="mt-8 space-y-4 rounded-lg border border-border p-4"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-base font-semibold uppercase">Autopart fulfilment</h2>
+                <p className="mt-1 text-[12px] text-steel">
+                  504 proves the Autopart document. TRM21QC supplies line quantities. Credits never
+                  reverse physical despatch.
+                </p>
+              </div>
+              <StatusBadge
+                tone={
+                  order.autopartFulfilment.statusLabel === "Despatched"
+                    ? "good"
+                    : order.autopartFulfilment.statusLabel === "Partially despatched"
+                      ? "warn"
+                      : "neutral"
+                }
+              >
+                {order.autopartFulfilment.statusLabel}
+              </StatusBadge>
+            </div>
+            {order.autopartFulfilment.lastUpdated ? (
+              <p className="text-[12px] text-steel">
+                Last updated {formatDateTime(order.autopartFulfilment.lastUpdated)}
+              </p>
+            ) : null}
+            {order.autopartFulfilment.warnings.length ? (
+              <ul className="space-y-1 text-[12px] text-warn">
+                {order.autopartFulfilment.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="min-w-full text-left text-[12px]">
+                <thead className="border-b border-border bg-surface/50 text-[10px] uppercase text-steel">
+                  <tr>
+                    <th className="px-3 py-2">SKU</th>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2 text-right">Ordered</th>
+                    <th className="px-3 py-2 text-right">Invoiced</th>
+                    <th className="px-3 py-2 text-right">Despatched</th>
+                    <th className="px-3 py-2 text-right">Remaining</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.autopartFulfilment.lines.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-3 text-steel">
+                        No Autopart line quantities yet
+                      </td>
+                    </tr>
+                  ) : (
+                    order.autopartFulfilment.lines.map((line) => (
+                      <tr key={`${line.sku}-${line.name}`} className="border-b border-border/50">
+                        <td className="num px-3 py-2">{line.sku}</td>
+                        <td className="px-3 py-2">{line.name}</td>
+                        <td className="num px-3 py-2 text-right">{line.orderedQty}</td>
+                        <td className="num px-3 py-2 text-right">{line.invoicedQty}</td>
+                        <td className="num px-3 py-2 text-right">{line.despatchedQty}</td>
+                        <td className="num px-3 py-2 text-right">{line.remainingQty}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {order.autopartFulfilment.documents.length ? (
+              <div className="overflow-x-auto rounded-md border border-border">
+                <table className="min-w-full text-left text-[12px]">
+                  <thead className="border-b border-border bg-surface/50 text-[10px] uppercase text-steel">
+                    <tr>
+                      <th className="px-3 py-2">Document</th>
+                      <th className="px-3 py-2">Type</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2 text-right">Goods</th>
+                      <th className="px-3 py-2">Imported</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {order.autopartFulfilment.documents.map((doc) => (
+                      <tr key={doc.documentReference} className="border-b border-border/50">
+                        <td className="num px-3 py-2">{doc.documentReference}</td>
+                        <td className="px-3 py-2">{doc.documentType}</td>
+                        <td className="px-3 py-2">{doc.fulfilmentStatus ?? "—"}</td>
+                        <td className="num px-3 py-2 text-right">
+                          {doc.goodsNet != null ? `£${doc.goodsNet}` : "—"}
+                        </td>
+                        <td className="px-3 py-2">{formatDateTime(doc.importedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-[12px] text-steel">No Autopart 504 / TRM documents linked to this order.</p>
+            )}
+          </section>
+        ) : null}
         {order.fulfilmentTimeline.length > 0 ? (
           <section className="mt-8 max-w-xl">
             <h2 className="font-display text-base font-semibold uppercase">Fulfilment history</h2>

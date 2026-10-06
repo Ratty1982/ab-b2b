@@ -365,8 +365,8 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
       text: textTrm,
       filename: "trm-preview.csv",
     });
-    expect(trmPreview.wouldSkip).toBeGreaterThanOrEqual(1);
     expect(trmPreview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
+    expect(trmPreview.wouldInsert).toBeGreaterThanOrEqual(1);
     expect(
       await prisma.autopartSalesLine.count({ where: { documentReference: docT } }),
     ).toBe(linesBefore);
@@ -376,12 +376,15 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
       filename: "trm-preview.csv",
       source: "MANUAL",
     });
-    expect(trmRun.rowsSkipped).toBeGreaterThanOrEqual(1);
+    expect(trmRun.rowsImported).toBeGreaterThanOrEqual(1);
     const skipped = await prisma.autopartImportDiagnostic.findMany({
       where: { importRunId: trmRun.id, reasonCode: "UNMAPPED_CUSTOMER" },
     });
     expect(skipped.length).toBeGreaterThanOrEqual(1);
     expect(Number(skipped[0]?.salesNet)).toBeCloseTo(10, 2);
+    expect(
+      await prisma.autopartSalesLine.count({ where: { documentReference: docT, companyId: null } }),
+    ).toBeGreaterThanOrEqual(1);
 
     // Idempotent re-import — financial rows not duplicated; unchanged diagnostics appear
     const again = await confirmAutopartTrm21qcImport(adminId, {
@@ -400,7 +403,8 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
 
     const detail = await getOngoingSalesImportRunDetail(adminId, trmRun.id);
     expect(detail.hasRowDiagnostics).toBe(true);
-    expect(detail.counts.skipped).toBeGreaterThanOrEqual(1);
+    expect(detail.counts.inserted).toBeGreaterThanOrEqual(1);
+    expect(detail.warnings).toBeGreaterThanOrEqual(1);
 
     const csv = await exportOngoingSalesImportDiagnosticsCsv(adminId, trmRun.id);
     expect(csv.csv).toContain("Reason Code");

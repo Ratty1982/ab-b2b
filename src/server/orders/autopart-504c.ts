@@ -48,7 +48,8 @@ export type Autopart504cFeedPublicSettings = {
   subjectContains: string | null;
   filenamePattern: string;
   automaticPolling: "OFF" | "ON";
-  statusLabel: "DISABLED" | "NOT_CONFIGURED" | "ENABLED";
+  statusLabel: "DISABLED" | "NOT_CONFIGURED" | "ENABLED" | "RETIRED";
+  runtimeMode: "ACTIVE" | "RETIRED";
   lastPolledAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
@@ -118,14 +119,17 @@ export async function getAutopart504cFeedSettings(): Promise<Autopart504cFeedPub
     /* keep default */
   }
 
-  const statusLabel: Autopart504cFeedPublicSettings["statusLabel"] = row.enabled
-    ? "ENABLED"
-    : row.configured
-      ? "DISABLED"
-      : "NOT_CONFIGURED";
+  const retired = row.runtimeMode === "RETIRED";
+  const statusLabel: Autopart504cFeedPublicSettings["statusLabel"] = retired
+    ? "RETIRED"
+    : row.enabled
+      ? "ENABLED"
+      : row.configured
+        ? "DISABLED"
+        : "NOT_CONFIGURED";
 
   return {
-    enabled: row.enabled,
+    enabled: retired ? false : row.enabled,
     configured: row.configured,
     scheduleLabel: AUTOPART_504C_SCHEDULE_LABEL,
     scheduleHours: hours,
@@ -133,8 +137,9 @@ export async function getAutopart504cFeedSettings(): Promise<Autopart504cFeedPub
     allowedSender: row.allowedSender,
     subjectContains: row.subjectContains,
     filenamePattern: row.filenamePattern,
-    automaticPolling: row.enabled ? "ON" : "OFF",
+    automaticPolling: retired ? "OFF" : row.enabled ? "ON" : "OFF",
     statusLabel,
+    runtimeMode: row.runtimeMode,
     lastPolledAt: row.lastPolledAt?.toISOString() ?? null,
     lastSuccessAt: row.lastSuccessAt?.toISOString() ?? null,
     lastError: row.lastError,
@@ -154,6 +159,22 @@ export async function updateAutopart504cFeedSettings(
 ) {
   await require504cAdmin(userId);
   const existing = await getAutopart504cFeedSettings();
+  if (existing.runtimeMode === "RETIRED") {
+    throw new AuthError(
+      "Legacy 504C is retired. Order fulfilment uses 504 + TRM21QC.",
+      "504C_RETIRED",
+      400,
+    );
+  }
+  const fulfilment = await import("@/server/orders/autopart-504-trm-fulfilment");
+  const fulfilmentSettings = await fulfilment.read504TrmFulfilmentSettings();
+  if (fulfilmentSettings.fulfilmentMode === "ACTIVE") {
+    throw new AuthError(
+      "504/TRM fulfilment is ACTIVE. 504C cannot mutate orders.",
+      "504C_MUTATOR_CONFLICT",
+      400,
+    );
+  }
   const nextConfigured = patch.configured ?? existing.configured;
   const nextEnabled = patch.enabled === undefined ? existing.enabled : Boolean(patch.enabled);
   if (nextEnabled && !nextConfigured) {
@@ -663,6 +684,22 @@ export async function applyAutopart504cFile(
   if (userId) await require504cAdmin(userId);
 
   const settings = await getAutopart504cFeedSettings();
+  if (settings.runtimeMode === "RETIRED") {
+    throw new AuthError(
+      "Legacy 504C is retired. Historical import records remain readable. Order fulfilment uses 504 + TRM21QC.",
+      "504C_RETIRED",
+      400,
+    );
+  }
+  const fulfilment = await import("@/server/orders/autopart-504-trm-fulfilment");
+  const fulfilmentSettings = await fulfilment.read504TrmFulfilmentSettings();
+  if (fulfilmentSettings.fulfilmentMode === "ACTIVE") {
+    throw new AuthError(
+      "504/TRM fulfilment is ACTIVE. 504C cannot mutate orders.",
+      "504C_MUTATOR_CONFLICT",
+      400,
+    );
+  }
   // Live apply from mailbox must be enabled; explicit admin allowApply bypasses for controlled tests.
   if (!input.allowApply && !settings.enabled) {
     throw new AuthError(
@@ -1136,6 +1173,9 @@ export async function getAutopart504cImportRunDetail(userId: string, runId: stri
 /** Scheduler entry — no-op while disabled. */
 export async function runAutopart504cScheduledPollIfEnabled(): Promise<{ ran: boolean; reason: string }> {
   const settings = await getAutopart504cFeedSettings();
+  if (settings.runtimeMode === "RETIRED") {
+    return { ran: false, reason: "504C feed retired. Automatic polling OFF. Historical records retained." };
+  }
   if (!settings.enabled) {
     return { ran: false, reason: "504C feed disabled (default). Automatic polling OFF." };
   }
@@ -1151,13 +1191,19 @@ export async function runAutopart504cScheduledPollIfEnabled(): Promise<{ ran: bo
 
 /**
  * Admin "Poll mailbox now".
- * When disabled/not configured, does not run production reconciliation.
+ * When disabled/not configured/retired, does not run production reconciliation.
  */
 export async function pollAutopart504cMailboxNow(
   userId: string,
 ): Promise<{ ran: boolean; reason: string }> {
   await require504cAdmin(userId);
   const settings = await getAutopart504cFeedSettings();
+  if (settings.runtimeMode === "RETIRED") {
+    return {
+      ran: false,
+      reason: "504C Invoice Feed is RETIRED. Historical imports remain readable. Fulfilment uses 504 + TRM21QC.",
+    };
+  }
   if (!settings.enabled || !settings.configured) {
     return {
       ran: false,

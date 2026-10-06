@@ -24,7 +24,13 @@ export async function recordFulfilmentEvent(
       | "DESPATCHED"
       | "NOTE";
     summary: string;
-    source: "ORDER_PLACE" | "QUOTE_CONVERT" | "AUTOPART_EXPORT" | "AUTOPART_504C" | "MANUAL";
+    source:
+      | "ORDER_PLACE"
+      | "QUOTE_CONVERT"
+      | "AUTOPART_EXPORT"
+      | "AUTOPART_504C"
+      | "AUTOPART_504_TRM"
+      | "MANUAL";
     invoiceId?: string | null;
     lineQuantitiesKnown?: boolean;
     limitation?: string | null;

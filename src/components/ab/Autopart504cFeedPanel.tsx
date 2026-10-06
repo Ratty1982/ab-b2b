@@ -29,7 +29,7 @@ type RunDetail = Extract<
 
 function statusTone(label: string): Tone {
   if (label === "ENABLED") return "good";
-  if (label === "DISABLED") return "warn";
+  if (label === "DISABLED" || label === "RETIRED") return "warn";
   return "neutral";
 }
 
@@ -170,11 +170,21 @@ export function Autopart504cFeedPanel() {
           Autopart invoice / despatch feed
         </h2>
         <p className="mt-1 max-w-3xl text-[13px] text-steel">
-          Report 504C — Listing of Invoices and Credits by Customer. Automatic mailbox import stays
-          off until Autopart configures the scheduled report email. Upload a test file for a
-          predictive dry-run (what would happen) without mutating orders.
+          {settings?.runtimeMode === "RETIRED"
+            ? "Legacy 504C is retired. Historical imports remain readable. Order fulfilment uses 504 + TRM21QC."
+            : "Report 504C — Listing of Invoices and Credits by Customer. Automatic mailbox import stays off until Autopart configures the scheduled report email. Upload a test file for a predictive dry-run (what would happen) without mutating orders."}
         </p>
       </div>
+
+      {settings?.runtimeMode === "RETIRED" ? (
+        <p
+          className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] text-foreground"
+          role="status"
+        >
+          504C Invoice Feed is RETIRED. Settings, polling, and live apply are disabled. Import
+          history below is retained for audit.
+        </p>
+      ) : null}
 
       {error ? (
         <p className="text-[13px] text-warn" role="status">
@@ -192,7 +202,9 @@ export function Autopart504cFeedPanel() {
                   ? "Not configured"
                   : settings?.statusLabel === "ENABLED"
                     ? "Enabled"
-                    : "Disabled"}
+                    : settings?.statusLabel === "RETIRED"
+                      ? "Retired"
+                      : "Disabled"}
               </StatusBadge>
             </dd>
           </div>
@@ -224,6 +236,7 @@ export function Autopart504cFeedPanel() {
             className="mt-0.5 size-4 accent-primary"
             checked={configuredDraft}
             onChange={(e) => setConfiguredDraft(e.target.checked)}
+            disabled={settings?.runtimeMode === "RETIRED"}
           />
           <span>
             <span className="font-semibold">Mark configured</span>
@@ -238,7 +251,7 @@ export function Autopart504cFeedPanel() {
             className="mt-0.5 size-4 accent-primary"
             checked={enabledDraft}
             onChange={(e) => setEnabledDraft(e.target.checked)}
-            disabled={!configuredDraft}
+            disabled={!configuredDraft || settings?.runtimeMode === "RETIRED"}
           />
           <span>
             <span className="font-semibold">Enable automatic import</span>
@@ -254,13 +267,14 @@ export function Autopart504cFeedPanel() {
             onChange={(e) => setSenderDraft(e.target.value)}
             placeholder="reports@autopart.example"
             autoComplete="off"
+            disabled={settings?.runtimeMode === "RETIRED"}
           />
         </Field>
         <div className="flex items-end gap-2">
           <button
             type="button"
             className={buttonClass(true)}
-            disabled={busy !== null}
+            disabled={busy !== null || settings?.runtimeMode === "RETIRED"}
             onClick={() => void saveSettings()}
           >
             {busy === "save" ? "Saving…" : "Save feed settings"}
@@ -290,11 +304,17 @@ export function Autopart504cFeedPanel() {
         <button
           type="button"
           className={buttonClass()}
-          disabled={busy !== null || settings?.automaticPolling !== "ON"}
+          disabled={
+            busy !== null ||
+            settings?.automaticPolling !== "ON" ||
+            settings?.runtimeMode === "RETIRED"
+          }
           title={
-            settings?.automaticPolling === "ON"
-              ? "Poll mailbox now"
-              : "Live mailbox poll is disabled until the feed is enabled"
+            settings?.runtimeMode === "RETIRED"
+              ? "504C is retired — mailbox polling is off"
+              : settings?.automaticPolling === "ON"
+                ? "Poll mailbox now"
+                : "Live mailbox poll is disabled until the feed is enabled"
           }
           onClick={() => void onPollNow()}
         >

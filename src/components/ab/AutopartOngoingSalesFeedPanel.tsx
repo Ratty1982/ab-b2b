@@ -9,13 +9,16 @@ import {
   confirmAutopart504Fn,
   confirmAutopartTrm21qcFn,
   exportOngoingSalesImportDiagnosticsCsvFn,
+  get504TrmFulfilmentSettingsFn,
   getOngoingSalesFeedSettingsFn,
   getOngoingSalesImportRunDetailFn,
   listOngoingSalesImportDiagnosticsFn,
   listOngoingSalesImportRunsFn,
   pollOngoingSalesMailboxFn,
+  preview504TrmFulfilmentFn,
   previewAutopart504Fn,
   previewAutopartTrm21qcFn,
+  update504TrmFulfilmentSettingsFn,
   updateOngoingSalesFeedSettingsFn,
 } from "@/server/phase2/fns";
 
@@ -42,6 +45,14 @@ type PreviewTrm = Extract<
 >["data"];
 type PollResult = Extract<
   Awaited<ReturnType<typeof pollOngoingSalesMailboxFn>>,
+  { ok: true }
+>["data"];
+type FulfilmentSettings = Extract<
+  Awaited<ReturnType<typeof get504TrmFulfilmentSettingsFn>>,
+  { ok: true }
+>["data"];
+type FulfilmentPreview = Extract<
+  Awaited<ReturnType<typeof preview504TrmFulfilmentFn>>,
   { ok: true }
 >["data"];
 
@@ -102,11 +113,16 @@ export function AutopartOngoingSalesFeedPanel() {
     diagnosticId?: string;
   } | null>(null);
   const [pollResult, setPollResult] = useState<PollResult | null>(null);
+  const [fulfilment, setFulfilment] = useState<FulfilmentSettings | null>(null);
+  const [fulfilmentModeDraft, setFulfilmentModeDraft] = useState<"OFF" | "PREVIEW" | "ACTIVE">("OFF");
+  const [fulfilmentFromDraft, setFulfilmentFromDraft] = useState("");
+  const [fulfilmentPreview, setFulfilmentPreview] = useState<FulfilmentPreview | null>(null);
 
   const load = useCallback(async () => {
-    const [s, history] = await Promise.all([
+    const [s, history, fulfilmentSettings] = await Promise.all([
       getOngoingSalesFeedSettingsFn(),
       listOngoingSalesImportRunsFn({ data: { limit: 40 } }),
+      get504TrmFulfilmentSettingsFn(),
     ]);
     if (s.ok) {
       setSettings(s.data);
@@ -118,6 +134,11 @@ export function AutopartOngoingSalesFeedPanel() {
       setError(s.error);
     }
     if (history.ok) setRuns(history.data);
+    if (fulfilmentSettings.ok) {
+      setFulfilment(fulfilmentSettings.data);
+      setFulfilmentModeDraft(fulfilmentSettings.data.fulfilmentMode);
+      setFulfilmentFromDraft(fulfilmentSettings.data.fulfilmentFrom?.slice(0, 10) ?? "");
+    }
   }, []);
 
   useEffect(() => {
@@ -168,6 +189,47 @@ export function AutopartOngoingSalesFeedPanel() {
     }
     toast.success("Ongoing sales feed settings saved");
     await load();
+  }
+
+  async function saveFulfilmentSettings() {
+    if (fulfilmentModeDraft === "ACTIVE") {
+      const ok = window.confirm(
+        "Switching 504/TRM fulfilment to ACTIVE retires legacy 504C. 504 + TRM21QC becomes the only order fulfilment mutator. Continue?",
+      );
+      if (!ok) return;
+    }
+    setBusy("fulfilment");
+    const res = await update504TrmFulfilmentSettingsFn({
+      data: {
+        fulfilmentMode: fulfilmentModeDraft,
+        fulfilmentFrom: fulfilmentFromDraft || null,
+        retire504c: fulfilmentModeDraft === "ACTIVE",
+      },
+    });
+    setBusy(null);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    setFulfilment(res.data);
+    toast.success(
+      res.data.fulfilmentMode === "ACTIVE"
+        ? "504/TRM fulfilment is ACTIVE. Legacy 504C is retired."
+        : "504/TRM fulfilment settings saved",
+    );
+    await load();
+  }
+
+  async function previewFulfilment() {
+    setBusy("fulfilment-preview");
+    const res = await preview504TrmFulfilmentFn();
+    setBusy(null);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    setFulfilmentPreview(res.data);
+    toast.success("504/TRM fulfilment preview generated — no orders were mutated");
   }
 
   async function on504File(file: File | null) {
@@ -294,7 +356,9 @@ export function AutopartOngoingSalesFeedPanel() {
           <p className="mt-1 text-[12px] text-steel">
             Autopart 504 — Invoice &amp; Credit Documents · Autopart TRM21QC — Product Sales &amp;
             Credits (NET / EX VAT). Expected email windows 13:00 and 18:00 Europe/London Mon–Fri.
-            Legacy 504C remains available above until 504 is proven in production.
+            {fulfilment?.runtime504c === "RETIRED" || fulfilment?.fulfilmentMode === "ACTIVE"
+              ? " Legacy 504C is retired. Order fulfilment uses 504 + TRM21QC."
+              : " Default fulfilment mode is OFF so legacy 504C can still bridge despatch until 504 + TRM is proven."}
           </p>
         </div>
         {settings ? (
@@ -339,6 +403,125 @@ export function AutopartOngoingSalesFeedPanel() {
             Poll Now
           </button>
         </div>
+      </div>
+
+      <div
+        data-admin-section="autopart-504-trm-fulfilment"
+        className="space-y-3 rounded-lg border border-border p-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-display text-sm font-semibold uppercase">
+              504 + TRM21QC order fulfilment
+            </h3>
+            <p className="mt-1 text-[12px] text-steel">
+              OFF keeps 504C as the despatch bridge. PREVIEW inspects 504 + TRM without mutating
+              orders. ACTIVE retires 504C and becomes the sole fulfilment mutator. Join is Autopart
+              document number; AB match is exact AB-###### only.
+            </p>
+          </div>
+          {fulfilment ? (
+            <StatusBadge
+              tone={
+                fulfilment.fulfilmentMode === "ACTIVE"
+                  ? "good"
+                  : fulfilment.fulfilmentMode === "PREVIEW"
+                    ? "warn"
+                    : "neutral"
+              }
+            >
+              {fulfilment.fulfilmentMode}
+            </StatusBadge>
+          ) : null}
+        </div>
+        <fieldset className="grid gap-2 sm:grid-cols-3">
+          {(["OFF", "PREVIEW", "ACTIVE"] as const).map((mode) => (
+            <label
+              key={mode}
+              className="flex items-start gap-2 rounded-md border border-border/80 px-3 py-2 text-[13px]"
+            >
+              <input
+                type="radio"
+                name="504-trm-fulfilment-mode"
+                checked={fulfilmentModeDraft === mode}
+                onChange={() => setFulfilmentModeDraft(mode)}
+              />
+              <span>
+                <span className="font-semibold">{mode}</span>
+                <span className="mt-0.5 block text-[11px] text-steel">
+                  {mode === "OFF"
+                    ? "504C may still despatch"
+                    : mode === "PREVIEW"
+                      ? "Inspect only — no mutations"
+                      : "Retires 504C and applies despatch"}
+                </span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+          <Field label="Fulfilment from (UTC date)">
+            <input
+              type="date"
+              className={inputClass}
+              value={fulfilmentFromDraft}
+              onChange={(e) => setFulfilmentFromDraft(e.target.value)}
+            />
+          </Field>
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              className={buttonClass(true)}
+              disabled={!!busy}
+              onClick={() => void saveFulfilmentSettings()}
+            >
+              {busy === "fulfilment" ? "Saving…" : "Save fulfilment mode"}
+            </button>
+            <button
+              type="button"
+              className={buttonClass()}
+              disabled={!!busy}
+              onClick={() => void previewFulfilment()}
+            >
+              {busy === "fulfilment-preview" ? "Previewing…" : "Preview fulfilment"}
+            </button>
+          </div>
+        </div>
+        {fulfilment ? (
+          <p className="text-[12px] text-steel">
+            504C runtime {fulfilment.runtime504c}
+            {fulfilment.fulfilmentLastPreviewAt
+              ? ` · Last preview ${formatOperationalDateTime(fulfilment.fulfilmentLastPreviewAt)}`
+              : ""}
+            {fulfilment.fulfilmentLastAppliedAt
+              ? ` · Last applied ${formatOperationalDateTime(fulfilment.fulfilmentLastAppliedAt)}`
+              : ""}
+          </p>
+        ) : null}
+        {fulfilmentPreview ? (
+          <div className="rounded-md border border-border bg-surface/30 p-3 text-[12px]">
+            <p className="font-semibold">Preview — no orders mutated</p>
+            <p className="mt-1 text-steel">
+              Matched {fulfilmentPreview.ordersMatched} · Would partial{" "}
+              {fulfilmentPreview.wouldBecomePartial} · Would despatch{" "}
+              {fulfilmentPreview.wouldBecomeDespatched} · Review {fulfilmentPreview.reviewRequired} ·
+              Waiting {fulfilmentPreview.waiting}
+            </p>
+            {fulfilmentPreview.orders.length ? (
+              <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
+                {fulfilmentPreview.orders.slice(0, 40).map((row) => (
+                  <li key={row.orderId}>
+                    {row.orderNumber} · {row.previousStatus} → {row.nextStatus ?? "no change"} ·{" "}
+                    {row.conceptually}
+                    {row.warnings[0] ? ` · ${row.warnings[0]}` : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-steel">No AB-###### documents in scope.</p>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {pollResult?.ran && pollResult.attachments.length ? (

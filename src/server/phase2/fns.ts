@@ -3094,6 +3094,47 @@ export const pollAutopart504cMailboxFn = createServerFn({ method: "POST" }).hand
   }
 });
 
+/* ─── 504 + TRM21QC order fulfilment ─────────────────────────────────────── */
+
+export const get504TrmFulfilmentSettingsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/orders/autopart-504-trm-fulfilment");
+    return { ok: true as const, data: await feed.get504TrmFulfilmentSettingsForActor(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const update504TrmFulfilmentSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        fulfilmentMode?: "OFF" | "PREVIEW" | "ACTIVE";
+        fulfilmentFrom?: string | null;
+        retire504c?: boolean;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const feed = await import("@/server/orders/autopart-504-trm-fulfilment");
+      return { ok: true as const, data: await feed.update504TrmFulfilmentSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const preview504TrmFulfilmentFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const feed = await import("@/server/orders/autopart-504-trm-fulfilment");
+    return { ok: true as const, data: await feed.preview504TrmFulfilment(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 /* ─── Ongoing Autopart 504 + TRM21QC ─────────────────────────────────────── */
 
 export const getOngoingSalesFeedSettingsFn = createServerFn({ method: "GET" }).handler(async () => {

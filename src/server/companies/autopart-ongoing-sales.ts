@@ -38,6 +38,11 @@ import {
 } from "@/server/companies/autopart-ongoing-sales-diagnostics";
 import { applyAutopart504cFile } from "@/server/orders/autopart-504c";
 import { format504cDataRow, AUTOPART_504C_HEADER, AUTOPART_504C_SEPARATOR } from "@/domain/autopart-504c-fixture";
+import {
+  read504TrmFulfilmentSettings,
+  run504TrmFulfilmentAfterImport,
+  shouldBridge504To504c,
+} from "@/server/orders/autopart-504-trm-fulfilment";
 
 export {
   getOngoingSalesImportRunDetail,
@@ -464,20 +469,59 @@ export async function previewAutopartTrm21qcImport(
     const mapped = await mappedAccount(r.customerAccount);
     const inCatalogue = skuMap.has(r.partNumber.toUpperCase());
     if (!mapped) {
-      diagnostics.push(
-        makeDiagnostic({
-          status: "SKIPPED",
-          reasonCode: "UNMAPPED_CUSTOMER",
-          rowNumber: r.lineNumber,
-          customerAccount: r.customerAccount,
-          documentReference: r.documentNumber,
-          documentDate: r.documentDate,
-          sku: r.partNumber,
-          description: r.description,
-          quantity: r.qty,
-          salesNet: r.salesNet,
-        }),
-      );
+      const found =
+        (await prisma.autopartSalesLine.findFirst({
+          where: {
+            companyId: null,
+            documentType: r.kind === "CREDIT" ? "CREDIT" : "INVOICE",
+            documentReference: r.documentNumber,
+            lineNumber: r.stableLineNumber,
+          },
+          select: { id: true, units: true, salesNet: true, sku: true },
+        })) ??
+        (await prisma.autopartSalesLine.findFirst({
+          where: { documentReference: r.documentNumber, sku: r.partNumber, lineNumber: r.stableLineNumber },
+          select: { id: true, units: true, salesNet: true, sku: true },
+        }));
+      if (found) {
+        existingLines += 1;
+        const identical =
+          decimalStringsEqual(found.units.toString(), r.qty) &&
+          decimalStringsEqual(found.salesNet.toString(), r.salesNet) &&
+          found.sku.toUpperCase() === r.partNumber.toUpperCase();
+        diagnostics.push(
+          makeDiagnostic({
+            status: identical ? "UNCHANGED" : "UPDATED",
+            reasonCode: identical ? "ALREADY_IMPORTED" : "UPDATED",
+            rowNumber: r.lineNumber,
+            customerAccount: r.customerAccount,
+            documentReference: r.documentNumber,
+            documentDate: r.documentDate,
+            sku: r.partNumber,
+            description: r.description,
+            quantity: r.qty,
+            salesNet: r.salesNet,
+            isWarning: true,
+          }),
+        );
+      } else {
+        newLines += 1;
+        diagnostics.push(
+          makeDiagnostic({
+            status: "INSERTED",
+            reasonCode: "UNMAPPED_CUSTOMER",
+            rowNumber: r.lineNumber,
+            customerAccount: r.customerAccount,
+            documentReference: r.documentNumber,
+            documentDate: r.documentDate,
+            sku: r.partNumber,
+            description: r.description,
+            quantity: r.qty,
+            salesNet: r.salesNet,
+            isWarning: true,
+          }),
+        );
+      }
       continue;
     }
     const found = await prisma.autopartSalesLine.findUnique({
@@ -814,6 +858,12 @@ export async function confirmAutopart504Import(
               existing.documentType !== "UNKNOWN" ? existing.documentType : documentType,
           },
         });
+        if (companyId) {
+          await prisma.autopartSalesLine.updateMany({
+            where: { documentId: existing.id, companyId: null },
+            data: { companyId },
+          });
+        }
         touchedDocIds.push(existing.id);
         if (identical) {
           unchanged += 1;
@@ -895,27 +945,39 @@ export async function confirmAutopart504Import(
       await refreshDocumentReconciliation(id);
     }
 
-    // AB order despatch/credit via proven 504C apply (idempotent on Invoice.externalRef).
-    // Credits are recorded but never despatch (504C CREDIT path).
-    const bridge = build504cBridgeText(parsed.rows);
-    if (bridge.includes(AUTOPART_504C_SEPARATOR) && parsed.abInvoiceRows.length + parsed.abCreditRows.length > 0) {
-      try {
-        await applyAutopart504cFile(actorUserId, {
-          text: bridge,
-          filename: `bridge-from-504-${raw.filename ?? "504.csv"}`,
-          source: "ONGOING_504_BRIDGE",
-          allowApply: true,
-        });
-      } catch (err) {
-        // Document import succeeded; despatch bridge failure is diagnostic-only.
-        await recordAuditEvent({
-          action: "autopart.ongoing_504_despatch_bridge_failed",
+    const fulfilmentSettings = await read504TrmFulfilmentSettings();
+    // Legacy 504C bridge remains only while 504/TRM fulfilment is OFF.
+    // PREVIEW/ACTIVE must not let 504C mutate the same orders.
+    if (shouldBridge504To504c(fulfilmentSettings.fulfilmentMode)) {
+      const bridge = build504cBridgeText(parsed.rows);
+      if (bridge.includes(AUTOPART_504C_SEPARATOR) && parsed.abInvoiceRows.length + parsed.abCreditRows.length > 0) {
+        try {
+          await applyAutopart504cFile(actorUserId, {
+            text: bridge,
+            filename: `bridge-from-504-${raw.filename ?? "504.csv"}`,
+            source: "ONGOING_504_BRIDGE",
+            allowApply: true,
+          });
+        } catch (err) {
+          await recordAuditEvent({
+            action: "autopart.ongoing_504_despatch_bridge_failed",
+            entityType: "AutopartCustomerImportRun",
+            entityId: run.id,
+            actorUserId: actorUserId ?? null,
+            metadata: { error: err instanceof Error ? err.message : "unknown" },
+          });
+        }
+      }
+    } else {
+      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+        recordAuditEvent({
+          action: "autopart.504_trm_fulfilment_failed",
           entityType: "AutopartCustomerImportRun",
           entityId: run.id,
           actorUserId: actorUserId ?? null,
-          metadata: { error: err instanceof Error ? err.message : "unknown" },
-        });
-      }
+          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
+        }),
+      );
     }
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
@@ -1087,59 +1149,7 @@ export async function confirmAutopartTrm21qcImport(
         mapped?.code ??
         (first.customerAccount.toUpperCase() || doc?.autopartCustomerCode || "UNKNOWN");
 
-      if (!companyId) {
-        unmatchedCustomers += 1;
-        if (doc) {
-          await prisma.autopartSalesDocument.update({
-            where: { id: doc.id },
-            data: {
-              hasTrm21qc: true,
-              autopartCustomerCode,
-              documentDate: utcNoon(first.documentDate) ?? doc.documentDate,
-              reconciliationStatus: "UNMAPPED_CUSTOMER",
-              importRunId: run.id,
-            },
-          });
-          touchedDocIds.add(doc.id);
-        } else {
-          const created = await prisma.autopartSalesDocument.create({
-            data: {
-              companyId: null,
-              autopartCustomerCode,
-              documentType,
-              documentReference: documentNumber,
-              documentDate: utcNoon(first.documentDate),
-              source: "ONGOING_TRM21QC",
-              importRunId: run.id,
-              has504: false,
-              hasTrm21qc: true,
-              reconciliationStatus: "UNMAPPED_CUSTOMER",
-            },
-          });
-          touchedDocIds.add(created.id);
-        }
-        // Lines require companyId today — retain document; surface unmapped for review.
-        skipped += lines.length;
-        for (const line of lines) {
-          diagnosticDrafts.push(
-            makeDiagnostic({
-              status: "SKIPPED",
-              reasonCode: "UNMAPPED_CUSTOMER",
-              rowNumber: line.lineNumber,
-              customerAccount: line.customerAccount,
-              documentReference: documentNumber,
-              documentDate: line.documentDate,
-              sku: line.partNumber,
-              description: line.description,
-              quantity: line.qty,
-              salesNet: line.salesNet,
-            }),
-          );
-        }
-        continue;
-      }
-
-      if (!mapped) unmatchedCustomers += 1;
+      if (!companyId || !mapped) unmatchedCustomers += 1;
 
       if (doc) {
         const preserveHistoric =
@@ -1201,16 +1211,34 @@ export async function confirmAutopartTrm21qcImport(
           source: "ONGOING_TRM21QC",
           importRunId: run.id,
         };
-        const existingLine = await prisma.autopartSalesLine.findUnique({
-          where: {
-            companyId_documentType_documentReference_lineNumber: {
-              companyId,
-              documentType: doc.documentType,
-              documentReference: documentNumber,
-              lineNumber: line.stableLineNumber,
+        const existingLine =
+          (await prisma.autopartSalesLine.findUnique({
+            where: {
+              documentId_lineNumber: {
+                documentId: doc.id,
+                lineNumber: line.stableLineNumber,
+              },
             },
-          },
-        });
+          })) ??
+          (companyId
+            ? await prisma.autopartSalesLine.findUnique({
+                where: {
+                  companyId_documentType_documentReference_lineNumber: {
+                    companyId,
+                    documentType: doc.documentType,
+                    documentReference: documentNumber,
+                    lineNumber: line.stableLineNumber,
+                  },
+                },
+              })
+            : await prisma.autopartSalesLine.findFirst({
+                where: {
+                  companyId: null,
+                  documentType: doc.documentType,
+                  documentReference: documentNumber,
+                  lineNumber: line.stableLineNumber,
+                },
+              }));
         if (existingLine) {
           const identical =
             decimalStringsEqual(existingLine.units.toString(), line.qty) &&
@@ -1232,7 +1260,7 @@ export async function confirmAutopartTrm21qcImport(
                 quantity: line.qty,
                 salesNet: line.salesNet,
                 companyId,
-                isWarning: !variantId,
+                isWarning: !mapped || !variantId,
               }),
             );
           } else {
@@ -1250,7 +1278,7 @@ export async function confirmAutopartTrm21qcImport(
                 quantity: line.qty,
                 salesNet: line.salesNet,
                 companyId,
-                isWarning: !variantId,
+                isWarning: !mapped || !variantId,
               }),
             );
           }
@@ -1260,7 +1288,7 @@ export async function confirmAutopartTrm21qcImport(
           diagnosticDrafts.push(
             makeDiagnostic({
               status: "INSERTED",
-              reasonCode: variantId ? "INSERTED" : "NOT_IN_AB_CATALOGUE",
+              reasonCode: !mapped ? "UNMAPPED_CUSTOMER" : variantId ? "INSERTED" : "NOT_IN_AB_CATALOGUE",
               rowNumber: line.lineNumber,
               customerAccount: line.customerAccount,
               documentReference: documentNumber,
@@ -1270,7 +1298,7 @@ export async function confirmAutopartTrm21qcImport(
               quantity: line.qty,
               salesNet: line.salesNet,
               companyId,
-              isWarning: !variantId,
+              isWarning: !mapped || !variantId,
             }),
           );
         }
@@ -1325,6 +1353,19 @@ export async function confirmAutopartTrm21qcImport(
         filename: raw.filename ?? null,
       },
     });
+
+    const fulfilmentSettings = await read504TrmFulfilmentSettings();
+    if (!shouldBridge504To504c(fulfilmentSettings.fulfilmentMode)) {
+      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+        recordAuditEvent({
+          action: "autopart.504_trm_fulfilment_failed",
+          entityType: "AutopartCustomerImportRun",
+          entityId: run.id,
+          actorUserId: actorUserId ?? null,
+          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
+        }),
+      );
+    }
 
     return finished;
   } catch (error) {

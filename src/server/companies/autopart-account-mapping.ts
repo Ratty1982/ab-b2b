@@ -558,9 +558,14 @@ export async function listAutopartAccountMappingWorkspace(
     });
   }
   for (const d of unmappedDocs) {
+    const code = normaliseAccountToken(d.autopartCustomerCode);
+    const alreadyCounted =
+      Boolean(code) &&
+      Boolean(d.documentReference) &&
+      Boolean(byAccount.get(code!)?.docs.has(d.documentReference!));
     touch(d.autopartCustomerCode, {
       doc: d.documentReference,
-      sales: d.linesNetSum != null ? Number(d.linesNetSum) : 0,
+      ...(alreadyCounted ? {} : { sales: d.linesNetSum != null ? Number(d.linesNetSum) : 0 }),
       seen: d.updatedAt ?? d.createdAt,
       name: d.customerNameSnapshot,
     });

@@ -79,6 +79,7 @@ import {
   summariseCustomerOrderFulfilment,
   backorderUnitsLabel,
 } from "@/domain/customer-fulfilment";
+import type { AutopartOrderFulfilmentView } from "@/server/orders/autopart-504-trm-fulfilment";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 
 export type CheckoutAddressSummary = {
@@ -295,6 +296,7 @@ export type AdminOrderDetail = PortalOrderDetail & {
   salesRepNameSnapshot: string | null;
   deliveryMethodLabel: string | null;
   basketId: string | null;
+  autopartFulfilment: AutopartOrderFulfilmentView | null;
   items: Array<
     PortalOrderDetail["items"][number] & {
       unitPrice: string;
@@ -1617,6 +1619,9 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     }
   }
 
+  const { getAutopartFulfilmentForOrder } = await import("@/server/orders/autopart-504-trm-fulfilment");
+  const autopartFulfilment = await getAutopartFulfilmentForOrder(order.id);
+
   const base = toConfirmation(order, order.company.name);
   const summary = summariseCustomerOrderFulfilment({
     status: order.status,
@@ -1700,6 +1705,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       lineQuantitiesKnown: ev.lineQuantitiesKnown,
       limitation: ev.limitation,
     })),
+    autopartFulfilment,
   };
 }
 

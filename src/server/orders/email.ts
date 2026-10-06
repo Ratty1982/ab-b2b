@@ -33,6 +33,8 @@ export type OrderEmailLine = {
   orderingMode: string | null;
   availableQtyAtOrder: number | null;
   backorderQtyAtOrder: number;
+  /** Authoritative line despatch qty when known (504/TRM). */
+  despatchedQty?: number;
 };
 
 export type OrderEmailSnapshot = {
@@ -333,13 +335,27 @@ export function buildOrderPartDespatchedCustomerBodies(
   const despatchedLines = opts.lineQuantitiesKnown
     ? order.items
         .map((i) => {
-          const despatched = Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
+          const despatched =
+            i.despatchedQty != null
+              ? Math.max(0, Math.trunc(i.despatchedQty))
+              : Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
           return despatched > 0 ? `${despatched} × ${i.name}` : null;
         })
         .filter((line): line is string => Boolean(line))
     : [];
 
-  const stillLines = backorderItems.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`);
+  const stillLines = opts.lineQuantitiesKnown
+    ? order.items
+        .map((i) => {
+          const despatched =
+            i.despatchedQty != null
+              ? Math.max(0, Math.trunc(i.despatchedQty))
+              : Math.max(0, i.qty - (i.backorderQtyAtOrder ?? 0));
+          const remaining = Math.max(0, i.qty - despatched);
+          return remaining > 0 ? `${remaining} × ${i.name}` : null;
+        })
+        .filter((line): line is string => Boolean(line))
+    : backorderItems.map((i) => `${i.backorderQtyAtOrder} × ${i.name}`);
 
   const unknownNote =
     "Part of this order has been despatched. Exact item quantities will appear on your order detail when confirmed.";

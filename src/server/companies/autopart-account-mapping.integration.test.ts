@@ -130,7 +130,7 @@ describe("autopart account mapping workflow", () => {
       text: sampleTrm(),
       filename: "trm-map.csv",
     });
-    expect(preview.wouldSkip).toBeGreaterThanOrEqual(2);
+    expect(preview.wouldInsert).toBeGreaterThanOrEqual(3);
     expect(preview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
 
     const run = await confirmAutopartTrm21qcImport(adminId, {
@@ -139,8 +139,7 @@ describe("autopart account mapping workflow", () => {
       source: "MANUAL",
     });
     expect(run.status).toBe("COMMITTED");
-    expect(run.rowsImported).toBeGreaterThanOrEqual(1);
-    expect(run.rowsSkipped).toBeGreaterThanOrEqual(2);
+    expect(run.rowsImported).toBeGreaterThanOrEqual(3);
 
     const written = await prisma.autopartSalesLine.count({
       where: { companyId, documentReference: docMapped },
@@ -148,9 +147,9 @@ describe("autopart account mapping workflow", () => {
     expect(written).toBe(1);
 
     const unmappedLines = await prisma.autopartSalesLine.count({
-      where: { documentReference: docUnmapped },
+      where: { documentReference: docUnmapped, companyId: null },
     });
-    expect(unmappedLines).toBe(0);
+    expect(unmappedLines).toBeGreaterThanOrEqual(2);
 
     const retailSku = await prisma.productVariant.findFirst({
       where: { sku: { equals: `RETAIL-ONLY-${stamp}`, mode: "insensitive" } },
@@ -220,8 +219,9 @@ describe("autopart account mapping workflow", () => {
       allowReassign: true,
     });
 
-    // Multiple aliases on one company allowed
-    const secondAlias = `UM2${String(stamp).slice(-7)}`;
+    // Multiple aliases on one company allowed.
+    // Use a prefix that cannot collide with unmappedAcct (`UM` + 8 stamp digits).
+    const secondAlias = `AL2${String(stamp).slice(-7)}`;
     await mapAutopartCustomerAccount(adminId, {
       accountCode: secondAlias,
       companyId,
@@ -232,7 +232,7 @@ describe("autopart account mapping workflow", () => {
     expect(aliases.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("re-upload after mapping inserts previously skipped lines idempotently", async () => {
+  it("re-upload after mapping attaches previously unmapped lines idempotently", async () => {
     const before = await prisma.autopartSalesLine.count({
       where: { companyId, documentReference: docUnmapped },
     });
@@ -243,8 +243,7 @@ describe("autopart account mapping workflow", () => {
       filename: "trm-map-reprocess.csv",
       accountCode: unmappedAcct,
     });
-    expect(again.rowsImported).toBeGreaterThanOrEqual(1);
-    expect(again.accountInserted).toBeGreaterThanOrEqual(1);
+    expect(again.status).toBe("COMMITTED");
 
     const after = await prisma.autopartSalesLine.findMany({
       where: { companyId, documentReference: docUnmapped },

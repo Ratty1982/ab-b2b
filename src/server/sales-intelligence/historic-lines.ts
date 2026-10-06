@@ -73,7 +73,7 @@ export async function loadHistoricSalesLines(args: {
   // Realised Autopart sales only (historic 561L/SLRB + ongoing 504/TRM21QC).
   // Excludes unmapped documents (null company) and never merges AB Order lines —
   // AB Orders remain operational; Autopart invoice/credit lines are authoritative realised sales.
-  return prisma.autopartSalesLine.findMany({
+  const rows = await prisma.autopartSalesLine.findMany({
     where: historicLineWhere(args),
     select: {
       companyId: true,
@@ -87,6 +87,7 @@ export async function loadHistoricSalesLines(args: {
       document: { select: { documentDate: true } },
     },
   });
+  return rows.filter((row): row is typeof row & { companyId: string } => row.companyId != null);
 }
 
 /**

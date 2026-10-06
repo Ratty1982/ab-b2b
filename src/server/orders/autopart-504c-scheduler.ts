@@ -28,7 +28,7 @@ export function startAutopart504cScheduler(): void {
     ticking = true;
     void (async () => {
       const settings = await getAutopart504cFeedSettings();
-      if (!settings.enabled) {
+      if (!settings.enabled || settings.runtimeMode === "RETIRED") {
         return;
       }
       const due = due504cWindow(new Date(), settings.workingDaysOnly);

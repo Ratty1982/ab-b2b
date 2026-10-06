@@ -96,3 +96,23 @@ describe("admin settings workspace structure", () => {
     expect(src).toContain("Default Trade Price");
   });
 });
+
+describe("504/TRM fulfilment settings surfaces", () => {
+  it("wires the fulfilment switch and retired 504C copy", () => {
+    const ongoing = readFileSync(join(root, "src/components/ab/AutopartOngoingSalesFeedPanel.tsx"), "utf8");
+    const c504 = readFileSync(join(root, "src/components/ab/Autopart504cFeedPanel.tsx"), "utf8");
+    const order = readFileSync(join(root, "src/routes/admin.orders.$orderId.tsx"), "utf8");
+    expect(ongoing).toContain("get504TrmFulfilmentSettingsFn");
+    expect(ongoing).toContain("update504TrmFulfilmentSettingsFn");
+    expect(ongoing).toContain("preview504TrmFulfilmentFn");
+    expect(ongoing).toContain('data-admin-section="autopart-504-trm-fulfilment"');
+    expect(ongoing).toContain("OFF");
+    expect(ongoing).toContain("PREVIEW");
+    expect(ongoing).toContain("ACTIVE");
+    expect(c504).toMatch(/Legacy 504C is retired/);
+    expect(c504).toContain("runtimeMode === \"RETIRED\"");
+    expect(order).toContain("autopartFulfilment");
+    expect(order).toContain("Autopart fulfilment");
+  });
+});
+

@@ -334,6 +334,7 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
     let units = 0;
     byCompanyMap = new Map();
     for (const row of byCompanyType) {
+      if (!row.companyId) continue;
       const minor = parseSalesNetMinor(row._sum.salesNet);
       let bucket = byCompanyMap.get(row.companyId);
       if (!bucket) {
@@ -354,6 +355,7 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
     }
     byMamMap = new Map();
     for (const row of byMamType) {
+      if (!row.companyId) continue;
       const mam = row.autopartCustomerCode.trim().toUpperCase() || "UNKNOWN";
       const minor = parseSalesNetMinor(row._sum.salesNet);
       let bucket = byMamMap.get(mam);
@@ -688,7 +690,11 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
   ]);
 
   const companies = await prisma.company.findMany({
-    where: { id: { in: [...new Set(lines.map((l) => l.companyId))] } },
+    where: {
+      id: {
+        in: [...new Set(lines.map((l) => l.companyId).filter((id): id is string => Boolean(id)))],
+      },
+    },
     select: { id: true, name: true },
   });
   const nameById = new Map(companies.map((c) => [c.id, c.name]));
@@ -698,7 +704,9 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
     page,
     pageSize,
     period: periodDto(businessPeriod),
-    items: lines.map((l) => ({
+    items: lines
+      .filter((l): l is typeof l & { companyId: string } => l.companyId != null)
+      .map((l) => ({
       companyId: l.companyId,
       companyName: nameById.get(l.companyId) ?? l.companyId,
       mamAccount: l.autopartCustomerCode,
