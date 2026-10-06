@@ -17,7 +17,7 @@ Git history from the Lovable prototype era should be preserved. Do **not** force
 
 Cloud Agent machines use the saved environment, which installs Bun on `/usr/local/bin` (login shells do not load `~/.bashrc`) and PostgreSQL 16 locally. The dev database matches `.env.example`: user `ab`, database `automotive_brands`, port 5432. Docker Compose is not installed in that environment.
 
-On boot the environment applies `prisma migrate deploy`, runs `bun run db:seed` (development users `@example.invalid`), and starts `bun run dev` on port 43127. `AUTOPART_STOCK_ENABLE_SCHEDULER` defaults to off because Autopart IMAP credentials are not part of local development. App code already defaults `DATABASE_URL`, `APP_URL`, and `AUTH_SECRET` for development; do not commit a `.env` file.
+GitHub’s default branch is `main` (the older prototype). Boot compares `bun.lock` with `node_modules` and runs `bun install --frozen-lockfile` when they differ, then `bun run db:generate` when that script exists. It applies `prisma migrate deploy` and `bun run db:seed` (development users `@example.invalid`) only when those scripts exist, and starts `bun run dev` on port 43127. `AUTOPART_STOCK_ENABLE_SCHEDULER` defaults to off because Autopart IMAP credentials are not part of local development. App code already defaults `DATABASE_URL`, `APP_URL`, and `AUTH_SECRET` for development; do not commit a `.env` file.
 
 ## Git delivery (permanent)
 
