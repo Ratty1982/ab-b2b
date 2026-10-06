@@ -5,9 +5,13 @@
  * "Order No","Custome","r and Name","","Part Number","Description","","Ord No","OSQty","Unit","O/S Val"
  *
  * Line identity (documented):
- *   Order No + customer account + SKU matchKey + customer order/reference
- * Duplicate combinations in the same file keep a 1-based occurrence suffix
- * so legitimate repeated lines are not collapsed. Part Number alone is not unique.
+ *   BASE = Order No + customer account + SKU matchKey
+ * When that base is unique in a snapshot it identifies the line alone.
+ * Customer Name and Product Description never participate.
+ * Customer Order / Reference is a secondary discriminator only when the same
+ * base repeats in one file (with #n for identical refs). Across snapshots,
+ * unique bases match even when Autopart expands truncated reference/name text;
+ * duplicate-base groups may use unambiguous prefix-compatible references.
  *
  * 216V Unit / O/S Val are report outstanding amounts — never Latest Cost.
  */
@@ -163,24 +167,252 @@ export function parseAutopart216vQty(raw: string): string | null {
   return String(n);
 }
 
+/** Strongest stable business identity: Order No + account + SKU matchKey. */
+export function autopart216vBaseIdentityKey(input: {
+  orderNumber: string;
+  customerAccount: string;
+  partMatchKey: string;
+}): string {
+  return [
+    input.orderNumber.trim().toUpperCase(),
+    input.customerAccount.trim().toUpperCase(),
+    input.partMatchKey,
+  ].join("|");
+}
+
+export function normaliseAutopart216vRef(ref: string | null | undefined): string {
+  return String(ref ?? "")
+    .trim()
+    .toUpperCase();
+}
+
 /**
- * Deterministic identity. Occurrence is 1 for the first in-file use of the key.
+ * Exact equality or genuine prefix/truncation (one value is a prefix of the other).
+ * Empty only matches empty. No fuzzy / similarity matching.
+ */
+export function autopart216vRefsPrefixCompatible(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const x = normaliseAutopart216vRef(a);
+  const y = normaliseAutopart216vRef(b);
+  if (x === y) return true;
+  if (!x || !y) return false;
+  return x.startsWith(y) || y.startsWith(x);
+}
+
+/**
+ * Deterministic in-file identity key.
+ * Unique base → base only. Duplicate bases → base|REF[#n].
  */
 export function autopart216vIdentityKey(input: {
   orderNumber: string;
   customerAccount: string;
   partMatchKey: string;
-  customerOrderRef: string;
+  customerOrderRef?: string;
+  /** When true, append normalised customer order/reference (duplicate-base path). */
+  includeRef?: boolean;
   occurrence?: number;
 }): string {
-  const base = [
-    input.orderNumber.trim().toUpperCase(),
-    input.customerAccount.trim().toUpperCase(),
-    input.partMatchKey,
-    input.customerOrderRef.trim().toUpperCase(),
-  ].join("|");
+  const base = autopart216vBaseIdentityKey(input);
+  const withRef = input.includeRef
+    ? `${base}|${normaliseAutopart216vRef(input.customerOrderRef)}`
+    : base;
   const n = input.occurrence ?? 1;
-  return n > 1 ? `${base}#${n}` : base;
+  return n > 1 ? `${withRef}#${n}` : withRef;
+}
+
+type IdentityDraft = {
+  orderNumber: string;
+  customerAccount: string;
+  partMatchKey: string;
+  customerOrderRef: string;
+  lineNumber: number;
+};
+
+/**
+ * Assign preferred identity keys within one snapshot.
+ * Unique bases omit customer reference; duplicate bases use it as secondary key.
+ */
+export function assignAutopart216vIdentityKeys(drafts: IdentityDraft[]): string[] {
+  const groups = new Map<string, number[]>();
+  drafts.forEach((d, i) => {
+    const base = autopart216vBaseIdentityKey(d);
+    const list = groups.get(base) ?? [];
+    list.push(i);
+    groups.set(base, list);
+  });
+  const keys = new Array<string>(drafts.length);
+  for (const [base, indexes] of groups) {
+    if (indexes.length === 1) {
+      keys[indexes[0]!] = base;
+      continue;
+    }
+    const refOccurrence = new Map<string, number>();
+    const ordered = [...indexes].sort((a, b) => drafts[a]!.lineNumber - drafts[b]!.lineNumber);
+    for (const i of ordered) {
+      const ref = normaliseAutopart216vRef(drafts[i]!.customerOrderRef);
+      const n = (refOccurrence.get(ref) ?? 0) + 1;
+      refOccurrence.set(ref, n);
+      keys[i] = autopart216vIdentityKey({
+        orderNumber: drafts[i]!.orderNumber,
+        customerAccount: drafts[i]!.customerAccount,
+        partMatchKey: drafts[i]!.partMatchKey,
+        customerOrderRef: drafts[i]!.customerOrderRef,
+        includeRef: true,
+        occurrence: n,
+      });
+    }
+  }
+  return keys;
+}
+
+export type Autopart216vMatchableLine = {
+  identityKey: string;
+  orderNumber: string;
+  customerAccount: string;
+  partMatchKey: string;
+  customerOrderRef: string;
+};
+
+export type Autopart216vSnapshotMatch<P extends Autopart216vMatchableLine, N extends Autopart216vMatchableLine> = {
+  previous: P;
+  next: N;
+  /** Preserve history continuity when Autopart expands truncated text fields. */
+  continuedIdentityKey: string;
+};
+
+export type Autopart216vSnapshotMatchResult<
+  P extends Autopart216vMatchableLine,
+  N extends Autopart216vMatchableLine,
+> = {
+  matches: Array<Autopart216vSnapshotMatch<P, N>>;
+  unmatchedPrevious: P[];
+  unmatchedNext: N[];
+  ambiguities: string[];
+};
+
+/**
+ * Match previous outstanding lines to the next snapshot without false CLEARED/NEW
+ * when Autopart expands truncated customer reference / name / description text.
+ */
+export function matchAutopart216vAcrossSnapshots<
+  P extends Autopart216vMatchableLine,
+  N extends Autopart216vMatchableLine,
+>(previous: P[], next: N[]): Autopart216vSnapshotMatchResult<P, N> {
+  const matches: Array<Autopart216vSnapshotMatch<P, N>> = [];
+  const ambiguities: string[] = [];
+  const prevRemaining = new Map<number, P>();
+  previous.forEach((line, i) => prevRemaining.set(i, line));
+  const nextRemaining = new Map<number, N>();
+  next.forEach((row, i) => nextRemaining.set(i, row));
+
+  const takeMatch = (prevIdx: number, nextIdx: number) => {
+    const prev = prevRemaining.get(prevIdx);
+    const nxt = nextRemaining.get(nextIdx);
+    if (!prev || !nxt) return;
+    matches.push({
+      previous: prev,
+      next: nxt,
+      continuedIdentityKey: prev.identityKey,
+    });
+    prevRemaining.delete(prevIdx);
+    nextRemaining.delete(nextIdx);
+  };
+
+  // 1) Exact identityKey (same preferred key across snapshots).
+  const prevByExact = new Map<string, number[]>();
+  for (const [idx, line] of prevRemaining) {
+    const list = prevByExact.get(line.identityKey) ?? [];
+    list.push(idx);
+    prevByExact.set(line.identityKey, list);
+  }
+  for (const [nextIdx, row] of [...nextRemaining]) {
+    const candidates = prevByExact.get(row.identityKey);
+    if (!candidates?.length) continue;
+    const prevIdx = candidates.shift()!;
+    if (!candidates.length) prevByExact.delete(row.identityKey);
+    takeMatch(prevIdx, nextIdx);
+  }
+
+  // 2) Base-identity groups for leftovers.
+  const groupIndexes = <T extends Autopart216vMatchableLine>(items: Map<number, T>) => {
+    const groups = new Map<string, number[]>();
+    for (const [idx, line] of items) {
+      const base = autopart216vBaseIdentityKey(line);
+      const list = groups.get(base) ?? [];
+      list.push(idx);
+      groups.set(base, list);
+    }
+    return groups;
+  };
+
+  const prevGroups = groupIndexes(prevRemaining);
+  const nextGroups = groupIndexes(nextRemaining);
+  const bases = new Set([...prevGroups.keys(), ...nextGroups.keys()]);
+
+  for (const base of bases) {
+    let prevIdxs = (prevGroups.get(base) ?? []).filter((i) => prevRemaining.has(i));
+    let nextIdxs = (nextGroups.get(base) ?? []).filter((i) => nextRemaining.has(i));
+    if (!prevIdxs.length || !nextIdxs.length) continue;
+
+    // Unique base on both leftover sides → same physical backorder.
+    if (prevIdxs.length === 1 && nextIdxs.length === 1) {
+      takeMatch(prevIdxs[0]!, nextIdxs[0]!);
+      continue;
+    }
+
+    // Duplicate-base groups: unambiguous prefix-compatible reference only.
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      prevIdxs = prevIdxs.filter((i) => prevRemaining.has(i));
+      nextIdxs = nextIdxs.filter((i) => nextRemaining.has(i));
+      if (!prevIdxs.length || !nextIdxs.length) break;
+
+      const prevToNext = new Map<number, number[]>();
+      const nextToPrev = new Map<number, number[]>();
+      for (const pIdx of prevIdxs) {
+        const pref = prevRemaining.get(pIdx)!;
+        for (const nIdx of nextIdxs) {
+          const nrow = nextRemaining.get(nIdx)!;
+          if (!autopart216vRefsPrefixCompatible(pref.customerOrderRef, nrow.customerOrderRef)) continue;
+          const pl = prevToNext.get(pIdx) ?? [];
+          pl.push(nIdx);
+          prevToNext.set(pIdx, pl);
+          const nl = nextToPrev.get(nIdx) ?? [];
+          nl.push(pIdx);
+          nextToPrev.set(nIdx, nl);
+        }
+      }
+
+      for (const pIdx of prevIdxs) {
+        if (!prevRemaining.has(pIdx)) continue;
+        const candidates = (prevToNext.get(pIdx) ?? []).filter((n) => nextRemaining.has(n));
+        if (candidates.length !== 1) continue;
+        const nIdx = candidates[0]!;
+        const reverse = (nextToPrev.get(nIdx) ?? []).filter((p) => prevRemaining.has(p));
+        if (reverse.length !== 1 || reverse[0] !== pIdx) continue;
+        takeMatch(pIdx, nIdx);
+        progressed = true;
+      }
+    }
+
+    prevIdxs = prevIdxs.filter((i) => prevRemaining.has(i));
+    nextIdxs = nextIdxs.filter((i) => nextRemaining.has(i));
+    if (prevIdxs.length && nextIdxs.length) {
+      ambiguities.push(
+        `Ambiguous base identity ${base}: ${prevIdxs.length} previous vs ${nextIdxs.length} next — left unmatched`,
+      );
+    }
+  }
+
+  return {
+    matches,
+    unmatchedPrevious: [...prevRemaining.values()],
+    unmatchedNext: [...nextRemaining.values()],
+    ambiguities,
+  };
 }
 
 export function parseAutopart216vReport(text: string): Autopart216vParseResult {
@@ -190,11 +422,10 @@ export function parseAutopart216vReport(text: string): Autopart216vParseResult {
     .replace(/\r/g, "\n")
     .split("\n");
   const errors: string[] = [];
-  const rows: Autopart216vRow[] = [];
+  const draftRows: Array<Omit<Autopart216vRow, "identityKey">> = [];
   let headerFound = false;
   let delimiter: "," | "\t" | ";" = ",";
   let headerMap: Record<string, number> | null = null;
-  const occurrence = new Map<string, number>();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -235,15 +466,7 @@ export function parseAutopart216vReport(text: string): Autopart216vParseResult {
       continue;
     }
     const partKey = skuMatchKey(partNumber);
-    const baseKey = autopart216vIdentityKey({
-      orderNumber,
-      customerAccount,
-      partMatchKey: partKey,
-      customerOrderRef,
-    });
-    const n = (occurrence.get(baseKey) ?? 0) + 1;
-    occurrence.set(baseKey, n);
-    rows.push({
+    draftRows.push({
       lineNumber,
       orderNumber,
       customerAccount,
@@ -255,16 +478,15 @@ export function parseAutopart216vReport(text: string): Autopart216vParseResult {
       outstandingQty,
       unitValue: parseAutopartMoneyToken(unitRaw),
       outstandingValue: parseAutopartMoneyToken(valueRaw),
-      identityKey: autopart216vIdentityKey({
-        orderNumber,
-        customerAccount,
-        partMatchKey: partKey,
-        customerOrderRef,
-        occurrence: n,
-      }),
       rawLine: line,
     });
   }
+
+  const identityKeys = assignAutopart216vIdentityKeys(draftRows);
+  const rows: Autopart216vRow[] = draftRows.map((row, i) => ({
+    ...row,
+    identityKey: identityKeys[i]!,
+  }));
 
   if (!headerFound) {
     errors.push("216V header not found (Order No + Part Number + OSQty + O/S Val).");

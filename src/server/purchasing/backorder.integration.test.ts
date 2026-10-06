@@ -6,7 +6,13 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
 import { saveProduct } from "@/server/catalogue/service";
 import { skuMatchKey } from "@/domain/stock";
-import { AUTOPART_216V_HEADER, AUTOPART_216V_PROFILE, buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
+import {
+  AUTOPART_216V_EXPANDED_PROFILE,
+  AUTOPART_216V_HEADER,
+  AUTOPART_216V_PROFILE,
+  buildAutopart216vExpandedFixture,
+  buildAutopart216vFixture,
+} from "@/domain/autopart-216v-fixture";
 import { confirmAutopart216vImport } from "@/server/purchasing/backorder-import";
 import {
   exportBackordersCsv,
@@ -473,6 +479,325 @@ describe("216V matching, cover, RBAC, export", () => {
     const emailed = await getBackorderWorkspace(adminId, { q: unknownSku });
     expect(emailed.freshness.source).toBe("EMAIL");
     expect(emailed.freshness.sourceLabel).toBe("Mailbox poll");
+  });
+});
+
+describe("216V expanded-field identity continuity", () => {
+  const expStamp = `${stamp}x`;
+  const orderKeep = `SB${String(expStamp).slice(-7)}K`;
+  const orderGone = `SB${String(expStamp).slice(-7)}G`;
+  const orderNew = `SB${String(expStamp).slice(-7)}N`;
+  const sku = `BO-EXP-${stamp}`;
+
+  it("imports the expanded fixture profile and accepts changed content as a new snapshot", async () => {
+    const text = buildAutopart216vExpandedFixture();
+    const hash = createHash("sha256").update(text).digest("hex");
+    await prisma.autopartBackorderSnapshot.deleteMany({ where: { fileHash: hash } });
+    const first = await confirmAutopart216vImport(adminId, {
+      text,
+      filename: `216V-expanded-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    expect(first.duplicate).toBe(false);
+    const snap = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({ where: { id: first.id } });
+    expect(snap.outstandingLineCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.lines);
+    expect(snap.orderCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.orders);
+    expect(snap.accountCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.accounts);
+    expect(snap.skuCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.skus);
+    expect(Number(snap.outstandingQty)).toBe(AUTOPART_216V_EXPANDED_PROFILE.units);
+    expect(Number(snap.outstandingValue).toFixed(2)).toBe(AUTOPART_216V_EXPANDED_PROFILE.outstandingValue);
+    const again = await confirmAutopart216vImport(adminId, {
+      text,
+      filename: `216V-expanded-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    expect(again.duplicate).toBe(true);
+  });
+
+  it("preserves identity across truncated→expanded text and applies movement rules", async () => {
+    const truncated = csv216v([
+      {
+        order: orderKeep,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WOR",
+        part: sku,
+        desc: "Steel Seal",
+        ref: "ADDITIV",
+        qty: 10,
+        unit: "2.00",
+        value: "20.00",
+      },
+      {
+        order: orderGone,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WOR",
+        part: sku,
+        desc: "Steel Seal",
+        ref: "GONE-REF",
+        qty: 2,
+        unit: "2.00",
+        value: "4.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: truncated,
+      filename: `216V-trunc-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const firstSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
+      where: { filename: `216V-trunc-${expStamp}.csv` },
+      include: { lines: true },
+    });
+    const keepLine = firstSnap.lines.find((l) => l.orderNumber === orderKeep)!;
+    expect(keepLine.changeStatus).toBe("NEW");
+    const firstSeen = keepLine.firstSeenAt;
+    const continuedKey = keepLine.identityKey;
+
+    const expandedSameQty = csv216v([
+      {
+        order: orderKeep,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WORLDWIDE",
+        part: sku,
+        desc: "Steel Seal India Formula",
+        ref: "ADDITIVELAUNCHSTOCK",
+        qty: 10,
+        unit: "2.00",
+        value: "20.00",
+      },
+      {
+        order: orderNew,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WORLDWIDE",
+        part: sku,
+        desc: "Steel Seal India Formula",
+        ref: "BRANDNEWREF",
+        qty: 1,
+        unit: "2.00",
+        value: "2.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: expandedSameQty,
+      filename: `216V-exp-same-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const sameSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
+      where: { filename: `216V-exp-same-${expStamp}.csv` },
+      include: { lines: true },
+    });
+    const sameKeep = sameSnap.lines.find((l) => l.orderNumber === orderKeep)!;
+    expect(sameKeep.changeStatus).toBe("UNCHANGED");
+    expect(sameKeep.identityKey).toBe(continuedKey);
+    expect(sameKeep.firstSeenAt.toISOString()).toBe(firstSeen.toISOString());
+    expect(sameKeep.customerNameSnapshot).toBe("AUTO ADDITIVES WORLDWIDE");
+    expect(sameKeep.customerOrderRef).toBe("ADDITIVELAUNCHSTOCK");
+    expect(sameKeep.descriptionSnapshot).toBe("Steel Seal India Formula");
+    expect(sameSnap.lines.find((l) => l.orderNumber === orderGone)?.changeStatus).toBe("CLEARED");
+    expect(sameSnap.lines.find((l) => l.orderNumber === orderNew)?.changeStatus).toBe("NEW");
+    expect(sameSnap.lines.filter((l) => l.changeStatus === "NEW")).toHaveLength(1);
+
+    const reduced = csv216v([
+      {
+        order: orderKeep,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WORLDWIDE",
+        part: sku,
+        desc: "Steel Seal India Formula",
+        ref: "ADDITIVELAUNCHSTOCK",
+        qty: 6,
+        unit: "2.00",
+        value: "12.00",
+      },
+      {
+        order: orderNew,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WORLDWIDE",
+        part: sku,
+        desc: "Steel Seal India Formula",
+        ref: "BRANDNEWREF",
+        qty: 1,
+        unit: "2.00",
+        value: "2.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: reduced,
+      filename: `216V-exp-red-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const redSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
+      where: { filename: `216V-exp-red-${expStamp}.csv` },
+      include: { lines: true },
+    });
+    expect(redSnap.lines.find((l) => l.orderNumber === orderKeep)?.changeStatus).toBe("QUANTITY_REDUCED");
+    expect(redSnap.lines.find((l) => l.orderNumber === orderKeep)?.firstSeenAt.toISOString()).toBe(
+      firstSeen.toISOString(),
+    );
+
+    const increased = csv216v([
+      {
+        order: orderKeep,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WORLDWIDE",
+        part: sku,
+        desc: "Steel Seal India Formula",
+        ref: "ADDITIVELAUNCHSTOCK",
+        qty: 9,
+        unit: "2.00",
+        value: "18.00",
+      },
+      {
+        order: orderNew,
+        account: "AUTOADDIT",
+        name: "AUTO ADDITIVES WORLDWIDE",
+        part: sku,
+        desc: "Steel Seal India Formula",
+        ref: "BRANDNEWREF",
+        qty: 1,
+        unit: "2.00",
+        value: "2.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: increased,
+      filename: `216V-exp-inc-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const incSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
+      where: { filename: `216V-exp-inc-${expStamp}.csv` },
+      include: { lines: true },
+    });
+    expect(incSnap.lines.find((l) => l.orderNumber === orderKeep)?.changeStatus).toBe("QUANTITY_INCREASED");
+    expect(incSnap.lines.find((l) => l.orderNumber === orderNew)?.changeStatus).toBe("UNCHANGED");
+  });
+
+  it("matches duplicate-base prefix-compatible refs and leaves ambiguous groups unmatched", async () => {
+    const orderDup = `SB${String(expStamp).slice(-7)}D`;
+    const skuDup = `BO-DUP-${stamp}`;
+    const first = csv216v([
+      {
+        order: orderDup,
+        account: "DUPACC01",
+        name: "Dup Customer",
+        part: skuDup,
+        desc: "Desc A",
+        ref: "ABC123",
+        qty: 4,
+        unit: "1.00",
+        value: "4.00",
+      },
+      {
+        order: orderDup,
+        account: "DUPACC01",
+        name: "Dup Customer",
+        part: skuDup,
+        desc: "Desc B",
+        ref: "OTHER",
+        qty: 5,
+        unit: "1.00",
+        value: "5.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: first,
+      filename: `216V-dup-a-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+
+    const prefixSafe = csv216v([
+      {
+        order: orderDup,
+        account: "DUPACC01",
+        name: "Dup Customer Expanded",
+        part: skuDup,
+        desc: "Desc A Expanded",
+        ref: "ABC123FULLREFERENCE",
+        qty: 4,
+        unit: "1.00",
+        value: "4.00",
+      },
+      {
+        order: orderDup,
+        account: "DUPACC01",
+        name: "Dup Customer Expanded",
+        part: skuDup,
+        desc: "Desc B Expanded",
+        ref: "OTHER",
+        qty: 5,
+        unit: "1.00",
+        value: "5.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: prefixSafe,
+      filename: `216V-dup-b-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const safeSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
+      where: { filename: `216V-dup-b-${expStamp}.csv` },
+      include: { lines: true },
+    });
+    expect(safeSnap.lines.filter((l) => l.changeStatus === "UNCHANGED")).toHaveLength(2);
+    expect(safeSnap.lines.filter((l) => l.changeStatus === "NEW" || l.changeStatus === "CLEARED")).toHaveLength(0);
+    expect(safeSnap.lines.find((l) => l.customerOrderRef === "ABC123FULLREFERENCE")).toBeTruthy();
+
+    const orderAmb = `SB${String(expStamp).slice(-7)}A`;
+    const ambFirst = csv216v([
+      {
+        order: orderAmb,
+        account: "AMBACC01",
+        name: "Amb Customer",
+        part: skuDup,
+        desc: "A",
+        ref: "AB",
+        qty: 1,
+        unit: "1.00",
+        value: "1.00",
+      },
+      {
+        order: orderAmb,
+        account: "AMBACC01",
+        name: "Amb Customer",
+        part: skuDup,
+        desc: "B",
+        ref: "ABC",
+        qty: 2,
+        unit: "1.00",
+        value: "2.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: ambFirst,
+      filename: `216V-amb-a-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const ambSecond = csv216v([
+      {
+        order: orderAmb,
+        account: "AMBACC01",
+        name: "Amb Customer",
+        part: skuDup,
+        desc: "C",
+        ref: "ABCFULL",
+        qty: 3,
+        unit: "1.00",
+        value: "3.00",
+      },
+    ]);
+    await confirmAutopart216vImport(adminId, {
+      text: ambSecond,
+      filename: `216V-amb-b-${expStamp}.csv`,
+      source: "MANUAL",
+    });
+    const ambSnap = await prisma.autopartBackorderSnapshot.findFirstOrThrow({
+      where: { filename: `216V-amb-b-${expStamp}.csv` },
+      include: { lines: true },
+    });
+    expect(ambSnap.lines.filter((l) => l.changeStatus === "CLEARED")).toHaveLength(2);
+    expect(ambSnap.lines.filter((l) => l.changeStatus === "NEW")).toHaveLength(1);
+    const diagnostics = ambSnap.diagnostics as { identityAmbiguities?: string[] } | null;
+    expect(diagnostics?.identityAmbiguities?.length).toBeGreaterThan(0);
   });
 });
 

@@ -15,6 +15,7 @@ import {
   compare216vQty,
   isAutopart216vReport,
   isStrongEmpty216vReport,
+  matchAutopart216vAcrossSnapshots,
   parseAutopart216vReport,
   type Autopart216vRow,
 } from "@/domain/autopart-216v";
@@ -100,58 +101,70 @@ export async function confirmAutopart216vImport(
     orderBy: { importedAt: "desc" },
     include: { lines: true },
   });
-  const previousByKey = new Map(previous?.lines.filter((l) => l.changeStatus !== "CLEARED").map((l) => [l.identityKey, l]) ?? []);
-  const firstSeenByKey = new Map<string, Date>();
-  if (previous) {
-    for (const line of previous.lines) {
-      if (line.changeStatus === "CLEARED") continue;
-      if (!firstSeenByKey.has(line.identityKey)) firstSeenByKey.set(line.identityKey, line.firstSeenAt);
-    }
-  }
+  const previousOutstanding = (previous?.lines ?? []).filter((l) => l.changeStatus !== "CLEARED");
+  const matched = matchAutopart216vAcrossSnapshots(previousOutstanding, parsed.rows);
 
   const accounts = await mapAccounts(parsed.rows.map((r) => r.customerAccount));
   const products = await mapProducts(parsed.rows.map((r) => r.partMatchKey));
   const now = new Date();
   const businessDate = utcDateOnly(todayLondonDateOnly(now));
 
-  const outstandingRows = parsed.rows;
-  const seenKeys = new Set(outstandingRows.map((r) => r.identityKey));
-  const clearedFromPrevious = [...previousByKey.values()].filter((l) => !seenKeys.has(l.identityKey));
-
   const lineData: Prisma.AutopartBackorderLineCreateManySnapshotInput[] = [];
 
-  function pack(row: Autopart216vRow, status: AutopartBackorderChangeStatus, previousQty: string | null) {
-    const firstSeen = firstSeenByKey.get(row.identityKey) ?? now;
-    const changed = status !== "UNCHANGED";
+  function pack(input: {
+    row: Autopart216vRow;
+    identityKey: string;
+    status: AutopartBackorderChangeStatus;
+    previousQty: string | null;
+    firstSeenAt: Date;
+    lastChangedAt: Date;
+  }) {
     lineData.push({
-      identityKey: row.identityKey,
-      orderNumber: row.orderNumber,
-      customerAccount: row.customerAccount,
-      customerNameSnapshot: row.customerName,
-      customerOrderRef: row.customerOrderRef,
-      partNumber: row.partNumber,
-      partMatchKey: row.partMatchKey || skuMatchKey(row.partNumber),
-      descriptionSnapshot: row.description,
-      outstandingQty: row.outstandingQty,
-      unitValue: row.unitValue,
-      outstandingValue: row.outstandingValue,
-      changeStatus: status,
-      previousQty,
-      firstSeenAt: firstSeen,
+      identityKey: input.identityKey,
+      orderNumber: input.row.orderNumber,
+      customerAccount: input.row.customerAccount,
+      customerNameSnapshot: input.row.customerName,
+      customerOrderRef: input.row.customerOrderRef,
+      partNumber: input.row.partNumber,
+      partMatchKey: input.row.partMatchKey || skuMatchKey(input.row.partNumber),
+      descriptionSnapshot: input.row.description,
+      outstandingQty: input.row.outstandingQty,
+      unitValue: input.row.unitValue,
+      outstandingValue: input.row.outstandingValue,
+      changeStatus: input.status,
+      previousQty: input.previousQty,
+      firstSeenAt: input.firstSeenAt,
       lastSeenAt: now,
-      lastChangedAt: changed ? now : (previousByKey.get(row.identityKey)?.lastChangedAt ?? now),
-      lineNumberInFile: row.lineNumber,
-      companyId: accounts.get(row.customerAccount.trim().toUpperCase()) ?? null,
-      autopartProductId: products.get(row.partMatchKey) ?? null,
+      lastChangedAt: input.lastChangedAt,
+      lineNumberInFile: input.row.lineNumber,
+      companyId: accounts.get(input.row.customerAccount.trim().toUpperCase()) ?? null,
+      autopartProductId: products.get(input.row.partMatchKey) ?? null,
     });
   }
 
-  for (const row of outstandingRows) {
-    const prev = previousByKey.get(row.identityKey);
-    const status = compare216vQty(prev ? prev.outstandingQty.toString() : null, row.outstandingQty);
-    pack(row, status, prev ? prev.outstandingQty.toString() : null);
+  for (const pair of matched.matches) {
+    const prevQty = pair.previous.outstandingQty.toString();
+    const status = compare216vQty(prevQty, pair.next.outstandingQty);
+    pack({
+      row: pair.next,
+      identityKey: pair.continuedIdentityKey,
+      status,
+      previousQty: prevQty,
+      firstSeenAt: pair.previous.firstSeenAt,
+      lastChangedAt: status === "UNCHANGED" ? pair.previous.lastChangedAt : now,
+    });
   }
-  for (const prev of clearedFromPrevious) {
+  for (const row of matched.unmatchedNext) {
+    pack({
+      row,
+      identityKey: row.identityKey,
+      status: "NEW",
+      previousQty: null,
+      firstSeenAt: now,
+      lastChangedAt: now,
+    });
+  }
+  for (const prev of matched.unmatchedPrevious) {
     lineData.push({
       identityKey: prev.identityKey,
       orderNumber: prev.orderNumber,
@@ -197,8 +210,9 @@ export async function confirmAutopart216vImport(
       diagnostics: {
         errors: parsed.errors,
         emptyCleared: parsed.rows.length === 0,
-        clearedCount: clearedFromPrevious.length,
+        clearedCount: matched.unmatchedPrevious.length,
         newCount: outstanding.filter((l) => l.changeStatus === "NEW").length,
+        identityAmbiguities: matched.ambiguities,
       },
       lines: { createMany: { data: lineData } },
     },
@@ -219,8 +233,9 @@ export async function confirmAutopart216vImport(
       filename: raw.filename ?? null,
       source: raw.source ?? "MANUAL",
       lines: parsed.rows.length,
-      cleared: clearedFromPrevious.length,
+      cleared: matched.unmatchedPrevious.length,
       emptyValid: parsed.rows.length === 0,
+      identityAmbiguities: matched.ambiguities.length,
     },
   });
 

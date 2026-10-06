@@ -34,11 +34,15 @@ A file is 216V only when those columns are present. TRM21QC, 231PO3NEW, and 504 
 
 ## Line identity
 
-Deterministic identity from the real report:
+Strongest stable business identity (base):
 
-`Order No | customer account | SKU matchKey | customer order/reference`
+`Order No | customer account | SKU matchKey`
 
-If the same combination repeats in one file, a 1-based `#n` suffix is appended. Part number alone is not unique. Legitimate multiple order lines are not collapsed.
+Customer Name and Product Description never participate in identity.
+
+When that base is unique in a snapshot, it identifies the line alone. Customer Order / Reference is **not** required in that case — Autopart may expand truncated references between daily files (for example `ADDITIV` → `ADDITIVELAUNCHSTOCK`) without creating false CLEARED + NEW movement. Matched lines keep a continuous `identityKey` / first-seen history while displaying the latest full reference, name, and description.
+
+When the same base repeats in one file, Customer Order / Reference is a secondary discriminator. Identical refs keep a 1-based `#n` suffix. Across snapshots, duplicate-base groups may match only via unambiguous prefix-compatible references (one value is a genuine prefix/truncation of the other). Ambiguous groups are left unmatched (previous → CLEARED, next → NEW) rather than guessed. Part number alone is not unique. Legitimate multiple order lines are not collapsed.
 
 ## Snapshots
 

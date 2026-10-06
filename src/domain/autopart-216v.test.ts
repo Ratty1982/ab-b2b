@@ -1,16 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
+  assignAutopart216vIdentityKeys,
+  autopart216vBaseIdentityKey,
   autopart216vIdentityKey,
+  autopart216vRefsPrefixCompatible,
   compare216vQty,
   isAutopart216vFilename,
   isAutopart216vReport,
   isStrongEmpty216vReport,
+  matchAutopart216vAcrossSnapshots,
   parseAutopart216vReport,
 } from "@/domain/autopart-216v";
-import { AUTOPART_216V_HEADER, AUTOPART_216V_PROFILE, buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
+import {
+  AUTOPART_216V_EXPANDED_PROFILE,
+  AUTOPART_216V_HEADER,
+  AUTOPART_216V_PROFILE,
+  buildAutopart216vExpandedFixture,
+  buildAutopart216vFixture,
+} from "@/domain/autopart-216v-fixture";
 import { firstSeenAgeLabel, resolveAutopart216vSkuCover, attentionIdsForBackorder } from "@/domain/autopart-216v-position";
 import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
+import { skuMatchKey } from "@/domain/stock";
 
 describe("Autopart 216V detector/parser", () => {
   const fixture = buildAutopart216vFixture();
@@ -61,21 +72,93 @@ describe("Autopart 216V detector/parser", () => {
     expect(parsed.rows.every((r) => r.partMatchKey)).toBe(true);
   });
 
-  it("keeps duplicate order/sku/ref lines distinct", () => {
-    const a = autopart216vIdentityKey({
-      orderNumber: "SB1",
-      customerAccount: "ACC",
-      partMatchKey: "SKU",
-      customerOrderRef: "REF",
-    });
-    const b = autopart216vIdentityKey({
-      orderNumber: "SB1",
-      customerAccount: "ACC",
-      partMatchKey: "SKU",
-      customerOrderRef: "REF",
-      occurrence: 2,
-    });
-    expect(a).not.toBe(b);
+  it("uses base identity alone when Order+Account+SKU is unique in-file", () => {
+    const parsed = parseAutopart216vReport(fixture);
+    const jet = parsed.rows.find((r) => r.orderNumber === "SB294008");
+    expect(jet?.identityKey).toBe(
+      autopart216vBaseIdentityKey({
+        orderNumber: "SB294008",
+        customerAccount: "A2MOTORCRE",
+        partMatchKey: skuMatchKey("WW1000RTU"),
+      }),
+    );
+    expect(jet?.identityKey.includes("VALETING")).toBe(false);
+  });
+
+  it("keeps duplicate base-identity lines distinct via reference (+ #n)", () => {
+    const keys = assignAutopart216vIdentityKeys([
+      {
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "REF",
+        lineNumber: 2,
+      },
+      {
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "REF",
+        lineNumber: 3,
+      },
+      {
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "OTHER",
+        lineNumber: 4,
+      },
+    ]);
+    expect(keys[0]).toBe(
+      autopart216vIdentityKey({
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "REF",
+        includeRef: true,
+        occurrence: 1,
+      }),
+    );
+    expect(keys[1]).toBe(
+      autopart216vIdentityKey({
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "REF",
+        includeRef: true,
+        occurrence: 2,
+      }),
+    );
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[2]).toContain("|OTHER");
+  });
+
+  it("parses the expanded-width fixture profile without depending on old field widths", () => {
+    const expanded = buildAutopart216vExpandedFixture();
+    expect(isAutopart216vReport(expanded)).toBe(true);
+    const parsed = parseAutopart216vReport(expanded);
+    expect(parsed.headerFound).toBe(true);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows).toHaveLength(AUTOPART_216V_EXPANDED_PROFILE.lines);
+    expect(parsed.orderCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.orders);
+    expect(parsed.accountCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.accounts);
+    expect(parsed.skuCount).toBe(AUTOPART_216V_EXPANDED_PROFILE.skus);
+    expect(Number(parsed.outstandingQty)).toBe(AUTOPART_216V_EXPANDED_PROFILE.units);
+    expect(parsed.outstandingValue).toBe(AUTOPART_216V_EXPANDED_PROFILE.outstandingValue);
+
+    const additive = parsed.rows.find((r) => r.orderNumber === "SB295193");
+    expect(additive?.customerName).toBe("AUTO ADDITIVES WORLDWIDE");
+    expect(additive?.customerOrderRef).toBe("ADDITIVELAUNCHSTOCK");
+    expect(additive?.description).toContain("Steel Seal");
+
+    const bases = parsed.rows.map((r) =>
+      autopart216vBaseIdentityKey({
+        orderNumber: r.orderNumber,
+        customerAccount: r.customerAccount,
+        partMatchKey: r.partMatchKey,
+      }),
+    );
+    expect(new Set(bases).size).toBe(bases.length);
   });
 
   it("classifies quantity changes", () => {
@@ -90,6 +173,118 @@ describe("Autopart 216V detector/parser", () => {
     expect(isStrongEmpty216vReport(empty)).toBe(true);
     expect(isStrongEmpty216vReport("not a report")).toBe(false);
     expect(isStrongEmpty216vReport("Order No,Part Number\n")).toBe(false);
+  });
+
+  it("does not let 216V detection steal 504 / TRM / 231PO3NEW content", () => {
+    expect(isAutopart216vReport(`LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)\n${AUTOPART_216V_HEADER}`)).toBe(
+      false,
+    );
+    expect(isAutopart216vReport(`Cust,Group,Document\nTRM21QC sample\n${AUTOPART_216V_HEADER}`)).toBe(false);
+    expect(isAutopart216vReport(`231PO3NEW stock\n${AUTOPART_216V_HEADER}`)).toBe(false);
+  });
+});
+
+describe("216V cross-snapshot identity matching", () => {
+  it("treats truncated→expanded reference/name/description as the same unique-base line", () => {
+    const previous = [
+      {
+        identityKey: "SB295193|AUTOADDIT|SSIN|INDIAQUOTE",
+        orderNumber: "SB295193",
+        customerAccount: "AUTOADDIT",
+        partMatchKey: "SSIN",
+        customerOrderRef: "INDIAQUOTE",
+      },
+    ];
+    const next = [
+      {
+        identityKey: "SB295193|AUTOADDIT|SSIN",
+        orderNumber: "SB295193",
+        customerAccount: "AUTOADDIT",
+        partMatchKey: "SSIN",
+        customerOrderRef: "ADDITIVELAUNCHSTOCK",
+      },
+    ];
+    const result = matchAutopart216vAcrossSnapshots(previous, next);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.continuedIdentityKey).toBe(previous[0]!.identityKey);
+    expect(result.unmatchedPrevious).toHaveLength(0);
+    expect(result.unmatchedNext).toHaveLength(0);
+    expect(result.ambiguities).toEqual([]);
+  });
+
+  it("matches duplicate bases only via unambiguous prefix-compatible references", () => {
+    expect(autopart216vRefsPrefixCompatible("ABC123", "ABC123FULLREFERENCE")).toBe(true);
+    expect(autopart216vRefsPrefixCompatible("ABC123", "XYZ")).toBe(false);
+
+    const previous = [
+      {
+        identityKey: "SB1|ACC|SKU|ABC123",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "ABC123",
+      },
+      {
+        identityKey: "SB1|ACC|SKU|OTHER",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "OTHER",
+      },
+    ];
+    const next = [
+      {
+        identityKey: "SB1|ACC|SKU|ABC123FULLREFERENCE",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "ABC123FULLREFERENCE",
+      },
+      {
+        identityKey: "SB1|ACC|SKU|OTHER",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "OTHER",
+      },
+    ];
+    const result = matchAutopart216vAcrossSnapshots(previous, next);
+    expect(result.matches).toHaveLength(2);
+    expect(result.unmatchedPrevious).toHaveLength(0);
+    expect(result.unmatchedNext).toHaveLength(0);
+  });
+
+  it("does not guess when duplicate-base reference matching is ambiguous", () => {
+    const previous = [
+      {
+        identityKey: "SB1|ACC|SKU|AB",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "AB",
+      },
+      {
+        identityKey: "SB1|ACC|SKU|ABC",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "ABC",
+      },
+    ];
+    const next = [
+      {
+        identityKey: "SB1|ACC|SKU|ABCFULL",
+        orderNumber: "SB1",
+        customerAccount: "ACC",
+        partMatchKey: "SKU",
+        customerOrderRef: "ABCFULL",
+      },
+    ];
+    const result = matchAutopart216vAcrossSnapshots(previous, next);
+    expect(result.matches).toHaveLength(0);
+    expect(result.unmatchedPrevious).toHaveLength(2);
+    expect(result.unmatchedNext).toHaveLength(1);
+    expect(result.ambiguities.some((a) => a.includes("Ambiguous base identity"))).toBe(true);
   });
 });
 

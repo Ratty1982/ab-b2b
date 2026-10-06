@@ -2907,7 +2907,8 @@ model AutopartBackorderSnapshot {
 model AutopartBackorderLine {
   id                   String                        @id @default(cuid())
   snapshotId           String
-  /// Order No | account | SKU matchKey | customer order ref [| #n for in-file duplicates].
+  /// Preferred: Order No | account | SKU matchKey; duplicate bases append |ref[#n].
+  /// Continued across snapshots when truncated Autopart text expands (history-stable).
   identityKey          String
   orderNumber          String
   customerAccount      String
