@@ -57,6 +57,31 @@ import {
 } from "@/server/purchasing/demand";
 import { moneyToString } from "@/domain/money";
 import { outstandingBackorderUnitsBySku } from "@/server/purchasing/backorders";
+import {
+  PLANNER_RECOMMENDATIONS,
+  PLANNER_RECOMMENDATION_LABEL,
+  PURCHASING_COST_SOURCE_LABEL,
+  backorderCoverage,
+  classifyPlannerRecommendation,
+  comparePlannerPriority,
+  demandConfidenceSufficient,
+  estimatedLineValue,
+  isActionableRecommendation,
+  plannerPurchaseQty,
+  resolvePlanningSupplier,
+  resolvePurchasingCost,
+  summarizeSupplierPlan,
+  type PlanningSupplierState,
+} from "@/domain/purchasing-planner";
+import { resolveSupplierConstraints } from "@/domain/purchasing-supplier";
+import {
+  getProductSuppliersForSku,
+  getSupplierDetail,
+  listActiveSupplierOptions,
+  listSuppliers,
+  loadSupplierAssignments,
+  type SupplierAssignment,
+} from "@/server/purchasing/suppliers";
 
 const SETTINGS_ID = "singleton";
 
@@ -105,7 +130,76 @@ type CatalogueRow = {
   productKind: AutopartProductKind;
   productKindLabel: string;
   autopartProductId: string | null;
+  supplier: RowSupplier;
 };
+
+/** Planning supplier for a row — from ProductSupplier relationships only, never inferred. */
+export type RowSupplier = {
+  state: PlanningSupplierState;
+  activeCount: number;
+  relationId: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  supplierCode: string | null;
+  supplierSku: string | null;
+  unitCost: string | null;
+  minimumOrderValue: string | null;
+  currency: string | null;
+  leadTimeSource: "RELATIONSHIP" | "SUPPLIER_DEFAULT" | "SKU_SETTINGS" | "NONE";
+};
+
+const NO_SUPPLIER: RowSupplier = {
+  state: "NONE",
+  activeCount: 0,
+  relationId: null,
+  supplierId: null,
+  supplierName: null,
+  supplierCode: null,
+  supplierSku: null,
+  unitCost: null,
+  minimumOrderValue: null,
+  currency: null,
+  leadTimeSource: "NONE",
+};
+
+/**
+ * Apply ProductSupplier relationships to a row. Constraint precedence:
+ * relationship → supplier default lead time → existing SKU purchasing settings.
+ */
+function applySupplierAssignment(row: CatalogueRow, assignments: Map<string, SupplierAssignment[]>): CatalogueRow {
+  const relations = assignments.get(skuMatchKey(row.sku)) ?? [];
+  const plan = resolvePlanningSupplier(relations);
+  const rel = plan.relation;
+  const constraints = resolveSupplierConstraints({
+    relation: rel,
+    supplierDefaultLeadTimeDays: rel?.supplierDefaultLeadTimeDays ?? null,
+    sku: row.purchasing,
+  });
+  return {
+    ...row,
+    purchasing: {
+      ...row.purchasing,
+      supplierName: rel?.supplierName ?? row.purchasing.supplierName,
+      supplierSku: rel ? rel.supplierSku : row.purchasing.supplierSku,
+      leadTimeDays: constraints.leadTimeDays,
+      minimumOrderQty: constraints.minimumOrderQty,
+      orderMultiple: constraints.orderMultiple,
+    },
+    supplier: {
+      state: plan.state,
+      activeCount: plan.activeCount,
+      relationId: rel?.id ?? null,
+      supplierId: rel?.supplierId ?? null,
+      supplierName: rel?.supplierName ?? null,
+      supplierCode: rel?.supplierCode ?? null,
+      supplierSku: rel?.supplierSku ?? null,
+      unitCost: rel?.unitCost ?? null,
+      minimumOrderValue: rel?.supplierMinimumOrderValue ?? null,
+      currency: rel?.supplierCurrency ?? null,
+      leadTimeSource: constraints.leadTimeSource,
+    },
+  };
+}
 
 function purchasingFromSettings(
   p:
@@ -174,6 +268,7 @@ async function loadCatalogueRows(): Promise<CatalogueRow[]> {
       productKind: "CATALOGUE",
       productKindLabel: AUTOPART_PRODUCT_KIND_LABEL.CATALOGUE,
       autopartProductId: null,
+      supplier: NO_SUPPLIER,
     };
   });
   const externalRows: CatalogueRow[] = externals
@@ -193,6 +288,7 @@ async function loadCatalogueRows(): Promise<CatalogueRow[]> {
       productKind: "EXTERNAL",
       productKindLabel: AUTOPART_PRODUCT_KIND_LABEL.EXTERNAL,
       autopartProductId: p.id,
+      supplier: NO_SUPPLIER,
     }));
   return [...variantRows, ...externalRows];
 }
@@ -306,6 +402,7 @@ function forecastSku(
     productKind: row.productKind,
     productKindLabel: row.productKindLabel,
     autopartProductId: row.autopartProductId,
+    supplier: row.supplier,
     lastSale: maps.lastSale.get(row.sku.toUpperCase()) ?? null,
     salesHistoryCoverageDays: coverageDays,
     salesHistoryFrom: maps.historyFrom,
@@ -401,8 +498,27 @@ async function freshnessLabels() {
 }
 
 export async function getPurchasingDashboard(actorUserId: string) {
-  const workspace = await loadWorkspace(actorUserId);
+  const [{ workspace, rows: plannerRows }, supplierOptions] = await Promise.all([
+    loadPlannerRows(actorUserId, 90),
+    listActiveSupplierOptions(),
+  ]);
   const rows = workspace.rows;
+  const groups = supplierGroups(plannerRows, supplierOptions);
+  const plannedAll = planSummary(plannerRows, null);
+  const supplierPlanning = {
+    suppliersRequiringAttention: groups.groups.filter(
+      (g) => g.summary.productsToConsider > 0 || g.summary.backordersAtRisk > 0,
+    ).length,
+    orderNow: plannerRows.filter((r) => r.recommendation === "ORDER_NOW").length,
+    backordersAtRisk: plannerRows.filter((r) => r.recommendation === "BACKORDERS_AT_RISK").length,
+    estimatedValue: plannedAll.knownValue,
+    estimatedValueMissingCostLines: plannedAll.missingCostLines,
+    productsMissingSupplier: plannerRows.filter((r) => r.suggestedQty > 0 && r.supplier.state === "NONE").length,
+    productsMissingCost: plannerRows.filter((r) => r.suggestedQty > 0 && r.costMissing).length,
+    topSuppliers: groups.groups
+      .filter((g) => g.summary.productsToConsider > 0 || g.summary.backordersAtRisk > 0)
+      .slice(0, 8),
+  };
   const coverage = coverageSummary(workspace.maps);
   const count = (status: PurchasingStatus) => rows.filter((r) => r.status === status).length;
   const confidenceCount = (level: ForecastConfidence) =>
@@ -419,6 +535,7 @@ export async function getPurchasingDashboard(actorUserId: string) {
     freshness: workspace.freshness,
     settings: workspace.settings,
     canManage: workspace.canManage,
+    supplierPlanning,
     metrics: {
       needingOrder: count("CRITICAL") + count("REORDER"),
       critical: count("CRITICAL"),
@@ -520,11 +637,13 @@ function coverageSummary(maps: Awaited<ReturnType<typeof loadPurchasingDemandMap
 async function loadWorkspace(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
   const settings = await loadPurchasingSettings();
-  const [maps, catalogue, fresh] = await Promise.all([
+  const [maps, rawCatalogue, fresh, assignments] = await Promise.all([
     loadPurchasingDemandMaps(settings.verifiedSalesHistoryFrom),
     loadCatalogueRows(),
     freshnessLabels(),
+    loadSupplierAssignments(),
   ]);
+  const catalogue = rawCatalogue.map((row) => applySupplierAssignment(row, assignments));
   const rows = catalogue.map((row) => forecastSku(row, maps, settings, fresh.stockStale));
   return {
     canManage: hasPermission(profile, "purchasing.manage"),
@@ -547,7 +666,181 @@ function paginate<T>(rows: T[], page: number, pageSize: number) {
 
 const plannerInput = listInput.extend({
   horizonDays: z.number().int().min(7).max(365).optional().nullable(),
+  /** Supplier id, or "unassigned" for products with no planning supplier. */
+  supplierId: z.string().optional().nullable(),
+  recommendation: z.enum(PLANNER_RECOMMENDATIONS).optional().nullable(),
+  backordersOnly: z.boolean().optional().nullable(),
+  incomingOnly: z.boolean().optional().nullable(),
+  missingCost: z.boolean().optional().nullable(),
+  demand: z.enum(["sufficient", "limited"]).optional().nullable(),
+  plannerSort: z.enum(["priority", "value", "backorders", "cover"]).optional().nullable(),
 });
+
+type PlannerInput = z.infer<typeof plannerInput>;
+
+/** Build a supplier-aware planner row on top of the existing forecast row. */
+function buildPlannerRow(row: PurchasingSkuRow, backorderUnits: number, stockStale: boolean, horizonDays: number) {
+  const calc = plannerPurchaseQty({
+    availableQty: row.availableQty,
+    incomingQty: row.incomingQty,
+    backorderUnits,
+    recommendedWeekly: row.recommendedWeekly,
+    targetCoverWeeks: row.targetCoverWeeks,
+    safetyStockQty: row.safetyStockQty,
+    leadTimeDays: row.purchasing.leadTimeDays,
+    minimumOrderQty: row.purchasing.minimumOrderQty,
+    orderMultiple: row.purchasing.orderMultiple,
+  });
+  const coverage = backorderCoverage({
+    backorderUnits,
+    availableQty: row.availableQty,
+    incomingQty: row.incomingQty,
+  });
+  const cost = resolvePurchasingCost({ supplierUnitCost: row.supplier.unitCost, latestCost: row.latestCost });
+  const confidenceSufficient = demandConfidenceSufficient({
+    verified: row.salesHistoryVerified,
+    confidence: row.forecastConfidence,
+  });
+  const rec = classifyPlannerRecommendation({
+    stockStale,
+    recommendedWeekly: row.recommendedWeekly,
+    confidenceSufficient,
+    forecastStatus: row.status,
+    suggestedQty: calc.suggestedQty,
+    requirementBeforeIncoming: calc.requirementBeforeIncoming,
+    backorderCoverage: coverage.coverage,
+    supplierState: row.supplier.state,
+    incomingQty: row.incomingQty,
+  });
+  const estimatedValue = calc.suggestedQty > 0 ? estimatedLineValue(calc.suggestedQty, cost.cost) : null;
+  return {
+    ...row,
+    horizonDemand: row.recommendedWeekly == null ? null : Math.ceil(row.recommendedWeekly * (horizonDays / 7)),
+    targetStock: row.purchase.targetStock,
+    backorderUnits,
+    backorderCoverage: coverage.coverage,
+    backorderShortfall: coverage.shortfall,
+    plan: calc,
+    suggestedQty: calc.suggestedQty,
+    purchasingCost: cost.cost,
+    costSource: cost.source,
+    costSourceLabel: PURCHASING_COST_SOURCE_LABEL[cost.source],
+    costMissing: cost.cost == null,
+    estimatedValue,
+    confidenceSufficient,
+    recommendation: rec.recommendation,
+    recommendationLabel: PLANNER_RECOMMENDATION_LABEL[rec.recommendation],
+    recommendationReason: rec.reason,
+    actionable: isActionableRecommendation(rec.recommendation),
+  };
+}
+
+export type PlannerRow = ReturnType<typeof buildPlannerRow>;
+
+async function loadPlannerRows(actorUserId: string, horizonDays: number) {
+  const workspace = await loadWorkspace(actorUserId);
+  const backorders = await outstandingBackorderUnitsBySku();
+  const rows = workspace.rows.map((row) =>
+    buildPlannerRow(row, backorders.get(skuMatchKey(row.sku)) ?? 0, workspace.freshness.stockStale, horizonDays),
+  );
+  return { workspace, rows };
+}
+
+function matchesSupplier(row: PlannerRow, supplierId: string | null | undefined) {
+  if (!supplierId) return true;
+  if (supplierId === "unassigned") return row.supplier.supplierId == null;
+  return row.supplier.supplierId === supplierId;
+}
+
+function applyPlannerFilters(rows: PlannerRow[], input: PlannerInput): PlannerRow[] {
+  const q = input.q?.trim().toLowerCase() ?? "";
+  let out = rows.filter((r) => matchesSupplier(r, input.supplierId));
+  if (input.recommendation) out = out.filter((r) => r.recommendation === input.recommendation);
+  if (input.status) out = out.filter((r) => r.status === input.status);
+  if (input.brand) out = out.filter((r) => r.brandSlug === input.brand);
+  if (input.productType === "catalogue") out = out.filter((r) => r.productKind === "CATALOGUE");
+  if (input.productType === "external") out = out.filter((r) => r.productKind === "EXTERNAL");
+  if (input.backordersOnly) out = out.filter((r) => r.backorderUnits > 0);
+  if (input.incomingOnly || input.incoming === "yes") out = out.filter((r) => r.incomingQty > 0);
+  if (input.incoming === "no") out = out.filter((r) => r.incomingQty <= 0);
+  if (input.missingCost) out = out.filter((r) => r.costMissing);
+  if (input.demand === "sufficient") out = out.filter((r) => r.confidenceSufficient);
+  if (input.demand === "limited") out = out.filter((r) => !r.confidenceSufficient);
+  if (q) {
+    out = out.filter(
+      (r) =>
+        r.sku.toLowerCase().includes(q) ||
+        r.name.toLowerCase().includes(q) ||
+        r.brand.toLowerCase().includes(q) ||
+        (r.supplier.supplierSku ?? "").toLowerCase().includes(q),
+    );
+  }
+  const sort = input.plannerSort ?? "priority";
+  return [...out].sort((a, b) => {
+    if (sort === "value") {
+      const v = Number(b.estimatedValue ?? -1) - Number(a.estimatedValue ?? -1);
+      if (v !== 0) return v;
+    } else if (sort === "backorders") {
+      const s = b.backorderShortfall - a.backorderShortfall || b.backorderUnits - a.backorderUnits;
+      if (s !== 0) return s;
+    } else if (sort === "cover") {
+      const c = (a.weeksCover ?? Number.POSITIVE_INFINITY) - (b.weeksCover ?? Number.POSITIVE_INFINITY);
+      if (c !== 0 && Number.isFinite(c)) return c;
+    }
+    return comparePlannerPriority(a, b);
+  });
+}
+
+function planSummary(rows: PlannerRow[], minimumOrderValue: string | null) {
+  return summarizeSupplierPlan(
+    rows.map((r) => ({
+      recommendation: r.recommendation,
+      suggestedQty: r.suggestedQty,
+      estimatedValue: r.estimatedValue,
+      costMissing: r.costMissing,
+    })),
+    minimumOrderValue,
+  );
+}
+
+/** Per-supplier planning totals over all planner rows (planning supplier = preferred/only active). */
+function supplierGroups(rows: PlannerRow[], suppliers: Awaited<ReturnType<typeof listActiveSupplierOptions>>) {
+  const bySupplier = new Map<string, PlannerRow[]>();
+  const unassigned: PlannerRow[] = [];
+  for (const row of rows) {
+    if (!row.supplier.supplierId) {
+      unassigned.push(row);
+      continue;
+    }
+    const list = bySupplier.get(row.supplier.supplierId) ?? [];
+    list.push(row);
+    bySupplier.set(row.supplier.supplierId, list);
+  }
+  const groups = suppliers.map((s) => ({
+    supplierId: s.id,
+    supplierName: s.name,
+    supplierCode: s.code,
+    currency: s.currency,
+    products: (bySupplier.get(s.id) ?? []).length,
+    summary: planSummary(bySupplier.get(s.id) ?? [], s.minimumOrderValue),
+  }));
+  groups.sort(
+    (a, b) =>
+      b.summary.backordersAtRisk - a.summary.backordersAtRisk ||
+      b.summary.orderNow - a.summary.orderNow ||
+      b.summary.productsToConsider - a.summary.productsToConsider ||
+      a.supplierName.localeCompare(b.supplierName),
+  );
+  const unassignedActionable = unassigned.filter((r) => r.suggestedQty > 0);
+  return {
+    groups,
+    unassigned: {
+      products: unassigned.length,
+      summary: planSummary(unassigned, null),
+      missingSupplierActions: unassignedActionable.length,
+    },
+  };
+}
 
 const overstockInput = listInput.extend({
   quiet: z.enum(["all", "overstock", "30", "90", "180"]).optional().nullable(),
@@ -555,25 +848,125 @@ const overstockInput = listInput.extend({
 
 export async function listPurchasePlanner(actorUserId: string, raw: unknown) {
   const input = plannerInput.parse(raw ?? {});
-  const workspace = await loadWorkspace(actorUserId);
   const horizonDays = input.horizonDays ?? 90;
-  const filtered = applyFilters(workspace.rows, { ...input, sort: input.sort ?? "suggestedValue" }).map((row) => ({
-    ...row,
-    horizonDemand:
-      row.recommendedWeekly == null ? null : Math.ceil(row.recommendedWeekly * (horizonDays / 7)),
-    targetStock: row.purchase.targetStock,
-  }));
+  const [{ workspace, rows }, supplierOptions] = await Promise.all([
+    loadPlannerRows(actorUserId, horizonDays),
+    listActiveSupplierOptions(),
+  ]);
+  const filtered = applyPlannerFilters(rows, input);
   const pageSize = input.pageSize ?? 50;
   const page = input.page ?? 1;
+  const selectedSupplier =
+    input.supplierId && input.supplierId !== "unassigned"
+      ? (supplierOptions.find((s) => s.id === input.supplierId) ?? null)
+      : null;
+  const supplierRows = input.supplierId ? rows.filter((r) => matchesSupplier(r, input.supplierId)) : null;
+  const groups = supplierGroups(rows, supplierOptions);
   return {
     freshness: workspace.freshness,
     settings: workspace.settings,
     canManage: workspace.canManage,
     brands: workspace.brands,
     suppliers: workspace.suppliers,
+    supplierOptions,
     horizonDays,
     forecastCoverage: coverageSummary(workspace.maps),
+    supplierSummary: supplierRows
+      ? {
+          supplierId: input.supplierId!,
+          supplierName: selectedSupplier?.name ?? (input.supplierId === "unassigned" ? "Unassigned supplier" : "Unknown supplier"),
+          currency: selectedSupplier?.currency ?? "GBP",
+          ...planSummary(supplierRows, selectedSupplier?.minimumOrderValue ?? null),
+        }
+      : null,
+    supplierGroups: input.supplierId ? null : groups,
     ...paginate(filtered, page, pageSize),
+  };
+}
+
+/** Planner view of one SKU (internal product detail). */
+export async function getPlannerRowForSku(actorUserId: string, sku: string) {
+  const { rows } = await loadPlannerRows(actorUserId, 90);
+  const key = skuMatchKey(sku);
+  return rows.find((r) => skuMatchKey(r.sku) === key) ?? null;
+}
+
+/** Internal product detail purchasing panel. purchasing.view only — never public/trade. */
+export async function getProductPurchasingPanel(actorUserId: string, raw: unknown) {
+  const input = z.object({ sku: z.string().trim().min(1) }).parse(raw);
+  const suppliers = await getProductSuppliersForSku(actorUserId, input);
+  const row = await getPlannerRowForSku(actorUserId, input.sku);
+  return {
+    ...suppliers,
+    planner: row
+      ? {
+          availableQty: row.availableQty,
+          incomingQty: row.incomingQty,
+          backorderUnits: row.backorderUnits,
+          backorderShortfall: row.backorderShortfall,
+          leadTimeDays: row.purchasing.leadTimeDays,
+          minimumOrderQty: row.purchasing.minimumOrderQty,
+          orderMultiple: row.purchasing.orderMultiple,
+          purchasingCost: row.purchasingCost,
+          costSourceLabel: row.costSourceLabel,
+          suggestedQty: row.suggestedQty,
+          estimatedValue: row.estimatedValue,
+          recommendation: row.recommendation,
+          recommendationLabel: row.recommendationLabel,
+          recommendationReason: row.recommendationReason,
+          forecastConfidenceLabel: row.forecastConfidenceLabel,
+        }
+      : null,
+  };
+}
+
+/** Suppliers list with real planning figures (no figures invented when cost/demand is missing). */
+export async function listSuppliersWorkspace(actorUserId: string, raw: unknown) {
+  const base = await listSuppliers(actorUserId, raw);
+  const { rows } = await loadPlannerRows(actorUserId, 90);
+  const bySupplier = new Map<string, PlannerRow[]>();
+  for (const row of rows) {
+    if (!row.supplier.supplierId) continue;
+    const list = bySupplier.get(row.supplier.supplierId) ?? [];
+    list.push(row);
+    bySupplier.set(row.supplier.supplierId, list);
+  }
+  const unassigned = rows.filter((r) => !r.supplier.supplierId);
+  return {
+    ...base,
+    suppliers: base.suppliers.map((s) => ({
+      ...s,
+      planning: planSummary(bySupplier.get(s.id) ?? [], s.defaultMinimumOrderValue),
+    })),
+    unassigned: {
+      products: unassigned.length,
+      productsRequiringAction: unassigned.filter((r) => r.suggestedQty > 0).length,
+      backordersAtRisk: unassigned.filter((r) => r.recommendation === "BACKORDERS_AT_RISK").length,
+    },
+  };
+}
+
+/** Supplier detail with each product's current planner recommendation. */
+export async function getSupplierWorkspace(actorUserId: string, raw: unknown) {
+  const detail = await getSupplierDetail(actorUserId, raw);
+  const { rows } = await loadPlannerRows(actorUserId, 90);
+  const byKey = new Map(rows.map((r) => [skuMatchKey(r.sku), r]));
+  const planningRows = rows.filter((r) => r.supplier.supplierId === detail.supplier.id);
+  return {
+    ...detail,
+    planning: planSummary(planningRows, detail.supplier.defaultMinimumOrderValue),
+    products: detail.products.map((p) => {
+      const row = byKey.get(p.matchKey);
+      return {
+        ...p,
+        planningSupplierIsThis: row?.supplier.supplierId === detail.supplier.id,
+        recommendation: row?.recommendation ?? null,
+        recommendationLabel: row?.recommendationLabel ?? null,
+        recommendationReason: row?.recommendationReason ?? null,
+        suggestedQty: row?.suggestedQty ?? null,
+        estimatedValue: row?.estimatedValue ?? null,
+      };
+    }),
   };
 }
 
@@ -828,8 +1221,8 @@ export async function updatePurchasingPlan(actorUserId: string, raw: unknown) {
 
 export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown) {
   const input = plannerInput.parse(raw ?? {});
-  const workspace = await loadWorkspace(actorUserId);
-  const rows = applyFilters(workspace.rows, { ...input, sort: input.sort ?? "suggestedValue" });
+  const { rows: plannerRows } = await loadPlannerRows(actorUserId, input.horizonDays ?? 90);
+  const rows = applyPlannerFilters(plannerRows, input);
   const header = [
     "Supplier",
     "Supplier SKU",
@@ -856,6 +1249,14 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
     "365d Coverage",
     "Seasonal Comparison Available",
     "Purchasing Note",
+    "Recommendation",
+    "Recommendation Reason",
+    "Customer Backorders",
+    "Uncovered Backorders",
+    "Planner Suggested Qty",
+    "Purchasing Cost",
+    "Cost Source",
+    "Planner Estimated Value",
   ];
   const lines = [
     header.join(","),
@@ -886,13 +1287,22 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
         row.demandComponents.last365,
         row.demandComponents.seasonalAvailable ? "yes" : "no",
         csv(row.note),
+        csv(row.recommendationLabel),
+        csv(row.recommendationReason),
+        row.backorderUnits,
+        row.backorderShortfall,
+        row.suggestedQty,
+        row.purchasingCost ?? "",
+        csv(row.costSourceLabel),
+        row.estimatedValue ?? "",
       ].join(","),
     ),
   ];
   return {
     filename: `purchase-planner-${todayLondonDateOnly()}.csv`,
     csv: lines.join("\n"),
-    disclaimer: "Human purchasing worksheet. Not an Autopart purchase-order import.",
+    disclaimer:
+      "Human purchasing worksheet. Not an Autopart purchase-order import. Purchase orders are created and owned in Autopart.",
   };
 }
 
