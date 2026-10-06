@@ -232,6 +232,19 @@ enum AutopartHistoricDocumentType {
   UNKNOWN
 }
 
+enum AutopartBackorderChangeStatus {
+  NEW
+  UNCHANGED
+  QUANTITY_REDUCED
+  QUANTITY_INCREASED
+  CLEARED
+}
+
+enum AutopartBackorderSnapshotStatus {
+  COMMITTED
+  FAILED
+}
+
 enum AutopartHistoricLineMatchStatus {
   MATCHED
   NOT_IN_AB_CATALOGUE
@@ -706,6 +719,7 @@ model Company {
   autopartSalesDocuments AutopartSalesDocument[]
   autopartSalesLines     AutopartSalesLine[]
   autopartCustomerImportRuns AutopartCustomerImportRun[]
+  autopartBackorderLines AutopartBackorderLine[]
 
   @@index([status])
   @@index([name])
@@ -1266,6 +1280,7 @@ model AutopartProduct {
   catalogueVariant     ProductVariant?                     @relation(fields: [catalogueVariantId], references: [id], onDelete: SetNull)
   purchasingSettings   AutopartProductPurchasingSettings?
   purchasingPlanLine   AutopartPurchasingPlanLine?
+  backorderLines       AutopartBackorderLine[]
 
   @@index([sku])
   @@index([catalogueVariantId])
@@ -2797,4 +2812,88 @@ model CmsPublishEvent {
   version CmsPageVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
 
   @@index([pageId, createdAt])
+}
+
+/// Daily Autopart 216V backorder email feed. Defaults OFF.
+model AutopartBackorderFeedSettings {
+  id              String    @id @default("default")
+  enabled         Boolean   @default(false)
+  configured      Boolean   @default(false)
+  /// Expected Europe/London hour — default 18:00.
+  scheduleHour    Int       @default(18)
+  workingDaysOnly Boolean   @default(true)
+  allowedSender   String?
+  lastPolledAt    DateTime?
+  lastSuccessAt   DateTime?
+  lastError       String?
+  updatedAt       DateTime  @updatedAt
+  updatedByUserId String?
+}
+
+/// One 216V import. Latest COMMITTED snapshot is the current outstanding position.
+model AutopartBackorderSnapshot {
+  id                   String                          @id @default(cuid())
+  status               AutopartBackorderSnapshotStatus
+  filename             String?
+  fileHash             String                          @unique
+  source               String                          @default("EMAIL")
+  /// Europe/London civil date of import (UTC midnight of that date).
+  businessDate         DateTime                        @db.Date
+  importedAt           DateTime                        @default(now())
+  receivedAt           DateTime?
+  lineCount            Int                             @default(0)
+  outstandingLineCount Int                             @default(0)
+  orderCount           Int                             @default(0)
+  accountCount         Int                             @default(0)
+  skuCount             Int                             @default(0)
+  outstandingQty       Decimal                         @default(0) @db.Decimal(14, 4)
+  outstandingValue     Decimal                         @default(0) @db.Decimal(12, 2)
+  emptyValid           Boolean                         @default(false)
+  previousSnapshotId   String?
+  createdById          String?
+  diagnostics          Json?
+  createdAt            DateTime                        @default(now())
+
+  lines AutopartBackorderLine[]
+
+  @@index([status, importedAt])
+  @@index([businessDate])
+}
+
+/// Outstanding (or CLEARED-vs-previous) 216V line on a snapshot.
+model AutopartBackorderLine {
+  id                   String                        @id @default(cuid())
+  snapshotId           String
+  /// Order No | account | SKU matchKey | customer order ref [| #n for in-file duplicates].
+  identityKey          String
+  orderNumber          String
+  customerAccount      String
+  customerNameSnapshot String
+  customerOrderRef     String                        @default("")
+  partNumber           String
+  partMatchKey         String
+  descriptionSnapshot  String
+  outstandingQty       Decimal                       @db.Decimal(14, 4)
+  unitValue            Decimal?                      @db.Decimal(12, 4)
+  outstandingValue     Decimal?                      @db.Decimal(12, 2)
+  changeStatus         AutopartBackorderChangeStatus
+  previousQty          Decimal?                      @db.Decimal(14, 4)
+  firstSeenAt          DateTime
+  lastSeenAt           DateTime
+  lastChangedAt        DateTime
+  lineNumberInFile     Int
+  companyId            String?
+  autopartProductId    String?
+
+  snapshot        AutopartBackorderSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  company         Company?                  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  autopartProduct AutopartProduct?          @relation(fields: [autopartProductId], references: [id], onDelete: SetNull)
+
+  @@index([snapshotId, changeStatus])
+  @@index([identityKey])
+  @@index([partMatchKey])
+  @@index([customerAccount])
+  @@index([orderNumber])
+  @@index([companyId])
+  @@index([autopartProductId])
 }

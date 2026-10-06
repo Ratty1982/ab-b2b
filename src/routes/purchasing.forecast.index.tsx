@@ -234,6 +234,7 @@ function StockForecastPage() {
                   <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
                     Incoming
                   </th>
+                  <th className="px-3 py-2">Customer backorders</th>
                   <th className="px-3 py-2">7d sales</th>
                   <th className="px-3 py-2">30d sales</th>
                   <th className="px-3 py-2">90d sales</th>
@@ -258,6 +259,9 @@ function StockForecastPage() {
                     <td className="px-3 py-2">{row.brand}</td>
                     <td className="px-3 py-2">{qty(row.availableQty)}</td>
                     <td className="px-3 py-2">{qty(row.incomingQty)}</td>
+                    <td className="px-3 py-2">
+                      {row.customerBackorderUnits > 0 ? `${qty(row.customerBackorderUnits)} units` : "—"}
+                    </td>
                     <td className="px-3 py-2">{qty(row.rates.last7.netUnits)}</td>
                     <td className="px-3 py-2">{qty(row.rates.last30.netUnits)}</td>
                     <td className="px-3 py-2">{qty(row.rates.last90.netUnits)}</td>

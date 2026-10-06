@@ -24,7 +24,8 @@ function isUsable(client: PrismaClient | undefined): client is PrismaClient {
     typeof client?.teamMember?.findUnique === "function" &&
     typeof client?.orderNumberSequence?.findUnique === "function" &&
     typeof client?.emailSettings?.findUnique === "function" &&
-    typeof client?.transactionalEmail?.findUnique === "function"
+    typeof client?.transactionalEmail?.findUnique === "function" &&
+    typeof client?.autopartBackorderSnapshot?.findUnique === "function"
   );
 }
 

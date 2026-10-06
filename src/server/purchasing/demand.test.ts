@@ -17,6 +17,9 @@ describe("purchasing demand SQL contract", () => {
     expect(service).not.toMatch(/netUnitsBySku\([^)]*sku/);
     expect(service).not.toMatch(/MIN\(d\."documentDate"\)/);
     expect(service).not.toMatch(/earliestSalesDocumentDate/);
+    const forecast = readFileSync(new URL("../../domain/purchasing-forecast.ts", import.meta.url), "utf8");
+    expect(forecast).not.toMatch(/216V|customerBackorder|outstandingBackorder/i);
+    expect(demand).not.toMatch(/216V|customerBackorder|outstandingBackorder/i);
   });
 });
 

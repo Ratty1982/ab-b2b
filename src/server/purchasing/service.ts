@@ -56,6 +56,7 @@ import {
   weeklyNetUnitsForSku,
 } from "@/server/purchasing/demand";
 import { moneyToString } from "@/domain/money";
+import { outstandingBackorderUnitsBySku } from "@/server/purchasing/backorders";
 
 const SETTINGS_ID = "singleton";
 
@@ -451,7 +452,11 @@ export async function getPurchasingDashboard(actorUserId: string) {
 export async function listPurchasingForecast(actorUserId: string, raw: unknown) {
   const input = listInput.parse(raw ?? {});
   const workspace = await loadWorkspace(actorUserId);
-  const all = applyFilters(workspace.rows, input);
+  const backorders = await outstandingBackorderUnitsBySku();
+  const all = applyFilters(workspace.rows, input).map((row) => ({
+    ...row,
+    customerBackorderUnits: backorders.get(skuMatchKey(row.sku)) ?? 0,
+  }));
   const pageSize = input.pageSize ?? 50;
   const page = input.page ?? 1;
   return {
@@ -475,12 +480,14 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
     workspace.maps.historyFrom,
   );
   const sourceRange = clipRangeToVerified(workspace.maps.windows.last90, workspace.maps.historyFrom);
-  const [chart, sources] = await Promise.all([
+  const [chart, sources, backorders] = await Promise.all([
     chartRange
       ? weeklyNetUnitsForSku(row.sku, chartRange.from, chartRange.to)
       : Promise.resolve([]),
     sourceRange ? demandSourcesForSku(row.sku, sourceRange) : Promise.resolve([]),
+    outstandingBackorderUnitsBySku(),
   ]);
+  const customerBackorderUnits = backorders.get(skuMatchKey(row.sku)) ?? 0;
   return {
     freshness: workspace.freshness,
     settings: workspace.settings,
@@ -488,6 +495,11 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
     forecast,
     chart,
     sources,
+    customerBackorderUnits,
+    customerBackorderNote:
+      customerBackorderUnits > 0 ? `Customer Backorders: ${customerBackorderUnits} units` : null,
+    customerBackorderExplanation:
+      customerBackorderUnits > 0 ? `Outstanding customer backorders: ${customerBackorderUnits}` : null,
   };
 }
 

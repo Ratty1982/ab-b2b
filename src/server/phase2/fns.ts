@@ -4217,5 +4217,90 @@ export const updatePurchasingPlanFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getPurchasingBackordersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const backorders = await import("@/server/purchasing/backorders");
+      return { ok: true as const, data: await backorders.getBackorderWorkspace(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPurchasingBackorderLineFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { lineId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const backorders = await import("@/server/purchasing/backorders");
+      return { ok: true as const, data: await backorders.getBackorderLineDetail(userId, data.lineId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportPurchasingBackordersCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const backorders = await import("@/server/purchasing/backorders");
+      return { ok: true as const, data: await backorders.exportBackordersCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewAutopart216vFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const importing = await import("@/server/purchasing/backorder-import");
+      return { ok: true as const, data: await importing.previewAutopart216vImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmAutopart216vFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { text: string; filename?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const importing = await import("@/server/purchasing/backorder-import");
+      return {
+        ok: true as const,
+        data: await importing.confirmAutopart216vImport(userId, { ...data, source: "MANUAL" }),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateBackorderFeedSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { enabled?: boolean; allowedSender?: string | null })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const backorders = await import("@/server/purchasing/backorders");
+      return { ok: true as const, data: await backorders.updateBackorderFeedSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const pollBackorderMailboxNowFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const poll = await import("@/server/purchasing/backorder-poll");
+    return { ok: true as const, data: await poll.pollBackorderMailboxNow(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 
 

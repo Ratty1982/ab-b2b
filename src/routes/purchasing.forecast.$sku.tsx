@@ -204,6 +204,14 @@ function PurchasingSkuPage() {
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[13px]">
               <Fact label="Available (Avail)" value={qty(forecast.availableQty)} />
               <Fact label="Incoming" value={incomingNote(forecast.incomingQty)} title={INCOMING_SOURCE_HINT} />
+              <Fact
+                label="Customer backorders"
+                value={
+                  data.customerBackorderUnits > 0
+                    ? data.customerBackorderNote ?? `${qty(data.customerBackorderUnits)} units`
+                    : "None"
+                }
+              />
               <Fact label="Current cover" value={coverLabel(forecast.weeksCover, forecast.recommendedWeekly)} />
               <Fact
                 label="Cover incl. incoming"
@@ -370,6 +378,7 @@ function PurchasingSkuPage() {
               {forecast.purchase.explanation.map((step) => (
                 <li key={step}>{step}</li>
               ))}
+              {data.customerBackorderExplanation ? <li>{data.customerBackorderExplanation}</li> : null}
             </ul>
             <div className="border border-border bg-secondary/30 px-4 py-3">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">Why?</div>

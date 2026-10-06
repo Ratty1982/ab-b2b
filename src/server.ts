@@ -72,6 +72,15 @@ function ensureStockScheduler() {
         error: error instanceof Error ? error.message : error,
       });
     });
+  // 216V backorders — no-ops while AutopartBackorderFeedSettings.enabled=false.
+  void import("./server/purchasing/backorder-scheduler")
+    .then((mod) => mod.startAutopart216vScheduler())
+    .catch((error) => {
+      console.error("[ab:216v]", {
+        event: "AUTOPART_216V_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();

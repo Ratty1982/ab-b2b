@@ -90,6 +90,7 @@ export const ROUTES = {
   purchasingForecast: "/purchasing/forecast",
   purchasingForecastSku: (sku: string) => `/purchasing/forecast/${encodeURIComponent(sku)}` as const,
   purchasingPlanner: "/purchasing/planner",
+  purchasingBackorders: "/purchasing/backorders",
   purchasingOverstock: "/purchasing/overstock",
 } as const;
 
@@ -377,6 +378,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "clipboard-list",
         to: ROUTES.purchasingPlanner,
         matchPrefixes: [ROUTES.purchasingPlanner],
+        permission: "purchasing.view",
+        implemented: true,
+      },
+      {
+        id: "purchasing-backorders",
+        label: "Backorders",
+        icon: "list-todo",
+        to: ROUTES.purchasingBackorders,
+        matchPrefixes: [ROUTES.purchasingBackorders],
         permission: "purchasing.view",
         implemented: true,
       },
