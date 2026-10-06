@@ -36,7 +36,7 @@ function decodeBase64Body(raw: string): Buffer {
   return Buffer.from(payload, "base64");
 }
 
-async function requireDocumentsManage(userId: string) {
+export async function requireDocumentsManage(userId: string) {
   const profile = await requireSystemPermission(userId, "products.edit");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade users cannot manage product documents", "FORBIDDEN", 403);
@@ -44,7 +44,7 @@ async function requireDocumentsManage(userId: string) {
   return profile;
 }
 
-async function requireDocumentsView(userId: string) {
+export async function requireDocumentsView(userId: string) {
   const profile = await requireSystemPermission(userId, "products.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade users cannot access product document admin", "FORBIDDEN", 403);
@@ -118,7 +118,14 @@ export async function listProductDocumentsAdmin(actorUserId: string, productId: 
   await requireDocumentsView(actorUserId);
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      sdsRequirement: true,
+      sdsNotRequiredReason: true,
+      sdsRequirementUpdatedAt: true,
+      sdsRequirementUpdatedBy: { select: { id: true, name: true, email: true } },
+    },
   });
   if (!product) throw new AuthError("Product not found", "NOT_FOUND", 404);
 
@@ -134,6 +141,13 @@ export async function listProductDocumentsAdmin(actorUserId: string, productId: 
     (r) => !(r.type === "SAFETY_DATA_SHEET" && r.status === "CURRENT") && r.status === "CURRENT",
   );
   const archived = rows.filter((r) => r.status === "ARCHIVED");
+  const archivedSds = archived.filter((r) => r.type === "SAFETY_DATA_SHEET");
+  const { classifySdsCoverage } = await import("@/domain/sds-coverage");
+  const sdsStatus = classifySdsCoverage({
+    sdsRequirement: product.sdsRequirement,
+    hasCurrentSds: Boolean(currentSds),
+    hasArchivedSds: archivedSds.length > 0,
+  });
 
   return {
     productId: product.id,
@@ -141,6 +155,19 @@ export async function listProductDocumentsAdmin(actorUserId: string, productId: 
     currentSds: currentSds ? toAdminDto(currentSds) : null,
     otherDocuments: otherCurrent.map(toAdminDto),
     archived: archived.map(toAdminDto),
+    sdsCoverage: {
+      status: sdsStatus,
+      requirement: product.sdsRequirement,
+      notRequiredReason: product.sdsNotRequiredReason,
+      requirementUpdatedAt: product.sdsRequirementUpdatedAt?.toISOString() ?? null,
+      requirementUpdatedBy: product.sdsRequirementUpdatedBy
+        ? {
+            id: product.sdsRequirementUpdatedBy.id,
+            name: product.sdsRequirementUpdatedBy.name,
+            email: product.sdsRequirementUpdatedBy.email,
+          }
+        : null,
+    },
     typeOptions: PRODUCT_DOCUMENT_TYPES.map((t) => ({
       value: t,
       label: productDocumentTypeLabel(t),
@@ -630,8 +657,6 @@ export async function previewBulkSdsImport(
 
 /** Exported for SharePoint import RBAC reuse. */
 export {
-  requireDocumentsManage,
-  requireDocumentsView,
   requireSharePointIntegrationManage,
   decodeBase64Body,
 };
@@ -917,23 +942,43 @@ export async function listPublicProductDocuments(productId: string) {
   }));
 }
 
-/** Whether product has a current SDS (for catalogue list). */
+/** Product-level SDS coverage / current-SDS filter for the catalogue list. */
 export function sdsFilterWhere(
-  sds: "attached" | "missing" | "" | undefined,
+  sds:
+    | "attached"
+    | "missing"
+    | "CURRENT"
+    | "MISSING"
+    | "ARCHIVED_ONLY"
+    | "NOT_REQUIRED"
+    | ""
+    | undefined,
 ): Prisma.ProductWhereInput {
-  if (sds === "attached") {
+  if (sds === "attached" || sds === "CURRENT") {
     return {
+      sdsRequirement: "REQUIRED",
       productDocuments: {
         some: { type: "SAFETY_DATA_SHEET", status: "CURRENT" },
       },
     };
   }
-  if (sds === "missing") {
+  if (sds === "missing" || sds === "MISSING") {
     return {
-      productDocuments: {
-        none: { type: "SAFETY_DATA_SHEET", status: "CURRENT" },
-      },
+      sdsRequirement: "REQUIRED",
+      productDocuments: { none: { type: "SAFETY_DATA_SHEET" } },
     };
+  }
+  if (sds === "ARCHIVED_ONLY") {
+    return {
+      AND: [
+        { sdsRequirement: "REQUIRED" },
+        { productDocuments: { none: { type: "SAFETY_DATA_SHEET", status: "CURRENT" } } },
+        { productDocuments: { some: { type: "SAFETY_DATA_SHEET", status: "ARCHIVED" } } },
+      ],
+    };
+  }
+  if (sds === "NOT_REQUIRED") {
+    return { sdsRequirement: "NOT_REQUIRED" };
   }
   return {};
 }

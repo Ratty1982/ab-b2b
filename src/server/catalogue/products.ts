@@ -32,6 +32,7 @@ import {
   type PriceViewer,
 } from "@/server/pricing/trade-price";
 import { loadPricingActor, pricingArgsFromActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
+import { classifySdsCoverage, type SdsCoverageStatus } from "@/domain/sds-coverage";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -65,6 +66,7 @@ export type CatalogueListItem = {
   isTradeVisible: boolean;
   isFeatured: boolean;
   hasSds: boolean;
+  sdsStatus: "CURRENT" | "MISSING" | "ARCHIVED_ONLY" | "NOT_REQUIRED";
 };
 
 export type CatalogueListQuery = {
@@ -75,8 +77,8 @@ export type CatalogueListQuery = {
   tradeVisible?: boolean | "";
   featured?: boolean | "";
   stock?: "in" | "out" | "unknown" | "";
-  /** Safety Data Sheet filter */
-  sds?: "attached" | "missing" | "";
+  /** Safety Data Sheet / coverage filter */
+  sds?: "attached" | "missing" | "CURRENT" | "MISSING" | "ARCHIVED_ONLY" | "NOT_REQUIRED" | "";
   sort?: "name" | "sku" | "updated" | "brand";
   page?: number;
   pageSize?: number;
@@ -85,6 +87,17 @@ export type CatalogueListQuery = {
 
 function defaultVariant<T extends { isDefault: boolean; createdAt: Date }>(variants: T[]): T | undefined {
   return variants.find((v) => v.isDefault) ?? variants[0];
+}
+
+function classifyProductSds(
+  sdsRequirement: string,
+  docs: Array<{ status: string }>,
+): SdsCoverageStatus {
+  return classifySdsCoverage({
+    sdsRequirement,
+    hasCurrentSds: docs.some((d) => d.status === "CURRENT"),
+    hasArchivedSds: docs.some((d) => d.status === "ARCHIVED"),
+  });
 }
 
 /** Exact sellable qty for authorised internal staff only — never trade/anonymous. */
@@ -185,9 +198,8 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
           take: 1,
         },
         productDocuments: {
-          where: { type: "SAFETY_DATA_SHEET", status: "CURRENT" },
-          select: { id: true },
-          take: 1,
+          where: { type: "SAFETY_DATA_SHEET" },
+          select: { id: true, status: true },
         },
       },
       orderBy,
@@ -249,7 +261,8 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
       updatedAt: row.updatedAt.toISOString(),
       isTradeVisible: row.isTradeVisible,
       isFeatured: row.isFeatured,
-      hasSds: row.productDocuments.length > 0,
+      hasSds: row.productDocuments.some((d) => d.status === "CURRENT"),
+      sdsStatus: classifyProductSds(row.sdsRequirement, row.productDocuments),
     };
   });
 

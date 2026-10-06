@@ -29,11 +29,14 @@ describe("Bulk SDS Upload production UI", () => {
     expect(importSrc).toContain("Scan SharePoint folder");
   });
 
-  it("wires Operations Documents and settings to the same route", () => {
+  it("wires Operations Documents and settings to the SDS coverage workspace", () => {
+    expect(navSrc).toContain("adminProductDocuments: \"/admin/products/documents\"");
     expect(navSrc).toContain("adminProductDocumentsImport: \"/admin/products/documents-import\"");
-    expect(navSrc).toMatch(/id: "documents"[\s\S]*to: ROUTES.adminProductDocumentsImport/);
+    expect(navSrc).toMatch(/id: "documents"[\s\S]*to: ROUTES.adminProductDocuments/);
     expect(settingsSrc).toContain("ROUTES.adminProductDocumentsImport");
+    expect(settingsSrc).toContain("ROUTES.adminProductDocuments");
     expect(settingsSrc).toContain("Bulk SDS Upload");
+    expect(settingsSrc).toContain("SDS Coverage");
     expect(settingsSrc).toContain("Safety Data Sheets are managed manually");
   });
 

@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
+import { SDS_COVERAGE_COMPACT } from "@/domain/sds-coverage";
 
 function bytesFromBase64(value: string): Uint8Array {
   const binary = atob(value);
@@ -57,7 +58,20 @@ type ProductRow = {
   imageSrc: string | null;
   updatedAt: string;
   hasSds: boolean;
+  sdsStatus?: "CURRENT" | "MISSING" | "ARCHIVED_ONLY" | "NOT_REQUIRED";
 };
+
+function sdsIndicator(p: ProductRow) {
+  const status = p.sdsStatus ?? (p.hasSds ? "CURRENT" : "MISSING");
+  const meta = SDS_COVERAGE_COMPACT[status];
+  const tone =
+    status === "CURRENT" ? "text-good" : status === "NOT_REQUIRED" ? "text-steel" : "text-warn";
+  return (
+    <span className={cn("text-[11px] font-semibold uppercase tracking-wide", tone)} title={meta.tooltip}>
+      SDS {meta.mark}
+    </span>
+  );
+}
 
 function statusTone(status: string) {
   if (status === "ACTIVE") return "good" as const;
@@ -90,7 +104,7 @@ function AdminProducts() {
   const [tradeVisible, setTradeVisible] = useState("");
   const [featured, setFeatured] = useState("");
   const [stock, setStock] = useState("");
-  const [sds, setSds] = useState<"" | "attached" | "missing">("");
+  const [sds, setSds] = useState<"" | "attached" | "missing" | "CURRENT" | "MISSING" | "ARCHIVED_ONLY" | "NOT_REQUIRED">("");
   const [sort, setSort] = useState<"name" | "sku" | "updated" | "brand">("updated");
   const [brands, setBrands] = useState<BrandRow[]>([]);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
@@ -246,14 +260,16 @@ function AdminProducts() {
         value={sds}
         onChange={(e) => {
           setPage(1);
-          setSds(e.target.value as "" | "attached" | "missing");
+          setSds(e.target.value as typeof sds);
         }}
         className={inputClass}
         aria-label="Safety Data Sheet filter"
       >
         <option value="">Safety Data Sheet — All</option>
-        <option value="attached">SDS attached</option>
-        <option value="missing">SDS missing</option>
+        <option value="CURRENT">Current SDS</option>
+        <option value="MISSING">Missing SDS</option>
+        <option value="ARCHIVED_ONLY">Archived only</option>
+        <option value="NOT_REQUIRED">Not required</option>
       </select>
       <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={inputClass}>
         <option value="updated">Recently updated</option>
@@ -386,9 +402,7 @@ function AdminProducts() {
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge>
-                    <span className={cn("text-[11px]", p.hasSds ? "text-good" : "text-steel")}>
-                      {p.hasSds ? "SDS ✓" : "SDS Missing"}
-                    </span>
+                    {sdsIndicator(p)}
                   </div>
                   <span className="text-[12px] font-semibold text-primary">Edit product</span>
                 </div>
@@ -455,17 +469,7 @@ function AdminProducts() {
                     <td className="px-3 py-2 text-steel">{p.brand}</td>
                     <td className="px-3 py-2 text-steel">{p.category}</td>
                     <td className="px-3 py-2"><StatusBadge tone={statusTone(p.status)}>{p.status}</StatusBadge></td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={cn(
-                          "text-[11px] font-semibold uppercase tracking-wide",
-                          p.hasSds ? "text-good" : "text-steel",
-                        )}
-                        title={p.hasSds ? "Safety Data Sheet attached" : "Safety Data Sheet missing"}
-                      >
-                        {p.hasSds ? "SDS ✓" : "SDS Missing"}
-                      </span>
-                    </td>
+                    <td className="px-3 py-2">{sdsIndicator(p)}</td>
                     <td className="num px-3 py-2 text-right">{p.trade != null ? gbp(p.trade) : "—"}</td>
                     <td className="num px-3 py-2 text-right text-steel">{p.rrp != null ? gbp(p.rrp) : "—"}</td>
                     <td className="px-3 py-2 text-right">

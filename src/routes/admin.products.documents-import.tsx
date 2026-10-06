@@ -546,15 +546,15 @@ function BulkSdsImportPage() {
         title="Bulk SDS Upload"
         sub="Drop Safety Data Sheet PDFs, review automatic product matches, then confirm. New SDS becomes current; the previous current SDS is archived on replace."
         crumbs={[
-          { label: "Products", to: ROUTES.adminProducts },
+          { label: "Documents", to: ROUTES.adminProductDocuments },
           { label: "Bulk SDS Upload" },
         ]}
         actions={
           <Link
-            to={ROUTES.adminProducts}
+            to={ROUTES.adminProductDocuments}
             className="h-10 rounded-md border border-border px-4 text-[12px] font-semibold uppercase inline-flex items-center"
           >
-            Products
+            SDS Coverage
           </Link>
         }
       />

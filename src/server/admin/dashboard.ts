@@ -18,6 +18,7 @@ import {
   attentionActionLabel,
   buildDashboardGreeting,
   DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES,
+  sdsCoverageHealthFromState,
   emailHealthFromState,
   feed504cHealthFromState,
   formatGbpIncVat,
@@ -909,6 +910,22 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       tone: h.tone,
       href: settingsDocumentsHref,
     });
+  }
+  if (canSeeProducts) {
+    try {
+      const { getSdsCoverageSummary } = await import("@/server/catalogue/sds-coverage");
+      const sds = await getSdsCoverageSummary(actorUserId);
+      const h = sdsCoverageHealthFromState(sds);
+      systemHealth.push({
+        id: "sds-coverage",
+        label: "SDS Coverage",
+        statusLabel: h.statusLabel,
+        tone: h.tone,
+        href: `${ROUTES.adminProductDocuments}?status=MISSING`,
+      });
+    } catch {
+      // Coverage must not take down the dashboard.
+    }
   }
 
   const quickActions: DashboardQuickAction[] = [];

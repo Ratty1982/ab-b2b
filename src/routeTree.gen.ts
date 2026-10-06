@@ -81,6 +81,7 @@ import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.in
 import { Route as AdminPricingIdRouteImport } from './routes/admin.pricing.$id'
 import { Route as AdminProductsIndexRouteImport } from './routes/admin.products.index'
 import { Route as AdminProductsIdRouteImport } from './routes/admin.products.$id'
+import { Route as AdminProductsDocumentsRouteImport } from './routes/admin.products.documents'
 import { Route as AdminProductsDocumentsImportRouteImport } from './routes/admin.products.documents-import'
 import { Route as AdminProductsImportsRouteImport } from './routes/admin.products.imports'
 import { Route as AdminProductsStockRouteImport } from './routes/admin.products.stock'
@@ -480,6 +481,11 @@ const AdminProductsIdRoute = AdminProductsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminProductsRoute,
 } as any)
+const AdminProductsDocumentsRoute = AdminProductsDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => AdminProductsRoute,
+} as any)
 const AdminProductsDocumentsImportRoute =
   AdminProductsDocumentsImportRouteImport.update({
     id: '/documents-import',
@@ -747,6 +753,7 @@ export interface FileRoutesByFullPath {
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/documents': typeof AdminProductsDocumentsRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRouteWithChildren
@@ -844,6 +851,7 @@ export interface FileRoutesByTo {
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/documents': typeof AdminProductsDocumentsRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/stock': typeof AdminProductsStockRouteWithChildren
   '/admin/security/mfa': typeof AdminSecurityMfaRoute
@@ -954,6 +962,7 @@ export interface FileRoutesById {
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
+  '/admin/products/documents': typeof AdminProductsDocumentsRoute
   '/admin/products/documents-import': typeof AdminProductsDocumentsImportRoute
   '/admin/products/imports': typeof AdminProductsImportsRouteWithChildren
   '/admin/products/stock': typeof AdminProductsStockRouteWithChildren
@@ -1067,6 +1076,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/documents'
     | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
@@ -1164,6 +1174,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/documents'
     | '/admin/products/documents-import'
     | '/admin/products/stock'
     | '/admin/security/mfa'
@@ -1273,6 +1284,7 @@ export interface FileRouteTypes {
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
+    | '/admin/products/documents'
     | '/admin/products/documents-import'
     | '/admin/products/imports'
     | '/admin/products/stock'
@@ -1855,6 +1867,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsIdRouteImport
       parentRoute: typeof AdminProductsRoute
     }
+    '/admin/products/documents': {
+      id: '/admin/products/documents'
+      path: '/documents'
+      fullPath: '/admin/products/documents'
+      preLoaderRoute: typeof AdminProductsDocumentsRouteImport
+      parentRoute: typeof AdminProductsRoute
+    }
     '/admin/products/documents-import': {
       id: '/admin/products/documents-import'
       path: '/documents-import'
@@ -2200,6 +2219,7 @@ const AdminProductsStockRouteWithChildren =
 
 interface AdminProductsRouteChildren {
   AdminProductsIdRoute: typeof AdminProductsIdRoute
+  AdminProductsDocumentsRoute: typeof AdminProductsDocumentsRoute
   AdminProductsDocumentsImportRoute: typeof AdminProductsDocumentsImportRoute
   AdminProductsImportsRoute: typeof AdminProductsImportsRouteWithChildren
   AdminProductsStockRoute: typeof AdminProductsStockRouteWithChildren
@@ -2208,6 +2228,7 @@ interface AdminProductsRouteChildren {
 
 const AdminProductsRouteChildren: AdminProductsRouteChildren = {
   AdminProductsIdRoute: AdminProductsIdRoute,
+  AdminProductsDocumentsRoute: AdminProductsDocumentsRoute,
   AdminProductsDocumentsImportRoute: AdminProductsDocumentsImportRoute,
   AdminProductsImportsRoute: AdminProductsImportsRouteWithChildren,
   AdminProductsStockRoute: AdminProductsStockRouteWithChildren,

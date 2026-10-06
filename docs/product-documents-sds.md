@@ -10,9 +10,10 @@ SharePoint / Microsoft Graph SDS import is **implemented but disabled** and is *
 
 | Path | Status |
 | --- | --- |
-| Operations → Documents (`/admin/products/documents-import`) | **Supported** — Bulk SDS Upload |
-| Product workspace → Documents tab | **Supported** — single upload, current/archived SDS, other document types |
-| Settings → Documents & SDS | **Supported** — explains the manual workflow and links to Bulk SDS Upload |
+| Operations → Documents (`/admin/products/documents`) | **Supported** — SDS Coverage workspace |
+| Operations → Documents → Bulk SDS Upload (`/admin/products/documents-import`) | **Supported** — Bulk SDS Upload |
+| Product workspace → Documents tab | **Supported** — SDS status, single upload, current/archived SDS, Not Required |
+| Settings → Documents & SDS | **Supported** — explains the manual workflow and links to Coverage + Bulk SDS Upload |
 | SharePoint scan / Graph import | Implemented, **disabled** unless `SHAREPOINT_SDS_ENABLED=true` |
 
 ## Architecture decision
@@ -88,7 +89,7 @@ Historical SDS rows stay as `ARCHIVED` (no destructive delete by default). Archi
 ## Bulk SDS Upload (supported)
 
 Route: `/admin/products/documents-import`  
-Also: Operations → Documents, Products → Bulk SDS Upload, Settings → Documents & SDS.
+Also: Operations → Documents (coverage), Products → Bulk SDS Upload, Settings → Documents & SDS.
 
 Designed for **30–100 PDFs** in one review (hard cap `BULK_SDS_MAX_FILES` = 100).
 
@@ -197,12 +198,96 @@ A manually uploaded SDS and a (future) SharePoint-sourced SDS behave identically
 
 | Action | Capability |
 | --- | --- |
-| View admin documents / SharePoint settings | `products.view` (internal) |
+| View admin documents / SDS coverage | `products.view` (internal) |
 | Upload / replace / archive / bulk SDS | `products.edit` (internal, non-TRADE) |
+| Mark SDS not required / restore requirement | `products.edit` (internal, non-TRADE) |
+| Export SDS coverage CSV | `products.view` (internal, audited) |
 | SharePoint connection settings | `integrations.sharepoint.manage` |
 | Public download | product visibility rules |
 
 Trade users: no access. Public users: no access to bulk/admin APIs.
+
+## SDS coverage (Operations → Documents)
+
+Workspace: `/admin/products/documents`  
+Bulk SDS Upload remains `/admin/products/documents-import`.
+
+Coverage answers: which **active B2B catalogue products** still need a current SDS, without opening each product.
+
+**Not Required is an internal business classification and is not an automated regulatory determination.**
+
+### Product vs variant
+
+`ProductDocument` is product-owned. Pack sizes / SKUs / variants of the same product share one SDS and produce **one** coverage state. Variant-level `productVariantId` is unused for typical SDS sharing. Do not invent a missing-SDS warning per variant when the product already has a current SDS.
+
+### Applicable active products
+
+Default population is the live B2B catalogue:
+
+`Product.status = ACTIVE` AND `isActive` AND `isTradeVisible`
+
+Excluded from the headline figure:
+
+- draft / inactive / discontinued products
+- products hidden from trade
+- Autopart **external** products (no B2B `Product` row)
+- Autopart **historic-only** SKUs (no B2B `Product` row)
+
+Use the Catalogue filter for inactive/hidden products when needed.
+
+### Coverage states
+
+| State | Meaning |
+| --- | --- |
+| **Current SDS** | Product requires SDS and has a CURRENT `ProductDocument` of type SDS |
+| **Missing SDS** | Product requires SDS and has no SDS documents (current or archived) |
+| **Archived only** | Product requires SDS, has archived SDS, and has no CURRENT SDS |
+| **Not required** | Product explicitly marked `NOT_REQUIRED` |
+
+Archived-only is **not** covered. A previous SDS may have been archived because it is obsolete — staff must upload a new current SDS (never auto-restore archived rows).
+
+### Coverage percentage
+
+```
+(Current SDS + Not Required) / Active Products × 100
+```
+
+Example: 287 current + 15 not required, 412 active products → **73.3%**.
+
+### Not Required workflow
+
+Default for every product is **REQUIRED**. Staff with `products.edit` may mark a small selected set (max 25) as not required, with confirmation and an optional **internal** reason (for example “Non-chemical accessory”). Reasons are never shown on the public product page.
+
+**Require SDS** reverses the classification. After restore:
+
+- current SDS exists → Current
+- archived SDS only → Archived only
+- no SDS → Missing
+
+Never infer Not Required from category, brand, product type, filename, absence of SDS, or AI.
+
+### CSV export
+
+Exports the **currently filtered** table as UTF-8 CSV (BOM). Columns: Product, Brand, SKU, MPN, SDS Status, Current SDS filename, Uploaded/updated date, Not Required reason. Audited as `catalogue.sds_coverage_exported`.
+
+### Public behaviour
+
+Unchanged:
+
+- CURRENT SDS: visible/downloadable on Safety & Documents for ACTIVE trade-visible products
+- ARCHIVED: not presented as current
+- MISSING: no SDS download
+- NOT REQUIRED: no public “Not required” message; internal governance only
+
+### Audit
+
+| Action | Meaning |
+| --- | --- |
+| `catalogue.sds_marked_not_required` | Requirement set to NOT_REQUIRED (`productId`, `previousStatus`, `newStatus`, `reason`) |
+| `catalogue.sds_requirement_restored` | Requirement set back to REQUIRED |
+| `catalogue.sds_coverage_exported` | Coverage CSV downloaded |
+
+Document bytes are never stored in audit metadata. Existing upload/replace/archive events are unchanged.
 
 ## Intentionally deferred
 

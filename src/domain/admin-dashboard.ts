@@ -311,3 +311,23 @@ export function sharePointSdsHealthFromState(input: {
   }
   return { statusLabel: "Not verified", tone: "no_data" };
 }
+
+/** Compact SDS coverage health for the dashboard system-health list. */
+export function sdsCoverageHealthFromState(input: {
+  coveragePercent: number;
+  missingSds: number;
+  archivedOnly: number;
+  activeProducts: number;
+}): { statusLabel: string; tone: SystemHealthTone } {
+  if (input.activeProducts <= 0) {
+    return { statusLabel: "No active products", tone: "no_data" };
+  }
+  const pct = `${input.coveragePercent.toFixed(1)}%`;
+  if (input.missingSds > 0) {
+    return { statusLabel: `${pct} · ${input.missingSds} missing`, tone: "attention" };
+  }
+  if (input.archivedOnly > 0) {
+    return { statusLabel: `${pct} · ${input.archivedOnly} archived only`, tone: "attention" };
+  }
+  return { statusLabel: `${pct} covered`, tone: "healthy" };
+}

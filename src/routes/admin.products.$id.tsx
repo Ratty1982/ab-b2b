@@ -46,9 +46,10 @@ type Tab =
 
 export const Route = createFileRoute("/admin/products/$id")({
   head: () => ({ meta: [{ title: "Product workspace — Automotive Brands Admin" }] }),
-  validateSearch: (search: Record<string, unknown>): { tab?: Tab } => {
+  validateSearch: (search: Record<string, unknown>): { tab?: Tab; uploadSds?: boolean } => {
     const tab = search["tab"];
-    if (
+    const uploadSds = search["uploadSds"] === true || search["uploadSds"] === "1" || search["uploadSds"] === "true";
+    const known =
       tab === "Overview" ||
       tab === "Content" ||
       tab === "Images" ||
@@ -57,11 +58,11 @@ export const Route = createFileRoute("/admin/products/$id")({
       tab === "Inventory" ||
       tab === "Variants" ||
       tab === "SEO" ||
-      tab === "Activity"
-    ) {
-      return { tab };
-    }
-    return {};
+      tab === "Activity";
+    return {
+      ...(known ? { tab } : {}),
+      ...(uploadSds ? { uploadSds: true } : {}),
+    };
   },
   component: ProductWorkspace,
 });
@@ -155,7 +156,7 @@ function optionalNumber(value: string): number | null {
 function ProductWorkspace() {
   const { id } = Route.useParams();
   const search = Route.useSearch();
-  const [tab, setTab] = useState<Tab>(search.tab ?? "Overview");
+  const [tab, setTab] = useState<Tab>(search.tab ?? (search.uploadSds ? "Documents" : "Overview"));
   const [product, setProduct] = useState<Workspace | null>(null);
   const [draft, setDraft] = useState<ProductDraft | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -347,7 +348,7 @@ function ProductWorkspace() {
           ) : null}
         </div>
         <div hidden={tab !== "Documents"}>
-          <ProductDocumentsPanel productId={product.id} />
+          <ProductDocumentsPanel productId={product.id} autoOpenUpload={Boolean(search.uploadSds)} />
         </div>
         <div hidden={tab !== "Inventory"}>
           <InventoryPanel product={product} onSaved={refreshMedia} />

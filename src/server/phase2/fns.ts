@@ -954,6 +954,54 @@ export const archiveProductDocumentFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getSdsCoverageSummaryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { population?: "active" | "inactive" | "all" } | undefined)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const coverage = await import("@/server/catalogue/sds-coverage");
+      return { ok: true as const, data: await coverage.getSdsCoverageSummary(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listSdsCoverageFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const coverage = await import("@/server/catalogue/sds-coverage");
+      return { ok: true as const, data: await coverage.listSdsCoveragePage(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportSdsCoverageCsvFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const coverage = await import("@/server/catalogue/sds-coverage");
+      return { ok: true as const, data: await coverage.exportSdsCoverageCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setProductSdsRequirementFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const coverage = await import("@/server/catalogue/sds-coverage");
+      return { ok: true as const, data: await coverage.setProductSdsRequirement(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const previewBulkSdsImportFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as {
     files: Array<{ filename: string; contentType?: string; base64: string; clientKey?: string }>;

@@ -416,6 +416,12 @@ enum ProductDocumentStatus {
   ARCHIVED
 }
 
+/// Internal SDS governance for a catalogue product. Not a regulatory determination.
+enum ProductSdsRequirement {
+  REQUIRED
+  NOT_REQUIRED
+}
+
 enum PromotionType {
   PERCENT
   FIXED
@@ -480,6 +486,7 @@ model User {
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
   customerGroupsCreated CustomerGroup[] @relation("CustomerGroupCreator")
+  productsSdsRequirementUpdated Product[] @relation("ProductSdsRequirementUpdatedBy")
   ownedLeads         Lead[]
   ownedOpportunities Opportunity[]
   sessions           AuthSession[]
@@ -970,10 +977,17 @@ model Product {
   isNew            Boolean       @default(false)
   metaTitle        String?
   metaDescription  String?
+  /// SDS coverage: REQUIRED (default) or NOT_REQUIRED. Internal catalogue governance only.
+  sdsRequirement   ProductSdsRequirement @default(REQUIRED)
+  /// Optional internal note when SDS is not required. Never shown publicly.
+  sdsNotRequiredReason String?
+  sdsRequirementUpdatedAt DateTime?
+  sdsRequirementUpdatedById String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
   brand     Brand            @relation(fields: [brandId], references: [id])
+  sdsRequirementUpdatedBy User? @relation("ProductSdsRequirementUpdatedBy", fields: [sdsRequirementUpdatedById], references: [id], onDelete: SetNull)
   category  Category?        @relation(fields: [categoryId], references: [id])
   variants  ProductVariant[]
   documents Document[]
@@ -987,6 +1001,8 @@ model Product {
   @@index([updatedAt])
   @@index([isFeatured])
   @@index([isActive])
+  @@index([sdsRequirement])
+  @@index([sdsRequirementUpdatedById])
 }
 
 model ProductVariant {

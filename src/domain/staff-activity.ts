@@ -121,6 +121,12 @@ const ACTION_LABELS: Record<string, string> = {
   "pricing.updated": "Updated pricing",
   "document.uploaded": "Uploaded document",
   "document.replaced": "Replaced document",
+  "catalogue.document_uploaded": "Safety Data Sheet uploaded",
+  "catalogue.document_replaced": "Safety Data Sheet replaced",
+  "catalogue.document_archived": "Safety Data Sheet archived",
+  "catalogue.sds_marked_not_required": "Marked SDS not required",
+  "catalogue.sds_requirement_restored": "Restored SDS requirement",
+  "catalogue.sds_coverage_exported": "Exported SDS coverage CSV",
 };
 
 const AREA_BY_ACTION: Record<string, StaffActivityArea> = {
@@ -249,6 +255,7 @@ export function staffActivityAreaForAction(action: string): StaffActivityArea {
     action.startsWith("product.") ||
     action.startsWith("pricing.") ||
     action.startsWith("document.") ||
+    action.startsWith("catalogue.") ||
     action.startsWith("stock.")
   ) {
     return "catalogue";

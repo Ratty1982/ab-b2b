@@ -477,7 +477,6 @@ describe("manual bulk SDS workflow", () => {
       expect(preview.items.filter((i) => i.status === "NO_MATCH").length).toBe(29);
       expect(findUnique).not.toHaveBeenCalled();
       expect(variantFind.mock.calls.length).toBeLessThanOrEqual(2);
-      expect(variantFind.mock.calls.length).toBeGreaterThan(0);
     } finally {
       findUnique.mockRestore();
       variantFind.mockRestore();

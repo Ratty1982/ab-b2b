@@ -416,19 +416,27 @@ function DocumentsTab() {
         <h2 className="font-display text-lg font-semibold uppercase">SDS management</h2>
         <p className="mt-1 max-w-2xl text-[13px] text-steel">
           Safety Data Sheets are managed manually. Use Bulk SDS Upload to add or replace documents
-          across multiple products.
+          across multiple products. Use SDS Coverage to see which products still need a current sheet.
         </p>
         <p className="mt-2 max-w-2xl text-[13px] text-steel">
           PDF only, up to 20 MB each and 100 files per batch. New SDS becomes current; the previous
           current SDS is archived on replace. Individual product Documents tabs still handle single
           uploads and other document types.
         </p>
-        <Link
-          to={ROUTES.adminProductDocumentsImport}
-          className="mt-4 inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-semibold uppercase text-primary-foreground"
-        >
-          Bulk SDS Upload
-        </Link>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            to={ROUTES.adminProductDocuments}
+            className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-semibold uppercase"
+          >
+            SDS Coverage
+          </Link>
+          <Link
+            to={ROUTES.adminProductDocumentsImport}
+            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-semibold uppercase text-primary-foreground"
+          >
+            Bulk SDS Upload
+          </Link>
+        </div>
       </section>
       {sharePointEnabled ? (
         <section data-settings-section="sharepoint-sds">

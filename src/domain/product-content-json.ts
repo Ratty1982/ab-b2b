@@ -863,6 +863,9 @@ export function catalogueActivityLabel(action: string): string {
   if (action === "catalogue.document_uploaded") return "Safety Data Sheet uploaded";
   if (action === "catalogue.document_replaced") return "Safety Data Sheet replaced";
   if (action === "catalogue.document_archived") return "Safety Data Sheet archived";
+  if (action === "catalogue.sds_marked_not_required") return "SDS marked not required";
+  if (action === "catalogue.sds_requirement_restored") return "SDS requirement restored";
+  if (action === "catalogue.sds_coverage_exported") return "SDS coverage exported";
   if (action === "catalogue.bulk_document_import") return "Bulk SDS import completed";
   return action.replace(/^catalogue\./, "").replace(/_/g, " ");
 }
