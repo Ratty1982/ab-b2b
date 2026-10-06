@@ -2,10 +2,11 @@
  * IMAP poll for ongoing 504 + TRM21QC — reuses stock IMAP connection.
  *
  * TXT/CSV/MIME are candidate filters only. Content detection is authoritative.
- * Email-level consumed receipts must not permanently hide an unprocessed 504 TXT.
+ * Report-level duplicate identity is the SHA-256 of attachment content.
+ * Filename / Message-ID / IMAP UID are retained for mailbox audit only and must
+ * not block a genuinely changed 504.txt or TRM21QC.csv from importing.
  */
 
-import { createHash } from "node:crypto";
 import { prisma } from "@/infra/database/client";
 import { AuthError } from "@/server/rbac/guards";
 import { attachmentReceiptKey, emailReceiptKey, parseAllowedSenders } from "@/domain/stock-email";
@@ -17,6 +18,8 @@ import {
   detectOngoingSalesAttachmentType,
   formatOngoingSalesAttachmentDiagnostic,
   isOngoingSalesAttachmentCandidate,
+  ongoingSalesContentReceiptKey,
+  ongoingSalesReportContentHash,
   skipReasonForDetectedType,
   type OngoingSalesAttachmentDiagnostic,
 } from "@/domain/autopart-ongoing-sales-attachment";
@@ -81,6 +84,36 @@ async function persistAttachmentReceipt(input: {
     .catch(() => undefined);
 }
 
+async function persistContentHashReceipt(input: {
+  email: InboundStockEmail;
+  filename: string;
+  detectedType: "ONGOING_504" | "TRM21QC";
+  contentHash: string;
+}) {
+  const key = ongoingSalesContentReceiptKey(input.detectedType, input.contentHash);
+  await prisma.stockEmailReceipt
+    .upsert({
+      where: { receiptKey: key },
+      create: {
+        receiptKey: key,
+        emailUid: input.email.uid,
+        emailMessageId: input.email.messageId,
+        fromAddress: input.email.from,
+        subject: input.email.subject ?? "",
+        receivedAt: input.email.receivedAt,
+        consumed: true,
+        attachmentFilename: input.filename,
+      },
+      update: {
+        consumed: true,
+        attachmentFilename: input.filename,
+        emailUid: input.email.uid,
+        emailMessageId: input.email.messageId,
+      },
+    })
+    .catch(() => undefined);
+}
+
 async function persistEmailReceiptIfFullyHandled(input: {
   email: InboundStockEmail;
   handledAllCandidates: boolean;
@@ -106,6 +139,21 @@ async function persistEmailReceiptIfFullyHandled(input: {
     .catch(() => undefined);
 }
 
+async function findCommittedContentDuplicate(input: {
+  contentHash: string;
+  detectedType: "ONGOING_504" | "TRM21QC";
+}): Promise<boolean> {
+  const prior = await prisma.autopartCustomerImportRun.findFirst({
+    where: {
+      fileHash: input.contentHash,
+      type: input.detectedType === "ONGOING_504" ? "ONGOING_504" : "ONGOING_TRM21QC",
+      status: "COMMITTED",
+    },
+    select: { id: true },
+  });
+  return Boolean(prior);
+}
+
 export async function processOngoingSalesEmailBatch(input: {
   emails: InboundStockEmail[];
   actorUserId: string | null;
@@ -114,15 +162,8 @@ export async function processOngoingSalesEmailBatch(input: {
   archive?: (uid: string) => Promise<void>;
 }): Promise<OngoingPollResult> {
   const result = emptyPollResult({ ran: true });
-  const handledAttachmentKeys = new Set(
-    (
-      await prisma.stockEmailReceipt.findMany({
-        where: { consumed: true, receiptKey: { contains: "|att:" } },
-        select: { receiptKey: true },
-        take: 8000,
-      })
-    ).map((r) => r.receiptKey),
-  );
+  /** In-batch content hashes already accepted this poll (exact-report dedupe). */
+  const seenContentHashes = new Set<string>();
 
   for (const email of input.emails) {
     let pendingCandidates = 0;
@@ -147,7 +188,6 @@ export async function processOngoingSalesEmailBatch(input: {
       }
 
       pendingCandidates += 1;
-      const attKey = attachmentReceiptKey(email.messageId, email.uid, att.filename);
       const text = att.content.toString("utf8");
       const detected = detectOngoingSalesAttachmentType(att.filename, text);
       const baseDiag = {
@@ -168,20 +208,24 @@ export async function processOngoingSalesEmailBatch(input: {
         continue;
       }
 
-      const fileHash = createHash("sha256").update(text).digest("hex");
-      const prior = await prisma.autopartCustomerImportRun.findFirst({
-        where: {
-          fileHash,
-          type: detected === "ONGOING_504" ? "ONGOING_504" : "ONGOING_TRM21QC",
-          status: "COMMITTED",
-        },
-        select: { id: true },
-      });
-      if (prior || (attKey && handledAttachmentKeys.has(attKey))) {
+      const contentHash = ongoingSalesReportContentHash(text);
+      const contentKey = `${detected}:${contentHash}`;
+      const alreadyImported =
+        seenContentHashes.has(contentKey) ||
+        (await findCommittedContentDuplicate({ contentHash, detectedType: detected }));
+
+      if (alreadyImported) {
         result.duplicatesIgnored += 1;
         handledCandidates += 1;
         result.attachments.push({ ...baseDiag, result: "duplicate", skipReason: null });
-        if (attKey) handledAttachmentKeys.add(attKey);
+        seenContentHashes.add(contentKey);
+        await persistContentHashReceipt({
+          email,
+          filename: att.filename,
+          detectedType: detected,
+          contentHash,
+        });
+        // Mailbox audit only — never used as the import-skip identity.
         await persistAttachmentReceipt({ email, filename: att.filename, consumed: true });
         continue;
       }
@@ -204,8 +248,14 @@ export async function processOngoingSalesEmailBatch(input: {
         }
         importedThisEmail += 1;
         handledCandidates += 1;
+        seenContentHashes.add(contentKey);
         result.attachments.push({ ...baseDiag, result: "imported", skipReason: null });
-        if (attKey) handledAttachmentKeys.add(attKey);
+        await persistContentHashReceipt({
+          email,
+          filename: att.filename,
+          detectedType: detected,
+          contentHash,
+        });
         await persistAttachmentReceipt({ email, filename: att.filename, consumed: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : "import failed";

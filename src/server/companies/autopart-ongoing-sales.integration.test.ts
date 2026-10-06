@@ -837,3 +837,260 @@ ${account},GRP,${ssAcc},06/10/2026,${txtTrmSku},Brake pad,1,416.74,200.00,216.74
     expect(Number(doc?.goodsNet)).toBe(12);
   });
 });
+
+describe("ongoing report content-hash dedupe", () => {
+  const hashStamp = `${stamp}hash`;
+  const early504Inv = `SSHA${String(stamp).slice(-5)}`;
+  const late504Inv = `SSHB${String(stamp).slice(-5)}`;
+  const earlyTrmInv = `SSHC${String(stamp).slice(-5)}`;
+  const lateTrmInv = `SSHD${String(stamp).slice(-5)}`;
+  const hashSku = `SKU-H-${String(stamp).slice(-6)}`;
+
+  function contentA504() {
+    return `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${early504Inv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,40.00,8.00,48.00,WR,CUTOFF-A
+`;
+  }
+
+  function contentB504() {
+    return `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${early504Inv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,40.00,8.00,48.00,WR,CUTOFF-A
+ACCOUNT,${late504Inv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,15.00,3.00,18.00,WR,LATE-B
+`;
+  }
+
+  function contentATrm() {
+    return `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${account},GRP,${earlyTrmInv},06/10/2026,${hashSku},Pad,1,40.00,20.00,20.00,50.000
+`;
+  }
+
+  function contentBTrm() {
+    return `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${account},GRP,${earlyTrmInv},06/10/2026,${hashSku},Pad,1,40.00,20.00,20.00,50.000
+${account},GRP,${lateTrmInv},06/10/2026,${hashSku},Pad late,1,15.00,7.00,8.00,53.333
+`;
+  }
+
+  function emailWith(
+    uid: string,
+    messageId: string,
+    attachments: Array<{ filename: string; content: string; contentType?: string }>,
+  ) {
+    return {
+      uid,
+      messageId,
+      from: "reports@example.invalid",
+      subject: "Autopart day end",
+      receivedAt: new Date(),
+      attachments: attachments.map((a) => ({
+        filename: a.filename,
+        content: Buffer.from(a.content),
+        contentType: a.contentType ?? "text/plain",
+      })),
+    };
+  }
+
+  it("504.txt content A imports; same content A is duplicate; content B same filename imports", async () => {
+    const a = contentA504();
+    const b = contentB504();
+    const first = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-hash-504-a-${hashStamp}`, `<hash-504-a-${hashStamp}@example.invalid>`, [
+          { filename: "504.txt", content: a },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.processed504).toBe(1);
+    expect(first.attachments[0]?.result).toBe("imported");
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: early504Inv } })).toBe(1);
+
+    const again = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-hash-504-a2-${hashStamp}`, `<hash-504-a2-${hashStamp}@example.invalid>`, [
+          { filename: "504.txt", content: a },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(again.processed504).toBe(0);
+    expect(again.duplicatesIgnored).toBe(1);
+    expect(again.attachments[0]?.result).toBe("duplicate");
+
+    const late = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-hash-504-b-${hashStamp}`, `<hash-504-b-${hashStamp}@example.invalid>`, [
+          { filename: "504.txt", content: b },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(late.processed504).toBe(1);
+    expect(late.duplicatesIgnored).toBe(0);
+    expect(late.attachments[0]?.result).toBe("imported");
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: early504Inv } })).toBe(1);
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: late504Inv } })).toBe(1);
+  });
+
+  it("TRM21QC.csv content A imports; same content A is duplicate; content B same filename imports", async () => {
+    const a = contentATrm();
+    const b = contentBTrm();
+    const first = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-hash-trm-a-${hashStamp}`, `<hash-trm-a-${hashStamp}@example.invalid>`, [
+          { filename: "TRM21QC.csv", content: a, contentType: "text/csv" },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.processedTrm21qc).toBe(1);
+    expect(first.attachments[0]?.result).toBe("imported");
+
+    const again = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-hash-trm-a2-${hashStamp}`, `<hash-trm-a2-${hashStamp}@example.invalid>`, [
+          { filename: "TRM21QC.csv", content: a, contentType: "text/csv" },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(again.processedTrm21qc).toBe(0);
+    expect(again.duplicatesIgnored).toBe(1);
+    expect(again.attachments[0]?.result).toBe("duplicate");
+
+    const late = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-hash-trm-b-${hashStamp}`, `<hash-trm-b-${hashStamp}@example.invalid>`, [
+          { filename: "TRM21QC.csv", content: b, contentType: "text/csv" },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(late.processedTrm21qc).toBe(1);
+    expect(late.attachments[0]?.result).toBe("imported");
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: earlyTrmInv } })).toBe(1);
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: lateTrmInv } })).toBe(1);
+  });
+
+  it("later report with old + new rows keeps old business records idempotent and imports new rows", async () => {
+    const earlyInv = `SSHE${String(stamp).slice(-5)}`;
+    const lateInv = `SSHF${String(stamp).slice(-5)}`;
+    const early = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${earlyInv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,22.00,4.40,26.40,WR,EARLY
+`;
+    const later = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${earlyInv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,22.00,4.40,26.40,WR,EARLY
+ACCOUNT,${lateInv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,9.00,1.80,10.80,WR,LATE
+`;
+    const first = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-incr-a-${hashStamp}`, `<incr-a-${hashStamp}@example.invalid>`, [
+          { filename: "504.txt", content: early },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.attachments[0]?.result).toBe("imported");
+    const earlyDocId = (
+      await prisma.autopartSalesDocument.findFirstOrThrow({ where: { documentReference: earlyInv } })
+    ).id;
+
+    const second = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-incr-b-${hashStamp}`, `<incr-b-${hashStamp}@example.invalid>`, [
+          { filename: "504.txt", content: later },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(second.attachments[0]?.result).toBe("imported");
+    expect(second.duplicatesIgnored).toBe(0);
+    const earlyAgain = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { documentReference: earlyInv },
+    });
+    expect(earlyAgain.id).toBe(earlyDocId);
+    expect(Number(earlyAgain.goodsNet)).toBe(22);
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: lateInv } })).toBe(1);
+  });
+
+  it("same content under a different filename remains a content-hash duplicate", async () => {
+    const inv = `SSHG${String(stamp).slice(-5)}`;
+    const body = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${inv},06/10/2026,19:00,EXAMPLE MOTOR FACTORS,11.00,2.20,13.20,WR,RENAME
+`;
+    const first = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-rename-a-${hashStamp}`, `<rename-a-${hashStamp}@example.invalid>`, [
+          { filename: "504.txt", content: body },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.attachments[0]?.result).toBe("imported");
+
+    const renamed = await processOngoingSalesEmailBatch({
+      emails: [
+        emailWith(`uid-rename-b-${hashStamp}`, `<rename-b-${hashStamp}@example.invalid>`, [
+          { filename: "504-late.txt", content: body },
+        ]),
+      ],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(renamed.processed504).toBe(0);
+    expect(renamed.duplicatesIgnored).toBe(1);
+    expect(renamed.attachments[0]?.result).toBe("duplicate");
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: inv } })).toBe(1);
+  });
+
+  it("does not treat same Message-ID/UID/filename as duplicate when attachment content changed", async () => {
+    const invA = `SSHH${String(stamp).slice(-5)}`;
+    const invB = `SSHI${String(stamp).slice(-5)}`;
+    const contentA = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${invA},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,5.00,1.00,6.00,WR,SAME-KEY-A
+`;
+    const contentB = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${invA},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,5.00,1.00,6.00,WR,SAME-KEY-A
+ACCOUNT,${invB},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,7.00,1.40,8.40,WR,SAME-KEY-B
+`;
+    const sharedUid = `uid-same-att-${hashStamp}`;
+    const sharedMid = `<same-att-${hashStamp}@example.invalid>`;
+    const first = await processOngoingSalesEmailBatch({
+      emails: [emailWith(sharedUid, sharedMid, [{ filename: "504.txt", content: contentA }])],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.attachments[0]?.result).toBe("imported");
+
+    const second = await processOngoingSalesEmailBatch({
+      emails: [emailWith(sharedUid, sharedMid, [{ filename: "504.txt", content: contentB }])],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(second.attachments[0]?.result).toBe("imported");
+    expect(second.duplicatesIgnored).toBe(0);
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: invB } })).toBe(1);
+  });
+});

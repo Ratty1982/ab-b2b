@@ -5,10 +5,28 @@
  * ONGOING_504 | TRM21QC | LEGACY_504C | UNKNOWN
  *
  * 504 != 504C. TXT is transport, not a report type.
+ *
+ * Report-level mailbox dedupe is content-hash authoritative (SHA-256 of the
+ * attachment bytes / UTF-8 text used for import). Filename, Message-ID, and
+ * IMAP UID must not block a genuinely changed 504/TRM21QC report.
  */
+import { createHash } from "node:crypto";
 import { normaliseAttachmentFilename } from "@/domain/stock-email";
 import { isAutopart504Report } from "@/domain/autopart-504";
 import { isAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
+
+/** Stable SHA-256 of report bytes/text — sole attachment/report duplicate identity. */
+export function ongoingSalesReportContentHash(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/** Audit receipt key for a consumed content hash (not used as a mailbox Message-ID gate). */
+export function ongoingSalesContentReceiptKey(
+  detectedType: "ONGOING_504" | "TRM21QC",
+  contentHash: string,
+): string {
+  return `ongoing-hash:${detectedType}:${contentHash}`;
+}
 
 export const ONGOING_SALES_DETECTED_TYPES = ["ONGOING_504", "TRM21QC", "LEGACY_504C", "UNKNOWN"] as const;
 export type OngoingSalesDetectedType = (typeof ONGOING_SALES_DETECTED_TYPES)[number];

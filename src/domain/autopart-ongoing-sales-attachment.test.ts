@@ -8,6 +8,8 @@ import {
   detectOngoingSalesAttachmentType,
   formatOngoingSalesAttachmentDiagnostic,
   isOngoingSalesAttachmentCandidate,
+  ongoingSalesContentReceiptKey,
+  ongoingSalesReportContentHash,
 } from "@/domain/autopart-ongoing-sales-attachment";
 
 const SAMPLE_504 = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
@@ -109,6 +111,17 @@ describe("ongoing sales content detection", () => {
     expect(detectOngoingSalesAttachmentType("504.txt", buildAutopart504DayEndFixture())).not.toBe(
       "LEGACY_504C",
     );
+  });
+
+  it("hashes report content stably (string and Buffer) for duplicate identity", () => {
+    const a = ongoingSalesReportContentHash(SAMPLE_504);
+    const b = ongoingSalesReportContentHash(Buffer.from(SAMPLE_504, "utf8"));
+    const changed = ongoingSalesReportContentHash(`${SAMPLE_504}ACCOUNT,SS999999,29/09/2026,18:00,X,1,0.2,1.2,WR,Z\n`);
+    expect(a).toMatch(/^[a-f0-9]{64}$/);
+    expect(a).toBe(b);
+    expect(changed).not.toBe(a);
+    expect(ongoingSalesContentReceiptKey("ONGOING_504", a)).toBe(`ongoing-hash:ONGOING_504:${a}`);
+    expect(ongoingSalesContentReceiptKey("TRM21QC", a)).toBe(`ongoing-hash:TRM21QC:${a}`);
   });
 
   it("formats Super Admin diagnostics without credentials", () => {

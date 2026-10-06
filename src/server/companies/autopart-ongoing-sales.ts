@@ -6,7 +6,6 @@
  * AB-order despatch reuses Invoice.externalRef idempotency with 504C.
  */
 
-import { createHash } from "node:crypto";
 import type { AutopartHistoricDocumentType, Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
@@ -27,6 +26,7 @@ import {
   trm21qcMalformedToReasonCode,
 } from "@/domain/autopart-trm21qc";
 import { reconcile504GoodsToTrmSales } from "@/domain/autopart-504-trm21qc-reconcile";
+import { ongoingSalesReportContentHash } from "@/domain/autopart-ongoing-sales-attachment";
 import {
   decimalStringsEqual,
   makeDiagnostic,
@@ -64,7 +64,7 @@ async function assertOngoingImportActor(userId: string | null) {
 }
 
 function fileHash(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
+  return ongoingSalesReportContentHash(text);
 }
 
 function utcNoon(dateOnly: string | null): Date | null {
