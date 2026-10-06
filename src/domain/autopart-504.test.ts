@@ -92,18 +92,19 @@ describe("Autopart 504 production day-end TXT", () => {
   it("derives fixed-width boundaries from header label starts", () => {
     const layout = detectAutopart504FixedWidthLayout(AUTOPART_504_DAYEND_HEADER);
     expect(layout).not.toBeNull();
-    const byKey = Object.fromEntries((layout ?? []).map((c) => [c.key, c]));
-    expect(byKey.type?.start).toBe(0);
-    expect(byKey.document?.start).toBe(10);
-    expect(byKey.document?.end).toBe(19);
-    expect(byKey.date?.start).toBe(19);
-    expect(byKey.time?.start).toBe(29);
-    expect(byKey.customer?.start).toBe(35);
-    expect(byKey.goods?.start).toBe(71);
-    expect(byKey.vat?.start).toBe(82);
-    expect(byKey.value?.start).toBe(92);
-    expect(byKey.inits?.start).toBe(98);
-    expect(byKey.orderNumber?.start).toBe(105);
+    const start = (key: string) => layout?.find((c) => c.key === key)?.start;
+    const end = (key: string) => layout?.find((c) => c.key === key)?.end;
+    expect(start("type")).toBe(0);
+    expect(start("document")).toBe(10);
+    expect(end("document")).toBe(19);
+    expect(start("date")).toBe(19);
+    expect(start("time")).toBe(29);
+    expect(start("customer")).toBe(35);
+    expect(start("goods")).toBe(71);
+    expect(start("vat")).toBe(82);
+    expect(start("value")).toBe(92);
+    expect(start("inits")).toBe(98);
+    expect(start("orderNumber")).toBe(105);
   });
 
   it("parses OIN document/date boundary from the production example row", () => {

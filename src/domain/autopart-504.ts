@@ -595,13 +595,13 @@ export function parseAutopart504Report(text: string): Autopart504ParseResult {
       customerOrderNumber = get("orderNumber");
     } else if (layoutMode === "fixed-width" && fixedLayout) {
       const fields = sliceFixedFields(line, fixedLayout);
-      reportType = fields.type || null;
-      documentNumber = fields.document ?? "";
-      dateRaw = fields.date ?? "";
-      timeRaw = fields.time ?? "";
-      customerName = fields.customer ?? "";
-      initials = fields.inits || null;
-      customerOrderNumber = fields.orderNumber ?? "";
+      reportType = fields["type"] || null;
+      documentNumber = fields["document"] ?? "";
+      dateRaw = fields["date"] ?? "";
+      timeRaw = fields["time"] ?? "";
+      customerName = fields["customer"] ?? "";
+      initials = fields["inits"] || null;
+      customerOrderNumber = fields["orderNumber"] ?? "";
       const money = extractFixedWidthMoney(line, fixedLayout);
       goodsRaw = money.goods ?? "";
       vatRaw = money.vat ?? "";
