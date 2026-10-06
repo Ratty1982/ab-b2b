@@ -22,6 +22,8 @@ import {
   requireDocumentsView,
   requireSharePointIntegrationManage,
 } from "@/server/catalogue/product-documents";
+import { assertSharePointSdsWorkflowEnabled } from "@/server/catalogue/sharepoint-sds-gate";
+import { isSharePointSdsWorkflowEnabled } from "@/domain/sharepoint-sds-enabled";
 import { getServerEnv } from "@/server/env";
 
 export const SHAREPOINT_SDS_SETTINGS_ID = "singleton";
@@ -73,6 +75,8 @@ export type SharePointSdsPublicSettings = {
   lastScanError: string | null;
   lastScanFileCount: number | null;
   recommendedPermission: "Files.SelectedOperations.Selected";
+  /** False unless SHAREPOINT_SDS_ENABLED=true. Scan/import stay implemented but rejected. */
+  workflowEnabled: boolean;
 };
 
 function resolveClientSecret(encrypted: string | null | undefined): string | null {
@@ -112,6 +116,7 @@ export async function toPublicSharePointSdsSettings(): Promise<SharePointSdsPubl
     lastScanError: row.lastScanError,
     lastScanFileCount: row.lastScanFileCount,
     recommendedPermission: "Files.SelectedOperations.Selected",
+    workflowEnabled: isSharePointSdsWorkflowEnabled(),
   };
 }
 
@@ -306,6 +311,7 @@ export async function loadAuthorisedSdsResource(): Promise<{
  * (getUserDrive may fail without broader consent used only for bootstrap).
  */
 export async function resolveSharePointSdsFolder(actorUserId: string) {
+  assertSharePointSdsWorkflowEnabled();
   await requireSharePointIntegrationManage(actorUserId);
   const runtime = await loadSharePointRuntimeConfig();
   if (!runtime) {
@@ -440,6 +446,7 @@ export async function resolveSharePointSdsFolder(actorUserId: string) {
 }
 
 export async function testSharePointSdsConnection(actorUserId: string) {
+  assertSharePointSdsWorkflowEnabled();
   await requireSharePointIntegrationManage(actorUserId);
   const runtime = await loadSharePointRuntimeConfig();
   if (!runtime) {

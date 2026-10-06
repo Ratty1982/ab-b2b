@@ -109,12 +109,16 @@ The B2B app must only list and download PDFs in that folder.
 
 ## I. SDS ingestion controls
 
-1. SCAN → PREVIEW → MATCH/REVIEW → HUMAN CONFIRM → IMPORT (never auto-replace on remote change)
+**Supported production workflow is manual / bulk manual upload** (`/admin/products/documents-import`). SharePoint Graph scan is implemented but disabled unless `SHAREPOINT_SDS_ENABLED=true`.
+
+1. Local bulk: DROP/CHOOSE → VALIDATE → MATCH/REVIEW → HUMAN CONFIRM → IMPORT (never auto-assign ambiguous files)
 2. PDF only: extension, declared MIME allowlist, `%PDF-` magic bytes, max 20 MB, non-empty
-3. Max files per scan: `SHAREPOINT_SDS_MAX_FILES` (500)
+3. Max files per manual bulk: `BULK_SDS_MAX_FILES` (100). SharePoint scan cap remains `SHAREPOINT_SDS_MAX_FILES` (500) when re-enabled
 4. Filename sanitisation (no path traversal)
-5. Checksum / deduplication retained
-6. Resource allowlist on download
+5. Checksum / deduplication retained (same product + current checksum → skip)
+6. Resource allowlist on SharePoint download (when enabled)
+
+`SHAREPOINT_SDS_ENABLED` defaults off. Stored Graph settings and secrets are not deleted when disabled.
 
 ---
 

@@ -9,13 +9,17 @@ import { hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { deleteMediaObject, getMediaObjectBytes, putMediaObject } from "@/server/cms/storage";
 import {
+  BULK_SDS_MAX_FILES,
   defaultDocumentTitle,
+  MANUAL_SDS_SOURCE,
   matchFilenameToProducts,
+  PRODUCT_DOCUMENT_MAX_BYTES,
   PRODUCT_DOCUMENT_TYPES,
   productDocumentPublicPath,
   productDocumentTypeLabel,
   sha256Hex,
   validateProductDocumentPdf,
+  type FilenameMatchMethod,
   type ProductDocumentTypeKey,
   type ProductMatchCandidate,
 } from "@/domain/product-documents";
@@ -186,24 +190,15 @@ export async function uploadProductDocument(actorUserId: string, raw: unknown) {
   const existingCurrent = await prisma.productDocument.findFirst({
     where: { productId: product.id, type, status: "CURRENT" },
   });
+  if (existingCurrent && existingCurrent.checksumSha256 === checksum) {
+    throw new AuthError("This exact PDF is already attached as the current document", "DUPLICATE", 409);
+  }
   if (existingCurrent && !input.replaceExisting) {
     throw new AuthError(
       "A current document of this type already exists. Confirm replacement.",
       "EXISTS",
       409,
     );
-  }
-
-  const duplicate = await prisma.productDocument.findFirst({
-    where: {
-      productId: product.id,
-      type,
-      checksumSha256: checksum,
-      status: "CURRENT",
-    },
-  });
-  if (duplicate) {
-    throw new AuthError("This exact PDF is already attached as the current document", "DUPLICATE", 409);
   }
 
   const docId = newDocumentId();
@@ -352,8 +347,25 @@ export type BulkPreviewItem = {
   productId: string | null;
   productName: string | null;
   sku: string | null;
-  candidates: ProductMatchCandidate[];
+  brandName: string | null;
+  matchMethod: FilenameMatchMethod | "MANUAL" | null;
+  candidates: Array<
+    ProductMatchCandidate & {
+      existingSds?: {
+        id: string;
+        filename: string;
+        title: string;
+        uploadedAt: string;
+      } | null;
+    }
+  >;
   existingDocumentId?: string | null;
+  existingSds: {
+    id: string;
+    filename: string;
+    title: string;
+    uploadedAt: string;
+  } | null;
   /** Present for local upload confirm — never used for SharePoint browser payloads. */
   base64?: string;
   contentType?: string;
@@ -416,6 +428,8 @@ export async function buildSdsPreviewItems(
       productId: true,
       checksumSha256: true,
       title: true,
+      originalFilename: true,
+      createdAt: true,
       sourceMetadata: true,
     },
   });
@@ -426,6 +440,18 @@ export async function buildSdsPreviewItems(
     if (meta?.source === "SHAREPOINT" && typeof meta.itemId === "string") {
       bySharepointItem.set(meta.itemId, d);
     }
+  }
+
+  function existingDto(productId: string | null) {
+    if (!productId) return null;
+    const existing = byProductCurrent.get(productId);
+    if (!existing) return null;
+    return {
+      id: existing.id,
+      filename: existing.originalFilename,
+      title: existing.title,
+      uploadedAt: existing.createdAt.toISOString(),
+    };
   }
 
   for (const file of files) {
@@ -440,7 +466,10 @@ export async function buildSdsPreviewItems(
         productId: null,
         productName: null,
         sku: null,
+        brandName: null,
+        matchMethod: null,
         candidates: [],
+        existingSds: null,
       });
       continue;
     }
@@ -461,7 +490,10 @@ export async function buildSdsPreviewItems(
         productId: null,
         productName: null,
         sku: null,
+        brandName: null,
+        matchMethod: null,
         candidates: [],
+        existingSds: null,
       });
       continue;
     }
@@ -472,7 +504,9 @@ export async function buildSdsPreviewItems(
     let productId: string | null = null;
     let productName: string | null = null;
     let sku: string | null = null;
-    let candidates: ProductMatchCandidate[] = [];
+    let brandName: string | null = null;
+    let matchMethod: FilenameMatchMethod | "MANUAL" | null = null;
+    let candidates: BulkPreviewItem["candidates"] = [];
     let status: BulkPreviewStatus = "NO_MATCH";
     let message = match.reason;
     let existingDocumentId: string | null = null;
@@ -481,13 +515,17 @@ export async function buildSdsPreviewItems(
       productId = match.product.productId;
       productName = match.product.name;
       sku = match.product.sku;
+      brandName = match.product.brandName ?? null;
+      matchMethod = match.method;
       status = "MATCHED";
     } else if (match.status === "REVIEW") {
-      candidates = match.products;
+      candidates = match.products.map((p) => ({
+        ...p,
+        existingSds: existingDto(p.productId),
+      }));
       status = "REVIEW";
     }
 
-    // Same SharePoint item already imported — detect unchanged vs updated content.
     if (file.sharepointItemId) {
       const byItem = bySharepointItem.get(file.sharepointItemId);
       if (byItem) {
@@ -496,6 +534,7 @@ export async function buildSdsPreviewItems(
         const prod = catalogue.find((c) => c.productId === byItem.productId);
         productName = prod?.name ?? byItem.title;
         sku = prod?.sku ?? sku;
+        brandName = prod?.brandName ?? brandName;
         if (byItem.checksumSha256 === checksum) {
           status = "ALREADY_ATTACHED";
           message = "Exact PDF already attached from this SharePoint file";
@@ -514,8 +553,11 @@ export async function buildSdsPreviewItems(
           productId,
           productName,
           sku,
+          brandName,
+          matchMethod,
           candidates,
           existingDocumentId,
+          existingSds: existingDto(productId),
           contentType: validated.contentType,
         });
         continue;
@@ -531,7 +573,7 @@ export async function buildSdsPreviewItems(
           message = "Exact PDF already attached";
         } else {
           status = "EXISTING_SDS";
-          message = "Product already has a current SDS — choose Replace or Skip";
+          message = "Product already has a current SDS — confirming will archive it and set this file as current";
         }
       }
     }
@@ -546,8 +588,11 @@ export async function buildSdsPreviewItems(
       productId,
       productName,
       sku,
+      brandName,
+      matchMethod,
       candidates,
       existingDocumentId,
+      existingSds: existingDto(productId),
       contentType: validated.contentType,
     });
   }
@@ -562,8 +607,8 @@ export async function previewBulkSdsImport(
   await requireDocumentsManage(actorUserId);
   const files = raw.files ?? [];
   if (!files.length) throw new AuthError("No files provided", "VALIDATION", 400);
-  if (files.length > 40) {
-    throw new AuthError("Preview up to 40 PDFs at a time", "VALIDATION", 400);
+  if (files.length > BULK_SDS_MAX_FILES) {
+    throw new AuthError(`Preview up to ${BULK_SDS_MAX_FILES} PDFs at a time`, "VALIDATION", 400);
   }
 
   const catalogueFinal = await loadCatalogueMatchCandidates();
@@ -575,13 +620,12 @@ export async function previewBulkSdsImport(
     base64: file.base64,
   }));
   const built = await buildSdsPreviewItems(prepared, catalogueFinal);
-  const b64ByKey = new Map(prepared.map((f) => [f.clientKey, f.base64]));
-  const items: BulkPreviewItem[] = built.map((item) => {
-    const b64 = b64ByKey.get(item.clientKey);
-    return b64 ? { ...item, base64: b64 } : item;
-  });
-
-  return { items, catalogueSize: catalogueFinal.length };
+  return {
+    items: built,
+    catalogueSize: catalogueFinal.length,
+    maxFiles: BULK_SDS_MAX_FILES,
+    maxBytes: PRODUCT_DOCUMENT_MAX_BYTES,
+  };
 }
 
 /** Exported for SharePoint import RBAC reuse. */
@@ -597,14 +641,14 @@ const confirmBulkSchema = z.object({
     z.object({
       clientKey: z.string(),
       filename: z.string(),
-      base64: z.string(),
+      base64: z.string().optional(),
       contentType: z.string().optional().nullable(),
-      productId: z.string().min(1),
+      productId: z.string().min(1).optional().nullable(),
       action: z.enum(["IMPORT", "REPLACE", "SKIP"]),
       title: z.string().optional().nullable(),
       revision: z.string().optional().nullable(),
     }),
-  ),
+  ).max(BULK_SDS_MAX_FILES),
 });
 
 export async function confirmBulkSdsImport(actorUserId: string, raw: unknown) {
@@ -621,6 +665,7 @@ export async function confirmBulkSdsImport(actorUserId: string, raw: unknown) {
   let imported = 0;
   let replaced = 0;
   let skipped = 0;
+  let duplicates = 0;
   let failed = 0;
 
   for (const item of input.items) {
@@ -634,6 +679,16 @@ export async function confirmBulkSdsImport(actorUserId: string, raw: unknown) {
       });
       continue;
     }
+    if (!item.productId || !item.base64) {
+      failed += 1;
+      results.push({
+        clientKey: item.clientKey,
+        filename: item.filename,
+        status: "FAILED",
+        message: "Unresolved files cannot be imported — select a product or skip",
+      });
+      continue;
+    }
     try {
       const doc = await uploadProductDocument(actorUserId, {
         productId: item.productId,
@@ -644,6 +699,7 @@ export async function confirmBulkSdsImport(actorUserId: string, raw: unknown) {
         base64: item.base64,
         revision: item.revision,
         replaceExisting: item.action === "REPLACE",
+        sourceMetadata: { source: MANUAL_SDS_SOURCE },
       });
       if (item.action === "REPLACE") {
         replaced += 1;
@@ -665,6 +721,17 @@ export async function confirmBulkSdsImport(actorUserId: string, raw: unknown) {
         });
       }
     } catch (err) {
+      const code = err instanceof AuthError ? err.code : null;
+      if (code === "DUPLICATE") {
+        duplicates += 1;
+        results.push({
+          clientKey: item.clientKey,
+          filename: item.filename,
+          status: "SKIPPED",
+          message: "Exact PDF already attached — skipped",
+        });
+        continue;
+      }
       failed += 1;
       results.push({
         clientKey: item.clientKey,
@@ -679,10 +746,19 @@ export async function confirmBulkSdsImport(actorUserId: string, raw: unknown) {
     action: "catalogue.bulk_document_import",
     entityType: "ProductDocument",
     actorUserId,
-    metadata: { imported, replaced, skipped, failed, total: input.items.length },
+    metadata: {
+      filesSelected: input.items.length,
+      created: imported,
+      replaced,
+      duplicates,
+      skipped,
+      failed,
+      total: input.items.length,
+      source: MANUAL_SDS_SOURCE,
+    },
   });
 
-  return { imported, replaced, skipped, failed, results };
+  return { imported, replaced, skipped, failed, duplicates, results };
 }
 
 export async function searchProductsForDocumentAttach(
@@ -712,12 +788,38 @@ export async function searchProductsForDocumentAttach(
     },
     take: Math.min(50, Math.max(1, limit)),
   });
-  return rows.map((r) => ({
-    productId: r.id,
-    name: r.name,
-    sku: r.variants[0]?.sku ?? "",
-    brandName: r.brand.name,
-  }));
+  const currentSds = await prisma.productDocument.findMany({
+    where: {
+      productId: { in: rows.map((r) => r.id) },
+      type: "SAFETY_DATA_SHEET",
+      status: "CURRENT",
+    },
+    select: {
+      id: true,
+      productId: true,
+      originalFilename: true,
+      title: true,
+      createdAt: true,
+    },
+  });
+  const sdsByProduct = new Map(currentSds.map((d) => [d.productId, d]));
+  return rows.map((r) => {
+    const existing = sdsByProduct.get(r.id);
+    return {
+      productId: r.id,
+      name: r.name,
+      sku: r.variants[0]?.sku ?? "",
+      brandName: r.brand.name,
+      existingSds: existing
+        ? {
+            id: existing.id,
+            filename: existing.originalFilename,
+            title: existing.title,
+            uploadedAt: existing.createdAt.toISOString(),
+          }
+        : null,
+    };
+  });
 }
 
 /** Public/admin download — enforces product visibility for anonymous access. */

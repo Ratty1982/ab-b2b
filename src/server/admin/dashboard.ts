@@ -6,6 +6,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireAuthenticatedUser } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
+import { isSharePointSdsWorkflowEnabled } from "@/domain/sharepoint-sds-enabled";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
 import {
@@ -899,7 +900,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       href: email.href,
     });
   }
-  if (sharePointSds) {
+  if (sharePointSds && isSharePointSdsWorkflowEnabled()) {
     const h = sharePointSdsHealthFromState(sharePointSds);
     systemHealth.push({
       id: "sharepoint-sds",

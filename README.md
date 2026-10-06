@@ -45,7 +45,7 @@ src/
   lib/             # Prototype helpers + temporary mock data
 ```
 
-See [docs/architecture.md](docs/architecture.md) and [docs/authentication-rbac.md](docs/authentication-rbac.md).
+See [docs/architecture.md](docs/architecture.md) and [docs/authentication-rbac.md](docs/authentication-rbac.md). Product SDS is a **manual / bulk manual** workflow: [docs/product-documents-sds.md](docs/product-documents-sds.md). SharePoint import is implemented but disabled.
 
 ### Date / time standard
 

@@ -1,7 +1,7 @@
 /**
  * Product Documents / SDS — upload, replace, public access, bulk match preview.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
@@ -9,12 +9,15 @@ import {
   archiveProductDocument,
   confirmBulkSdsImport,
   getProductDocumentBytes,
+  listProductDocumentsAdmin,
   listPublicProductDocuments,
   previewBulkSdsImport,
+  searchProductsForDocumentAttach,
   uploadProductDocument,
 } from "@/server/catalogue/product-documents";
 import { getPublicProduct, listCataloguePage } from "@/server/catalogue/products";
 import { sha256Hex } from "@/domain/product-documents";
+import { prisma as appPrisma } from "@/infra/database/client";
 
 const prisma = new PrismaClient();
 const stamp = Date.now();
@@ -23,10 +26,18 @@ const PDF_B = Buffer.from("%PDF-1.4\n% product-doc-b-replacement\ntrailer\n%%EOF
 
 let adminId = "";
 let tradeUserId = "";
+let salesRepId = "";
 let productId = "";
 let productSlug = "";
 let productSku = "";
 let hiddenProductId = "";
+let extraProductId = "";
+let extraSku = "";
+let hyphenProductId = "";
+let hyphenSku = "";
+let nameProductId = "";
+let nameProductName = "";
+const extraCleanupIds: string[] = [];
 
 async function ensureUser(
   email: string,
@@ -69,6 +80,7 @@ beforeAll(async () => {
   await bootstrapRbac(prisma);
   adminId = await ensureUser(`pd.admin.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
   tradeUserId = await ensureUser(`pd.trade.${stamp}@example.invalid`, [], "TRADE");
+  salesRepId = await ensureUser(`pd.sales.${stamp}@example.invalid`, ["SALES_REPRESENTATIVE"]);
 
   const brand = await prisma.brand.create({
     data: {
@@ -118,14 +130,69 @@ beforeAll(async () => {
     },
   });
   hiddenProductId = hidden.id;
+
+  extraSku = `EXTR${String(stamp).slice(-6)}`;
+  const extra = await prisma.product.create({
+    data: {
+      name: `Extra Bulk Cleaner ${stamp}`,
+      slug: `pd-extra-${stamp}`,
+      status: "ACTIVE",
+      isActive: true,
+      isTradeVisible: true,
+      brandId: brand.id,
+      variants: {
+        create: { sku: extraSku, isDefault: true, isActive: true, tradePrice: 3.5 },
+      },
+    },
+  });
+  extraProductId = extra.id;
+
+  hyphenSku = `PM-HX-${String(stamp).slice(-4)}`;
+  const hyphen = await prisma.product.create({
+    data: {
+      name: `Hyphen SKU Cleaner ${stamp}`,
+      slug: `pd-hyphen-${stamp}`,
+      status: "ACTIVE",
+      isActive: true,
+      isTradeVisible: true,
+      brandId: brand.id,
+      variants: {
+        create: { sku: hyphenSku, isDefault: true, isActive: true, tradePrice: 4.5 },
+      },
+    },
+  });
+  hyphenProductId = hyphen.id;
+
+  nameProductName = `Unique Ultrasonic Degreaser ${stamp}`;
+  const named = await prisma.product.create({
+    data: {
+      name: nameProductName,
+      slug: `pd-named-${stamp}`,
+      status: "ACTIVE",
+      isActive: true,
+      isTradeVisible: true,
+      brandId: brand.id,
+      variants: {
+        create: {
+          sku: `NM${String(stamp).slice(-6)}`,
+          isDefault: true,
+          isActive: true,
+          tradePrice: 5.5,
+        },
+      },
+    },
+  });
+  nameProductId = named.id;
+  extraCleanupIds.push(extraProductId, hyphenProductId, nameProductId);
 });
 
 afterAll(async () => {
+  const ids = [productId, hiddenProductId, ...extraCleanupIds].filter(Boolean);
   await prisma.productDocument.deleteMany({
-    where: { productId: { in: [productId, hiddenProductId] } },
+    where: { productId: { in: ids } },
   });
   await prisma.product.deleteMany({
-    where: { id: { in: [productId, hiddenProductId] } },
+    where: { id: { in: ids } },
   });
   await prisma.brand.deleteMany({ where: { slug: `pd-brand-${stamp}` } });
   await prisma.$disconnect();
@@ -316,3 +383,332 @@ describe("product documents SDS", () => {
     expect(still?.id).toBe(current!.id);
   });
 });
+
+function pdfMarker(tag: string) {
+  return Buffer.from(`%PDF-1.4\n% ${tag}\ntrailer\n%%EOF\n`, "utf8");
+}
+
+describe("manual bulk SDS workflow", () => {
+  it("denies trade and unauthorised staff; allows admin", async () => {
+    const file = {
+      clientKey: "deny",
+      filename: `${extraSku} SDS.pdf`,
+      contentType: "application/pdf",
+      base64: b64(pdfMarker("deny")),
+    };
+    await expect(previewBulkSdsImport(tradeUserId, { files: [file] })).rejects.toBeInstanceOf(
+      AuthError,
+    );
+    await expect(previewBulkSdsImport(salesRepId, { files: [file] })).rejects.toBeInstanceOf(
+      AuthError,
+    );
+    await expect(
+      confirmBulkSdsImport(tradeUserId, {
+        items: [{ clientKey: "deny", filename: file.filename, action: "SKIP" }],
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    const allowed = await previewBulkSdsImport(adminId, { files: [file] });
+    expect(allowed.items).toHaveLength(1);
+    expect(allowed.maxFiles).toBe(100);
+  });
+
+  it("matches exact SKU, normalised SKU, product name, review and no match", async () => {
+    const preview = await previewBulkSdsImport(adminId, {
+      files: [
+        {
+          clientKey: "exact",
+          filename: `${extraSku} Safety Data Sheet.pdf`,
+          contentType: "application/pdf",
+          base64: b64(pdfMarker("exact")),
+        },
+        {
+          clientKey: "norm",
+          filename: `${hyphenSku.replace(/-/g, "")} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(pdfMarker("norm")),
+        },
+        {
+          clientKey: "name",
+          filename: `${nameProductName} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(pdfMarker("name")),
+        },
+        {
+          clientKey: "none",
+          filename: "Completely Unknown Widget SDS.pdf",
+          contentType: "application/pdf",
+          base64: b64(pdfMarker("none")),
+        },
+      ],
+    });
+    const exact = preview.items.find((i) => i.clientKey === "exact");
+    expect(exact?.status).toBe("MATCHED");
+    expect(exact?.matchMethod).toBe("EXACT_SKU");
+    expect(exact?.productId).toBe(extraProductId);
+    expect(exact?.brandName).toBeTruthy();
+
+    const norm = preview.items.find((i) => i.clientKey === "norm");
+    expect(norm?.status).toBe("MATCHED");
+    expect(norm?.matchMethod).toBe("NORMALISED_SKU");
+    expect(norm?.productId).toBe(hyphenProductId);
+
+    const named = preview.items.find((i) => i.clientKey === "name");
+    expect(named?.status).toBe("MATCHED");
+    expect(named?.matchMethod).toBe("PRODUCT_NAME");
+    expect(named?.productId).toBe(nameProductId);
+
+    expect(preview.items.find((i) => i.clientKey === "none")?.status).toBe("NO_MATCH");
+  });
+
+  it("does not query products per file when matching a 30-file batch", async () => {
+    const files = Array.from({ length: 30 }, (_, i) => ({
+      clientKey: `b${i}`,
+      filename: i === 0 ? `${extraSku} SDS.pdf` : `UnknownBatch${i} SDS.pdf`,
+      contentType: "application/pdf",
+      base64: b64(pdfMarker(`batch-${i}`)),
+    }));
+    const findUnique = vi.spyOn(appPrisma.product, "findUnique");
+    const variantFind = vi.spyOn(appPrisma.productVariant, "findMany");
+    try {
+      const preview = await previewBulkSdsImport(adminId, { files });
+      expect(preview.items).toHaveLength(30);
+      expect(preview.items[0]?.status).toBe("MATCHED");
+      expect(preview.items.filter((i) => i.status === "NO_MATCH").length).toBe(29);
+      expect(findUnique).not.toHaveBeenCalled();
+      expect(variantFind.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(variantFind.mock.calls.length).toBeGreaterThan(0);
+    } finally {
+      findUnique.mockRestore();
+      variantFind.mockRestore();
+    }
+  }, 60_000);
+
+  it("imports ready rows, skips unresolved/skipped, reports partial failure", async () => {
+    const readyPdf = pdfMarker("ready-import");
+    const skipPdf = pdfMarker("skip-me");
+    const failPdf = pdfMarker("fail-missing-product");
+    const result = await confirmBulkSdsImport(adminId, {
+      items: [
+        {
+          clientKey: "ready",
+          filename: `${extraSku} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(readyPdf),
+          productId: extraProductId,
+          action: "IMPORT",
+        },
+        {
+          clientKey: "skipped",
+          filename: "unmatched SDS.pdf",
+          contentType: "application/pdf",
+          base64: b64(skipPdf),
+          action: "SKIP",
+        },
+        {
+          clientKey: "unresolved",
+          filename: "needs-review SDS.pdf",
+          contentType: "application/pdf",
+          base64: b64(pdfMarker("unresolved")),
+          action: "IMPORT",
+        },
+        {
+          clientKey: "failed",
+          filename: "missing-product SDS.pdf",
+          contentType: "application/pdf",
+          base64: b64(failPdf),
+          productId: "pd_missing_product_id",
+          action: "IMPORT",
+        },
+      ],
+    });
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.failed).toBe(2);
+    expect(result.results.find((r) => r.clientKey === "ready")?.status).toBe("IMPORTED");
+    expect(result.results.find((r) => r.clientKey === "skipped")?.status).toBe("SKIPPED");
+    expect(result.results.find((r) => r.clientKey === "unresolved")?.status).toBe("FAILED");
+    expect(result.results.find((r) => r.clientKey === "failed")?.message).toMatch(
+      /not found|failed/i,
+    );
+
+    const extraDocs = await prisma.productDocument.findMany({
+      where: { productId: extraProductId, type: "SAFETY_DATA_SHEET" },
+    });
+    expect(extraDocs).toHaveLength(1);
+    expect(extraDocs[0]?.status).toBe("CURRENT");
+    expect(extraDocs[0]?.sourceMetadata).toMatchObject({ source: "MANUAL_UPLOAD" });
+
+    const audit = await prisma.auditEvent.findFirst({
+      where: { action: "catalogue.bulk_document_import", actorUserId: adminId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit?.metadata).toMatchObject({
+      filesSelected: 4,
+      created: 1,
+      replaced: 0,
+      skipped: 1,
+      failed: 2,
+      source: "MANUAL_UPLOAD",
+    });
+
+    const pub = await listPublicProductDocuments(extraProductId);
+    expect(pub).toHaveLength(1);
+    expect(pub[0]?.id).toBe(extraDocs[0]?.id);
+  });
+
+  it("detects existing SDS, replaces/archives, and keeps archived off public current", async () => {
+    const current = await prisma.productDocument.findFirstOrThrow({
+      where: { productId: extraProductId, type: "SAFETY_DATA_SHEET", status: "CURRENT" },
+    });
+    const replacement = pdfMarker("replacement-sds");
+    const preview = await previewBulkSdsImport(adminId, {
+      files: [
+        {
+          clientKey: "rep",
+          filename: `${extraSku} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(replacement),
+        },
+      ],
+    });
+    expect(preview.items[0]?.status).toBe("EXISTING_SDS");
+    expect(preview.items[0]?.existingSds?.id).toBe(current.id);
+    expect(preview.items[0]?.existingSds?.filename).toBeTruthy();
+
+    const confirm = await confirmBulkSdsImport(adminId, {
+      items: [
+        {
+          clientKey: "rep",
+          filename: `${extraSku} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(replacement),
+          productId: extraProductId,
+          action: "REPLACE",
+        },
+      ],
+    });
+    expect(confirm.replaced).toBe(1);
+    const after = await listProductDocumentsAdmin(adminId, extraProductId);
+    expect(after.currentSds?.id).toBe(confirm.results[0]?.documentId);
+    expect(after.archived.some((d) => d.id === current.id)).toBe(true);
+    const pub = await listPublicProductDocuments(extraProductId);
+    expect(pub.map((d) => d.id)).toEqual([after.currentSds?.id]);
+    const archivedPublic = await getProductDocumentBytes(current.id, { actorUserId: null });
+    expect(archivedPublic).toBeNull();
+  });
+
+  it("skips exact checksum duplicates on the same product and does not steal another product's checksum", async () => {
+    const current = await prisma.productDocument.findFirstOrThrow({
+      where: { productId: extraProductId, type: "SAFETY_DATA_SHEET", status: "CURRENT" },
+    });
+    const bytes = await getProductDocumentBytes(current.id, { actorUserId: adminId });
+    expect(bytes).toBeTruthy();
+    const preview = await previewBulkSdsImport(adminId, {
+      files: [
+        {
+          clientKey: "dup",
+          filename: `${extraSku} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(bytes!.bytes),
+        },
+      ],
+    });
+    expect(preview.items[0]?.status).toBe("ALREADY_ATTACHED");
+
+    const skipDup = await confirmBulkSdsImport(adminId, {
+      items: [
+        {
+          clientKey: "dup",
+          filename: `${extraSku} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(bytes!.bytes),
+          productId: extraProductId,
+          action: "IMPORT",
+        },
+      ],
+    });
+    expect(skipDup.duplicates).toBe(1);
+    expect(skipDup.imported).toBe(0);
+
+    const elsewhere = await confirmBulkSdsImport(adminId, {
+      items: [
+        {
+          clientKey: "else",
+          filename: `${hyphenSku.replace(/-/g, "")} SDS.pdf`,
+          contentType: "application/pdf",
+          base64: b64(bytes!.bytes),
+          productId: hyphenProductId,
+          action: "IMPORT",
+        },
+      ],
+    });
+    expect(elsewhere.imported).toBe(1);
+    const hyphenDoc = await prisma.productDocument.findFirst({
+      where: { productId: hyphenProductId, type: "SAFETY_DATA_SHEET", status: "CURRENT" },
+    });
+    expect(hyphenDoc?.id).toBe(elsewhere.results[0]?.documentId);
+    expect(hyphenDoc?.productId).toBe(hyphenProductId);
+  });
+
+  it("supports manual product selection via search and still serves the product Documents tab", async () => {
+    const hits = await searchProductsForDocumentAttach(adminId, extraSku, 8);
+    expect(hits.some((h) => h.productId === extraProductId)).toBe(true);
+    expect(hits.find((h) => h.productId === extraProductId)?.existingSds).toBeTruthy();
+
+    const orphan = pdfMarker("manual-select");
+    const confirm = await confirmBulkSdsImport(adminId, {
+      items: [
+        {
+          clientKey: "manual",
+          filename: "orphan-manual SDS.pdf",
+          contentType: "application/pdf",
+          base64: b64(orphan),
+          productId: nameProductId,
+          action: "IMPORT",
+        },
+      ],
+    });
+    expect(confirm.imported).toBe(1);
+    const tab = await listProductDocumentsAdmin(adminId, nameProductId);
+    expect(tab.currentSds?.id).toBe(confirm.results[0]?.documentId);
+  });
+
+  it("rejects non-PDF, fake PDF and oversized files on upload", async () => {
+    await expect(
+      uploadProductDocument(adminId, {
+        productId: extraProductId,
+        type: "SAFETY_DATA_SHEET",
+        filename: "notes.docx",
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        base64: b64(pdfMarker("docx")),
+        replaceExisting: true,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    await expect(
+      uploadProductDocument(adminId, {
+        productId: extraProductId,
+        type: "SAFETY_DATA_SHEET",
+        filename: "fake.pdf",
+        contentType: "application/pdf",
+        base64: b64(Buffer.from("not-a-pdf")),
+        replaceExisting: true,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    const oversized = Buffer.alloc(20 * 1024 * 1024 + 8, 0);
+    oversized.set(Buffer.from("%PDF-1.4"), 0);
+    await expect(
+      uploadProductDocument(adminId, {
+        productId: extraProductId,
+        type: "SAFETY_DATA_SHEET",
+        filename: "huge.pdf",
+        contentType: "application/pdf",
+        base64: b64(oversized),
+        replaceExisting: true,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+  });
+});
+

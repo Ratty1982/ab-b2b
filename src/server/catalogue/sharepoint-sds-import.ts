@@ -27,6 +27,7 @@ import {
   type BulkPreviewItem,
   type BulkPreviewStatus,
 } from "@/server/catalogue/product-documents";
+import { assertSharePointSdsWorkflowEnabled } from "@/server/catalogue/sharepoint-sds-gate";
 import {
   loadSharePointRuntimeConfig,
   loadAuthorisedSdsResource,
@@ -63,6 +64,7 @@ function summarise(items: Array<{ status: string }>) {
 }
 
 export async function scanSharePointSdsFolder(actorUserId: string) {
+  assertSharePointSdsWorkflowEnabled();
   await requireDocumentsManage(actorUserId);
   const authorised = await loadAuthorisedSdsResource();
   const runtime = await loadSharePointRuntimeConfig();
@@ -204,6 +206,7 @@ export async function scanSharePointSdsFolder(actorUserId: string) {
       productId: true,
       title: true,
       originalFilename: true,
+      createdAt: true,
       sourceMetadata: true,
       product: {
         select: {
@@ -236,8 +239,16 @@ export async function scanSharePointSdsFolder(actorUserId: string) {
       productId: doc.productId,
       productName: doc.product.name,
       sku: doc.product.variants[0]?.sku ?? null,
+      brandName: null,
+      matchMethod: null,
       candidates: [],
       existingDocumentId: doc.id,
+      existingSds: {
+        id: doc.id,
+        filename: doc.originalFilename,
+        title: doc.title,
+        uploadedAt: doc.createdAt.toISOString(),
+      },
     });
   }
 
@@ -316,6 +327,7 @@ export async function listSharePointScanPage(
   actorUserId: string,
   raw: { sessionId: string; page?: number; pageSize?: number; status?: string },
 ) {
+  assertSharePointSdsWorkflowEnabled();
   await requireDocumentsManage(actorUserId);
   const sessionId = raw.sessionId;
   const page = Math.max(1, Number(raw.page) || 1);
@@ -383,6 +395,7 @@ const confirmSchema = z.object({
 });
 
 export async function confirmSharePointSdsImport(actorUserId: string, raw: unknown) {
+  assertSharePointSdsWorkflowEnabled();
   await requireDocumentsManage(actorUserId);
   const input = confirmSchema.parse(raw);
   const authorised = await loadAuthorisedSdsResource();
@@ -586,6 +599,7 @@ export async function updateSharePointScanItemProduct(
   actorUserId: string,
   raw: { sessionId: string; clientKey: string; productId: string },
 ) {
+  assertSharePointSdsWorkflowEnabled();
   await requireDocumentsManage(actorUserId);
   const product = await prisma.product.findUnique({
     where: { id: raw.productId },
@@ -652,6 +666,7 @@ export async function updateSharePointScanItemProduct(
 }
 
 export async function getSharePointSdsImportStatus(actorUserId: string) {
+  assertSharePointSdsWorkflowEnabled();
   await requireDocumentsManage(actorUserId);
   await getOrCreateSharePointSdsSettings();
   return toPublicSharePointSdsSettings();

@@ -13,10 +13,17 @@ import {
 } from "@/server/catalogue/product-documents";
 import {
   getSharePointSdsSettingsForActor,
+  resolveSharePointSdsFolder,
   SHAREPOINT_SDS_SETTINGS_ID,
   testSharePointSdsConnection,
   updateSharePointSdsSettings,
 } from "@/server/catalogue/sharepoint-sds-settings";
+import {
+  confirmSharePointSdsImport,
+  listSharePointScanPage,
+  scanSharePointSdsFolder,
+  updateSharePointScanItemProduct,
+} from "@/server/catalogue/sharepoint-sds-import";
 import { buildSharePointSourceMetadata } from "@/domain/sharepoint-sds";
 import { sha256Hex } from "@/domain/product-documents";
 import { decryptSecret } from "@/server/crypto/secret";
@@ -213,6 +220,9 @@ describe("SharePoint SDS settings RBAC", () => {
   });
 
   it("failed Test Connection does not wipe saved settings", async () => {
+    const prev = process.env["SHAREPOINT_SDS_ENABLED"];
+    process.env["SHAREPOINT_SDS_ENABLED"] = "true";
+    try {
     await updateSharePointSdsSettings(adminId, {
       enabled: true,
       tenantId: "tenant-keep-on-fail",
@@ -255,6 +265,10 @@ describe("SharePoint SDS settings RBAC", () => {
     expect(row.tenantId).toBe("tenant-keep-on-fail");
     expect(row.driveId).toBe("drive-fake-for-test");
     expect(row.folderItemId).toBe("folder-fake-for-test");
+    } finally {
+      if (prev === undefined) delete process.env["SHAREPOINT_SDS_ENABLED"];
+      else process.env["SHAREPOINT_SDS_ENABLED"] = prev;
+    }
   });
 });
 
@@ -356,3 +370,66 @@ describe("SharePoint-aware SDS preview statuses", () => {
     expect(row.sourceMetadata).toBeNull();
   });
 });
+
+describe("SharePoint SDS workflow disabled by default", () => {
+  it("rejects scan/import/test/resolve while preserving settings and history", async () => {
+    const prev = process.env["SHAREPOINT_SDS_ENABLED"];
+    delete process.env["SHAREPOINT_SDS_ENABLED"];
+    try {
+      const before = await getSharePointSdsSettingsForActor(adminId);
+      expect(before.workflowEnabled).toBe(false);
+      expect(before.hasClientSecret).toBe(true);
+      expect(before.tenantId).toBeTruthy();
+
+      const history = await prisma.sharePointSdsScanSession.create({
+        data: {
+          status: "READY",
+          createdByUserId: adminId,
+          driveId: "drive-history-keep",
+          folderItemId: "folder-history-keep",
+          folderName: "Preserved history",
+          summaryJson: { FILES_FOUND: 3 },
+        },
+      });
+
+      const disabled = async (fn: () => Promise<unknown>) => {
+        await expect(fn()).rejects.toMatchObject({ code: "DISABLED", status: 403 });
+      };
+
+      await disabled(() => scanSharePointSdsFolder(adminId));
+      await disabled(() =>
+        listSharePointScanPage(adminId, { sessionId: history.id, page: 1 }),
+      );
+      await disabled(() =>
+        confirmSharePointSdsImport(adminId, {
+          sessionId: history.id,
+          items: [{ clientKey: "x", productId, action: "IMPORT" }],
+        }),
+      );
+      await disabled(() =>
+        updateSharePointScanItemProduct(adminId, {
+          sessionId: history.id,
+          clientKey: "x",
+          productId,
+        }),
+      );
+      await disabled(() => testSharePointSdsConnection(adminId));
+      await disabled(() => resolveSharePointSdsFolder(adminId));
+
+      const after = await getSharePointSdsSettingsForActor(adminId);
+      expect(after.tenantId).toBe(before.tenantId);
+      expect(after.hasClientSecret).toBe(true);
+      expect(after.driveId).toBeTruthy();
+      const row = await prisma.sharePointSdsSettings.findUniqueOrThrow({
+        where: { id: SHAREPOINT_SDS_SETTINGS_ID },
+      });
+      expect(row.clientSecretEncrypted).toBeTruthy();
+      const kept = await prisma.sharePointSdsScanSession.findUnique({ where: { id: history.id } });
+      expect(kept?.folderName).toBe("Preserved history");
+    } finally {
+      if (prev === undefined) delete process.env["SHAREPOINT_SDS_ENABLED"];
+      else process.env["SHAREPOINT_SDS_ENABLED"] = prev;
+    }
+  });
+});
+

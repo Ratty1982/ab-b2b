@@ -8,7 +8,7 @@ import { TradeOrderingSettingsPanel } from "@/components/ab/TradeOrderingSetting
 import { Autopart504cFeedPanel } from "@/components/ab/Autopart504cFeedPanel";
 import { AutopartOngoingSalesFeedPanel } from "@/components/ab/AutopartOngoingSalesFeedPanel";
 import { SharePointSdsSettingsPanel } from "@/components/catalogue/SharePointSdsSettingsPanel";
-import { getMyTradeTestLevelFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
+import { getMyTradeTestLevelFn, getSharePointSdsSettingsFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import {
@@ -396,16 +396,52 @@ function AutopartTab() {
 }
 
 function DocumentsTab() {
+  const [sharePointEnabled, setSharePointEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getSharePointSdsSettingsFn();
+      if (cancelled || !res.ok) return;
+      setSharePointEnabled(Boolean(res.data.workflowEnabled));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="space-y-6" data-settings-panel="documents">
-      <div>
-        <h2 className="font-display text-lg font-semibold uppercase">Documents &amp; SDS</h2>
+      <section data-settings-section="sds-management">
+        <h2 className="font-display text-lg font-semibold uppercase">SDS management</h2>
         <p className="mt-1 max-w-2xl text-[13px] text-steel">
-          Configure the Microsoft SharePoint source used to import product Safety Data Sheets.
-          Bulk SDS import remains on the catalogue documents import screen.
+          Safety Data Sheets are managed manually. Use Bulk SDS Upload to add or replace documents
+          across multiple products.
         </p>
-      </div>
-      <SharePointSdsSettingsPanel />
+        <p className="mt-2 max-w-2xl text-[13px] text-steel">
+          PDF only, up to 20 MB each and 100 files per batch. New SDS becomes current; the previous
+          current SDS is archived on replace. Individual product Documents tabs still handle single
+          uploads and other document types.
+        </p>
+        <Link
+          to={ROUTES.adminProductDocumentsImport}
+          className="mt-4 inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-semibold uppercase text-primary-foreground"
+        >
+          Bulk SDS Upload
+        </Link>
+      </section>
+      {sharePointEnabled ? (
+        <section data-settings-section="sharepoint-sds">
+          <h3 className="font-display text-base font-semibold uppercase">SharePoint (environment enabled)</h3>
+          <p className="mt-1 max-w-2xl text-[13px] text-steel">
+            Microsoft Graph is switched on for this environment. Manual bulk upload remains the
+            supported production workflow.
+          </p>
+          <div className="mt-4">
+            <SharePointSdsSettingsPanel />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

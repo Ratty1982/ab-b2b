@@ -68,6 +68,9 @@ describe("admin settings workspace structure", () => {
     expect(src).toMatch(
       /function AutopartTab[\s\S]*Autopart504cFeedPanel[\s\S]*AutopartOngoingSalesFeedPanel/,
     );
+    expect(src).toMatch(/function DocumentsTab[\s\S]*SDS management/);
+    expect(src).toMatch(/function DocumentsTab[\s\S]*Bulk SDS Upload/);
+    expect(src).toMatch(/function DocumentsTab[\s\S]*sharePointEnabled \?/);
     expect(src).toMatch(/function DocumentsTab[\s\S]*SharePointSdsSettingsPanel/);
     expect(src).toMatch(/function SystemTab[\s\S]*No editable system settings/);
   });

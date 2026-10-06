@@ -30,6 +30,12 @@ export const PRODUCT_DOCUMENT_TYPE_LABELS: Record<ProductDocumentTypeKey, string
 /** Soft max for SDS/TDS PDFs (20 MB). */
 export const PRODUCT_DOCUMENT_MAX_BYTES = 20 * 1024 * 1024;
 
+/** Local bulk SDS upload — comfortable for 30–100 PDFs. */
+export const BULK_SDS_MAX_FILES = 100;
+
+/** ProductDocument.sourceMetadata.source for the supported production workflow. */
+export const MANUAL_SDS_SOURCE = "MANUAL_UPLOAD" as const;
+
 export function productDocumentTypeLabel(type: string): string {
   if ((PRODUCT_DOCUMENT_TYPES as readonly string[]).includes(type)) {
     return PRODUCT_DOCUMENT_TYPE_LABELS[type as ProductDocumentTypeKey];
@@ -125,13 +131,17 @@ export type ProductMatchCandidate = {
   brandName?: string | null;
 };
 
+export type FilenameMatchMethod = "EXACT_SKU" | "NORMALISED_SKU" | "PRODUCT_NAME";
+
 export type FilenameMatchResult =
-  | { status: "MATCHED"; product: ProductMatchCandidate; reason: string }
+  | { status: "MATCHED"; product: ProductMatchCandidate; reason: string; method: FilenameMatchMethod }
   | { status: "REVIEW"; products: ProductMatchCandidate[]; reason: string }
   | { status: "NO_MATCH"; reason: string };
 
 /**
  * Conservative deterministic matching. Never auto-picks when ambiguous.
+ *
+ * Priority: exact SKU in filename → normalised SKU → strong product-name match.
  */
 export function matchFilenameToProducts(
   filename: string,
@@ -146,13 +156,17 @@ export function matchFilenameToProducts(
   }
   const uniqueSku = uniqueById(exactSkuHits);
   if (uniqueSku.length === 1) {
-    return { status: "MATCHED", product: uniqueSku[0]!, reason: "Exact SKU in filename" };
+    return {
+      status: "MATCHED",
+      product: uniqueSku[0]!,
+      reason: "Exact SKU in filename",
+      method: "EXACT_SKU",
+    };
   }
   if (uniqueSku.length > 1) {
     return { status: "REVIEW", products: uniqueSku, reason: "Multiple SKU matches" };
   }
 
-  // Normalised SKU containment (filename token equals normalised sku)
   const normalisedHits: ProductMatchCandidate[] = [];
   for (const p of catalogue) {
     const nSku = normaliseDocumentMatchToken(p.sku);
@@ -163,13 +177,17 @@ export function matchFilenameToProducts(
   }
   const uniqueNorm = uniqueById(normalisedHits);
   if (uniqueNorm.length === 1) {
-    return { status: "MATCHED", product: uniqueNorm[0]!, reason: "Normalised SKU match" };
+    return {
+      status: "MATCHED",
+      product: uniqueNorm[0]!,
+      reason: "Normalised SKU match",
+      method: "NORMALISED_SKU",
+    };
   }
   if (uniqueNorm.length > 1) {
     return { status: "REVIEW", products: uniqueNorm, reason: "Multiple normalised SKU matches" };
   }
 
-  // Strong name match: normalised filename contains full normalised product name (min length)
   const fileNorm = normaliseDocumentMatchToken(filename.replace(/\.pdf$/i, ""));
   const nameHits: ProductMatchCandidate[] = [];
   for (const p of catalogue) {
@@ -178,7 +196,12 @@ export function matchFilenameToProducts(
   }
   const uniqueName = uniqueById(nameHits);
   if (uniqueName.length === 1) {
-    return { status: "MATCHED", product: uniqueName[0]!, reason: "Strong product name match" };
+    return {
+      status: "MATCHED",
+      product: uniqueName[0]!,
+      reason: "Strong product name match",
+      method: "PRODUCT_NAME",
+    };
   }
   if (uniqueName.length > 1) {
     return { status: "REVIEW", products: uniqueName.slice(0, 8), reason: "Ambiguous product name" };

@@ -2,6 +2,19 @@
 
 Reusable catalogue document architecture for Automotive Brands B2B. First active type: **Safety Data Sheet (SDS)**.
 
+## Supported production SDS workflow
+
+**Manual upload / bulk manual upload.**
+
+SharePoint / Microsoft Graph SDS import is **implemented but disabled** and is **not currently used**. Do not configure Microsoft credentials expecting staff to scan SharePoint in production.
+
+| Path | Status |
+| --- | --- |
+| Operations → Documents (`/admin/products/documents-import`) | **Supported** — Bulk SDS Upload |
+| Product workspace → Documents tab | **Supported** — single upload, current/archived SDS, other document types |
+| Settings → Documents & SDS | **Supported** — explains the manual workflow and links to Bulk SDS Upload |
+| SharePoint scan / Graph import | Implemented, **disabled** unless `SHAREPOINT_SDS_ENABLED=true` |
+
 ## Architecture decision
 
 The existing polymorphic `Document` model (company / application / mixed CRM files) is **not** reused for product SDS.
@@ -28,7 +41,7 @@ Product documents are product-owned by default. Variant-specific association is 
 | `FITTING_GUIDE` | Fitting Guide |
 | `OTHER` | Other Document |
 
-UI never exposes enum names.
+UI never exposes enum names. The bulk SDS workspace always uses **SDS** — administrators do not re-select type per file.
 
 ## Storage (R2)
 
@@ -40,12 +53,12 @@ Object key convention:
 products/{productId}/documents/{documentId}/{safeFilename}
 ```
 
-Validation:
+Validation (always server-side; client MIME is never trusted alone):
 
 - PDF magic bytes (`%PDF-`)
 - `.pdf` extension after filename sanitisation
 - Max 20 MB
-- Declared MIME must be PDF-compatible when present (browser MIME is never trusted alone)
+- Declared MIME must be PDF-compatible when present
 
 Public downloads go through `/api/product-documents/:id` (optional `?download=1`), not a permanent public R2 URL requirement.
 
@@ -60,6 +73,8 @@ Tab: **Documents**
 
 Upload fields: type, title, PDF, optional revision/date/notes.
 
+Bulk upload does **not** replace this tab. Use it for one product at a time, archived history, and non-SDS files.
+
 ## Replacement / versions
 
 1. Upload + validate new PDF
@@ -68,41 +83,80 @@ Upload fields: type, title, PDF, optional revision/date/notes.
 4. Audit `catalogue.document_replaced`
 5. If storage or DB fails after upload, object cleanup is attempted and the previous CURRENT SDS remains
 
-Historical SDS rows stay as `ARCHIVED` (no destructive delete by default).
+Historical SDS rows stay as `ARCHIVED` (no destructive delete by default). Archived SDS is never the public current download.
 
-## Bulk import
+## Bulk SDS Upload (supported)
 
 Route: `/admin/products/documents-import`  
-Linked from Products (“Import SDS”) and Product CSV Imports.
+Also: Operations → Documents, Products → Bulk SDS Upload, Settings → Documents & SDS.
 
-### Choose source
+Designed for **30–100 PDFs** in one review (hard cap `BULK_SDS_MAX_FILES` = 100).
 
-1. **Import from SharePoint** — scan the configured Power Maxed SDS folder (150+ PDFs)
-2. **Upload PDF files** — local select, up to 40 per preview batch (unchanged)
+1. Drop or choose PDF files only
+2. Server validates PDF magic, size, and filename
+3. Batch product matching (one catalogue load + one current-SDS load — not N+1)
+4. Administrator reviews the table (file, product, SKU, match method, existing SDS, action, status)
+5. Correct **Needs review** / **No match** rows with in-row SKU/name search
+6. Preview the import summary
+7. **Confirm import** — only then writes to R2 / `ProductDocument`
+8. New SDS becomes **current**; previous current SDS is **archived** when Replace is confirmed
+9. Partial failure is reported per file (other rows still import)
 
-Both sources share the same validation, SHA-256, matching, R2 storage, `ProductDocument` creation, and audit path.
+### Matching rules (conservative)
 
-### Local upload workflow
+Never fuzzy-auto-assigns ambiguous files.
 
-1. Select up to 40 PDFs
-2. Preview matches (no publish yet)
-3. Confirm Import / Replace / Skip per row
+1. Exact SKU token in filename (e.g. `PMAPC500 Safety Data Sheet.pdf` → SKU `PMAPC500` if unique)
+2. Normalised SKU (case-insensitive; strips spaces/hyphens/`SDS`/years)
+3. Strong normalised product-name containment (min length 8)
+4. Otherwise **Needs review** (multiple candidates) or **No match**
 
-### SharePoint workflow
+Unresolved rows cannot import until a product is selected or the row is skipped. A skipped file stays visible and is not written. One unmatched PDF does not fail the rest of the batch.
 
-1. Configure Microsoft Graph connection (Settings or Connection settings on the import page)
-2. Resolve folder → store stable `driveId` + `folderItemId`
-3. **Scan SharePoint folder** (server-side list + download + preview; max 500 PDFs)
-4. Review paginated preview (50/page)
-5. Confirm import — server re-downloads each selected file and runs the normal import service
+### Existing SDS / duplicates
 
-Statuses: `MATCHED`, `REVIEW`, `NO_MATCH`, `ALREADY_ATTACHED`, `EXISTING_SDS`, `UPDATED_SOURCE`, `SOURCE_MISSING`, `INVALID`, `DOWNLOAD_FAILED`, then `IMPORTED` / `REPLACED` / `FAILED`.
+- Product already has a current SDS with **different** bytes → **Replacement** (default action: replace current; previous row archived, not deleted)
+- Same product + type + SHA-256 already CURRENT → **Duplicate** (default: skip; no second identical version)
+- Same checksum on a **different** product is not treated as a duplicate of that other product
 
-Uncertain matches never auto-import. There is no “Replace all existing SDS” bulk action.
+Manual bulk source metadata is `{ "source": "MANUAL_UPLOAD" }` (never pretended to be SharePoint).
 
-## SharePoint / Microsoft Graph architecture
+### Audit
 
-**Chosen model:** organisation-managed Microsoft Entra **application (client credentials)** calling Microsoft Graph. Production must not depend on George remaining logged into B2B.
+| Action | Meaning |
+| --- | --- |
+| `catalogue.document_uploaded` | New current document |
+| `catalogue.document_replaced` | Previous archived, new current |
+| `catalogue.document_archived` | Manual archive |
+| `catalogue.bulk_document_import` | Bulk confirm summary (`filesSelected`, `created`, `replaced`, `duplicates`, `skipped`, `failed`, `source`) |
+
+Preview/matching does not write audit rows.
+
+## SharePoint / Microsoft Graph (implemented, not currently used)
+
+**Do not delete this integration.** Schema, settings, Graph client, scan/confirm services, and security review remain in the repo so it can be re-enabled later.
+
+### Disable mechanism
+
+`SHAREPOINT_SDS_ENABLED` defaults to **off**. Only `true` / `1` / `yes` enables scan, test-connection, folder resolve, and confirm-import.
+
+When disabled:
+
+- Production UI hides SharePoint connection/scan/import controls (Bulk SDS Upload and Settings → Documents & SDS)
+- Server actions reject execution (`DISABLED` / 403), including hidden URL calls
+- Stored `SharePointSdsSettings`, encrypted secrets, and scan history are **untouched**
+- Dashboard does not show a SharePoint SDS health card
+
+### How to re-enable later
+
+1. Confirm Entra + Graph least-privilege is still valid (`docs/microsoft-graph-security-review.md`, `docs/security.md`)
+2. Set Coolify env `SHAREPOINT_SDS_ENABLED=true` (plus existing Graph tenant/client/secret if used)
+3. Redeploy — Settings → Documents & SDS shows the connection panel again; Bulk SDS Upload offers an advanced SharePoint section
+4. Test connection → Scan → Preview → Confirm import (same ProductDocument / R2 path as manual upload)
+
+### Chosen model (when enabled)
+
+Organisation-managed Microsoft Entra **application (client credentials)** calling Microsoft Graph.
 
 | Piece | Detail |
 | --- | --- |
@@ -112,66 +166,11 @@ Uncertain matches never auto-import. There is no “Replace all existing SDS” 
 | Folder identity | Stable Graph `driveId` + `folderItemId` (URL is a one-time helper only) |
 | APIs | `/users/{upn}/drive`, drive item by path, children with `@odata.nextLink`, `/content` download |
 
-### Required Entra configuration (human steps)
-
-See **`docs/microsoft-graph-security-review.md`** and **`docs/security.md`** for the authoritative Maximum Networks review pack.
-
-1. Entra app **Automotive Brands B2B** → Microsoft Graph **Application** permission:
-   - `Files.SelectedOperations.Selected` (preferred; **not** `Files.Read.All`)
-2. Admin consent for that permission, **plus** a folder-level `read` grant on the SDS driveItem.
-3. Prefer Coolify env secrets: `MICROSOFT_GRAPH_TENANT_ID`, `MICROSOFT_GRAPH_CLIENT_ID`, `MICROSOFT_GRAPH_CLIENT_SECRET`.
-4. In B2B **Settings → Documents & SDS**:
-   - Paste stable `driveId` + `folderItemId` (preferred least-privilege bootstrap), or resolve from a SharePoint folder URL when bootstrap access allows
-   - **Test connection** → Scan → Preview → Confirm import
-
 Configuration changes require `integrations.sharepoint.manage`. Ordinary SDS upload/import confirm uses `products.edit`.
 
-### Source metadata (internal)
-
-On import, `ProductDocument.sourceMetadata` stores:
-
-```json
-{
-  "source": "SHAREPOINT",
-  "driveId": "…",
-  "itemId": "…",
-  "filename": "…",
-  "lastModified": "…",
-  "eTag": "…",
-  "cTag": "…",
-  "folderItemId": "…",
-  "importedAt": "…"
-}
-```
-
-Never exposed on public APIs. Enables later update detection.
-
-### Update detection readiness (manual)
-
-- Same SharePoint `itemId` + different checksum → preview `UPDATED_SOURCE` (Review / Replace; no silent replace)
-- SharePoint file gone → preview `SOURCE_MISSING`; **B2B SDS stays CURRENT** until a human archives/replaces it
+SharePoint-sourced rows store internal `sourceMetadata.source = "SHAREPOINT"` (never on public APIs).
 
 **Automatic unattended sync remains deferred.**
-
-## Matching rules (conservative)
-
-Priority:
-
-1. Exact SKU token in filename
-2. Normalised SKU (case-insensitive; strips spaces/hyphens/`SDS`/years)
-3. Strong normalised product-name containment (min length)
-
-Ambiguous → `REVIEW` (human chooses). None → `NO_MATCH` (manual select).
-
-SharePoint does **not** weaken matching.
-
-## Duplicates
-
-SHA-256 checksum stored on every document.
-
-- Same product + type + checksum + CURRENT → `ALREADY_ATTACHED` (no second copy)
-- Different current SDS already present → `EXISTING_SDS` (explicit Replace or Skip)
-- Same SharePoint item, changed bytes → `UPDATED_SOURCE`
 
 ## Public product page
 
@@ -182,7 +181,7 @@ If any CURRENT customer-visible documents exist, render **Safety & Documents**.
 - No empty section when nothing is attached
 - Never expose notes, uploadedBy, storage keys, archive history, SharePoint URLs, or source metadata
 
-SharePoint-sourced SDS behaves identically to a manually uploaded SDS for customers.
+A manually uploaded SDS and a (future) SharePoint-sourced SDS behave identically for customers. Only **CURRENT** documents on visible products are public.
 
 ## Download security
 
@@ -199,25 +198,11 @@ SharePoint-sourced SDS behaves identically to a manually uploaded SDS for custom
 | Action | Capability |
 | --- | --- |
 | View admin documents / SharePoint settings | `products.view` (internal) |
-| Upload / replace / archive / bulk / SharePoint scan | `products.edit` (internal) |
+| Upload / replace / archive / bulk SDS | `products.edit` (internal, non-TRADE) |
+| SharePoint connection settings | `integrations.sharepoint.manage` |
 | Public download | product visibility rules |
 
-## Audit / Activity
-
-| Action | Meaning |
-| --- | --- |
-| `catalogue.document_uploaded` | New current document |
-| `catalogue.document_replaced` | Previous archived, new current |
-| `catalogue.document_archived` | Manual archive |
-| `catalogue.bulk_document_import` | Local bulk confirm summary |
-| `catalogue.sharepoint_sds_scan` | SharePoint folder scan preview |
-| `catalogue.sharepoint_document_import` | SharePoint confirm import summary |
-| `catalogue.sharepoint_sds_settings_updated` | Connection settings changed |
-| `catalogue.sharepoint_sds_connection_tested` | Test connection result |
-
-Audit metadata never includes access tokens, refresh tokens, client secrets, or PDF bytes.
-
-Product Activity includes `ProductDocument` events keyed by `metadata.productId`.
+Trade users: no access. Public users: no access to bulk/admin APIs.
 
 ## Intentionally deferred
 
@@ -228,4 +213,4 @@ Product Activity includes `ProductDocument` events keyed by `metadata.productId`
 - Variant-specific SDS UI (schema supports optional `productVariantId` only)
 - Narrower Graph permission model (`Sites.Selected`) if tenant policy requires it
 
-**SharePoint is the SOURCE. R2 / `ProductDocument` is the website copy.**
+**Manual upload is the SOURCE in production. R2 / `ProductDocument` is the website copy.** SharePoint remains a dormant alternative source.
