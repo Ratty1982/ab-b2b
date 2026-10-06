@@ -32,12 +32,19 @@ import {
   ChangeStatusBadge,
   StockPositionBadge,
   activeBackorderFilterChips,
+  backorderFilterIgnoredByMovement,
   mergeBackorderSearch,
   parseBackorderSearch,
   stockPositionHeadline,
+  toggleBackorderMovement,
   type BackorderSearch,
   type BackorderSearchPatch,
 } from "@/components/purchasing/backorders";
+import {
+  autopart216vMovementEmptyCopy,
+  formatAutopart216vChangeQty,
+  type Autopart216vMovement,
+} from "@/domain/autopart-216v-movement";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatOperationalDateTime } from "@/lib/datetime";
 import {
@@ -66,6 +73,8 @@ export const Route = createFileRoute("/purchasing/backorders")({
 type Data = Extract<Awaited<ReturnType<typeof getPurchasingBackordersFn>>, { ok: true }>["data"];
 type LineDetail = Extract<Awaited<ReturnType<typeof getPurchasingBackorderLineFn>>, { ok: true }>["data"];
 type LineRow = Data["lines"]["rows"][number];
+type MovementData = NonNullable<Data["movement"]>;
+type MovementRow = MovementData["rows"][number];
 
 function BackordersPage() {
   const search = Route.useSearch();
@@ -79,7 +88,9 @@ function BackordersPage() {
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
+  const [clearedDetail, setClearedDetail] = useState<MovementRow | null>(null);
   const view = search.view ?? "lines";
+  const movement = search.movement ?? null;
   const uploadId = useId();
 
   useEffect(() => {
@@ -91,6 +102,7 @@ function BackordersPage() {
     void getPurchasingBackordersFn({
       data: {
         view,
+        movement: search.movement ?? null,
         q: search.q ?? null,
         status: search.status ?? null,
         position: search.position ?? null,
@@ -135,6 +147,7 @@ function BackordersPage() {
     setExporting(true);
     const result = await exportPurchasingBackordersCsvFn({
       data: {
+        movement: search.movement ?? null,
         q: search.q ?? null,
         status: search.status ?? null,
         position: search.position ?? null,
@@ -213,10 +226,15 @@ function BackordersPage() {
       {error ? <ErrorState message={error} /> : null}
       {data?.freshness ? <FreshnessBar freshness={data.freshness} /> : null}
       {current && data ? (
-        <Metrics current={current} attentionCount={data.attentionSummary.unique} />
+        <Metrics
+          current={current}
+          attentionCount={data.attentionSummary.unique}
+          movement={movement}
+          onMovement={(next) => patch(toggleBackorderMovement(search, next))}
+        />
       ) : null}
       {data?.current && data.attentionSummary.unique > 0 ? (
-        <AttentionSummary summary={data.attentionSummary} onView={() => patch({ view: "attention", page: undefined })} />
+        <AttentionSummary summary={data.attentionSummary} onView={() => patch({ view: "attention", movement: undefined, page: undefined })} />
       ) : null}
       <div className="grid gap-2 border-b border-border/70 px-4 py-3 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
         <ViewCard
@@ -226,8 +244,8 @@ function BackordersPage() {
           count={counts?.lines ?? current?.outstandingLines ?? 0}
           icon={ClipboardList}
           accent="cyan"
-          active={view === "lines"}
-          onSelect={() => patch({ view: "lines", page: undefined })}
+          active={!movement && view === "lines"}
+          onSelect={() => patch({ view: "lines", movement: undefined, page: undefined })}
         />
         <ViewCard
           id="sku"
@@ -236,8 +254,8 @@ function BackordersPage() {
           count={counts?.skus ?? 0}
           icon={Boxes}
           accent="steel"
-          active={view === "sku"}
-          onSelect={() => patch({ view: "sku", page: undefined })}
+          active={!movement && view === "sku"}
+          onSelect={() => patch({ view: "sku", movement: undefined, page: undefined })}
         />
         <ViewCard
           id="customer"
@@ -246,8 +264,8 @@ function BackordersPage() {
           count={counts?.customers ?? 0}
           icon={Users}
           accent="info"
-          active={view === "customer"}
-          onSelect={() => patch({ view: "customer", page: undefined })}
+          active={!movement && view === "customer"}
+          onSelect={() => patch({ view: "customer", movement: undefined, page: undefined })}
         />
         <ViewCard
           id="attention"
@@ -257,8 +275,8 @@ function BackordersPage() {
           icon={AlertTriangle}
           accent="attention"
           strong={Boolean(counts?.attention)}
-          active={view === "attention"}
-          onSelect={() => patch({ view: "attention", page: undefined })}
+          active={!movement && view === "attention"}
+          onSelect={() => patch({ view: "attention", movement: undefined, page: undefined })}
         />
       </div>
       <Filters search={search} q={q} setQ={setQ} data={data} patch={patch} />
@@ -269,16 +287,24 @@ function BackordersPage() {
           body="The daily Autopart 216V report has not been imported. Outstanding backorders will appear here after the first successful file."
         />
       ) : null}
-      {data && current && view === "lines" ? (
+      {data && current && data.movement ? (
+        <MovementPanel
+          movement={data.movement}
+          onClear={() => patch({ movement: undefined, page: undefined })}
+          onPage={(page) => patch({ page })}
+          onOpen={(row) => (row.currentlyOutstanding ? void openLine(row.id) : setClearedDetail(row))}
+        />
+      ) : null}
+      {data && current && !data.movement && view === "lines" ? (
         <LinesTable rows={data.lines.rows} total={data.lines.total} page={data.lines.page} pageSize={data.lines.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
       ) : null}
-      {data && current && view === "sku" ? (
+      {data && current && !data.movement && view === "sku" ? (
         <SkuTable groups={data.skus.rows} total={data.skus.total} page={data.skus.page} pageSize={data.skus.pageSize} expanded={expandedSku} onExpand={setExpandedSku} onPage={(page) => patch({ page })} onOpen={openLine} />
       ) : null}
-      {data && current && view === "customer" ? (
+      {data && current && !data.movement && view === "customer" ? (
         <CustomerTable groups={data.customerGroups.rows} total={data.customerGroups.total} page={data.customerGroups.page} pageSize={data.customerGroups.pageSize} onPage={(page) => patch({ page })} onOpen={openLine} />
       ) : null}
-      {data && current && view === "attention" ? <AttentionBoard data={data} onOpen={openLine} /> : null}
+      {data && current && !data.movement && view === "attention" ? <AttentionBoard data={data} onOpen={openLine} /> : null}
       <Drawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -305,6 +331,15 @@ function BackordersPage() {
         width="lg"
       >
         {detail ? <LineDetailBody detail={detail} /> : null}
+      </Drawer>
+      <Drawer
+        open={Boolean(clearedDetail)}
+        onClose={() => setClearedDetail(null)}
+        title={clearedDetail?.orderNumber ?? "Cleared backorder"}
+        sub={clearedDetail ? `${clearedDetail.sku} · ${clearedDetail.customerName} · Cleared` : ""}
+        width="lg"
+      >
+        {clearedDetail ? <ClearedDetailBody row={clearedDetail} /> : null}
       </Drawer>
     </>
   );
@@ -356,10 +391,27 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
 function Metrics({
   current,
   attentionCount,
+  movement,
+  onMovement,
 }: {
   current: NonNullable<Data["current"]>;
   attentionCount: number;
+  movement: Autopart216vMovement | null;
+  onMovement: (movement: Autopart216vMovement) => void;
 }) {
+  const movementCard = (id: Autopart216vMovement, label: string, count: number, accent: "cyan" | "warn" | "good") => (
+    <KpiCard
+      label={label}
+      value={qty(count)}
+      accent={accent}
+      compact
+      selected={movement === id}
+      onSelect={() => onMovement(id)}
+      ariaLabel={`${label}: ${count} line${count === 1 ? "" : "s"} since the previous 216V snapshot. ${
+        movement === id ? "Selected. Activate to return to all current backorders." : "Show these lines."
+      }`}
+    />
+  );
   return (
     <div className="grid gap-3 border-b border-border/70 px-4 py-4 sm:px-6">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -369,10 +421,10 @@ function Metrics({
         <KpiCard label="Attention" value={qty(attentionCount)} accent={attentionCount > 0 ? "bad" : "steel"} emphasis={attentionCount > 0} />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="New Today" value={qty(current.newToday)} accent="cyan" compact />
-        <KpiCard label="Increased" value={qty(current.increasedSincePrevious)} accent="warn" compact />
-        <KpiCard label="Reduced" value={qty(current.reducedSincePrevious)} accent="good" compact />
-        <KpiCard label="Cleared" value={qty(current.clearedSincePrevious)} accent="good" compact />
+        {movementCard("NEW", "New Today", current.newToday, "cyan")}
+        {movementCard("INCREASED", "Increased", current.increasedSincePrevious, "warn")}
+        {movementCard("REDUCED", "Reduced", current.reducedSincePrevious, "good")}
+        {movementCard("CLEARED", "Cleared", current.clearedSincePrevious, "good")}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <KpiCard label="Outstanding Lines" value={qty(current.outstandingLines)} accent="steel" compact />
@@ -388,12 +440,18 @@ function KpiCard({
   accent,
   compact,
   emphasis,
+  selected,
+  onSelect,
+  ariaLabel,
 }: {
   label: string;
   value: string;
   accent: "cyan" | "warn" | "good" | "bad" | "steel";
   compact?: boolean;
   emphasis?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
+  ariaLabel?: string;
 }) {
   const border =
     accent === "cyan"
@@ -405,13 +463,35 @@ function KpiCard({
           : accent === "bad"
             ? "border-l-destructive/70 bg-destructive/5"
             : "border-l-steel/50 bg-surface/60";
-  return (
-    <div className={cn("border border-border border-l-4 px-3 py-3", border, compact && "py-2")}>
+  const body = (
+    <>
       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</div>
       <div className={cn("num mt-1 font-display font-semibold", emphasis || !compact ? "text-2xl" : "text-lg")}>
         {value}
       </div>
-    </div>
+    </>
+  );
+  if (!onSelect) {
+    return <div className={cn("border border-border border-l-4 px-3 py-3", border, compact && "py-2")}>{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      aria-pressed={Boolean(selected)}
+      aria-label={ariaLabel ?? `${label}, ${value}`}
+      onClick={onSelect}
+      className={cn(
+        "cursor-pointer border border-border border-l-4 px-3 py-3 text-left transition-colors hover:border-primary hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        border,
+        compact && "py-2",
+        selected && "border-primary bg-secondary/80 ring-1 ring-primary",
+      )}
+    >
+      {body}
+      {selected ? (
+        <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">Showing these lines</div>
+      ) : null}
+    </button>
   );
 }
 
@@ -523,23 +603,34 @@ function Filters({
   patch: (next: BackorderSearchPatch) => void;
 }) {
   const chips = activeBackorderFilterChips(search);
+  const statusOff = backorderFilterIgnoredByMovement(search, "status");
+  const positionOff = backorderFilterIgnoredByMovement(search, "position");
+  const ageOff = backorderFilterIgnoredByMovement(search, "ageDays");
+  const ignoredNote =
+    search.movement === "CLEARED"
+      ? "Cleared lines are historical: status, stock position and age filters describe current backorders and are not applied."
+      : search.movement
+        ? "Status filter is not applied while a movement is selected."
+        : null;
   return (
     <div className="border-b border-border/70 px-4 py-3 sm:px-6">
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">Filters</div>
       <div className="mb-3 flex flex-wrap gap-2">
         <QuickFilter
           label="Needs Attention"
-          active={search.view === "attention"}
-          onClick={() => patch({ view: "attention", page: undefined })}
+          active={!search.movement && search.view === "attention"}
+          onClick={() => patch({ view: "attention", movement: undefined, page: undefined })}
         />
         <QuickFilter
           label="Stock Available"
-          active={search.position === "STOCK_AVAILABLE"}
+          active={!positionOff && search.position === "STOCK_AVAILABLE"}
+          disabled={positionOff}
           onClick={() => patch({ position: search.position === "STOCK_AVAILABLE" ? undefined : "STOCK_AVAILABLE", page: undefined })}
         />
         <QuickFilter
           label="No Stock / No Incoming"
-          active={search.position === "NO_STOCK_NO_INCOMING"}
+          active={!positionOff && search.position === "NO_STOCK_NO_INCOMING"}
+          disabled={positionOff}
           onClick={() =>
             patch({
               position: search.position === "NO_STOCK_NO_INCOMING" ? undefined : "NO_STOCK_NO_INCOMING",
@@ -549,7 +640,8 @@ function Filters({
         />
         <QuickFilter
           label="7+ Days"
-          active={search.ageDays === 7}
+          active={!ageOff && search.ageDays === 7}
+          disabled={ageOff}
           onClick={() => patch({ ageDays: search.ageDays === 7 ? undefined : 7, page: undefined })}
         />
       </div>
@@ -567,17 +659,17 @@ function Filters({
           onChange={(e) => setQ(e.target.value)}
           aria-label="Search order, customer, account, SKU or reference"
         />
-        <select className={controlClass} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })} aria-label="Status">
+        <select className={cn(controlClass, statusOff && "opacity-50")} disabled={statusOff} title={statusOff ? ignoredNote ?? undefined : undefined} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })} aria-label="Status">
           {BACKORDER_STATUS_FILTERS.map((opt) => (
             <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select className={controlClass} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })} aria-label="Stock position">
+        <select className={cn(controlClass, positionOff && "opacity-50")} disabled={positionOff} title={positionOff ? ignoredNote ?? undefined : undefined} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })} aria-label="Stock position">
           {BACKORDER_POSITION_FILTERS.map((opt) => (
             <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select className={controlClass} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })} aria-label="Age">
+        <select className={cn(controlClass, ageOff && "opacity-50")} disabled={ageOff} title={ageOff ? ignoredNote ?? undefined : undefined} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })} aria-label="Age">
           {BACKORDER_AGE_FILTERS.map((opt) => (
             <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
           ))}
@@ -602,6 +694,7 @@ function Filters({
         </select>
         <button type="submit" className={btnClass}>Search</button>
       </form>
+      {ignoredNote ? <p className="mt-2 text-[12px] text-steel">{ignoredNote}</p> : null}
       {chips.length ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {chips.map((chip) => (
@@ -619,6 +712,7 @@ function Filters({
             className="text-[11px] font-semibold uppercase tracking-[0.12em] text-primary hover:underline"
             onClick={() =>
               patch({
+                movement: undefined,
                 q: undefined,
                 status: undefined,
                 position: undefined,
@@ -638,15 +732,27 @@ function Filters({
   );
 }
 
-function QuickFilter({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function QuickFilter({
+  label,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       aria-pressed={active}
+      disabled={disabled}
       onClick={onClick}
       className={cn(
         "h-8 border px-3 text-[11px] font-semibold uppercase tracking-[0.12em]",
         active ? "border-primary bg-primary/15 text-foreground" : "border-border bg-surface/40 text-steel hover:border-primary",
+        disabled && "cursor-not-allowed opacity-50 hover:border-border",
       )}
     >
       {label}
@@ -762,6 +868,195 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function QuietNote({ children }: { children: React.ReactNode }) {
   return <div className="text-[11px] text-steel/80">{children}</div>;
+}
+
+function MovementPanel({
+  movement,
+  onClear,
+  onPage,
+  onOpen,
+}: {
+  movement: MovementData;
+  onClear: () => void;
+  onPage: (page: number) => void;
+  onOpen: (row: MovementRow) => void;
+}) {
+  const cleared = movement.movement === "CLEARED";
+  const filteredOut = movement.total !== movement.kpiCount;
+  return (
+    <section aria-label={`Movement: ${movement.label}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-secondary/30 px-4 py-3 sm:px-6">
+        <div className="flex flex-wrap items-center gap-3 text-[13px]">
+          <button
+            type="button"
+            onClick={onClear}
+            aria-label={`Clear movement ${movement.label} and return to all current backorders`}
+            className="inline-flex items-center gap-1 border border-primary bg-primary/15 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] hover:bg-primary/25"
+          >
+            Movement: {movement.label} ×
+          </button>
+          <span className="num font-semibold">
+            {filteredOut
+              ? `${qty(movement.total)} of ${qty(movement.kpiCount)} lines match the current filters`
+              : `${qty(movement.total)} line${movement.total === 1 ? "" : "s"}`}
+          </span>
+          <span className="text-steel">
+            {movement.previousSnapshot
+              ? `Compared with previous snapshot ${movement.previousSnapshot.receivedLabel}${movement.previousSnapshot.filename ? ` (${movement.previousSnapshot.filename})` : ""}`
+              : "No previous committed snapshot to compare against"}
+          </span>
+        </div>
+        <button type="button" className={btnClass} onClick={onClear}>
+          All current
+        </button>
+      </div>
+      {cleared ? (
+        <p className="border-b border-border/70 px-4 py-2 text-[12px] text-steel sm:px-6">
+          Cleared lines were outstanding in the previous snapshot and are absent from the current one. They are history only and are not counted in current outstanding totals.
+        </p>
+      ) : null}
+      {movement.rows.length === 0 ? (
+        <EmptyState
+          title={autopart216vMovementEmptyCopy(movement.movement)}
+          body={
+            filteredOut
+              ? "Some movement lines are hidden by the current filters. Clear filters to see them."
+              : "Movement compares the current 216V snapshot with the previous committed snapshot."
+          }
+        />
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1280px] text-left text-[13px]">
+              <thead className="sticky top-0 z-10 bg-secondary/50 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+                <tr>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Order No</th>
+                  <th className="px-3 py-2">Customer</th>
+                  <th className="px-3 py-2">Customer Account</th>
+                  <th className="px-3 py-2">Customer Order Ref</th>
+                  <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2">SKU</th>
+                  <th className="px-3 py-2 text-right">Previous Qty</th>
+                  <th className="px-3 py-2 text-right">Current Qty</th>
+                  <th className="px-3 py-2 text-right">Change</th>
+                  <th className="px-3 py-2 text-right">Unit Value</th>
+                  <th className="px-3 py-2 text-right">Previous Value</th>
+                  <th className="px-3 py-2 text-right">Current Value</th>
+                  <th className="px-3 py-2">First seen</th>
+                  <th className="px-3 py-2">{cleared ? "Cleared at" : "Last changed"}</th>
+                  {cleared ? null : <th className="px-3 py-2">Stock</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {movement.rows.map((row, i) => (
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      "cursor-pointer border-t border-border/80 hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      i % 2 === 1 && "bg-secondary/20",
+                    )}
+                    tabIndex={0}
+                    onClick={() => onOpen(row)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onOpen(row);
+                      }
+                    }}
+                  >
+                    <td className="px-3 py-2.5"><ChangeStatusBadge status={row.status} label={row.statusLabel} /></td>
+                    <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{row.orderNumber}</td>
+                    <td className="px-3 py-2.5">
+                      {row.customerName}
+                      {row.unmapped ? <QuietNote>Unmapped account</QuietNote> : null}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-[12px]">{row.customerAccount}</td>
+                    <td className="max-w-[140px] truncate px-3 py-2.5" title={row.customerOrderRef || undefined}>
+                      {row.customerOrderRef || "—"}
+                    </td>
+                    <td className="max-w-[220px] px-3 py-2.5">
+                      <span className="block truncate" title={row.description}>{row.description}</span>
+                      <QuietNote>{row.productKindLabel}</QuietNote>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{row.sku}</td>
+                    <td className="num px-3 py-2.5 text-right">{qty(row.previousQty)}</td>
+                    <td className="num px-3 py-2.5 text-right text-base font-semibold">{cleared ? "Cleared" : qty(row.currentQty)}</td>
+                    <td className="num px-3 py-2.5 text-right font-semibold">{formatAutopart216vChangeQty(row.changeQty)}</td>
+                    <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.unitValue)}</td>
+                    <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.previousValue)}</td>
+                    <td className="num px-3 py-2.5 text-right text-steel">{cleared ? "—" : gbp(row.currentValue)}</td>
+                    <td className="px-3 py-2.5">{ukDate(row.firstSeenAt)}</td>
+                    <td className="px-3 py-2.5">{formatOperationalDateTime(row.clearedAt ?? row.lastChangedAt) ?? ukDate(row.clearedAt ?? row.lastChangedAt)}</td>
+                    {cleared ? null : (
+                      <td className="px-3 py-2.5">
+                        {row.position && row.positionLabel ? (
+                          <PositionCell
+                            row={{
+                              position: row.position,
+                              positionLabel: row.positionLabel,
+                              coverSummary: row.coverSummary ?? "",
+                              availQty: row.availQty,
+                              incomingQty: row.incomingQty,
+                              outstandingQty: row.currentQty ?? 0,
+                            }}
+                          />
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pager page={movement.page} pageSize={movement.pageSize} total={movement.total} onPage={onPage} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function ClearedDetailBody({ row }: { row: MovementRow }) {
+  return (
+    <div className="grid gap-5">
+      <section className="grid gap-2">
+        <StatusBadge tone="good">Cleared</StatusBadge>
+        <p className="text-[12px] text-steel">
+          Outstanding in the previous 216V snapshot and absent from the current snapshot. Not part of current outstanding totals.
+        </p>
+      </section>
+      <section className="grid gap-2">
+        <h3 className="font-display text-base font-semibold uppercase">Order</h3>
+        <dl className="grid gap-2 text-[13px] sm:grid-cols-2">
+          <Fact label="Order number" value={row.orderNumber} />
+          <Fact label="Customer account" value={row.customerAccount} />
+          <Fact label="Customer name" value={row.customerName} />
+          <Fact label="Mapped AB company" value={row.companyName ?? "Unmapped account"} />
+          <Fact label="Customer order / reference" value={row.customerOrderRef || "—"} />
+        </dl>
+      </section>
+      <section className="grid gap-2">
+        <h3 className="font-display text-base font-semibold uppercase">Product</h3>
+        <dl className="grid gap-2 text-[13px] sm:grid-cols-2">
+          <Fact label="Part number" value={row.sku} />
+          <Fact label="Description" value={row.description} />
+          <Fact label="Catalogue type" value={row.productKindLabel} />
+        </dl>
+      </section>
+      <section className="grid gap-2">
+        <h3 className="font-display text-base font-semibold uppercase">Previous backorder</h3>
+        <dl className="grid gap-2 text-[13px] sm:grid-cols-2">
+          <Fact label="Previous outstanding qty" value={qty(row.previousQty)} />
+          <Fact label="Unit value" value={gbp(row.unitValue)} />
+          <Fact label="Previous outstanding value" value={gbp(row.previousValue)} />
+          <Fact label="First seen" value={ukDate(row.firstSeenAt)} />
+          <Fact label="Cleared at" value={formatOperationalDateTime(row.clearedAt ?? row.lastChangedAt) ?? "—"} />
+        </dl>
+      </section>
+    </div>
+  );
 }
 
 function LinesTable({

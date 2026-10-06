@@ -4,6 +4,13 @@ import {
   AUTOPART_216V_STOCK_POSITION_LABEL,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
+import {
+  AUTOPART_216V_MOVEMENT_LABEL,
+  autopart216vMovementIgnoredFilters,
+  isAutopart216vMovement,
+  type Autopart216vMovement,
+  type Autopart216vMovementFilterKey,
+} from "@/domain/autopart-216v-movement";
 
 export function changeStatusTone(
   status: keyof typeof AUTOPART_216V_CHANGE_STATUS_LABEL,
@@ -72,6 +79,7 @@ export const BACKORDER_AGE_FILTERS = [
 
 export type BackorderSearch = {
   view?: "lines" | "sku" | "customer" | "attention";
+  movement?: Autopart216vMovement;
   q?: string;
   status?: string;
   position?: string;
@@ -90,6 +98,8 @@ export function parseBackorderSearch(raw: Record<string, unknown>): BackorderSea
   };
   const view = str("view");
   if (view === "lines" || view === "sku" || view === "customer" || view === "attention") out.view = view;
+  const movement = str("movement");
+  if (isAutopart216vMovement(movement)) out.movement = movement;
   const q = str("q");
   if (q) out.q = q;
   const status = str("status");
@@ -134,6 +144,9 @@ export type BackorderFilterChip = { key: keyof BackorderSearch; label: string };
 
 export function activeBackorderFilterChips(search: BackorderSearch): BackorderFilterChip[] {
   const chips: BackorderFilterChip[] = [];
+  if (search.movement) {
+    chips.push({ key: "movement", label: `Movement: ${AUTOPART_216V_MOVEMENT_LABEL[search.movement]}` });
+  }
   const status = BACKORDER_STATUS_FILTERS.find((o) => o.value && o.value === search.status);
   if (status) chips.push({ key: "status", label: `Status: ${status.label}` });
   const position = BACKORDER_POSITION_FILTERS.find((o) => o.value && o.value === search.position);
@@ -147,6 +160,21 @@ export function activeBackorderFilterChips(search: BackorderSearch): BackorderFi
   if (search.catalogueType === "HISTORIC_ONLY") chips.push({ key: "catalogueType", label: "Historic/not current" });
   if (search.q) chips.push({ key: "q", label: `Search: ${search.q}` });
   return chips;
+}
+
+/** Selecting a movement KPI switches directly to it; selecting the active one returns to current. */
+export function toggleBackorderMovement(
+  search: BackorderSearch,
+  movement: Autopart216vMovement,
+): BackorderSearchPatch {
+  return { movement: search.movement === movement ? undefined : movement, page: undefined };
+}
+
+export function backorderFilterIgnoredByMovement(
+  search: BackorderSearch,
+  key: Autopart216vMovementFilterKey,
+): boolean {
+  return Boolean(search.movement && autopart216vMovementIgnoredFilters(search.movement).includes(key));
 }
 
 export function stockPositionHeadline(position: Autopart216vStockPosition): string {

@@ -801,3 +801,151 @@ describe("216V expanded-field identity continuity", () => {
   });
 });
 
+describe("216V movement drill-down", () => {
+  const mv = String(stamp).slice(-7);
+  const sku = `BO-MV-${stamp}`;
+  const base = { account: "MVACC01", name: "Movement Customer", part: sku, desc: "Movement part" };
+  const up = { ...base, order: `MV${mv}U`, ref: "UP" };
+  const down = { ...base, order: `MV${mv}D`, ref: "DOWN" };
+  const same = { ...base, order: `MV${mv}S`, ref: "SAME" };
+  const gone1 = { ...base, order: `MV${mv}G1`, ref: "GONE1" };
+  const gone2 = { ...base, order: `MV${mv}G2`, ref: "GONE2" };
+  const new1 = { ...base, order: `MV${mv}N1`, ref: "NEW1" };
+  const new2 = { ...base, order: `MV${mv}N2`, ref: "NEW2" };
+  const row = (r: typeof up, qty: number, unit = "2.00") => ({
+    ...r,
+    qty,
+    unit,
+    value: (qty * Number(unit)).toFixed(2),
+  });
+  let previousId = "";
+
+  it("drills into NEW / INCREASED / REDUCED / CLEARED for the transition into the current snapshot", async () => {
+    const previous = await confirmAutopart216vImport(adminId, {
+      text: csv216v([row(up, 4), row(down, 7), row(same, 1), row(gone1, 3, "2.50"), row(gone2, 5)]),
+      filename: `216V-mv-a-${stamp}.csv`,
+      source: "MANUAL",
+    });
+    previousId = previous.id;
+    await expect(
+      confirmAutopart216vImport(adminId, { text: "not a 216v file", filename: "bad.csv", source: "MANUAL" }),
+    ).rejects.toBeInstanceOf(AuthError);
+    await confirmAutopart216vImport(adminId, {
+      text: csv216v([row(up, 7), row(down, 4), row(same, 1), row(new1, 2), row(new2, 1)]),
+      filename: `216V-mv-b-${stamp}.csv`,
+      source: "MANUAL",
+    });
+
+    const current = await getBackorderWorkspace(adminId, {});
+    expect(current.movement).toBeNull();
+    expect(current.current?.newToday).toBe(2);
+    expect(current.current?.increasedSincePrevious).toBe(1);
+    expect(current.current?.reducedSincePrevious).toBe(1);
+    expect(current.current?.clearedSincePrevious).toBe(2);
+    expect(current.lines.total).toBe(5);
+    expect(current.current?.outstandingLines).toBe(5);
+    const outstandingIds = new Set(current.lines.rows.map((r) => r.id));
+
+    const fresh = await getBackorderWorkspace(adminId, { movement: "NEW" });
+    expect(fresh.movement?.total).toBe(current.current?.newToday);
+    expect(fresh.movement?.kpiCount).toBe(current.current?.newToday);
+    expect(fresh.movement?.rows.map((r) => r.orderNumber).sort()).toEqual([new1.order, new2.order].sort());
+    expect(fresh.movement?.rows.every((r) => r.status === "NEW" && r.currentlyOutstanding)).toBe(true);
+    expect(fresh.movement?.rows.find((r) => r.orderNumber === new1.order)?.currentQty).toBe(2);
+    expect(fresh.movement?.rows.every((r) => r.position !== null)).toBe(true);
+    expect(fresh.movement?.previousSnapshot?.id).toBe(previousId);
+
+    const increased = await getBackorderWorkspace(adminId, { movement: "INCREASED" });
+    expect(increased.movement?.total).toBe(current.current?.increasedSincePrevious);
+    const inc = increased.movement!.rows[0]!;
+    expect(inc.orderNumber).toBe(up.order);
+    expect([inc.previousQty, inc.currentQty, inc.changeQty]).toEqual([4, 7, 3]);
+    expect(inc.previousValue).toBe("8.00");
+    expect(inc.currentValue).toBe("14.00");
+
+    const reduced = await getBackorderWorkspace(adminId, { movement: "REDUCED" });
+    expect(reduced.movement?.total).toBe(current.current?.reducedSincePrevious);
+    const red = reduced.movement!.rows[0]!;
+    expect(red.orderNumber).toBe(down.order);
+    expect([red.previousQty, red.currentQty, red.changeQty]).toEqual([7, 4, -3]);
+
+    const cleared = await getBackorderWorkspace(adminId, { movement: "CLEARED" });
+    expect(cleared.movement?.total).toBe(current.current?.clearedSincePrevious);
+    expect(cleared.movement?.rows.map((r) => r.orderNumber).sort()).toEqual([gone1.order, gone2.order].sort());
+    for (const r of cleared.movement!.rows) {
+      expect(r.status).toBe("CLEARED");
+      expect(r.currentlyOutstanding).toBe(false);
+      expect(r.currentQty).toBeNull();
+      expect(r.currentValue).toBeNull();
+      expect(r.position).toBeNull();
+      expect(r.clearedAt).toBeTruthy();
+      expect(outstandingIds.has(r.id)).toBe(false);
+    }
+    const g1 = cleared.movement!.rows.find((r) => r.orderNumber === gone1.order)!;
+    expect(g1.previousQty).toBe(3);
+    expect(g1.unitValue).toBe("2.50");
+    expect(g1.previousValue).toBe("7.50");
+    expect(g1.customerOrderRef).toBe("GONE1");
+    expect(cleared.lines.total).toBe(5);
+    expect(cleared.current?.outstandingUnits).toBe(15);
+    await expect(getBackorderLineDetail(adminId, g1.id)).rejects.toBeInstanceOf(AuthError);
+
+    const csv = await exportBackordersCsv(adminId, { movement: "CLEARED" });
+    expect(csv.filename).toBe("autopart-216v-backorders-cleared.csv");
+    const csvLines = csv.csv.split("\n");
+    expect(csvLines[0]).toContain("Previous Qty");
+    expect(csvLines).toHaveLength(3);
+    expect(csvLines.find((l) => l.includes(gone1.order))).toMatch(/^Cleared,CLEARED,.*,3,,,2\.50,7\.50,/);
+    const standard = await exportBackordersCsv(adminId, {});
+    expect(standard.csv.split("\n")[0]).toBe(
+      "Status,First Seen,Order No,Customer Account,Customer,Customer Order Ref,SKU,Description,Outstanding Qty,Unit Value,Outstanding Value,Avail,Incoming,Stock Position,Product Type",
+    );
+    expect(standard.csv).not.toContain(gone1.order);
+  });
+
+  it("applies compatible filters and ignores current-state filters for cleared history", async () => {
+    const searched = await getBackorderWorkspace(adminId, { movement: "NEW", q: new1.order });
+    expect(searched.movement?.total).toBe(1);
+    expect(searched.movement?.kpiCount).toBe(2);
+    const statusIgnored = await getBackorderWorkspace(adminId, { movement: "NEW", status: "UNCHANGED" });
+    expect(statusIgnored.movement?.total).toBe(2);
+    expect(statusIgnored.movement?.ignoredFilters).toEqual(["status"]);
+    const clearedWithStock = await getBackorderWorkspace(adminId, {
+      movement: "CLEARED",
+      position: "STOCK_AVAILABLE",
+      ageDays: 7,
+    });
+    expect(clearedWithStock.movement?.total).toBe(2);
+    expect(clearedWithStock.movement?.ignoredFilters).toEqual(["position", "ageDays"]);
+    const clearedSearch = await getBackorderWorkspace(adminId, { movement: "CLEARED", q: "GONE2" });
+    expect(clearedSearch.movement?.rows.map((r) => r.orderNumber)).toEqual([gone2.order]);
+    const back = await getBackorderWorkspace(adminId, { q: String(mv) });
+    expect(back.movement).toBeNull();
+    expect(back.lines.total).toBe(5);
+  });
+
+  it("returns zero-count movements as empty results when nothing moved", async () => {
+    await confirmAutopart216vImport(adminId, {
+      text: csv216v([
+        { ...row(up, 7), desc: "Movement part renamed", name: "Movement Customer Renamed" },
+        row(down, 4),
+        row(same, 1),
+        row(new1, 2),
+        row(new2, 1),
+      ]),
+      filename: `216V-mv-c-${stamp}.csv`,
+      source: "MANUAL",
+    });
+    for (const movement of ["NEW", "INCREASED", "REDUCED", "CLEARED"] as const) {
+      const ws = await getBackorderWorkspace(adminId, { movement });
+      expect(ws.movement?.total).toBe(0);
+      expect(ws.movement?.kpiCount).toBe(0);
+      expect(ws.movement?.rows).toEqual([]);
+    }
+    const ws = await getBackorderWorkspace(adminId, {});
+    expect(ws.current?.newToday).toBe(0);
+    expect(ws.current?.clearedSincePrevious).toBe(0);
+    expect(ws.lines.total).toBe(5);
+  });
+});
+

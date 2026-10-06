@@ -28,8 +28,18 @@ import {
 } from "@/domain/autopart-216v-position";
 import { next216vExpectedLabel, resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
 import { requireBackorderManage } from "@/server/purchasing/backorder-import";
+import {
+  AUTOPART_216V_MOVEMENTS,
+  AUTOPART_216V_MOVEMENT_CHANGE_STATUS,
+  AUTOPART_216V_MOVEMENT_LABEL,
+  autopart216vMovementIgnoredFilters,
+  autopart216vMovementQuantities,
+  type Autopart216vMovement,
+  type Autopart216vMovementFilterKey,
+} from "@/domain/autopart-216v-movement";
 
 const listInput = z.object({
+  movement: z.enum(AUTOPART_216V_MOVEMENTS).optional().nullable(),
   q: z.string().optional().nullable(),
   status: z
     .enum(["NEW", "UNCHANGED", "QUANTITY_REDUCED", "QUANTITY_INCREASED"])
@@ -239,12 +249,22 @@ function enrichLines(lines: LineRow[], now = new Date()): BackorderLineView[] {
   });
 }
 
-function applyFilters(rows: BackorderLineView[], input: z.infer<typeof listInput>): BackorderLineView[] {
+type IdentityFilterable = {
+  orderNumber: string;
+  customerName: string;
+  customerAccount: string;
+  sku: string;
+  description: string;
+  customerOrderRef: string;
+  companyName: string | null;
+  brandSlug: string | null;
+  productKind: ProductKind | "UNKNOWN";
+};
+
+/** Filters meaningful for both current and historical (cleared) lines. */
+function applyIdentityFilters<T extends IdentityFilterable>(rows: T[], input: z.infer<typeof listInput>): T[] {
   const q = input.q?.trim().toLowerCase() ?? "";
   let out = rows;
-  if (input.status) out = out.filter((r) => r.status === input.status);
-  if (input.position) out = out.filter((r) => r.position === input.position);
-  if (input.ageDays) out = out.filter((r) => r.ageDays >= input.ageDays!);
   if (input.customerAccount) {
     const acc = input.customerAccount.trim().toUpperCase();
     out = out.filter((r) => r.customerAccount.trim().toUpperCase() === acc);
@@ -271,6 +291,15 @@ function applyFilters(rows: BackorderLineView[], input: z.infer<typeof listInput
       return hay.includes(q);
     });
   }
+  return out;
+}
+
+function applyFilters(rows: BackorderLineView[], input: z.infer<typeof listInput>): BackorderLineView[] {
+  let out = rows;
+  if (input.status) out = out.filter((r) => r.status === input.status);
+  if (input.position) out = out.filter((r) => r.position === input.position);
+  if (input.ageDays) out = out.filter((r) => r.ageDays >= input.ageDays!);
+  out = applyIdentityFilters(out, input);
   return out.sort((a, b) => {
     const value = Number(b.outstandingValue ?? 0) - Number(a.outstandingValue ?? 0);
     if (value !== 0) return value;
@@ -383,6 +412,219 @@ async function loadLatestSnapshot() {
   });
 }
 
+type LoadedSnapshot = NonNullable<Awaited<ReturnType<typeof loadLatestSnapshot>>>;
+
+export type BackorderMovementRowView = {
+  id: string;
+  identityKey: string;
+  movement: Autopart216vMovement;
+  status: AutopartBackorderChangeStatus;
+  statusLabel: string;
+  /** False for CLEARED: historical line, not part of current outstanding totals. */
+  currentlyOutstanding: boolean;
+  orderNumber: string;
+  customerAccount: string;
+  customerName: string;
+  customerOrderRef: string;
+  companyId: string | null;
+  companyName: string | null;
+  unmapped: boolean;
+  sku: string;
+  partMatchKey: string;
+  description: string;
+  productKind: ProductKind | "UNKNOWN";
+  productKindLabel: string;
+  brand: string | null;
+  brandSlug: string | null;
+  previousQty: number | null;
+  currentQty: number | null;
+  changeQty: number | null;
+  unitValue: string | null;
+  previousValue: string | null;
+  currentValue: string | null;
+  firstSeenAt: string;
+  ageLabel: string;
+  lastChangedAt: string;
+  clearedAt: string | null;
+  availQty: number | null;
+  incomingQty: number | null;
+  position: Autopart216vStockPosition | null;
+  positionLabel: string | null;
+  coverSummary: string | null;
+};
+
+async function loadPreviousCommittedSnapshot(current: LoadedSnapshot) {
+  return prisma.autopartBackorderSnapshot.findFirst({
+    where: { status: "COMMITTED", importedAt: { lt: current.importedAt }, id: { not: current.id } },
+    orderBy: { importedAt: "desc" },
+    select: { id: true, importedAt: true, receivedAt: true, filename: true },
+  });
+}
+
+function movementSort(a: BackorderMovementRowView, b: BackorderMovementRowView) {
+  const value =
+    Number(b.currentValue ?? b.previousValue ?? 0) - Number(a.currentValue ?? a.previousValue ?? 0);
+  if (value !== 0) return value;
+  return a.orderNumber.localeCompare(b.orderNumber);
+}
+
+/**
+ * Lines classified into `movement` by the import that produced the current committed snapshot.
+ * CLEARED rows are the historical CLEARED records persisted on the current snapshot (identity
+ * carried from the previous snapshot) — never derived from the current outstanding rows.
+ */
+async function buildMovementRows(
+  snapshot: LoadedSnapshot,
+  outstanding: BackorderLineView[],
+  movement: Autopart216vMovement,
+  input: z.infer<typeof listInput>,
+  now: Date,
+) {
+  const changeStatus = AUTOPART_216V_MOVEMENT_CHANGE_STATUS[movement];
+  const ignored = autopart216vMovementIgnoredFilters(movement);
+  const effective = {
+    ...input,
+    ...Object.fromEntries(ignored.map((key) => [key, null])),
+  } as z.infer<typeof listInput>;
+
+  const previous = await loadPreviousCommittedSnapshot(snapshot);
+  const raw = snapshot.lines as unknown as LineRow[];
+  const movementLines = raw.filter((l) => l.changeStatus === changeStatus);
+  const previousValues = new Map<string, string | null>();
+  if (previous && movement !== "NEW" && movementLines.length) {
+    const prevLines = await prisma.autopartBackorderLine.findMany({
+      where: {
+        snapshotId: previous.id,
+        identityKey: { in: movementLines.map((l) => l.identityKey) },
+        changeStatus: { not: "CLEARED" },
+      },
+      select: { identityKey: true, outstandingValue: true },
+    });
+    for (const line of prevLines) previousValues.set(line.identityKey, money(line.outstandingValue));
+  }
+
+  function previousValueOf(identityKey: string, previousQty: number | null, unitValue: string | null) {
+    const stored = previousValues.get(identityKey);
+    if (stored != null) return stored;
+    if (previousQty == null || unitValue == null) return null;
+    return (previousQty * Number(unitValue)).toFixed(2);
+  }
+
+  let rows: BackorderMovementRowView[];
+  if (movement === "CLEARED") {
+    rows = movementLines.map((line) => {
+      const kind = productKindOf(line.autopartProduct);
+      const brand = line.autopartProduct?.catalogueVariant?.product.brand ?? null;
+      const ageDays = firstSeenAgeDays(line.firstSeenAt, now);
+      const quantities = autopart216vMovementQuantities({
+        movement,
+        outstandingQty: num(line.outstandingQty),
+        previousQty: line.previousQty == null ? null : num(line.previousQty),
+      });
+      const unitValue = money(line.unitValue);
+      return {
+        id: line.id,
+        identityKey: line.identityKey,
+        movement,
+        status: line.changeStatus,
+        statusLabel: AUTOPART_216V_CHANGE_STATUS_LABEL[line.changeStatus],
+        currentlyOutstanding: false,
+        orderNumber: line.orderNumber,
+        customerAccount: line.customerAccount,
+        customerName: line.company?.name ?? line.customerNameSnapshot,
+        customerOrderRef: line.customerOrderRef,
+        companyId: line.companyId,
+        companyName: line.company?.name ?? null,
+        unmapped: !line.companyId,
+        sku: line.partNumber,
+        partMatchKey: line.partMatchKey,
+        description: line.descriptionSnapshot,
+        productKind: kind,
+        productKindLabel: kind === "UNKNOWN" ? "Historic/not current" : AUTOPART_PRODUCT_KIND_LABEL[kind],
+        brand: brand?.name ?? null,
+        brandSlug: brand?.slug ?? null,
+        ...quantities,
+        unitValue,
+        previousValue: previousValueOf(line.identityKey, quantities.previousQty, unitValue),
+        currentValue: null,
+        firstSeenAt: line.firstSeenAt.toISOString(),
+        ageLabel: firstSeenAgeLabel(ageDays),
+        lastChangedAt: line.lastChangedAt.toISOString(),
+        clearedAt: line.lastChangedAt.toISOString(),
+        availQty: null,
+        incomingQty: null,
+        position: null,
+        positionLabel: null,
+        coverSummary: null,
+      };
+    });
+    rows = applyIdentityFilters(rows, effective).sort(movementSort);
+  } else {
+    rows = applyFilters(
+      outstanding.filter((l) => l.status === changeStatus),
+      effective,
+    ).map((line) => {
+      const quantities = autopart216vMovementQuantities({
+        movement,
+        outstandingQty: line.outstandingQty,
+        previousQty: line.previousQty,
+      });
+      return {
+        id: line.id,
+        identityKey: line.identityKey,
+        movement,
+        status: line.status,
+        statusLabel: line.statusLabel,
+        currentlyOutstanding: true,
+        orderNumber: line.orderNumber,
+        customerAccount: line.customerAccount,
+        customerName: line.customerName,
+        customerOrderRef: line.customerOrderRef,
+        companyId: line.companyId,
+        companyName: line.companyName,
+        unmapped: line.unmapped,
+        sku: line.sku,
+        partMatchKey: line.partMatchKey,
+        description: line.description,
+        productKind: line.productKind,
+        productKindLabel: line.productKindLabel,
+        brand: line.brand,
+        brandSlug: line.brandSlug,
+        ...quantities,
+        unitValue: line.unitValue,
+        previousValue:
+          movement === "NEW" ? null : previousValueOf(line.identityKey, quantities.previousQty, line.unitValue),
+        currentValue: line.outstandingValue,
+        firstSeenAt: line.firstSeenAt,
+        ageLabel: line.ageLabel,
+        lastChangedAt: line.lastChangedAt,
+        clearedAt: null,
+        availQty: line.availQty,
+        incomingQty: line.incomingQty,
+        position: line.position,
+        positionLabel: line.positionLabel,
+        coverSummary: line.coverSummary,
+      };
+    }).sort(movementSort);
+  }
+
+  const ignoredFilters = ignored.filter((key) => input[key] != null) as Autopart216vMovementFilterKey[];
+  return {
+    movement,
+    label: AUTOPART_216V_MOVEMENT_LABEL[movement],
+    kpiCount: movementLines.length,
+    ignoredFilters,
+    previousSnapshot: previous
+      ? {
+          id: previous.id,
+          filename: previous.filename,
+          receivedLabel: formatOrDash(formatOperationalDateTime(previous.receivedAt ?? previous.importedAt)),
+        }
+      : null,
+    rows,
+  };
+}
+
 async function feedSettingsRow() {
   return prisma.autopartBackorderFeedSettings.upsert({
     where: { id: "default" },
@@ -461,6 +703,19 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
   const pagedSkus = paginate(skuGroups, page, pageSize);
   const pagedCustomers = paginate(customerGroups, page, pageSize);
 
+  const movementResult =
+    snapshot && input.movement ? await buildMovementRows(snapshot, allLines, input.movement, input, now) : null;
+  const movement = movementResult
+    ? {
+        movement: movementResult.movement,
+        label: movementResult.label,
+        kpiCount: movementResult.kpiCount,
+        ignoredFilters: movementResult.ignoredFilters,
+        previousSnapshot: movementResult.previousSnapshot,
+        ...paginate(movementResult.rows, page, pageSize),
+      }
+    : null;
+
   const brands = [...new Set(allLines.map((l) => l.brandSlug).filter((b): b is string => Boolean(b)))].sort();
   const customers = [...new Map(allLines.map((l) => [l.customerAccount.trim().toUpperCase(), l.customerName])).entries()]
     .filter(([acc]) => acc)
@@ -531,6 +786,7 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
         ? pagedCustomers
         : { total: customerGroups.length, page, pageSize, rows: [] as ReturnType<typeof groupCustomers> },
     attention,
+    movement,
   };
 }
 
@@ -541,6 +797,9 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
     include: { ...lineInclude, snapshot: true },
   });
   if (!current) throw new AuthError("Backorder line not found", "NOT_FOUND", 404);
+  if (current.changeStatus === "CLEARED") {
+    throw new AuthError("Cleared backorders are historical and have no current outstanding detail", "NOT_FOUND", 404);
+  }
   const [history, enriched] = await Promise.all([
     prisma.autopartBackorderLine.findMany({
       where: { identityKey: current.identityKey, snapshot: { status: "COMMITTED" } },
@@ -566,10 +825,73 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
   };
 }
 
+function movementCsv(movement: Autopart216vMovement, rows: BackorderMovementRowView[]) {
+  const header = [
+    "Movement",
+    "Status",
+    "Order No",
+    "Customer Account",
+    "Customer",
+    "Customer Order Ref",
+    "SKU",
+    "Description",
+    "Previous Qty",
+    "Current Qty",
+    "Change",
+    "Unit Value",
+    "Previous Value",
+    "Current Value",
+    "First Seen",
+    movement === "CLEARED" ? "Cleared At" : "Last Changed",
+    "Avail",
+    "Incoming",
+    "Stock Position",
+    "Product Type",
+  ];
+  const csv = [
+    header.join(","),
+    ...rows.map((r) =>
+      [
+        csvCell(AUTOPART_216V_MOVEMENT_LABEL[movement]),
+        csvCell(r.statusLabel),
+        csvCell(r.orderNumber),
+        csvCell(r.customerAccount),
+        csvCell(r.customerName),
+        csvCell(r.customerOrderRef),
+        csvCell(r.sku),
+        csvCell(r.description),
+        r.previousQty ?? "",
+        r.currentQty ?? "",
+        r.changeQty ?? "",
+        r.unitValue ?? "",
+        r.previousValue ?? "",
+        r.currentValue ?? "",
+        csvCell(r.firstSeenAt.slice(0, 10)),
+        csvCell((r.clearedAt ?? r.lastChangedAt).slice(0, 10)),
+        r.availQty ?? "",
+        r.incomingQty ?? "",
+        csvCell(r.positionLabel ?? ""),
+        csvCell(r.productKindLabel),
+      ].join(","),
+    ),
+  ].join("\n");
+  return {
+    filename: `autopart-216v-backorders-${movement.toLowerCase()}.csv`,
+    csv,
+    mime: "text/csv;charset=utf-8",
+  };
+}
+
 export async function exportBackordersCsv(actorUserId: string, raw: unknown = {}) {
   await requirePurchasingAccess(actorUserId);
   const input = listInput.parse(raw ?? {});
   const snapshot = await loadLatestSnapshot();
+  if (input.movement) {
+    const movementRows = snapshot
+      ? (await buildMovementRows(snapshot, enrichLines(snapshot.lines as unknown as LineRow[]), input.movement, input, new Date())).rows
+      : [];
+    return movementCsv(input.movement, movementRows);
+  }
   const rows = snapshot ? applyFilters(enrichLines(snapshot.lines as unknown as LineRow[]), input) : [];
   const header = [
     "Status",
