@@ -12,8 +12,9 @@ import {
   exportBackordersCsv,
   getBackorderLineDetail,
   getBackorderWorkspace,
+  updateBackorderFeedSettings,
 } from "@/server/purchasing/backorders";
-import { process216vEmailBatch } from "@/server/purchasing/backorder-poll";
+import { process216vEmailBatch, pollBackorderMailboxNow } from "@/server/purchasing/backorder-poll";
 import { getPurchasingSku } from "@/server/purchasing/service";
 import { suggestedPurchaseQty } from "@/domain/purchasing-forecast";
 
@@ -373,6 +374,13 @@ describe("216V matching, cover, RBAC, export", () => {
     const skuView = await getBackorderWorkspace(adminId, { view: "sku", q: sharedSku });
     expect(skuView.skus.rows[0]?.outstandingQty).toBe(16);
     expect(skuView.skus.rows[0]?.position).toBe("PART_STOCK_AVAILABLE");
+    expect(skuView.skus.rows[0]?.oldestAgeLabel).toMatch(/Seen for/);
+    expect(skuView.viewCounts.attention).toBe(skuView.attentionSummary.unique);
+
+    const enabled = await updateBackorderFeedSettings(adminId, { enabled: true });
+    expect(enabled.enabled).toBe(true);
+    const disabled = await updateBackorderFeedSettings(adminId, { enabled: false });
+    expect(disabled.enabled).toBe(false);
 
     const detail = await getBackorderLineDetail(adminId, mapped!.id);
     expect(detail.timeline.length).toBeGreaterThanOrEqual(1);
@@ -388,6 +396,19 @@ describe("216V matching, cover, RBAC, export", () => {
     const accounts = await getBackorderWorkspace(accountsId, { q: String(stamp) });
     expect(accounts.canManage).toBe(false);
     expect(accounts.lines.rows.length).toBeGreaterThan(0);
+    expect(accounts.freshness.source).toBe("MANUAL");
+    expect(accounts.freshness.sourceLabel).toBe("Manual upload");
+    expect(accounts.viewCounts.lines).toBe(accounts.lines.total);
+    expect(accounts.viewCounts.attention).toBe(accounts.attentionSummary.unique);
+    expect(accounts.skus.total).toBe(accounts.viewCounts.skus);
+    expect(accounts.customerGroups.total).toBe(accounts.viewCounts.customers);
+    const csvView = await exportBackordersCsv(accountsId, { q: catalogueSku });
+    expect(csvView.csv).toContain(catalogueSku);
+    await expect(updateBackorderFeedSettings(accountsId, { enabled: true })).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      confirmAutopart216vImport(accountsId, { text: live, filename: "216V-denied.csv", source: "MANUAL" }),
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(pollBackorderMailboxNow(accountsId)).rejects.toBeInstanceOf(AuthError);
   });
 
   it("does not N+1 AutopartProduct or Company per backorder line", async () => {
@@ -449,5 +470,9 @@ describe("216V matching, cover, RBAC, export", () => {
     expect(first.processed + first.duplicatesIgnored).toBeGreaterThanOrEqual(1);
     expect(second.duplicatesIgnored).toBeGreaterThanOrEqual(1);
     expect(second.processed).toBe(0);
+    const emailed = await getBackorderWorkspace(adminId, { q: unknownSku });
+    expect(emailed.freshness.source).toBe("EMAIL");
+    expect(emailed.freshness.sourceLabel).toBe("Mailbox poll");
   });
 });
+

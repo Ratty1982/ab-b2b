@@ -155,6 +155,75 @@ export function resolveAutopart216vFreshness(input: {
   };
 }
 
+export const AUTOPART_216V_SOURCE_LABEL: Record<string, string> = {
+  MANUAL: "Manual upload",
+  EMAIL: "Mailbox poll",
+  SCHEDULE: "Autopart email",
+};
+
+export function label216vSnapshotSource(source: string | null | undefined): string | null {
+  const raw = String(source ?? "").trim();
+  if (!raw) return null;
+  return AUTOPART_216V_SOURCE_LABEL[raw.toUpperCase()] ?? raw;
+}
+
+export type Autopart216vFeedHeadline =
+  | "CURRENT"
+  | "WAITING_FOR_TODAYS_REPORT"
+  | "REPORT_OVERDUE"
+  | "IMPORT_FAILED"
+  | "NO_SNAPSHOT";
+
+export const AUTOPART_216V_FEED_HEADLINE_LABEL: Record<Autopart216vFeedHeadline, string> = {
+  CURRENT: "CURRENT",
+  WAITING_FOR_TODAYS_REPORT: "WAITING FOR TODAY'S REPORT",
+  REPORT_OVERDUE: "REPORT OVERDUE",
+  IMPORT_FAILED: "IMPORT FAILED",
+  NO_SNAPSHOT: "WAITING FOR TODAY'S REPORT",
+};
+
+/**
+ * Compact operational headline. Does not change stale/CURRENT freshness rules.
+ * Waiting for today's 18:00 file is not overdue.
+ */
+export function headline216vFeedHealth(input: {
+  status: Autopart216vFeedHealth;
+  stale: boolean;
+  lastError?: string | null;
+  lastBusinessDate: string | null;
+  now?: Date;
+}): { key: Autopart216vFeedHeadline; label: string; tone: "good" | "warn" | "bad" } {
+  const now = input.now ?? new Date();
+  if (input.lastError && (input.stale || input.status === "NO_SNAPSHOT")) {
+    return { key: "IMPORT_FAILED", label: AUTOPART_216V_FEED_HEADLINE_LABEL.IMPORT_FAILED, tone: "bad" };
+  }
+  if (input.status === "EXPECTED_REPORT_NOT_RECEIVED") {
+    return { key: "REPORT_OVERDUE", label: AUTOPART_216V_FEED_HEADLINE_LABEL.REPORT_OVERDUE, tone: "bad" };
+  }
+  if (input.status === "NO_SNAPSHOT") {
+    return { key: "NO_SNAPSHOT", label: AUTOPART_216V_FEED_HEADLINE_LABEL.NO_SNAPSHOT, tone: "warn" };
+  }
+  const local = londonCivilTime(now);
+  const today = londonBusinessDate(local);
+  const working = isLondonWorkingDayOngoing(now);
+  const minutes = local.hour * 60 + local.minute;
+  const beforeTodayDue = minutes < AUTOPART_216V_SCHEDULE_HOUR * 60;
+  if (
+    working &&
+    beforeTodayDue &&
+    input.lastBusinessDate &&
+    input.lastBusinessDate < today &&
+    input.status === "CURRENT"
+  ) {
+    return {
+      key: "WAITING_FOR_TODAYS_REPORT",
+      label: AUTOPART_216V_FEED_HEADLINE_LABEL.WAITING_FOR_TODAYS_REPORT,
+      tone: "warn",
+    };
+  }
+  return { key: "CURRENT", label: AUTOPART_216V_FEED_HEADLINE_LABEL.CURRENT, tone: "good" };
+}
+
 export function due216vPollWindow(now = new Date(), scheduleHour = AUTOPART_216V_SCHEDULE_HOUR): boolean {
   if (!isLondonWorkingDayOngoing(now)) return false;
   const local = londonCivilTime(now);

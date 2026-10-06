@@ -26,7 +26,7 @@ import {
   type Autopart216vAttentionId,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
-import { next216vExpectedLabel, resolveAutopart216vFreshness } from "@/domain/autopart-216v-freshness";
+import { next216vExpectedLabel, resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
 import { requireBackorderManage } from "@/server/purchasing/backorder-import";
 
 const listInput = z.object({
@@ -312,6 +312,8 @@ function groupSkus(rows: BackorderLineView[]) {
         positionLabel: first.positionLabel,
         coverSummary: first.coverSummary,
         incomingHasEta: false as const,
+        oldestAgeDays: Math.max(...lines.map((l) => l.ageDays)),
+        oldestAgeLabel: firstSeenAgeLabel(Math.max(...lines.map((l) => l.ageDays))),
         lines,
       };
     })
@@ -345,6 +347,7 @@ function groupCustomers(rows: BackorderLineView[]) {
         oldestAgeDays: oldest,
         oldestAgeLabel: firstSeenAgeLabel(oldest),
         stockCoverIssues: coverIssues,
+        attentionCount: lines.filter((l) => l.attention.length > 0).length,
         lineRows: lines,
       };
     })
@@ -444,6 +447,16 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     HIGH_VALUE: filtered.filter((l) => l.attention.includes("HIGH_VALUE")),
   };
 
+  const uniqueAttentionIds = new Set(filtered.filter((l) => l.attention.length > 0).map((l) => l.id));
+  const attentionSummary = {
+    STOCK_NOW_AVAILABLE: attention.STOCK_NOW_AVAILABLE.length,
+    NO_STOCK_NO_INCOMING: attention.NO_STOCK_NO_INCOMING.length,
+    INCOMING_DOES_NOT_COVER: attention.INCOMING_DOES_NOT_COVER.length,
+    LONG_STANDING: attention.LONG_STANDING.length,
+    HIGH_VALUE: attention.HIGH_VALUE.length,
+    unique: uniqueAttentionIds.size,
+  };
+
   const pagedLines = paginate(filtered, page, pageSize);
   const pagedSkus = paginate(skuGroups, page, pageSize);
   const pagedCustomers = paginate(customerGroups, page, pageSize);
@@ -458,12 +471,20 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     canManage: hasPermission(profile, "purchasing.manage"),
     freshness: {
       ...freshness,
+      headline: headline216vFeedHealth({
+        status: freshness.status,
+        stale: freshness.stale,
+        lastError: settings.lastError,
+        lastBusinessDate,
+      }),
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",
       nextExpectedLabel: next216vExpectedLabel(now),
       filename: snapshot?.filename ?? null,
       emptyValid: snapshot?.emptyValid ?? false,
+      source: snapshot?.source ?? null,
+      sourceLabel: label216vSnapshotSource(snapshot?.source ?? null),
     },
     feed: {
       enabled: settings.enabled,
@@ -496,6 +517,13 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     brands,
     customers,
     view,
+    viewCounts: {
+      lines: filtered.length,
+      skus: skuGroups.length,
+      customers: customerGroups.length,
+      attention: attentionSummary.unique,
+    },
+    attentionSummary,
     lines: view === "lines" ? pagedLines : { total: filtered.length, page, pageSize, rows: [] as BackorderLineView[] },
     skus: view === "sku" ? pagedSkus : { total: skuGroups.length, page, pageSize, rows: [] as ReturnType<typeof groupSkus> },
     customerGroups:

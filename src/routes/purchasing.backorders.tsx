@@ -1,7 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import {
+  AlertTriangle,
+  Boxes,
+  ClipboardList,
+  Settings,
+  Users,
+} from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Drawer } from "@/components/ab/Drawer";
+import { StatusBadge } from "@/components/ab/Badges";
+import { cn } from "@/lib/utils";
 import {
   EmptyState,
   ErrorState,
@@ -22,8 +31,10 @@ import {
   BACKORDER_STATUS_FILTERS,
   ChangeStatusBadge,
   StockPositionBadge,
+  activeBackorderFilterChips,
   mergeBackorderSearch,
   parseBackorderSearch,
+  stockPositionHeadline,
   type BackorderSearch,
   type BackorderSearchPatch,
 } from "@/components/purchasing/backorders";
@@ -64,10 +75,12 @@ function BackordersPage() {
   const [q, setQ] = useState(search.q ?? "");
   const [detail, setDetail] = useState<LineDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const view = search.view ?? "lines";
+  const uploadId = useId();
 
   useEffect(() => {
     setQ(search.q ?? "");
@@ -177,6 +190,7 @@ function BackordersPage() {
   }
 
   const current = data?.current;
+  const counts = data?.viewCounts;
 
   return (
     <>
@@ -184,55 +198,68 @@ function BackordersPage() {
         title="Backorders"
         sub="Current Autopart 216V outstanding position. Avail and Incoming come from 231PO3NEW and are not reservations."
         crumbs={[{ label: "Purchasing", to: ROUTES.purchasing }, { label: "Backorders" }]}
+        actions={
+          <button
+            type="button"
+            className={btnClass}
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Open backorder settings"
+          >
+            <Settings className="mr-2 size-3.5" aria-hidden />
+            Backorder Settings
+          </button>
+        }
       />
       {error ? <ErrorState message={error} /> : null}
       {data?.freshness ? <FreshnessBar freshness={data.freshness} /> : null}
-      {current ? <Metrics current={current} /> : null}
-      <div className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
-        {(
-          [
-            ["lines", "Lines"],
-            ["sku", "By product / SKU"],
-            ["customer", "By customer"],
-            ["attention", "Attention"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            className={view === id ? primaryBtnClass : btnClass}
-            onClick={() => patch({ view: id, page: undefined })}
-          >
-            {label}
-          </button>
-        ))}
-        <button type="button" className={btnClass} disabled={exporting} onClick={() => void exportCsv()}>
-          {exporting ? "Exporting…" : "Export CSV"}
-        </button>
-        {data?.canManage ? (
-          <>
-            <label className={btnClass}>
-              Upload 216V
-              <input
-                type="file"
-                accept=".csv,.txt,text/csv,text/plain"
-                className="sr-only"
-                disabled={busy}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void onUpload(file);
-                  e.currentTarget.value = "";
-                }}
-              />
-            </label>
-            <button type="button" className={btnClass} disabled={busy} onClick={() => void pollNow()}>
-              Poll mailbox
-            </button>
-            <button type="button" className={btnClass} disabled={busy} onClick={() => void saveFeed(!data.feed.enabled)}>
-              Auto-import {data.feed.enabled ? "ON" : "OFF"}
-            </button>
-          </>
-        ) : null}
+      {current && data ? (
+        <Metrics current={current} attentionCount={data.attentionSummary.unique} />
+      ) : null}
+      {data?.current && data.attentionSummary.unique > 0 ? (
+        <AttentionSummary summary={data.attentionSummary} onView={() => patch({ view: "attention", page: undefined })} />
+      ) : null}
+      <div className="grid gap-2 border-b border-border/70 px-4 py-3 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
+        <ViewCard
+          id="lines"
+          label="Lines"
+          hint="All backorders"
+          count={counts?.lines ?? current?.outstandingLines ?? 0}
+          icon={ClipboardList}
+          accent="cyan"
+          active={view === "lines"}
+          onSelect={() => patch({ view: "lines", page: undefined })}
+        />
+        <ViewCard
+          id="sku"
+          label="Products"
+          hint="SKU pressure"
+          count={counts?.skus ?? 0}
+          icon={Boxes}
+          accent="steel"
+          active={view === "sku"}
+          onSelect={() => patch({ view: "sku", page: undefined })}
+        />
+        <ViewCard
+          id="customer"
+          label="Customers"
+          hint="Customer impact"
+          count={counts?.customers ?? 0}
+          icon={Users}
+          accent="info"
+          active={view === "customer"}
+          onSelect={() => patch({ view: "customer", page: undefined })}
+        />
+        <ViewCard
+          id="attention"
+          label="Attention"
+          hint="Needs review"
+          count={counts?.attention ?? 0}
+          icon={AlertTriangle}
+          accent="attention"
+          strong={Boolean(counts?.attention)}
+          active={view === "attention"}
+          onSelect={() => patch({ view: "attention", page: undefined })}
+        />
       </div>
       <Filters search={search} q={q} setQ={setQ} data={data} patch={patch} />
       {!data && !error ? <LoadingState label="Loading backorders…" /> : null}
@@ -253,6 +280,24 @@ function BackordersPage() {
       ) : null}
       {data && current && view === "attention" ? <AttentionBoard data={data} onOpen={openLine} /> : null}
       <Drawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        title="Backorder Settings"
+        sub="216V feed and export. Everyday backorder work stays on this page."
+        width="md"
+      >
+        <SettingsBody
+          data={data}
+          busy={busy}
+          exporting={exporting}
+          uploadId={uploadId}
+          onExport={() => void exportCsv()}
+          onPoll={() => void pollNow()}
+          onToggle={() => void saveFeed(!data?.feed.enabled)}
+          onUpload={onUpload}
+        />
+      </Drawer>
+      <Drawer
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
         title={detail?.line.orderNumber ?? "Backorder"}
@@ -266,35 +311,201 @@ function BackordersPage() {
 }
 
 function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
+  const headline = freshness.headline;
+  const toneClass =
+    headline.tone === "good"
+      ? "border-good/40 bg-good/10"
+      : headline.tone === "bad"
+        ? "border-destructive/40 bg-destructive/10"
+        : "border-warn/40 bg-warn/10";
+  const dot =
+    headline.tone === "good" ? "bg-good" : headline.tone === "bad" ? "bg-destructive" : "bg-warn";
   return (
-    <div className={`border-b px-4 py-3 text-[13px] sm:px-6 ${freshness.stale ? "border-warn/40 bg-warn/10 text-ink" : "border-border/70 text-steel"}`}>
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span className="font-semibold uppercase tracking-[0.12em] text-[10px] text-ink">216V feed · {freshness.status.replaceAll("_", " ")}</span>
-        <span>Last 216V received: {freshness.lastReceivedLabel}</span>
-        <span>Next expected report: {freshness.nextExpectedLabel}</span>
-        {freshness.filename ? <span>File: {freshness.filename}</span> : null}
+    <div className={cn("border-b px-4 py-3 text-[13px] sm:px-6", toneClass)}>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <p className="flex items-center gap-2 font-semibold uppercase tracking-[0.12em] text-[11px] text-ink">
+          <span className={cn("size-2 rounded-full", dot)} aria-hidden />
+          <span>{headline.label}</span>
+        </p>
+        <span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot</span>{" "}
+          {freshness.lastReceivedLabel}
+        </span>
+        {freshness.sourceLabel ? (
+          <span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Source</span>{" "}
+            {freshness.sourceLabel}
+          </span>
+        ) : null}
+        {freshness.filename ? (
+          <span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">File</span>{" "}
+            {freshness.filename}
+          </span>
+        ) : null}
+        <span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Next automatic report</span>{" "}
+          {freshness.nextExpectedLabel}
+        </span>
       </div>
       {freshness.warning ? <p className="mt-1">{freshness.warning}</p> : null}
-      <p className="mt-1 text-[12px]">
-        This feed arrives once per working day around 18:00 Europe/London. Weekends do not expect a Saturday or Sunday report. A missing file never clears yesterday&apos;s backorders.
-      </p>
     </div>
   );
 }
 
-function Metrics({ current }: { current: NonNullable<Data["current"]> }) {
+function Metrics({
+  current,
+  attentionCount,
+}: {
+  current: NonNullable<Data["current"]>;
+  attentionCount: number;
+}) {
   return (
-    <div className="grid gap-3 border-b border-border/70 px-4 py-4 sm:grid-cols-5 sm:px-6">
-      <Metric label="Outstanding Orders" value={qty(current.outstandingOrders)} />
-      <Metric label="Outstanding Lines" value={qty(current.outstandingLines)} />
-      <Metric label="Customers" value={qty(current.customers)} />
-      <Metric label="Outstanding Units" value={qty(current.outstandingUnits)} />
-      <Metric label="Outstanding Value" value={gbp(current.outstandingValue)} />
-      <Metric label="New Today" value={qty(current.newToday)} />
-      <Metric label="Cleared Since Previous Report" value={qty(current.clearedSincePrevious)} />
-      <Metric label="Reduced Since Previous Report" value={qty(current.reducedSincePrevious)} />
-      <Metric label="Increased Since Previous Report" value={qty(current.increasedSincePrevious)} />
+    <div className="grid gap-3 border-b border-border/70 px-4 py-4 sm:px-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Outstanding Orders" value={qty(current.outstandingOrders)} accent="cyan" />
+        <KpiCard label="Outstanding Units" value={qty(current.outstandingUnits)} accent="warn" emphasis />
+        <KpiCard label="Outstanding Value" value={gbp(current.outstandingValue)} accent="warn" emphasis />
+        <KpiCard label="Attention" value={qty(attentionCount)} accent={attentionCount > 0 ? "bad" : "steel"} emphasis={attentionCount > 0} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="New Today" value={qty(current.newToday)} accent="cyan" compact />
+        <KpiCard label="Increased" value={qty(current.increasedSincePrevious)} accent="warn" compact />
+        <KpiCard label="Reduced" value={qty(current.reducedSincePrevious)} accent="good" compact />
+        <KpiCard label="Cleared" value={qty(current.clearedSincePrevious)} accent="good" compact />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <KpiCard label="Outstanding Lines" value={qty(current.outstandingLines)} accent="steel" compact />
+        <KpiCard label="Customers" value={qty(current.customers)} accent="steel" compact />
+      </div>
     </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  accent,
+  compact,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  accent: "cyan" | "warn" | "good" | "bad" | "steel";
+  compact?: boolean;
+  emphasis?: boolean;
+}) {
+  const border =
+    accent === "cyan"
+      ? "border-l-cyan/70 bg-cyan/5"
+      : accent === "warn"
+        ? "border-l-warn/70 bg-warn/5"
+        : accent === "good"
+          ? "border-l-good/70 bg-good/5"
+          : accent === "bad"
+            ? "border-l-destructive/70 bg-destructive/5"
+            : "border-l-steel/50 bg-surface/60";
+  return (
+    <div className={cn("border border-border border-l-4 px-3 py-3", border, compact && "py-2")}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</div>
+      <div className={cn("num mt-1 font-display font-semibold", emphasis || !compact ? "text-2xl" : "text-lg")}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function AttentionSummary({
+  summary,
+  onView,
+}: {
+  summary: Data["attentionSummary"];
+  onView: () => void;
+}) {
+  const items = [
+    { n: summary.NO_STOCK_NO_INCOMING, label: "No stock or incoming" },
+    { n: summary.STOCK_NOW_AVAILABLE, label: "Stock available now" },
+    { n: summary.INCOMING_DOES_NOT_COVER, label: "Incoming does not cover" },
+    { n: summary.LONG_STANDING, label: "Long-standing" },
+    { n: summary.HIGH_VALUE, label: "High outstanding value" },
+  ].filter((item) => item.n > 0);
+  if (!items.length) return null;
+  return (
+    <section className="border-b border-border/70 px-4 py-3 sm:px-6" aria-label="Needs attention">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-warn">Needs attention</h2>
+          <ul className="mt-2 grid gap-1 text-[13px] sm:grid-cols-2">
+            {items.map((item) => (
+              <li key={item.label}>
+                <span className="num mr-2 font-display text-lg font-semibold">{item.n}</span>
+                {item.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <button type="button" className={primaryBtnClass} onClick={onView}>
+          View attention
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ViewCard({
+  id,
+  label,
+  hint,
+  count,
+  icon: Icon,
+  accent,
+  active,
+  strong,
+  onSelect,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  count: number;
+  icon: typeof ClipboardList;
+  accent: "cyan" | "steel" | "info" | "attention";
+  active: boolean;
+  strong?: boolean;
+  onSelect: () => void;
+}) {
+  const accentClass =
+    accent === "attention"
+      ? strong
+        ? "border-warn text-warn"
+        : "border-warn/40"
+      : accent === "cyan"
+        ? "border-cyan/50"
+        : accent === "info"
+          ? "border-cyan/30"
+          : "border-border";
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-label={`${label}, ${count}. ${hint}`}
+      onClick={onSelect}
+      className={cn(
+        "flex items-start justify-between gap-3 border px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        accentClass,
+        active ? "bg-secondary/80 ring-1 ring-foreground/20" : "bg-surface/40 hover:bg-secondary/40",
+      )}
+    >
+      <div>
+        <div className="flex items-center gap-2">
+          <Icon className="size-3.5 text-steel" aria-hidden />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">{label}</span>
+        </div>
+        <div className="mt-1 text-[12px] text-steel">{hint}</div>
+      </div>
+      <span className={cn("num font-display text-2xl font-semibold", id === "attention" && count > 0 && "text-warn")}>
+        {qty(count)}
+      </span>
+    </button>
   );
 }
 
@@ -311,58 +522,231 @@ function Filters({
   data: Data | null;
   patch: (next: BackorderSearchPatch) => void;
 }) {
+  const chips = activeBackorderFilterChips(search);
   return (
-    <form
-      className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6"
-      onSubmit={(event) => {
-        event.preventDefault();
-        patch({ q: q.trim() || undefined, page: undefined });
-      }}
-    >
-      <input className={`${controlClass} min-w-[220px]`} placeholder="Search order, customer, account, SKU, description, ref" value={q} onChange={(e) => setQ(e.target.value)} />
-      <select className={controlClass} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })}>
-        {BACKORDER_STATUS_FILTERS.map((opt) => (
-          <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-      <select className={controlClass} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })}>
-        {BACKORDER_POSITION_FILTERS.map((opt) => (
-          <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-      <select className={controlClass} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })}>
-        {BACKORDER_AGE_FILTERS.map((opt) => (
-          <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
-      <select className={controlClass} value={search.customerAccount ?? ""} onChange={(e) => patch({ customerAccount: e.target.value || undefined, page: undefined })}>
-        <option value="">All customers</option>
-        {(data?.customers ?? []).map((c) => (
-          <option key={c.account} value={c.account}>{c.name} ({c.account})</option>
-        ))}
-      </select>
-      <select className={controlClass} value={search.brand ?? ""} onChange={(e) => patch({ brand: e.target.value || undefined, page: undefined })}>
-        <option value="">All brands</option>
-        {(data?.brands ?? []).map((brand) => (
-          <option key={brand} value={brand}>{brand}</option>
-        ))}
-      </select>
-      <select className={controlClass} value={search.catalogueType ?? ""} onChange={(e) => patch({ catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined, page: undefined })}>
-        <option value="">All catalogue types</option>
-        <option value="CATALOGUE">Catalogue</option>
-        <option value="EXTERNAL">External product</option>
-        <option value="HISTORIC_ONLY">Historic/not current</option>
-      </select>
-      <button type="submit" className={btnClass}>Search</button>
-    </form>
+    <div className="border-b border-border/70 px-4 py-3 sm:px-6">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">Filters</div>
+      <div className="mb-3 flex flex-wrap gap-2">
+        <QuickFilter
+          label="Needs Attention"
+          active={search.view === "attention"}
+          onClick={() => patch({ view: "attention", page: undefined })}
+        />
+        <QuickFilter
+          label="Stock Available"
+          active={search.position === "STOCK_AVAILABLE"}
+          onClick={() => patch({ position: search.position === "STOCK_AVAILABLE" ? undefined : "STOCK_AVAILABLE", page: undefined })}
+        />
+        <QuickFilter
+          label="No Stock / No Incoming"
+          active={search.position === "NO_STOCK_NO_INCOMING"}
+          onClick={() =>
+            patch({
+              position: search.position === "NO_STOCK_NO_INCOMING" ? undefined : "NO_STOCK_NO_INCOMING",
+              page: undefined,
+            })
+          }
+        />
+        <QuickFilter
+          label="7+ Days"
+          active={search.ageDays === 7}
+          onClick={() => patch({ ageDays: search.ageDays === 7 ? undefined : 7, page: undefined })}
+        />
+      </div>
+      <form
+        className="flex flex-wrap gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          patch({ q: q.trim() || undefined, page: undefined });
+        }}
+      >
+        <input
+          className={`${controlClass} min-w-[240px] flex-1 sm:min-w-[380px]`}
+          placeholder="Search order, customer, account, SKU or reference…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Search order, customer, account, SKU or reference"
+        />
+        <select className={controlClass} value={search.status ?? ""} onChange={(e) => patch({ status: e.target.value || undefined, page: undefined })} aria-label="Status">
+          {BACKORDER_STATUS_FILTERS.map((opt) => (
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <select className={controlClass} value={search.position ?? ""} onChange={(e) => patch({ position: e.target.value || undefined, page: undefined })} aria-label="Stock position">
+          {BACKORDER_POSITION_FILTERS.map((opt) => (
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <select className={controlClass} value={search.ageDays ? String(search.ageDays) : ""} onChange={(e) => patch({ ageDays: e.target.value ? Number(e.target.value) : undefined, page: undefined })} aria-label="Age">
+          {BACKORDER_AGE_FILTERS.map((opt) => (
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <select className={controlClass} value={search.customerAccount ?? ""} onChange={(e) => patch({ customerAccount: e.target.value || undefined, page: undefined })} aria-label="Customer">
+          <option value="">All customers</option>
+          {(data?.customers ?? []).map((c) => (
+            <option key={c.account} value={c.account}>{c.name} ({c.account})</option>
+          ))}
+        </select>
+        <select className={controlClass} value={search.brand ?? ""} onChange={(e) => patch({ brand: e.target.value || undefined, page: undefined })} aria-label="Brand">
+          <option value="">All brands</option>
+          {(data?.brands ?? []).map((brand) => (
+            <option key={brand} value={brand}>{brand}</option>
+          ))}
+        </select>
+        <select className={controlClass} value={search.catalogueType ?? ""} onChange={(e) => patch({ catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined, page: undefined })} aria-label="Catalogue type">
+          <option value="">All catalogue types</option>
+          <option value="CATALOGUE">Catalogue</option>
+          <option value="EXTERNAL">External product</option>
+          <option value="HISTORIC_ONLY">Historic/not current</option>
+        </select>
+        <button type="submit" className={btnClass}>Search</button>
+      </form>
+      {chips.length ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {chips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              className="inline-flex items-center gap-1 border border-border bg-secondary/50 px-2 py-1 text-[11px] uppercase tracking-[0.08em] text-steel hover:border-primary"
+              onClick={() => patch({ [chip.key]: undefined, page: undefined })}
+            >
+              {chip.label} ×
+            </button>
+          ))}
+          <button
+            type="button"
+            className="text-[11px] font-semibold uppercase tracking-[0.12em] text-primary hover:underline"
+            onClick={() =>
+              patch({
+                q: undefined,
+                status: undefined,
+                position: undefined,
+                ageDays: undefined,
+                customerAccount: undefined,
+                brand: undefined,
+                catalogueType: undefined,
+                page: undefined,
+              })
+            }
+          >
+            Clear all
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function QuickFilter({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
-    <div>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</div>
-      <div className="mt-1 font-display text-xl font-semibold">{value}</div>
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "h-8 border px-3 text-[11px] font-semibold uppercase tracking-[0.12em]",
+        active ? "border-primary bg-primary/15 text-foreground" : "border-border bg-surface/40 text-steel hover:border-primary",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function SettingsBody({
+  data,
+  busy,
+  exporting,
+  uploadId,
+  onExport,
+  onPoll,
+  onToggle,
+  onUpload,
+}: {
+  data: Data | null;
+  busy: boolean;
+  exporting: boolean;
+  uploadId: string;
+  onExport: () => void;
+  onPoll: () => void;
+  onToggle: () => void;
+  onUpload: (file: File) => void;
+}) {
+  const feed = data?.feed;
+  const freshness = data?.freshness;
+  return (
+    <div className="grid gap-6 text-[13px]">
+      <section>
+        <h3 className="font-display text-base font-semibold uppercase">Automatic import</h3>
+        <dl className="mt-3 grid gap-2">
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Status</dt>
+            <dd className="mt-1 flex items-center gap-2">
+              <span className={cn("size-2 rounded-full", feed?.enabled ? "bg-good" : "bg-steel")} aria-hidden />
+              {feed?.enabled ? "Enabled" : "Disabled"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Expected schedule</dt>
+            <dd className="mt-1">Once per working day around 18:00 Europe/London</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful report</dt>
+            <dd className="mt-1">{freshness?.lastReceivedLabel ?? "Never"}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot</dt>
+            <dd className="mt-1">{freshness?.filename ?? "—"}{freshness?.sourceLabel ? ` · ${freshness.sourceLabel}` : ""}</dd>
+          </div>
+        </dl>
+        {data?.canManage ? (
+          <button type="button" className={`${primaryBtnClass} mt-4`} disabled={busy} onClick={onToggle}>
+            {feed?.enabled ? "Disable automatic import" : "Enable automatic import"}
+          </button>
+        ) : (
+          <p className="mt-3 text-[12px] text-steel">purchasing.manage is required to change automatic import.</p>
+        )}
+      </section>
+      <section>
+        <h3 className="font-display text-base font-semibold uppercase">Manual actions</h3>
+        {data?.canManage ? (
+          <div className="mt-3 grid gap-3">
+            <div>
+              <button type="button" className={btnClass} disabled={busy} onClick={onPoll}>
+                Poll mailbox
+              </button>
+              <p className="mt-1 text-[12px] text-steel">Check the configured Autopart mailbox now.</p>
+            </div>
+            <div>
+              <input
+                id={uploadId}
+                type="file"
+                accept=".csv,.txt,text/csv,text/plain"
+                className="sr-only"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onUpload(file);
+                  e.currentTarget.value = "";
+                }}
+              />
+              <label htmlFor={uploadId} className={cn(btnClass, busy && "pointer-events-none opacity-50")}>
+                Upload 216V
+              </label>
+              <p className="mt-1 text-[12px] text-steel">Manually import an Autopart 216V CSV.</p>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-[12px] text-steel">Upload and mailbox poll require purchasing.manage.</p>
+        )}
+      </section>
+      <section>
+        <h3 className="font-display text-base font-semibold uppercase">Export</h3>
+        <button type="button" className={`${btnClass} mt-3`} disabled={exporting} onClick={onExport}>
+          {exporting ? "Exporting…" : "Export current view CSV"}
+        </button>
+      </section>
     </div>
   );
 }
@@ -374,6 +758,10 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dd>{value}</dd>
     </div>
   );
+}
+
+function QuietNote({ children }: { children: React.ReactNode }) {
+  return <div className="text-[11px] text-steel/80">{children}</div>;
 }
 
 function LinesTable({
@@ -388,52 +776,87 @@ function LinesTable({
     <>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1280px] text-left text-[13px]">
-          <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
-            <tr>
+          <thead className="sticky top-0 z-10 bg-surface text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+            <tr className="border-b border-border/80">
+              <th className="px-3 pt-2 pb-0" colSpan={2}>History</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={4}>Order</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={2}>Product</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>Backorder</th>
+              <th className="border-l border-border/60 px-3 pt-2 pb-0" colSpan={3}>Stock</th>
+              <th className="px-3 pt-2 pb-0"> </th>
+            </tr>
+            <tr className="bg-secondary/50">
               <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Backorder first seen</th>
-              <th className="px-3 py-2">Order No</th>
+              <th className="px-3 py-2">First seen</th>
+              <th className="sticky left-0 z-20 border-l border-border/60 bg-secondary/50 px-3 py-2">Order No</th>
               <th className="px-3 py-2">Customer</th>
               <th className="px-3 py-2">Customer Account</th>
               <th className="px-3 py-2">Customer Order Ref</th>
-              <th className="px-3 py-2">Product</th>
+              <th className="border-l border-border/60 px-3 py-2">Product</th>
               <th className="px-3 py-2">SKU</th>
-              <th className="px-3 py-2">Outstanding Qty</th>
-              <th className="px-3 py-2">Unit Value</th>
-              <th className="px-3 py-2">Outstanding Value</th>
-              <th className="px-3 py-2">Available</th>
-              <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>Incoming</th>
+              <th className="border-l border-border/60 px-3 py-2 text-right">Outstanding Qty</th>
+              <th className="px-3 py-2 text-right">Unit Value</th>
+              <th className="px-3 py-2 text-right">Outstanding Value</th>
+              <th className="border-l border-border/60 px-3 py-2 text-right">Available</th>
+              <th className="px-3 py-2 text-right" title={INCOMING_SOURCE_HINT}>Incoming</th>
               <th className="px-3 py-2">Position</th>
               <th className="px-3 py-2">Last Changed</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className="cursor-pointer border-t border-border/70 hover:bg-secondary/30" onClick={() => onOpen(row.id)}>
-                <td className="px-3 py-2"><ChangeStatusBadge status={row.status} label={row.statusLabel} /></td>
-                <td className="px-3 py-2">{row.ageLabel}</td>
-                <td className="px-3 py-2 font-mono text-[12px]">{row.orderNumber}</td>
-                <td className="px-3 py-2">
+            {rows.map((row, i) => (
+              <tr
+                key={row.id}
+                className={cn(
+                  "cursor-pointer border-t border-border/80 hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  i % 2 === 1 && "bg-secondary/20",
+                )}
+                tabIndex={0}
+                onClick={() => onOpen(row.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpen(row.id);
+                  }
+                }}
+              >
+                <td className="px-3 py-2.5"><ChangeStatusBadge status={row.status} label={row.statusLabel} /></td>
+                <td className="px-3 py-2.5">{row.ageLabel}</td>
+                <td className={cn("sticky left-0 z-10 px-3 py-2.5 font-mono text-[12px] font-semibold", i % 2 === 1 ? "bg-secondary/20" : "bg-background")}>
+                  {row.orderNumber}
+                </td>
+                <td className="px-3 py-2.5">
                   {row.companyId ? (
                     <Link className="text-primary underline-offset-2 hover:underline" to="/admin/customers/$id" params={{ id: row.companyId }}>{row.customerName}</Link>
                   ) : (
-                    <><span>{row.customerName}</span><div className="text-[11px] text-steel">Unmapped account</div></>
+                    <>
+                      <span>{row.customerName}</span>
+                      <QuietNote>Unmapped account</QuietNote>
+                    </>
                   )}
                 </td>
-                <td className="px-3 py-2 font-mono text-[12px]">{row.customerAccount}</td>
-                <td className="px-3 py-2">{row.customerOrderRef || "—"}</td>
-                <td className="px-3 py-2">{row.description}<div className="text-[11px] text-steel">{row.productKindLabel}</div></td>
-                <td className="px-3 py-2 font-mono text-[12px]">{row.sku}</td>
-                <td className="px-3 py-2">{qty(row.outstandingQty)}</td>
-                <td className="px-3 py-2">{gbp(row.unitValue)}</td>
-                <td className="px-3 py-2">{gbp(row.outstandingValue)}</td>
-                <td className="px-3 py-2">{row.availQty == null ? "—" : qty(row.availQty)}</td>
-                <td className="px-3 py-2">{row.incomingQty == null ? "—" : qty(row.incomingQty)}</td>
-                <td className="px-3 py-2">
-                  <StockPositionBadge position={row.position} label={row.positionLabel} />
-                  <div className="mt-1 max-w-[220px] text-[11px] text-steel">{row.coverSummary}</div>
+                <td className="px-3 py-2.5 font-mono text-[12px]">{row.customerAccount}</td>
+                <td className="max-w-[140px] truncate px-3 py-2.5" title={row.customerOrderRef || undefined}>
+                  {row.customerOrderRef || "—"}
                 </td>
-                <td className="px-3 py-2">{formatOperationalDateTime(row.lastChangedAt) ?? ukDate(row.lastChangedAt)}</td>
+                <td className="max-w-[220px] px-3 py-2.5">
+                  <span className="block truncate" title={row.description}>{row.description}</span>
+                  {row.productKind === "EXTERNAL" ? (
+                    <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">External product</StatusBadge>
+                  ) : (
+                    <QuietNote>{row.productKindLabel}</QuietNote>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{row.sku}</td>
+                <td className="num px-3 py-2.5 text-right text-base font-semibold">{qty(row.outstandingQty)}</td>
+                <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.unitValue)}</td>
+                <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.outstandingValue)}</td>
+                <td className="num px-3 py-2.5 text-right text-base font-semibold">{row.availQty == null ? "—" : qty(row.availQty)}</td>
+                <td className="num px-3 py-2.5 text-right text-base font-semibold">{row.incomingQty == null ? "—" : qty(row.incomingQty)}</td>
+                <td className="px-3 py-2.5">
+                  <PositionCell row={row} />
+                </td>
+                <td className="px-3 py-2.5">{formatOperationalDateTime(row.lastChangedAt) ?? ukDate(row.lastChangedAt)}</td>
               </tr>
             ))}
           </tbody>
@@ -441,6 +864,24 @@ function LinesTable({
       </div>
       <Pager page={page} pageSize={pageSize} total={total} onPage={onPage} />
     </>
+  );
+}
+
+function PositionCell({ row }: { row: Pick<LineRow, "position" | "positionLabel" | "coverSummary" | "availQty" | "incomingQty" | "outstandingQty"> }) {
+  const title = stockPositionHeadline(row.position);
+    const support =
+    row.position === "STOCK_AVAILABLE"
+      ? `${qty(row.availQty)} available against ${qty(row.outstandingQty)} backordered. Review allocation/despatch.`
+      : row.position === "NO_STOCK_NO_INCOMING"
+        ? `${qty(row.outstandingQty)} units currently backordered.`
+        : row.position === "INCOMING_COVERS"
+          ? `${qty(row.incomingQty)} incoming against ${qty(row.outstandingQty)} backordered. Arrival date not available.`
+          : row.coverSummary;
+  return (
+    <div className="max-w-[240px]">
+      <StockPositionBadge position={row.position} label={title} />
+      <div className="mt-1 text-[11px] text-steel">{support}</div>
+    </div>
   );
 }
 
@@ -455,41 +896,60 @@ function SkuTable({
     <>
       <div className="grid gap-3 px-4 py-4 sm:px-6">
         {groups.map((group) => (
-          <section key={group.partMatchKey} className="border border-border">
-            <button type="button" className="flex w-full flex-wrap items-start justify-between gap-3 px-4 py-3 text-left" onClick={() => onExpand(expanded === group.partMatchKey ? null : group.partMatchKey)}>
-              <div>
-                <div className="font-mono text-[13px]">{group.sku}</div>
+          <section key={group.partMatchKey} className="border border-border bg-surface/40">
+            <button type="button" className="flex w-full flex-wrap items-start justify-between gap-4 px-4 py-4 text-left" onClick={() => onExpand(expanded === group.partMatchKey ? null : group.partMatchKey)}>
+              <div className="min-w-0">
+                <div className="font-mono text-[15px] font-semibold">{group.sku}</div>
                 <div className="font-display text-lg font-semibold uppercase">{group.description}</div>
-                <div className="text-[12px] text-steel">{group.productKindLabel}</div>
+                {group.productKind === "EXTERNAL" ? (
+                  <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">External product</StatusBadge>
+                ) : (
+                  <QuietNote>{group.productKindLabel}</QuietNote>
+                )}
+                <div className="mt-3">
+                  <div className="num font-display text-2xl font-semibold">{qty(group.outstandingQty)} backordered</div>
+                  <div className="text-[12px] text-steel">{qty(group.orders)} order · {qty(group.customers)} customer{group.customers === 1 ? "" : "s"}</div>
+                </div>
               </div>
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-[13px] sm:grid-cols-4">
-                <Fact label="Outstanding across customers" value={qty(group.outstandingQty)} />
-                <Fact label="Orders" value={qty(group.orders)} />
-                <Fact label="Customers" value={qty(group.customers)} />
-                <Fact label="Avail" value={group.availQty == null ? "—" : qty(group.availQty)} />
+              <dl className="grid min-w-[220px] grid-cols-2 gap-x-6 gap-y-2 text-[13px]">
+                <Fact label="Available" value={group.availQty == null ? "—" : qty(group.availQty)} />
                 <Fact label="Incoming" value={group.incomingQty == null ? "—" : qty(group.incomingQty)} />
-                <Fact label="Position" value={group.positionLabel} />
+                <Fact label="Oldest first seen" value={group.oldestAgeLabel} />
+                <div className="col-span-2">
+                  <PositionCell
+                    row={{
+                      position: group.position,
+                      positionLabel: group.positionLabel,
+                      coverSummary: group.coverSummary,
+                      availQty: group.availQty,
+                      incomingQty: group.incomingQty,
+                      outstandingQty: group.outstandingQty,
+                    }}
+                  />
+                </div>
               </dl>
             </button>
-            <p className="border-t border-border/70 px-4 py-2 text-[12px] text-steel">{group.coverSummary}</p>
             {expanded === group.partMatchKey ? (
               <table className="w-full text-left text-[13px]">
                 <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
                   <tr>
                     <th className="px-3 py-2">Order</th>
                     <th className="px-3 py-2">Customer</th>
-                    <th className="px-3 py-2">Qty</th>
-                    <th className="px-3 py-2">Value</th>
+                    <th className="px-3 py-2 text-right">Qty</th>
+                    <th className="px-3 py-2 text-right">Value</th>
                     <th className="px-3 py-2">First seen</th>
                   </tr>
                 </thead>
                 <tbody>
                   {group.lines.map((line) => (
-                    <tr key={line.id} className="cursor-pointer border-t border-border/70 hover:bg-secondary/30" onClick={() => onOpen(line.id)}>
-                      <td className="px-3 py-2 font-mono text-[12px]">{line.orderNumber}</td>
-                      <td className="px-3 py-2">{line.customerName}{line.unmapped ? <span className="ml-2 text-[11px] text-steel">Unmapped account</span> : null}</td>
-                      <td className="px-3 py-2">{qty(line.outstandingQty)}</td>
-                      <td className="px-3 py-2">{gbp(line.outstandingValue)}</td>
+                    <tr key={line.id} className="cursor-pointer border-t border-border/70 hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" tabIndex={0} onClick={() => onOpen(line.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(line.id); } }}>
+                      <td className="px-3 py-2 font-mono text-[12px] font-semibold">{line.orderNumber}</td>
+                      <td className="px-3 py-2">
+                        {line.customerName}
+                        {line.unmapped ? <span className="ml-2 text-[11px] text-steel/80">Unmapped account</span> : null}
+                      </td>
+                      <td className="num px-3 py-2 text-right font-semibold">{qty(line.outstandingQty)}</td>
+                      <td className="num px-3 py-2 text-right text-steel">{gbp(line.outstandingValue)}</td>
                       <td className="px-3 py-2">{line.ageLabel}</td>
                     </tr>
                   ))}
@@ -515,36 +975,46 @@ function CustomerTable({
     <>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] text-left text-[13px]">
-          <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+          <thead className="sticky top-0 z-10 bg-secondary/50 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
             <tr>
               <th className="px-3 py-2">Customer</th>
-              <th className="px-3 py-2">Account</th>
-              <th className="px-3 py-2">Orders</th>
-              <th className="px-3 py-2">Lines</th>
-              <th className="px-3 py-2">Units</th>
-              <th className="px-3 py-2">Outstanding Value</th>
+              <th className="px-3 py-2">Autopart account</th>
+              <th className="px-3 py-2 text-right">Orders</th>
+              <th className="px-3 py-2 text-right">Lines</th>
+              <th className="px-3 py-2 text-right">Units</th>
+              <th className="px-3 py-2 text-right">Outstanding Value</th>
               <th className="px-3 py-2">Oldest first seen</th>
-              <th className="px-3 py-2">Stock-cover issues</th>
+              <th className="px-3 py-2">Attention issues</th>
             </tr>
           </thead>
           <tbody>
-            {groups.map((group) => (
-              <tr key={group.customerAccount} className="border-t border-border/70 align-top">
-                <td className="px-3 py-2">
+            {groups.map((group, i) => (
+              <tr key={group.customerAccount} className={cn("border-t border-border/80 align-top", i % 2 === 1 && "bg-secondary/20")}>
+                <td className="px-3 py-2.5">
                   {group.companyId ? (
                     <Link className="text-primary underline-offset-2 hover:underline" to="/admin/customers/$id" params={{ id: group.companyId }}>{group.customerName}</Link>
                   ) : (
-                    <><span>{group.customerName}</span><div className="text-[11px] text-steel">Unmapped account</div></>
+                    <>
+                      <span>{group.customerName}</span>
+                      <QuietNote>Unmapped account</QuietNote>
+                    </>
                   )}
                 </td>
-                <td className="px-3 py-2 font-mono text-[12px]">{group.customerAccount}</td>
-                <td className="px-3 py-2">{qty(group.orders)}</td>
-                <td className="px-3 py-2">{qty(group.lines)}</td>
-                <td className="px-3 py-2">{qty(group.units)}</td>
-                <td className="px-3 py-2">{gbp(group.outstandingValue)}</td>
-                <td className="px-3 py-2">{group.oldestAgeLabel}</td>
-                <td className="px-3 py-2 text-[12px] text-steel">
-                  {group.stockCoverIssues.length ? group.stockCoverIssues.join(" · ") : "None"}
+                <td className="px-3 py-2.5 font-mono text-[12px]">{group.customerAccount}</td>
+                <td className="num px-3 py-2.5 text-right font-semibold">{qty(group.orders)}</td>
+                <td className="num px-3 py-2.5 text-right font-semibold">{qty(group.lines)}</td>
+                <td className="num px-3 py-2.5 text-right font-semibold">{qty(group.units)}</td>
+                <td className="num px-3 py-2.5 text-right text-steel">{gbp(group.outstandingValue)}</td>
+                <td className="px-3 py-2.5">{group.oldestAgeLabel}</td>
+                <td className="px-3 py-2.5 text-[12px] text-steel">
+                  {group.attentionCount > 0 ? (
+                    <span className="font-semibold text-warn">{qty(group.attentionCount)} need review</span>
+                  ) : (
+                    "None"
+                  )}
+                  {group.stockCoverIssues.length ? (
+                    <div className="mt-1 text-[11px]">{group.stockCoverIssues.join(" · ")}</div>
+                  ) : null}
                   <div className="mt-2 grid gap-1">
                     {group.lineRows.slice(0, 6).map((line) => (
                       <button key={line.id} type="button" className="text-left text-primary hover:underline" onClick={() => onOpen(line.id)}>
@@ -565,19 +1035,58 @@ function CustomerTable({
 
 function AttentionBoard({ data, onOpen }: { data: Data; onOpen: (id: string) => void }) {
   const sections = [
-    { id: "STOCK_NOW_AVAILABLE" as const, title: "STOCK NOW AVAILABLE", copy: "Stock available in Autopart — review allocation/despatch. This does not confirm the order can be fulfilled.", rows: data.attention.STOCK_NOW_AVAILABLE },
-    { id: "NO_STOCK_NO_INCOMING" as const, title: "NO STOCK / NO INCOMING", copy: data.attention.rules.find((r) => r.id === "NO_STOCK_NO_INCOMING")?.rule ?? "", rows: data.attention.NO_STOCK_NO_INCOMING },
-    { id: "INCOMING_DOES_NOT_COVER" as const, title: "INCOMING DOES NOT COVER TOTAL BACKORDER", copy: data.attention.rules.find((r) => r.id === "INCOMING_DOES_NOT_COVER")?.rule ?? "", rows: data.attention.INCOMING_DOES_NOT_COVER },
-    { id: "LONG_STANDING" as const, title: "LONG-STANDING BACKORDER", copy: data.attention.rules.find((r) => r.id === "LONG_STANDING")?.rule ?? "", rows: data.attention.LONG_STANDING },
-    { id: "HIGH_VALUE" as const, title: "HIGH OUTSTANDING VALUE", copy: data.attention.rules.find((r) => r.id === "HIGH_VALUE")?.rule ?? "", rows: data.attention.HIGH_VALUE },
+    {
+      id: "STOCK_NOW_AVAILABLE" as const,
+      title: "STOCK AVAILABLE — REVIEW",
+      copy: "Stock available in Autopart — review allocation/despatch. Avail is not a reservation and does not confirm the order can be fulfilled.",
+      rows: data.attention.STOCK_NOW_AVAILABLE,
+      tone: "warn" as const,
+    },
+    {
+      id: "NO_STOCK_NO_INCOMING" as const,
+      title: "NO STOCK / NO INCOMING",
+      copy: data.attention.rules.find((r) => r.id === "NO_STOCK_NO_INCOMING")?.rule ?? "",
+      rows: data.attention.NO_STOCK_NO_INCOMING,
+      tone: "bad" as const,
+    },
+    {
+      id: "INCOMING_DOES_NOT_COVER" as const,
+      title: "INCOMING SHORTFALL",
+      copy: data.attention.rules.find((r) => r.id === "INCOMING_DOES_NOT_COVER")?.rule ?? "",
+      rows: data.attention.INCOMING_DOES_NOT_COVER,
+      tone: "warn" as const,
+    },
+    {
+      id: "LONG_STANDING" as const,
+      title: "LONG-STANDING BACKORDER",
+      copy: data.attention.rules.find((r) => r.id === "LONG_STANDING")?.rule ?? "",
+      rows: data.attention.LONG_STANDING,
+      tone: "warn" as const,
+    },
+    {
+      id: "HIGH_VALUE" as const,
+      title: "HIGH OUTSTANDING VALUE",
+      copy: data.attention.rules.find((r) => r.id === "HIGH_VALUE")?.rule ?? "",
+      rows: data.attention.HIGH_VALUE,
+      tone: "warn" as const,
+    },
   ];
   return (
     <div className="grid gap-6 px-4 py-5 sm:px-6">
-      <p className="text-[13px] text-steel">Attention rules are visible and deterministic. There is no hidden score. Incoming has no invented ETA.</p>
+      <p className="text-[13px] text-steel">Attention is a work queue. Rules are visible and deterministic. There is no hidden score. Incoming has no invented ETA.</p>
       {sections.map((section) => (
-        <section key={section.id} className="border border-border">
-          <header className="border-b border-border/70 px-4 py-3">
-            <h2 className="font-display text-lg font-semibold uppercase">{section.title}</h2>
+        <section
+          key={section.id}
+          className={cn(
+            "border",
+            section.tone === "bad" ? "border-destructive/50" : "border-border",
+          )}
+        >
+          <header className={cn("border-b px-4 py-3", section.tone === "bad" ? "border-destructive/30 bg-destructive/10" : "border-border/70 bg-warn/5")}>
+            <h2 className="font-display text-lg font-semibold uppercase">
+              {section.title}
+              <span className="num ml-2 text-base text-steel">{section.rows.length}</span>
+            </h2>
             <p className="mt-1 text-[13px] text-steel">{section.copy}</p>
           </header>
           {section.rows.length === 0 ? (
@@ -587,8 +1096,14 @@ function AttentionBoard({ data, onOpen }: { data: Data; onOpen: (id: string) => 
               {section.rows.map((row) => (
                 <li key={`${section.id}-${row.id}`}>
                   <button type="button" className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left hover:bg-secondary/30" onClick={() => onOpen(row.id)}>
-                    <span><span className="font-mono text-[12px]">{row.orderNumber}</span> · {row.customerName} · {row.sku} · {qty(row.outstandingQty)} units</span>
-                    <StockPositionBadge position={row.position} label={row.positionLabel} />
+                    <span>
+                      <span className="font-mono text-[12px] font-semibold">{row.orderNumber}</span>
+                      {" · "}{row.customerName}{" · "}
+                      <span className="font-mono">{row.sku}</span>
+                      {" · "}
+                      <span className="num font-semibold">{qty(row.outstandingQty)}</span> units
+                    </span>
+                    <StockPositionBadge position={row.position} label={stockPositionHeadline(row.position)} />
                   </button>
                 </li>
               ))}
@@ -642,7 +1157,7 @@ function LineDetailBody({ detail }: { detail: LineDetail }) {
           <Fact label="Incoming" value={line.incomingQty == null ? "—" : qty(line.incomingQty)} />
           <Fact label="Stock-feed timestamp" value={line.stockFeedAt ? formatOperationalDateTime(line.stockFeedAt) ?? "—" : "—"} />
         </dl>
-        <p className="text-[12px] text-steel">{line.coverSummary}</p>
+        <PositionCell row={line} />
         <p className="text-[12px] text-steel">{detail.stockDisclaimer}</p>
         <p className="text-[12px] text-steel">Incoming is Autopart P/Ord Qty. Arrival date is not available.</p>
       </section>

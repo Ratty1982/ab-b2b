@@ -37,11 +37,16 @@ export function ChangeStatusBadge({
 export function StockPositionBadge({
   position,
   label,
+  tone,
 }: {
   position: Autopart216vStockPosition;
   label: string;
+  tone?: Tone;
 }) {
-  return <StatusBadge tone={stockPositionTone(position)}>{label}</StatusBadge>;
+  const resolved =
+    tone ??
+    (position === "STOCK_AVAILABLE" ? "warn" : stockPositionTone(position));
+  return <StatusBadge tone={resolved}>{label}</StatusBadge>;
 }
 
 export const BACKORDER_STATUS_FILTERS = [
@@ -123,4 +128,29 @@ export function mergeBackorderSearch(prev: BackorderSearch, next: BackorderSearc
   if (merged.page === 1) delete merged.page;
   if (merged.view === "lines") delete merged.view;
   return merged;
+}
+
+export type BackorderFilterChip = { key: keyof BackorderSearch; label: string };
+
+export function activeBackorderFilterChips(search: BackorderSearch): BackorderFilterChip[] {
+  const chips: BackorderFilterChip[] = [];
+  const status = BACKORDER_STATUS_FILTERS.find((o) => o.value && o.value === search.status);
+  if (status) chips.push({ key: "status", label: `Status: ${status.label}` });
+  const position = BACKORDER_POSITION_FILTERS.find((o) => o.value && o.value === search.position);
+  if (position) chips.push({ key: "position", label: `Stock: ${position.label}` });
+  const age = BACKORDER_AGE_FILTERS.find((o) => o.value && Number(o.value) === search.ageDays);
+  if (age) chips.push({ key: "ageDays", label: `Age: ${age.label}` });
+  if (search.customerAccount) chips.push({ key: "customerAccount", label: `Customer: ${search.customerAccount}` });
+  if (search.brand) chips.push({ key: "brand", label: `Brand: ${search.brand}` });
+  if (search.catalogueType === "CATALOGUE") chips.push({ key: "catalogueType", label: "Catalogue" });
+  if (search.catalogueType === "EXTERNAL") chips.push({ key: "catalogueType", label: "External product" });
+  if (search.catalogueType === "HISTORIC_ONLY") chips.push({ key: "catalogueType", label: "Historic/not current" });
+  if (search.q) chips.push({ key: "q", label: `Search: ${search.q}` });
+  return chips;
+}
+
+export function stockPositionHeadline(position: Autopart216vStockPosition): string {
+  if (position === "STOCK_AVAILABLE") return "STOCK AVAILABLE — REVIEW";
+  if (position === "NO_STOCK_NO_INCOMING") return "NO STOCK / NO INCOMING";
+  return AUTOPART_216V_STOCK_POSITION_LABEL[position];
 }

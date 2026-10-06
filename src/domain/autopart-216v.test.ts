@@ -9,7 +9,7 @@ import {
 } from "@/domain/autopart-216v";
 import { AUTOPART_216V_HEADER, AUTOPART_216V_PROFILE, buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
 import { firstSeenAgeLabel, resolveAutopart216vSkuCover, attentionIdsForBackorder } from "@/domain/autopart-216v-position";
-import { resolveAutopart216vFreshness } from "@/domain/autopart-216v-freshness";
+import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 
 describe("Autopart 216V detector/parser", () => {
@@ -196,5 +196,91 @@ describe("216V freshness", () => {
     });
     expect(result.status).toBe("EXPECTED_REPORT_NOT_RECEIVED");
     expect(result.warning).toMatch(/not arrived/i);
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: "2026-10-05",
+        now: tueEvening,
+      }).key,
+    ).toBe("REPORT_OVERDUE");
+  });
+
+  it("does not treat a waiting working-day morning as overdue", () => {
+    const tueMorning = new Date("2026-10-06T08:00:00.000Z"); // 09:00 BST
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-05T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-05",
+      now: tueMorning,
+    });
+    expect(result.status).toBe("CURRENT");
+    expect(result.stale).toBe(false);
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: "2026-10-05",
+        now: tueMorning,
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
+  });
+
+  it("maps persisted 216V source without inventing labels", () => {
+    expect(label216vSnapshotSource("MANUAL")).toBe("Manual upload");
+    expect(label216vSnapshotSource("EMAIL")).toBe("Mailbox poll");
+    expect(label216vSnapshotSource("SCHEDULE")).toBe("Autopart email");
+    expect(label216vSnapshotSource(null)).toBeNull();
+  });
+
+  it("weekend headline stays current when last working-day snapshot is present", () => {
+    const sunday = new Date("2026-10-11T10:00:00.000Z");
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-09T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-09",
+      now: sunday,
+    });
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: "2026-10-09",
+        now: sunday,
+      }).key,
+    ).toBe("CURRENT");
+  });
+
+  it("does not mark a current snapshot as failed just because a later poll error is stored", () => {
+    const tueMorning = new Date("2026-10-06T08:00:00.000Z");
+    const current = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-05T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-05",
+      now: tueMorning,
+    });
+    expect(
+      headline216vFeedHealth({
+        status: current.status,
+        stale: current.stale,
+        lastError: "IMAP timeout",
+        lastBusinessDate: "2026-10-05",
+        now: tueMorning,
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
+  });
+
+  it("headlines import failure when there is no usable snapshot", () => {
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: null,
+      lastBusinessDate: null,
+      now: new Date("2026-10-06T19:00:00.000Z"),
+    });
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastError: "Mailbox authentication failed",
+        lastBusinessDate: null,
+        now: new Date("2026-10-06T19:00:00.000Z"),
+      }).key,
+    ).toBe("IMPORT_FAILED");
   });
 });
