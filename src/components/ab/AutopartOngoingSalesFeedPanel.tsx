@@ -40,6 +40,10 @@ type PreviewTrm = Extract<
   Awaited<ReturnType<typeof previewAutopartTrm21qcFn>>,
   { ok: true }
 >["data"];
+type PollResult = Extract<
+  Awaited<ReturnType<typeof pollOngoingSalesMailboxFn>>,
+  { ok: true }
+>["data"];
 
 function buttonClass(primary = false) {
   return cn(
@@ -97,6 +101,7 @@ export function AutopartOngoingSalesFeedPanel() {
     accountCode: string;
     diagnosticId?: string;
   } | null>(null);
+  const [pollResult, setPollResult] = useState<PollResult | null>(null);
 
   const load = useCallback(async () => {
     const [s, history] = await Promise.all([
@@ -240,10 +245,20 @@ export function AutopartOngoingSalesFeedPanel() {
     if (!res.data.ran) {
       toast.message(res.data.reason ?? "Poll did not run");
     } else {
+      setPollResult(res.data);
       toast.success(
         `504: ${res.data.processed504} · TRM21QC: ${res.data.processedTrm21qc} · duplicates: ${res.data.duplicatesIgnored}`,
       );
       if (res.data.errors.length) toast.error(res.data.errors[0]);
+      const skipped = res.data.attachments.filter((a) => a.result === "skipped" || a.result === "failed");
+      if (skipped.length) {
+        toast.message(
+          skipped
+            .slice(0, 3)
+            .map((a) => `${a.filename}: ${a.detectedType === "NOT_EXAMINED" ? a.skipReason : a.detectedType}`)
+            .join(" · "),
+        );
+      }
     }
     await load();
   }
@@ -325,6 +340,40 @@ export function AutopartOngoingSalesFeedPanel() {
           </button>
         </div>
       </div>
+
+      {pollResult?.ran && pollResult.attachments.length ? (
+        <div className="rounded-lg border border-border p-4">
+          <h3 className="font-display text-sm font-semibold uppercase">Last poll attachments</h3>
+          <p className="mt-1 text-[12px] text-steel">
+            Filenames and content detection only — no mailbox credentials or message headers.
+          </p>
+          <ul className="mt-3 space-y-2 text-[13px]">
+            {pollResult.attachments.map((row, i) => (
+              <li key={`${row.filename}-${i}`} className="rounded-md border border-border/70 px-3 py-2">
+                <div className="font-mono">{row.filename}</div>
+                <div className="text-[12px] text-steel">
+                  MIME {row.mime || "unknown"} · Candidate{" "}
+                  {row.candidateType === "NOT_CANDIDATE" ? "no" : row.candidateType} · Detected{" "}
+                  {row.detectedType}
+                </div>
+                <div>
+                  {row.result === "imported"
+                    ? "Imported"
+                    : row.result === "duplicate"
+                      ? "Duplicate"
+                      : row.result === "failed"
+                        ? `Failed — ${row.skipReason ?? "import failed"}`
+                        : `Skipped${row.skipReason ? ` — ${row.skipReason}` : ""}`}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : settings?.lastError ? (
+        <p className="rounded-lg border border-border px-4 py-3 text-[13px] text-steel whitespace-pre-wrap">
+          {settings.lastError}
+        </p>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-3 rounded-lg border border-border p-4">

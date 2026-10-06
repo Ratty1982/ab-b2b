@@ -35,8 +35,11 @@ describe("Autopart 504 parser", () => {
     expect(isAutopart504Report(c)).toBe(false);
     expect(detectAutopart504Filename("504C.CSV")).toBe(false);
     expect(detectAutopart504Filename("504.CSV")).toBe(true);
+    expect(detectAutopart504Filename("504.TXT")).toBe(true);
+    expect(detectAutopart504Filename("504.txt")).toBe(true);
     expect(classifyOngoingSalesAttachment("504C.CSV", c)).toBe("504C");
     expect(classifyOngoingSalesAttachment("504.CSV", SAMPLE_504)).toBe("504");
+    expect(classifyOngoingSalesAttachment("504.TXT", SAMPLE_504)).toBe("504");
   });
 
   it("classifies credits by SC prefix and signed values", () => {

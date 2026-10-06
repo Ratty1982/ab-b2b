@@ -20,6 +20,9 @@ import { AuthError } from "@/server/rbac/guards";
 import { loadHistoricSalesLines, summarizeHistoricLines } from "@/server/sales-intelligence/historic-lines";
 import { isAutopart504Report } from "@/domain/autopart-504";
 import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
+import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
+import { processOngoingSalesEmailBatch } from "@/server/companies/autopart-ongoing-sales-poll";
+import { emailReceiptKey } from "@/domain/stock-email";
 
 const prisma = new PrismaClient();
 
@@ -441,5 +444,209 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
     expect(isAutopart504Report(text504)).toBe(true);
     expect(text504.toUpperCase()).not.toContain("504C");
     expect(text504.toUpperCase()).not.toContain(AUTOPART_504C_REPORT_TITLE.toUpperCase());
+  });
+});
+
+describe("ongoing 504 TXT email poll", () => {
+  const txtStamp = `${stamp}txt`;
+  const txtInv = `SSTX${String(stamp).slice(-6)}`;
+  const txtCr = `SCTX${String(stamp).slice(-6)}`;
+  const txtTrmSku = `SKU-TX-${String(stamp).slice(-6)}`;
+
+  function sample504Txt() {
+    return `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${txtInv},29/09/2026,13:05,EXAMPLE MOTOR FACTORS,80.00,16.00,96.00,WR,${orderNumber}
+ACCOUNT,${txtCr},29/09/2026,14:10,EXAMPLE MOTOR FACTORS,-8.00,-1.60,-9.60,WR,${orderNumber}
+`;
+  }
+
+  function sampleTrmTxtCompanion() {
+    return `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${account},GRP,${txtInv},29/09/2026,${txtTrmSku},Torch,2,80.00,40.00,40.00,50.000
+${account},GRP,${txtCr},29/09/2026,${txtTrmSku},Torch credit,-1,-8.00,4.00,-4.00,-100.000
+`;
+  }
+
+  it("imports 504.TXT through the existing ongoing importer and does not duplicate TRM", async () => {
+    const text504 = sample504Txt();
+    const textTrm = sampleTrmTxtCompanion();
+    const email = {
+      uid: `uid-504-txt-${txtStamp}`,
+      messageId: `<504-txt-${txtStamp}@example.invalid>`,
+      from: "reports@example.invalid",
+      subject: "Day end reports",
+      receivedAt: new Date(),
+      attachments: [
+        { filename: "504.TXT", content: Buffer.from(text504), contentType: "text/plain" },
+        { filename: "TRM21QC.csv", content: Buffer.from(textTrm), contentType: "text/csv" },
+      ],
+    };
+
+    const first = await processOngoingSalesEmailBatch({
+      emails: [email],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(first.processed504).toBe(1);
+    expect(first.processedTrm21qc).toBe(1);
+    expect(first.attachments.find((a) => a.filename === "504.TXT")?.detectedType).toBe("ONGOING_504");
+    expect(first.attachments.find((a) => a.filename === "504.TXT")?.result).toBe("imported");
+
+    const invoice = await prisma.autopartSalesDocument.findFirst({
+      where: { documentReference: txtInv },
+    });
+    expect(invoice?.has504).toBe(true);
+    expect(Number(invoice?.goodsNet)).toBe(80);
+    const credit = await prisma.autopartSalesDocument.findFirst({
+      where: { documentReference: txtCr },
+    });
+    expect(credit?.documentType).toBe("CREDIT");
+    expect(Number(credit?.goodsNet)).toBeCloseTo(-8, 2);
+
+    const again = await processOngoingSalesEmailBatch({
+      emails: [email],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(again.processed504).toBe(0);
+    expect(again.processedTrm21qc).toBe(0);
+    expect(again.duplicatesIgnored).toBe(2);
+    const docs = await prisma.autopartSalesDocument.count({
+      where: { documentReference: { in: [txtInv, txtCr] } },
+    });
+    expect(docs).toBe(2);
+  });
+
+  it("reconsiders a previously ignored 504 TXT after an email-level TRM consume", async () => {
+    const lateInv = `SSL8${String(stamp).slice(-6)}`;
+    const text504 = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${lateInv},29/09/2026,18:00,EXAMPLE MOTOR FACTORS,12.00,2.40,14.40,WR,MAM-ONLY-TXT
+`;
+    const textTrm = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${account},GRP,${lateInv},29/09/2026,${txtTrmSku},Late line,1,12.00,6.00,6.00,50.000
+`;
+    const email = {
+      uid: `uid-ignored-504-${txtStamp}`,
+      messageId: `<ignored-504-${txtStamp}@example.invalid>`,
+      from: "reports@example.invalid",
+      subject: "Autopart day end",
+      receivedAt: new Date(),
+      attachments: [
+        { filename: "504.TXT", content: Buffer.from(text504), contentType: "application/octet-stream" },
+        { filename: "TRM21QC.CSV", content: Buffer.from(textTrm), contentType: "text/csv" },
+      ],
+    };
+
+    await confirmAutopartTrm21qcImport(adminId, {
+      text: textTrm,
+      filename: "TRM21QC.CSV",
+      source: "EMAIL",
+    });
+    const oldKey = emailReceiptKey(email.messageId, email.uid);
+    expect(oldKey).toBeTruthy();
+    await prisma.stockEmailReceipt.upsert({
+      where: { receiptKey: oldKey! },
+      create: {
+        receiptKey: oldKey!,
+        emailUid: email.uid,
+        emailMessageId: email.messageId,
+        fromAddress: email.from,
+        subject: email.subject,
+        receivedAt: email.receivedAt,
+        consumed: true,
+        attachmentFilename: "TRM21QC.CSV",
+      },
+      update: { consumed: true, attachmentFilename: "TRM21QC.CSV" },
+    });
+
+    const poll = await processOngoingSalesEmailBatch({
+      emails: [email],
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(poll.processed504).toBe(1);
+    expect(poll.processedTrm21qc).toBe(0);
+    expect(poll.duplicatesIgnored).toBe(1);
+    expect(poll.attachments.find((a) => a.filename === "504.TXT")?.result).toBe("imported");
+    expect(poll.attachments.find((a) => a.filename.toUpperCase() === "TRM21QC.CSV")?.result).toBe(
+      "duplicate",
+    );
+
+    const doc = await prisma.autopartSalesDocument.findFirst({ where: { documentReference: lateInv } });
+    expect(doc?.has504).toBe(true);
+    expect(doc?.hasTrm21qc).toBe(true);
+  });
+
+  it("skips legacy 504C TXT, arbitrary TXT, and malformed 504 without a financial import", async () => {
+    const bogusDoc = `SSBG${String(stamp).slice(-6)}`;
+    const emails = [
+      {
+        uid: `uid-504c-${txtStamp}`,
+        messageId: `<504c-${txtStamp}@example.invalid>`,
+        from: "reports@example.invalid",
+        subject: "504C",
+        receivedAt: new Date(),
+        attachments: [
+          {
+            filename: "504.TXT",
+            content: Buffer.from(`${AUTOPART_504C_REPORT_TITLE}\n${AUTOPART_504C_HEADER}\n`),
+            contentType: "text/plain",
+          },
+        ],
+      },
+      {
+        uid: `uid-notes-${txtStamp}`,
+        messageId: `<notes-${txtStamp}@example.invalid>`,
+        from: "reports@example.invalid",
+        subject: "notes",
+        receivedAt: new Date(),
+        attachments: [
+          { filename: "notes.txt", content: Buffer.from("not a report"), contentType: "text/plain" },
+          {
+            filename: "payload.bin",
+            content: Buffer.from("zzzz"),
+            contentType: "application/octet-stream",
+          },
+        ],
+      },
+      {
+        uid: `uid-malformed-${txtStamp}`,
+        messageId: `<malformed-${txtStamp}@example.invalid>`,
+        from: "reports@example.invalid",
+        subject: "almost 504",
+        receivedAt: new Date(),
+        attachments: [
+          {
+            filename: "504.TXT",
+            content: Buffer.from(`Hello\nDocument ${bogusDoc} but no Customer Order Number header\n`),
+            contentType: "text/plain",
+          },
+        ],
+      },
+    ];
+    const poll = await processOngoingSalesEmailBatch({
+      emails,
+      actorUserId: adminId,
+      source: "EMAIL",
+      autoArchive: false,
+    });
+    expect(poll.processed504).toBe(0);
+    expect(poll.processedTrm21qc).toBe(0);
+    expect(poll.attachments.some((a) => a.detectedType === "LEGACY_504C" && a.result === "skipped")).toBe(
+      true,
+    );
+    expect(poll.attachments.some((a) => a.filename === "notes.txt" && a.detectedType === "UNKNOWN")).toBe(
+      true,
+    );
+    expect(poll.attachments.some((a) => a.filename === "payload.bin" && a.candidate === false)).toBe(true);
+    expect(
+      poll.attachments.some(
+        (a) => a.filename === "504.TXT" && a.detectedType === "UNKNOWN" && a.skipReason?.includes("not recognised"),
+      ),
+    ).toBe(true);
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: bogusDoc } })).toBe(0);
   });
 });

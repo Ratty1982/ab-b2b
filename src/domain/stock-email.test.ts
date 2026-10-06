@@ -3,6 +3,7 @@ import { parseAutopart231Po3New } from "@/domain/stock-parse";
 import { detect231Po3ReportKind, is231Po3NewReport, parseNative231Po3New } from "@/domain/stock-parse-native";
 import { buildNative231Po3New } from "@/server/stock/fixtures/native-231po3new";
 import {
+  attachmentReceiptKey,
   emailReceiptKey,
   filenameMatchesStockPattern,
   isDuplicateEmailReceipt,
@@ -131,5 +132,16 @@ describe("email acquisition helpers", () => {
     expect(validateImapSettingsUpdate({ imapPort: 993, pollIntervalMinutes: 15 })).toBeNull();
     expect(validateImapSettingsUpdate({ imapPort: 0 })).toBe("IMAP port must be between 1 and 65535");
     expect(validateImapSettingsUpdate({ pollIntervalMinutes: 0 })).toBe("Poll interval must be between 1 and 1440 minutes");
+  });
+
+  it("scopes attachment receipts separately from the email-level key", () => {
+    const emailKey = emailReceiptKey("<mid@x>", "99");
+    const txtKey = attachmentReceiptKey("<mid@x>", "99", "504.TXT");
+    const csvKey = attachmentReceiptKey("<mid@x>", "99", "TRM21QC.csv");
+    expect(emailKey).toBe("<mid@x>|99");
+    expect(txtKey).toBe("<mid@x>|99|att:504.txt");
+    expect(csvKey).toBe("<mid@x>|99|att:trm21qc.csv");
+    expect(txtKey).not.toBe(emailKey);
+    expect(txtKey).not.toBe(csvKey);
   });
 });

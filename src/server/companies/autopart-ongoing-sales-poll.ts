@@ -1,30 +1,32 @@
 /**
  * IMAP poll for ongoing 504 + TRM21QC — reuses stock IMAP connection.
+ *
+ * TXT/CSV/MIME are candidate filters only. Content detection is authoritative.
+ * Email-level consumed receipts must not permanently hide an unprocessed 504 TXT.
  */
 
 import { createHash } from "node:crypto";
 import { prisma } from "@/infra/database/client";
 import { AuthError } from "@/server/rbac/guards";
-import {
-  emailReceiptKey,
-  parseAllowedSenders,
-  senderIsAllowed,
-} from "@/domain/stock-email";
+import { attachmentReceiptKey, emailReceiptKey, parseAllowedSenders } from "@/domain/stock-email";
 import { fetchUnprocessedStockEmails, archiveProcessedMessage } from "@/server/stock/imap";
+import type { InboundStockEmail } from "@/server/stock/imap";
 import { loadImapRuntimeConfig, getOrCreateImapSettings } from "@/server/stock/settings";
 import {
-  detectAutopart504Filename,
-  isAutopart504Report,
-} from "@/domain/autopart-504";
-import {
-  detectAutopartTrm21qcFilename,
-  isAutopartTrm21qcReport,
-} from "@/domain/autopart-trm21qc";
+  classifyOngoingSalesAttachment,
+  detectOngoingSalesAttachmentType,
+  formatOngoingSalesAttachmentDiagnostic,
+  isOngoingSalesAttachmentCandidate,
+  skipReasonForDetectedType,
+  type OngoingSalesAttachmentDiagnostic,
+} from "@/domain/autopart-ongoing-sales-attachment";
 import {
   confirmAutopart504Import,
   confirmAutopartTrm21qcImport,
   getOngoingSalesFeedSettings,
 } from "@/server/companies/autopart-ongoing-sales";
+
+export { classifyOngoingSalesAttachment };
 
 export type OngoingPollResult = {
   ran: boolean;
@@ -34,24 +36,196 @@ export type OngoingPollResult = {
   duplicatesIgnored: number;
   unknownAttachments: number;
   errors: string[];
+  attachments: OngoingSalesAttachmentDiagnostic[];
 };
 
-function is504cFilename(filename: string): boolean {
-  return filename.toUpperCase().includes("504C");
+function emptyPollResult(partial?: Partial<OngoingPollResult>): OngoingPollResult {
+  return {
+    ran: false,
+    processed504: 0,
+    processedTrm21qc: 0,
+    duplicatesIgnored: 0,
+    unknownAttachments: 0,
+    errors: [],
+    attachments: [],
+    ...partial,
+  };
 }
 
-export function classifyOngoingSalesAttachment(
-  filename: string,
-  text: string,
-): "504" | "TRM21QC" | "504C" | "UNKNOWN" {
-  if (is504cFilename(filename) || text.toUpperCase().includes("(504C)")) return "504C";
-  if (detectAutopartTrm21qcFilename(filename) || isAutopartTrm21qcReport(text)) {
-    if (isAutopartTrm21qcReport(text)) return "TRM21QC";
+function acceptOngoingImapAttachment(filename: string, contentType: string | null): boolean {
+  return isOngoingSalesAttachmentCandidate({ filename, mime: contentType }).candidate;
+}
+
+async function persistAttachmentReceipt(input: {
+  email: InboundStockEmail;
+  filename: string;
+  consumed: boolean;
+}) {
+  const key = attachmentReceiptKey(input.email.messageId, input.email.uid, input.filename);
+  if (!key) return;
+  await prisma.stockEmailReceipt
+    .upsert({
+      where: { receiptKey: key },
+      create: {
+        receiptKey: key,
+        emailUid: input.email.uid,
+        emailMessageId: input.email.messageId,
+        fromAddress: input.email.from,
+        subject: input.email.subject ?? "",
+        receivedAt: input.email.receivedAt,
+        consumed: input.consumed,
+        attachmentFilename: input.filename,
+      },
+      update: { consumed: input.consumed, attachmentFilename: input.filename },
+    })
+    .catch(() => undefined);
+}
+
+async function persistEmailReceiptIfFullyHandled(input: {
+  email: InboundStockEmail;
+  handledAllCandidates: boolean;
+}) {
+  if (!input.handledAllCandidates) return;
+  const key = emailReceiptKey(input.email.messageId, input.email.uid);
+  if (!key) return;
+  await prisma.stockEmailReceipt
+    .upsert({
+      where: { receiptKey: key },
+      create: {
+        receiptKey: key,
+        emailUid: input.email.uid,
+        emailMessageId: input.email.messageId,
+        fromAddress: input.email.from,
+        subject: input.email.subject ?? "",
+        receivedAt: input.email.receivedAt,
+        consumed: true,
+        attachmentFilename: input.email.attachments[0]?.filename ?? "",
+      },
+      update: { consumed: true },
+    })
+    .catch(() => undefined);
+}
+
+export async function processOngoingSalesEmailBatch(input: {
+  emails: InboundStockEmail[];
+  actorUserId: string | null;
+  source: "EMAIL" | "SCHEDULE";
+  autoArchive: boolean;
+  archive?: (uid: string) => Promise<void>;
+}): Promise<OngoingPollResult> {
+  const result = emptyPollResult({ ran: true });
+  const handledAttachmentKeys = new Set(
+    (
+      await prisma.stockEmailReceipt.findMany({
+        where: { consumed: true, receiptKey: { contains: "|att:" } },
+        select: { receiptKey: true },
+        take: 8000,
+      })
+    ).map((r) => r.receiptKey),
+  );
+
+  for (const email of input.emails) {
+    let pendingCandidates = 0;
+    let handledCandidates = 0;
+    let importedThisEmail = 0;
+
+    for (const att of email.attachments) {
+      const mime = att.contentType ?? null;
+      const candidate = isOngoingSalesAttachmentCandidate({ filename: att.filename, mime });
+      if (!candidate.candidate) {
+        result.attachments.push({
+          filename: att.filename || "(unnamed)",
+          mime,
+          candidate: false,
+          candidateType: "NOT_CANDIDATE",
+          detectedType: "NOT_EXAMINED",
+          result: "skipped",
+          skipReason: candidate.reason,
+        });
+        result.unknownAttachments += 1;
+        continue;
+      }
+
+      pendingCandidates += 1;
+      const attKey = attachmentReceiptKey(email.messageId, email.uid, att.filename);
+      const text = att.content.toString("utf8");
+      const detected = detectOngoingSalesAttachmentType(att.filename, text);
+      const baseDiag = {
+        filename: att.filename,
+        mime,
+        candidate: true as const,
+        candidateType: candidate.hintedType ?? "UNKNOWN",
+        detectedType: detected,
+      };
+
+      if (detected === "LEGACY_504C" || detected === "UNKNOWN") {
+        result.unknownAttachments += detected === "UNKNOWN" ? 1 : 0;
+        result.attachments.push({
+          ...baseDiag,
+          result: "skipped",
+          skipReason: skipReasonForDetectedType(detected),
+        });
+        continue;
+      }
+
+      const fileHash = createHash("sha256").update(text).digest("hex");
+      const prior = await prisma.autopartCustomerImportRun.findFirst({
+        where: {
+          fileHash,
+          type: detected === "ONGOING_504" ? "ONGOING_504" : "ONGOING_TRM21QC",
+          status: "COMMITTED",
+        },
+        select: { id: true },
+      });
+      if (prior || (attKey && handledAttachmentKeys.has(attKey))) {
+        result.duplicatesIgnored += 1;
+        handledCandidates += 1;
+        result.attachments.push({ ...baseDiag, result: "duplicate", skipReason: null });
+        if (attKey) handledAttachmentKeys.add(attKey);
+        await persistAttachmentReceipt({ email, filename: att.filename, consumed: true });
+        continue;
+      }
+
+      try {
+        if (detected === "ONGOING_504") {
+          await confirmAutopart504Import(input.actorUserId, {
+            text,
+            filename: att.filename,
+            source: input.source,
+          });
+          result.processed504 += 1;
+        } else {
+          await confirmAutopartTrm21qcImport(input.actorUserId, {
+            text,
+            filename: att.filename,
+            source: input.source,
+          });
+          result.processedTrm21qc += 1;
+        }
+        importedThisEmail += 1;
+        handledCandidates += 1;
+        result.attachments.push({ ...baseDiag, result: "imported", skipReason: null });
+        if (attKey) handledAttachmentKeys.add(attKey);
+        await persistAttachmentReceipt({ email, filename: att.filename, consumed: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "import failed";
+        result.errors.push(`${att.filename}: ${message}`);
+        result.attachments.push({
+          ...baseDiag,
+          result: "failed",
+          skipReason: message,
+        });
+      }
+    }
+
+    const handledAllCandidates = pendingCandidates > 0 && handledCandidates === pendingCandidates;
+    await persistEmailReceiptIfFullyHandled({ email, handledAllCandidates });
+    if (handledAllCandidates && importedThisEmail > 0 && input.autoArchive && input.archive) {
+      await input.archive(email.uid).catch(() => undefined);
+    }
   }
-  if (detectAutopart504Filename(filename) || isAutopart504Report(text)) {
-    if (isAutopart504Report(text)) return "504";
-  }
-  return "UNKNOWN";
+
+  return result;
 }
 
 async function runOngoingSalesMailboxPoll(
@@ -64,16 +238,11 @@ async function runOngoingSalesMailboxPoll(
     update: {},
   });
   if (!settings.enabled || !settings.configured) {
-    return {
+    return emptyPollResult({
       ran: false,
       reason:
         "Ongoing 504/TRM21QC feed is DISABLED / NOT CONFIGURED. Use manual upload, or configure Autopart email and enable the feed.",
-      processed504: 0,
-      processedTrm21qc: 0,
-      duplicatesIgnored: 0,
-      unknownAttachments: 0,
-      errors: [],
-    };
+    });
   }
 
   const base = await loadImapRuntimeConfig();
@@ -86,17 +255,16 @@ async function runOngoingSalesMailboxPoll(
     settings.allowedSender?.trim() ? settings.allowedSender : imapSettings.allowedSenderEmails,
   );
 
-  // Broaden attachment gate vs stock 231PO3NEW pattern so 504/TRM21QC CSVs are fetched.
   const config = {
     ...base,
-    filenamePattern: "*.csv",
+    filenamePattern: "*",
     allowedSenders: allowed.length ? allowed : base.allowedSenders,
   };
 
   const receipts = await prisma.stockEmailReceipt.findMany({
     where: { consumed: true },
     select: { receiptKey: true, emailUid: true },
-    take: 5000,
+    take: 8000,
   });
   const processedReceiptKeys = new Set(receipts.map((r) => r.receiptKey));
   const processedUids = new Set(receipts.map((r) => r.emailUid));
@@ -104,93 +272,38 @@ async function runOngoingSalesMailboxPoll(
   const emails = await fetchUnprocessedStockEmails(config, {
     processedReceiptKeys,
     processedUids,
+    skipConsumed: false,
+    acceptAttachment: acceptOngoingImapAttachment,
   });
 
-  const result: OngoingPollResult = {
-    ran: true,
-    processed504: 0,
-    processedTrm21qc: 0,
-    duplicatesIgnored: 0,
-    unknownAttachments: 0,
-    errors: [],
-  };
+  const result = await processOngoingSalesEmailBatch({
+    emails,
+    actorUserId,
+    source,
+    autoArchive: imapSettings.autoArchiveProcessedEmails,
+    archive: (uid) => archiveProcessedMessage(config, uid),
+  });
 
-  for (const email of emails) {
-    if (!senderIsAllowed(email.from, config.allowedSenders)) continue;
-    for (const att of email.attachments) {
-      const text = att.content.toString("utf8");
-      const kind = classifyOngoingSalesAttachment(att.filename, text);
-      if (kind === "504C") continue; // keep legacy 504C path separate
-      if (kind === "UNKNOWN") {
-        result.unknownAttachments += 1;
-        continue;
-      }
-
-      const fileHash = createHash("sha256").update(text).digest("hex");
-      const prior = await prisma.autopartCustomerImportRun.findFirst({
-        where: {
-          fileHash,
-          type: kind === "504" ? "ONGOING_504" : "ONGOING_TRM21QC",
-          status: "COMMITTED",
-        },
-        select: { id: true },
-      });
-      if (prior) {
-        result.duplicatesIgnored += 1;
-        continue;
-      }
-
-      try {
-        if (kind === "504") {
-          await confirmAutopart504Import(actorUserId, {
-            text,
-            filename: att.filename,
-            source,
-          });
-          result.processed504 += 1;
-        } else {
-          await confirmAutopartTrm21qcImport(actorUserId, {
-            text,
-            filename: att.filename,
-            source,
-          });
-          result.processedTrm21qc += 1;
-        }
-        if (imapSettings.autoArchiveProcessedEmails) {
-          await archiveProcessedMessage(config, email.uid).catch(() => undefined);
-        }
-        const key = emailReceiptKey(email.messageId, email.uid);
-        if (key) {
-          await prisma.stockEmailReceipt
-            .upsert({
-              where: { receiptKey: key },
-              create: {
-                receiptKey: key,
-                emailUid: email.uid,
-                emailMessageId: email.messageId,
-                fromAddress: email.from,
-                subject: email.subject ?? "",
-                receivedAt: email.receivedAt,
-                consumed: true,
-                attachmentFilename: att.filename,
-              },
-              update: { consumed: true, attachmentFilename: att.filename },
-            })
-            .catch(() => undefined);
-        }
-      } catch (err) {
-        result.errors.push(
-          `${att.filename}: ${err instanceof Error ? err.message : "import failed"}`,
-        );
-      }
-    }
-  }
+  const diagnosticText = result.attachments
+    .map((row) => formatOngoingSalesAttachmentDiagnostic(row))
+    .slice(0, 20)
+    .join("\n\n");
+  const hasSkips = result.attachments.some(
+    (row) => row.result === "skipped" || row.result === "failed",
+  );
+  const lastError = result.errors.length
+    ? result.errors.slice(0, 5).join("; ")
+    : hasSkips
+      ? diagnosticText
+      : null;
 
   await prisma.autopartOngoingSalesFeedSettings.update({
     where: { id: "default" },
     data: {
       lastPolledAt: new Date(),
-      lastError: result.errors.length ? result.errors.slice(0, 3).join("; ") : null,
+      lastError,
+      ...(result.processed504 ? { lastSuccess504At: new Date() } : {}),
+      ...(result.processedTrm21qc ? { lastSuccessTrm21qcAt: new Date() } : {}),
     },
   });
 

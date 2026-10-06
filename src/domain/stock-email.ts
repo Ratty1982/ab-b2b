@@ -7,6 +7,17 @@ export function emailReceiptKey(messageId: string | null | undefined, uid: strin
   return null;
 }
 
+/** Per-attachment receipt so one successful CSV import cannot hide an unprocessed TXT sibling. */
+export function attachmentReceiptKey(
+  messageId: string | null | undefined,
+  uid: string | null | undefined,
+  filename: string,
+): string | null {
+  const base = emailReceiptKey(messageId, uid);
+  if (!base) return null;
+  return `${base}|att:${normaliseAttachmentFilename(filename)}`;
+}
+
 /**
  * Same IMAP message iff UID matches (and Message-ID agrees when both exist).
  * Matching Message-ID with a different UID is NOT a duplicate (Autopart can reuse Message-ID).

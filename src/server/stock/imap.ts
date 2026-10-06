@@ -5,6 +5,7 @@ import { filenameMatchesStockPattern, senderIsAllowed } from "@/domain/stock-ema
 export type EmailAttachmentPayload = {
   filename: string;
   content: Buffer;
+  contentType?: string | null;
 };
 
 export type InboundStockEmail = {
@@ -45,6 +46,9 @@ export async function fetchUnprocessedStockEmails(
   opts: {
     processedReceiptKeys: Set<string>;
     processedUids: Set<string>;
+    /** Default true. Set false so leftover unprocessed attachments on a previously seen email can be retried. */
+    skipConsumed?: boolean;
+    acceptAttachment?: (filename: string, contentType: string | null) => boolean;
   },
 ): Promise<InboundStockEmail[]> {
   const { ImapFlow } = await import("imapflow");
@@ -90,17 +94,28 @@ export async function fetchUnprocessedStockEmails(
         const messageId = String(parsed.messageId ?? "").trim() || null;
         const { emailReceiptKey } = await import("@/domain/stock-email");
         const receiptKey = emailReceiptKey(messageId, uidKey);
-        if (receiptKey && opts.processedReceiptKeys.has(receiptKey)) continue;
-        if (!messageId && opts.processedUids.has(uidKey)) continue;
+        const skipConsumed = opts.skipConsumed !== false;
+        if (skipConsumed && receiptKey && opts.processedReceiptKeys.has(receiptKey)) continue;
+        if (skipConsumed && !messageId && opts.processedUids.has(uidKey)) continue;
         if (!senderIsAllowed(from, config.allowedSenders)) continue;
 
         const attachments: EmailAttachmentPayload[] = [];
         for (const att of parsed.attachments ?? []) {
           const fn = String(att.filename ?? "").trim();
-          if (!filenameMatchesStockPattern(fn, config.filenamePattern)) continue;
+          const contentType = String(
+            (att as { contentType?: string; type?: string }).contentType ??
+              (att as { type?: string }).type ??
+              "",
+          ).trim() || null;
+          if (opts.acceptAttachment) {
+            if (!opts.acceptAttachment(fn, contentType)) continue;
+          } else if (!filenameMatchesStockPattern(fn, config.filenamePattern)) {
+            continue;
+          }
           attachments.push({
             filename: fn,
             content: Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content),
+            contentType,
           });
         }
         if (!attachments.length) continue;

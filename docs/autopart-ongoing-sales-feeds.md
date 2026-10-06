@@ -81,6 +81,21 @@ Settings → **Autopart ongoing sales feeds**:
 - Poll Now (requires configured + enabled)
 - Import history with run detail / diagnostics / CSV export
 
+### Email attachments (504 TXT + TRM21QC CSV)
+
+Autopart day-end delivery is:
+
+| Report | Transport |
+| --- | --- |
+| **504** invoice/credit documents | `.TXT` / `.txt` (CSV still accepted) |
+| **TRM21QC** product lines | `.CSV` / `.csv` |
+
+IMAP candidate filter accepts `.txt` / `.csv` plus `text/plain` and `application/octet-stream` when the filename is a plausible 504/TRM attachment. **Content detection is authoritative.** A `.txt` file is never imported as 504 unless `isAutopart504Report` matches. Legacy **504C** content/filenames are skipped (not financial 504). 231PO3NEW stock files are excluded.
+
+Poll Now lists each attachment: filename, MIME, candidate type, content-detected type, imported / duplicate / skipped (+ reason). Credentials and message headers are not shown.
+
+Dedupe is per successfully handled attachment (file hash + attachment receipt). An email previously marked consumed because TRM CSV was imported will still be reconsidered for an unprocessed 504 TXT on Poll Now, as long as the message remains in the inbox. Auto-archive is off by default; if a message was moved out of INBOX, resend the 504 report.
+
 Legacy **Autopart invoice / despatch feed (504C)** panel remains above.
 
 ### Preview workflow
