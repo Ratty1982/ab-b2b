@@ -1,6 +1,7 @@
 /**
- * Autopart 504C schedule — 13:00 and 16:00 Europe/London, working days.
+ * Autopart 504C schedule — 13:15 and 16:15 Europe/London, working days.
  * Automatic execution remains gated by Autopart504cFeedSettings.enabled (default false).
+ * Poll Now does not use this schedule.
  */
 
 import {
@@ -12,7 +13,8 @@ import {
 
 export const AUTOPART_504C_TIMEZONE = "Europe/London";
 export const AUTOPART_504C_SCHEDULE_HOURS = [13, 16] as const;
-export const AUTOPART_504C_SCHEDULE_LABEL = "13:00 · 16:00 Europe/London (working days)";
+export const AUTOPART_504C_SCHEDULE_MINUTE = 15;
+export const AUTOPART_504C_SCHEDULE_LABEL = "13:15 · 16:15 Europe/London (working days)";
 
 function shiftCivilDate(civil: Pick<LondonCivilTime, "year" | "month" | "day">, days: number) {
   const utc = Date.UTC(civil.year, civil.month - 1, civil.day + days);
@@ -39,22 +41,31 @@ export function isLondonWorkingDay(date: Date): boolean {
   return d >= 1 && d <= 5;
 }
 
+function slotHasStarted(local: LondonCivilTime, hour: number): boolean {
+  return local.hour > hour || (local.hour === hour && local.minute >= AUTOPART_504C_SCHEDULE_MINUTE);
+}
+
+function windowFor(local: Pick<LondonCivilTime, "year" | "month" | "day">, hour: number): DueStockWindow {
+  const businessDate = londonBusinessDate(local);
+  const label = `${String(hour).padStart(2, "0")}:${String(AUTOPART_504C_SCHEDULE_MINUTE).padStart(2, "0")}`;
+  return {
+    key: `${businessDate}T${label}`,
+    hour,
+    businessDate,
+    label,
+  };
+}
+
 export function due504cWindow(date: Date, workingDaysOnly = true): DueStockWindow | null {
   if (workingDaysOnly && !isLondonWorkingDay(date)) return null;
   const local = londonCivilTime(date);
   const hours = AUTOPART_504C_SCHEDULE_HOURS;
-  if (local.hour < hours[0]) return null;
+  if (!slotHasStarted(local, hours[0])) return null;
   let hour: number = hours[0];
   for (const candidate of hours) {
-    if (local.hour >= candidate) hour = candidate;
+    if (slotHasStarted(local, candidate)) hour = candidate;
   }
-  const businessDate = londonBusinessDate(local);
-  return {
-    key: `${businessDate}T${String(hour).padStart(2, "0")}:00`,
-    hour,
-    businessDate,
-    label: `${String(hour).padStart(2, "0")}:00`,
-  };
+  return windowFor(local, hour);
 }
 
 export function next504cWindow(date: Date, workingDaysOnly = true): DueStockWindow {
@@ -64,16 +75,10 @@ export function next504cWindow(date: Date, workingDaysOnly = true): DueStockWind
     const hours = AUTOPART_504C_SCHEDULE_HOURS;
     const upcomingToday =
       (!workingDaysOnly || isLondonWorkingDay(cursor))
-        ? hours.find((hour) => hour > local.hour)
+        ? hours.find((hour) => !slotHasStarted(local, hour))
         : undefined;
     if (upcomingToday != null) {
-      const businessDate = londonBusinessDate(local);
-      return {
-        key: `${businessDate}T${String(upcomingToday).padStart(2, "0")}:00`,
-        hour: upcomingToday,
-        businessDate,
-        label: `${String(upcomingToday).padStart(2, "0")}:00`,
-      };
+      return windowFor(local, upcomingToday);
     }
     const next = shiftCivilDate(local, 1);
     cursor = new Date(Date.UTC(next.year, next.month - 1, next.day, 8, 0, 0));
@@ -84,20 +89,7 @@ export function next504cWindow(date: Date, workingDaysOnly = true): DueStockWind
       cursor = new Date(Date.UTC(n.year, n.month - 1, n.day, 8, 0, 0));
     }
     const morning = londonCivilTime(cursor);
-    const businessDate = londonBusinessDate(morning);
-    const hour = hours[0];
-    return {
-      key: `${businessDate}T${String(hour).padStart(2, "0")}:00`,
-      hour,
-      businessDate,
-      label: `${String(hour).padStart(2, "0")}:00`,
-    };
+    return windowFor(morning, hours[0]);
   }
-  const local = londonCivilTime(date);
-  return {
-    key: `${londonBusinessDate(local)}T13:00`,
-    hour: 13,
-    businessDate: londonBusinessDate(local),
-    label: "13:00",
-  };
+  return windowFor(londonCivilTime(date), AUTOPART_504C_SCHEDULE_HOURS[0]);
 }

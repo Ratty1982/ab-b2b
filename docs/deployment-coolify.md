@@ -150,6 +150,6 @@ If export/unpack still fails after the timeout is raised: on the Coolify server 
 - Optional recovery: `POST https://<app>/api/internal/stock-sync` with `x-autopart-cron-secret` matching `AUTOPART_STOCK_CRON_SECRET`.
 - Set `AUTOPART_STOCK_ENABLE_SCHEDULER=false` only if you must stop automatic imports.
 
-Stock **imports** at **09:00, 12:00, 15:00, 18:00 Europe/London**. See [docs/autopart-stock-sync.md](autopart-stock-sync.md).
+Stock **imports** at **09:15, 12:15, 15:15, 18:15 Europe/London**. See [docs/autopart-stock-sync.md](autopart-stock-sync.md).
 
 

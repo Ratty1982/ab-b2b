@@ -19,7 +19,13 @@ import {
   buildAutopart216vFixture,
 } from "@/domain/autopart-216v-fixture";
 import { firstSeenAgeLabel, resolveAutopart216vSkuCover, attentionIdsForBackorder } from "@/domain/autopart-216v-position";
-import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
+import {
+  AUTOPART_216V_SCHEDULE_LABEL,
+  due216vPollWindow,
+  headline216vFeedHealth,
+  label216vSnapshotSource,
+  resolveAutopart216vFreshness,
+} from "@/domain/autopart-216v-freshness";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 import { skuMatchKey } from "@/domain/stock";
 
@@ -382,7 +388,39 @@ describe("216V freshness", () => {
     expect(result.stale).toBe(false);
   });
 
-  it("warns after the working-day 18:00 grace if today's report is missing", () => {
+  it("polls from 18:15 Europe/London on working days and not before", () => {
+    expect(AUTOPART_216V_SCHEDULE_LABEL).toContain("18:15");
+    // Wednesday 30 Sep 2026 BST: 18:14 London = 17:14 UTC, 18:15 = 17:15 UTC
+    expect(due216vPollWindow(new Date("2026-09-30T17:14:00.000Z"))).toBe(false);
+    expect(due216vPollWindow(new Date("2026-09-30T17:15:00.000Z"))).toBe(true);
+    // Wednesday 14 Jan 2026 GMT
+    expect(due216vPollWindow(new Date("2026-01-14T18:14:00.000Z"))).toBe(false);
+    expect(due216vPollWindow(new Date("2026-01-14T18:15:00.000Z"))).toBe(true);
+    expect(due216vPollWindow(new Date("2026-09-26T17:15:00.000Z"))).toBe(false);
+  });
+
+  it("keeps the 90-minute grace measured from 18:15", () => {
+    const yesterday = {
+      lastSuccessAt: new Date("2026-10-05T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-05",
+    };
+    const beforeGrace = new Date("2026-10-06T18:40:00.000Z"); // 19:40 BST
+    expect(resolveAutopart216vFreshness({ ...yesterday, now: beforeGrace }).status).toBe("CURRENT");
+    const afterGrace = new Date("2026-10-06T18:45:00.000Z"); // 19:45 BST
+    expect(resolveAutopart216vFreshness({ ...yesterday, now: afterGrace }).status).toBe(
+      "EXPECTED_REPORT_NOT_RECEIVED",
+    );
+    const gmtAfter = new Date("2026-01-14T19:45:00.000Z");
+    expect(
+      resolveAutopart216vFreshness({
+        lastSuccessAt: new Date("2026-01-13T18:20:00.000Z"),
+        lastBusinessDate: "2026-01-13",
+        now: gmtAfter,
+      }).status,
+    ).toBe("EXPECTED_REPORT_NOT_RECEIVED");
+  });
+
+  it("warns after the working-day 18:15 grace if today's report is missing", () => {
     const tueEvening = new Date("2026-10-06T19:00:00.000Z"); // 20:00 BST
     const result = resolveAutopart216vFreshness({
       lastSuccessAt: new Date("2026-10-05T17:04:00.000Z"),

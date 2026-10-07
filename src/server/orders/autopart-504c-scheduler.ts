@@ -1,6 +1,7 @@
 /**
  * Autopart 504C in-app scheduler.
  * Default: DISABLED. Tick runs every minute but never imports while enabled=false.
+ * Due windows are 13:15 and 16:15 Europe/London, working days.
  */
 
 import { due504cWindow } from "@/domain/autopart-504c-schedule";

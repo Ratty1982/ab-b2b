@@ -2,7 +2,7 @@
 
 Purchasing → **Backorders** (`/purchasing/backorders`) is the operational workspace for the daily Autopart **216V** outstanding-backorder report.
 
-216V is emailed once per working day at approximately **18:00 Europe/London**. It is **not** the 231PO3NEW stock feed and does not use the 36-hour stock freshness rule.
+216V is emailed once per working day at approximately **18:15 Europe/London**. It is **not** the 231PO3NEW stock feed and does not use the 36-hour stock freshness rule.
 
 ## Detection
 
@@ -98,7 +98,7 @@ Examples:
 
 ## Freshness
 
-Expected: working days, ~18:00 Europe/London, 90-minute grace. Weekends use the last working day's report and do not alert merely because Saturday/Sunday had no file.
+Expected: working days, ~18:15 Europe/London, 90-minute grace. Weekends use the last working day's report and do not alert merely because Saturday/Sunday had no file.
 
 ## Purchasing forecast
 

@@ -1,5 +1,5 @@
 /**
- * 216V arrives once per working day at approximately 18:00 Europe/London.
+ * 216V arrives once per working day at approximately 18:15 Europe/London.
  * Do not reuse the 36-hour stock freshness rule.
  * Weekends must not alert merely because no Saturday/Sunday report exists.
  */
@@ -8,8 +8,10 @@ import { londonBusinessDate, londonCivilTime } from "@/domain/stock-schedule";
 import { isLondonWorkingDayOngoing, londonIsoWeekdayOngoing } from "@/domain/autopart-ongoing-sales-schedule";
 
 export const AUTOPART_216V_SCHEDULE_HOUR = 18;
-/** Grace after 18:00 before "expected report not received". */
+export const AUTOPART_216V_SCHEDULE_MINUTE = 15;
+/** Grace after 18:15 before "expected report not received". */
 export const AUTOPART_216V_GRACE_MINUTES = 90;
+export const AUTOPART_216V_SCHEDULE_LABEL = "Once per working day at 18:15 Europe/London";
 
 export type Autopart216vFeedHealth =
   | "CURRENT"
@@ -54,8 +56,8 @@ export function next216vExpectedLabel(now = new Date()): string {
   const today = londonBusinessDate(local);
   if (isLondonWorkingDayOngoing(now)) {
     const minutes = local.hour * 60 + local.minute;
-    if (minutes < AUTOPART_216V_SCHEDULE_HOUR * 60) {
-      return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:00 Europe/London today`;
+    if (minutes < AUTOPART_216V_SCHEDULE_HOUR * 60 + AUTOPART_216V_SCHEDULE_MINUTE) {
+      return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London today`;
     }
   }
   let cursor = today;
@@ -65,10 +67,10 @@ export function next216vExpectedLabel(now = new Date()): string {
     const weekday = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
     if (weekday !== 0 && weekday !== 6) {
       const [yy, mm, dd] = cursor.split("-");
-      return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:00 Europe/London ${dd}/${mm}/${yy}`;
+      return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London ${dd}/${mm}/${yy}`;
     }
   }
-  return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:00 Europe/London next working day`;
+  return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London next working day`;
 }
 
 export function resolveAutopart216vFreshness(input: {
@@ -116,7 +118,7 @@ export function resolveAutopart216vFreshness(input: {
   }
 
   const minutes = local.hour * 60 + local.minute;
-  const dueMinutes = hour * 60 + grace;
+  const dueMinutes = hour * 60 + AUTOPART_216V_SCHEDULE_MINUTE + grace;
   const todayDue = minutes >= dueMinutes;
   const expectedBusinessDate = todayDue ? today : previousLondonWorkingDate(today);
 
@@ -140,7 +142,7 @@ export function resolveAutopart216vFreshness(input: {
       lastBusinessDate,
       expectedBusinessDate,
       nextExpectedLabel,
-      warning: `Expected working-day 216V after ${pad(hour)}:00 Europe/London has not arrived. Showing last available snapshot — backorders were not cleared.`,
+      warning: `Expected working-day 216V after ${pad(hour)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London has not arrived. Showing last available snapshot — backorders were not cleared.`,
     };
   }
 
@@ -184,7 +186,7 @@ export const AUTOPART_216V_FEED_HEADLINE_LABEL: Record<Autopart216vFeedHeadline,
 
 /**
  * Compact operational headline. Does not change stale/CURRENT freshness rules.
- * Waiting for today's 18:00 file is not overdue.
+ * Waiting for today's 18:15 file is not overdue.
  */
 export function headline216vFeedHealth(input: {
   status: Autopart216vFeedHealth;
@@ -207,7 +209,7 @@ export function headline216vFeedHealth(input: {
   const today = londonBusinessDate(local);
   const working = isLondonWorkingDayOngoing(now);
   const minutes = local.hour * 60 + local.minute;
-  const beforeTodayDue = minutes < AUTOPART_216V_SCHEDULE_HOUR * 60;
+  const beforeTodayDue = minutes < AUTOPART_216V_SCHEDULE_HOUR * 60 + AUTOPART_216V_SCHEDULE_MINUTE;
   if (
     working &&
     beforeTodayDue &&
@@ -227,7 +229,8 @@ export function headline216vFeedHealth(input: {
 export function due216vPollWindow(now = new Date(), scheduleHour = AUTOPART_216V_SCHEDULE_HOUR): boolean {
   if (!isLondonWorkingDayOngoing(now)) return false;
   const local = londonCivilTime(now);
-  return local.hour >= scheduleHour;
+  const minutes = local.hour * 60 + local.minute;
+  return minutes >= scheduleHour * 60 + AUTOPART_216V_SCHEDULE_MINUTE;
 }
 
 export { londonIsoWeekdayOngoing };

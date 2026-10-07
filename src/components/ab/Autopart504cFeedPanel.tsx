@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { AUTOPART_504C_SCHEDULE_LABEL } from "@/domain/autopart-504c-schedule";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import {
@@ -219,12 +220,12 @@ export function Autopart504cFeedPanel() {
           <div className="flex items-center justify-between gap-2 rounded border border-border/60 px-3 py-2 sm:col-span-2 lg:col-span-1">
             <dt className="text-steel">Schedule</dt>
             <dd className="text-right text-[12px]">
-              {settings?.scheduleLabel ?? "13:00 · 16:00 Europe/London"}
+              {settings?.scheduleLabel ?? AUTOPART_504C_SCHEDULE_LABEL}
             </dd>
           </div>
         </dl>
         <p className="mt-3 text-[12px] text-steel">
-          Intended production schedule: 13:00 and 16:00 Europe/London on working days. Coolify cron
+          Intended production schedule: 13:15 and 16:15 Europe/London on working days. Coolify cron
           is not required — the in-app scheduler ticks this feed only when explicitly enabled.
         </p>
       </div>

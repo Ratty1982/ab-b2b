@@ -55,19 +55,19 @@ No fuzzy matching. Non-AB references are ignored for despatch. Credits may link 
 - Ongoing documents also use a partial unique index on `(documentType, documentReference)` where `has504` or `hasTrm21qc`
 - Imports find existing rows by Autopart document number first — never create a second financial sale for the same document
 - Line natural key: `(companyId, documentType, documentReference, lineNumber)` with stable TRM21QC fingerprints (supports repeated SKUs)
-- Overlapping 13:00 / 18:00 / manual / email imports are idempotent
+- Overlapping 13:15 / 18:15 / manual / email imports are idempotent
 - Sales Intelligence reads `AutopartSalesLine` only (historic + ongoing) — **not** AB `OrderItem` rows, so realised Autopart invoice lines are not double-counted with order placement
 
 ## Schedule
 
 Autopart is asked to email **both** 504 and TRM21QC at:
 
-- 13:00 Europe/London Mon–Fri (interim)
-- 18:00 Europe/London Mon–Fri (final expected daily feed)
+- 13:15 Europe/London Mon–Fri (interim)
+- 18:15 Europe/London Mon–Fri (final expected daily feed)
 
 In-app scheduler follows the 504C pattern (minute tick, window keys, no Coolify cron). Defaults **OFF**.
 
-Polling must tolerate late arrival. Missing companion report mid-day → `AWAITING_504` / `AWAITING_LINES` (not fatal). After the final expected 18:00 window, unresolved companion gaps are more visible in diagnostics. No Saturday/Sunday missing-feed warnings.
+Polling must tolerate late arrival. Missing companion report mid-day → `AWAITING_504` / `AWAITING_LINES` (not fatal). After the final expected 18:15 window, unresolved companion gaps are more visible in diagnostics. No Saturday/Sunday missing-feed warnings.
 
 ## Freshness
 

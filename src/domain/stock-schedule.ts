@@ -1,6 +1,8 @@
 export const STOCK_SCHEDULE_TIMEZONE = "Europe/London";
 export const STOCK_SCHEDULE_HOURS = [9, 12, 15, 18] as const;
-export const STOCK_SCHEDULE_LABEL = "09:00 · 12:00 · 15:00 · 18:00";
+/** Windows open 15 minutes past the hour so reports can arrive before the poll. */
+export const STOCK_SCHEDULE_MINUTE = 15;
+export const STOCK_SCHEDULE_LABEL = "09:15 · 12:15 · 15:15 · 18:15";
 export const STOCK_SCHEDULE_OVERNIGHT_HOUR = 18;
 export const STOCK_FAILED_RETRY_MS = 10 * 60 * 1000;
 
@@ -53,12 +55,16 @@ export function londonBusinessDate(civil: Pick<LondonCivilTime, "year" | "month"
   return `${civil.year}-${String(civil.month).padStart(2, "0")}-${String(civil.day).padStart(2, "0")}`;
 }
 
+function slotHasStarted(local: LondonCivilTime, hour: number): boolean {
+  return local.hour > hour || (local.hour === hour && local.minute >= STOCK_SCHEDULE_MINUTE);
+}
+
 export function stockWindowKey(businessDate: string, hour: number): string {
-  return `${businessDate}T${String(hour).padStart(2, "0")}:00`;
+  return `${businessDate}T${stockWindowLabel(hour)}`;
 }
 
 export function stockWindowLabel(hour: number): string {
-  return `${String(hour).padStart(2, "0")}:00`;
+  return `${String(hour).padStart(2, "0")}:${String(STOCK_SCHEDULE_MINUTE).padStart(2, "0")}`;
 }
 
 function shiftCivilDate(civil: Pick<LondonCivilTime, "year" | "month" | "day">, days: number) {
@@ -73,13 +79,13 @@ function shiftCivilDate(civil: Pick<LondonCivilTime, "year" | "month" | "day">, 
 
 /**
  * Catch-up policy: a window stays due until the next window starts.
- * 09:00 until 12:00, 12:00 until 15:00, 15:00 until 18:00,
- * 18:00 until the next day's 09:00 Europe/London.
+ * 09:15 until 12:15, 12:15 until 15:15, 15:15 until 18:15,
+ * 18:15 until the next day's 09:15 Europe/London.
  * At most one window is due. Missed days are not replayed.
  */
 export function dueStockWindow(date: Date): DueStockWindow {
   const local = londonCivilTime(date);
-  if (local.hour < STOCK_SCHEDULE_HOURS[0]) {
+  if (!slotHasStarted(local, STOCK_SCHEDULE_HOURS[0])) {
     const previous = shiftCivilDate(local, -1);
     const businessDate = londonBusinessDate(previous);
     return {
@@ -91,7 +97,7 @@ export function dueStockWindow(date: Date): DueStockWindow {
   }
   let hour: number = STOCK_SCHEDULE_HOURS[0];
   for (const candidate of STOCK_SCHEDULE_HOURS) {
-    if (local.hour >= candidate) hour = candidate;
+    if (slotHasStarted(local, candidate)) hour = candidate;
   }
   const businessDate = londonBusinessDate(local);
   return {
@@ -104,7 +110,7 @@ export function dueStockWindow(date: Date): DueStockWindow {
 
 export function nextStockWindow(date: Date): DueStockWindow {
   const local = londonCivilTime(date);
-  const upcomingToday = STOCK_SCHEDULE_HOURS.find((hour) => hour > local.hour);
+  const upcomingToday = STOCK_SCHEDULE_HOURS.find((hour) => !slotHasStarted(local, hour));
   if (upcomingToday != null) {
     const businessDate = londonBusinessDate(local);
     return {

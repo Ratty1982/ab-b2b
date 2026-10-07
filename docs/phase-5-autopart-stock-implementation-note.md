@@ -53,7 +53,7 @@ configured source (EMAIL / IMAP in production; FTP / HTTP / file diagnostic) or 
 
 In-application minute tick while the Nitro server runs (`startStockScheduler` from `src/server.ts`). Enabled by default unless `AUTOPART_STOCK_ENABLE_SCHEDULER=false`.
 
-Windows: **09:00 / 12:00 / 15:00 / 18:00 Europe/London** every day (BST/GMT via `Intl`). A due window stays open until the next window. `StockScheduleWindow` records COMPLETE / WAITING_EMAIL / FAILED.
+Windows: **09:15 / 12:15 / 15:15 / 18:15 Europe/London** every day (BST/GMT via `Intl`). A due window stays open until the next window. `StockScheduleWindow` records COMPLETE / WAITING_EMAIL / FAILED.
 
 `POST /api/internal/stock-sync` is optional recovery, not the production scheduler. No Coolify cron.
 
@@ -71,7 +71,7 @@ Inspected AlphaOps (`Ratty1982/alphaops`, `backend/src/autopart-stock-email/`). 
 
 AB reimplements the mailbox path independently. After attachment extraction, the existing Phase 5 parse / match / apply / stale / public-availability pipeline is reused.
 
-**One poll path:** the in-application scheduler performs IMAP acquisition at 09:00 / 12:00 / 15:00 / 18:00 Europe/London. Coolify HTTP cron is not required.
+**One poll path:** the in-application scheduler performs IMAP acquisition at 09:15 / 12:15 / 15:15 / 18:15 Europe/London. Coolify HTTP cron is not required.
 
 **Duplicate SKU policy unchanged:** AB still skips every duplicate instance. Current AlphaOps keeps highest Avail. Do not change AB until live feed data is reviewed.
 

@@ -35,7 +35,7 @@ Sales Intelligence, Gap Analysis, Stock Intelligence (`/admin/products/stock` Au
 
 Internal staff with stock/intelligence permission see exact Avail / Physical / Incoming. Latest Cost stays internal (`products.cost.view` / `purchasing.view`). Trade and public APIs never receive AutopartProduct rows, exact stock, or cost.
 
-Stock freshness is the existing 36-hour / 09:00–18:00 Europe/London policy. Stale stock is labelled **Stock data delayed** / **Incoming delayed**, never shown as trustworthy live figures.
+Stock freshness is the existing 36-hour / 09:15–18:15 Europe/London policy. Stale stock is labelled **Stock data delayed** / **Incoming delayed**, never shown as trustworthy live figures.
 
 Purchasing reuses the existing forecast, trend, reorder, confidence, and verified-history rules. External SKUs use `AutopartProductPurchasingSettings` / `AutopartPurchasingPlanLine` instead of requiring `VariantPurchasingSettings`. Catalogue SKU settings are unchanged.
 

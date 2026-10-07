@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/session";
 import { summariseStockQtyChanges } from "@/domain/stock";
 import { InstantText } from "@/components/ab/InstantText";
+import { STOCK_SCHEDULE_LABEL } from "@/domain/stock-schedule";
 import { formatLondonScheduleLabel, formatOrDash, formatOperationalDateTime } from "@/lib/datetime";
 
 export const Route = createFileRoute("/admin/products/stock")({
@@ -404,7 +405,7 @@ function AutopartStockOps() {
         <StatusCard label="Scheduler" value={overview?.scheduler?.enabled ? "Automatic" : "Disabled"} />
         <StatusCard
           label="Schedule"
-          value={overview?.config.scheduleLabel ?? "09:00 · 12:00 · 15:00 · 18:00"}
+          value={overview?.config.scheduleLabel ?? STOCK_SCHEDULE_LABEL}
         />
         <StatusCard label="Timezone" value={overview?.config.scheduleTimezone ?? "Europe/London"} />
         <StatusCard label="Current window" value={overview?.scheduler?.currentWindow.display ?? "—"} />
@@ -489,7 +490,7 @@ function AutopartStockOps() {
           ) : null}
         </div>
         <p className="text-[12px] text-steel">
-          Production receives 231PO3NEW from the mailbox automatically at 09:00, 12:00, 15:00 and 18:00
+          Production receives 231PO3NEW from the mailbox automatically at 09:15, 12:15, 15:15 and 18:15
           Europe/London. The application scheduler ticks once a minute and only imports when a window is
           due and not yet complete. Coolify cron is not required. Manual Poll now still works at any time.
           Password is write-only

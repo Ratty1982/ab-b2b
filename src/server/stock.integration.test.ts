@@ -437,7 +437,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     await expect(getImapSettings(tradeUserId)).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("scheduled sync catch-up keeps 09:00 due at 10:07 without mutating stock when no email exists", async () => {
+  it("scheduled sync catch-up keeps 09:15 due at 10:07 without mutating stock when no email exists", async () => {
     const sku = `ST5W-${Date.now().toString(36).slice(-7)}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -772,8 +772,8 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect(await prisma.stockSyncChange.count({ where: { skuSnapshot: `FAIL-${stamp}` } })).toBe(0);
   });
 
-  it("runs a due 09:00 window once, catch-up at 09:02, and does not repeat after restart", async () => {
-    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-10T09:00" } });
+  it("runs a due 09:15 window once, catch-up at 09:17, and does not repeat after restart", async () => {
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-10T09:15" } });
     const sku = `SCH9-${Date.now().toString(36).slice(-6)}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -795,13 +795,13 @@ describe("Phase 5 Autopart inventory integration", () => {
       messageId: `<${sku}@example.invalid>`,
       from: "reports@example.com",
       subject: "231PO3NEW",
-      receivedAt: new Date("2026-02-10T09:01:00.000Z"),
+      receivedAt: new Date("2026-02-10T09:16:00.000Z"),
       attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
     };
-    const atNine = new Date("2026-02-10T09:00:00.000Z");
+    const atNine = new Date("2026-02-10T09:15:00.000Z");
     const first = await runScheduledStockSync({ dryRun: false, trigger: "schedule", now: atNine, emails: [email] });
     expect(first.status).toBe("SUCCESS");
-    expect(first.windowKey).toBe("2026-02-10T09:00");
+    expect(first.windowKey).toBe("2026-02-10T09:15");
     expect(first.windowStatus).toBe("COMPLETE");
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(36);
     expect(await prisma.stockSyncChange.count({ where: { runId: first.runId! } })).toBe(1);
@@ -809,7 +809,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     const at902 = await runScheduledStockSync({
       dryRun: false,
       trigger: "schedule",
-      now: new Date("2026-02-10T09:02:00.000Z"),
+      now: new Date("2026-02-10T09:17:00.000Z"),
       emails: [email],
     });
     expect(at902.status).toBe("SKIPPED");
@@ -817,8 +817,8 @@ describe("Phase 5 Autopart inventory integration", () => {
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(36);
   });
 
-  it("waits for a late 12:00 email then completes that window once", async () => {
-    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-11T12:00" } });
+  it("waits for a late 12:15 email then completes that window once", async () => {
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-11T12:15" } });
     const sku = `SCH12-${Date.now().toString(36).slice(-6)}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -841,7 +841,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     const native = buildNative231Po3New([
       { sku: variant.sku, description: "LATE", stk: "20.0000", avail: "8.0000", pick: "1.0000", physical: "20.0000" },
     ]);
-    const noon = new Date("2026-02-11T12:00:00.000Z");
+    const noon = new Date("2026-02-11T12:15:00.000Z");
     const scheduledRunsBefore = await prisma.stockSyncRun.count({ where: { trigger: "schedule" } });
     const waiting = await runScheduledStockSync({ dryRun: false, trigger: "schedule", now: noon, emails: [] });
     expect(waiting.status).toBe("WAITING_FOR_EMAIL");
@@ -853,13 +853,13 @@ describe("Phase 5 Autopart inventory integration", () => {
       messageId: `<${sku}@example.invalid>`,
       from: "reports@example.com",
       subject: "231PO3NEW",
-      receivedAt: new Date("2026-02-11T12:07:00.000Z"),
+      receivedAt: new Date("2026-02-11T12:22:00.000Z"),
       attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
     };
     const late = await runScheduledStockSync({
       dryRun: false,
       trigger: "schedule",
-      now: new Date("2026-02-11T12:07:00.000Z"),
+      now: new Date("2026-02-11T12:22:00.000Z"),
       emails: [email],
     });
     expect(late.status).toBe("SUCCESS");
@@ -869,7 +869,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     const again = await runScheduledStockSync({
       dryRun: false,
       trigger: "schedule",
-      now: new Date("2026-02-11T12:20:00.000Z"),
+      now: new Date("2026-02-11T12:35:00.000Z"),
       emails: [email],
     });
     expect(again.status).toBe("SKIPPED");
@@ -877,7 +877,7 @@ describe("Phase 5 Autopart inventory integration", () => {
   });
 
   it("allows only one of two concurrent scheduled workers to import a window", async () => {
-    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-12T15:00" } });
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: "2026-02-12T15:15" } });
     const sku = `SCHD-${Date.now().toString(36).slice(-6)}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -899,10 +899,10 @@ describe("Phase 5 Autopart inventory integration", () => {
       messageId: `<${sku}@example.invalid>`,
       from: "reports@example.com",
       subject: "231PO3NEW",
-      receivedAt: new Date("2026-02-12T15:00:00.000Z"),
+      receivedAt: new Date("2026-02-12T15:15:00.000Z"),
       attachments: [{ filename: "231PO3NEW.txt", content: Buffer.from(native) }],
     };
-    const now = new Date("2026-02-12T15:00:00.000Z");
+    const now = new Date("2026-02-12T15:15:00.000Z");
     const [a, b] = await Promise.all([
       runScheduledStockSync({ dryRun: false, trigger: "schedule", now, emails: [email] }),
       runScheduledStockSync({ dryRun: false, trigger: "schedule", now, emails: [email] }),
@@ -916,7 +916,7 @@ describe("Phase 5 Autopart inventory integration", () => {
   });
 
   it("retains inventory when scheduled IMAP/parser work fails and does not emit a waiting-for-email failure", async () => {
-    await prisma.stockScheduleWindow.deleteMany({ where: { key: { in: ["2026-02-13T18:00", "2026-02-14T09:00"] } } });
+    await prisma.stockScheduleWindow.deleteMany({ where: { key: { in: ["2026-02-13T18:15", "2026-02-14T09:15"] } } });
     const sku = `SCHF-${Date.now().toString(36).slice(-6)}`;
     const product = await saveProduct(adminId, {
       sku,
@@ -938,7 +938,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     const missingImap = await runScheduledStockSync({
       dryRun: false,
       trigger: "schedule",
-      now: new Date("2026-02-13T18:00:00.000Z"),
+      now: new Date("2026-02-13T18:15:00.000Z"),
     });
     expect(missingImap.status).toBe("FAILED");
     expect((await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } })).qtyOnHand).toBe(14);
@@ -948,7 +948,7 @@ describe("Phase 5 Autopart inventory integration", () => {
       messageId: `<bad-${sku}@example.invalid>`,
       from: "reports@example.com",
       subject: "231PO3NEW",
-      receivedAt: new Date("2026-02-14T09:00:00.000Z"),
+      receivedAt: new Date("2026-02-14T09:15:00.000Z"),
       attachments: [
         {
           filename: "231PO3NEW.txt",
@@ -959,7 +959,7 @@ describe("Phase 5 Autopart inventory integration", () => {
     const parsed = await runScheduledStockSync({
       dryRun: false,
       trigger: "schedule",
-      now: new Date("2026-02-14T09:00:00.000Z"),
+      now: new Date("2026-02-14T09:15:00.000Z"),
       emails: [bad],
     });
     expect(parsed.status).toBe("FAILED");

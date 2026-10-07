@@ -68,7 +68,7 @@ Latest **live** `StockSyncRun` with status SUCCESS or PARTIAL:
 Read-only settings from `getAutopart504cFeedSettings()`:
 
 - Expected production state while waiting on Autopart: **Not configured**, automatic polling **OFF**
-- Schedule label: 13:00 · 16:00 Europe/London (working days)
+- Schedule label: 13:15 · 16:15 Europe/London (working days)
 - Listed under Needs attention as **informational**, not a critical error
 
 Dry-run import records must never be presented as live imports on this dashboard.

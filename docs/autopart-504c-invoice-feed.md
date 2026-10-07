@@ -11,7 +11,7 @@ Autopart has **not** yet configured the scheduled 504C report emails.
 | Status | NOT CONFIGURED / DISABLED |
 | Automatic polling | **OFF** |
 | `Autopart504cFeedSettings.enabled` | `false` |
-| Schedule capability | 13:00 · 16:00 Europe/London (working days) |
+| Schedule capability | 13:15 · 16:15 Europe/London (working days) |
 
 Do **not** enable during migration, deployment, or bootstrap. Enable only in a later task after Autopart confirms the report email.
 
@@ -108,7 +108,7 @@ Safeguards:
 - RECEIVED (`SUBMITTED`) without Processing → do **not** despatch from 504C alone  
 - Credits → store/classify only; **never** despatch or email  
 - Duplicate document numbers → ignore (harmless)  
-- Repeated 13:00 / 16:00 overlapping files are expected and must be idempotent  
+- Repeated 13:15 / 16:15 overlapping files are expected and must be idempotent  
 - Email failure does **not** roll back invoice or status  
 - Financial totals alone must not invent SKU quantities
 
@@ -128,8 +128,8 @@ On 504C despatch:
 
 Intended production windows:
 
-- 13:00 Europe/London  
-- 16:00 Europe/London  
+- 13:15 Europe/London  
+- 16:15 Europe/London  
 - Working days only  
 
 In-app scheduler (`src/server/orders/autopart-504c-scheduler.ts`) ticks every minute but **no-ops** while `enabled=false`. No Coolify cron required.

@@ -47,6 +47,7 @@ import {
   formatAutopart216vChangeQty,
   type Autopart216vMovement,
 } from "@/domain/autopart-216v-movement";
+import { AUTOPART_216V_SCHEDULE_LABEL } from "@/domain/autopart-216v-freshness";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatOperationalDateTime } from "@/lib/datetime";
 import {
@@ -810,7 +811,7 @@ function SettingsBody({
           </div>
           <div>
             <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Expected schedule</dt>
-            <dd className="mt-1">Once per working day around 18:00 Europe/London</dd>
+            <dd className="mt-1">{AUTOPART_216V_SCHEDULE_LABEL}</dd>
           </div>
           <div>
             <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful report</dt>

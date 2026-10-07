@@ -1,7 +1,7 @@
 /**
  * Autopart 216V in-app scheduler.
  * Default: DISABLED. Tick is registered but never imports while enabled=false.
- * Expected window: working days from 18:00 Europe/London.
+ * Expected window: working days from 18:15 Europe/London.
  */
 
 import { due216vPollWindow } from "@/domain/autopart-216v-freshness";

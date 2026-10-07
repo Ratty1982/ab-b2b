@@ -15,7 +15,7 @@ AlphaOps was inspected in `Ratty1982/alphaops` (`backend/src/autopart-stock-emai
 ```
 IMAP mailbox
 → in-application scheduler (minute tick)
-→ Europe/London due window (09:00 / 12:00 / 15:00 / 18:00, catch-up until the next window)
+→ Europe/London due window (09:15 / 12:15 / 15:15 / 18:15, catch-up until the next window)
 → PostgreSQL StockSyncMutex
 → allowed-sender check
 → 231PO3NEW attachment filter
@@ -27,11 +27,11 @@ IMAP mailbox
 
 **Production stock schedule** (business local times, every day):
 
-**09:00 · 12:00 · 15:00 · 18:00 Europe/London**
+**09:15 · 12:15 · 15:15 · 18:15 Europe/London**
 
-The server uses `Intl` civil time in `Europe/London`, so BST/GMT shifts are handled. Do **not** hard-code 09:00 UTC.
+The server uses `Intl` civil time in `Europe/London`, so BST/GMT shifts are handled. Do **not** hard-code 09:15 UTC.
 
-A window stays due until the next one starts (09:00 until 12:00, …, 18:00 until the next day’s 09:00). Restarts catch up that open window only — they do not replay older days. Successful processing marks the window complete in `StockScheduleWindow`.
+A window stays due until the next one starts (09:15 until 12:15, …, 18:15 until the next day’s 09:15). Restarts catch up that open window only — they do not replay older days. Successful processing marks the window complete in `StockScheduleWindow`.
 
 If the mailbox has no new 231PO3NEW yet, the scheduler waits (no FAILED run every minute, stock unchanged). The next tick imports when the email arrives.
 
@@ -51,7 +51,7 @@ Manual **Poll now** / upload ignore the windows and still use the DB lock. UID +
 
 Admin → Autopart Stock: configure IMAP, **Test connection**, **Poll now (dry run)** then **Poll now (live)**. Password is never returned in DTOs.
 
-Sync History, scheduler ticks, and related timestamps are **stored UTC** and **displayed Europe/London** (for example `23/09/2026, 12:03:14 BST`). The 09:00–18:00 schedule labels stay London civil times; they are not converted to UTC in the UI.
+Sync History, scheduler ticks, and related timestamps are **stored UTC** and **displayed Europe/London** (for example `23/09/2026, 12:03:14 BST`). The 09:15–18:15 schedule labels stay London civil times; they are not converted to UTC in the UI.
 
 Dedupe: `Message-ID|UID` (UID required). Message-ID alone is not unique. Dry-run does **not** consume the message. Live success marks the receipt consumed. Default: leave mail in INBOX (no delete). Archive-after-success is optional and off by default.
 
@@ -126,9 +126,9 @@ Dry run still records a `StockSyncRun` with `mode=dry-run` and issues. It does n
 
 Automotive Brands runs an **in-application** minute tick (`src/server/stock/scheduler.ts`) while the Nitro server is up. The tick does not import every minute — it asks whether a London window is due and incomplete.
 
-- Windows: **09:00, 12:00, 15:00, 18:00 Europe/London** every day (BST/GMT via `Intl`).
-- Catch-up: a window remains eligible until the next window starts (18:00 until next 09:00).
-- Persistence: `StockScheduleWindow` keyed by `YYYY-MM-DDTHH:00` London. Restarts do not re-run COMPLETE windows.
+- Windows: **09:15, 12:15, 15:15, 18:15 Europe/London** every day (BST/GMT via `Intl`).
+- Catch-up: a window remains eligible until the next window starts (18:15 until next 09:15).
+- Persistence: `StockScheduleWindow` keyed by `YYYY-MM-DDTHH:15` London. Restarts do not re-run COMPLETE windows.
 - Waiting for email is not FAILED. Genuine IMAP/parser/inventory failures are FAILED and retry after 10 minutes.
 - `GET/POST /api/internal/stock-sync` is optional (secret required on POST).
 - Disable with `AUTOPART_STOCK_ENABLE_SCHEDULER=false` if needed.
@@ -217,7 +217,7 @@ Sales Intelligence foundation (cost + usage only — not full SI).
 ### What stays unchanged
 
 - **231PO3NEW `Avail` remains the authoritative sellable stock** for AB Inventory.
-- Existing polling cadence is unchanged: **09:00 / 12:00 / 15:00 / 18:00 Europe/London**.
+- Polling cadence: **09:15 / 12:15 / 15:15 / 18:15 Europe/London**.
 - Manual **Poll now** still updates Avail every time.
 - Cost capture never feeds the Phase 4 price resolver, trade/RRP, or public catalogue.
 - No historic gross margin is inferred by applying today’s cost to old invoices.
@@ -232,7 +232,7 @@ From each successful native 231PO3NEW parse AB also reads **Latest Cost**:
 | `AutopartProductCostPosition` | Current cost per SKU (+ previous, first/last observed, last changed, source run) |
 | `AutopartProductCostSnapshot` | **One** row per SKU per **Europe/London** business date |
 
-Multiple polls the same London day **upsert** the daily snapshot — latest valid observation wins (e.g. 09:00 £2.50, 15:00 £2.60 → day’s snapshot £2.60). Database timestamps remain UTC; the business date label is London civil `YYYY-MM-DD` stored as that date at UTC midnight (no timezone shift of the label).
+Multiple polls the same London day **upsert** the daily snapshot — latest valid observation wins (e.g. 09:15 £2.50, 15:15 £2.60 → day’s snapshot £2.60). Database timestamps remain UTC; the business date label is London civil `YYYY-MM-DD` stored as that date at UTC midnight (no timezone shift of the label).
 
 Costs use Prisma `Decimal(12,4)` / scaled Money strings — never IEEE floats as the authority.
 
