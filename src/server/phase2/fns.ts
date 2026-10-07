@@ -4208,6 +4208,76 @@ export const listFbaStockImportsFn = createServerFn({ method: "GET" }).handler(a
   }
 });
 
+export const previewSalesHistoryCoverageFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const coverage = await import("@/server/purchasing/sales-history-coverage");
+      return { ok: true as const, data: await coverage.previewSalesHistoryCoverage(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const verifySalesHistoryCoverageFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const coverage = await import("@/server/purchasing/sales-history-coverage");
+      return { ok: true as const, data: await coverage.verifySalesHistoryCoverage(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listSalesHistoryBrandsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const coverage = await import("@/server/purchasing/sales-history-coverage");
+    return { ok: true as const, data: await coverage.listSalesHistoryBrands(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const getSkuSalesTrendFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const trend = await import("@/server/purchasing/sales-trend");
+      return { ok: true as const, data: await trend.getSkuSalesTrend(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getBrandSalesTrendFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const trend = await import("@/server/purchasing/sales-trend");
+      return { ok: true as const, data: await trend.getBrandSalesTrend(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportStockForecastCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.exportStockForecastCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getPurchasingSkuFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { sku: string })
   .handler(async ({ data }) => {

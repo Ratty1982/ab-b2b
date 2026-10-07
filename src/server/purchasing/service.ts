@@ -12,6 +12,10 @@ import {
 } from "@/domain/autopart-product";
 import { stockFreshness } from "@/server/stock/service";
 import { loadCurrentFbaQtyByMatchKey, loadFbaFreshness } from "@/server/purchasing/fba-stock";
+import { loadCoverageIndex, verificationForBrandSlug } from "@/server/purchasing/sales-history-coverage";
+import { trendDirectionBySku } from "@/server/purchasing/sales-trend";
+import { SALES_HISTORY_VERIFICATION_LABEL } from "@/domain/sales-history-coverage";
+import { autopartConditionLabel } from "@/domain/autopart-product-condition";
 import { FBA_LOCATION_CODE, totalOwnedStock } from "@/domain/fba-stock";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import { addDaysIso, dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
@@ -604,14 +608,40 @@ export async function getPurchasingDashboard(actorUserId: string) {
   };
 }
 
-export async function listPurchasingForecast(actorUserId: string, raw: unknown) {
+function withHistoryVerification<T extends { brandSlug: string }>(
+  row: T,
+  coverage: Awaited<ReturnType<typeof loadCoverageIndex>>,
+  today: string,
+) {
+  const history = verificationForBrandSlug(coverage, row.brandSlug, today);
+  return {
+    ...row,
+    historyVerification: history.status,
+    historyVerificationLabel: SALES_HISTORY_VERIFICATION_LABEL[history.status],
+    verifiedCoverageFrom: history.verifiedCoverageFrom,
+    verifiedCoverageTo: history.verifiedCoverageTo,
+  };
+}
+
+async function filteredForecastRows(actorUserId: string, raw: unknown) {
   const input = listInput.parse(raw ?? {});
   const workspace = await loadWorkspace(actorUserId);
-  const backorders = await outstandingBackorderUnitsBySku();
-  const all = applyFilters(workspace.rows, input).map((row) => ({
-    ...row,
-    customerBackorderUnits: backorders.get(skuMatchKey(row.sku)) ?? 0,
-  }));
+  const [backorders, coverage] = await Promise.all([outstandingBackorderUnitsBySku(), loadCoverageIndex()]);
+  const rows = applyFilters(workspace.rows, input).map((row) =>
+    withHistoryVerification(
+      {
+        ...row,
+        customerBackorderUnits: backorders.get(skuMatchKey(row.sku)) ?? 0,
+      },
+      coverage,
+      workspace.maps.windows.today,
+    ),
+  );
+  return { input, workspace, rows };
+}
+
+export async function listPurchasingForecast(actorUserId: string, raw: unknown) {
+  const { input, workspace, rows: all } = await filteredForecastRows(actorUserId, raw);
   const pageSize = input.pageSize ?? 50;
   const page = input.page ?? 1;
   return {
@@ -649,11 +679,13 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
     outstandingBackorderUnitsBySku(),
   ]);
   const customerBackorderUnits = backorders.get(skuMatchKey(row.sku)) ?? 0;
+  const coverage = await loadCoverageIndex();
+  const history = withHistoryVerification(forecast, coverage, workspace.maps.windows.today);
   return {
     freshness: workspace.freshness,
     settings: workspace.settings,
     canManage: workspace.canManage,
-    forecast,
+    forecast: history,
     chart,
     sources,
     customerBackorderUnits,
@@ -1303,6 +1335,98 @@ export async function updatePurchasingPlan(actorUserId: string, raw: unknown) {
     after: { plannedQty: input.plannedQty, note: input.note },
   });
   return getPurchasingSku(actorUserId, autopart.sku);
+}
+
+function forecastExportFilename(brand: string | null | undefined, today: string): string {
+  const slug = (brand ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug ? `stock-forecast-${slug}-${today}.csv` : `stock-forecast-${today}.csv`;
+}
+
+export async function exportStockForecastCsv(actorUserId: string, raw: unknown) {
+  const { input, workspace, rows } = await filteredForecastRows(actorUserId, raw);
+  const keys = rows.map((row) => skuMatchKey(row.sku));
+  const [conditions, directions] = await Promise.all([
+    keys.length
+      ? prisma.autopartProduct.findMany({
+          where: { matchKey: { in: keys } },
+          select: { matchKey: true, conditionCode: true },
+        })
+      : Promise.resolve([]),
+    trendDirectionBySku(rows.map((row) => row.sku), workspace.maps.windows.today),
+  ]);
+  const conditionByKey = new Map(conditions.map((row) => [row.matchKey, autopartConditionLabel(row.conditionCode) ?? ""]));
+  const header = [
+    "Product",
+    "SKU",
+    "Brand",
+    "Product Type",
+    "Supplier",
+    "Product Condition",
+    "Warehouse Stock",
+    "FBA Stock",
+    "Total Stock",
+    "Incoming",
+    "Customer Backorders",
+    "7d Sales",
+    "30d Sales",
+    "90d Sales",
+    "365d Sales",
+    "Average / Week",
+    "Current Cover",
+    "Lead Time Days",
+    "Estimated Runout",
+    "Suggested Order",
+    "Latest Cost GBP",
+    "Suggested Value GBP",
+    "Trend Direction",
+    "Sales History Confidence",
+    "Verified Coverage From",
+    "Verified Coverage To",
+    "Status",
+  ];
+  const lines = [
+    header.join(","),
+    ...rows.map((row) =>
+      [
+        csv(row.name),
+        csv(row.sku),
+        csv(row.brand),
+        csv(row.productKindLabel),
+        csv(row.purchasing.supplierName ?? row.supplier.supplierName),
+        csv(conditionByKey.get(skuMatchKey(row.sku)) ?? ""),
+        row.availableQty,
+        row.fbaQty,
+        row.totalStock,
+        row.incomingQty,
+        row.customerBackorderUnits,
+        row.rates.last7.netUnits,
+        row.rates.last30.netUnits,
+        row.rates.last90.netUnits,
+        row.rates.last365.netUnits,
+        row.recommendedWeekly ?? "",
+        row.weeksCover ?? "",
+        row.purchasing.leadTimeDays ?? "",
+        row.estimatedStockoutDate ?? "",
+        row.purchase.suggestedQty,
+        row.latestCost ?? "",
+        row.suggestedValue ?? "",
+        csv(directions.get(skuMatchKey(row.sku)) ?? "Insufficient history"),
+        csv(row.historyVerificationLabel),
+        row.verifiedCoverageFrom ?? "",
+        row.verifiedCoverageTo ?? "",
+        csv(PURCHASING_STATUS_LABEL[row.status]),
+      ].join(","),
+    ),
+  ];
+  return {
+    filename: forecastExportFilename(input.brand, workspace.maps.windows.today),
+    csv: lines.join("\n"),
+    rowCount: rows.length,
+  };
 }
 
 export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown) {

@@ -16,6 +16,7 @@ import {
   ErrorState,
   ForecastConfidenceBadge,
   ExternalBadge,
+  SalesHistoryVerificationBadge,
   FreshnessBanner,
   LoadingState,
   PurchasingStatusBadge,
@@ -31,6 +32,7 @@ import {
   trendLabel,
   ukDate,
 } from "@/components/purchasing/workspace";
+import { SkuSalesTrendSheet } from "@/components/purchasing/sales-trend-panel";
 import { formatDate } from "@/lib/datetime";
 import { ROUTES } from "@/lib/app-nav";
 import {
@@ -56,6 +58,7 @@ function PurchasingSkuPage() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [trendOpen, setTrendOpen] = useState(false);
 
   function load() {
     void getPurchasingSkuFn({ data: { sku } }).then((result) => {
@@ -169,6 +172,14 @@ function PurchasingSkuPage() {
               warning={forecast.forecastConfidenceWarning}
               verified={forecast.salesHistoryVerified}
             />
+            <SalesHistoryVerificationBadge
+              status={forecast.historyVerification}
+              from={forecast.verifiedCoverageFrom}
+              to={forecast.verifiedCoverageTo}
+            />
+            <button type="button" className={btnClass} onClick={() => setTrendOpen(true)}>
+              Sales trend
+            </button>
             <span className="text-[13px] text-steel">{forecast.statusReason}</span>
           </div>
           {forecast.forecastConfidenceWarning ? (
@@ -179,6 +190,15 @@ function PurchasingSkuPage() {
             <h2 className="font-display text-lg font-semibold uppercase">Forecast confidence</h2>
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-[13px]">
               <Fact label="Forecast confidence" value={forecast.forecastConfidenceLabel} />
+              <Fact label="Sales history confidence" value={forecast.historyVerificationLabel} />
+              <Fact
+                label="Confirmed coverage"
+                value={
+                  forecast.verifiedCoverageFrom && forecast.verifiedCoverageTo
+                    ? `${ukDate(forecast.verifiedCoverageFrom)} → ${ukDate(forecast.verifiedCoverageTo)}`
+                    : "Not confirmed"
+                }
+              />
               <Fact
                 label="Verified sales history"
                 value={
@@ -527,6 +547,12 @@ function PurchasingSkuPage() {
           ) : null}
         </div>
       ) : null}
+      <SkuSalesTrendSheet
+        open={trendOpen}
+        sku={sku}
+        name={forecast?.name ?? null}
+        onOpenChange={setTrendOpen}
+      />
     </>
   );
 }

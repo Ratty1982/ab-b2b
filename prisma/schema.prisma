@@ -526,6 +526,7 @@ model User {
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
+  salesHistoryCoverageVerifications SalesHistoryCoverageVerification[] @relation("SalesHistoryCoverageVerifier")
   customerGroupsCreated CustomerGroup[] @relation("CustomerGroupCreator")
   productsSdsRequirementUpdated Product[] @relation("ProductSdsRequirementUpdatedBy")
   ownedLeads         Lead[]
@@ -974,6 +975,7 @@ model Brand {
 
   products  Product[]
   logoMedia CmsMedia? @relation("BrandLogo", fields: [logoMediaId], references: [id], onDelete: SetNull)
+  salesHistoryCoverageVerifications SalesHistoryCoverageVerification[]
 
   @@index([logoMediaId])
   @@index([isActive, sortOrder])
@@ -1542,6 +1544,33 @@ model PurchasingSettings {
   verifiedSalesHistoryFrom DateTime? @db.Date
   updatedByUserId         String?
   updatedAt               DateTime @updatedAt
+}
+
+/// Explicit confirmation that imported sales history is complete for a scope and period.
+/// Records are kept. Effective coverage is their union. A gap is not filled in.
+enum SalesHistoryCoverageScope {
+  BRAND
+  ALL
+}
+
+model SalesHistoryCoverageVerification {
+  id           String                     @id @default(cuid())
+  scope        SalesHistoryCoverageScope
+  brandId      String?
+  coverageFrom DateTime                   @db.Date
+  coverageTo   DateTime                   @db.Date
+  verifiedAt   DateTime                   @default(now())
+  verifiedById String
+  notes        String?                    @db.Text
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+
+  brand      Brand? @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  verifiedBy User   @relation("SalesHistoryCoverageVerifier", fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  @@index([scope, brandId])
+  @@index([verifiedAt])
+  @@index([verifiedById])
 }
 
 /// Lightweight per-SKU purchasing parameters. Null means not configured.

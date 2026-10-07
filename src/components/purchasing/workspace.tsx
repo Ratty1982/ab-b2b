@@ -18,6 +18,11 @@ import {
   type ForecastConfidence,
   type PurchasingStatus,
 } from "@/domain/purchasing-forecast";
+import {
+  SALES_HISTORY_CONFIDENCE_HELP,
+  SALES_HISTORY_VERIFICATION_LABEL,
+  type SalesHistoryVerificationStatus,
+} from "@/domain/sales-history-coverage";
 
 export function gbp(value: string | null | undefined): string {
   if (value == null || value === "") return "—";
@@ -114,6 +119,46 @@ export function ForecastConfidenceBadge({
     <StatusBadge tone={confidenceTone(confidence)} className="normal-case tracking-normal">
       <span title={title}>{FORECAST_CONFIDENCE_LABEL[confidence]}</span>
     </StatusBadge>
+  );
+}
+
+export function SalesHistoryVerificationBadge({
+  status,
+  from,
+  to,
+}: {
+  status: SalesHistoryVerificationStatus;
+  from?: string | null;
+  to?: string | null;
+}) {
+  const tone: Tone = status === "VERIFIED" ? "good" : status === "PARTIAL" ? "warn" : "neutral";
+  const range = from && to ? ` Confirmed ${ukDate(from)} to ${ukDate(to)}.` : "";
+  const title =
+    status === "VERIFIED"
+      ? `The last 365 days sit inside confirmed sales-history coverage.${range}`
+      : status === "PARTIAL"
+        ? `Only part of the last 365 days is inside confirmed coverage.${range}`
+        : "Sales-history coverage has not been confirmed for this brand.";
+  return (
+    <StatusBadge tone={tone} className="normal-case tracking-normal">
+      <span title={title}>{SALES_HISTORY_VERIFICATION_LABEL[status]}</span>
+    </StatusBadge>
+  );
+}
+
+export function SalesHistoryConfidenceBanner() {
+  return (
+    <div className="border-b border-border/70 px-4 py-3 text-[13px] text-steel sm:px-6">
+      <div className="font-semibold uppercase tracking-[0.12em] text-[10px] text-ink">Sales history confidence</div>
+      <p className="mt-1 max-w-3xl">
+        Each brand is Verified, Partially verified, or Unverified. Imported sales records are not confirmation that the
+        history is complete. Use Verify Sales History after reviewing the imported dates.
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[12px] text-primary">What does confidence mean?</summary>
+        <p className="mt-1 max-w-3xl text-[12px]">{SALES_HISTORY_CONFIDENCE_HELP}</p>
+      </details>
+    </div>
   );
 }
 

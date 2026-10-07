@@ -4,19 +4,20 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import {
   EmptyState,
   ErrorState,
-  ForecastConfidenceBadge,
-  ForecastCoverageBanner,
   FreshnessBanner,
   LoadingState,
   Pager,
   PurchasingStatusBadge,
   SORT_OPTIONS,
   STATUS_FILTERS,
+  SalesHistoryConfidenceBanner,
+  SalesHistoryVerificationBadge,
   SkuLink,
   TREND_FILTERS,
   btnClass,
   controlClass,
   coverLabel,
+  downloadCsv,
   gbp,
   parseForecastSearch,
   mergeForecastSearch,
@@ -28,7 +29,9 @@ import {
   type ForecastSearchPatch,
 } from "@/components/purchasing/workspace";
 import { FbaStockImportPanel } from "@/components/purchasing/fba-stock-import";
-import { listPurchasingForecastFn } from "@/server/phase2/fns";
+import { BrandSalesTrendDialog, SkuSalesTrendSheet } from "@/components/purchasing/sales-trend-panel";
+import { SalesHistoryVerifyDialog } from "@/components/purchasing/sales-history-verify";
+import { exportStockForecastCsvFn, listPurchasingForecastFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/forecast/")({
   validateSearch: (raw: Record<string, unknown>) => parseForecastSearch(raw),
@@ -50,6 +53,11 @@ function StockForecastPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState(search.q ?? "");
   const [reload, setReload] = useState(0);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [brandTrendOpen, setBrandTrendOpen] = useState(false);
+  const [trendSku, setTrendSku] = useState<{ sku: string; name: string } | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     setQ(search.q ?? "");
@@ -91,6 +99,29 @@ function StockForecastPage() {
     });
   }
 
+  const filters = {
+    status: search.status ?? null,
+    brand: search.brand ?? null,
+    supplier: search.supplier ?? null,
+    trend: search.trend ?? null,
+    incoming: search.incoming ?? "any",
+    productType: search.productType ?? "all",
+    q: search.q ?? null,
+    sort: search.sort ?? "cover",
+  };
+
+  async function exportCsv() {
+    setExporting(true);
+    setExportError(null);
+    const result = await exportStockForecastCsvFn({ data: filters });
+    setExporting(false);
+    if (!result.ok) {
+      setExportError(result.error);
+      return;
+    }
+    downloadCsv(result.data.csv, result.data.filename);
+  }
+
   return (
     <>
       <PanelHeader
@@ -107,14 +138,7 @@ function StockForecastPage() {
             fbaUpdated={data.freshness.fbaUpdated}
             fbaStale={data.freshness.fbaStale}
           />
-          <ForecastCoverageBanner
-            coverageDays={data.forecastCoverage.coverageDays}
-            confidence={data.forecastCoverage.confidence}
-            historyFrom={data.forecastCoverage.historyFrom}
-            verified={data.forecastCoverage.verified}
-            verifiedFrom={data.forecastCoverage.verifiedFrom}
-            verifiedTo={data.forecastCoverage.verifiedTo}
-          />
+          <SalesHistoryConfidenceBanner />
         </>
       ) : null}
       {data ? (
@@ -219,7 +243,17 @@ function StockForecastPage() {
         <button type="submit" className={btnClass}>
           Search
         </button>
+        <button type="button" className={btnClass} disabled={!data} onClick={() => setVerifyOpen(true)}>
+          Verify sales history
+        </button>
+        <button type="button" className={btnClass} disabled={!data} onClick={() => setBrandTrendOpen(true)}>
+          Brand trend
+        </button>
+        <button type="button" className={btnClass} disabled={!data || exporting} onClick={() => void exportCsv()}>
+          {exporting ? "Exporting…" : "Export CSV"}
+        </button>
       </form>
+      {exportError ? <ErrorState message={exportError} /> : null}
       {!data && !error ? <LoadingState /> : null}
       {data && data.rows.length === 0 ? (
         <EmptyState
@@ -262,6 +296,13 @@ function StockForecastPage() {
                   <tr key={row.sku} className="border-t border-border/70">
                     <td className="px-3 py-2">
                       <SkuLink sku={row.sku} name={row.name} productKind={row.productKind} />
+                      <button
+                        type="button"
+                        className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary"
+                        onClick={() => setTrendSku({ sku: row.sku, name: row.name })}
+                      >
+                        Trend
+                      </button>
                     </td>
                     <td className="px-3 py-2 font-mono text-[12px]">{row.sku}</td>
                     <td className="px-3 py-2">{row.brand}</td>
@@ -285,11 +326,10 @@ function StockForecastPage() {
                     <td className="px-3 py-2">{gbp(row.latestCost)}</td>
                     <td className="px-3 py-2">{gbp(row.suggestedValue)}</td>
                     <td className="px-3 py-2">
-                      <ForecastConfidenceBadge
-                        confidence={row.forecastConfidence}
-                        coverageDays={row.salesHistoryCoverageDays}
-                        warning={row.forecastConfidenceWarning}
-                        verified={row.salesHistoryVerified}
+                      <SalesHistoryVerificationBadge
+                        status={row.historyVerification}
+                        from={row.verifiedCoverageFrom}
+                        to={row.verifiedCoverageTo}
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -308,6 +348,25 @@ function StockForecastPage() {
           />
         </>
       ) : null}
+      <SalesHistoryVerifyDialog
+        open={verifyOpen}
+        onOpenChange={setVerifyOpen}
+        initialBrandSlug={search.brand ?? null}
+        onVerified={() => setReload((value) => value + 1)}
+      />
+      <BrandSalesTrendDialog
+        open={brandTrendOpen}
+        onOpenChange={setBrandTrendOpen}
+        initialBrandSlug={search.brand ?? null}
+      />
+      <SkuSalesTrendSheet
+        open={trendSku != null}
+        sku={trendSku?.sku ?? null}
+        name={trendSku?.name ?? null}
+        onOpenChange={(open) => {
+          if (!open) setTrendSku(null);
+        }}
+      />
     </>
   );
 }
