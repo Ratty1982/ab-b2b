@@ -33,6 +33,10 @@ import {
   type CostPersistStats,
 } from "@/server/stock/cost-persist";
 import { persistAutopartProducts, stagedRowToPersistRow } from "@/server/stock/autopart-products";
+import {
+  emptySupplierGroupTotals,
+  type SupplierGroupReconcileTotals,
+} from "@/domain/autopart-supplier-group";
 import { isKnownAutopartConditionCode } from "@/domain/autopart-product-condition";
 import type { StagedStockRow } from "@/domain/stock-parse-types";
 import type { PublicAvailability } from "@/domain/availability";
@@ -199,6 +203,7 @@ export async function applyStockFeed(input: {
     let fatalIssueCount = 0;
     const matchedFeedSkus: string[] = [];
     const autopartPersist: Array<ReturnType<typeof stagedRowToPersistRow>> = [];
+    let supplierGroups: (SupplierGroupReconcileTotals & { summary: string; error?: string }) | null = null;
 
     const recordUnknownCondition = (staged: StagedStockRow) => {
       if (!staged.conditionAuthoritative) return;
@@ -401,6 +406,23 @@ export async function applyStockFeed(input: {
         observedAt: now,
         dryRun: false,
       });
+      const groupKeys = autopartPersist.filter((row) => row.group.kind === "set").map((row) => row.matchKey);
+      if (groupKeys.length) {
+        try {
+          const { reconcileAutopartSupplierGroupsForImport } = await import(
+            "@/server/purchasing/autopart-supplier-groups"
+          );
+          supplierGroups = await reconcileAutopartSupplierGroupsForImport(groupKeys);
+        } catch (groupError) {
+          const totals = emptySupplierGroupTotals();
+          supplierGroups = {
+            ...totals,
+            summary: "Supplier group reconciliation failed. Stock import was kept.",
+            error: groupError instanceof Error ? groupError.message : String(groupError),
+          };
+          console.warn("[ab:stock-sync:supplier-groups]", { runId: run.id, error: supplierGroups.error });
+        }
+      }
       const matchedKeys = [...new Set(matchedFeedSkus.filter(Boolean))];
       if (matchedKeys.length) {
         await prisma.stockFeedUnmatched.deleteMany({ where: { sku: { in: matchedKeys } } });
@@ -485,6 +507,7 @@ export async function applyStockFeed(input: {
       })),
     });
 
+    const commercialRecord = supplierGroups ? { ...commercial, supplierGroups } : commercial;
     await finishRun(run.id, {
       status: finalStatus,
       rowsRead: parsed.rows.length,
@@ -496,7 +519,7 @@ export async function applyStockFeed(input: {
       duplicates,
       durationMs: Date.now() - started,
       errorSummary,
-      commercial,
+      commercial: commercialRecord,
     });
 
     console.info("[ab:stock-sync]", {
@@ -514,7 +537,8 @@ export async function applyStockFeed(input: {
       summary,
       incomingHeader,
       incomingRefreshed,
-      commercial,
+      commercial: commercialRecord,
+      supplierGroups,
     });
 
     if (!input.dryRun && input.trigger === "manual") {
@@ -523,7 +547,7 @@ export async function applyStockFeed(input: {
         entityType: "StockSyncRun",
         entityId: run.id,
         actorUserId: input.actorUserId ?? null,
-        after: { status: finalStatus, matched, updated, unmatched, invalid, commercial },
+        after: { status: finalStatus, matched, updated, unmatched, invalid, commercial: commercialRecord },
       });
     }
 
@@ -545,7 +569,8 @@ export async function applyStockFeed(input: {
       incomingHeader,
       incomingRefreshed,
       wouldChanges: changeDrafts.slice(0, WOULD_CHANGE_CAP).map(serializeWouldChange),
-      commercial,
+      commercial: commercialRecord,
+      supplierGroups,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stock sync failed";
@@ -578,7 +603,7 @@ async function finishRun(
     invalid?: number;
     duplicates?: number;
     errorSummary?: string | null;
-    commercial?: CostPersistStats;
+    commercial?: CostPersistStats & { supplierGroups?: SupplierGroupReconcileTotals & { summary: string; error?: string } };
     durationMs: number;
   },
 ) {

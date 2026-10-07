@@ -16,6 +16,8 @@ import { ROUTES } from "@/lib/app-nav";
 import type { PlannerRecommendation } from "@/domain/purchasing-planner";
 import {
   addProductSupplierFn,
+  addSupplierAutopartGroupFn,
+  setSupplierAutopartGroupActiveFn,
   searchPurchasingProductsFn,
   setPreferredProductSupplierFn,
   setProductSupplierActiveFn,
@@ -178,6 +180,13 @@ function SupplierDetailPage() {
             </section>
           </form>
 
+          <AutopartGroups
+            supplierId={id}
+            canManage={data.canManage && data.supplier.active}
+            groups={data.autopartGroups}
+            onChanged={load}
+          />
+
           <section>
             <h2 className="font-display text-sm font-semibold uppercase tracking-wide">Products supplied</h2>
             {data.canManage && data.supplier.active ? <AddProduct supplierId={id} onAdded={load} /> : null}
@@ -210,6 +219,108 @@ function SupplierDetailPage() {
         </div>
       ) : null}
     </>
+  );
+}
+
+function AutopartGroups({
+  supplierId,
+  canManage,
+  groups,
+  onChanged,
+}: {
+  supplierId: string;
+  canManage: boolean;
+  groups: Data["autopartGroups"];
+  onChanged: () => void;
+}) {
+  const [groupCode, setGroupCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  function describe(result: {
+    matchedProducts: number;
+    relationshipsCreated: number;
+    alreadyLinked: number;
+    manualOverridesPreserved: number;
+    changedGroup: number;
+  }) {
+    return `Matched products: ${result.matchedProducts}. Relationships created: ${result.relationshipsCreated}. Already linked: ${result.alreadyLinked}. Manual overrides preserved: ${result.manualOverridesPreserved}. Group changes reconciled: ${result.changedGroup}.`;
+  }
+
+  async function add(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    const result = await addSupplierAutopartGroupFn({ data: { supplierId, groupCode } });
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      setNotice(null);
+      return;
+    }
+    setError(null);
+    setGroupCode("");
+    setNotice(describe(result.data.reconciliation));
+    onChanged();
+  }
+
+  async function toggle(id: string, active: boolean) {
+    const result = await setSupplierAutopartGroupActiveFn({ data: { id, active } });
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    setNotice(describe(result.data.reconciliation));
+    onChanged();
+  }
+
+  return (
+    <section>
+      <h2 className="font-display text-sm font-semibold uppercase tracking-wide">Autopart Groups</h2>
+      <p className="mt-1 text-[13px] text-steel">
+        Products in these Autopart Groups can be automatically associated with this supplier. This is separate from the supplier code.
+      </p>
+      {groups.length === 0 ? <p className="mt-3 text-[13px] text-steel">No Autopart Groups —</p> : null}
+      {groups.length > 0 ? (
+        <ul className="mt-3 grid gap-2">
+          {groups.map((group) => (
+            <li key={group.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/70 px-3 py-2 text-[13px]">
+              <span>
+                <span className="font-mono font-semibold">{group.groupCode}</span>
+                <span className="ml-2 text-steel">{group.active ? "Active" : "Inactive"}</span>
+                <span className="ml-2 text-steel">
+                  {group.linkedProducts} linked · {group.productsInGroup} in group
+                </span>
+              </span>
+              {canManage ? (
+                <button type="button" className={btnClass} onClick={() => void toggle(group.id, !group.active)}>
+                  {group.active ? "Deactivate" : "Reactivate"}
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {canManage ? (
+        <form onSubmit={(e) => void add(e)} className="mt-3 flex flex-wrap items-end gap-2">
+          <Field label="Autopart Group" htmlFor="autopart-group">
+            <input
+              id="autopart-group"
+              value={groupCode}
+              onChange={(e) => setGroupCode(e.target.value)}
+              className={inputClass}
+              placeholder="SX"
+            />
+          </Field>
+          <button type="submit" className={primaryBtnClass} disabled={saving || !groupCode.trim()}>
+            {saving ? "Saving…" : "Add Group"}
+          </button>
+        </form>
+      ) : null}
+      {notice ? <p className="mt-2 text-[12px] text-steel">{notice}</p> : null}
+      {error ? <p className="mt-2 text-[12px] text-destructive">{error}</p> : null}
+    </section>
   );
 }
 
@@ -359,6 +470,11 @@ function ProductRow({
           {product.name}
           {!product.active ? <span className="ml-2 text-steel">Inactive</span> : null}
           {product.isPreferred ? <span className="ml-2 text-primary">Preferred</span> : null}
+          {product.source === "AUTOPART_GROUP" ? (
+            <span className="ml-2 text-steel">Autopart Group {product.autopartGroupCode ?? ""}</span>
+          ) : (
+            <span className="ml-2 text-steel">Manual</span>
+          )}
         </td>
         <td className="px-2 py-2">{product.productKindLabel}</td>
         <td className="px-2 py-2 text-right tabular-nums">{product.availQty == null ? "—" : qty(product.availQty)}</td>

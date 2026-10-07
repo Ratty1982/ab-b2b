@@ -1,7 +1,8 @@
 /**
  * Purchasing supplier master + product ↔ supplier relationships.
- * Internal only. Relationships are assigned manually — never inferred from brand, group,
- * SKU prefix or description. Never creates purchase orders or touches Autopart stock.
+ * Internal only. Relationships are manual, or maintained from an explicit Autopart Group
+ * mapping. They are never inferred from Supplier.code, SKU, or report text.
+ * Supplier.code is never treated as a group. Never creates purchase orders.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -22,6 +23,7 @@ import {
 } from "@/domain/purchasing-supplier";
 import { resolvePlanningSupplier } from "@/domain/purchasing-planner";
 import { outstandingBackorderUnitsBySku } from "@/server/purchasing/backorders";
+import { autopartGroupsBySupplier, listSupplierAutopartGroups } from "@/server/purchasing/autopart-supplier-groups";
 
 export async function requirePurchasingManage(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
@@ -203,12 +205,14 @@ export async function listSuppliers(actorUserId: string, raw: unknown = {}) {
     productCount.set(c.supplierId, (productCount.get(c.supplierId) ?? 0) + c._count._all);
     if (c.isPreferred) preferredCount.set(c.supplierId, c._count._all);
   }
+  const groups = await autopartGroupsBySupplier(suppliers.map((s) => s.id));
   return {
     canManage: hasPermission(profile, "purchasing.manage"),
     suppliers: suppliers.map((s) => ({
       ...supplierView(s),
       productCount: productCount.get(s.id) ?? 0,
       preferredCount: preferredCount.get(s.id) ?? 0,
+      autopartGroups: groups.get(s.id) ?? [],
     })),
   };
 }
@@ -436,17 +440,19 @@ export async function getSupplierDetail(actorUserId: string, raw: unknown) {
   });
   if (!supplier) throw new AuthError("Supplier not found", "NOT_FOUND", 404);
   const keys = supplier.products.map((p) => p.matchKey);
-  const [info, backorders, siblings] = await Promise.all([
+  const [info, backorders, siblings, autopartGroups] = await Promise.all([
     productInfoForKeys(keys),
     outstandingBackorderUnitsBySku(),
     prisma.productSupplier.findMany({
       where: { matchKey: { in: keys }, active: true },
       select: { matchKey: true, supplierId: true, isPreferred: true, supplier: { select: { name: true } } },
     }),
+    listSupplierAutopartGroups(supplier.id),
   ]);
   return {
     canManage: hasPermission(profile, "purchasing.manage"),
     supplier: supplierView(supplier),
+    autopartGroups,
     products: supplier.products.map((p) => {
       const product = info.get(p.matchKey);
       const others = siblings.filter((s) => s.matchKey === p.matchKey && s.supplierId !== supplier.id);
@@ -460,6 +466,8 @@ export async function getSupplierDetail(actorUserId: string, raw: unknown) {
         supplierSku: p.supplierSku,
         isPreferred: p.isPreferred,
         active: p.active,
+        source: p.source,
+        autopartGroupCode: p.autopartGroupCode,
         leadTimeDays: p.leadTimeDays,
         minimumOrderQty: p.minimumOrderQty,
         orderMultiple: p.orderMultiple,
@@ -550,6 +558,9 @@ export async function addProductSupplier(actorUserId: string, raw: unknown) {
             variantId: product.variantId,
             active: true,
             isPreferred: false,
+            source: "MANUAL",
+            autopartGroupCode: null,
+            supplierAutopartGroupId: null,
             updatedByUserId: actorUserId,
           },
         })
@@ -562,6 +573,7 @@ export async function addProductSupplier(actorUserId: string, raw: unknown) {
             autopartProductId: product.autopartProductId,
             variantId: product.variantId,
             isPreferred: false,
+            source: "MANUAL",
             updatedByUserId: actorUserId,
           },
         });
@@ -597,7 +609,7 @@ export async function updateProductSupplier(actorUserId: string, raw: unknown) {
   if (!before) throw new AuthError("Supplier relationship not found", "NOT_FOUND", 404);
   const updated = await prisma.productSupplier.update({
     where: { id: input.id },
-    data: { ...constraintData(input), updatedByUserId: actorUserId },
+    data: { ...constraintData(input), source: "MANUAL", updatedByUserId: actorUserId },
   });
   await recordAuditEvent({
     action: "purchasing.product_supplier.constraints",
@@ -626,7 +638,7 @@ export async function setPreferredProductSupplier(actorUserId: string, raw: unkn
     await clearOtherPreferred(tx, row.matchKey, row.id);
     await tx.productSupplier.update({
       where: { id: row.id },
-      data: { isPreferred: true, updatedByUserId: actorUserId },
+      data: { isPreferred: true, source: "MANUAL", updatedByUserId: actorUserId },
     });
   });
   if (!row.isPreferred) {
@@ -653,6 +665,7 @@ export async function setProductSupplierActive(actorUserId: string, raw: unknown
     where: { id: input.id },
     data: {
       active: input.active,
+      source: "MANUAL",
       ...(input.active ? {} : { isPreferred: false }),
       updatedByUserId: actorUserId,
     },

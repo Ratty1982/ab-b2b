@@ -208,6 +208,9 @@ function SuppliersPage() {
                     <Link to="/purchasing/suppliers/$id" params={{ id: supplier.id }} className="font-medium hover:text-primary">
                       {supplier.name}
                     </Link>
+                    <span className="mt-0.5 block text-[11px] text-steel">
+                      Autopart Groups: {supplier.autopartGroups.length ? supplier.autopartGroups.join(", ") : "—"}
+                    </span>
                   </td>
                   <td className="px-3 py-2 font-mono text-[12px]">{supplier.code ?? "—"}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{qty(supplier.productCount)}</td>

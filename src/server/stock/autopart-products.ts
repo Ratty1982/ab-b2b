@@ -24,6 +24,7 @@ import {
 } from "@/domain/autopart-product";
 import type { StagedStockRow } from "@/domain/stock-parse-types";
 import { autopartConditionLabel } from "@/domain/autopart-product-condition";
+import { normalizeAutopartGroupCode } from "@/domain/autopart-supplier-group";
 import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { demandSourcesForSku, netUnitsForKeys, weeklyNetUnitsForSku } from "@/server/purchasing/demand";
 import { randomBytes } from "node:crypto";
@@ -47,6 +48,8 @@ export type AutopartPersistRow = {
   catalogueVariantId: string | null;
   /** set writes the current code, including null when C is blank. absent leaves the previous code. */
   condition: { kind: "set"; code: string | null } | { kind: "absent" };
+  /** set writes the current 231PO3NEW Group, including null when the column is blank. */
+  group: { kind: "set"; code: string | null } | { kind: "absent" };
 };
 
 export function stagedRowToPersistRow(
@@ -77,6 +80,9 @@ export function stagedRowToPersistRow(
     catalogueVariantId,
     condition: row.conditionAuthoritative
       ? { kind: "set", code: row.conditionCode?.trim() ? row.conditionCode.trim().toUpperCase() : null }
+      : { kind: "absent" },
+    group: row.groupAuthoritative
+      ? { kind: "set", code: normalizeAutopartGroupCode(row.groupCode) }
       : { kind: "absent" },
   };
 }
@@ -145,6 +151,7 @@ export async function persistAutopartProducts(input: {
             sourceIncomingRaw: row.incoming.kind === "set" ? row.incoming.raw : null,
             latestCost,
             ...(row.condition.kind === "set" ? { conditionCode: row.condition.code } : {}),
+            ...(row.group.kind === "set" ? { groupCode: row.group.code } : {}),
             sourceUpdatedAt: now,
             firstSeenAt: now,
             lastSeenAt: now,
@@ -156,6 +163,7 @@ export async function persistAutopartProducts(input: {
             sku: row.sku,
             ...(row.description != null ? { description: row.description } : {}),
             ...(row.condition.kind === "set" ? { conditionCode: row.condition.code } : {}),
+            ...(row.group.kind === "set" ? { groupCode: row.group.code } : {}),
             availQty: row.availQty,
             physicalQty,
             incomingQty,

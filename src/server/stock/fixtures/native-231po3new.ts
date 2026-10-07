@@ -26,6 +26,12 @@ export type Native231Po3NewRow = {
    * Omit or blank for no condition. Width stays one character so other columns do not shift.
    */
   condition?: string;
+  /** 231PO3NEW Group column, after Branch and before Part Number. Defaults to AA. */
+  group?: string;
+  /** Sub Grp column. Must not be read as the supplier Group. */
+  subGrp?: string;
+  /** Later GROUP column. Must not be read as the supplier Group. */
+  trailerGroup?: string;
 };
 
 /** Identity + Avail/cost columns used by existing native tests. */
@@ -76,7 +82,8 @@ export function buildNative231Po3New(rows: Native231Po3NewRow[], page = 1): stri
     // occupies that column; Description starts on the Description label.
     const conditionChar = (row.condition ?? "").trim().slice(0, 1).toUpperCase() || " ";
     const skuField = row.sku.padEnd(21).slice(0, 21);
-    const left = `  01    AA    ${skuField}${conditionChar} ${row.description.padEnd(33)}`;
+    const group = (row.group ?? "AA").toUpperCase().padEnd(6).slice(0, 6);
+    const left = `  01    ${group}${skuField}${conditionChar} ${row.description.padEnd(33)}`;
     const nums = `${cost}   ${row.stk}  ${row.avail}   ${row.pick}    ${row.physical}`;
     let line = left + nums;
     if (!withIncoming) return line;
@@ -108,6 +115,13 @@ export function buildNative231Po3New(rows: Native231Po3NewRow[], page = 1): stri
     if (pordStart >= 0) {
       const width = subGrpStart > pordStart ? subGrpStart - pordStart : 9;
       line = overlayRight(line, pordStart, width, incoming);
+    }
+    const trailerStart = header.lastIndexOf("GROUP");
+    if (row.subGrp != null && subGrpStart >= 0 && trailerStart > subGrpStart) {
+      line = overlayRight(line, subGrpStart, trailerStart - subGrpStart, row.subGrp);
+    }
+    if (row.trailerGroup != null && trailerStart >= 0) {
+      line = overlayRight(line, trailerStart, Math.max(row.trailerGroup.length, 8), row.trailerGroup);
     }
     return line;
   });

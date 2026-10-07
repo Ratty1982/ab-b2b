@@ -4330,6 +4330,30 @@ export const setProductSupplierActiveFn = createServerFn({ method: "POST" })
     }
   });
 
+export const addSupplierAutopartGroupFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { supplierId: string; groupCode: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const groups = await import("@/server/purchasing/autopart-supplier-groups");
+      return { ok: true as const, data: await groups.addSupplierAutopartGroup(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setSupplierAutopartGroupActiveFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string; active: boolean })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const groups = await import("@/server/purchasing/autopart-supplier-groups");
+      return { ok: true as const, data: await groups.setSupplierAutopartGroupActive(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPurchasingOverstockFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

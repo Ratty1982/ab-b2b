@@ -337,6 +337,13 @@ function detectIdentity(headerLine: string): IdentityOffsets | null {
   };
 }
 
+/** Group column between Branch and Part Number. Blank is null. Never inferred. */
+function extractGroupCode(line: string, start: number, end: number): string | null {
+  const raw = sliceField(line, start, end).replace(/\s+/g, "");
+  if (!raw) return null;
+  return raw.toUpperCase();
+}
+
 /** Read the single C-column character. Blank is null. Never inferred from Description. */
 function extractConditionCode(line: string, column: number | null): string | null {
   if (column == null || column < 0) return null;
@@ -503,6 +510,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     const description = sliceField(line, identity.descriptionStart, descEnd).trim() || null;
     const conditionAuthoritative = identity.conditionColumn != null;
     const conditionCode = conditionAuthoritative ? extractConditionCode(line, identity.conditionColumn) : null;
+    const groupCode = extractGroupCode(line, identity.groupStart, identity.groupEnd);
     const extracted = extractAvail(line, identity, numeric);
     const availRaw = extracted?.raw ?? "";
     const avail = extracted
@@ -524,6 +532,8 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       ...(incoming ? { incoming } : {}),
       conditionAuthoritative,
       conditionCode,
+      groupAuthoritative: true,
+      groupCode,
     });
   }
 

@@ -52,6 +52,14 @@ export type StagedStockRow = {
   conditionAuthoritative?: boolean;
   /** Single-character 231PO3NEW C column. Null when the column is blank. */
   conditionCode?: string | null;
+  /**
+   * True when this row came from a 231PO3NEW report with the Group column.
+   * A blank Group is authoritative and clears any previously stored group.
+   * Omitted on delimited CSV uploads, which must not clear the group.
+   */
+  groupAuthoritative?: boolean;
+  /** Current 231PO3NEW Group column. Not Sub Grp, not the later GROUP field, and not inferred. */
+  groupCode?: string | null;
 };
 
 export type StockParseFailure = {
