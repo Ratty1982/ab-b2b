@@ -153,6 +153,40 @@ function PurchasingDashboardPage() {
             />
           </div>
 
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Link to={ROUTES.purchasingSuppliers}>
+              <Metric label="Suppliers requiring attention" value={qty(data.supplierPlanning.suppliersRequiringAttention)} />
+            </Link>
+            <Link to={ROUTES.purchasingPlanner} search={{ recommendation: "ORDER_NOW" }}>
+              <Metric label="Products order now" value={qty(data.supplierPlanning.orderNow)} tone="warn" />
+            </Link>
+            <Link to={ROUTES.purchasingPlanner} search={{ recommendation: "BACKORDERS_AT_RISK" }}>
+              <Metric label="Backorders at risk" value={qty(data.supplierPlanning.backordersAtRisk)} tone="warn" />
+            </Link>
+            <Link to={ROUTES.purchasingPlanner}>
+              <Metric
+                label="Estimated suggested purchasing value"
+                value={
+                  data.supplierPlanning.estimatedValueMissingCostLines > 0 &&
+                  Number(data.supplierPlanning.estimatedValue) === 0
+                    ? "—"
+                    : gbp(data.supplierPlanning.estimatedValue)
+                }
+                hint={
+                  data.supplierPlanning.estimatedValueMissingCostLines
+                    ? `${data.supplierPlanning.estimatedValueMissingCostLines} lines missing cost — not treated as £0`
+                    : "Known cost only. Missing cost is excluded."
+                }
+              />
+            </Link>
+            <Link to={ROUTES.purchasingPlanner} search={{ missingSupplier: true }}>
+              <Metric label="Products missing supplier" value={qty(data.supplierPlanning.productsMissingSupplier)} />
+            </Link>
+            <Link to={ROUTES.purchasingPlanner} search={{ missingCost: true }}>
+              <Metric label="Products missing cost" value={qty(data.supplierPlanning.productsMissingCost)} />
+            </Link>
+          </div>
+
           {data.forecastCoverage ? (
             <p className="text-[12px] text-steel">
               Unverified {qty(data.forecastCoverage.counts.UNVERIFIED)} · Strong{" "}

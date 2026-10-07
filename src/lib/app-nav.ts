@@ -92,6 +92,8 @@ export const ROUTES = {
   purchasingPlanner: "/purchasing/planner",
   purchasingBackorders: "/purchasing/backorders",
   purchasingOverstock: "/purchasing/overstock",
+  purchasingSuppliers: "/purchasing/suppliers",
+  purchasingSupplier: (id: string) => `/purchasing/suppliers/${id}` as const,
 } as const;
 
 /**
@@ -396,6 +398,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "package",
         to: ROUTES.purchasingOverstock,
         matchPrefixes: [ROUTES.purchasingOverstock],
+        permission: "purchasing.view",
+        implemented: true,
+      },
+      {
+        id: "purchasing-suppliers",
+        label: "Suppliers",
+        icon: "building-2",
+        to: ROUTES.purchasingSuppliers,
+        matchPrefixes: [ROUTES.purchasingSuppliers],
         permission: "purchasing.view",
         implemented: true,
       },

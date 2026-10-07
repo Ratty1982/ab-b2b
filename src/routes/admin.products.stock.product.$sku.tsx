@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -6,6 +6,7 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { InstantText } from "@/components/ab/InstantText";
 import { getAutopartProductFn, linkAutopartProductToVariantFn } from "@/server/phase2/fns";
+import { ProductPurchasingPanel } from "@/components/purchasing/product-panel";
 
 export const Route = createFileRoute("/admin/products/stock/product/$sku")({
   head: ({ params }) => ({
@@ -125,61 +126,7 @@ function AutopartProductPage() {
             </p>
           </section>
 
-          <section>
-            <h2 className="font-display text-sm font-semibold uppercase tracking-wide">Purchasing</h2>
-            <dl className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Latest Cost</dt>
-                <dd>{data.latestCost ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Supplier</dt>
-                <dd>{data.purchasing.supplierName ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Lead time</dt>
-                <dd>{data.purchasing.leadTimeDays == null ? "—" : `${data.purchasing.leadTimeDays} days`}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">MOQ</dt>
-                <dd>{data.purchasing.minimumOrderQty ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Order multiple</dt>
-                <dd>{data.purchasing.orderMultiple ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Safety stock</dt>
-                <dd>{data.purchasing.safetyStockQty ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Target cover</dt>
-                <dd>{data.purchasing.targetCoverWeeks ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-steel">Suggested order</dt>
-                <dd>{data.purchasing.suggestedQty ?? "—"}</dd>
-              </div>
-              <div className="col-span-2">
-                <dt className="text-[10px] uppercase text-steel">Forecast confidence</dt>
-                <dd>{data.purchasing.forecastConfidenceLabel ?? "—"}</dd>
-              </div>
-            </dl>
-            {data.kind !== "CATALOGUE" ? (
-              <p className="mt-3 text-[12px] text-steel">
-                Purchasing settings for this SKU live on the Autopart product, not a catalogue variant.{" "}
-                <Link to="/purchasing/forecast/$sku" params={{ sku }} className="text-primary hover:underline">
-                  Open Stock Forecast
-                </Link>
-              </p>
-            ) : (
-              <p className="mt-3 text-[12px] text-steel">
-                <Link to="/purchasing/forecast/$sku" params={{ sku }} className="text-primary hover:underline">
-                  Open Stock Forecast
-                </Link>
-              </p>
-            )}
-          </section>
+          <ProductPurchasingPanel sku={sku} />
 
           <section>
             <h2 className="font-display text-sm font-semibold uppercase tracking-wide">Sales</h2>

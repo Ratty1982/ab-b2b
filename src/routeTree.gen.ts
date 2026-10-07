@@ -66,6 +66,7 @@ import { Route as PurchasingBackordersRouteImport } from './routes/purchasing.ba
 import { Route as PurchasingForecastRouteImport } from './routes/purchasing.forecast'
 import { Route as PurchasingOverstockRouteImport } from './routes/purchasing.overstock'
 import { Route as PurchasingPlannerRouteImport } from './routes/purchasing.planner'
+import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing.suppliers'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as SalesSalesIntelligenceRouteImport } from './routes/sales.sales-intelligence'
 import { Route as AdminApplicationsIndexRouteImport } from './routes/admin.applications.index'
@@ -101,6 +102,8 @@ import { Route as PortalQuotesQuoteIdRouteImport } from './routes/portal.quotes.
 import { Route as ProductsCategorySlugRouteImport } from './routes/products.category.$slug'
 import { Route as PurchasingForecastIndexRouteImport } from './routes/purchasing.forecast.index'
 import { Route as PurchasingForecastSkuRouteImport } from './routes/purchasing.forecast.$sku'
+import { Route as PurchasingSuppliersIndexRouteImport } from './routes/purchasing.suppliers.index'
+import { Route as PurchasingSuppliersIdRouteImport } from './routes/purchasing.suppliers.$id'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
@@ -406,6 +409,11 @@ const PurchasingPlannerRoute = PurchasingPlannerRouteImport.update({
   path: '/planner',
   getParentRoute: () => PurchasingRoute,
 } as any)
+const PurchasingSuppliersRoute = PurchasingSuppliersRouteImport.update({
+  id: '/suppliers',
+  path: '/suppliers',
+  getParentRoute: () => PurchasingRoute,
+} as any)
 const SalesIndexRoute = SalesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -584,6 +592,17 @@ const PurchasingForecastSkuRoute = PurchasingForecastSkuRouteImport.update({
   path: '/$sku',
   getParentRoute: () => PurchasingForecastRoute,
 } as any)
+const PurchasingSuppliersIndexRoute =
+  PurchasingSuppliersIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => PurchasingSuppliersRoute,
+  } as any)
+const PurchasingSuppliersIdRoute = PurchasingSuppliersIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => PurchasingSuppliersRoute,
+} as any)
 const SalesCustomersIndexRoute = SalesCustomersIndexRouteImport.update({
   id: '/customers/',
   path: '/customers/',
@@ -744,6 +763,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/forecast': typeof PurchasingForecastRouteWithChildren
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersRouteWithChildren
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
@@ -775,6 +795,7 @@ export interface FileRoutesByFullPath {
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
+  '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
@@ -793,6 +814,7 @@ export interface FileRoutesByFullPath {
   '/portal/orders/': typeof PortalOrdersIndexRoute
   '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/purchasing/forecast/': typeof PurchasingForecastIndexRoute
+  '/purchasing/suppliers/': typeof PurchasingSuppliersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
@@ -872,6 +894,7 @@ export interface FileRoutesByTo {
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
+  '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
@@ -890,6 +913,7 @@ export interface FileRoutesByTo {
   '/portal/orders': typeof PortalOrdersIndexRoute
   '/portal/quotes': typeof PortalQuotesIndexRoute
   '/purchasing/forecast': typeof PurchasingForecastIndexRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceIndexRoute
@@ -955,6 +979,7 @@ export interface FileRoutesById {
   '/purchasing/forecast': typeof PurchasingForecastRouteWithChildren
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersRouteWithChildren
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/brands/': typeof BrandsIndexRoute
@@ -986,6 +1011,7 @@ export interface FileRoutesById {
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
+  '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
@@ -1004,6 +1030,7 @@ export interface FileRoutesById {
   '/portal/orders/': typeof PortalOrdersIndexRoute
   '/portal/quotes/': typeof PortalQuotesIndexRoute
   '/purchasing/forecast/': typeof PurchasingForecastIndexRoute
+  '/purchasing/suppliers/': typeof PurchasingSuppliersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
@@ -1070,6 +1097,7 @@ export interface FileRouteTypes {
     | '/purchasing/forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
+    | '/purchasing/suppliers'
     | '/sales/sales-intelligence'
     | '/admin/'
     | '/brands/'
@@ -1101,6 +1129,7 @@ export interface FileRouteTypes {
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/purchasing/forecast/$sku'
+    | '/purchasing/suppliers/$id'
     | '/sales/customers/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
@@ -1119,6 +1148,7 @@ export interface FileRouteTypes {
     | '/portal/orders/'
     | '/portal/quotes/'
     | '/purchasing/forecast/'
+    | '/purchasing/suppliers/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/sales/sales-intelligence/'
@@ -1198,6 +1228,7 @@ export interface FileRouteTypes {
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/purchasing/forecast/$sku'
+    | '/purchasing/suppliers/$id'
     | '/sales/customers/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
@@ -1216,6 +1247,7 @@ export interface FileRouteTypes {
     | '/portal/orders'
     | '/portal/quotes'
     | '/purchasing/forecast'
+    | '/purchasing/suppliers'
     | '/sales/customers'
     | '/sales/quotes'
     | '/sales/sales-intelligence'
@@ -1280,6 +1312,7 @@ export interface FileRouteTypes {
     | '/purchasing/forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
+    | '/purchasing/suppliers'
     | '/sales/sales-intelligence'
     | '/admin/'
     | '/brands/'
@@ -1311,6 +1344,7 @@ export interface FileRouteTypes {
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
     | '/purchasing/forecast/$sku'
+    | '/purchasing/suppliers/$id'
     | '/sales/customers/$id'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
@@ -1329,6 +1363,7 @@ export interface FileRouteTypes {
     | '/portal/orders/'
     | '/portal/quotes/'
     | '/purchasing/forecast/'
+    | '/purchasing/suppliers/'
     | '/sales/customers/'
     | '/sales/quotes/'
     | '/sales/sales-intelligence/'
@@ -1774,6 +1809,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchasingPlannerRouteImport
       parentRoute: typeof PurchasingRoute
     }
+    '/purchasing/suppliers': {
+      id: '/purchasing/suppliers'
+      path: '/suppliers'
+      fullPath: '/purchasing/suppliers'
+      preLoaderRoute: typeof PurchasingSuppliersRouteImport
+      parentRoute: typeof PurchasingRoute
+    }
     '/sales/': {
       id: '/sales/'
       path: '/'
@@ -2018,6 +2060,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/purchasing/forecast/$sku'
       preLoaderRoute: typeof PurchasingForecastSkuRouteImport
       parentRoute: typeof PurchasingForecastRoute
+    }
+    '/purchasing/suppliers/': {
+      id: '/purchasing/suppliers/'
+      path: '/'
+      fullPath: '/purchasing/suppliers/'
+      preLoaderRoute: typeof PurchasingSuppliersIndexRouteImport
+      parentRoute: typeof PurchasingSuppliersRoute
+    }
+    '/purchasing/suppliers/$id': {
+      id: '/purchasing/suppliers/$id'
+      path: '/$id'
+      fullPath: '/purchasing/suppliers/$id'
+      preLoaderRoute: typeof PurchasingSuppliersIdRouteImport
+      parentRoute: typeof PurchasingSuppliersRoute
     }
     '/sales/customers/': {
       id: '/sales/customers/'
@@ -2424,11 +2480,25 @@ const PurchasingForecastRouteChildren: PurchasingForecastRouteChildren = {
 const PurchasingForecastRouteWithChildren =
   PurchasingForecastRoute._addFileChildren(PurchasingForecastRouteChildren)
 
+interface PurchasingSuppliersRouteChildren {
+  PurchasingSuppliersIdRoute: typeof PurchasingSuppliersIdRoute
+  PurchasingSuppliersIndexRoute: typeof PurchasingSuppliersIndexRoute
+}
+
+const PurchasingSuppliersRouteChildren: PurchasingSuppliersRouteChildren = {
+  PurchasingSuppliersIdRoute: PurchasingSuppliersIdRoute,
+  PurchasingSuppliersIndexRoute: PurchasingSuppliersIndexRoute,
+}
+
+const PurchasingSuppliersRouteWithChildren =
+  PurchasingSuppliersRoute._addFileChildren(PurchasingSuppliersRouteChildren)
+
 interface PurchasingRouteChildren {
   PurchasingBackordersRoute: typeof PurchasingBackordersRoute
   PurchasingForecastRoute: typeof PurchasingForecastRouteWithChildren
   PurchasingOverstockRoute: typeof PurchasingOverstockRoute
   PurchasingPlannerRoute: typeof PurchasingPlannerRoute
+  PurchasingSuppliersRoute: typeof PurchasingSuppliersRouteWithChildren
   PurchasingIndexRoute: typeof PurchasingIndexRoute
 }
 
@@ -2437,6 +2507,7 @@ const PurchasingRouteChildren: PurchasingRouteChildren = {
   PurchasingForecastRoute: PurchasingForecastRouteWithChildren,
   PurchasingOverstockRoute: PurchasingOverstockRoute,
   PurchasingPlannerRoute: PurchasingPlannerRoute,
+  PurchasingSuppliersRoute: PurchasingSuppliersRouteWithChildren,
   PurchasingIndexRoute: PurchasingIndexRoute,
 }
 

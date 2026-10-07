@@ -29,6 +29,7 @@ import { AutopartProductCostPanel } from "@/components/catalogue/AutopartProduct
 import { ProductDocumentsPanel } from "@/components/catalogue/ProductDocumentsPanel";
 import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { InstantText } from "@/components/ab/InstantText";
+import { ProductPurchasingPanel } from "@/components/purchasing/product-panel";
 import { PUBLIC_AVAILABILITY_LABEL } from "@/domain/availability";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -770,6 +771,11 @@ function InventoryPanel({
           </p>
         </div>
       )}
+      <div className="space-y-3">
+        {product.variants.map((variant) => (
+          <ProductPurchasingPanel key={variant.id} sku={variant.sku} />
+        ))}
+      </div>
     </div>
   );
 }

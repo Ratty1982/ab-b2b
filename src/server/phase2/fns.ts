@@ -4198,6 +4198,138 @@ export const listPurchasePlannerFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listPurchasingSuppliersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.listSuppliersWorkspace(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getPurchasingSupplierFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.getSupplierWorkspace(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getProductPurchasingPanelFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { sku: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const purchasing = await import("@/server/purchasing/service");
+      return { ok: true as const, data: await purchasing.getProductPurchasingPanel(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchPurchasingProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.searchPurchasingProducts(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const createPurchasingSupplierFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.createSupplier(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updatePurchasingSupplierFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.updateSupplier(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setPurchasingSupplierActiveFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string; active: boolean })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.setSupplierActive(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const addProductSupplierFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.addProductSupplier(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateProductSupplierFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.updateProductSupplier(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setPreferredProductSupplierFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.setPreferredProductSupplier(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const setProductSupplierActiveFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { id: string; active: boolean })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const suppliers = await import("@/server/purchasing/suppliers");
+      return { ok: true as const, data: await suppliers.setProductSupplierActive(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPurchasingOverstockFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

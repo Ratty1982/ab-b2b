@@ -2,6 +2,10 @@ import { Link } from "@tanstack/react-router";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { formatDate } from "@/lib/datetime";
 import {
+  PLANNER_RECOMMENDATION_LABEL,
+  type PlannerRecommendation,
+} from "@/domain/purchasing-planner";
+import {
   DEMAND_COMPONENT_AVAILABILITY_LABEL,
   DEMAND_TREND_LABEL,
   FORECAST_CONFIDENCE_HELP,
@@ -53,6 +57,28 @@ export function statusTone(status: PurchasingStatus): Tone {
 
 export function PurchasingStatusBadge({ status }: { status: PurchasingStatus }) {
   return <StatusBadge tone={statusTone(status)}>{PURCHASING_STATUS_LABEL[status]}</StatusBadge>;
+}
+
+export function recommendationTone(recommendation: PlannerRecommendation): Tone {
+  if (recommendation === "BACKORDERS_AT_RISK") return "bad";
+  if (recommendation === "ORDER_NOW" || recommendation === "NO_SUPPLIER" || recommendation === "REVIEW") return "warn";
+  if (recommendation === "ORDER_SOON" || recommendation === "COVERED_BY_INCOMING") return "info";
+  if (recommendation === "ADEQUATE_STOCK") return "good";
+  return "neutral";
+}
+
+export function PlannerRecommendationBadge({
+  recommendation,
+  reason,
+}: {
+  recommendation: PlannerRecommendation;
+  reason?: string | null;
+}) {
+  return (
+    <StatusBadge tone={recommendationTone(recommendation)} className="normal-case tracking-normal">
+      <span title={reason ?? undefined}>{PLANNER_RECOMMENDATION_LABEL[recommendation]}</span>
+    </StatusBadge>
+  );
 }
 
 function confidenceTone(confidence: ForecastConfidence): Tone {

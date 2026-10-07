@@ -113,6 +113,15 @@ describe("canonical navigation contract", () => {
       "system",
     ]);
     expect(sections.indexOf("purchasing")).toBe(sections.indexOf("catalogue") + 1);
+    const purchasing = BACK_OFFICE_NAV.find((s) => s.id === "purchasing");
+    expect(purchasing?.items.map((i) => i.id)).toEqual([
+      "purchasing-dashboard",
+      "purchasing-forecast",
+      "purchasing-planner",
+      "purchasing-backorders",
+      "purchasing-overstock",
+      "purchasing-suppliers",
+    ]);
     expect(sections.indexOf("crm")).toBe(sections.indexOf("purchasing") + 1);
     expect(sections.indexOf("sales-intelligence")).toBe(sections.indexOf("crm") + 1);
   });
