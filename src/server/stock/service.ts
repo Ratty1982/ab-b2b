@@ -33,6 +33,8 @@ import {
   type CostPersistStats,
 } from "@/server/stock/cost-persist";
 import { persistAutopartProducts, stagedRowToPersistRow } from "@/server/stock/autopart-products";
+import { isKnownAutopartConditionCode } from "@/domain/autopart-product-condition";
+import type { StagedStockRow } from "@/domain/stock-parse-types";
 import type { PublicAvailability } from "@/domain/availability";
 import type { InboundStockEmail } from "@/server/stock/imap";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -198,6 +200,22 @@ export async function applyStockFeed(input: {
     const matchedFeedSkus: string[] = [];
     const autopartPersist: Array<ReturnType<typeof stagedRowToPersistRow>> = [];
 
+    const recordUnknownCondition = (staged: StagedStockRow) => {
+      if (!staged.conditionAuthoritative) return;
+      const code = staged.conditionCode?.trim() ?? "";
+      if (!code || isKnownAutopartConditionCode(code)) return;
+      actionableIssueCount += 1;
+      issues.push({
+        kind: "INVALID",
+        severity: "WARNING",
+        sku: staged.sku,
+        description: staged.description,
+        availRaw: staged.availRaw,
+        message: `Unknown Autopart product condition "${code}" on ${staged.sku}. Stored as-is and not treated as no condition.`,
+        line: staged.line,
+      });
+    };
+
     for (const row of classified) {
       if (row.kind === "missing_sku" || row.kind === "invalid") {
         invalid += 1;
@@ -230,6 +248,7 @@ export async function applyStockFeed(input: {
       const hits = bySku.get(row.row.matchKey) ?? [];
       if (hits.length === 0) {
         unmatched += 1;
+        recordUnknownCondition(row.row);
         autopartPersist.push(stagedRowToPersistRow(row.row, row.avail, null));
         continue;
       }
@@ -247,6 +266,7 @@ export async function applyStockFeed(input: {
           message: "Ambiguous SKU match — no inventory updated",
           line: row.row.line,
         });
+        recordUnknownCondition(row.row);
         autopartPersist.push(stagedRowToPersistRow(row.row, row.avail, null));
         continue;
       }
@@ -284,6 +304,7 @@ export async function applyStockFeed(input: {
         raw: row.row.availRaw,
         ...(incoming ? { incoming } : {}),
       });
+      recordUnknownCondition(row.row);
       autopartPersist.push(stagedRowToPersistRow(row.row, row.avail, hit.id));
     }
 

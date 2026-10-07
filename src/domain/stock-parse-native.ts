@@ -241,6 +241,8 @@ type IdentityOffsets = {
   partNumberStart: number;
   partNumberEnd: number;
   descriptionStart: number;
+  /** Header index of the C label. Null when the report has no C column — do not guess. */
+  conditionColumn: number | null;
 };
 
 type NumericLayout = {
@@ -315,10 +317,12 @@ function detectIdentity(headerLine: string): IdentityOffsets | null {
   const descStart = findLabelStart(headerLine, "Description");
   if (groupStart < 0 || partStart < 0 || descStart < 0) return null;
   let statusStart = -1;
+  let conditionColumn: number | null = null;
   const between = headerLine.slice(partStart, descStart);
   const cMatch = /\sC\s/.exec(between);
   if (cMatch && cMatch.index != null) {
     statusStart = partStart + cMatch.index + cMatch[0]!.indexOf("C");
+    conditionColumn = statusStart;
   } else {
     statusStart = descStart - 2;
   }
@@ -329,7 +333,16 @@ function detectIdentity(headerLine: string): IdentityOffsets | null {
     partNumberStart: partStart,
     partNumberEnd: Math.max(partStart + 1, statusStart),
     descriptionStart: descStart,
+    conditionColumn,
   };
+}
+
+/** Read the single C-column character. Blank is null. Never inferred from Description. */
+function extractConditionCode(line: string, column: number | null): string | null {
+  if (column == null || column < 0) return null;
+  const ch = line.charAt(column);
+  if (!ch || /\s/.test(ch)) return null;
+  return ch.toUpperCase();
 }
 
 function detectNumericLayout(lines: string[], identity: IdentityOffsets): NumericLayout | null {
@@ -488,6 +501,8 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     if (!sku || FORBIDDEN_SKU_TOKENS.has(skuUpper) || !looksLikeSkuToken(sku)) continue;
     const descEnd = numeric.latestCostStart;
     const description = sliceField(line, identity.descriptionStart, descEnd).trim() || null;
+    const conditionAuthoritative = identity.conditionColumn != null;
+    const conditionCode = conditionAuthoritative ? extractConditionCode(line, identity.conditionColumn) : null;
     const extracted = extractAvail(line, identity, numeric);
     const availRaw = extracted?.raw ?? "";
     const avail = extracted
@@ -507,6 +522,8 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       latestCost: commercial.latestCost,
       usage: commercial.usage,
       ...(incoming ? { incoming } : {}),
+      conditionAuthoritative,
+      conditionCode,
     });
   }
 

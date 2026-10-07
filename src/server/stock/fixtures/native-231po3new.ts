@@ -21,6 +21,11 @@ export type Native231Po3NewRow = {
   mth1?: string;
   min?: string;
   max?: string;
+  /**
+   * Single-character Autopart C column, between Part Number and Description.
+   * Omit or blank for no condition. Width stays one character so other columns do not shift.
+   */
+  condition?: string;
 };
 
 /** Identity + Avail/cost columns used by existing native tests. */
@@ -67,7 +72,11 @@ export function buildNative231Po3New(rows: Native231Po3NewRow[], page = 1): stri
 
   const body = rows.map((row) => {
     const cost = row.cost ?? "1.41";
-    const left = `  01    AA    ${row.sku.padEnd(22)} C ${row.description.padEnd(33)}`;
+    // Part Number is padded up to the header C column. The condition character
+    // occupies that column; Description starts on the Description label.
+    const conditionChar = (row.condition ?? "").trim().slice(0, 1).toUpperCase() || " ";
+    const skuField = row.sku.padEnd(21).slice(0, 21);
+    const left = `  01    AA    ${skuField}${conditionChar} ${row.description.padEnd(33)}`;
     const nums = `${cost}   ${row.stk}  ${row.avail}   ${row.pick}    ${row.physical}`;
     let line = left + nums;
     if (!withIncoming) return line;

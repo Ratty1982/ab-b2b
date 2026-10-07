@@ -44,6 +44,14 @@ export type StagedStockRow = {
    * Independent of Avail.
    */
   incoming?: ParsedIncoming;
+  /**
+   * True when this row came from a 231PO3NEW report whose header has the C column.
+   * A blank C is authoritative and clears any previously stored condition.
+   * Omitted on delimited CSV uploads, which must not clear product condition.
+   */
+  conditionAuthoritative?: boolean;
+  /** Single-character 231PO3NEW C column. Null when the column is blank. */
+  conditionCode?: string | null;
 };
 
 export type StockParseFailure = {

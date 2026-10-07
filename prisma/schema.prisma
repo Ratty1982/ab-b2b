@@ -1286,6 +1286,9 @@ model AutopartProduct {
   sku                 String
   matchKey            String    @unique
   description         String?
+  /// Current Autopart condition from the 231PO3NEW C column (S/N/O/W/D/M, or an unknown raw code).
+  /// Null means no condition. Every successful 231PO3NEW import replaces this, including a blank C.
+  conditionCode       String?
   /// Authoritative 231PO3NEW Avail (sellable). Not reduced by AB reservations.
   availQty            Int       @default(0)
   /// 231PO3NEW Physical Stk when present. Diagnostic; Avail remains sellable authority.

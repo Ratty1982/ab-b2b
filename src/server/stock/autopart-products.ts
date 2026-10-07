@@ -23,6 +23,7 @@ import {
   AUTOPART_PRODUCT_KIND_LABEL,
 } from "@/domain/autopart-product";
 import type { StagedStockRow } from "@/domain/stock-parse-types";
+import { autopartConditionLabel } from "@/domain/autopart-product-condition";
 import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { demandSourcesForSku, netUnitsForKeys, weeklyNetUnitsForSku } from "@/server/purchasing/demand";
 import { randomBytes } from "node:crypto";
@@ -44,6 +45,8 @@ export type AutopartPersistRow = {
   sourceAvailRaw: string;
   latestCost: string | null;
   catalogueVariantId: string | null;
+  /** set writes the current code, including null when C is blank. absent leaves the previous code. */
+  condition: { kind: "set"; code: string | null } | { kind: "absent" };
 };
 
 export function stagedRowToPersistRow(
@@ -72,6 +75,9 @@ export function stagedRowToPersistRow(
     sourceAvailRaw: row.availRaw,
     latestCost: cost,
     catalogueVariantId,
+    condition: row.conditionAuthoritative
+      ? { kind: "set", code: row.conditionCode?.trim() ? row.conditionCode.trim().toUpperCase() : null }
+      : { kind: "absent" },
   };
 }
 
@@ -138,6 +144,7 @@ export async function persistAutopartProducts(input: {
             sourceAvailRaw: row.sourceAvailRaw,
             sourceIncomingRaw: row.incoming.kind === "set" ? row.incoming.raw : null,
             latestCost,
+            ...(row.condition.kind === "set" ? { conditionCode: row.condition.code } : {}),
             sourceUpdatedAt: now,
             firstSeenAt: now,
             lastSeenAt: now,
@@ -148,6 +155,7 @@ export async function persistAutopartProducts(input: {
           update: {
             sku: row.sku,
             ...(row.description != null ? { description: row.description } : {}),
+            ...(row.condition.kind === "set" ? { conditionCode: row.condition.code } : {}),
             availQty: row.availQty,
             physicalQty,
             incomingQty,
@@ -187,6 +195,9 @@ export type IntelligenceStock = {
   catalogueVariantId: string | null;
   inCatalogue: boolean;
   historicOnly: boolean;
+  /** Current 231PO3NEW condition. Null when the product has no condition. */
+  conditionCode: string | null;
+  conditionLabel: string | null;
 };
 
 export async function loadIntelligenceByMatchKeys(
@@ -207,6 +218,7 @@ export async function loadIntelligenceByMatchKeys(
       physicalQty: number | null;
       presentInLatestFeed: boolean;
       catalogueVariantId: string | null;
+      conditionCode: string | null;
     }
   >();
   for (let i = 0; i < uniqueKeys.length; i += KEY_CHUNK) {
@@ -221,6 +233,7 @@ export async function loadIntelligenceByMatchKeys(
         physicalQty: true,
         presentInLatestFeed: true,
         catalogueVariantId: true,
+        conditionCode: true,
       },
     });
     for (const row of rows) products.set(row.matchKey, row);
@@ -291,6 +304,8 @@ export async function loadIntelligenceByMatchKeys(
       catalogueVariantId: variantId,
       inCatalogue: kind === "CATALOGUE",
       historicOnly: kind === "HISTORIC_ONLY",
+      conditionCode: product?.conditionCode ?? null,
+      conditionLabel: autopartConditionLabel(product?.conditionCode ?? null),
     });
   }
   return out;
@@ -399,6 +414,8 @@ export async function listAutopartProducts(actorUserId: string, raw: unknown) {
         sales30: u30.get(match) ?? 0,
         sales90: u90.get(match) ?? 0,
         sales365: u365.get(match) ?? 0,
+        conditionCode: row.conditionCode,
+        conditionLabel: autopartConditionLabel(row.conditionCode),
       };
     }),
   };
@@ -462,6 +479,8 @@ export async function getAutopartProduct(actorUserId: string, sku: string) {
     sourceUpdatedAt: row.sourceUpdatedAt?.toISOString() ?? null,
     presentInLatestFeed: row.presentInLatestFeed,
     catalogueVariantId: row.catalogueVariantId,
+    conditionCode: row.conditionCode,
+    conditionLabel: autopartConditionLabel(row.conditionCode),
     stale,
     availLine: formatInternalAvailLine({ kind, availQty: row.availQty, stale }),
     incomingLine: formatInternalIncomingLine({ kind, incomingQty: row.incomingQty, stale }),

@@ -894,11 +894,12 @@ describe("216V movement drill-down", () => {
     expect(csv.filename).toBe("autopart-216v-backorders-cleared.csv");
     const csvLines = csv.csv.split("\n");
     expect(csvLines[0]).toContain("Previous Qty");
+    expect(csvLines[0]).toContain("Current Condition Code,Current Product Condition");
     expect(csvLines).toHaveLength(3);
     expect(csvLines.find((l) => l.includes(gone1.order))).toMatch(/^Cleared,CLEARED,.*,3,,,2\.50,7\.50,/);
     const standard = await exportBackordersCsv(adminId, {});
     expect(standard.csv.split("\n")[0]).toBe(
-      "Status,First Seen,Order No,Customer Account,Customer,Customer Order Ref,SKU,Description,Outstanding Qty,Unit Value,Outstanding Value,Avail,Incoming,Stock Position,Product Type",
+      "Status,First Seen,Order No,Customer Account,Customer,Customer Order Ref,SKU,Description,Outstanding Qty,Unit Value,Outstanding Value,Avail,Incoming,Stock Position,Product Type,Condition Code,Condition",
     );
     expect(standard.csv).not.toContain(gone1.order);
   });

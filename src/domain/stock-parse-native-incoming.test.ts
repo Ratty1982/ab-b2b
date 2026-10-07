@@ -105,9 +105,9 @@ describe("231PO3NEW P/Ord Qty → Incoming", () => {
       "AUTOPART SYSTEM STOCK USAGES / REORDER INFORMATION (231PO3NEW)",
       "Branch  Group Part Number          C Description                     Latest Cost     Stk     Avail  Pick Qty Physical Stk Incoming",
       "--------------------------------------------------------------------------------",
-      "  01    AA    GC5000                 C GLASS CLEANER 5L                 1.41   93.0000  36.0000   0.0000    93.0000     120",
-      "  01    AA    OK2                    C OK TWO                           1.41   11.0000   9.0000   0.0000    11.0000      48",
-      "  01    AA    OK3                    C OK THREE                         1.41   12.0000  10.0000   0.0000    12.0000      96",
+      "  01    AA    GC5000                   GLASS CLEANER 5L                 1.41   93.0000  36.0000   0.0000    93.0000     120",
+      "  01    AA    OK2                      OK TWO                           1.41   11.0000   9.0000   0.0000    11.0000      48",
+      "  01    AA    OK3                      OK THREE                         1.41   12.0000  10.0000   0.0000    12.0000      96",
     ].join("\n");
     const parsed = parsedOrThrow(fakeIncoming);
     expect(parsed.incomingHeader).toBeNull();

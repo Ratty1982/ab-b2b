@@ -57,6 +57,27 @@ describe("backorder filter chips", () => {
     expect(activeBackorderFilterChips(cleared)).toEqual([]);
   });
 
+  it("parses the product condition filter without dropping existing filters", () => {
+    const search = parseBackorderSearch({
+      condition: "O",
+      status: "NEW",
+      position: "NO_STOCK_NO_INCOMING",
+    });
+    expect(search.condition).toBe("O");
+    expect(search.status).toBe("NEW");
+    expect(activeBackorderFilterChips(search).map((chip) => chip.label)).toEqual([
+      "Status: NEW",
+      "Stock: NO STOCK / NO INCOMING",
+      "Condition: Obsolete",
+    ]);
+    expect(parseBackorderSearch({ condition: "HAS" }).condition).toBe("HAS");
+    expect(parseBackorderSearch({ condition: "NONE" }).condition).toBe("NONE");
+    expect(parseBackorderSearch({ condition: "Z" }).condition).toBeUndefined();
+    const cleared = mergeBackorderSearch(search, { condition: undefined });
+    expect(cleared.condition).toBeUndefined();
+    expect(cleared.status).toBe("NEW");
+  });
+
   it("keeps existing filters functional when no movement is selected", () => {
     const search = parseBackorderSearch({ status: "NEW", position: "STOCK_AVAILABLE", ageDays: "7" });
     expect(search.movement).toBeUndefined();

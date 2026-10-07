@@ -1,5 +1,13 @@
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import {
+  autopartConditionLabel,
+  autopartConditionTitle,
+  autopartConditionTone,
+  BACKORDER_CONDITION_FILTERS,
+  isBackorderConditionFilter,
+  type BackorderConditionFilter,
+} from "@/domain/autopart-product-condition";
+import {
   AUTOPART_216V_CHANGE_STATUS_LABEL,
   AUTOPART_216V_STOCK_POSITION_LABEL,
   type Autopart216vStockPosition,
@@ -41,6 +49,18 @@ export function ChangeStatusBadge({
   return <StatusBadge tone={changeStatusTone(status)}>{label}</StatusBadge>;
 }
 
+export function ProductConditionBadge({ code }: { code: string | null | undefined }) {
+  const label = autopartConditionLabel(code);
+  if (!code || !label) return null;
+  return (
+    <span className="mt-1 inline-flex max-w-full" title={autopartConditionTitle(code) ?? undefined}>
+      <StatusBadge tone={autopartConditionTone(code)} className="normal-case tracking-normal">
+        {label}
+      </StatusBadge>
+    </span>
+  );
+}
+
 export function StockPositionBadge({
   position,
   label,
@@ -68,6 +88,8 @@ export const BACKORDER_POSITION_FILTERS = [
   ...Object.entries(AUTOPART_216V_STOCK_POSITION_LABEL).map(([value, label]) => ({ value, label })),
 ];
 
+export { BACKORDER_CONDITION_FILTERS };
+
 export const BACKORDER_AGE_FILTERS = [
   { value: "", label: "All ages" },
   { value: "1", label: "1+ day" },
@@ -87,6 +109,7 @@ export type BackorderSearch = {
   customerAccount?: string;
   brand?: string;
   catalogueType?: "CATALOGUE" | "EXTERNAL" | "HISTORIC_ONLY";
+  condition?: BackorderConditionFilter;
   page?: number;
 };
 
@@ -117,6 +140,8 @@ export function parseBackorderSearch(raw: Record<string, unknown>): BackorderSea
   if (catalogueType === "CATALOGUE" || catalogueType === "EXTERNAL" || catalogueType === "HISTORIC_ONLY") {
     out.catalogueType = catalogueType;
   }
+  const condition = str("condition");
+  if (condition && isBackorderConditionFilter(condition)) out.condition = condition;
   const pageRaw = raw["page"];
   const page = typeof pageRaw === "number" ? pageRaw : Number(pageRaw);
   if (Number.isFinite(page) && page > 1) out.page = Math.trunc(page);
@@ -158,6 +183,8 @@ export function activeBackorderFilterChips(search: BackorderSearch): BackorderFi
   if (search.catalogueType === "CATALOGUE") chips.push({ key: "catalogueType", label: "Catalogue" });
   if (search.catalogueType === "EXTERNAL") chips.push({ key: "catalogueType", label: "External product" });
   if (search.catalogueType === "HISTORIC_ONLY") chips.push({ key: "catalogueType", label: "Historic/not current" });
+  const condition = BACKORDER_CONDITION_FILTERS.find((o) => o.value && o.value === search.condition);
+  if (condition) chips.push({ key: "condition", label: `Condition: ${condition.label}` });
   if (search.q) chips.push({ key: "q", label: `Search: ${search.q}` });
   return chips;
 }

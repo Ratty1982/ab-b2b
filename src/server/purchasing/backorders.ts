@@ -37,6 +37,10 @@ import {
   type Autopart216vMovement,
   type Autopart216vMovementFilterKey,
 } from "@/domain/autopart-216v-movement";
+import {
+  autopartConditionLabel,
+  type BackorderConditionFilter,
+} from "@/domain/autopart-product-condition";
 
 const listInput = z.object({
   movement: z.enum(AUTOPART_216V_MOVEMENTS).optional().nullable(),
@@ -60,6 +64,7 @@ const listInput = z.object({
   customerAccount: z.string().optional().nullable(),
   brand: z.string().optional().nullable(),
   catalogueType: z.enum(["CATALOGUE", "EXTERNAL", "HISTORIC_ONLY"]).optional().nullable(),
+  condition: z.enum(["HAS", "NONE", "S", "N", "O", "W", "D", "M"]).optional().nullable(),
   view: z.enum(["lines", "sku", "customer", "attention"]).optional().nullable(),
   page: z.number().int().positive().optional().nullable(),
   pageSize: z.number().int().positive().max(200).optional().nullable(),
@@ -94,6 +99,7 @@ type ProductInclude = {
   presentInLatestFeed: boolean;
   sourceUpdatedAt: Date | null;
   catalogueVariantId: string | null;
+  conditionCode: string | null;
   catalogueVariant: {
     sku: string;
     product: { brand: { name: string; slug: string } };
@@ -162,6 +168,9 @@ export type BackorderLineView = {
   brandSlug: string | null;
   autopartProductId: string | null;
   attention: Autopart216vAttentionId[];
+  /** Current 231PO3NEW product condition. Not part of 216V identity or movement. */
+  conditionCode: string | null;
+  conditionLabel: string | null;
 };
 
 function productKindOf(product: ProductInclude | null): ProductKind | "UNKNOWN" {
@@ -239,6 +248,8 @@ function enrichLines(lines: LineRow[], now = new Date()): BackorderLineView[] {
       brand: brand?.name ?? null,
       brandSlug: brand?.slug ?? null,
       autopartProductId: line.autopartProduct?.id ?? null,
+      conditionCode: line.autopartProduct?.conditionCode ?? null,
+      conditionLabel: autopartConditionLabel(line.autopartProduct?.conditionCode ?? null),
       attention: attentionIdsForBackorder({
         ageDays,
         outstandingValue,
@@ -300,11 +311,22 @@ function applyFilters(rows: BackorderLineView[], input: z.infer<typeof listInput
   if (input.position) out = out.filter((r) => r.position === input.position);
   if (input.ageDays) out = out.filter((r) => r.ageDays >= input.ageDays!);
   out = applyIdentityFilters(out, input);
+  out = applyConditionFilter(out, input.condition);
   return out.sort((a, b) => {
     const value = Number(b.outstandingValue ?? 0) - Number(a.outstandingValue ?? 0);
     if (value !== 0) return value;
     return a.orderNumber.localeCompare(b.orderNumber);
   });
+}
+
+function applyConditionFilter<T extends { conditionCode: string | null }>(
+  rows: T[],
+  condition: BackorderConditionFilter | null | undefined,
+): T[] {
+  if (!condition) return rows;
+  if (condition === "HAS") return rows.filter((row) => Boolean(row.conditionCode));
+  if (condition === "NONE") return rows.filter((row) => !row.conditionCode);
+  return rows.filter((row) => row.conditionCode === condition);
 }
 
 function paginate<T>(rows: T[], page: number, pageSize: number) {
@@ -331,6 +353,8 @@ function groupSkus(rows: BackorderLineView[]) {
         productKind: first.productKind,
         productKindLabel: first.productKindLabel,
         brand: first.brand,
+        conditionCode: first.conditionCode,
+        conditionLabel: first.conditionLabel,
         outstandingQty,
         outstandingValue: outstandingValue.toFixed(2),
         orders: new Set(lines.map((l) => l.orderNumber)).size,
@@ -397,6 +421,7 @@ const lineInclude = {
       presentInLatestFeed: true,
       sourceUpdatedAt: true,
       catalogueVariantId: true,
+      conditionCode: true,
       catalogueVariant: {
         select: { sku: true, product: { select: { brand: { select: { name: true, slug: true } } } } },
       },
@@ -451,6 +476,9 @@ export type BackorderMovementRowView = {
   position: Autopart216vStockPosition | null;
   positionLabel: string | null;
   coverSummary: string | null;
+  /** Current product master condition. For CLEARED this is not a historic snapshot. */
+  conditionCode: string | null;
+  conditionLabel: string | null;
 };
 
 async function loadPreviousCommittedSnapshot(current: LoadedSnapshot) {
@@ -556,9 +584,11 @@ async function buildMovementRows(
         position: null,
         positionLabel: null,
         coverSummary: null,
+        conditionCode: line.autopartProduct?.conditionCode ?? null,
+        conditionLabel: autopartConditionLabel(line.autopartProduct?.conditionCode ?? null),
       };
     });
-    rows = applyIdentityFilters(rows, effective).sort(movementSort);
+    rows = applyConditionFilter(applyIdentityFilters(rows, effective), effective.condition).sort(movementSort);
   } else {
     rows = applyFilters(
       outstanding.filter((l) => l.status === changeStatus),
@@ -604,6 +634,8 @@ async function buildMovementRows(
         position: line.position,
         positionLabel: line.positionLabel,
         coverSummary: line.coverSummary,
+        conditionCode: line.conditionCode,
+        conditionLabel: line.conditionLabel,
       };
     }).sort(movementSort);
   }
@@ -847,6 +879,9 @@ function movementCsv(movement: Autopart216vMovement, rows: BackorderMovementRowV
     "Incoming",
     "Stock Position",
     "Product Type",
+    ...(movement === "CLEARED"
+      ? ["Current Condition Code", "Current Product Condition"]
+      : ["Condition Code", "Condition"]),
   ];
   const csv = [
     header.join(","),
@@ -872,6 +907,8 @@ function movementCsv(movement: Autopart216vMovement, rows: BackorderMovementRowV
         r.incomingQty ?? "",
         csvCell(r.positionLabel ?? ""),
         csvCell(r.productKindLabel),
+        csvCell(r.conditionCode ?? ""),
+        csvCell(r.conditionCode ? (r.conditionLabel ?? "") : ""),
       ].join(","),
     ),
   ].join("\n");
@@ -909,6 +946,8 @@ export async function exportBackordersCsv(actorUserId: string, raw: unknown = {}
     "Incoming",
     "Stock Position",
     "Product Type",
+    "Condition Code",
+    "Condition",
   ];
   const csv = [
     header.join(","),
@@ -929,6 +968,8 @@ export async function exportBackordersCsv(actorUserId: string, raw: unknown = {}
         r.incomingQty ?? "",
         csvCell(r.positionLabel),
         csvCell(r.productKindLabel),
+        csvCell(r.conditionCode ?? ""),
+        csvCell(r.conditionCode ? (r.conditionLabel ?? "") : ""),
       ].join(","),
     ),
   ].join("\n");

@@ -30,6 +30,8 @@ import {
   BACKORDER_POSITION_FILTERS,
   BACKORDER_STATUS_FILTERS,
   ChangeStatusBadge,
+  BACKORDER_CONDITION_FILTERS,
+  ProductConditionBadge,
   StockPositionBadge,
   activeBackorderFilterChips,
   backorderFilterIgnoredByMovement,
@@ -110,6 +112,7 @@ function BackordersPage() {
         customerAccount: search.customerAccount ?? null,
         brand: search.brand ?? null,
         catalogueType: search.catalogueType ?? null,
+        condition: search.condition ?? null,
         page: search.page ?? 1,
         pageSize: 50,
       },
@@ -155,6 +158,7 @@ function BackordersPage() {
         customerAccount: search.customerAccount ?? null,
         brand: search.brand ?? null,
         catalogueType: search.catalogueType ?? null,
+        condition: search.condition ?? null,
       },
     });
     setExporting(false);
@@ -644,6 +648,11 @@ function Filters({
           disabled={ageOff}
           onClick={() => patch({ ageDays: search.ageDays === 7 ? undefined : 7, page: undefined })}
         />
+        <QuickFilter
+          label="Product Issue"
+          active={search.condition === "HAS"}
+          onClick={() => patch({ condition: search.condition === "HAS" ? undefined : "HAS", page: undefined })}
+        />
       </div>
       <form
         className="flex flex-wrap gap-2"
@@ -686,6 +695,11 @@ function Filters({
             <option key={brand} value={brand}>{brand}</option>
           ))}
         </select>
+        <select className={controlClass} value={search.condition ?? ""} onChange={(e) => patch({ condition: (e.target.value as BackorderSearch["condition"]) || undefined, page: undefined })} aria-label="Product condition">
+          {BACKORDER_CONDITION_FILTERS.map((opt) => (
+            <option key={opt.value || "all"} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
         <select className={controlClass} value={search.catalogueType ?? ""} onChange={(e) => patch({ catalogueType: (e.target.value as BackorderSearch["catalogueType"]) || undefined, page: undefined })} aria-label="Catalogue type">
           <option value="">All catalogue types</option>
           <option value="CATALOGUE">Catalogue</option>
@@ -720,6 +734,7 @@ function Filters({
                 customerAccount: undefined,
                 brand: undefined,
                 catalogueType: undefined,
+                condition: undefined,
                 page: undefined,
               })
             }
@@ -857,11 +872,11 @@ function SettingsBody({
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, title }: { label: string; value: string; title?: string | undefined }) {
   return (
     <div>
       <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">{label}</dt>
-      <dd>{value}</dd>
+      <dd title={title}>{value}</dd>
     </div>
   );
 }
@@ -979,7 +994,10 @@ function MovementPanel({
                       <span className="block truncate" title={row.description}>{row.description}</span>
                       <QuietNote>{row.productKindLabel}</QuietNote>
                     </td>
-                    <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{row.sku}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="font-mono text-[12px] font-semibold">{row.sku}</div>
+                      <ProductConditionBadge code={row.conditionCode} />
+                    </td>
                     <td className="num px-3 py-2.5 text-right">{qty(row.previousQty)}</td>
                     <td className="num px-3 py-2.5 text-right text-base font-semibold">{cleared ? "Cleared" : qty(row.currentQty)}</td>
                     <td className="num px-3 py-2.5 text-right font-semibold">{formatAutopart216vChangeQty(row.changeQty)}</td>
@@ -1043,7 +1061,19 @@ function ClearedDetailBody({ row }: { row: MovementRow }) {
           <Fact label="Part number" value={row.sku} />
           <Fact label="Description" value={row.description} />
           <Fact label="Catalogue type" value={row.productKindLabel} />
+          {row.conditionLabel ? (
+            <Fact
+              label="Current Product Condition"
+              value={row.conditionLabel}
+              title={row.conditionCode ? `Autopart condition: ${row.conditionCode} — ${row.conditionLabel}` : undefined}
+            />
+          ) : null}
         </dl>
+        {row.conditionLabel ? (
+          <p className="text-[12px] text-steel">
+            Current Autopart product master. This is not the condition at the time the backorder was cleared.
+          </p>
+        ) : null}
       </section>
       <section className="grid gap-2">
         <h3 className="font-display text-base font-semibold uppercase">Previous backorder</h3>
@@ -1142,7 +1172,10 @@ function LinesTable({
                     <QuietNote>{row.productKindLabel}</QuietNote>
                   )}
                 </td>
-                <td className="px-3 py-2.5 font-mono text-[12px] font-semibold">{row.sku}</td>
+                <td className="px-3 py-2.5">
+                  <div className="font-mono text-[12px] font-semibold">{row.sku}</div>
+                  <ProductConditionBadge code={row.conditionCode} />
+                </td>
                 <td className="num px-3 py-2.5 text-right text-base font-semibold">{qty(row.outstandingQty)}</td>
                 <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.unitValue)}</td>
                 <td className="num px-3 py-2.5 text-right text-steel">{gbp(row.outstandingValue)}</td>
@@ -1194,7 +1227,10 @@ function SkuTable({
           <section key={group.partMatchKey} className="border border-border bg-surface/40">
             <button type="button" className="flex w-full flex-wrap items-start justify-between gap-4 px-4 py-4 text-left" onClick={() => onExpand(expanded === group.partMatchKey ? null : group.partMatchKey)}>
               <div className="min-w-0">
-                <div className="font-mono text-[15px] font-semibold">{group.sku}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="font-mono text-[15px] font-semibold">{group.sku}</div>
+                  <ProductConditionBadge code={group.conditionCode} />
+                </div>
                 <div className="font-display text-lg font-semibold uppercase">{group.description}</div>
                 {group.productKind === "EXTERNAL" ? (
                   <StatusBadge tone="neutral" className="mt-1 normal-case tracking-normal">External product</StatusBadge>
@@ -1395,6 +1431,7 @@ function AttentionBoard({ data, onOpen }: { data: Data; onOpen: (id: string) => 
                       <span className="font-mono text-[12px] font-semibold">{row.orderNumber}</span>
                       {" · "}{row.customerName}{" · "}
                       <span className="font-mono">{row.sku}</span>
+                      <ProductConditionBadge code={row.conditionCode} />
                       {" · "}
                       <span className="num font-semibold">{qty(row.outstandingQty)}</span> units
                     </span>
@@ -1431,6 +1468,13 @@ function LineDetailBody({ detail }: { detail: LineDetail }) {
           <Fact label="Description" value={line.description} />
           <Fact label="Catalogue type" value={line.productKindLabel} />
           <Fact label="AutopartProduct" value={line.autopartProductId ? "Matched" : "Not in AutopartProduct master"} />
+          {line.conditionLabel ? (
+            <Fact
+              label="Product Condition"
+              value={line.conditionLabel}
+              title={line.conditionCode ? `Autopart condition: ${line.conditionCode} — ${line.conditionLabel}` : undefined}
+            />
+          ) : null}
         </dl>
       </section>
       <section className="grid gap-2">
