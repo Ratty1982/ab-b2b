@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { MapAutopartAccountDrawer } from "@/components/ab/MapAutopartAccountDrawer";
+import { AUTOPART_ONGOING_SALES_SCHEDULE_LABEL } from "@/domain/autopart-ongoing-sales-schedule";
 import { formatOperationalDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import {
@@ -355,7 +356,8 @@ export function AutopartOngoingSalesFeedPanel() {
           </h2>
           <p className="mt-1 text-[12px] text-steel">
             Autopart 504 — Invoice &amp; Credit Documents · Autopart TRM21QC — Product Sales &amp;
-            Credits (NET / EX VAT). Expected email windows 13:00 and 18:00 Europe/London Mon–Fri.
+            Credits (NET / EX VAT). Expected email windows {AUTOPART_ONGOING_SALES_SCHEDULE_LABEL}.
+            Poll Now can run at any time.
             {fulfilment?.runtime504c === "RETIRED" || fulfilment?.fulfilmentMode === "ACTIVE"
               ? " Legacy 504C is retired. Order fulfilment uses 504 + TRM21QC."
               : " Default fulfilment mode is OFF so legacy 504C can still bridge despatch until 504 + TRM is proven."}

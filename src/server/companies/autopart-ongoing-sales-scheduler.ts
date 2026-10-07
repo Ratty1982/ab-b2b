@@ -1,6 +1,7 @@
 /**
  * In-app scheduler for ongoing Autopart 504 + TRM21QC email ingestion.
  * Default: DISABLED. Tick runs every minute but never imports while enabled=false.
+ * Due windows are 13:15 and 18:15 Europe/London, Monday–Friday.
  */
 
 import { dueOngoingSalesWindow } from "@/domain/autopart-ongoing-sales-schedule";
