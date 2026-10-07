@@ -223,10 +223,14 @@ export function FreshnessBanner({
   stockUpdated,
   salesUpdated,
   stockStale,
+  fbaUpdated,
+  fbaStale,
 }: {
   stockUpdated: string;
   salesUpdated: string;
   stockStale: boolean;
+  fbaUpdated?: string | null;
+  fbaStale?: boolean;
 }) {
   return (
     <div
@@ -239,6 +243,13 @@ export function FreshnessBanner({
       <span className="font-semibold text-ink">Stock updated:</span> {stockUpdated}
       <span className="mx-2 text-border">·</span>
       <span className="font-semibold text-ink">Sales updated:</span> {salesUpdated}
+      {fbaUpdated ? (
+        <>
+          <span className="mx-2 text-border">·</span>
+          <span className="font-semibold text-ink">FBA stock updated:</span> {fbaUpdated}
+          {fbaStale ? <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide">Stale</span> : null}
+        </>
+      ) : null}
       {stockStale ? (
         <span className="mt-1 block font-medium">
           Autopart stock is stale. Treat purchase recommendations as out of date until the next 231PO3NEW

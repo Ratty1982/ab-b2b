@@ -32,6 +32,8 @@ export type Native231Po3NewRow = {
   subGrp?: string;
   /** Later GROUP column. Must not be read as the supplier Group. */
   trailerGroup?: string;
+  /** Branch column. Omit to keep the historical fixture prefix. OPTIMUS is Amazon FBA. SS is the warehouse. */
+  branch?: string;
 };
 
 /** Identity + Avail/cost columns used by existing native tests. */
@@ -83,7 +85,8 @@ export function buildNative231Po3New(rows: Native231Po3NewRow[], page = 1): stri
     const conditionChar = (row.condition ?? "").trim().slice(0, 1).toUpperCase() || " ";
     const skuField = row.sku.padEnd(21).slice(0, 21);
     const group = (row.group ?? "AA").toUpperCase().padEnd(6).slice(0, 6);
-    const left = `  01    ${group}${skuField}${conditionChar} ${row.description.padEnd(33)}`;
+    const branch = row.branch != null ? row.branch.toUpperCase().padEnd(8).slice(0, 8) : "  01    ";
+    const left = `${branch}${group}${skuField}${conditionChar} ${row.description.padEnd(33)}`;
     const nums = `${cost}   ${row.stk}  ${row.avail}   ${row.pick}    ${row.physical}`;
     let line = left + nums;
     if (!withIncoming) return line;

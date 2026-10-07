@@ -4174,6 +4174,40 @@ export const listPurchasingForecastFn = createServerFn({ method: "GET" })
     }
   });
 
+export const previewFbaStockImportFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-stock");
+      return { ok: true as const, data: await fba.previewFbaStockImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const importFbaStockFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-stock");
+      return { ok: true as const, data: await fba.importFbaStock(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listFbaStockImportsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const fba = await import("@/server/purchasing/fba-stock");
+    return { ok: true as const, data: await fba.listFbaStockImports(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 export const getPurchasingSkuFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { sku: string })
   .handler(async ({ data }) => {

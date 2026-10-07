@@ -257,6 +257,8 @@ function PurchasePlannerPage() {
             stockUpdated={data.freshness.stockUpdated}
             salesUpdated={data.freshness.salesUpdated}
             stockStale={data.freshness.stockStale}
+            fbaUpdated={data.freshness.fbaUpdated}
+            fbaStale={data.freshness.fbaStale}
           />
           <ForecastCoverageBanner
             coverageDays={data.forecastCoverage.coverageDays}
@@ -371,7 +373,9 @@ function PurchasePlannerPage() {
                 <th className="px-3 py-2" />
                 <th className="px-2 py-2">Product</th>
                 <th className="px-2 py-2">Supplier</th>
-                <th className="px-2 py-2 text-right">Avail</th>
+                <th className="px-2 py-2 text-right">Warehouse</th>
+                <th className="px-2 py-2 text-right">FBA</th>
+                <th className="px-2 py-2 text-right">Total Stock</th>
                 <th className="px-2 py-2 text-right">Incoming</th>
                 <th className="px-2 py-2 text-right">Backorders</th>
                 <th className="px-2 py-2 text-right">30 / 90 / 365</th>
@@ -421,6 +425,8 @@ function PurchasePlannerPage() {
                           : row.supplier.supplierName}
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums">{qty(row.availableQty)}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{qty(row.fbaQty)}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{qty(row.totalStock)}</td>
                     <td className="px-2 py-2 text-right tabular-nums" title="On order from Autopart P/Ord Qty. Not available stock. No ETA.">
                       {qty(row.incomingQty)}
                     </td>
@@ -522,8 +528,9 @@ function PurchasePlannerPage() {
             ))}
           </dl>
           <p className="mt-4 text-[12px] text-steel">
-            Customer backorders are compared with Available + Incoming. They are not added on top of historic sales demand.
+            Customer backorders are compared with Warehouse Stock + Incoming. They are not added on top of historic sales demand.
             Incoming is on-order stock from Autopart and is not treated as available. No arrival date is assumed.
+            Amazon FBA stock is shown separately and is not subtracted from the suggested quantity.
           </p>
         </div>
       ) : null}

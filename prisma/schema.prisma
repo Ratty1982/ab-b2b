@@ -1317,12 +1317,66 @@ model AutopartProduct {
   purchasingPlanLine   AutopartPurchasingPlanLine?
   backorderLines       AutopartBackorderLine[]
   productSuppliers     ProductSupplier[]
+  locationStocks       AutopartLocationStock[]
 
   @@index([sku])
   @@index([catalogueVariantId])
   @@index([lastSeenAt])
   @@index([presentInLatestFeed])
   @@index([groupCode])
+}
+
+/// Current stock at a non-warehouse location. FBA is Amazon FBA (Autopart branch OPTIMUS).
+/// This is not B2B sellable stock and must not be written to Inventory.qtyOnHand or AutopartProduct.availQty.
+model AutopartLocationStock {
+  id                String   @id @default(cuid())
+  autopartProductId String
+  /// FBA = Amazon FBA. Further locations can be added without overloading warehouse Inventory.
+  locationCode      String
+  availableQty      Int      @default(0)
+  /// Autopart branch code. FBA rows store OPTIMUS. Not the user-facing name.
+  sourceBranch      String
+  sourceFileName    String?
+  sourceImportedAt  DateTime
+  importId          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  autopartProduct AutopartProduct         @relation(fields: [autopartProductId], references: [id], onDelete: Cascade)
+  import          AutopartFbaStockImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
+  @@unique([autopartProductId, locationCode])
+  @@index([locationCode])
+  @@index([importId])
+}
+
+/// One successful manual Amazon FBA stock import. fileHash is the content hash, not the filename.
+model AutopartFbaStockImport {
+  id                String   @id @default(cuid())
+  fileName          String
+  fileHash          String   @unique
+  status            String
+  actorUserId       String?
+  importedAt        DateTime @default(now())
+  productsProcessed Int      @default(0)
+  matchedExisting   Int      @default(0)
+  newProducts       Int      @default(0)
+  productsWithStock Int      @default(0)
+  totalUnits        Int      @default(0)
+  changedQuantities Int      @default(0)
+  zeroStock         Int      @default(0)
+  absentZeroed      Int      @default(0)
+  invalidRows       Int      @default(0)
+  duplicateSkus     Int      @default(0)
+  completeSnapshot  Boolean  @default(false)
+  sourceBranch      String
+  warnings          Json
+  createdAt         DateTime @default(now())
+
+  locations AutopartLocationStock[]
+
+  @@index([importedAt])
+  @@index([actorUserId])
 }
 
 /// Per-SKU purchasing params for external Autopart products (no ProductVariant).

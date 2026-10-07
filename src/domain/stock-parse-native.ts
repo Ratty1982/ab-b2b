@@ -511,6 +511,9 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
     const conditionAuthoritative = identity.conditionColumn != null;
     const conditionCode = conditionAuthoritative ? extractConditionCode(line, identity.conditionColumn) : null;
     const groupCode = extractGroupCode(line, identity.groupStart, identity.groupEnd);
+    const branchCode = identity.hasBranch
+      ? extractGroupCode(line, 0, identity.groupStart)
+      : null;
     const extracted = extractAvail(line, identity, numeric);
     const availRaw = extracted?.raw ?? "";
     const avail = extracted
@@ -534,6 +537,7 @@ export function parseNative231Po3New(text: string, byteLength?: number): StockPa
       conditionCode,
       groupAuthoritative: true,
       groupCode,
+      branchCode,
     });
   }
 

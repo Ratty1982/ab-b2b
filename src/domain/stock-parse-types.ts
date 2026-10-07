@@ -60,6 +60,11 @@ export type StagedStockRow = {
   groupAuthoritative?: boolean;
   /** Current 231PO3NEW Group column. Not Sub Grp, not the later GROUP field, and not inferred. */
   groupCode?: string | null;
+  /**
+   * Branch column when the report header has one. Warehouse stock is SS.
+   * Amazon FBA stock is the Autopart branch OPTIMUS. Omitted when the header has no Branch column.
+   */
+  branchCode?: string | null;
 };
 
 export type StockParseFailure = {

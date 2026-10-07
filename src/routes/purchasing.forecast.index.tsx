@@ -27,6 +27,7 @@ import {
   type ForecastSearch,
   type ForecastSearchPatch,
 } from "@/components/purchasing/workspace";
+import { FbaStockImportPanel } from "@/components/purchasing/fba-stock-import";
 import { listPurchasingForecastFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/forecast/")({
@@ -48,6 +49,7 @@ function StockForecastPage() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState(search.q ?? "");
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     setQ(search.q ?? "");
@@ -55,7 +57,6 @@ function StockForecastPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setData(null);
     void listPurchasingForecastFn({
       data: {
         status: search.status ?? null,
@@ -82,7 +83,7 @@ function StockForecastPage() {
     return () => {
       cancelled = true;
     };
-  }, [search]);
+  }, [search, reload]);
 
   function patch(next: ForecastSearchPatch) {
     void navigate({
@@ -94,7 +95,7 @@ function StockForecastPage() {
     <>
       <PanelHeader
         title="Stock Forecast"
-        sub="Current sellable stock is Avail only. Incoming is on-order quantity with no invented ETA."
+        sub="Warehouse Stock is SS Avail and stays the B2B sellable quantity. FBA Stock is Amazon stock. Total Stock is company-owned visibility only."
         crumbs={[{ label: "Purchasing" }, { label: "Stock Forecast" }]}
       />
       {data ? (
@@ -103,6 +104,8 @@ function StockForecastPage() {
             stockUpdated={data.freshness.stockUpdated}
             salesUpdated={data.freshness.salesUpdated}
             stockStale={data.freshness.stockStale}
+            fbaUpdated={data.freshness.fbaUpdated}
+            fbaStale={data.freshness.fbaStale}
           />
           <ForecastCoverageBanner
             coverageDays={data.forecastCoverage.coverageDays}
@@ -113,6 +116,9 @@ function StockForecastPage() {
             verifiedTo={data.forecastCoverage.verifiedTo}
           />
         </>
+      ) : null}
+      {data ? (
+        <FbaStockImportPanel canManage={data.canManage} onImported={() => setReload((value) => value + 1)} />
       ) : null}
       {error ? <ErrorState message={error} /> : null}
       <form
@@ -230,7 +236,9 @@ function StockForecastPage() {
                   <th className="px-3 py-2">Product</th>
                   <th className="px-3 py-2">SKU</th>
                   <th className="px-3 py-2">Brand</th>
-                  <th className="px-3 py-2">Available</th>
+                  <th className="px-3 py-2">Warehouse Stock</th>
+                  <th className="px-3 py-2">FBA Stock</th>
+                  <th className="px-3 py-2">Total Stock</th>
                   <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
                     Incoming
                   </th>
@@ -258,6 +266,8 @@ function StockForecastPage() {
                     <td className="px-3 py-2 font-mono text-[12px]">{row.sku}</td>
                     <td className="px-3 py-2">{row.brand}</td>
                     <td className="px-3 py-2">{qty(row.availableQty)}</td>
+                    <td className="px-3 py-2">{qty(row.fbaQty)}</td>
+                    <td className="px-3 py-2">{qty(row.totalStock)}</td>
                     <td className="px-3 py-2">{qty(row.incomingQty)}</td>
                     <td className="px-3 py-2">
                       {row.customerBackorderUnits > 0 ? `${qty(row.customerBackorderUnits)} units` : "—"}

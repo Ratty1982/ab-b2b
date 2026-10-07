@@ -53,13 +53,17 @@ export function ProductPurchasingPanel({ sku }: { sku: string }) {
         <Item label="MOQ" value={plan.minimumOrderQty == null ? "—" : qty(plan.minimumOrderQty)} />
         <Item label="Order multiple" value={plan.orderMultiple == null ? "—" : qty(plan.orderMultiple)} />
         <Item label="Purchasing cost" value={plan.purchasingCost ? `${gbp(plan.purchasingCost)} · ${plan.costSourceLabel}` : "— · Cost missing"} />
-        <Item label="Available" value={qty(plan.availableQty)} />
+        <Item label="Warehouse" value={qty(plan.availableQty)} />
+        <Item label="Amazon FBA" value={qty(plan.fbaQty)} />
+        <Item label="Total" value={qty(plan.totalStock)} />
         <Item label="Incoming" value={qty(plan.incomingQty)} />
         <Item label="Customer backorders" value={qty(plan.backorderUnits)} />
         <Item label="Uncovered backorders" value={qty(plan.backorderShortfall)} />
         <Item label="Suggested qty" value={qty(plan.suggestedQty)} />
       </dl>
       <p className="mt-3 text-[12px] text-steel">
+        FBA stock updated: {plan.fbaUpdated}
+        {plan.fbaStale ? " · Stale" : ""}. Total is company-owned stock. B2B sellable stock remains Warehouse.{" "}
         Internal only. Purchase orders are created in Autopart.{" "}
         <Link to={ROUTES.purchasingPlanner} search={{ q: sku }} className="text-primary hover:underline">
           Open in Purchase Planner

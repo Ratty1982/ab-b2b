@@ -152,6 +152,8 @@ function PurchasingSkuPage() {
           stockUpdated={data.freshness.stockUpdated}
           salesUpdated={data.freshness.salesUpdated}
           stockStale={data.freshness.stockStale}
+          fbaUpdated={data.freshness.fbaUpdated}
+          fbaStale={data.freshness.fbaStale}
         />
       ) : null}
       {error ? <ErrorState message={error} /> : null}
@@ -202,7 +204,9 @@ function PurchasingSkuPage() {
           <section className="grid gap-3">
             <h2 className="font-display text-lg font-semibold uppercase">Current position</h2>
             <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[13px]">
-              <Fact label="Available (Avail)" value={qty(forecast.availableQty)} />
+              <Fact label="Warehouse Stock" value={qty(forecast.availableQty)} />
+              <Fact label="FBA Stock" value={qty(forecast.fbaQty)} />
+              <Fact label="Total Stock" value={qty(forecast.totalStock)} />
               <Fact label="Incoming" value={incomingNote(forecast.incomingQty)} title={INCOMING_SOURCE_HINT} />
               <Fact
                 label="Customer backorders"
@@ -222,6 +226,9 @@ function PurchasingSkuPage() {
                 }
               />
             </dl>
+            <p className="text-[13px] text-steel">
+              Cover and suggested order use Warehouse Stock. Amazon FBA is company-owned visibility and is not added to B2B sellable stock.
+            </p>
           </section>
 
           <section className="grid gap-3">

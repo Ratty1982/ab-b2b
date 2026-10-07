@@ -11,6 +11,8 @@ import {
   type AutopartProductKind,
 } from "@/domain/autopart-product";
 import { stockFreshness } from "@/server/stock/service";
+import { loadCurrentFbaQtyByMatchKey, loadFbaFreshness } from "@/server/purchasing/fba-stock";
+import { FBA_LOCATION_CODE, totalOwnedStock } from "@/domain/fba-stock";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import { addDaysIso, dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -291,7 +293,39 @@ async function loadCatalogueRows(): Promise<CatalogueRow[]> {
       autopartProductId: p.id,
       supplier: NO_SUPPLIER,
     }));
-  return [...variantRows, ...externalRows];
+  const held = await prisma.autopartLocationStock.findMany({
+    where: {
+      locationCode: FBA_LOCATION_CODE,
+      availableQty: { gt: 0 },
+      autopartProduct: { catalogueVariantId: null },
+    },
+    include: { autopartProduct: { include: { purchasingSettings: true, purchasingPlanLine: true } } },
+  });
+  const seen = new Set([...catalogueKeys, ...externalRows.map((row) => skuMatchKey(row.sku))]);
+  const fbaOnlyRows: CatalogueRow[] = [];
+  for (const heldRow of held) {
+    const product = heldRow.autopartProduct;
+    if (seen.has(product.matchKey)) continue;
+    seen.add(product.matchKey);
+    fbaOnlyRows.push({
+      variantId: product.id,
+      sku: product.sku,
+      name: product.description?.trim() || product.sku,
+      brand: "External",
+      brandSlug: "external",
+      availableQty: product.availQty,
+      incomingQty: product.incomingQty ?? 0,
+      latestCost: product.latestCost ? String(product.latestCost) : null,
+      purchasing: purchasingFromSettings(product.purchasingSettings),
+      plannedQty: product.purchasingPlanLine?.plannedQty ?? null,
+      note: product.purchasingPlanLine?.note ?? null,
+      productKind: "EXTERNAL",
+      productKindLabel: AUTOPART_PRODUCT_KIND_LABEL.EXTERNAL,
+      autopartProductId: product.id,
+      supplier: NO_SUPPLIER,
+    });
+  }
+  return [...variantRows, ...externalRows, ...fbaOnlyRows];
 }
 
 function buildRates(
@@ -322,6 +356,7 @@ function forecastSku(
   maps: Awaited<ReturnType<typeof loadPurchasingDemandMaps>>,
   settings: PurchasingSystemSettings,
   stockStale: boolean,
+  fbaQty = 0,
 ) {
   const verified = Boolean(maps.historyFrom);
   const rates = buildRates(row.sku, maps);
@@ -374,6 +409,8 @@ function forecastSku(
     brand: row.brand,
     brandSlug: row.brandSlug,
     availableQty: row.availableQty,
+    fbaQty,
+    totalStock: totalOwnedStock(row.availableQty, fbaQty),
     incomingQty: row.incomingQty,
     latestCost: row.latestCost,
     purchasing: row.purchasing,
@@ -592,7 +629,13 @@ export async function getPurchasingSku(actorUserId: string, sku: string) {
   const workspace = await loadWorkspace(actorUserId);
   const row = workspace.catalogue.find((r) => r.sku.toUpperCase() === sku.toUpperCase());
   if (!row) throw new AuthError("SKU not found", "NOT_FOUND", 404);
-  const forecast = forecastSku(row, workspace.maps, workspace.settings, workspace.freshness.stockStale);
+  const forecast = forecastSku(
+    row,
+    workspace.maps,
+    workspace.settings,
+    workspace.freshness.stockStale,
+    workspace.fbaQty.get(skuMatchKey(row.sku)) ?? 0,
+  );
   const chartRange = clipRangeToVerified(
     { from: addDaysIso(workspace.maps.windows.today, -364), to: workspace.maps.windows.today },
     workspace.maps.historyFrom,
@@ -638,20 +681,30 @@ function coverageSummary(maps: Awaited<ReturnType<typeof loadPurchasingDemandMap
 async function loadWorkspace(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
   const settings = await loadPurchasingSettings();
-  const [maps, rawCatalogue, fresh, assignments] = await Promise.all([
+  const [maps, rawCatalogue, fresh, assignments, fbaQty, fbaFreshness] = await Promise.all([
     loadPurchasingDemandMaps(settings.verifiedSalesHistoryFrom),
     loadCatalogueRows(),
     freshnessLabels(),
     loadSupplierAssignments(),
+    loadCurrentFbaQtyByMatchKey(),
+    loadFbaFreshness(),
   ]);
   const catalogue = rawCatalogue.map((row) => applySupplierAssignment(row, assignments));
-  const rows = catalogue.map((row) => forecastSku(row, maps, settings, fresh.stockStale));
+  const rows = catalogue.map((row) =>
+    forecastSku(row, maps, settings, fresh.stockStale, fbaQty.get(skuMatchKey(row.sku)) ?? 0),
+  );
   return {
     canManage: hasPermission(profile, "purchasing.manage"),
     settings,
     maps,
     catalogue,
-    freshness: fresh,
+    fbaQty,
+    freshness: {
+      ...fresh,
+      fbaUpdated: fbaFreshness.updatedLabel,
+      fbaStale: fbaFreshness.stale,
+      fbaUpdatedAt: fbaFreshness.updatedAt,
+    },
     rows,
     brands: [...new Set(catalogue.map((r) => r.brandSlug))].sort(),
     suppliers: [
@@ -920,13 +973,20 @@ export async function getPlannerRowForSku(actorUserId: string, sku: string) {
 /** Internal product detail purchasing panel. purchasing.view only — never public/trade. */
 export async function getProductPurchasingPanel(actorUserId: string, raw: unknown) {
   const input = z.object({ sku: z.string().trim().min(1) }).parse(raw);
-  const suppliers = await getProductSuppliersForSku(actorUserId, input);
-  const row = await getPlannerRowForSku(actorUserId, input.sku);
+  const [suppliers, row, fbaFreshness] = await Promise.all([
+    getProductSuppliersForSku(actorUserId, input),
+    getPlannerRowForSku(actorUserId, input.sku),
+    loadFbaFreshness(),
+  ]);
   return {
     ...suppliers,
     planner: row
       ? {
           availableQty: row.availableQty,
+          fbaQty: row.fbaQty,
+          totalStock: row.totalStock,
+          fbaUpdated: fbaFreshness.updatedLabel,
+          fbaStale: fbaFreshness.stale,
           incomingQty: row.incomingQty,
           backorderUnits: row.backorderUnits,
           backorderShortfall: row.backorderShortfall,
@@ -1256,7 +1316,9 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
     "Description",
     "Product Type",
     "Brand",
-    "Available",
+    "Warehouse Stock",
+    "FBA Stock",
+    "Total Stock",
     "Incoming",
     "30 Day Units",
     "90 Day Units",
@@ -1301,6 +1363,8 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
         csv(row.productKindLabel),
         csv(row.brand),
         row.availableQty,
+        row.fbaQty,
+        row.totalStock,
         row.incomingQty,
         row.rates.last30.netUnits,
         row.rates.last90.netUnits,

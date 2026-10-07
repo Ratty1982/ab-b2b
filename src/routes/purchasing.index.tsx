@@ -121,6 +121,8 @@ function PurchasingDashboardPage() {
             stockUpdated={data.freshness.stockUpdated}
             salesUpdated={data.freshness.salesUpdated}
             stockStale={data.freshness.stockStale}
+            fbaUpdated={data.freshness.fbaUpdated}
+            fbaStale={data.freshness.fbaStale}
           />
           <ForecastCoverageBanner
             coverageDays={data.forecastCoverage.coverageDays}

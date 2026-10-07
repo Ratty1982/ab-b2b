@@ -832,7 +832,7 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
   if (current.changeStatus === "CLEARED") {
     throw new AuthError("Cleared backorders are historical and have no current outstanding detail", "NOT_FOUND", 404);
   }
-  const [history, enriched] = await Promise.all([
+  const [history, enriched, fbaQty] = await Promise.all([
     prisma.autopartBackorderLine.findMany({
       where: { identityKey: current.identityKey, snapshot: { status: "COMMITTED" } },
       select: {
@@ -843,6 +843,7 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
       orderBy: { snapshot: { businessDate: "asc" } },
     }),
     Promise.resolve(enrichLines([current as unknown as LineRow])[0]!),
+    import("@/server/purchasing/fba-stock").then((mod) => mod.fbaQtyForMatchKey(current.partMatchKey)),
   ]);
   const timeline = history.map((h) => ({
     date: dateOnlyIsoFromDate(h.snapshot.businessDate),
@@ -851,6 +852,7 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
   }));
   return {
     line: enriched,
+    fbaQty,
     timeline,
     stockDisclaimer:
       "Line-level cover is indicative and is not a reservation or allocation. Multiple backorders share the same Autopart Avail.",
