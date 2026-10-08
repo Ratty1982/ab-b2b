@@ -1,8 +1,11 @@
 import { ArrowRight, ClipboardList, Headphones, Truck, Warehouse } from "lucide-react";
 import type { CmsSectionTypeKey } from "@/domain/cms";
+import { parseBrandsShowcaseContent } from "@/domain/brands-showcase-content";
 import { resolveFeaturedBrandCards, featuredBrandsIntro } from "@/domain/featured-brands";
+import type { PublicCatalogueBrandCard } from "@/domain/public-brands-showcase";
 import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureSection";
 import { MotorsportMediaGallery } from "@/components/public/MotorsportMediaGallery";
+import { PublicBrandsShowcase } from "@/components/public/PublicBrandsShowcase";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
 import { cmsMediaDisplaySrc, cmsFocalStyle, cmsImageFitClass, readBrandLogos } from "@/lib/cms-media";
@@ -31,7 +34,13 @@ function num(c: Record<string, unknown>, key: string, fallback = 0): number {
   return typeof v === "number" ? v : fallback;
 }
 
-export function CmsSectionRenderer({ section }: { section: Section }) {
+export function CmsSectionRenderer({
+  section,
+  catalogueBrands = [],
+}: {
+  section: Section;
+  catalogueBrands?: readonly PublicCatalogueBrandCard[];
+}) {
   const c = section.config;
   switch (section.type) {
     case "HERO": {
@@ -444,17 +453,31 @@ export function CmsSectionRenderer({ section }: { section: Section }) {
       return <MotorsportFeatureSection config={c} />;
     case "MEDIA_GALLERY":
       return <MotorsportMediaGallery config={c} />;
+    case "BRANDS_SHOWCASE":
+      return (
+        <PublicBrandsShowcase
+          brands={catalogueBrands}
+          session={{ signedIn: false }}
+          content={parseBrandsShowcaseContent(c)}
+        />
+      );
 
     default:
       return null;
   }
 }
 
-export function CmsPageView({ sections }: { sections: Section[] }) {
+export function CmsPageView({
+  sections,
+  catalogueBrands = [],
+}: {
+  sections: Section[];
+  catalogueBrands?: readonly PublicCatalogueBrandCard[];
+}) {
   return (
     <>
       {sections.map((section) => (
-        <CmsSectionRenderer key={section.id} section={section} />
+        <CmsSectionRenderer key={section.id} section={section} catalogueBrands={catalogueBrands} />
       ))}
     </>
   );

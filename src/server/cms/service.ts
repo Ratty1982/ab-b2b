@@ -14,6 +14,16 @@ import {
   defaultHomepageSections,
   HOMEPAGE_LAUNCH_CONTENT_KEY,
 } from "@/server/cms/homepage-seed";
+import {
+  brandsShowcaseContentFromLegacy,
+  LEGACY_BRANDS_PAGE_SEO,
+  parseBrandsShowcaseContent,
+  upgradeLegacyBrandsShowcaseContent,
+} from "@/domain/brands-showcase-content";
+import {
+  PUBLIC_BRANDS_PAGE_DESCRIPTION,
+  PUBLIC_BRANDS_PAGE_TITLE,
+} from "@/domain/public-brands-showcase";
 import { MARKETING_CMS_PAGES } from "@/domain/cms-marketing-pages";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
 import { listPublicBrands } from "@/server/catalogue/products";
@@ -47,6 +57,7 @@ export async function listCmsPages(actorUserId: string) {
 
 export async function getCmsPageDraft(actorUserId: string, slug: string) {
   await requireSystemPermission(actorUserId, "cms.page.read");
+  if (slug === "brands") await ensureBrandsShowcaseSection();
   const page = await prisma.cmsPage.findUnique({
     where: { slug },
     include: {
@@ -764,7 +775,101 @@ export async function bootstrapMarketingCmsPages(
     created.push(seed.slug);
   }
 
+  await ensureBrandsShowcaseSection(prismaClient);
   return { created, existing };
+}
+
+/**
+ * Move an existing Brands page onto the showcase template once.
+ * Leaves every other website page alone. Does not change SEO or publication status.
+ * A version that already has BRANDS_SHOWCASE is not overwritten.
+ */
+export async function ensureBrandsShowcaseSection(
+  prismaClient: typeof prisma = prisma,
+): Promise<{ migratedVersionIds: string[] }> {
+  const page = await prismaClient.cmsPage.findUnique({
+    where: { slug: "brands" },
+    select: {
+      id: true,
+      draftVersionId: true,
+      publishedVersionId: true,
+      seoTitle: true,
+      metaDescription: true,
+    },
+  });
+  if (!page) return { migratedVersionIds: [] };
+
+  const seoData: { seoTitle?: string; metaDescription?: string } = {};
+  if (page.seoTitle === LEGACY_BRANDS_PAGE_SEO.seoTitle) seoData.seoTitle = PUBLIC_BRANDS_PAGE_TITLE;
+  if (page.metaDescription === LEGACY_BRANDS_PAGE_SEO.metaDescription) {
+    seoData.metaDescription = PUBLIC_BRANDS_PAGE_DESCRIPTION;
+  }
+  if (seoData.seoTitle || seoData.metaDescription) {
+    await prismaClient.cmsPage.update({ where: { id: page.id }, data: seoData });
+    await prismaClient.cmsPageVersion.updateMany({
+      where: {
+        pageId: page.id,
+        AND: [
+          { OR: [{ seoTitle: LEGACY_BRANDS_PAGE_SEO.seoTitle }, { seoTitle: null }] },
+          {
+            OR: [
+              { metaDescription: LEGACY_BRANDS_PAGE_SEO.metaDescription },
+              { metaDescription: null },
+            ],
+          },
+        ],
+      },
+      data: seoData,
+    });
+  }
+
+  const versionIds = [...new Set([page.draftVersionId, page.publishedVersionId].filter((id): id is string => Boolean(id)))];
+  const migratedVersionIds: string[] = [];
+
+  for (const versionId of versionIds) {
+    const sections = await prismaClient.cmsSection.findMany({
+      where: { versionId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const showcase = sections.find((section) => section.type === "BRANDS_SHOWCASE");
+    if (!showcase) {
+      const upgraded = upgradeLegacyBrandsShowcaseContent(
+        brandsShowcaseContentFromLegacy(
+          sections.map((section) => ({
+            type: section.type,
+            config: section.config,
+            enabled: section.enabled,
+          })),
+        ),
+      ).content;
+      const config = validateSectionConfig("BRANDS_SHOWCASE", upgraded);
+      await prismaClient.$transaction(async (tx) => {
+        await tx.cmsSection.deleteMany({ where: { versionId } });
+        await tx.cmsSection.create({
+          data: {
+            versionId,
+            type: "BRANDS_SHOWCASE",
+            config: config as Prisma.InputJsonValue,
+            sortOrder: 0,
+            enabled: true,
+          },
+        });
+      });
+      migratedVersionIds.push(versionId);
+      continue;
+    }
+
+    const upgraded = upgradeLegacyBrandsShowcaseContent(parseBrandsShowcaseContent(showcase.config));
+    if (!upgraded.changed) continue;
+    const config = validateSectionConfig("BRANDS_SHOWCASE", upgraded.content);
+    await prismaClient.cmsSection.update({
+      where: { id: showcase.id },
+      data: { config: config as Prisma.InputJsonValue },
+    });
+    migratedVersionIds.push(versionId);
+  }
+
+  return { migratedVersionIds };
 }
 
 /** Homepage + marketing pages used by production bootstrap and public loaders. */

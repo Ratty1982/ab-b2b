@@ -89,6 +89,8 @@ enum CmsSectionType {
   MOTORSPORT_FEATURE
   /// Responsive media gallery (motorsport page and reusable CMS).
   MEDIA_GALLERY
+  /// Public /brands page: fixed Steel Seal then Power Maxed showcase.
+  BRANDS_SHOWCASE
 }
 
 /// Company-scoped trade access levels (distinct from system Role).

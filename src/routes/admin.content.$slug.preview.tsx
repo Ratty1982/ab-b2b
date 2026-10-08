@@ -2,29 +2,35 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { CmsPageView } from "@/components/cms/CmsSectionRenderer";
 import { PublicHomepage } from "@/components/public/PublicHomepage";
 import { PublicLayout } from "@/components/ab/PublicLayout";
-import { getCmsPageDraftFn, previewPublicHomepageFn } from "@/server/phase2/fns";
+import type { PublicCatalogueBrandCard } from "@/domain/public-brands-showcase";
+import { getCmsPageDraftFn, listPublicBrandsFn, previewPublicHomepageFn } from "@/server/phase2/fns";
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import type { HomepageJson } from "@/domain/homepage";
 
 export const Route = createFileRoute("/admin/content/$slug/preview")({
   loader: async ({ params }) => {
     const r = await getCmsPageDraftFn({ data: { slug: params.slug } });
-    if (!r.ok) return { error: r.error, page: null as null, homepage: null };
+    if (!r.ok) return { error: r.error, page: null as null, homepage: null, catalogueBrands: [] as PublicCatalogueBrandCard[] };
     const sections = (r.data.version?.sections ?? []).map((s) => ({
       id: s.id,
       type: s.type as CmsSectionTypeKey,
       config: s.config as { [key: string]: HomepageJson },
       enabled: s.enabled,
     }));
+    const catalogueBrands: PublicCatalogueBrandCard[] =
+      params.slug === "brands"
+        ? await listPublicBrandsFn().then((result) => (result.ok ? result.data : []))
+        : [];
     if (params.slug === "home") {
       const preview = await previewPublicHomepageFn({ data: { sections } });
       return {
         error: preview.ok ? null : preview.error,
         page: r.data,
         homepage: preview.ok ? preview.data : null,
+        catalogueBrands,
       };
     }
-    return { error: null as string | null, page: r.data, homepage: null };
+    return { error: null as string | null, page: r.data, homepage: null, catalogueBrands };
   },
   head: ({ loaderData }) => ({
     meta: [{ title: `Draft preview — ${loaderData?.page?.title ?? "CMS"}` }],
@@ -34,7 +40,7 @@ export const Route = createFileRoute("/admin/content/$slug/preview")({
 
 function DraftPreview() {
   const { slug } = Route.useParams();
-  const { error, page, homepage } = Route.useLoaderData();
+  const { error, page, homepage, catalogueBrands } = Route.useLoaderData();
   const sections = (page?.version?.sections ?? [])
     .filter((s) => s.enabled)
     .map((s) => ({
@@ -56,7 +62,7 @@ function DraftPreview() {
         {slug === "home" && homepage ? (
           <PublicHomepage data={{ ...homepage, sections: homepage.sections.filter((s) => s.enabled) }} />
         ) : sections.length ? (
-          <CmsPageView sections={sections} />
+          <CmsPageView sections={sections} catalogueBrands={catalogueBrands ?? []} />
         ) : (
           <p className="px-6 py-16 text-center text-sm text-steel">This draft has no enabled sections.</p>
         )}

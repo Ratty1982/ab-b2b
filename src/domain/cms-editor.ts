@@ -1,4 +1,5 @@
 import { CMS_SECTION_TYPES, type CmsSectionTypeKey } from "@/domain/cms";
+import { defaultBrandsShowcaseContent } from "@/domain/brands-showcase-content";
 import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
 import { HOMEPAGE_MOTORSPORT_DEFAULTS } from "@/domain/motorsport";
 
@@ -24,6 +25,11 @@ export const SECTION_LIBRARY: Array<{
   description: string;
 }> = [
   { type: "HERO", name: "Hero", description: "Headline, image canvas and primary call to action" },
+  {
+    type: "BRANDS_SHOWCASE",
+    name: "Brands Showcase",
+    description: "Steel Seal then Power Maxed. Brand order is fixed.",
+  },
   { type: "BRAND_LOGO_STRIP", name: "Brand Logos", description: "Horizontal strip of brand marks" },
   { type: "FEATURED_BRANDS", name: "Featured Brands", description: "Brand cards with logos and blurbs" },
   { type: "CATEGORY_GRID", name: "Category Grid", description: "Shop-by-category tiles" },
@@ -53,6 +59,8 @@ export const SECTION_LIBRARY: Array<{
 
 export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, unknown> {
   switch (type) {
+    case "BRANDS_SHOWCASE":
+      return defaultBrandsShowcaseContent();
     case "HERO":
       return {
         eyebrow: "UK Automotive Aftermarket Supply",

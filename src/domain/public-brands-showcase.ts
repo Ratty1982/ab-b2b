@@ -4,7 +4,12 @@
  * This page always presents Steel Seal, then Power Maxed.
  */
 import { DEFAULT_BRANDS } from "@/domain/catalogue";
+import {
+  defaultBrandsShowcaseContent,
+  type BrandsShowcaseContent,
+} from "@/domain/brands-showcase-content";
 import { homepageBrandLogoSrc } from "@/domain/homepage-brand-logos";
+import { cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { publicHeaderAccountLinks } from "@/lib/public-header-account";
 import type { ClientSession } from "@/server/auth/session";
 
@@ -85,6 +90,8 @@ export type PublicBrandShowcase = {
   shopHref: string;
   shopLabel: string;
   emphasis: "primary" | "secondary";
+  coverSrc: string | null;
+  coverAlt: string;
 };
 
 export type ShowcaseCta = {
@@ -149,9 +156,54 @@ export function orderPublicBrandShowcase(brands: readonly PublicCatalogueBrandCa
       shopHref: `/brands/${slug}`,
       shopLabel: `Shop ${name}`,
       emphasis: slug === "steel-seal" ? "primary" : "secondary",
+      coverSrc: null,
+      coverAlt: "",
     });
   }
   return ordered;
+}
+
+/**
+ * Apply CMS copy onto the fixed Steel Seal → Power Maxed catalogue order.
+ * Shop links stay on the brand catalogue routes. Product counts stay on the catalogue cards.
+ */
+export function presentPublicBrandShowcase(
+  brands: readonly PublicCatalogueBrandCard[],
+  content: BrandsShowcaseContent = defaultBrandsShowcaseContent(),
+): PublicBrandShowcase[] {
+  return orderPublicBrandShowcase(brands).map((brand) => {
+    const panel = brand.slug === "steel-seal" ? content.steelSeal : content.powerMaxed;
+    const coverSrc = cmsMediaDisplaySrc(panel.media) ?? null;
+    return {
+      ...brand,
+      name: panel.heading.trim() || brand.name,
+      kicker: panel.kicker.trim() || brand.kicker,
+      description: panel.description.trim() || brand.description,
+      points: panel.points.length ? panel.points : brand.points,
+      shopLabel: panel.ctaLabel.trim() || brand.shopLabel,
+      shopHref: brand.shopHref,
+      coverSrc,
+      coverAlt: panel.media.alt.trim() || `${brand.name} photography`,
+    };
+  });
+}
+
+export function brandsPageCtas(session: ClientSession, content: BrandsShowcaseContent): BrandsShowcaseCtas {
+  const sessionCtas = brandsShowcaseCtas(session);
+  if (session.signedIn) return sessionCtas;
+  return {
+    heroPrimary: { label: content.hero.ctaLabel, href: content.hero.ctaHref },
+    heroSecondary: content.hero.secondaryCtaLabel.trim()
+      ? { label: content.hero.secondaryCtaLabel, href: content.hero.secondaryCtaHref }
+      : null,
+    closePrimary: { label: content.close.ctaLabel, href: content.close.ctaHref },
+    closeSecondary: content.close.secondaryCtaLabel.trim()
+      ? { label: content.close.secondaryCtaLabel, href: content.close.secondaryCtaHref }
+      : null,
+    offerTradeAccount: [content.hero.ctaHref, content.hero.secondaryCtaHref, content.close.ctaHref, content.close.secondaryCtaHref].includes(
+      "/register",
+    ),
+  };
 }
 
 export function publicBrandPropositionCards(brands: readonly { slug: string }[]) {

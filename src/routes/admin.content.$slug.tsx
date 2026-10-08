@@ -46,8 +46,10 @@ import { Field, inputClass } from "@/components/ab/Drawer";
 import { cmsPublicPath } from "@/lib/cms-pages";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
+import type { PublicCatalogueBrandCard } from "@/domain/public-brands-showcase";
 import {
   getCmsPageDraftFn,
+  listPublicBrandsFn,
   previewPublicHomepageFn,
   publishCmsPageFn,
   restoreCmsVersionFn,
@@ -164,6 +166,7 @@ function CmsEditor() {
   });
   const [ogPicker, setOgPicker] = useState(false);
   const [homepagePreview, setHomepagePreview] = useState<PublicHomepageData | null>(null);
+  const [catalogueBrands, setCatalogueBrands] = useState<PublicCatalogueBrandCard[]>([]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -200,6 +203,10 @@ function CmsEditor() {
     setVersions(r.data.versions ?? []);
     setSavedKey(snapshotKey(secs, nextMeta));
     setStatus("idle");
+    if (slug === "brands") {
+      const liveBrands = await listPublicBrandsFn();
+      if (liveBrands.ok) setCatalogueBrands(liveBrands.data);
+    }
   }, [slug]);
 
   useEffect(() => {
@@ -466,6 +473,9 @@ function CmsEditor() {
         <div className="min-h-0 overflow-auto bg-black/40 p-3 sm:p-5">
           <div className="mb-2 text-center text-[11px] font-semibold uppercase tracking-wide text-steel">
             {viewport} · {canvasWidth}px canvas — click a section to edit
+            {slug === "brands"
+              ? " · same Brands showcase as the live page. Anonymous calls to action are shown here; signed-in visitors see their account link."
+              : ""}
           </div>
           <div className="flex justify-center">
             <div
@@ -504,7 +514,10 @@ function CmsEditor() {
                         selectedId === s.id && rightMode === "section" && "ring-2 ring-inset ring-primary",
                       )}
                     >
-                      <CmsPageView sections={[{ id: s.id, type: s.type, config: s.config }]} />
+                      <CmsPageView
+                        sections={[{ id: s.id, type: s.type, config: s.config }]}
+                        catalogueBrands={catalogueBrands}
+                      />
                     </div>
                     <button
                       type="button"

@@ -20,6 +20,7 @@ export const CMS_SECTION_TYPES = [
   "SPACER",
   "MOTORSPORT_FEATURE",
   "MEDIA_GALLERY",
+  "BRANDS_SHOWCASE",
 ] as const;
 
 export type CmsSectionTypeKey = (typeof CMS_SECTION_TYPES)[number];
@@ -357,6 +358,45 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
       .max(24)
       .default([]),
     spacing,
+  }),
+  BRANDS_SHOWCASE: z.object({
+    contentKey,
+    hero: z.object({
+      eyebrow: z.string().max(80).default("Our Brands"),
+      headline: z.string().max(400).default("Two specialist brands.\nOne trade account."),
+      description: z.string().max(2000).default(""),
+      ctaLabel: z.string().max(80).default("Shop Products"),
+      ctaHref: z.string().max(300).default("/products"),
+      secondaryCtaLabel: z.string().max(80).default("Open a Trade Account"),
+      secondaryCtaHref: z.string().max(300).default("/register"),
+      media: mediaRef,
+    }),
+    steelSeal: z.object({
+      kicker: z.string().max(80).default("Head Gasket & Cooling Repair"),
+      heading: z.string().max(160).default("Steel Seal"),
+      description: z.string().max(2000).default(""),
+      points: z.array(z.string().max(120)).max(6).default([]),
+      ctaLabel: z.string().max(80).default("Shop Steel Seal"),
+      ctaHref: z.string().max(300).default("/brands/steel-seal"),
+      media: mediaRef,
+    }),
+    powerMaxed: z.object({
+      kicker: z.string().max(80).default("Vehicle Care & Workshop"),
+      heading: z.string().max(160).default("Power Maxed"),
+      description: z.string().max(2000).default(""),
+      points: z.array(z.string().max(120)).max(6).default([]),
+      ctaLabel: z.string().max(80).default("Shop Power Maxed"),
+      ctaHref: z.string().max(300).default("/brands/power-maxed"),
+      media: mediaRef,
+    }),
+    close: z.object({
+      headline: z.string().max(400).default("One account.\nBoth brands."),
+      description: z.string().max(2000).default(""),
+      ctaLabel: z.string().max(80).default("Open a Trade Account"),
+      ctaHref: z.string().max(300).default("/register"),
+      secondaryCtaLabel: z.string().max(80).default("Shop Products"),
+      secondaryCtaHref: z.string().max(300).default("/products"),
+    }),
   }),
 };
 

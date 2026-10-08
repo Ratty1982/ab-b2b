@@ -201,6 +201,140 @@ function MediaField({
   );
 }
 
+function asConfigRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return { ...(value as Record<string, unknown>) };
+}
+
+function SlotMediaField({
+  label,
+  media,
+  onMedia,
+}: {
+  label: string;
+  media: Record<string, unknown>;
+  onMedia: (next: Record<string, unknown>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const preview = cmsMediaDisplaySrc(media);
+  const alt = typeof media["alt"] === "string" ? media["alt"] : "";
+  const hasImage = Boolean(preview);
+
+  return (
+    <div className="grid gap-2">
+      <Field label={label}>
+        <div className="overflow-hidden rounded-md border border-border bg-ink">
+          {preview ? (
+            <img src={preview} alt={alt || label} className="aspect-video w-full object-cover" />
+          ) : (
+            <div className="grid aspect-video place-items-center px-4 text-center text-[12px] text-steel">
+              No image selected. The published page keeps a dark panel and the brand logo until a photo is chosen.
+            </div>
+          )}
+        </div>
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
+        >
+          {hasImage ? "Replace image" : "Choose image"}
+        </button>
+        {hasImage ? (
+          <button
+            type="button"
+            onClick={() => onMedia({ alt })}
+            className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold uppercase tracking-wide hover:border-steel"
+          >
+            Remove image
+          </button>
+        ) : null}
+      </div>
+      <Field label="Image alt text">
+        <input value={alt} onChange={(e) => onMedia({ ...media, alt: e.target.value })} className={inputClass} />
+      </Field>
+      <MediaPicker
+        open={open}
+        onClose={() => setOpen(false)}
+        onSelect={(item) =>
+          onMedia({
+            ...media,
+            mediaId: item.id,
+            src: item.src,
+            alt: alt || item.altText || "",
+            fit: typeof media["fit"] === "string" ? media["fit"] : "fill",
+            focalX: typeof media["focalX"] === "number" ? media["focalX"] : 50,
+            focalY: typeof media["focalY"] === "number" ? media["focalY"] : 50,
+          })
+        }
+      />
+    </div>
+  );
+}
+
+function BrandPanelFields({
+  title,
+  panel,
+  shopHref,
+  onPanel,
+}: {
+  title: string;
+  panel: Record<string, unknown>;
+  shopHref: string;
+  onPanel: (next: Record<string, unknown>) => void;
+}) {
+  const points = Array.isArray(panel["points"]) ? panel["points"] : [];
+  return (
+    <Group title={title}>
+      <Field label="Kicker">
+        <input
+          value={str(panel, "kicker")}
+          onChange={(e) => onPanel({ ...panel, kicker: e.target.value })}
+          className={inputClass}
+        />
+      </Field>
+      <Field label="Heading">
+        <input
+          value={str(panel, "heading")}
+          onChange={(e) => onPanel({ ...panel, heading: e.target.value })}
+          className={inputClass}
+        />
+      </Field>
+      <Field label="Description">
+        <textarea
+          rows={4}
+          value={str(panel, "description")}
+          onChange={(e) => onPanel({ ...panel, description: e.target.value })}
+          className={inputClass}
+        />
+      </Field>
+      <Field label="Feature highlights (one per line)">
+        <textarea
+          rows={4}
+          value={multilineListToTextareaValue(points)}
+          onChange={(e) => onPanel({ ...panel, points: linesFromMultilineInput(e.target.value) })}
+          onBlur={(e) => onPanel({ ...panel, points: compactMultilineList(linesFromMultilineInput(e.target.value)) })}
+          className={inputClass}
+        />
+      </Field>
+      <Field label="Shop button label">
+        <input
+          value={str(panel, "ctaLabel")}
+          onChange={(e) => onPanel({ ...panel, ctaLabel: e.target.value })}
+          className={inputClass}
+        />
+      </Field>
+      <p className="text-[11px] leading-relaxed text-steel">Catalogue link stays {shopHref}.</p>
+      <SlotMediaField
+        label="Section photography"
+        media={asConfigRecord(panel["media"])}
+        onMedia={(media) => onPanel({ ...panel, media })}
+      />
+    </Group>
+  );
+}
+
 export function BrandLogoPicker({
   label,
   logo,
@@ -1140,6 +1274,136 @@ export function SectionSettings({
         >
           Add item
         </button>
+      </div>
+    );
+  }
+
+  if (type === "BRANDS_SHOWCASE") {
+    const hero = asConfigRecord(config["hero"]);
+    const steelSeal = asConfigRecord(config["steelSeal"]);
+    const powerMaxed = asConfigRecord(config["powerMaxed"]);
+    const close = asConfigRecord(config["close"]);
+    return (
+      <div className="grid gap-3" data-cms-editor="brands-showcase">
+        <p className="text-[12px] leading-relaxed text-steel">
+          Steel Seal is always first. Power Maxed is always second. This template cannot add another public brand.
+        </p>
+        <Group title="Hero">
+          <Field label="Eyebrow">
+            <input
+              value={str(hero, "eyebrow")}
+              onChange={(e) => onChange("hero", { ...hero, eyebrow: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Heading">
+            <textarea
+              rows={3}
+              value={str(hero, "headline")}
+              onChange={(e) => onChange("hero", { ...hero, headline: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Description">
+            <textarea
+              rows={4}
+              value={str(hero, "description")}
+              onChange={(e) => onChange("hero", { ...hero, description: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA label">
+            <input
+              value={str(hero, "ctaLabel")}
+              onChange={(e) => onChange("hero", { ...hero, ctaLabel: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA link">
+            <input
+              value={str(hero, "ctaHref")}
+              onChange={(e) => onChange("hero", { ...hero, ctaHref: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA label">
+            <input
+              value={str(hero, "secondaryCtaLabel")}
+              onChange={(e) => onChange("hero", { ...hero, secondaryCtaLabel: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA link">
+            <input
+              value={str(hero, "secondaryCtaHref")}
+              onChange={(e) => onChange("hero", { ...hero, secondaryCtaHref: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <SlotMediaField
+            label="Hero background"
+            media={asConfigRecord(hero["media"])}
+            onMedia={(media) => onChange("hero", { ...hero, media })}
+          />
+        </Group>
+        <BrandPanelFields
+          title="Steel Seal"
+          panel={steelSeal}
+          shopHref="/brands/steel-seal"
+          onPanel={(next) => onChange("steelSeal", next)}
+        />
+        <BrandPanelFields
+          title="Power Maxed"
+          panel={powerMaxed}
+          shopHref="/brands/power-maxed"
+          onPanel={(next) => onChange("powerMaxed", next)}
+        />
+        <Group title="Final trade account">
+          <Field label="Heading">
+            <textarea
+              rows={2}
+              value={str(close, "headline")}
+              onChange={(e) => onChange("close", { ...close, headline: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Description">
+            <textarea
+              rows={3}
+              value={str(close, "description")}
+              onChange={(e) => onChange("close", { ...close, description: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA label">
+            <input
+              value={str(close, "ctaLabel")}
+              onChange={(e) => onChange("close", { ...close, ctaLabel: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Primary CTA link">
+            <input
+              value={str(close, "ctaHref")}
+              onChange={(e) => onChange("close", { ...close, ctaHref: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA label">
+            <input
+              value={str(close, "secondaryCtaLabel")}
+              onChange={(e) => onChange("close", { ...close, secondaryCtaLabel: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Secondary CTA link">
+            <input
+              value={str(close, "secondaryCtaHref")}
+              onChange={(e) => onChange("close", { ...close, secondaryCtaHref: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+        </Group>
       </div>
     );
   }

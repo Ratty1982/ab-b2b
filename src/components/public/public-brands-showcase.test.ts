@@ -2,7 +2,8 @@ import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PublicBrandsShowcase } from "@/components/public/PublicBrandsShowcase";
-import { orderPublicBrandShowcase, type PublicCatalogueBrandCard } from "@/domain/public-brands-showcase";
+import { defaultBrandsShowcaseContent } from "@/domain/brands-showcase-content";
+import { type PublicCatalogueBrandCard } from "@/domain/public-brands-showcase";
 import { TRADE_ROLE_PERMISSIONS } from "@/domain/role-permissions";
 import type { ClientSession } from "@/server/auth/session";
 
@@ -60,11 +61,12 @@ function tradeCustomer(): ClientSession {
   };
 }
 
-function renderShowcase(session: ClientSession) {
+function renderShowcase(session: ClientSession, content = defaultBrandsShowcaseContent()) {
   return renderToStaticMarkup(
     createElement(PublicBrandsShowcase, {
-      brands: orderPublicBrandShowcase(catalogue),
+      brands: catalogue,
       session,
+      content,
     }) as ReactElement,
   );
 }
@@ -76,10 +78,11 @@ describe("public brands showcase markup", () => {
     const power = html.indexOf('data-brand-showcase="power-maxed"');
     expect(steel).toBeGreaterThan(-1);
     expect(power).toBeGreaterThan(steel);
-    expect(html.indexOf('data-brand-proposition="steel-seal"')).toBeLessThan(
-      html.indexOf('data-brand-proposition="power-maxed"'),
-    );
+    expect(html.match(/data-brand-showcase="/g)).toHaveLength(2);
+    expect(html).toContain('data-brands-template="brands-showcase"');
     expect(html).toContain('data-brand-order="steel-seal power-maxed"');
+    expect(html).not.toContain("bg-white");
+    expect(html).not.toMatch(/order-first|order-last|lg:order-/);
     expect(html).not.toMatch(/street rhino|streetwize|leisurewize|saxon|bramley|kidzmotion/i);
     expect(html).not.toMatch(/trade-visible/);
     expect(html).not.toMatch(/coming soon|explore all our brands/i);
@@ -115,5 +118,28 @@ describe("public brands showcase markup", () => {
     expect(html.indexOf('data-brand-showcase="steel-seal"')).toBeLessThan(
       html.indexOf('data-brand-showcase="power-maxed"'),
     );
+  });
+
+  it("shows a CMS photograph on the published showcase and keeps the dark fallback when none is set", () => {
+    const content = defaultBrandsShowcaseContent();
+    content.hero.headline = "Workshop brands.\nOne trade account.";
+    content.steelSeal.media = {
+      src: "/api/cms-media/engine-photo",
+      alt: "Close-up of an engine head gasket",
+    };
+    content.steelSeal.ctaLabel = "Shop Steel Seal";
+    const html = renderShowcase({ signedIn: false }, content);
+    expect(html.indexOf('data-brand-showcase="steel-seal"')).toBeLessThan(
+      html.indexOf('data-brand-showcase="power-maxed"'),
+    );
+    expect(html).toContain("Workshop brands.");
+    expect(html).toContain('src="/api/cms-media/engine-photo"');
+    expect(html).toContain('alt="Close-up of an engine head gasket"');
+    expect(html).toContain('data-brand-visual="photo"');
+    expect(html).toContain('data-brand-visual="fallback"');
+    expect(html).toContain('href="/brands/steel-seal"');
+    expect(html).toContain('href="/brands/power-maxed"');
+    expect(html).not.toContain("bg-white");
+    expect(html).not.toMatch(/street rhino|streetwize|leisurewize|saxon|bramley|kidzmotion/i);
   });
 });

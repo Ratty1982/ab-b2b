@@ -41,6 +41,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-steel: var(--steel);
   --color-cyan: var(--cyan);
+  --color-brand-yellow: var(--brand-yellow);
   --color-good: var(--good);
   --color-warn: var(--warn);
   --color-destructive: var(--destructive);
@@ -93,6 +94,8 @@
 
   --steel: oklch(0.685 0.026 258);
   --cyan: oklch(0.812 0.117 216);
+  /* Steel Seal / Power Maxed mark yellow */
+  --brand-yellow: oklch(0.9 0.18 98);
   --good: oklch(0.79 0.157 163);
   --warn: oklch(0.82 0.152 79);
 

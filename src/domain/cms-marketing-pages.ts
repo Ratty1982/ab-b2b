@@ -1,6 +1,6 @@
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
-import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
+import { defaultBrandsShowcaseContent } from "@/domain/brands-showcase-content";
 import { MOTORSPORT_PAGE_DEFAULTS } from "@/domain/motorsport";
 
 export type MarketingPageSeed = {
@@ -62,29 +62,12 @@ export const MARKETING_CMS_PAGES: MarketingPageSeed[] = [
     seoTitle: "Steel Seal & Power Maxed Trade Products | Automotive Brands",
     metaDescription:
       "Explore Steel Seal and Power Maxed trade automotive products from Automotive Brands, with professional products for workshops, vehicle care and repair.",
-    blurb: "Brand portfolio introduction (catalogue cards load live)",
+    blurb: "Steel Seal and Power Maxed showcase",
     primaryNav: true,
     sections: [
-      pageHero({
-        eyebrow: "Our Brands",
-        headline: "Two specialist brands. One trade account.",
-        supporting:
-          "Professional vehicle care, workshop and engine repair products from Steel Seal and Power Maxed, available through one Automotive Brands trade account.",
-        ctaLabel: "Shop Products",
-        ctaHref: "/products",
-        secondaryCtaLabel: "Open a Trade Account",
-        secondaryCtaHref: "/register",
-      }),
       {
-        type: "FEATURED_BRANDS",
-        config: {
-          ...defaultFeaturedBrandsConfig(),
-          eyebrow: "",
-          heading: "",
-          intro: "",
-        },
-        // Catalogue brand cards are rendered by the /brands route; keep CMS brand strip off by default.
-        enabled: false,
+        type: "BRANDS_SHOWCASE",
+        config: defaultBrandsShowcaseContent(),
       },
     ],
   },

@@ -1,8 +1,8 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { PublicLayout, PublicPageBreadcrumbs } from "@/components/ab/PublicLayout";
 import { PublicBrandsShowcase } from "@/components/public/PublicBrandsShowcase";
+import { parseBrandsShowcaseContent } from "@/domain/brands-showcase-content";
 import {
-  orderPublicBrandShowcase,
   PUBLIC_BRANDS_PAGE_DESCRIPTION,
   PUBLIC_BRANDS_PAGE_TITLE,
 } from "@/domain/public-brands-showcase";
@@ -17,29 +17,35 @@ export const Route = createFileRoute("/brands/")({
       getClientSession(),
     ]);
     if (!cms.ok || !cms.data) throw notFound();
+    const showcase = cms.data.sections.find((section) => section.type === "BRANDS_SHOWCASE");
+    const seoTitle = cms.data.seoTitle?.trim() || PUBLIC_BRANDS_PAGE_TITLE;
+    const metaDescription = cms.data.metaDescription?.trim() || PUBLIC_BRANDS_PAGE_DESCRIPTION;
     return {
-      brands: orderPublicBrandShowcase(brands.ok ? brands.data : []),
+      brands: brands.ok ? brands.data : [],
       requestSession,
+      content: parseBrandsShowcaseContent(showcase?.config),
+      seoTitle,
+      metaDescription,
     };
   },
   headers: () => ({
     "Cache-Control": "private, no-store",
   }),
-  head: () => ({
+  head: ({ loaderData }) => ({
     meta: [
-      { title: PUBLIC_BRANDS_PAGE_TITLE },
-      { name: "description", content: PUBLIC_BRANDS_PAGE_DESCRIPTION },
+      { title: loaderData?.seoTitle || PUBLIC_BRANDS_PAGE_TITLE },
+      { name: "description", content: loaderData?.metaDescription || PUBLIC_BRANDS_PAGE_DESCRIPTION },
     ],
   }),
   component: BrandsIndex,
 });
 
 function BrandsIndex() {
-  const { brands, requestSession } = Route.useLoaderData();
+  const { brands, requestSession, content } = Route.useLoaderData();
   return (
     <PublicLayout requestSession={requestSession}>
       <PublicPageBreadcrumbs items={[{ label: "Home", to: "/" }, { label: "Brands" }]} />
-      <PublicBrandsShowcase brands={brands} session={requestSession} />
+      <PublicBrandsShowcase brands={brands} session={requestSession} content={content} />
     </PublicLayout>
   );
 }

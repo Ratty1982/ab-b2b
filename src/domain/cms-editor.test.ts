@@ -38,6 +38,7 @@ describe("CMS editor draft operations", () => {
   it("lists every controlled section type in the library", () => {
     expect(SECTION_LIBRARY.map((s) => s.type)).toEqual([
       "HERO",
+      "BRANDS_SHOWCASE",
       "BRAND_LOGO_STRIP",
       "FEATURED_BRANDS",
       "CATEGORY_GRID",
