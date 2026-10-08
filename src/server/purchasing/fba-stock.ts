@@ -13,15 +13,20 @@ import { skuMatchKey } from "@/domain/stock";
 import {
   FBA_LOCATION_CODE,
   FBA_SOURCE_BRANCH,
+  FBA_STOCK_LABEL,
   FBA_STOCK_STALE_AFTER_DAYS,
   assessFbaStockFile,
   buildFbaPreviewProducts,
+  fbaLocationForImport,
   fbaStockIsStale,
   planFbaSnapshot,
   type FbaFileAssessment,
   type FbaImportTotals,
 } from "@/domain/fba-stock";
 import { formatOperationalDateTime } from "@/lib/datetime";
+
+/** This importer writes UK FBA only. Other countries stay on their own location codes. */
+const UK_FBA_LOCATION_CODE = fbaLocationForImport("UK")?.locationCode ?? FBA_LOCATION_CODE;
 
 const FILE_NAME_MAX = 200;
 
@@ -69,7 +74,7 @@ export async function loadFbaFreshness(now = new Date()): Promise<FbaFreshness> 
 
 export async function loadCurrentFbaQtyByMatchKey(): Promise<Map<string, number>> {
   const rows = await prisma.autopartLocationStock.findMany({
-    where: { locationCode: FBA_LOCATION_CODE },
+    where: { locationCode: UK_FBA_LOCATION_CODE },
     select: { availableQty: true, autopartProduct: { select: { matchKey: true } } },
   });
   const qty = new Map<string, number>();
@@ -79,7 +84,7 @@ export async function loadCurrentFbaQtyByMatchKey(): Promise<Map<string, number>
 
 async function previousQtyMap(): Promise<Map<string, number>> {
   const rows = await prisma.autopartLocationStock.findMany({
-    where: { locationCode: FBA_LOCATION_CODE },
+    where: { locationCode: UK_FBA_LOCATION_CODE },
     select: { availableQty: true, autopartProduct: { select: { matchKey: true } } },
   });
   return new Map(rows.map((row) => [row.autopartProduct.matchKey, row.availableQty]));
@@ -248,10 +253,15 @@ export async function importFbaStock(actorUserId: string, raw: unknown) {
     const product = products.get(row.matchKey);
     if (!product) continue;
     await prisma.autopartLocationStock.upsert({
-      where: { autopartProductId_locationCode: { autopartProductId: product.id, locationCode: FBA_LOCATION_CODE } },
+      where: {
+        autopartProductId_locationCode: {
+          autopartProductId: product.id,
+          locationCode: UK_FBA_LOCATION_CODE,
+        },
+      },
       create: {
         autopartProductId: product.id,
-        locationCode: FBA_LOCATION_CODE,
+        locationCode: UK_FBA_LOCATION_CODE,
         availableQty: row.availQty,
         sourceBranch: FBA_SOURCE_BRANCH,
         sourceFileName: fileName,
@@ -267,7 +277,7 @@ export async function importFbaStock(actorUserId: string, raw: unknown) {
   }
   if (assessed.completeSnapshot) {
     const current = await prisma.autopartLocationStock.findMany({
-      where: { locationCode: FBA_LOCATION_CODE },
+      where: { locationCode: UK_FBA_LOCATION_CODE },
       select: { id: true, autopartProduct: { select: { matchKey: true } } },
     });
     const absentIds = current.filter((row) => !fileKeys.has(row.autopartProduct.matchKey)).map((row) => row.id);
@@ -301,7 +311,7 @@ export async function importFbaStock(actorUserId: string, raw: unknown) {
     },
   });
   await prisma.autopartLocationStock.updateMany({
-    where: { sourceImportedAt: now, locationCode: FBA_LOCATION_CODE, importId: null },
+    where: { sourceImportedAt: now, locationCode: UK_FBA_LOCATION_CODE, importId: null },
     data: { importId: saved.id },
   });
   await recordAuditEvent({
@@ -323,7 +333,7 @@ export async function importFbaStock(actorUserId: string, raw: unknown) {
   });
   return {
     status: "IMPORTED" as const,
-    message: "FBA Stock updated",
+    message: `${FBA_STOCK_LABEL} stock updated`,
     id: saved.id,
     fileName,
     importedAt: saved.importedAt.toISOString(),
@@ -363,7 +373,10 @@ export async function listFbaStockImports(actorUserId: string) {
 
 export async function fbaQtyForMatchKey(matchKey: string): Promise<number> {
   const row = await prisma.autopartLocationStock.findFirst({
-    where: { locationCode: FBA_LOCATION_CODE, autopartProduct: { matchKey: skuMatchKey(matchKey) } },
+    where: {
+      locationCode: UK_FBA_LOCATION_CODE,
+      autopartProduct: { matchKey: skuMatchKey(matchKey) },
+    },
     select: { availableQty: true },
   });
   return row?.availableQty ?? 0;

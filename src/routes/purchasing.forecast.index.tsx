@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import {
@@ -126,7 +127,7 @@ function StockForecastPage() {
     <>
       <PanelHeader
         title="Stock Forecast"
-        sub="Warehouse Stock is SS Avail and stays the B2B sellable quantity. FBA Stock is Amazon stock. Total Stock is company-owned visibility only."
+        sub={`${WAREHOUSE_STOCK_LABEL} is SS Avail and stays the B2B sellable quantity. ${FBA_STOCK_LABEL} is Amazon UK stock. Total Stock is company-owned visibility only.`}
         crumbs={[{ label: "Purchasing" }, { label: "Stock Forecast" }]}
       />
       {data ? (
@@ -270,8 +271,8 @@ function StockForecastPage() {
                   <th className="px-3 py-2">Product</th>
                   <th className="px-3 py-2">SKU</th>
                   <th className="px-3 py-2">Brand</th>
-                  <th className="px-3 py-2">Warehouse Stock</th>
-                  <th className="px-3 py-2">FBA Stock</th>
+                  <th className="px-3 py-2">{WAREHOUSE_STOCK_LABEL}</th>
+                  <th className="px-3 py-2">{FBA_STOCK_LABEL}</th>
                   <th className="px-3 py-2">Total Stock</th>
                   <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
                     Incoming

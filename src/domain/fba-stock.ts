@@ -21,13 +21,39 @@ import { is231Po3NewReport, parseNative231Po3New } from "@/domain/stock-parse-na
 import { headerKey } from "@/domain/stock-parse";
 import { parseAvailCell } from "@/domain/stock-parse-types";
 
+/** Existing UK FBA rows use this code. Do not change it or the quantities move to a new location. */
 export const FBA_LOCATION_CODE = "FBA";
 export const FBA_SOURCE_BRANCH = "OPTIMUS";
 export const WAREHOUSE_SOURCE_BRANCH = "SS";
-export const FBA_STOCK_LABEL = "FBA Stock";
+export const FBA_STOCK_LABEL = "FBA UK";
 export const FBA_SOURCE_LABEL = "Amazon FBA";
-export const WAREHOUSE_STOCK_LABEL = "Warehouse Stock";
+export const WAREHOUSE_STOCK_LABEL = "Studley";
 export const TOTAL_STOCK_LABEL = "Total Stock";
+
+/**
+ * Future Amazon countries get their own location code. They are not created as
+ * warehouses and the current import writes only the enabled UK location.
+ */
+export const FBA_COUNTRY_CODES = ["UK", "DE", "FR", "IT", "ES", "AU"] as const;
+export type FbaCountryCode = (typeof FBA_COUNTRY_CODES)[number];
+
+export const FBA_COUNTRY_LOCATIONS: Record<
+  FbaCountryCode,
+  { locationCode: string; label: string; enabled: boolean }
+> = {
+  UK: { locationCode: FBA_LOCATION_CODE, label: FBA_STOCK_LABEL, enabled: true },
+  DE: { locationCode: "FBA_DE", label: "FBA Germany", enabled: false },
+  FR: { locationCode: "FBA_FR", label: "FBA France", enabled: false },
+  IT: { locationCode: "FBA_IT", label: "FBA Italy", enabled: false },
+  ES: { locationCode: "FBA_ES", label: "FBA Spain", enabled: false },
+  AU: { locationCode: "FBA_AU", label: "FBA Australia", enabled: false },
+};
+
+export function fbaLocationForImport(country: FbaCountryCode = "UK") {
+  const location = FBA_COUNTRY_LOCATIONS[country];
+  if (!location.enabled) return null;
+  return location;
+}
 
 /** Manual FBA imports older than this are marked stale. Nothing is blocked. */
 export const FBA_STOCK_STALE_AFTER_DAYS = 14;

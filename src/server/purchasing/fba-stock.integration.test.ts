@@ -304,7 +304,7 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     const imported = await importFbaStock(adminId, { fileName: firstName, text: firstText });
     expect(imported.status).toBe("IMPORTED");
     if (imported.status !== "IMPORTED") return;
-    expect(imported.message).toBe("FBA Stock updated");
+    expect(imported.message).toBe("FBA UK stock updated");
     expect(imported.productsWithStock).toBe(4);
     expect(imported.zeroStock).toBe(1);
     expect(imported.totalUnits).toBe(74);
@@ -363,8 +363,8 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     expect(onlyRow?.totalStock).toBe(4);
 
     const csv = await exportPurchasePlannerCsv(adminId, { q: catSku });
-    expect(csv.csv).toContain("Warehouse Stock");
-    expect(csv.csv).toContain("FBA Stock");
+    expect(csv.csv).toContain("Studley");
+    expect(csv.csv).toContain("FBA UK");
     expect(csv.csv).toContain("Total Stock");
 
     const anonymous = await getPublicProduct(null, catSku);

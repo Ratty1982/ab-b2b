@@ -11,23 +11,32 @@ import {
   FBA_LOCATION_CODE,
   FBA_STOCK_LABEL,
   WAREHOUSE_STOCK_LABEL,
+  fbaLocationForImport,
   totalOwnedStock,
 } from "@/domain/fba-stock";
-import { sellableQuantityFromAvail, skuMatchKey } from "@/domain/stock";
+import { resolvePlanningSupplier } from "@/domain/purchasing-planner";
+import { sellableQuantityFromAvail, skuMatchKey, warehouseDisplayName } from "@/domain/stock";
 import {
+  STOCK_VALUE_HELP,
+  accumulateOverviewValue,
   configuredReorderPoint,
+  emptyOverviewValue,
   fbaImportHealth,
+  finishOverviewValue,
+  overviewLineValues,
   overviewSellableQty,
   overviewStatusLabel,
   overviewStockStatus,
   overviewUnavailableQty,
   warehouseImportHealth,
   type OverviewStockStatus,
+  type OverviewValueTotals,
 } from "@/domain/stock-overview";
 import { loadFbaFreshness } from "@/server/purchasing/fba-stock";
 import { stockFreshness } from "@/server/stock/service";
 import { requirePurchasingAccess } from "@/server/rbac/guards";
 
+const UK_FBA_CODE = fbaLocationForImport("UK")?.locationCode ?? FBA_LOCATION_CODE;
 const PAGE_SIZE = 50;
 const EXPORT_BATCH = 500;
 const EXPORT_LIMIT = 20000;
@@ -39,6 +48,7 @@ const querySchema = z.object({
   feed: z.enum(["current", "historic", "all"]).optional().nullable(),
   brand: z.string().max(80).optional().nullable(),
   warehouse: z.string().max(80).optional().nullable(),
+  supplier: z.string().max(80).optional().nullable(),
   sort: z
     .enum([
       "recent",
@@ -77,6 +87,7 @@ function overviewWhere(
   const sort = input.sort ?? "recent";
   const brand = input.brand?.trim() ?? "";
   const warehouse = input.warehouse?.trim() ?? "";
+  const supplier = input.supplier?.trim() ?? "";
   const catalogueVariantFilter =
     (brand && brand !== "unlinked") || warehouse
       ? {
@@ -121,6 +132,15 @@ function overviewWhere(
       ...(catalogue === "external" ? { catalogueVariantId: null } : {}),
       ...(catalogueVariantFilter ? { catalogueVariant: catalogueVariantFilter } : {}),
       ...(brand === "unlinked" ? { catalogueVariantId: null } : {}),
+      ...(supplier === "unassigned"
+        ? { productSuppliers: { none: { active: true, supplier: { active: true } } } }
+        : supplier
+          ? {
+              productSuppliers: {
+                some: { supplierId: supplier, active: true, supplier: { active: true } },
+              },
+            }
+          : {}),
       ...(position === "in"
         ? { availQty: { gt: 0 }, ...(lowIds.length > 0 ? { id: { notIn: lowIds } } : {}) }
         : {}),
@@ -129,7 +149,7 @@ function overviewWhere(
       ...(position === "unknown" ? { presentInLatestFeed: false } : {}),
       ...(position === "incoming" ? { incomingQty: { gt: 0 } } : {}),
       ...(position === "fba"
-        ? { locationStocks: { some: { locationCode: FBA_LOCATION_CODE, availableQty: { gt: 0 } } } }
+        ? { locationStocks: { some: { locationCode: UK_FBA_CODE, availableQty: { gt: 0 } } } }
         : {}),
     },
   };
@@ -154,6 +174,15 @@ function orderBy(sort: NonNullable<StockOverviewQuery["sort"]>) {
 
 const rowInclude = {
   purchasingSettings: { select: { safetyStockQty: true, supplierName: true } },
+  productSuppliers: {
+    where: { active: true },
+    select: {
+      isPreferred: true,
+      active: true,
+      unitCost: true,
+      supplier: { select: { id: true, name: true, active: true } },
+    },
+  },
   catalogueVariant: {
     select: {
       sku: true,
@@ -170,7 +199,7 @@ const rowInclude = {
     },
   },
   locationStocks: {
-    where: { locationCode: FBA_LOCATION_CODE },
+    where: { locationCode: UK_FBA_CODE },
     select: { availableQty: true, locationCode: true },
   },
 } as const;
@@ -200,6 +229,12 @@ type OverviewRow = {
   fbaQty: number;
   ownedQty: number;
   warehouseName: string | null;
+  supplierName: string | null;
+  supplierLabel: string;
+  unitCost: string | null;
+  unitCostSource: string;
+  stockValue: string | null;
+  sellableValue: string | null;
   stockStatus: OverviewStockStatus;
   statusLabel: string;
   lastSeenAt: string;
@@ -212,6 +247,36 @@ function reservedFrom(row: {
   return row.catalogueVariant.inventory.reduce((sum, item) => sum + item.qtyReserved, 0);
 }
 
+function decimalText(value: { toFixed(digits: number): string } | null | undefined): string | null {
+  if (value == null) return null;
+  return value.toFixed(4);
+}
+
+function supplierView(
+  links: {
+    isPreferred: boolean;
+    active: boolean;
+    unitCost: { toFixed(digits: number): string } | null;
+    supplier: { id: string; name: string; active: boolean };
+  }[],
+) {
+  const relations = links.map((link) => ({
+    id: link.supplier.id,
+    supplierId: link.supplier.id,
+    supplierName: link.supplier.name,
+    supplierActive: link.supplier.active,
+    active: link.active,
+    isPreferred: link.isPreferred,
+    unitCost: decimalText(link.unitCost),
+  }));
+  const plan = resolvePlanningSupplier(relations);
+  return {
+    state: plan.state,
+    supplierName: plan.relation?.supplierName ?? null,
+    supplierUnitCost: plan.relation?.unitCost ?? null,
+  };
+}
+
 function presentRow(row: {
   sku: string;
   description: string | null;
@@ -222,8 +287,15 @@ function presentRow(row: {
   availQty: number;
   incomingQty: number | null;
   physicalQty: number | null;
+  latestCost: { toFixed(digits: number): string } | null;
   lastSeenAt: Date;
   purchasingSettings: { safetyStockQty: number | null; supplierName: string | null } | null;
+  productSuppliers: {
+    isPreferred: boolean;
+    active: boolean;
+    unitCost: { toFixed(digits: number): string } | null;
+    supplier: { id: string; name: string; active: boolean };
+  }[];
   catalogueVariant: {
     sku: string;
     barcode: string | null;
@@ -244,7 +316,7 @@ function presentRow(row: {
   const linked = Boolean(row.catalogueVariant);
   const warehouse = sellableQuantityFromAvail(row.availQty);
   const fbaQty = row.locationStocks
-    .filter((location) => location.locationCode === FBA_LOCATION_CODE)
+    .filter((location) => location.locationCode === UK_FBA_CODE)
     .reduce((sum, location) => sum + location.availableQty, 0);
   const reservedQty = reservedFrom(row);
   const reorderPoint = configuredReorderPoint(
@@ -258,9 +330,24 @@ function presentRow(row: {
   });
   const warehouses = [
     ...new Set(
-      (row.catalogueVariant?.inventory ?? []).map((item) => item.warehouse.name).filter(Boolean),
+      (row.catalogueVariant?.inventory ?? [])
+        .map((item) => warehouseDisplayName(item.warehouse.code, item.warehouse.name))
+        .filter(Boolean),
     ),
   ];
+  const supplier = supplierView(row.productSuppliers);
+  const values = overviewLineValues({
+    physicalQty: row.physicalQty,
+    sellableQty: overviewSellableQty(linked, row.availQty, reservedQty),
+    supplierUnitCost: supplier.supplierUnitCost,
+    latestCost: decimalText(row.latestCost),
+  });
+  const supplierLabel =
+    supplier.state === "ASSIGNED" && supplier.supplierName
+      ? supplier.supplierName
+      : supplier.state === "AMBIGUOUS"
+        ? "Multiple suppliers"
+        : "Unassigned";
   return {
     sku: row.sku,
     productName: row.catalogueVariant?.product.name ?? row.description,
@@ -286,6 +373,12 @@ function presentRow(row: {
     fbaQty,
     ownedQty: totalOwnedStock(warehouse, fbaQty),
     warehouseName: warehouses.length > 0 ? warehouses.join(", ") : null,
+    supplierName: supplier.supplierName,
+    supplierLabel,
+    unitCost: values.unitCost,
+    unitCostSource: values.source,
+    stockValue: values.physicalValue,
+    sellableValue: values.sellableValue,
     stockStatus,
     statusLabel: overviewStatusLabel(stockStatus),
     lastSeenAt: row.lastSeenAt.toISOString(),
@@ -323,7 +416,7 @@ async function catalogueSellableUnits(): Promise<number> {
 
 async function positionSummary(lowIds: string[]) {
   const current = { presentInLatestFeed: true };
-  const fba = { locationCode: FBA_LOCATION_CODE };
+  const fba = { locationCode: UK_FBA_CODE };
   const [feed, physical, out, low, sellableUnits, reserved, fbaUnits, fbaSkus, linked] =
     await Promise.all([
       prisma.autopartProduct.aggregate({
@@ -433,12 +526,81 @@ async function brandOptions() {
 }
 
 async function warehouseOptions() {
-  return prisma.warehouse.findMany({
+  const rows = await prisma.warehouse.findMany({
     where: { inventory: { some: { variant: { autopartProduct: { isNot: null } } } } },
     select: { id: true, code: true, name: true },
     orderBy: { name: "asc" },
     take: 50,
   });
+  return rows.map((warehouse) => ({
+    ...warehouse,
+    name: warehouseDisplayName(warehouse.code, warehouse.name),
+  }));
+}
+
+async function supplierOptions() {
+  return prisma.supplier.findMany({
+    where: {
+      active: true,
+      products: { some: { active: true, autopartProduct: { isNot: null } } },
+    },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+    take: 300,
+  });
+}
+
+const valueSelect = {
+  physicalQty: true,
+  availQty: true,
+  latestCost: true,
+  catalogueVariantId: true,
+  catalogueVariant: { select: { inventory: { select: { qtyReserved: true } } } },
+  productSuppliers: {
+    where: { active: true },
+    select: {
+      isPreferred: true,
+      active: true,
+      unitCost: true,
+      supplier: { select: { id: true, name: true, active: true } },
+    },
+  },
+} as const;
+
+async function filteredValuation(
+  where: import("@prisma/client").Prisma.AutopartProductWhereInput,
+): Promise<OverviewValueTotals> {
+  const totals = emptyOverviewValue();
+  let cursor: string | undefined;
+  for (;;) {
+    const batch = await prisma.autopartProduct.findMany({
+      where,
+      select: { id: true, ...valueSelect },
+      orderBy: { id: "asc" },
+      take: 500,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    for (const row of batch) {
+      const linked = Boolean(row.catalogueVariantId);
+      const reserved = row.catalogueVariant
+        ? row.catalogueVariant.inventory.reduce((sum, item) => sum + item.qtyReserved, 0)
+        : null;
+      const supplier = supplierView(row.productSuppliers);
+      accumulateOverviewValue(
+        totals,
+        overviewLineValues({
+          physicalQty: row.physicalQty,
+          sellableQty: overviewSellableQty(linked, row.availQty, reserved),
+          supplierUnitCost: supplier.supplierUnitCost,
+          latestCost: decimalText(row.latestCost),
+        }),
+      );
+    }
+    const last = batch[batch.length - 1];
+    if (!last || batch.length < 500) break;
+    cursor = last.id;
+  }
+  return finishOverviewValue(totals);
 }
 
 export async function getStockOverview(actorUserId: string, raw: unknown) {
@@ -459,17 +621,26 @@ export async function getStockOverview(actorUserId: string, raw: unknown) {
     position === "low" || position === "in" ? Promise.resolve(lowIds) : lowStockProductIds(),
     loadFbaFreshness(),
   ]);
-  const [summary, importStatus, brands, warehouses] = await Promise.all([
+  const [summary, valuation, importStatus, brands, warehouses, suppliers] = await Promise.all([
     positionSummary(summaryLowIds),
+    filteredValuation(where),
     loadImportStatus(fba),
     brandOptions(),
     warehouseOptions(),
+    supplierOptions(),
   ]);
   return {
     summary,
+    valuation: {
+      ...valuation,
+      definition: STOCK_VALUE_HELP,
+      scope:
+        "Totals cover every part number matching the current filters, not only this page. Products without a unit cost are excluded from the money totals.",
+    },
     importStatus,
     brands,
     warehouses,
+    suppliers,
     total,
     page,
     pageSize: PAGE_SIZE,
@@ -518,10 +689,13 @@ export async function exportStockOverviewCsv(actorUserId: string, raw: unknown) 
     "Status",
     "Last update",
     "Catalogue",
+    "Supplier",
     "Warehouse",
     "Incoming",
     "Warehouse Avail",
-    "FBA",
+    "FBA UK",
+    "Unit cost",
+    "Stock value",
   ];
   const lines = rows.map((row) => {
     const item = presentRow(row);
@@ -537,10 +711,13 @@ export async function exportStockOverviewCsv(actorUserId: string, raw: unknown) 
       item.statusLabel,
       item.lastSeenAt,
       item.catalogueLabel,
+      item.supplierLabel,
       item.warehouseName,
       item.incomingQty,
       item.availQty,
       item.fbaQty,
+      item.unitCost ?? "Cost unavailable",
+      item.unitCostSource === "MISSING" ? "Cost unavailable" : (item.stockValue ?? "—"),
     ]
       .map(csvCell)
       .join(",");
@@ -574,7 +751,7 @@ export async function getStockPartDetail(actorUserId: string, raw: unknown) {
   });
   if (!row) return null;
   const item = presentRow(row);
-  const [changes, usage, preferred] = await Promise.all([
+  const [changes, usage] = await Promise.all([
     row.catalogueVariantId
       ? prisma.stockSyncChange.findMany({
           where: { variantId: row.catalogueVariantId },
@@ -588,11 +765,6 @@ export async function getStockPartDetail(actorUserId: string, raw: unknown) {
       orderBy: { businessDate: "asc" },
       take: 120,
       select: { businessDate: true, physicalStk: true, stk: true },
-    }),
-    prisma.productSupplier.findFirst({
-      where: { matchKey: row.matchKey, active: true, isPreferred: true },
-      orderBy: { updatedAt: "desc" },
-      select: { supplier: { select: { name: true } } },
     }),
   ]);
   const syncPoints = changes.map((change) => ({
@@ -621,25 +793,19 @@ export async function getStockPartDetail(actorUserId: string, raw: unknown) {
   const lastSuccessfulUpdateAt =
     syncPoints.length > 0 ? syncPoints[syncPoints.length - 1]!.at : null;
   const warehouseLocations = (row.catalogueVariant?.inventory ?? []).map((entry) => ({
-    name: entry.warehouse.name,
+    name: warehouseDisplayName(entry.warehouse.code, entry.warehouse.name),
     code: entry.warehouse.code,
     qty: sellableQuantityFromAvail(entry.qtyOnHand),
     kind: "warehouse" as const,
   }));
   const otherLocations = row.locationStocks.map((location) => ({
-    name: location.locationCode === FBA_LOCATION_CODE ? FBA_STOCK_LABEL : location.locationCode,
+    name: location.locationCode === UK_FBA_CODE ? FBA_STOCK_LABEL : location.locationCode,
     code: location.locationCode,
     qty: location.availableQty,
     kind: "location" as const,
   }));
-  const supplierName =
-    preferred?.supplier.name ??
-    row.catalogueVariant?.purchasingSettings?.supplierName ??
-    row.purchasingSettings?.supplierName ??
-    null;
   return {
     ...item,
-    supplierName,
     expectedArrivalAt: null as string | null,
     locations: [...warehouseLocations, ...otherLocations],
     history,

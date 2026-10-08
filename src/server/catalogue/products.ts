@@ -17,7 +17,11 @@ import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
 import { sanitizeSpecRows, sellingFromDraft } from "@/domain/product-content-editor";
 import { type PublicAvailability } from "@/domain/availability";
 import { publicOrderingFromVariant } from "@/domain/case-ordering";
-import { AUTOPART_FEED_SOURCE, customerAvailabilityForStock } from "@/domain/stock";
+import {
+  AUTOPART_FEED_SOURCE,
+  customerAvailabilityForStock,
+  warehouseDisplayName,
+} from "@/domain/stock";
 import { stockFreshness } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { resolveBackorderPolicy, type VariantBackorderPolicy, type EffectiveBackorderPolicy, effectiveBackorderPolicyLabel } from "@/domain/backorder";
@@ -453,7 +457,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
         const sellable = Math.max(0, inv.qtyOnHand - inv.qtyReserved);
         return {
           variantSku: v.sku,
-          warehouse: inv.warehouse.name,
+          warehouse: warehouseDisplayName(inv.warehouse.code, inv.warehouse.name),
           warehouseCode: inv.warehouse.code,
           qtyOnHand: canSeeQty ? inv.qtyOnHand : null,
           qtyReserved: canSeeQty ? inv.qtyReserved : null,

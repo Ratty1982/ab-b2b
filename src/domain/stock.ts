@@ -1,7 +1,14 @@
 import { publicAvailabilityFromQty, publicAvailabilityFromStock, type PublicAvailability } from "@/domain/availability";
 
 export const AUTOPART_WAREHOUSE_CODE = "AUTOPART";
-export const AUTOPART_WAREHOUSE_NAME = "Autopart";
+/** User-facing location. The stock feed source remains Autopart. */
+export const AUTOPART_WAREHOUSE_NAME = "Studley";
+
+/** Show the Studley location without changing the warehouse code or creating another warehouse. */
+export function warehouseDisplayName(code: string, name: string): string {
+  if (code === AUTOPART_WAREHOUSE_CODE) return AUTOPART_WAREHOUSE_NAME;
+  return name;
+}
 export const AUTOPART_FEED_SOURCE = "231PO3NEW";
 export const STOCK_SYNC_MUTEX_ID = "autopart-231po3new";
 export const DEFAULT_STALE_HOURS = 36;

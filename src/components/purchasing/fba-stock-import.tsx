@@ -100,9 +100,10 @@ export function FbaStockImportPanel({
     <section className="border-b border-border/70 px-4 py-4 sm:px-6" data-fba-import>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-semibold uppercase">FBA Stock Import</h2>
+          <h2 className="font-display text-base font-semibold uppercase">FBA UK Stock Import</h2>
           <p className="mt-1 max-w-3xl text-[13px] text-steel">
-            Import Amazon FBA stock from the exported 231PO3NEW file. FBA Stock stays separate from Warehouse Stock and is not B2B sellable.
+            Import Amazon FBA UK stock from the exported 231PO3NEW file. FBA UK stays separate from
+            Studley warehouse stock and is not B2B sellable.
           </p>
         </div>
         {canManage ? (
@@ -120,11 +121,11 @@ export function FbaStockImportPanel({
               }}
             />
             <label htmlFor="fba-stock-file" className={`${btnClass} ${busy ? "pointer-events-none opacity-50" : ""}`}>
-              Import FBA Stock
+              Import FBA UK Stock
             </label>
           </div>
         ) : (
-          <p className="text-[12px] text-steel">Import FBA Stock requires purchasing.manage.</p>
+          <p className="text-[12px] text-steel">Import FBA UK Stock requires purchasing.manage.</p>
         )}
       </div>
 
@@ -138,7 +139,7 @@ export function FbaStockImportPanel({
 
       {result ? (
         <div className="mt-3 border border-border px-3 py-3 text-[13px]" data-fba-result>
-          <p className="font-semibold">{result.status === "DUPLICATE" ? result.message : "FBA Stock updated"}</p>
+          <p className="font-semibold">{result.message}</p>
           <dl className="mt-2 grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Products processed" value={qty(result.productsProcessed)} />
             <Stat label="Products with stock" value={qty(result.productsWithStock)} />
@@ -251,7 +252,7 @@ function FbaPreview({
 
   return (
     <div className="mt-3 border border-border px-3 py-3 text-[13px]" data-fba-preview>
-      <p className="font-semibold">FBA Stock Import</p>
+      <p className="font-semibold">FBA UK Stock Import</p>
       <p className="mt-1">File: {preview.fileName}</p>
       <p className="mt-1">Source recognised as Amazon FBA</p>
       <p className="text-[11px] text-steel">Autopart source branch: {preview.sourceBranch}</p>
@@ -296,7 +297,7 @@ function FbaPreview({
       {preview.stockedProducts.length > 0 ? (
         <Review title={`View ${qty(preview.stockedProducts.length)} stocked products`} testId="fba-stocked">
           <p className="mb-2 text-[12px] text-steel">
-            Total after import is Warehouse Stock plus imported FBA Stock. It is not B2B sellable stock.
+            Total after import is Studley stock plus imported FBA UK stock. It is not B2B sellable stock.
           </p>
           <table className="w-full min-w-[760px] text-left text-[12px]">
             <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">

@@ -10,10 +10,18 @@ import {
   btnClass,
   controlClass,
   downloadCsv,
+  gbp,
   qty,
   ukDate,
   INCOMING_SOURCE_HINT,
 } from "@/components/purchasing/workspace";
+import {
+  PHYSICAL_QTY_HELP,
+  SELLABLE_QTY_HELP,
+  STOCK_VALUE_HELP,
+  UNAVAILABLE_QTY_HELP,
+  defaultStockOverviewCatalogue,
+} from "@/domain/stock-overview";
 import { ROUTES } from "@/lib/app-nav";
 import { exportStockOverviewCsvFn, getStockOverviewFn } from "@/server/phase2/fns";
 
@@ -24,6 +32,7 @@ type Search = {
   feed?: "current" | "historic" | "all";
   brand?: string;
   warehouse?: string;
+  supplier?: string;
   sort?: "recent" | "sku" | "name" | "brand" | "physical" | "sellable" | "incoming" | "updated";
   page?: number;
 };
@@ -40,15 +49,18 @@ function parseSearch(raw: Record<string, unknown>): Search {
   const page = Number(raw["page"]);
   const brand = text("brand");
   const warehouse = text("warehouse");
+  const supplier = text("supplier");
+  const resolvedCatalogue = defaultStockOverviewCatalogue(catalogue);
   return {
     ...(text("q") ? { q: text("q") } : {}),
     ...(POSITIONS.some((item) => item === position)
       ? { position: position as NonNullable<Search["position"]> }
       : {}),
-    ...(catalogue === "catalogue" || catalogue === "external" ? { catalogue } : {}),
+    ...(resolvedCatalogue === "catalogue" ? {} : { catalogue: resolvedCatalogue }),
     ...(feed === "historic" || feed === "all" ? { feed } : {}),
     ...(brand ? { brand } : {}),
     ...(warehouse ? { warehouse } : {}),
+    ...(supplier ? { supplier } : {}),
     ...(SORTS.some((item) => item === sort) ? { sort: sort as NonNullable<Search["sort"]> } : {}),
     ...(Number.isFinite(page) && page > 1 ? { page } : {}),
   };
@@ -103,7 +115,9 @@ function StockOverviewPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void getStockOverviewFn({ data: search }).then((result) => {
+    void getStockOverviewFn({
+      data: { ...search, catalogue: defaultStockOverviewCatalogue(search.catalogue) },
+    }).then((result) => {
       if (cancelled) return;
       setLoading(false);
       if (!result.ok) {
@@ -127,7 +141,9 @@ function StockOverviewPage() {
 
   async function exportCsv() {
     setExporting(true);
-    const result = await exportStockOverviewCsvFn({ data: search });
+    const result = await exportStockOverviewCsvFn({
+      data: { ...search, catalogue: defaultStockOverviewCatalogue(search.catalogue) },
+    });
     setExporting(false);
     if (!result.ok) {
       setError(result.error);
@@ -195,7 +211,7 @@ function StockOverviewPage() {
               <Metric
                 label="Total Sellable Stock"
                 value={qty(summary.sellableUnits)}
-                hint="Catalogue Avail minus reservations. FBA is excluded."
+                hint="Catalogue Studley Avail minus reservations. FBA UK is excluded."
                 tone="good"
               />
             </div>
@@ -213,6 +229,29 @@ function StockOverviewPage() {
                 value={qty(summary.outPartNumbers)}
                 hint="Warehouse Avail is zero on the latest import"
                 {...(summary.outPartNumbers > 0 ? { tone: "warn" as const } : {})}
+              />
+            </div>
+            <div data-summary-card="physical-value">
+              <Metric
+                label="Total Physical Stock Value"
+                value={
+                  data.valuation.physicalValue == null
+                    ? "Cost unavailable"
+                    : gbp(data.valuation.physicalValue)
+                }
+                hint={`${qty(data.valuation.valuedPhysical)} products with a known cost. ${qty(data.valuation.missingCost)} have no cost and are excluded. ${data.valuation.scope}`}
+              />
+            </div>
+            <div data-summary-card="sellable-value">
+              <Metric
+                label="Total Sellable Stock Value"
+                value={
+                  data.valuation.sellableValue == null
+                    ? "Cost unavailable"
+                    : gbp(data.valuation.sellableValue)
+                }
+                hint={`${qty(data.valuation.valuedSellable)} products with a known cost and a sellable quantity. ${qty(data.valuation.missingCost)} have no cost and are excluded. FBA UK is excluded. ${data.valuation.scope}`}
+                tone="good"
               />
             </div>
           </div>
@@ -250,7 +289,7 @@ function StockOverviewPage() {
                 <option value="out">Out of stock</option>
                 <option value="unknown">Unknown</option>
                 <option value="incoming">Incoming</option>
-                <option value="fba">FBA stock</option>
+                <option value="fba">FBA UK</option>
               </select>
             </label>
             <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
@@ -285,10 +324,26 @@ function StockOverviewPage() {
               </select>
             </label>
             <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
+              Supplier
+              <select
+                className={controlClass}
+                value={search.supplier ?? ""}
+                onChange={(event) => patch({ supplier: event.target.value, page: 1 })}
+              >
+                <option value="">All suppliers</option>
+                <option value="unassigned">Unassigned supplier</option>
+                {data.suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
               Catalogue
               <select
                 className={controlClass}
-                value={search.catalogue ?? "all"}
+                value={defaultStockOverviewCatalogue(search.catalogue)}
                 onChange={(event) =>
                   patch({
                     catalogue: event.target.value as NonNullable<Search["catalogue"]>,
@@ -326,6 +381,9 @@ function StockOverviewPage() {
             {qty(data.total)} {data.total === 1 ? "part number" : "part numbers"}
             {loading ? " · updating" : ""}
           </p>
+          <p className="px-4 pb-2 text-[12px] text-steel sm:px-6">
+            {PHYSICAL_QTY_HELP} {SELLABLE_QTY_HELP} {UNAVAILABLE_QTY_HELP}
+          </p>
           {data.items.length === 0 ? (
             <EmptyState
               title="No stock rows"
@@ -355,20 +413,28 @@ function StockOverviewPage() {
                         search={search}
                         onSort={(sort) => patch({ sort, page: 1 })}
                       />
+                      <th className="px-3 py-2">Supplier</th>
                       <th className="px-3 py-2">SKU / EAN</th>
                       <SortHeader
                         label="Physical"
                         sortKey="physical"
+                        title={PHYSICAL_QTY_HELP}
                         search={search}
                         onSort={(sort) => patch({ sort, page: 1 })}
                       />
-                      <th className="px-3 py-2">Unavailable</th>
+                      <th className="px-3 py-2" title={UNAVAILABLE_QTY_HELP}>
+                        Unavailable
+                      </th>
                       <SortHeader
                         label="Sellable"
                         sortKey="sellable"
+                        title={SELLABLE_QTY_HELP}
                         search={search}
                         onSort={(sort) => patch({ sort, page: 1 })}
                       />
+                      <th className="px-3 py-2" title={STOCK_VALUE_HELP}>
+                        Stock value
+                      </th>
                       <th className="px-3 py-2">Status</th>
                       <SortHeader
                         label="Updated"
@@ -401,6 +467,7 @@ function StockOverviewPage() {
                         </td>
                         <td className="px-3 py-2">{row.productName || "—"}</td>
                         <td className="px-3 py-2">{row.brandName || "—"}</td>
+                        <td className="px-3 py-2">{row.supplierLabel}</td>
                         <td className="px-3 py-2">
                           <div>{row.catalogueSku || row.sku}</div>
                           <div className="text-[11px] text-steel">{row.ean || "—"}</div>
@@ -414,6 +481,13 @@ function StockOverviewPage() {
                         <td className="px-3 py-2 tabular-nums">
                           {row.sellableQty == null ? "—" : qty(row.sellableQty)}
                         </td>
+                        <td className="px-3 py-2 tabular-nums">
+                          {row.unitCostSource === "MISSING"
+                            ? "Cost unavailable"
+                            : row.stockValue == null
+                              ? "—"
+                              : gbp(row.stockValue)}
+                        </td>
                         <td className="px-3 py-2">
                           <StatusBadge tone={statusTone(row.stockStatus)}>
                             {row.statusLabel}
@@ -424,7 +498,7 @@ function StockOverviewPage() {
                         <td className="px-3 py-2">
                           {row.warehouseName || "—"}
                           {row.fbaQty > 0 ? (
-                            <div className="text-[11px] text-steel">FBA {qty(row.fbaQty)}</div>
+                            <div className="text-[11px] text-steel">FBA UK {qty(row.fbaQty)}</div>
                           ) : null}
                         </td>
                         <td className="px-3 py-2 tabular-nums">{qty(row.incomingQty)}</td>
@@ -453,15 +527,17 @@ function SortHeader({
   sortKey,
   search,
   onSort,
+  title,
 }: {
   label: string;
   sortKey: NonNullable<Search["sort"]>;
   search: Search;
   onSort: (sort: NonNullable<Search["sort"]>) => void;
+  title?: string;
 }) {
   const active = (search.sort ?? "recent") === sortKey;
   return (
-    <th className="px-3 py-2">
+    <th className="px-3 py-2" title={title}>
       <button
         type="button"
         className={active ? "text-ink" : undefined}
@@ -491,9 +567,9 @@ function ImportStatus({ status }: { status: Data["importStatus"] }) {
           ? "info"
           : "warn";
   const fbaLabel = {
-    current: "FBA import current",
-    delayed: "FBA import delayed",
-    unknown: "FBA import not recorded",
+    current: "FBA UK import current",
+    delayed: "FBA UK import delayed",
+    unknown: "FBA UK import not recorded",
   }[status.fbaHealth];
   return (
     <div
@@ -532,7 +608,7 @@ function ImportStatus({ status }: { status: Data["importStatus"] }) {
 function OverviewSkeleton() {
   return (
     <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 xl:grid-cols-3" aria-hidden>
-      {Array.from({ length: 6 }, (_, index) => (
+      {Array.from({ length: 8 }, (_, index) => (
         <div key={index} className="h-24 animate-pulse border border-border bg-secondary/40" />
       ))}
     </div>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Drawer } from "@/components/ab/Drawer";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
-import { EmptyState, ErrorState, qty, ukDate } from "@/components/purchasing/workspace";
+import { EmptyState, ErrorState, gbp, qty, ukDate } from "@/components/purchasing/workspace";
 import { getStockPartDetailFn } from "@/server/phase2/fns";
+import { PURCHASING_COST_SOURCE_LABEL } from "@/domain/purchasing-planner";
 
 type Detail = Extract<Awaited<ReturnType<typeof getStockPartDetailFn>>, { ok: true }>["data"];
 
@@ -43,6 +44,13 @@ function HistoryChart({ points }: { points: { at: string; qty: number }[] }) {
       ) : null}
     </svg>
   );
+}
+
+function costSourceLabel(source: string): string | null {
+  if (source === "SUPPLIER_OVERRIDE" || source === "LATEST_COST") {
+    return PURCHASING_COST_SOURCE_LABEL[source];
+  }
+  return null;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -124,6 +132,24 @@ export function StockPartDrawer({ sku, onClose }: { sku: string; onClose: () => 
                   value={detail.physicalQty == null ? "—" : qty(detail.physicalQty)}
                 />
                 <Fact
+                  label="Unit cost"
+                  value={
+                    detail.unitCostSource === "MISSING" || detail.unitCost == null
+                      ? "Cost unavailable"
+                      : `${gbp(detail.unitCost)}${costSourceLabel(detail.unitCostSource) ? ` · ${costSourceLabel(detail.unitCostSource)}` : ""}`
+                  }
+                />
+                <Fact
+                  label="Stock value"
+                  value={
+                    detail.unitCostSource === "MISSING"
+                      ? "Cost unavailable"
+                      : detail.stockValue == null
+                        ? "—"
+                        : gbp(detail.stockValue)
+                  }
+                />
+                <Fact
                   label="Unavailable"
                   value={detail.unavailableQty == null ? "—" : qty(detail.unavailableQty)}
                 />
@@ -181,7 +207,13 @@ export function StockPartDrawer({ sku, onClose }: { sku: string; onClose: () => 
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <Fact
                   label="Preferred supplier"
-                  value={detail.supplierName || "No preferred supplier is recorded"}
+                  value={
+                    detail.supplierName
+                      ? detail.supplierName
+                      : detail.supplierLabel === "Multiple suppliers"
+                        ? "Multiple suppliers — no preferred supplier is designated"
+                        : "No preferred supplier is recorded"
+                  }
                 />
                 <Fact
                   label="Expected arrival"

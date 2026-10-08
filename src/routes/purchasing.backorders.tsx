@@ -48,6 +48,7 @@ import {
   type Autopart216vMovement,
 } from "@/domain/autopart-216v-movement";
 import { AUTOPART_216V_SCHEDULE_LABEL } from "@/domain/autopart-216v-freshness";
+import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatOperationalDateTime } from "@/lib/datetime";
 import {
@@ -1492,8 +1493,11 @@ function LineDetailBody({ detail }: { detail: LineDetail }) {
       <section className="grid gap-2">
         <h3 className="font-display text-base font-semibold uppercase">Stock</h3>
         <dl className="grid gap-2 text-[13px] sm:grid-cols-2">
-          <Fact label="Warehouse Stock" value={line.availQty == null ? "—" : qty(line.availQty)} />
-          <Fact label="FBA Stock" value={qty(detail.fbaQty)} />
+          <Fact
+            label={WAREHOUSE_STOCK_LABEL}
+            value={line.availQty == null ? "—" : qty(line.availQty)}
+          />
+          <Fact label={FBA_STOCK_LABEL} value={qty(detail.fbaQty)} />
           <Fact label="Total Stock" value={line.availQty == null ? "—" : qty(line.availQty + detail.fbaQty)} />
           <Fact label="Physical" value={line.physicalQty == null ? "—" : qty(line.physicalQty)} />
           <Fact label="Incoming" value={line.incomingQty == null ? "—" : qty(line.incomingQty)} />

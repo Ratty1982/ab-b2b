@@ -16,7 +16,12 @@ import { loadCoverageIndex, verificationForBrandSlug } from "@/server/purchasing
 import { trendDirectionBySku } from "@/server/purchasing/sales-trend";
 import { SALES_HISTORY_VERIFICATION_LABEL } from "@/domain/sales-history-coverage";
 import { autopartConditionLabel } from "@/domain/autopart-product-condition";
-import { FBA_LOCATION_CODE, totalOwnedStock } from "@/domain/fba-stock";
+import {
+  FBA_LOCATION_CODE,
+  FBA_STOCK_LABEL,
+  WAREHOUSE_STOCK_LABEL,
+  totalOwnedStock,
+} from "@/domain/fba-stock";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import { addDaysIso, dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -1414,8 +1419,8 @@ export async function exportStockForecastCsv(actorUserId: string, raw: unknown) 
     "Product Type",
     "Supplier",
     "Product Condition",
-    "Warehouse Stock",
-    "FBA Stock",
+    WAREHOUSE_STOCK_LABEL,
+    FBA_STOCK_LABEL,
     "Total Stock",
     "Incoming",
     "Customer Backorders",
@@ -1488,8 +1493,8 @@ export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown
     "Description",
     "Product Type",
     "Brand",
-    "Warehouse Stock",
-    "FBA Stock",
+    WAREHOUSE_STOCK_LABEL,
+    FBA_STOCK_LABEL,
     "Total Stock",
     "Incoming",
     "30 Day Units",

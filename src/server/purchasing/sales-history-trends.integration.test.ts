@@ -404,8 +404,8 @@ describe("stock forecast csv", () => {
 
     const table = parseCsv(exported.csv);
     const header = table[0]!;
-    expect(header).toContain("Warehouse Stock");
-    expect(header).toContain("FBA Stock");
+    expect(header).toContain("Studley");
+    expect(header).toContain("FBA UK");
     expect(header).toContain("Total Stock");
     expect(header).toContain("Latest Cost GBP");
     expect(header).toContain("Suggested Value GBP");
@@ -417,11 +417,11 @@ describe("stock forecast csv", () => {
     expect(a?.[index("Product")]).toBe(awkwardName);
     expect(a?.[index("Latest Cost GBP")]).toMatch(/^\d+(\.\d+)?$/);
     expect(a?.[index("Latest Cost GBP")]).not.toContain("£");
-    expect(Number(a?.[index("Warehouse Stock")])).toBe(36);
-    expect(Number(a?.[index("FBA Stock")])).toBe(17);
+    expect(Number(a?.[index("Studley")])).toBe(36);
+    expect(Number(a?.[index("FBA UK")])).toBe(17);
     expect(Number(a?.[index("Total Stock")])).toBe(53);
-    expect(Number(b?.[index("Warehouse Stock")])).toBe(12);
-    expect(Number(b?.[index("FBA Stock")])).toBe(0);
+    expect(Number(b?.[index("Studley")])).toBe(12);
+    expect(Number(b?.[index("FBA UK")])).toBe(0);
     expect(Number(b?.[index("Total Stock")])).toBe(12);
     expect(Number(a?.[index("Incoming")])).toBe(8);
     expect(Number(b?.[index("Incoming")])).toBe(0);
