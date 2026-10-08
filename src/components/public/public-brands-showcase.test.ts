@@ -83,6 +83,8 @@ describe("public brands showcase markup", () => {
     expect(html).toContain('data-brand-order="steel-seal power-maxed"');
     expect(html).not.toContain("bg-white");
     expect(html).not.toMatch(/order-first|order-last|lg:order-/);
+    expect(html).not.toContain("justify-start");
+    expect(html.match(/justify-end/g)).toHaveLength(2);
     expect(html).not.toMatch(/street rhino|streetwize|leisurewize|saxon|bramley|kidzmotion/i);
     expect(html).not.toMatch(/trade-visible/);
     expect(html).not.toMatch(/coming soon|explore all our brands/i);

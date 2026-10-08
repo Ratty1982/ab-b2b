@@ -91,7 +91,6 @@ function CoverPhoto({ media, alt }: { media: BrandsShowcaseMedia; alt: string })
 
 function BrandShowcase({ brand }: { brand: PublicBrandShowcase }) {
   const icons = POINT_ICONS[brand.slug];
-  const logoOnRight = brand.slug === "power-maxed";
   return (
     <section
       aria-labelledby={`brand-${brand.slug}-title`}
@@ -150,19 +149,9 @@ function BrandShowcase({ brand }: { brand: PublicBrandShowcase }) {
               }}
             />
           )}
-          <div
-            className={cn(
-              "pointer-events-none absolute inset-y-0 w-[46%] from-ink/90 via-ink/45 to-transparent",
-              logoOnRight ? "right-0 bg-gradient-to-l" : "left-0 bg-gradient-to-r",
-            )}
-          />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-[46%] bg-gradient-to-l from-ink/90 via-ink/45 to-transparent" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-ink/55 to-transparent" />
-          <div
-            className={cn(
-              "relative z-10 flex h-full min-h-[16.5rem] items-end p-5 sm:min-h-[18rem] sm:p-7 lg:min-h-full lg:p-8",
-              logoOnRight ? "justify-end" : "justify-start",
-            )}
-          >
+          <div className="relative z-10 flex h-full min-h-[16.5rem] items-end justify-end p-5 sm:min-h-[18rem] sm:p-7 lg:min-h-full lg:p-8">
             <img
               src={brand.logoSrc}
               alt={brand.logoAlt}
