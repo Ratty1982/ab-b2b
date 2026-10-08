@@ -8,6 +8,7 @@ import {
   fbaIssuesCsv,
   fbaMatchingEquation,
   fbaRowsReadEquation,
+  presentFbaDiagnosticText,
   type FbaDuplicateRow,
   type FbaInvalidRow,
   type FbaPreviewProduct,
@@ -195,6 +196,25 @@ export function FbaStockImportPanel({
   );
 }
 
+function DiagnosticText({ value }: { value: string | null | undefined }) {
+  const full = value?.trim() ? value : null;
+  if (!full) return <>—</>;
+  const flat = full.replace(/\s+/g, " ").trim();
+  const shown = presentFbaDiagnosticText(full) ?? flat;
+  if (shown === flat) return <>{shown}</>;
+  return (
+    <span>
+      {shown}
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-steel">
+          View full text
+        </summary>
+        <p className="mt-1 max-w-xl whitespace-pre-wrap break-words">{full}</p>
+      </details>
+    </span>
+  );
+}
+
 function signedQty(value: number): string {
   const formatted = qty(Math.abs(value));
   if (value > 0) return `+${formatted}`;
@@ -226,6 +246,7 @@ function FbaPreview({
   const partial = warnings.find((item) => item === FBA_PARTIAL_CSV_WARNING || item === FBA_PARTIAL_SNAPSHOT_WARNING);
   const otherWarnings = warnings.filter((item) => item !== partial);
   const issues = [...preview.invalidRowDetails, ...preview.duplicateRowDetails];
+  const malformedQuotes = preview.invalidRowDetails.filter((row) => row.reason === "malformed_quote").length;
   const safety = fbaImportSafetyLines(preview);
 
   return (
@@ -331,9 +352,53 @@ function FbaPreview({
         </Review>
       ) : null}
 
+      {preview.quoteDiagnostics.some((row) => row.recovered) ? (
+        <Review
+          title={`View ${qty(preview.quoteDiagnostics.filter((row) => row.recovered).length)} recovered quotations`}
+          testId="fba-quote-recovery"
+        >
+          <p className="mb-2 text-[12px] text-steel">
+            These descriptions contained an unescaped inch mark. Each row was read on its own and its Avail quantity was kept.
+          </p>
+          <table className="w-full min-w-[640px] text-left text-[12px]">
+            <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+              <tr>
+                <th className="py-1 pr-3">Row</th>
+                <th className="py-1 pr-3">SKU</th>
+                <th className="py-1 pr-3">Description</th>
+                <th className="py-1 pr-3">Recovery</th>
+                <th className="py-1">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.quoteDiagnostics
+                .filter((row) => row.recovered)
+                .map((row) => (
+                  <tr key={`quote-${row.line}-${row.sku}`} className="border-t border-border/70">
+                    <td className="py-1 pr-3">{row.line}</td>
+                    <td className="py-1 pr-3">{row.sku || "—"}</td>
+                    <td className="py-1 pr-3">
+                      <DiagnosticText value={row.description} />
+                    </td>
+                    <td className="py-1 pr-3">Recovered</td>
+                    <td className="py-1">{row.detail}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </Review>
+      ) : null}
+
       {preview.invalidRowDetails.length > 0 ? (
         <Review title={`View ${qty(preview.invalidRowDetails.length)} invalid rows`} testId="fba-invalid-rows">
           <p className="mb-2 text-[12px] text-steel">These rows will be skipped. Valid rows can still be imported.</p>
+          {malformedQuotes > 0 ? (
+            <p className="mb-2 text-[12px] text-steel">
+              {qty(malformedQuotes)} {malformedQuotes === 1 ? "row has" : "rows have"} a malformed CSV quotation and
+              {malformedQuotes === 1 ? " was" : " were"} not recovered. No quantity from
+              {malformedQuotes === 1 ? " that row" : " those rows"} will be imported.
+            </p>
+          ) : null}
           <table className="w-full min-w-[640px] text-left text-[12px]">
             <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
               <tr>
@@ -349,9 +414,11 @@ function FbaPreview({
                 <tr key={`${row.line}-${row.reason}`} className="border-t border-border/70">
                   <td className="py-1 pr-3">{row.line}</td>
                   <td className="py-1 pr-3">{row.sku || "—"}</td>
-                  <td className="py-1 pr-3">{row.description || "—"}</td>
+                  <td className="py-1 pr-3">
+                    <DiagnosticText value={row.description} />
+                  </td>
                   <td className="py-1 pr-3">{row.reasonLabel}</td>
-                  <td className="py-1">{row.value || "—"}</td>
+                  <td className="py-1">{row.reason === "malformed_quote" ? "Not recovered" : row.value || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -377,7 +444,9 @@ function FbaPreview({
                 <tr key={`${row.line}-${row.sku}`} className="border-t border-border/70">
                   <td className="py-1 pr-3">{row.line}</td>
                   <td className="py-1 pr-3">{row.sku}</td>
-                  <td className="py-1 pr-3">{row.description || "—"}</td>
+                  <td className="py-1 pr-3">
+                    <DiagnosticText value={row.description} />
+                  </td>
                   <td className="py-1 pr-3">{row.reasonLabel}</td>
                   <td className="py-1">{row.value || "—"}</td>
                 </tr>

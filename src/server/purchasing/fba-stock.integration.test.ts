@@ -108,6 +108,27 @@ function fbaCsv(lines: string[]): string {
   return [CSV_HEADER, ...lines].join("\n");
 }
 
+function csvDescribed(sku: string, description: string, avail: string): string {
+  return [
+    "OPTIMUS",
+    fbaGroup,
+    sku,
+    "O",
+    description,
+    "88.00",
+    "99.0000",
+    avail,
+    "7.0000",
+    "80.0000",
+    "111",
+    "9",
+    "14",
+    "40.0000",
+    "SUBGRP",
+    "TRAIL",
+  ].join(",");
+}
+
 async function applyWarehouse(rows: Native231Po3NewRow[]) {
   for (let attempt = 0; attempt < 15; attempt += 1) {
     try {
@@ -632,5 +653,63 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     expect((await product(heldSku)).incomingQty).toBeNull();
     expect((await product(catSku)).availQty).toBe(10);
     expect(await fbaQty(catSku)).toBe(0);
+  });
+
+  it("imports inch-mark wheel trims as separate FBA rows and blocks an unsafe quotation", async () => {
+    const v14 = `V14${stamp}`;
+    const v15 = `V15${stamp}`;
+    const v16 = `V16${stamp}`;
+    const after = `VA${stamp}`;
+    const text = fbaCsv([
+      csvDescribed(v14, 'Venus 14" Wheel Trim', "4"),
+      csvDescribed(v15, 'Venus 15" Wheel Trim', "5"),
+      csvDescribed(v16, 'Venus 16" Wheel Trim', "6"),
+      csvDescribed(after, "After pad", "2"),
+    ]);
+    const preview = await previewFbaStockImport(adminId, { fileName: `venus-${stamp}.csv`, text });
+    expect(preview.invalidRows).toBe(0);
+    expect(preview.duplicateSkus).toBe(0);
+    expect(preview.rowsRead).toBe(4);
+    expect(preview.productsProcessed).toBe(4);
+    expect(preview.totalUnits).toBe(17);
+    expect(preview.productsWithStock).toBe(4);
+    expect(preview.rowsRead).toBe(preview.productsProcessed + preview.invalidRows + preview.duplicateSkus);
+    expect(preview.quoteDiagnostics.filter((row) => row.recovered).map((row) => row.sku).sort()).toEqual(
+      [v14, v15, v16].sort(),
+    );
+    expect(preview.quoteDiagnostics.every((row) => row.recovered && !row.description?.includes(v15))).toBe(true);
+
+    const imported = await importFbaStock(adminId, { fileName: `venus-${stamp}.csv`, text });
+    expect(imported.status).toBe("IMPORTED");
+    expect(await fbaQty(v14)).toBe(4);
+    expect(await fbaQty(v15)).toBe(5);
+    expect(await fbaQty(v16)).toBe(6);
+    expect(await fbaQty(after)).toBe(2);
+    const created = await product(v14);
+    expect(created.description).toBe('Venus 14" Wheel Trim');
+    expect(created.availQty).toBe(0);
+    expect(created.latestCost).toBeNull();
+    expect(created.incomingQty).toBeNull();
+    expect(created.conditionCode).toBeNull();
+
+    const beforeImports = await prisma.autopartFbaStockImport.count();
+    const unsafe = fbaCsv([
+      csvDescribed(`VB${stamp}`, "Plain", "1"),
+      `OPTIMUS,${fbaGroup},BAD${stamp},O,"description keeps going`,
+      "and has, commas, but no close",
+      "still not a product row",
+    ]);
+    await expect(previewFbaStockImport(adminId, { fileName: `unsafe-${stamp}.csv`, text: unsafe })).rejects.toMatchObject({
+      code: "VALIDATION",
+      message: expect.stringMatching(/cannot be split safely/),
+    });
+    await expect(importFbaStock(adminId, { fileName: `unsafe-${stamp}.csv`, text: unsafe })).rejects.toMatchObject({
+      code: "VALIDATION",
+      message: expect.stringMatching(/No FBA stock was changed/),
+    });
+    expect(await prisma.autopartFbaStockImport.count()).toBe(beforeImports);
+    expect(await prisma.autopartProduct.findUnique({ where: { matchKey: skuMatchKey(`VB${stamp}`) } })).toBeNull();
+    expect(await fbaQty(v14)).toBe(4);
+    expect((await product(v14)).availQty).toBe(0);
   });
 });

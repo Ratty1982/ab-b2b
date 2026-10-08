@@ -11,7 +11,8 @@
  * The badge does not block purchasing.
  */
 
-import { detectCsvDelimiter, parseCsvRecords } from "@/domain/catalogue-csv";
+import { detectCsvDelimiter } from "@/domain/catalogue-csv";
+import { parseFbaCsvDocument } from "@/domain/fba-csv";
 import { isAutopart504Report } from "@/domain/autopart-504";
 import { isAutopart216vReport } from "@/domain/autopart-216v";
 import { isAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
@@ -52,7 +53,25 @@ export const FBA_INVALID_REASON_LABELS = {
   invalid_avail: "Invalid Avail",
   negative_avail: "Negative Avail",
   missing_branch: "Missing branch",
+  malformed_quote: "Malformed CSV quotation",
 } as const;
+
+/** Long preview cells are shortened. The full stored text stays available in the issues CSV. */
+export const FBA_DIAGNOSTIC_TEXT_LIMIT = 160;
+
+export function presentFbaDiagnosticText(value: string | null, limit = FBA_DIAGNOSTIC_TEXT_LIMIT): string | null {
+  if (!value) return value;
+  const flat = value.replace(/\s+/g, " ").trim();
+  if (flat.length <= limit) return flat;
+  return `${flat.slice(0, limit - 1)}…`;
+}
+
+function capDiagnosticText(value: string | null, limit = 500): string | null {
+  if (!value) return value;
+  const flat = value.replace(/\s+/g, " ").trim();
+  if (flat.length <= limit) return flat;
+  return `${flat.slice(0, limit - 1)}…`;
+}
 
 export type FbaInvalidReason = keyof typeof FBA_INVALID_REASON_LABELS;
 
@@ -64,6 +83,15 @@ export type FbaInvalidRow = {
   value: string | null;
   reason: FbaInvalidReason;
   reasonLabel: string;
+};
+
+export type FbaQuoteDiagnostic = {
+  line: number;
+  sku: string | null;
+  description: string | null;
+  recovered: boolean;
+  reasonLabel: "Malformed CSV quotation";
+  detail: string;
 };
 
 export type FbaDuplicateRow = {
@@ -97,6 +125,7 @@ export type FbaFileAssessment =
       invalidRowDetails: FbaInvalidRow[];
       duplicateSkus: number;
       duplicateRowDetails: FbaDuplicateRow[];
+      quoteDiagnostics: FbaQuoteDiagnostic[];
       warnings: string[];
     };
 
@@ -137,6 +166,8 @@ type Candidate = {
   availQty: number;
   groupCode: string | null;
   conditionCode: string | null;
+  quoteRejected: boolean;
+  quoteRecovered: boolean;
 };
 
 export function fbaInvalidReason(row: {
@@ -144,7 +175,9 @@ export function fbaInvalidReason(row: {
   branch: string | null;
   availOk: boolean;
   availQty: number;
+  quoteRejected?: boolean;
 }): FbaInvalidReason | null {
+  if (row.quoteRejected) return "malformed_quote";
   if (!row.sku) return "missing_sku";
   if (!row.availOk) return "invalid_avail";
   if (row.availQty < 0) return "negative_avail";
@@ -208,9 +241,9 @@ function collapseDuplicates(candidates: Candidate[]): {
       invalidRowDetails.push({
         line: row.line,
         sku: row.sku || null,
-        description: row.description,
+        description: capDiagnosticText(row.description),
         branch: row.branch,
-        value: reason === "missing_branch" ? row.branch : row.availRaw || null,
+        value: reason === "missing_branch" ? row.branch : reason === "malformed_quote" ? null : row.availRaw || null,
         reason,
         reasonLabel: FBA_INVALID_REASON_LABELS[reason],
       });
@@ -293,6 +326,8 @@ function fromNative(text: string): FbaFileAssessment {
     availQty: row.avail.ok ? row.avail.value : 0,
     groupCode: row.groupCode ?? null,
     conditionCode: row.conditionCode ?? null,
+    quoteRejected: false,
+    quoteRecovered: false,
   }));
   if (!candidates.length) {
     return { ok: false, message: "No usable FBA stock rows were found." };
@@ -315,6 +350,7 @@ function fromNative(text: string): FbaFileAssessment {
     invalidRowDetails: collapsed.invalidRowDetails,
     duplicateSkus: collapsed.duplicateSkus,
     duplicateRowDetails: collapsed.duplicateRowDetails,
+    quoteDiagnostics: [],
     warnings: completeness.warning ? [completeness.warning, ...collapsed.warnings] : collapsed.warnings,
   };
 }
@@ -328,9 +364,11 @@ function fromCsv(text: string): FbaFileAssessment | null {
   const headerLine = lines.find((line) => /avail/i.test(line) && /part/i.test(line));
   if (!headerLine || !headerLine.includes(",")) return null;
   const delimiter = detectCsvDelimiter(text);
-  const records = parseCsvRecords(text, delimiter);
+  const parsed = parseFbaCsvDocument(text, delimiter);
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+  const records = parsed.records;
   if (records.length < 2) return { ok: false, message: "This file is not a 231PO3NEW stock export and cannot be imported as FBA Stock." };
-  const keys = (records[0] ?? []).map((cell) => headerKey(cell));
+  const keys = (records[0]?.cells ?? []).map((cell) => headerKey(cell));
   const branchIdx = csvHeaderIndex(keys, ["branch"]);
   const skuIdx = csvHeaderIndex(keys, ["partnumber", "partno", "sku", "code"]);
   const availIdx = csvHeaderIndex(keys, ["avail", "available"]);
@@ -349,21 +387,42 @@ function fromCsv(text: string): FbaFileAssessment | null {
   }
   const candidates: Candidate[] = [];
   for (let i = 1; i < records.length; i += 1) {
-    const rec = records[i] ?? [];
-    if (rec.every((cell) => !cell.trim())) continue;
-    const sku = normalizeStockSku(rec[skuIdx] ?? "");
-    const avail = parseAvailCell(rec[availIdx] ?? "");
-    const branch = (rec[branchIdx] ?? "").replace(/\s+/g, "").toUpperCase() || null;
+    const rec = records[i];
+    if (!rec || rec.cells.every((cell) => !cell.trim())) continue;
+    const sku = normalizeStockSku(rec.cells[skuIdx] ?? "");
+    const description = descIdx >= 0 ? (rec.cells[descIdx] ?? "").trim() || null : null;
+    const branch = (rec.cells[branchIdx] ?? "").replace(/\s+/g, "").toUpperCase() || null;
+    const groupCode = groupIdx >= 0 ? (rec.cells[groupIdx] ?? "").trim() || null : null;
+    const conditionCode = conditionIdx >= 0 ? (rec.cells[conditionIdx] ?? "").trim() || null : null;
+    if (rec.quoteRejected) {
+      candidates.push({
+        line: rec.physicalLine,
+        sku,
+        description,
+        branch,
+        availRaw: "",
+        availOk: false,
+        availQty: 0,
+        groupCode,
+        conditionCode,
+        quoteRejected: true,
+        quoteRecovered: false,
+      });
+      continue;
+    }
+    const avail = parseAvailCell(rec.cells[availIdx] ?? "");
     candidates.push({
-      line: i + 1,
+      line: rec.physicalLine,
       sku,
-      description: descIdx >= 0 ? (rec[descIdx] ?? "").trim() || null : null,
+      description,
       branch,
       availRaw: avail.raw,
       availOk: avail.ok,
       availQty: avail.ok ? avail.value : 0,
-      groupCode: groupIdx >= 0 ? (rec[groupIdx] ?? "").trim() || null : null,
-      conditionCode: conditionIdx >= 0 ? (rec[conditionIdx] ?? "").trim() || null : null,
+      groupCode,
+      conditionCode,
+      quoteRejected: false,
+      quoteRecovered: rec.quoteRecovered,
     });
   }
   if (!candidates.length) return { ok: false, message: "No usable FBA stock rows were found." };
@@ -371,6 +430,11 @@ function fromCsv(text: string): FbaFileAssessment | null {
   if (rejected) return { ok: false, message: rejected };
   const collapsed = collapseDuplicates(candidates);
   if (!collapsed.rows.length) return { ok: false, message: "No usable FBA stock rows were found." };
+  const quoteDiagnostics = quoteDiagnosticsFor(candidates);
+  const recoveryWarning =
+    quoteDiagnostics.some((row) => row.recovered)
+      ? `Recovered ${quoteDiagnostics.filter((row) => row.recovered).length} product ${quoteDiagnostics.filter((row) => row.recovered).length === 1 ? "row" : "rows"} with an unescaped inch mark. Avail was read from each of those rows.`
+      : null;
   return {
     ok: true,
     sourceBranch: FBA_SOURCE_BRANCH,
@@ -382,8 +446,24 @@ function fromCsv(text: string): FbaFileAssessment | null {
     invalidRowDetails: collapsed.invalidRowDetails,
     duplicateSkus: collapsed.duplicateSkus,
     duplicateRowDetails: collapsed.duplicateRowDetails,
-    warnings: [FBA_PARTIAL_CSV_WARNING, ...collapsed.warnings],
+    quoteDiagnostics,
+    warnings: [FBA_PARTIAL_CSV_WARNING, ...collapsed.warnings, ...(recoveryWarning ? [recoveryWarning] : [])],
   };
+}
+
+function quoteDiagnosticsFor(candidates: Candidate[]): FbaQuoteDiagnostic[] {
+  return candidates
+    .filter((row) => row.quoteRecovered || row.quoteRejected)
+    .map((row) => ({
+      line: row.line,
+      sku: row.sku || null,
+      description: capDiagnosticText(row.description),
+      recovered: row.quoteRecovered,
+      reasonLabel: "Malformed CSV quotation" as const,
+      detail: row.quoteRecovered
+        ? "Recovery succeeded. The inch mark stayed in the description and Avail was read from this row."
+        : "Recovery failed. This row was not imported.",
+    }));
 }
 
 /** Validate an uploaded file as Amazon FBA stock. Does not read warehouse Avail into the result quantity. */

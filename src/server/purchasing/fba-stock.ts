@@ -165,6 +165,7 @@ export async function previewFbaStockImport(actorUserId: string, raw: unknown) {
     ...totals,
     invalidRowDetails: assessed.invalidRowDetails,
     duplicateRowDetails: assessed.duplicateRowDetails,
+    quoteDiagnostics: assessed.quoteDiagnostics,
     newProductRows: lines.newProducts,
     stockedProducts: lines.stockedProducts,
   };

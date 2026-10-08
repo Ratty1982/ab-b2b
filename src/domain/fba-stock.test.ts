@@ -12,6 +12,7 @@ import {
   fbaRowsReadEquation,
   fbaStockIsStale,
   planFbaSnapshot,
+  presentFbaDiagnosticText,
   totalOwnedStock,
 } from "@/domain/fba-stock";
 import { backorderCoverage, classifyPlannerRecommendation, plannerPurchaseQty } from "@/domain/purchasing-planner";
@@ -292,6 +293,186 @@ describe("FBA snapshot planning", () => {
     expect(fbaStockIsStale(new Date("2026-10-01T12:00:00.000Z"), now)).toBe(false);
     expect(fbaStockIsStale(new Date("2026-09-01T12:00:00.000Z"), now)).toBe(true);
     expect(fbaStockIsStale(null, now)).toBe(false);
+  });
+});
+
+describe("FBA CSV inch quotations", () => {
+  const header =
+    "Branch,Group,Part Number,C,Description,Latest Cost,Stk,Avail,Pick Qty,Physical Stk,P/Ord Qty,Sub Grp,GROUP";
+
+  function dataRow(sku: string, description: string, avail: string): string {
+    return ["OPTIMUS", "SX", sku, "W", description, "1.25", "10", avail, "0", "10", "0", "SUB", "GRP"].join(",");
+  }
+
+  it("keeps VENUS14, VENUS15, VENUS16 and every later SKU as separate rows", () => {
+    const later = Array.from({ length: 12 }, (_, index) => dataRow(`AFTER${index + 1}`, `Pad ${index + 1}`, String(index + 1)));
+    const assessed = assessFbaStockFile(
+      [
+        header,
+        dataRow("BEFORE", "Plain widget", "2"),
+        dataRow("VENUS14", 'Venus 14" Wheel Trim', "4"),
+        dataRow("VENUS15", 'Venus 15" Wheel Trim', "5"),
+        dataRow("VENUS16", 'Venus 16" Wheel Trim', "6"),
+        ...later,
+      ].join("\n"),
+    );
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.map((row) => row.sku)).toEqual([
+      "BEFORE",
+      "VENUS14",
+      "VENUS15",
+      "VENUS16",
+      ...later.map((_, index) => `AFTER${index + 1}`),
+    ]);
+    expect(assessed.rows.find((row) => row.sku === "VENUS14")).toMatchObject({
+      availQty: 4,
+      description: 'Venus 14" Wheel Trim',
+      line: 3,
+    });
+    expect(assessed.rows.find((row) => row.sku === "VENUS15")?.availQty).toBe(5);
+    expect(assessed.rows.find((row) => row.sku === "VENUS16")?.availQty).toBe(6);
+    expect(assessed.invalidRows).toBe(0);
+    expect(assessed.rowsRead).toBe(assessed.rows.length);
+    const units = assessed.rows.reduce((sum, row) => sum + row.availQty, 0);
+    expect(units).toBe(2 + 4 + 5 + 6 + later.reduce((sum, _, index) => sum + index + 1, 0));
+    expect(assessed.quoteDiagnostics.filter((row) => row.recovered).map((row) => row.sku)).toEqual([
+      "VENUS14",
+      "VENUS15",
+      "VENUS16",
+    ]);
+    expect(assessed.rows.some((row) => (row.description ?? "").includes("VENUS15"))).toBe(false);
+  });
+
+  it("reads a properly escaped inch mark, a quoted comma, and a quoted newline", () => {
+    const escaped = `OPTIMUS,SX,VENUS14,W,"Venus 14"" Wheel Trim",1.25,10,4,0,10,0,SUB,GRP`;
+    const comma = `OPTIMUS,SX,COMMA,W,"Pad, front",1.25,10,8,0,10,0,SUB,GRP`;
+    const newline = `OPTIMUS,SX,MULTI,W,"Line one\nLine two",1.25,10,3,0,10,0,SUB,GRP`;
+    const assessed = assessFbaStockFile([header, escaped, comma, newline].join("\n"));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.map((row) => [row.sku, row.description, row.availQty, row.line])).toEqual([
+      ["VENUS14", 'Venus 14" Wheel Trim', 4, 2],
+      ["COMMA", "Pad, front", 8, 3],
+      ["MULTI", "Line one\nLine two", 3, 4],
+    ]);
+    expect(assessed.quoteDiagnostics).toEqual([]);
+    expect(assessed.invalidRows).toBe(0);
+  });
+
+  it("recovers a quoted description whose inch mark was not escaped", () => {
+    const row = `OPTIMUS,SX,VENUS14,W,"Venus 14"" Wheel Trim",1.25,10,4,0,10,0,SUB,GRP`.replace(
+      '"Venus 14"" Wheel Trim"',
+      '"Venus 14" Wheel Trim"',
+    );
+    const assessed = assessFbaStockFile([header, row, dataRow("NEXT", "Next pad", "9")].join("\n"));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.map((item) => [item.sku, item.description, item.availQty])).toEqual([
+      ["VENUS14", 'Venus 14" Wheel Trim', 4],
+      ["NEXT", "Next pad", 9],
+    ]);
+    expect(assessed.quoteDiagnostics[0]).toMatchObject({ sku: "VENUS14", recovered: true, line: 2 });
+  });
+
+  it("rejects one malformed quotation and keeps the following branch rows", () => {
+    const broken = `OPTIMUS,SX,BAD,W,"this " is not an inch mark`;
+    const assessed = assessFbaStockFile(
+      [header, dataRow("BEFORE", "Plain", "1"), broken, dataRow("NEXT", "Next pad", "9"), dataRow("LAST", "Last pad", "2")].join(
+        "\n",
+      ),
+    );
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.map((row) => [row.sku, row.availQty])).toEqual([
+      ["BEFORE", 1],
+      ["NEXT", 9],
+      ["LAST", 2],
+    ]);
+    expect(assessed.invalidRowDetails).toEqual([
+      expect.objectContaining({
+        line: 3,
+        sku: "BAD",
+        reason: "malformed_quote",
+        reasonLabel: "Malformed CSV quotation",
+        value: null,
+      }),
+    ]);
+    expect(assessed.quoteDiagnostics).toEqual([
+      expect.objectContaining({ line: 3, sku: "BAD", recovered: false }),
+    ]);
+    expect(assessed.rowsRead).toBe(assessed.rows.length + assessed.invalidRows);
+    expect(assessed.invalidRowDetails[0]?.description ?? "").not.toMatch(/NEXT|LAST/);
+  });
+
+  it("blocks the file when a quotation runs into lines that are not new product rows", () => {
+    const assessed = assessFbaStockFile(
+      [header, dataRow("BEFORE", "Plain", "1"), 'OPTIMUS,SX,BAD,W,"description keeps going', "and has, commas, but no close", "still not a product row"].join(
+        "\n",
+      ),
+    );
+    expect(assessed.ok).toBe(false);
+    if (assessed.ok) return;
+    expect(assessed.message).toMatch(/cannot be split safely/);
+    expect(assessed.message).toMatch(/No FBA stock was changed/);
+  });
+
+  it("recovers an opened description whose inch mark has no closing quote when the columns still align", () => {
+    const row = `OPTIMUS,SX,VENUS14,W,"Venus 14" Wheel Trim,1.25,10,4,0,10,0,SUB,GRP`;
+    const later = Array.from({ length: 8 }, (_, index) => dataRow(`AFTER${index + 1}`, `Pad ${index + 1}`, String(index + 1)));
+    const assessed = assessFbaStockFile([header, row, dataRow("VENUS15", 'Venus 15" Wheel Trim', "5"), ...later].join("\n"));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.find((item) => item.sku === "VENUS14")).toMatchObject({
+      description: 'Venus 14" Wheel Trim',
+      availQty: 4,
+      line: 2,
+    });
+    expect(assessed.rows.find((item) => item.sku === "VENUS15")?.availQty).toBe(5);
+    expect(assessed.rows.map((item) => item.sku)).toEqual(["VENUS14", "VENUS15", ...later.map((_, index) => `AFTER${index + 1}`)]);
+    expect(assessed.invalidRows).toBe(0);
+    expect(assessed.rowsRead).toBe(assessed.rows.length);
+    expect(assessed.rows.reduce((sum, item) => sum + item.availQty, 0)).toBe(4 + 5 + later.reduce((sum, _, index) => sum + index + 1, 0));
+  });
+
+  it("does not swallow the next OPTIMUS row when a quotation stays open", () => {
+    const open = `OPTIMUS,SX,VENUS14,W,"Venus fourteen inch trim that never closes`;
+    const assessed = assessFbaStockFile(
+      [header, open, dataRow("VENUS15", 'Venus 15" Wheel Trim', "5"), dataRow("VENUS16", 'Venus 16" Wheel Trim', "6")].join("\n"),
+    );
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.map((row) => [row.sku, row.availQty])).toEqual([
+      ["VENUS15", 5],
+      ["VENUS16", 6],
+    ]);
+    expect(assessed.invalidRowDetails).toEqual([
+      expect.objectContaining({
+        line: 2,
+        sku: "VENUS14",
+        reason: "malformed_quote",
+        value: null,
+      }),
+    ]);
+    expect(assessed.quoteDiagnostics[0]).toMatchObject({ sku: "VENUS14", recovered: false, line: 2 });
+    expect(assessed.rowsRead).toBe(3);
+    expect(assessed.invalidRowDetails[0]?.description ?? "").not.toMatch(/VENUS15|VENUS16/);
+  });
+
+  it("shortens a long diagnostic description", () => {
+    const long = `Venus 14" ${"Wheel ".repeat(40)}Trim`;
+    const shown = presentFbaDiagnosticText(long);
+    expect(shown?.endsWith("…")).toBe(true);
+    expect(shown!.length).toBeLessThanOrEqual(160);
+    expect(shown).not.toContain("\n");
+    expect(long.length).toBeGreaterThan(160);
+  });
+
+  it("uses the physical line number when a blank line precedes the inch-mark row", () => {
+    const assessed = assessFbaStockFile([header, "", dataRow("VENUS14", 'Venus 14" Wheel Trim', "4")].join("\n"));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows[0]).toMatchObject({ sku: "VENUS14", availQty: 4, line: 3 });
   });
 });
 
