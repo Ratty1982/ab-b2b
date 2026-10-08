@@ -1,5 +1,6 @@
 export { AdminDashboardHeader } from "./AdminDashboardHeader";
 export { DashboardKpiCard } from "./DashboardKpiCard";
+export { OperationalKpis, OperationalSections, SalesTrendPanel } from "./OperationalOverview";
 export { NeedsAttentionPanel } from "./NeedsAttentionPanel";
 export { OrderOperationsPanel } from "./OrderOperationsPanel";
 export { SystemHealthPanel } from "./SystemHealthPanel";

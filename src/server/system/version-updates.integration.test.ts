@@ -65,6 +65,14 @@ beforeAll(async () => {
   salesId = await ensureUser(`vu.sales.${stamp}@example.invalid`, ["SALES_REPRESENTATIVE"]);
   marketingId = await ensureUser(`vu.mkt.${stamp}@example.invalid`, ["MARKETING"]);
   tradeUserId = await ensureUser(`vu.trade.${stamp}@example.invalid`, [], "TRADE");
+  const alreadyPublished = await prisma.versionUpdate.findMany({
+    where: { status: "PUBLISHED" },
+    select: { id: true },
+  });
+  for (const row of alreadyPublished) {
+    await acknowledgeWhatsNew(salesId, row.id);
+    await acknowledgeWhatsNew(marketingId, row.id);
+  }
 });
 
 afterAll(async () => {

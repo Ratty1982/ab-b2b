@@ -61,7 +61,7 @@ import {
   unitsFor,
   weeklyNetUnitsForSku,
 } from "@/server/purchasing/demand";
-import { moneyToString } from "@/domain/money";
+import { moneyToString, parseMoney } from "@/domain/money";
 import { outstandingBackorderUnitsBySku } from "@/server/purchasing/backorders";
 import {
   PLANNER_RECOMMENDATIONS,
@@ -605,6 +605,54 @@ export async function getPurchasingDashboard(actorUserId: string) {
     overstock: rows.filter((r) => r.status === "OVERSTOCK").slice(0, 8),
     noRecentSales: rows.filter((r) => r.status === "NO_RECENT_DEMAND").slice(0, 8),
     unusualDemand: rows.filter((r) => r.unusual.unusual).slice(0, 8),
+  };
+}
+
+/** Counts only. Same planner rows and value rules as the purchasing dashboard. */
+export async function summarisePurchasingAttention(actorUserId: string) {
+  const { workspace, rows } = await loadPlannerRows(actorUserId, 90);
+  const plan = planSummary(rows, null);
+  const allMissing = plan.productsToConsider > 0 && plan.missingCostLines === plan.productsToConsider;
+  let incomingSkus = 0;
+  let incomingUnits = 0;
+  let warehouseUnits = 0;
+  let fbaUnits = 0;
+  let incomingKnown = true;
+  let incomingMinor = 0n;
+  for (const row of rows) {
+    warehouseUnits += row.availableQty;
+    fbaUnits += row.fbaQty;
+    if (row.incomingQty <= 0) continue;
+    incomingSkus += 1;
+    incomingUnits += row.incomingQty;
+    const value = estimatedLineValue(row.incomingQty, row.latestCost);
+    const money = value == null ? null : parseMoney(value);
+    if (!money) incomingKnown = false;
+    else incomingMinor += money.minor;
+  }
+  return {
+    orderNow: plan.orderNow,
+    backordersAtRisk: plan.backordersAtRisk,
+    missingSupplier: rows.filter((row) => row.suggestedQty > 0 && row.supplier.state === "NONE").length,
+    backordersNoSupplier: rows.filter((row) => row.backorderUnits > 0 && row.supplier.state === "NONE").length,
+    missingCost: plan.missingCostLines,
+    suggestedPurchaseValue: plan.productsToConsider === 0 || allMissing ? null : plan.knownValue,
+    suggestedValueMissingCost: plan.missingCostLines,
+    critical: rows.filter((row) => row.status === "CRITICAL").length,
+    noWarehouseWithBackorders: rows.filter((row) => row.availableQty <= 0 && row.backorderUnits > 0).length,
+    noWarehouseNoIncoming: rows.filter(
+      (row) => row.availableQty <= 0 && row.incomingQty <= 0 && row.backorderUnits > 0,
+    ).length,
+    incomingSkus,
+    incomingUnits,
+    incomingValue: incomingSkus === 0 || !incomingKnown ? null : moneyToString({ minor: incomingMinor }, 2),
+    warehouseUnits,
+    fbaUnits,
+    totalOwnedUnits: totalOwnedStock(warehouseUnits, fbaUnits),
+    fbaUpdatedLabel: workspace.freshness.fbaUpdated,
+    fbaStale: workspace.freshness.fbaStale,
+    fbaUpdatedAt: workspace.freshness.fbaUpdatedAt,
+    stockStale: workspace.freshness.stockStale,
   };
 }
 

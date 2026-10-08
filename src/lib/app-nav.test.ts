@@ -104,15 +104,18 @@ describe("canonical navigation contract", () => {
     expect(sections).toEqual([
       "home",
       "sales",
-      "catalogue",
-      "purchasing",
       "crm",
       "sales-intelligence",
+      "purchasing",
+      "catalogue",
       "website",
       "operations",
       "system",
     ]);
-    expect(sections.indexOf("purchasing")).toBe(sections.indexOf("catalogue") + 1);
+    expect(BACK_OFFICE_NAV.map((s) => s.id)).toEqual(sections);
+    expect(sections.indexOf("sales-intelligence")).toBe(sections.indexOf("crm") + 1);
+    expect(sections.indexOf("purchasing")).toBe(sections.indexOf("sales-intelligence") + 1);
+    expect(sections.indexOf("catalogue")).toBe(sections.indexOf("purchasing") + 1);
     const purchasing = BACK_OFFICE_NAV.find((s) => s.id === "purchasing");
     expect(purchasing?.items.map((i) => i.id)).toEqual([
       "purchasing-dashboard",
@@ -121,9 +124,22 @@ describe("canonical navigation contract", () => {
       "purchasing-backorders",
       "purchasing-overstock",
       "purchasing-suppliers",
+      "cost-intelligence",
     ]);
-    expect(sections.indexOf("crm")).toBe(sections.indexOf("purchasing") + 1);
-    expect(sections.indexOf("sales-intelligence")).toBe(sections.indexOf("crm") + 1);
+    const catalogue = BACK_OFFICE_NAV.find((s) => s.id === "catalogue");
+    expect(catalogue?.items.map((i) => i.id)).toEqual([
+      "products",
+      "brands",
+      "categories",
+      "product-imports",
+      "autopart-stock",
+      "price-lists",
+    ]);
+    expect(catalogue?.items.map((i) => i.id)).not.toContain("cost-intelligence");
+    const cost = purchasing?.items.find((i) => i.id === "cost-intelligence");
+    expect(cost?.label).toBe("Cost Intelligence");
+    expect(cost?.to).toBe(ROUTES.adminCostIntelligence);
+    expect(cost?.permission).toEqual(["products.cost.view", "admin.access"]);
   });
 
   it("keeps Website nav as Pages, Homepage, Team, Media in that order", () => {
@@ -172,6 +188,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("products");
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-forecast");
+    expect(ids).not.toContain("cost-intelligence");
     expect(ids).not.toContain("users");
     expect(ids).not.toContain("settings");
     expect(ids).not.toContain("sales-team");

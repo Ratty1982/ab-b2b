@@ -317,6 +317,72 @@ describe("admin production dashboard", () => {
     expect(dash.quickActions.some((a) => a.id === "new-customer")).toBe(false);
     // View orders / products / applications depend on role catalogue — orders.view is typical
     expect(dash.quickActions.every((a) => ["new-customer", "new-quote", "view-orders", "products", "trade-applications"].includes(a.id))).toBe(true);
+    expect(dash.operational.purchasing).toBeNull();
+    expect(dash.operational.backorders).toBeNull();
+    expect(dash.operational.conditions).toBeNull();
+    const salesPayload = JSON.stringify(dash.operational);
+    expect(salesPayload).not.toContain("suggestedPurchaseValue");
+    expect(salesPayload).not.toContain("missingSupplier");
+    expect(salesPayload).not.toContain("missingCost");
+    expect(salesPayload).not.toContain("fbaUnits");
+    expect(salesPayload).not.toContain("backordersNoSupplier");
+    expect(dash.operational.sales?.today?.orders).toBeGreaterThanOrEqual(1);
+    expect(dash.operational.crm?.tradeApplications).toBeGreaterThanOrEqual(0);
+    expect(dash.operational.freshness.rows.some((row) => row.id === "fba-stock")).toBe(false);
+    expect(dash.operational.freshness.rows.some((row) => row.id === "backorders")).toBe(false);
+  });
+
+  it("gives purchasing attention to admins and keeps sales values on the order ledger", async () => {
+    const dash = await getAdminDashboard(adminId);
+    expect(dash.operational.purchasing).not.toBeNull();
+    expect(dash.operational.purchasing?.summary == null || typeof dash.operational.purchasing.summary.orderNow === "number").toBe(true);
+    expect(dash.operational.sales?.today?.valueLabel).toContain("£");
+    expect(dash.operational.sales?.trend?.length).toBe(90);
+    expect(dash.operational.backorders == null || dash.operational.backorders.summary == null || typeof dash.operational.backorders.summary.outstandingOrders === "number").toBe(true);
+    const announcement = await prisma.versionUpdate.findFirst({ where: { version: "2026.10.08-dashboard" } });
+    expect(announcement?.status).toBe("PUBLISHED");
+    expect(announcement?.title).toBe("Improved Dashboard & Navigation");
+    const intro = JSON.stringify(announcement?.content);
+    expect(intro).toContain("what needs attention");
+    expect(intro).not.toContain("231PO3NEW");
+    expect(intro).not.toContain("Prisma");
+  });
+
+  it("marks the latest warehouse import failed without treating FBA as a scheduled failure", async () => {
+    const run = await prisma.stockSyncRun.create({
+      data: {
+        source: "test",
+        mode: "live",
+        status: "FAILED",
+        trigger: "manual",
+        startedAt: new Date(),
+        completedAt: new Date(),
+        errorSummary: "dashboard freshness test",
+      },
+    });
+    const fba = await prisma.autopartFbaStockImport.create({
+      data: {
+        fileName: `fba-dash-${suffix}.csv`,
+        fileHash: `fba-dash-${suffix}`,
+        status: "SUCCESS",
+        importedAt: new Date(),
+        sourceBranch: "FBA",
+        warnings: [],
+      },
+    });
+    try {
+      const dash = await getAdminDashboard(adminId);
+      const warehouse = dash.operational.freshness.rows.find((row) => row.id === "warehouse-stock");
+      const fbaRow = dash.operational.freshness.rows.find((row) => row.id === "fba-stock");
+      expect(warehouse?.status).toBe("failed");
+      expect(warehouse?.kind).toBe("scheduled");
+      expect(fbaRow?.kind).toBe("manual");
+      expect(fbaRow?.status).not.toBe("failed");
+      expect(dash.needsAttention.some((item) => item.id === "warehouse-import-failed")).toBe(true);
+    } finally {
+      await prisma.stockSyncRun.delete({ where: { id: run.id } });
+      await prisma.autopartFbaStockImport.delete({ where: { id: fba.id } });
+    }
   });
 
   it("lists known prototype dashboard strings for source regression", () => {

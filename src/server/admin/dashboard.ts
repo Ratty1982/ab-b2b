@@ -42,6 +42,7 @@ import {
   londonCalendarDayBounds,
 } from "@/lib/datetime";
 import { ROUTES } from "@/lib/app-nav";
+import { loadOperationalOverview, type OperationalOverview } from "@/server/admin/operational-overview";
 
 function orderCompanyScope(accessible: string[] | "all"): Prisma.OrderWhereInput {
   if (accessible === "all") return {};
@@ -220,6 +221,7 @@ export type AdminDashboardPayload = {
   /** Consolidated authoritative health rows — omit services without genuine state. */
   systemHealth: SystemHealthRow[];
   needsAttention: AttentionItem[];
+  operational: OperationalOverview;
 };
 
 function mapOrderRow(row: {
@@ -279,6 +281,10 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
   const canSeeEmail = hasPermission(profile, "settings.view") || hasPermission(profile, "admin.access");
   const canSeeAudit = hasPermission(profile, "audit.view") || hasPermission(profile, "admin.access");
   const canSeeTasks = hasPermission(profile, "tasks.view") || hasPermission(profile, "admin.access");
+  const canSeePurchasing =
+    hasPermission(profile, "purchasing.view") || hasPermission(profile, "admin.access");
+  const canSeeCrm = hasPermission(profile, "crm.view") || hasPermission(profile, "admin.access");
+  const canSeeSettings = hasPermission(profile, "settings.view") || hasPermission(profile, "admin.access");
   /** Ongoing sales settings row — readable for staff who can view orders (no edit required for health). */
   const canSeeOngoingSales = canSeeOrders;
   /** SharePoint SDS public settings — products.view staff (same gate as document admin view). */
@@ -949,6 +955,62 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     });
   }
 
+  let operational: OperationalOverview;
+  try {
+    operational = await loadOperationalOverview({
+      actorUserId,
+      accessible,
+      canSeeOrders,
+      canSeeApplications,
+      canSeePurchasing,
+      canSeeCrm,
+      canSeeTasks,
+      canSeeStock,
+      canSeeSettings,
+      tradeApplications: appAttention,
+    });
+  } catch (error) {
+    operational = {
+      sales: canSeeOrders
+        ? { error: error instanceof Error ? error.message : "Sales overview is unavailable", today: null, trend: null }
+        : null,
+      backorders: null,
+      purchasing: null,
+      conditions: null,
+      crm:
+        canSeeCrm || canSeeTasks || canSeeApplications
+          ? {
+              error: error instanceof Error ? error.message : "CRM overview is unavailable",
+              openLeads: null,
+              openOpportunities: null,
+              overdueTasks: null,
+              tasksDueToday: null,
+              tradeApplications: canSeeApplications ? appAttention : null,
+            }
+          : null,
+      freshness: { error: error instanceof Error ? error.message : "Data freshness is unavailable", rows: [] },
+      attention: [],
+    };
+  }
+  for (const item of operational.attention) {
+    if (needsAttention.some((existing) => existing.id === item.id)) continue;
+    needsAttention.push({
+      id: item.id,
+      label: item.label,
+      count: item.count,
+      href: item.href,
+      severity: item.severity === "warning" ? "attention" : item.severity,
+      actionLabel: item.actionLabel,
+    });
+  }
+  const attentionRank: Record<AttentionItem["severity"], number> = {
+    critical: 0,
+    attention: 1,
+    action: 1,
+    info: 2,
+  };
+  needsAttention.sort((a, b) => attentionRank[a.severity] - attentionRank[b.severity]);
+
   return {
     generatedAt: new Date().toISOString(),
     scope,
@@ -1011,6 +1073,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     email,
     systemHealth,
     needsAttention,
+    operational,
   };
 }
 
