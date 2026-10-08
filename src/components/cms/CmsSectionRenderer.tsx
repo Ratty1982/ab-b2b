@@ -6,6 +6,8 @@ import type { PublicCatalogueBrandCard } from "@/domain/public-brands-showcase";
 import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureSection";
 import { MotorsportMediaGallery } from "@/components/public/MotorsportMediaGallery";
 import { PublicBrandsShowcase } from "@/components/public/PublicBrandsShowcase";
+import { PublicTradeSolutions } from "@/components/public/PublicTradeSolutions";
+import { parseTradeSolutionsContent } from "@/domain/trade-solutions-content";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
 import { cmsMediaDisplaySrc, cmsFocalStyle, cmsImageFitClass, readBrandLogos } from "@/lib/cms-media";
@@ -461,6 +463,8 @@ export function CmsSectionRenderer({
           content={parseBrandsShowcaseContent(c)}
         />
       );
+    case "TRADE_SOLUTIONS":
+      return <PublicTradeSolutions content={parseTradeSolutionsContent(c)} session={{ signedIn: false }} />;
 
     default:
       return null;

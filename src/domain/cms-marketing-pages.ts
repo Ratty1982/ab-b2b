@@ -1,6 +1,11 @@
 import type { CmsSectionTypeKey } from "@/domain/cms";
 import { ACCOUNT_MANAGER_HOURS } from "@/domain/account-manager-hours";
 import { defaultBrandsShowcaseContent } from "@/domain/brands-showcase-content";
+import {
+  defaultTradeSolutionsContent,
+  TRADE_SOLUTIONS_PAGE_DESCRIPTION,
+  TRADE_SOLUTIONS_PAGE_TITLE,
+} from "@/domain/trade-solutions-content";
 import { MOTORSPORT_PAGE_DEFAULTS } from "@/domain/motorsport";
 
 export type MarketingPageSeed = {
@@ -74,77 +79,14 @@ export const MARKETING_CMS_PAGES: MarketingPageSeed[] = [
   {
     slug: "trade-solutions",
     title: "Trade Solutions",
-    seoTitle: "Trade Solutions — Automotive Brands",
-    metaDescription:
-      "Trade pricing, case ordering, live availability and account support for Power Maxed and Steel Seal customers.",
-    blurb: "Trade platform capabilities",
+    seoTitle: TRADE_SOLUTIONS_PAGE_TITLE,
+    metaDescription: TRADE_SOLUTIONS_PAGE_DESCRIPTION,
+    blurb: "Trade account landing page",
     primaryNav: true,
     sections: [
-      pageHero({
-        eyebrow: "Trade solutions",
-        headline: "Built for trade ordering",
-        supporting:
-          "Practical capabilities for approved Automotive Brands trade accounts ordering Power Maxed and Steel Seal.",
-      }),
       {
-        type: "BENEFITS_GRID",
-        config: {
-          eyebrow: "",
-          heading: "",
-          supporting: "",
-          ctaLabel: "",
-          ctaHref: "/register",
-          items: [
-            {
-              title: "Trade pricing",
-              body: "Approved customers see their account pricing on the catalogue and product pages.",
-              icon: "clipboard",
-            },
-            {
-              title: "Customer-specific pricing",
-              body: "Negotiated product prices can be applied to individual trade accounts.",
-              icon: "clipboard",
-            },
-            {
-              title: "Case ordering",
-              body: "Products can be ordered in the correct trade case quantities where case packs apply.",
-              icon: "truck",
-            },
-            {
-              title: "Live availability",
-              body: "Customer-safe availability is derived from current stock data at the point of browsing and ordering.",
-              icon: "warehouse",
-            },
-            {
-              title: "Account support",
-              body: `Dedicated account manager details are available in the trade portal. ${ACCOUNT_MANAGER_HOURS.weekdayLine}. ${ACCOUNT_MANAGER_HOURS.orderCutoffLine}.`,
-              icon: "headphones",
-            },
-            {
-              title: "Quick ordering",
-              body: "Trade catalogue designed for rapid repeat purchasing of Power Maxed and Steel Seal lines.",
-              icon: "truck",
-            },
-          ],
-          customerTypes: [],
-          spacing: "standard",
-          media: { alt: "", fit: "fill" },
-        },
-      },
-      {
-        type: "TRADE_CTA",
-        config: {
-          eyebrow: "Ready to trade",
-          headline: "Open a trade account",
-          supporting: "Apply for account pricing on Power Maxed and Steel Seal.",
-          ctaLabel: "Open a Trade Account",
-          ctaHref: "/register",
-          secondaryCtaLabel: "Shop Products",
-          secondaryCtaHref: "/products",
-          variant: "dark",
-          spacing: "standard",
-          media: { alt: "", fit: "fill" },
-        },
+        type: "TRADE_SOLUTIONS",
+        config: defaultTradeSolutionsContent(),
       },
     ],
   },

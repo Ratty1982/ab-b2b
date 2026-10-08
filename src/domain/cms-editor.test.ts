@@ -39,6 +39,7 @@ describe("CMS editor draft operations", () => {
     expect(SECTION_LIBRARY.map((s) => s.type)).toEqual([
       "HERO",
       "BRANDS_SHOWCASE",
+      "TRADE_SOLUTIONS",
       "BRAND_LOGO_STRIP",
       "FEATURED_BRANDS",
       "CATEGORY_GRID",

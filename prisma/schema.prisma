@@ -91,6 +91,8 @@ enum CmsSectionType {
   MEDIA_GALLERY
   /// Public /brands page: fixed Steel Seal then Power Maxed showcase.
   BRANDS_SHOWCASE
+  /// Public /trade-solutions landing page.
+  TRADE_SOLUTIONS
 }
 
 /// Company-scoped trade access levels (distinct from system Role).

@@ -25,6 +25,15 @@ import {
   PUBLIC_BRANDS_PAGE_TITLE,
 } from "@/domain/public-brands-showcase";
 import { MARKETING_CMS_PAGES } from "@/domain/cms-marketing-pages";
+import {
+  applyShowcaseBrandMedia,
+  LEGACY_TRADE_SOLUTIONS_SEO,
+  parseTradeSolutionsContent,
+  TRADE_SOLUTIONS_PAGE_DESCRIPTION,
+  TRADE_SOLUTIONS_PAGE_TITLE,
+  tradeSolutionsContentFromLegacy,
+  upgradeMigratedTradeSolutions,
+} from "@/domain/trade-solutions-content";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
 import { listPublicBrands } from "@/server/catalogue/products";
 import { attachFeaturedBrandLogos } from "@/domain/featured-brands";
@@ -58,6 +67,7 @@ export async function listCmsPages(actorUserId: string) {
 export async function getCmsPageDraft(actorUserId: string, slug: string) {
   await requireSystemPermission(actorUserId, "cms.page.read");
   if (slug === "brands") await ensureBrandsShowcaseSection();
+  if (slug === "trade-solutions") await ensureTradeSolutionsSection();
   const page = await prisma.cmsPage.findUnique({
     where: { slug },
     include: {
@@ -776,6 +786,7 @@ export async function bootstrapMarketingCmsPages(
   }
 
   await ensureBrandsShowcaseSection(prismaClient);
+  await ensureTradeSolutionsSection(prismaClient);
   return { created, existing };
 }
 
@@ -865,6 +876,116 @@ export async function ensureBrandsShowcaseSection(
     await prismaClient.cmsSection.update({
       where: { id: showcase.id },
       data: { config: config as Prisma.InputJsonValue },
+    });
+    migratedVersionIds.push(versionId);
+  }
+
+  return { migratedVersionIds };
+}
+
+/**
+ * Move an existing Trade Solutions page onto the structured template once.
+ * Leaves every other website page alone and does not change publication status.
+ * A version that already has TRADE_SOLUTIONS is not overwritten.
+ */
+export async function ensureTradeSolutionsSection(
+  prismaClient: typeof prisma = prisma,
+): Promise<{ migratedVersionIds: string[] }> {
+  const page = await prismaClient.cmsPage.findUnique({
+    where: { slug: "trade-solutions" },
+    select: {
+      id: true,
+      draftVersionId: true,
+      publishedVersionId: true,
+      seoTitle: true,
+      metaDescription: true,
+    },
+  });
+  if (!page) return { migratedVersionIds: [] };
+
+  const seoData: { seoTitle?: string; metaDescription?: string } = {};
+  if (page.seoTitle === LEGACY_TRADE_SOLUTIONS_SEO.seoTitle) seoData.seoTitle = TRADE_SOLUTIONS_PAGE_TITLE;
+  if (page.metaDescription === LEGACY_TRADE_SOLUTIONS_SEO.metaDescription) {
+    seoData.metaDescription = TRADE_SOLUTIONS_PAGE_DESCRIPTION;
+  }
+  if (seoData.seoTitle || seoData.metaDescription) {
+    await prismaClient.cmsPage.update({ where: { id: page.id }, data: seoData });
+    await prismaClient.cmsPageVersion.updateMany({
+      where: {
+        pageId: page.id,
+        AND: [
+          { OR: [{ seoTitle: LEGACY_TRADE_SOLUTIONS_SEO.seoTitle }, { seoTitle: null }] },
+          {
+            OR: [
+              { metaDescription: LEGACY_TRADE_SOLUTIONS_SEO.metaDescription },
+              { metaDescription: null },
+            ],
+          },
+        ],
+      },
+      data: seoData,
+    });
+  }
+
+  const brandsPage = await prismaClient.cmsPage.findUnique({
+    where: { slug: "brands" },
+    select: {
+      publishedVersion: {
+        select: {
+          sections: {
+            where: { type: "BRANDS_SHOWCASE" },
+            take: 1,
+            select: { config: true },
+          },
+        },
+      },
+    },
+  });
+  const showcaseConfig = brandsPage?.publishedVersion?.sections[0]?.config ?? null;
+
+  const versionIds = [...new Set([page.draftVersionId, page.publishedVersionId].filter((id): id is string => Boolean(id)))];
+  const migratedVersionIds: string[] = [];
+
+  for (const versionId of versionIds) {
+    const sections = await prismaClient.cmsSection.findMany({
+      where: { versionId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const existing = sections.find((section) => section.type === "TRADE_SOLUTIONS");
+    if (existing) {
+      const upgraded = upgradeMigratedTradeSolutions(parseTradeSolutionsContent(existing.config));
+      if (!upgraded.changed) continue;
+      const config = validateSectionConfig("TRADE_SOLUTIONS", upgraded.content);
+      await prismaClient.cmsSection.update({
+        where: { id: existing.id },
+        data: { config: config as Prisma.InputJsonValue },
+      });
+      migratedVersionIds.push(versionId);
+      continue;
+    }
+
+    const content = applyShowcaseBrandMedia(
+      tradeSolutionsContentFromLegacy(
+        sections.map((section) => ({
+          type: section.type,
+          config: section.config,
+          enabled: section.enabled,
+        })),
+      ),
+      showcaseConfig,
+    );
+    const config = validateSectionConfig("TRADE_SOLUTIONS", content);
+    await prismaClient.$transaction(async (tx) => {
+      await tx.cmsSection.deleteMany({ where: { versionId } });
+      await tx.cmsSection.create({
+        data: {
+          versionId,
+          type: "TRADE_SOLUTIONS",
+          config: config as Prisma.InputJsonValue,
+          sortOrder: 0,
+          enabled: true,
+        },
+      });
     });
     migratedVersionIds.push(versionId);
   }
