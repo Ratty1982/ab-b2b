@@ -126,9 +126,17 @@ describe("public brands showcase markup", () => {
     content.steelSeal.media = {
       src: "/api/cms-media/engine-photo",
       alt: "Close-up of an engine head gasket",
+      focalX: 62,
+      focalY: 48,
     };
     content.steelSeal.ctaLabel = "Shop Steel Seal";
     const html = renderShowcase({ signedIn: false }, content);
+    const withCar = defaultBrandsShowcaseContent();
+    withCar.powerMaxed.media = {
+      src: "/api/cms-media/car-photo",
+      alt: "Black car in a dark workshop",
+    };
+    const carHtml = renderShowcase({ signedIn: false }, withCar);
     expect(html.indexOf('data-brand-showcase="steel-seal"')).toBeLessThan(
       html.indexOf('data-brand-showcase="power-maxed"'),
     );
@@ -137,6 +145,15 @@ describe("public brands showcase markup", () => {
     expect(html).toContain('alt="Close-up of an engine head gasket"');
     expect(html).toContain('data-brand-visual="photo"');
     expect(html).toContain('data-brand-visual="fallback"');
+    expect(html).toContain("object-cover");
+    expect(html).toContain("object-position:62% 48%");
+    expect(html).not.toContain("object-[64%_50%]");
+    expect(carHtml).toContain("object-[39%_46%]");
+    expect(carHtml).toContain('src="/api/cms-media/car-photo"');
+    expect(html).toContain("max-w-[1400px]");
+    expect(html).toContain("lg:gap-16");
+    expect(html).toContain("lg:grid-cols-[minmax(0,0.45fr)_minmax(0,0.55fr)]");
+    expect(html).not.toMatch(/order-first|order-last|lg:order-/);
     expect(html).toContain('href="/brands/steel-seal"');
     expect(html).toContain('href="/brands/power-maxed"');
     expect(html).not.toContain("bg-white");

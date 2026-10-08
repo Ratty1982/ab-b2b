@@ -9,7 +9,7 @@ import {
   type BrandsShowcaseContent,
 } from "@/domain/brands-showcase-content";
 import { homepageBrandLogoSrc } from "@/domain/homepage-brand-logos";
-import { cmsMediaDisplaySrc } from "@/lib/cms-media";
+import { cmsFocalStyle, cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { publicHeaderAccountLinks } from "@/lib/public-header-account";
 import type { ClientSession } from "@/server/auth/session";
 
@@ -92,6 +92,9 @@ export type PublicBrandShowcase = {
   emphasis: "primary" | "secondary";
   coverSrc: string | null;
   coverAlt: string;
+  /** CMS focal point, when an editor has set one. Otherwise the layout uses a brand default. */
+  coverObjectPosition: string | null;
+  coverFit: "fill" | "contain";
 };
 
 export type ShowcaseCta = {
@@ -158,6 +161,8 @@ export function orderPublicBrandShowcase(brands: readonly PublicCatalogueBrandCa
       emphasis: slug === "steel-seal" ? "primary" : "secondary",
       coverSrc: null,
       coverAlt: "",
+      coverObjectPosition: null,
+      coverFit: "fill",
     });
   }
   return ordered;
@@ -174,6 +179,7 @@ export function presentPublicBrandShowcase(
   return orderPublicBrandShowcase(brands).map((brand) => {
     const panel = brand.slug === "steel-seal" ? content.steelSeal : content.powerMaxed;
     const coverSrc = cmsMediaDisplaySrc(panel.media) ?? null;
+    const hasFocal = typeof panel.media.focalX === "number" || typeof panel.media.focalY === "number";
     return {
       ...brand,
       name: panel.heading.trim() || brand.name,
@@ -184,6 +190,8 @@ export function presentPublicBrandShowcase(
       shopHref: brand.shopHref,
       coverSrc,
       coverAlt: panel.media.alt.trim() || `${brand.name} photography`,
+      coverObjectPosition: hasFocal ? cmsFocalStyle(panel.media).objectPosition : null,
+      coverFit: panel.media.fit === "contain" ? "contain" : "fill",
     };
   });
 }

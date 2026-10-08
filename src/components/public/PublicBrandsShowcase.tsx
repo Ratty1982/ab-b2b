@@ -15,6 +15,14 @@ import { mediaContainClass } from "@/lib/media-presentation";
 import { cn } from "@/lib/utils";
 import type { ClientSession } from "@/server/auth/session";
 
+const frameClass = "mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10";
+
+/** Subject placement for the approved photography when the CMS has no focal point. */
+const COVER_FOCUS: Record<PublicBrandShowcase["slug"], string> = {
+  "steel-seal": "object-[64%_50%]",
+  "power-maxed": "object-[39%_46%]",
+};
+
 const primaryCtaClass =
   "inline-flex h-11 items-center gap-2 rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
 
@@ -83,36 +91,37 @@ function CoverPhoto({ media, alt }: { media: BrandsShowcaseMedia; alt: string })
 
 function BrandShowcase({ brand }: { brand: PublicBrandShowcase }) {
   const icons = POINT_ICONS[brand.slug];
+  const logoOnRight = brand.slug === "power-maxed";
   return (
     <section
       aria-labelledby={`brand-${brand.slug}-title`}
       data-brand-showcase={brand.slug}
       data-brand-emphasis={brand.emphasis}
       data-brand-visual={brand.coverSrc ? "photo" : "fallback"}
-      className="border-b border-border/60"
+      className="overflow-hidden rounded-lg border border-border/80 bg-surface"
     >
-      <div className="grid lg:grid-cols-2">
-        <div className="flex flex-col justify-center px-4 py-10 sm:px-8 lg:px-12 lg:py-14">
+      <div className="grid lg:min-h-[27rem] lg:grid-cols-[minmax(0,0.45fr)_minmax(0,0.55fr)]">
+        <div className="flex flex-col justify-center px-5 py-7 sm:px-7 lg:px-9 lg:py-9">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan">{brand.kicker}</p>
           <h2
             id={`brand-${brand.slug}-title`}
-            className="mt-3 font-display text-4xl font-semibold uppercase leading-[0.92] tracking-tight sm:text-5xl"
+            className="mt-2 font-display text-4xl font-semibold uppercase leading-[0.92] tracking-tight xl:text-5xl"
           >
             {brand.name}
           </h2>
-          <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-steel">{brand.description}</p>
-          <ul className="mt-6 grid gap-4 sm:grid-cols-3">
+          <p className="mt-3 max-w-prose text-[15px] leading-relaxed text-steel">{brand.description}</p>
+          <ul className="mt-5 space-y-2.5">
             {brand.points.map((point, index) => {
               const Icon = icons[index] ?? Wrench;
               return (
-                <li key={point} className="flex items-start gap-2 text-[13px] leading-snug text-foreground">
-                  <Icon className="mt-0.5 size-4 shrink-0 text-steel" aria-hidden />
+                <li key={point} className="flex items-start gap-2.5 text-[13px] leading-snug text-foreground">
+                  <Icon className="mt-0.5 size-4 shrink-0 text-cyan" aria-hidden />
                   <span>{point}</span>
                 </li>
               );
             })}
           </ul>
-          <div className="mt-7 flex flex-wrap items-center gap-4">
+          <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
             <a href={brand.shopHref} className={primaryCtaClass}>
               {brand.shopLabel}
               <ArrowRight className="size-4" aria-hidden />
@@ -120,16 +129,18 @@ function BrandShowcase({ brand }: { brand: PublicBrandShowcase }) {
             <p className="num text-[13px] text-steel">{brand.tradeProductCountLabel}</p>
           </div>
         </div>
-        <div className="relative min-h-[260px] overflow-hidden bg-ink sm:min-h-[320px] lg:min-h-[420px]">
+        <div className="relative min-h-[16.5rem] overflow-hidden bg-ink sm:min-h-[18rem] lg:min-h-full">
           {brand.coverSrc ? (
-            <>
-              <img
-                src={brand.coverSrc}
-                alt={brand.coverAlt}
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-l from-ink/80 via-ink/35 to-ink/15" />
-            </>
+            <img
+              src={brand.coverSrc}
+              alt={brand.coverAlt}
+              className={cn(
+                "absolute inset-0 h-full w-full",
+                brand.coverFit === "contain" ? "object-contain" : "object-cover",
+                !brand.coverObjectPosition && COVER_FOCUS[brand.slug],
+              )}
+              style={brand.coverObjectPosition ? { objectPosition: brand.coverObjectPosition } : undefined}
+            />
           ) : (
             <div
               className="absolute inset-0"
@@ -139,13 +150,23 @@ function BrandShowcase({ brand }: { brand: PublicBrandShowcase }) {
               }}
             />
           )}
-          <div className="relative z-10 flex h-full min-h-[260px] items-center justify-center p-8 sm:min-h-[320px] sm:justify-end sm:p-10 lg:min-h-[420px]">
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-y-0 w-[46%] from-ink/90 via-ink/45 to-transparent",
+              logoOnRight ? "right-0 bg-gradient-to-l" : "left-0 bg-gradient-to-r",
+            )}
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-ink/55 to-transparent" />
+          <div
+            className={cn(
+              "relative z-10 flex h-full min-h-[16.5rem] items-end p-5 sm:min-h-[18rem] sm:p-7 lg:min-h-full lg:p-8",
+              logoOnRight ? "justify-end" : "justify-start",
+            )}
+          >
             <img
               src={brand.logoSrc}
               alt={brand.logoAlt}
-              width={420}
-              height={180}
-              className={cn("h-28 w-auto max-w-[18rem] sm:h-36 lg:h-40", mediaContainClass)}
+              className={cn("h-16 w-auto max-w-[68%] object-contain sm:h-20 lg:h-24", mediaContainClass)}
             />
           </div>
         </div>
@@ -173,42 +194,50 @@ export function PublicBrandsShowcase({
       data-brands-template="brands-showcase"
       data-brand-order={presented.map((brand) => brand.slug).join(" ")}
     >
-      <section aria-labelledby="brands-hero-title" className="relative overflow-hidden border-b border-border/60">
+      <section aria-labelledby="brands-hero-title" className="relative overflow-hidden">
         {heroCover ? (
           <>
             <CoverPhoto media={content.hero.media} alt={content.hero.media.alt} />
             <div className="absolute inset-0 bg-ink/80" />
           </>
         ) : null}
-        <div className="relative mx-auto max-w-[1400px] px-4 py-14 sm:px-6 lg:px-10 lg:py-20">
-          <div className="max-w-3xl">
-            {content.hero.eyebrow ? (
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary">
-                {content.hero.eyebrow}
-              </p>
-            ) : null}
-            <Headline
-              as="h1"
-              id="brands-hero-title"
-              text={content.hero.headline}
-              className="mt-4 font-display text-[40px] font-semibold uppercase leading-[0.92] tracking-tight sm:text-6xl"
-            />
-            {content.hero.description ? (
-              <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-steel">{content.hero.description}</p>
-            ) : null}
-            <div className="mt-8 flex flex-wrap items-center gap-3" data-brands-cta="hero">
-              <CtaLink cta={ctas.heroPrimary} tone="primary" />
-              {ctas.heroSecondary ? <CtaLink cta={ctas.heroSecondary} tone="secondary" /> : null}
+        <div className={cn(frameClass, "relative py-8 sm:py-9 lg:py-11")}>
+          <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(16rem,0.85fr)] lg:gap-12">
+            <div>
+              {content.hero.eyebrow ? (
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary">
+                  {content.hero.eyebrow}
+                </p>
+              ) : null}
+              <Headline
+                as="h1"
+                id="brands-hero-title"
+                text={content.hero.headline}
+                className="mt-3 font-display text-[2.35rem] font-semibold uppercase leading-[0.92] tracking-tight sm:text-5xl lg:text-[3.15rem]"
+              />
+            </div>
+            <div>
+              {content.hero.description ? (
+                <p className="max-w-xl text-[15px] leading-relaxed text-steel lg:max-w-none">{content.hero.description}</p>
+              ) : null}
+              <div className="mt-5 flex flex-wrap items-center gap-3" data-brands-cta="hero">
+                <CtaLink cta={ctas.heroPrimary} tone="primary" />
+                {ctas.heroSecondary ? <CtaLink cta={ctas.heroSecondary} tone="secondary" /> : null}
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       {presented.length ? (
-        presented.map((brand) => <BrandShowcase key={brand.slug} brand={brand} />)
+        <div className={cn(frameClass, "flex flex-col gap-8 py-6 sm:py-8 lg:gap-16 lg:py-10")} data-brand-stack>
+          {presented.map((brand) => (
+            <BrandShowcase key={brand.slug} brand={brand} />
+          ))}
+        </div>
       ) : (
-        <section className="border-b border-border/60">
-          <p className="mx-auto max-w-[1400px] px-4 py-12 text-sm text-steel sm:px-6 lg:px-10">
+        <section>
+          <p className={cn(frameClass, "py-12 text-sm text-steel")}>
             Steel Seal and Power Maxed are not available to browse right now.
           </p>
         </section>
@@ -218,9 +247,8 @@ export function PublicBrandsShowcase({
         aria-labelledby="brands-close-title"
         data-brands-cta="close"
         data-offer-trade-account={ctas.offerTradeAccount ? "yes" : "no"}
-        className="border-b border-border/60"
       >
-        <div className="mx-auto max-w-[1400px] px-4 py-14 sm:px-6 lg:px-10 lg:py-16">
+        <div className={cn(frameClass, "py-10 lg:py-12")}>
           <Headline
             as="h2"
             id="brands-close-title"
