@@ -35,6 +35,7 @@ There is **no** browser → Graph path. The browser never supplies arbitrary Gra
 | Rate limits (sign-in / forgot / reset) | Implemented |
 | Disabled-user blocked at session create + profile load | Implemented |
 | Session wipe on deactivate / disable / admin password reset | Implemented |
+| Session lookup reads the database (cookie cache disabled) | Implemented |
 | Password reset tokens never audited | Implemented |
 | Safe return URLs (`safeReturnPath`) | Implemented |
 | CSRF middleware on server functions | Implemented (`src/start.ts`) |
