@@ -731,7 +731,7 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
   const company = await loadVerifiedCompany(companyId);
   const verified = Boolean(company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt);
 
-  const [lineCount, docCount, lastHistory, aliases, topSkus, skuGroups] =
+  const [lineCount, docCount, lastHistory, aliases, topSkus, skuCountRows] =
     await Promise.all([
       prisma.autopartSalesLine.count({ where: { companyId } }),
       prisma.autopartSalesDocument.count({ where: { companyId } }),
@@ -764,10 +764,11 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
         orderBy: { _sum: { salesNet: "desc" } },
         take: 10,
       }),
-      prisma.autopartSalesLine.groupBy({
-        by: ["sku"],
-        where: { companyId },
-      }),
+      prisma.$queryRaw<Array<{ count: number }>>`
+        SELECT COUNT(DISTINCT sku)::int AS count
+        FROM "AutopartSalesLine"
+        WHERE "companyId" = ${companyId}
+      `,
     ]);
 
   const aggregates = await prisma.autopartSalesLine.aggregate({
@@ -798,7 +799,7 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
         2,
       ),
       netUnits: Number(aggregates._sum.units ?? 0),
-      productsPurchased: skuGroups.length,
+      productsPurchased: Number(skuCountRows[0]?.count ?? 0),
       lastImportedAt: lastHistory?.completedAt?.toISOString() ?? null,
       lastHistoricPurchaseDate: lastDated?.documentDate
         ? lastDated.documentDate.toISOString().slice(0, 10)

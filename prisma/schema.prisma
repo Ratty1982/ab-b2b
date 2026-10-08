@@ -2732,7 +2732,7 @@ model AutopartInvoiceLine {
   account AutopartAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
   batch   AutopartImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
 
-  @@index([accountCode])
+  @@index([accountCode, rawInvAndLn], map: "AutopartInvoiceLine_account_rawInv_idx")
   @@index([accountId])
   @@index([documentReference])
   @@index([partNumber])
@@ -2764,7 +2764,7 @@ model AutopartLedgerTransaction {
   account AutopartAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
   batch   AutopartImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
 
-  @@index([accountCode])
+  @@index([accountCode, transactionDate, reference], map: "AutopartLedger_account_date_ref_idx")
   @@index([accountId])
   @@index([reference])
   @@index([transactionDate])
@@ -2792,6 +2792,7 @@ model AutopartDocumentMatch {
   batch   AutopartImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
   @@unique([accountCode, documentType, documentReference])
+  @@index([accountCode, documentReference], map: "AutopartDocumentMatch_account_docref_idx")
   @@index([status])
   @@index([accountId])
   @@index([documentReference])

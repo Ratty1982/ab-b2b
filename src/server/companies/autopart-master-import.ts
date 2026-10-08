@@ -42,6 +42,14 @@ import { AuthError, requireCompanyAccess, requireSystemPermission } from "@/serv
 const ISSUE_CAP = 2000;
 const CHUNK = 200;
 const STALE_MS = 15 * 60 * 1000;
+const MAX_LIST_PAGE = 10_000;
+
+function boundedPage(page: number | undefined): number {
+  if (page == null || !Number.isFinite(page)) return 1;
+  const whole = Math.trunc(page);
+  if (whole < 1) return 1;
+  return whole > MAX_LIST_PAGE ? MAX_LIST_PAGE : whole;
+}
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024;
 
 const runningBatches = new Set<string>();
@@ -1109,8 +1117,22 @@ export async function getAutopartImportBatch(actorUserId: string, batchId: strin
   return publicBatch(fresh);
 }
 
+async function recoverListedStaleBatches() {
+  const running = await prisma.autopartImportBatch.findMany({
+    where: { status: "RUNNING" },
+    select: { id: true, status: true, heartbeatAt: true },
+    orderBy: { heartbeatAt: "asc" },
+    take: 25,
+  });
+  for (const batch of running) {
+    await recoverStale(batch.id, batch.status, batch.heartbeatAt);
+  }
+}
+
 export async function listAutopartImportBatches(actorUserId: string, page = 1) {
   await requireSystemPermission(actorUserId, "autopart.import.view");
+  await recoverListedStaleBatches();
+  const safePage = boundedPage(page);
   const pageSize = 25;
   const where = {};
   const [total, items] = await Promise.all([
@@ -1118,7 +1140,7 @@ export async function listAutopartImportBatches(actorUserId: string, page = 1) {
     prisma.autopartImportBatch.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
       select: {
         id: true,
@@ -1141,11 +1163,12 @@ export async function listAutopartImportBatches(actorUserId: string, page = 1) {
       },
     }),
   ]);
-  return { total, page, pageSize, items };
+  return { total, page: safePage, pageSize, items };
 }
 
 export async function listAutopartImportIssues(actorUserId: string, batchId: string, page = 1) {
   await requireSystemPermission(actorUserId, "autopart.import.view");
+  const safePage = boundedPage(page);
   const pageSize = 50;
   const where = { batchId };
   const [total, items] = await Promise.all([
@@ -1153,11 +1176,11 @@ export async function listAutopartImportIssues(actorUserId: string, batchId: str
     prisma.autopartImportIssue.findMany({
       where,
       orderBy: { sourceRowNumber: "asc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
     }),
   ]);
-  return { total, page, pageSize, items };
+  return { total, page: safePage, pageSize, items };
 }
 
 export async function listAutopartAccounts(
@@ -1170,7 +1193,7 @@ export async function listAutopartAccounts(
   },
 ) {
   await requireSystemPermission(actorUserId, "autopart.customer.view");
-  const page = input.page ?? 1;
+  const page = boundedPage(input.page);
   const pageSize = 50;
   const q = input.q?.trim() ?? "";
   const where: Prisma.AutopartAccountWhereInput = {
@@ -1219,13 +1242,27 @@ export async function listAutopartAccounts(
 export async function listDuplicateAutopartNames(actorUserId: string, page = 1) {
   await requireSystemPermission(actorUserId, "autopart.customer.view");
   const pageSize = 25;
-  const groupedAll = await prisma.autopartAccount.groupBy({
-    by: ["originalName"],
-    _count: { _all: true },
-    orderBy: { originalName: "asc" },
-  });
-  const grouped = groupedAll.filter((row) => row._count._all > 1);
-  const slice = grouped.slice((page - 1) * pageSize, page * pageSize);
+  const safePage = boundedPage(page);
+  const offset = (safePage - 1) * pageSize;
+  const [countRows, slice] = await Promise.all([
+    prisma.$queryRaw<Array<{ total: number }>>`
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT "originalName"
+        FROM "AutopartAccount"
+        GROUP BY "originalName"
+        HAVING COUNT(*) > 1
+      ) grouped
+    `,
+    prisma.$queryRaw<Array<{ originalName: string; count: number }>>`
+      SELECT "originalName", COUNT(*)::int AS count
+      FROM "AutopartAccount"
+      GROUP BY "originalName"
+      HAVING COUNT(*) > 1
+      ORDER BY "originalName" ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `,
+  ]);
   const names = slice.map((row) => row.originalName);
   const accounts = names.length
     ? await prisma.autopartAccount.findMany({
@@ -1241,12 +1278,12 @@ export async function listDuplicateAutopartNames(actorUserId: string, page = 1) 
       })
     : [];
   return {
-    total: grouped.length,
-    page,
+    total: Number(countRows[0]?.total ?? 0),
+    page: safePage,
     pageSize,
     items: slice.map((row) => ({
       originalName: row.originalName,
-      count: row._count._all,
+      count: Number(row.count),
       accounts: accounts.filter((account) => account.originalName === row.originalName),
     })),
   };
@@ -1491,7 +1528,7 @@ export async function listAutopartInvoiceLines(
   input: { accountCode?: string; q?: string; page?: number },
 ) {
   await requireSystemPermission(actorUserId, "autopart.history.view");
-  const page = input.page ?? 1;
+  const page = boundedPage(input.page);
   const pageSize = 50;
   const q = input.q?.trim() ?? "";
   const where: Prisma.AutopartInvoiceLineWhereInput = {
@@ -1547,7 +1584,7 @@ export async function listAutopartLedger(
   input: { accountCode?: string; page?: number },
 ) {
   await requireSystemPermission(actorUserId, "autopart.ledger.view");
-  const page = input.page ?? 1;
+  const page = boundedPage(input.page);
   const pageSize = 50;
   const where = input.accountCode ? { accountCode: input.accountCode } : {};
   const [total, items] = await Promise.all([
@@ -1587,7 +1624,7 @@ export async function listAutopartReconciliation(
 ) {
   const profile = await requireSystemPermission(actorUserId, "autopart.history.view");
   const canLedger = profile.permissions.has("autopart.ledger.view");
-  const page = input.page ?? 1;
+  const page = boundedPage(input.page);
   const pageSize = 50;
   const status = documentMatchStatus(input.status);
   const where: Prisma.AutopartDocumentMatchWhereInput = {
@@ -1693,6 +1730,7 @@ export async function listAutopartDocumentMatches(
   page = 1,
 ) {
   await requireSystemPermission(actorUserId, "autopart.history.view");
+  const safePage = boundedPage(page);
   const pageSize = 50;
   const where = { accountCode };
   const [total, items] = await Promise.all([
@@ -1700,13 +1738,13 @@ export async function listAutopartDocumentMatches(
     prisma.autopartDocumentMatch.findMany({
       where,
       orderBy: { documentReference: "asc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
     }),
   ]);
   return {
     total,
-    page,
+    page: safePage,
     pageSize,
     items: items.map((item) => ({
       ...item,
@@ -1739,11 +1777,12 @@ export async function getAutopartHistoricalSummary(actorUserId: string) {
 
 export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
   const profile = await requireSystemPermission(actorUserId, "companies.view");
+  const safePage = boundedPage(page);
   if (profile.actorType !== "TRADE") {
     throw new AuthError("This history view is for a trade customer", "FORBIDDEN", 403);
   }
   if (!portalAutopartHistoryEnabled()) {
-    return { enabled: false as const, items: [], total: 0, page, pageSize: 50 };
+    return { enabled: false as const, items: [], total: 0, page: safePage, pageSize: 50 };
   }
   const companyIds = profile.companyMemberships
     .filter((membership) => membership.status === "ACTIVE")
@@ -1758,7 +1797,7 @@ export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
   });
   const codes = accounts.map((account) => account.accountCode);
   if (codes.length === 0)
-    return { enabled: true as const, items: [], total: 0, page, pageSize: 50 };
+    return { enabled: true as const, items: [], total: 0, page: safePage, pageSize: 50 };
   const pageSize = 50;
   const where = { accountCode: { in: codes } };
   const [total, items] = await Promise.all([
@@ -1766,7 +1805,7 @@ export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
     prisma.autopartInvoiceLine.findMany({
       where,
       orderBy: { rawInvAndLn: "asc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
       select: {
         id: true,
@@ -1783,7 +1822,7 @@ export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
   return {
     enabled: true as const,
     total,
-    page,
+    page: safePage,
     pageSize,
     label: "Autopart historical purchases for your approved account.",
     items: items.map((item) => ({
