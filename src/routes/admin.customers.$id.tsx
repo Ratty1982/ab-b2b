@@ -6,6 +6,7 @@ import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { AutopartCustomerHistoryPanel } from "@/components/ab/AutopartCustomerHistoryPanel";
+import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
 import {
@@ -478,7 +479,12 @@ function CustomerWorkspace() {
           </div>
         ) : null}
 
-        {tab === "Autopart" ? <AutopartCustomerHistoryPanel companyId={company.id} /> : null}
+        {tab === "Autopart" ? (
+          <>
+            <AutopartMasterAccessPanel companyId={company.id} />
+            <AutopartCustomerHistoryPanel companyId={company.id} />
+          </>
+        ) : null}
 
         {tab === "Activity" ? (
           <ul className="grid gap-2">

@@ -49,6 +49,7 @@ import { Route as CrmManagerRouteImport } from './routes/crm.manager'
 import { Route as CrmOverviewRouteImport } from './routes/crm.overview'
 import { Route as CrmTasksRouteImport } from './routes/crm.tasks'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
+import { Route as PortalAutopartHistoryRouteImport } from './routes/portal.autopart-history'
 import { Route as PortalBasketRouteImport } from './routes/portal.basket'
 import { Route as PortalCheckoutRouteImport } from './routes/portal.checkout'
 import { Route as PortalFavouritesRouteImport } from './routes/portal.favourites'
@@ -78,6 +79,7 @@ import { Route as AdminContentTeamRouteImport } from './routes/admin.content.tea
 import { Route as AdminCustomersIndexRouteImport } from './routes/admin.customers.index'
 import { Route as AdminCustomersIdRouteImport } from './routes/admin.customers.$id'
 import { Route as AdminCustomersAutopartAccountsRouteImport } from './routes/admin.customers.autopart-accounts'
+import { Route as AdminCustomersAutopartImportsRouteImport } from './routes/admin.customers.autopart-imports'
 import { Route as AdminOrdersIndexRouteImport } from './routes/admin.orders.index'
 import { Route as AdminOrdersOrderIdRouteImport } from './routes/admin.orders.$orderId'
 import { Route as AdminPricingIndexRouteImport } from './routes/admin.pricing.index'
@@ -93,6 +95,7 @@ import { Route as AdminVersionUpdatesIndexRouteImport } from './routes/admin.ver
 import { Route as AdminVersionUpdatesIdRouteImport } from './routes/admin.version-updates.$id'
 import { Route as AdminVersionUpdatesNewRouteImport } from './routes/admin.version-updates.new'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiAutopartImportsUploadRouteImport } from './routes/api/autopart-imports/upload'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
 import { Route as ApiProductDocumentsIdRouteImport } from './routes/api/product-documents/$id'
@@ -121,6 +124,7 @@ import { Route as AdminCustomersGroupsIndexRouteImport } from './routes/admin.cu
 import { Route as AdminCustomersGroupsGroupIdRouteImport } from './routes/admin.customers.groups.$groupId'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
+import { Route as ApiAutopartImportsReconciliationCsvRouteImport } from './routes/api/autopart-imports/reconciliation.csv'
 import { Route as PortalOrdersOrderIdIndexRouteImport } from './routes/portal.orders.$orderId.index'
 import { Route as PortalOrdersOrderIdConfirmationRouteImport } from './routes/portal.orders.$orderId.confirmation'
 import { Route as AdminProductsStockProductSkuRouteImport } from './routes/admin.products.stock.product.$sku'
@@ -325,6 +329,11 @@ const PortalIndexRoute = PortalIndexRouteImport.update({
   path: '/',
   getParentRoute: () => PortalRoute,
 } as any)
+const PortalAutopartHistoryRoute = PortalAutopartHistoryRouteImport.update({
+  id: '/autopart-history',
+  path: '/autopart-history',
+  getParentRoute: () => PortalRoute,
+} as any)
 const PortalBasketRoute = PortalBasketRouteImport.update({
   id: '/basket',
   path: '/basket',
@@ -471,6 +480,12 @@ const AdminCustomersAutopartAccountsRoute =
     path: '/customers/autopart-accounts',
     getParentRoute: () => AdminRoute,
   } as any)
+const AdminCustomersAutopartImportsRoute =
+  AdminCustomersAutopartImportsRouteImport.update({
+    id: '/customers/autopart-imports',
+    path: '/customers/autopart-imports',
+    getParentRoute: () => AdminRoute,
+  } as any)
 const AdminOrdersIndexRoute = AdminOrdersIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -548,6 +563,12 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAutopartImportsUploadRoute =
+  ApiAutopartImportsUploadRouteImport.update({
+    id: '/api/autopart-imports/upload',
+    path: '/api/autopart-imports/upload',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiCmsMediaIdRoute = ApiCmsMediaIdRouteImport.update({
   id: '/api/cms-media/$id',
   path: '/api/cms-media/$id',
@@ -698,6 +719,12 @@ const AdminProductsImportsIdRoute = AdminProductsImportsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminProductsImportsRoute,
 } as any)
+const ApiAutopartImportsReconciliationCsvRoute =
+  ApiAutopartImportsReconciliationCsvRouteImport.update({
+    id: '/api/autopart-imports/reconciliation/csv',
+    path: '/api/autopart-imports/reconciliation/csv',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const PortalOrdersOrderIdIndexRoute =
   PortalOrdersOrderIdIndexRouteImport.update({
     id: '/',
@@ -754,6 +781,7 @@ export interface FileRoutesByFullPath {
   '/crm/manager': typeof CrmManagerRoute
   '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
+  '/portal/autopart-history': typeof PortalAutopartHistoryRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
@@ -784,6 +812,7 @@ export interface FileRoutesByFullPath {
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
+  '/admin/customers/autopart-imports': typeof AdminCustomersAutopartImportsRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -795,6 +824,7 @@ export interface FileRoutesByFullPath {
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
@@ -828,6 +858,7 @@ export interface FileRoutesByFullPath {
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
@@ -861,6 +892,7 @@ export interface FileRoutesByTo {
   '/crm/manager': typeof CrmManagerRoute
   '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
+  '/portal/autopart-history': typeof PortalAutopartHistoryRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
@@ -886,6 +918,7 @@ export interface FileRoutesByTo {
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
+  '/admin/customers/autopart-imports': typeof AdminCustomersAutopartImportsRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -896,6 +929,7 @@ export interface FileRoutesByTo {
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
@@ -928,6 +962,7 @@ export interface FileRoutesByTo {
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports': typeof AdminProductsImportsIndexRoute
@@ -972,6 +1007,7 @@ export interface FileRoutesById {
   '/crm/manager': typeof CrmManagerRoute
   '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
+  '/portal/autopart-history': typeof PortalAutopartHistoryRoute
   '/portal/basket': typeof PortalBasketRoute
   '/portal/checkout': typeof PortalCheckoutRoute
   '/portal/favourites': typeof PortalFavouritesRoute
@@ -1002,6 +1038,7 @@ export interface FileRoutesById {
   '/admin/content/team': typeof AdminContentTeamRoute
   '/admin/customers/$id': typeof AdminCustomersIdRoute
   '/admin/customers/autopart-accounts': typeof AdminCustomersAutopartAccountsRoute
+  '/admin/customers/autopart-imports': typeof AdminCustomersAutopartImportsRoute
   '/admin/orders/$orderId': typeof AdminOrdersOrderIdRoute
   '/admin/pricing/$id': typeof AdminPricingIdRoute
   '/admin/products/$id': typeof AdminProductsIdRoute
@@ -1013,6 +1050,7 @@ export interface FileRoutesById {
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
@@ -1046,6 +1084,7 @@ export interface FileRoutesById {
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
   '/admin/products/imports/': typeof AdminProductsImportsIndexRoute
@@ -1091,6 +1130,7 @@ export interface FileRouteTypes {
     | '/crm/manager'
     | '/crm/overview'
     | '/crm/tasks'
+    | '/portal/autopart-history'
     | '/portal/basket'
     | '/portal/checkout'
     | '/portal/favourites'
@@ -1121,6 +1161,7 @@ export interface FileRouteTypes {
     | '/admin/content/team'
     | '/admin/customers/$id'
     | '/admin/customers/autopart-accounts'
+    | '/admin/customers/autopart-imports'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1132,6 +1173,7 @@ export interface FileRouteTypes {
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
+    | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
     | '/api/product-documents/$id'
@@ -1165,6 +1207,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
+    | '/api/autopart-imports/reconciliation/csv'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups/'
     | '/admin/products/imports/'
@@ -1198,6 +1241,7 @@ export interface FileRouteTypes {
     | '/crm/manager'
     | '/crm/overview'
     | '/crm/tasks'
+    | '/portal/autopart-history'
     | '/portal/basket'
     | '/portal/checkout'
     | '/portal/favourites'
@@ -1223,6 +1267,7 @@ export interface FileRouteTypes {
     | '/admin/content/team'
     | '/admin/customers/$id'
     | '/admin/customers/autopart-accounts'
+    | '/admin/customers/autopart-imports'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1233,6 +1278,7 @@ export interface FileRouteTypes {
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
+    | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
     | '/api/product-documents/$id'
@@ -1265,6 +1311,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
+    | '/api/autopart-imports/reconciliation/csv'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups'
     | '/admin/products/imports'
@@ -1308,6 +1355,7 @@ export interface FileRouteTypes {
     | '/crm/manager'
     | '/crm/overview'
     | '/crm/tasks'
+    | '/portal/autopart-history'
     | '/portal/basket'
     | '/portal/checkout'
     | '/portal/favourites'
@@ -1338,6 +1386,7 @@ export interface FileRouteTypes {
     | '/admin/content/team'
     | '/admin/customers/$id'
     | '/admin/customers/autopart-accounts'
+    | '/admin/customers/autopart-imports'
     | '/admin/orders/$orderId'
     | '/admin/pricing/$id'
     | '/admin/products/$id'
@@ -1349,6 +1398,7 @@ export interface FileRouteTypes {
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
+    | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
     | '/api/product-documents/$id'
@@ -1382,6 +1432,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
+    | '/api/autopart-imports/reconciliation/csv'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups/'
     | '/admin/products/imports/'
@@ -1414,10 +1465,12 @@ export interface RootRouteChildren {
   BrandsIndexRoute: typeof BrandsIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiAutopartImportsUploadRoute: typeof ApiAutopartImportsUploadRoute
   ApiCmsMediaIdRoute: typeof ApiCmsMediaIdRoute
   ApiInternalStockSyncRoute: typeof ApiInternalStockSyncRoute
   ApiProductDocumentsIdRoute: typeof ApiProductDocumentsIdRoute
   ProductsCategorySlugRoute: typeof ProductsCategorySlugRoute
+  ApiAutopartImportsReconciliationCsvRoute: typeof ApiAutopartImportsReconciliationCsvRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1702,6 +1755,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalIndexRouteImport
       parentRoute: typeof PortalRoute
     }
+    '/portal/autopart-history': {
+      id: '/portal/autopart-history'
+      path: '/autopart-history'
+      fullPath: '/portal/autopart-history'
+      preLoaderRoute: typeof PortalAutopartHistoryRouteImport
+      parentRoute: typeof PortalRoute
+    }
     '/portal/basket': {
       id: '/portal/basket'
       path: '/basket'
@@ -1905,6 +1965,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersAutopartAccountsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/customers/autopart-imports': {
+      id: '/admin/customers/autopart-imports'
+      path: '/customers/autopart-imports'
+      fullPath: '/admin/customers/autopart-imports'
+      preLoaderRoute: typeof AdminCustomersAutopartImportsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/orders/': {
       id: '/admin/orders/'
       path: '/'
@@ -2008,6 +2075,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autopart-imports/upload': {
+      id: '/api/autopart-imports/upload'
+      path: '/api/autopart-imports/upload'
+      fullPath: '/api/autopart-imports/upload'
+      preLoaderRoute: typeof ApiAutopartImportsUploadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/cms-media/$id': {
@@ -2206,6 +2280,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsImportsIdRouteImport
       parentRoute: typeof AdminProductsImportsRoute
     }
+    '/api/autopart-imports/reconciliation/csv': {
+      id: '/api/autopart-imports/reconciliation/csv'
+      path: '/api/autopart-imports/reconciliation/csv'
+      fullPath: '/api/autopart-imports/reconciliation/csv'
+      preLoaderRoute: typeof ApiAutopartImportsReconciliationCsvRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/portal/orders/$orderId/': {
       id: '/portal/orders/$orderId/'
       path: '/'
@@ -2362,6 +2443,7 @@ interface AdminRouteChildren {
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCustomersIdRoute: typeof AdminCustomersIdRoute
   AdminCustomersAutopartAccountsRoute: typeof AdminCustomersAutopartAccountsRoute
+  AdminCustomersAutopartImportsRoute: typeof AdminCustomersAutopartImportsRoute
   AdminSecurityMfaRoute: typeof AdminSecurityMfaRoute
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
   AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
@@ -2383,6 +2465,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminIndexRoute: AdminIndexRoute,
   AdminCustomersIdRoute: AdminCustomersIdRoute,
   AdminCustomersAutopartAccountsRoute: AdminCustomersAutopartAccountsRoute,
+  AdminCustomersAutopartImportsRoute: AdminCustomersAutopartImportsRoute,
   AdminSecurityMfaRoute: AdminSecurityMfaRoute,
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
   AdminCustomersIndexRoute: AdminCustomersIndexRoute,
@@ -2456,6 +2539,7 @@ const PortalQuotesRouteWithChildren = PortalQuotesRoute._addFileChildren(
 )
 
 interface PortalRouteChildren {
+  PortalAutopartHistoryRoute: typeof PortalAutopartHistoryRoute
   PortalBasketRoute: typeof PortalBasketRoute
   PortalCheckoutRoute: typeof PortalCheckoutRoute
   PortalFavouritesRoute: typeof PortalFavouritesRoute
@@ -2470,6 +2554,7 @@ interface PortalRouteChildren {
 }
 
 const PortalRouteChildren: PortalRouteChildren = {
+  PortalAutopartHistoryRoute: PortalAutopartHistoryRoute,
   PortalBasketRoute: PortalBasketRoute,
   PortalCheckoutRoute: PortalCheckoutRoute,
   PortalFavouritesRoute: PortalFavouritesRoute,
@@ -2609,10 +2694,13 @@ const rootRouteChildren: RootRouteChildren = {
   BrandsIndexRoute: BrandsIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiAutopartImportsUploadRoute: ApiAutopartImportsUploadRoute,
   ApiCmsMediaIdRoute: ApiCmsMediaIdRoute,
   ApiInternalStockSyncRoute: ApiInternalStockSyncRoute,
   ApiProductDocumentsIdRoute: ApiProductDocumentsIdRoute,
   ProductsCategorySlugRoute: ProductsCategorySlugRoute,
+  ApiAutopartImportsReconciliationCsvRoute:
+    ApiAutopartImportsReconciliationCsvRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -106,6 +106,15 @@ export const PERMISSIONS = [
 
   /// Super Admin only — manage Version Updates / What's New (via ALL_PERMISSIONS).
   "version_updates.manage",
+
+  /// Autopart customer master and historical exports. Internal only.
+  "autopart.import.view",
+  "autopart.import.manage",
+  "autopart.customer.view",
+  "autopart.history.view",
+  "autopart.ledger.view",
+  "autopart.mapping.manage",
+  "autopart.portal-access.manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number];

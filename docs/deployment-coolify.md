@@ -152,4 +152,12 @@ If export/unpack still fails after the timeout is raised: on the Coolify server 
 
 Stock **imports** at **09:15, 12:15, 15:15, 18:15 Europe/London**. See [docs/autopart-stock-sync.md](autopart-stock-sync.md).
 
+## Autopart customer master
+
+Migration `20261008202311_autopart_customer_master` is additive. The entrypoint `prisma migrate deploy` applies it. Bootstrap upserts the `autopart.*` permissions. Deploy does **not** import 407EXP, 561L, or SLRB, and it does **not** enable historical access or create portal users.
+
+Leave `AUTOPART_PORTAL_HISTORY_ENABLED` unset or `false`. Optional `AUTOPART_IMPORT_MAX_BYTES` defaults to 262144000 (250 MB). Optional `AUTOPART_IMPORT_DIR` overrides the private upload directory.
+
+The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/upload`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. A confirmed import continues in the Node process after the confirm request returns, so the proxy timeout applies to the upload and the confirm call, not to the whole multi-minute write.
+
 

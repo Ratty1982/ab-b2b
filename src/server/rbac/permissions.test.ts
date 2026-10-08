@@ -110,6 +110,21 @@ describe("permission catalogue", () => {
     }
   });
 
+  it("keeps Autopart history internal and limits the ledger to accounts", () => {
+    expect(isPermissionKey("autopart.ledger.view")).toBe(true);
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTS).toContain("autopart.ledger.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("autopart.portal-access.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).toContain("autopart.history.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("autopart.ledger.view");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("autopart.import.manage");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("autopart.customer.view");
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("autopart.history.view");
+      expect(perms).not.toContain("autopart.ledger.view");
+      expect(perms).not.toContain("autopart.import.view");
+    }
+  });
+
   it("trade buyer cannot manage company users", () => {
     expect(TRADE_ROLE_PERMISSIONS.TRADE_BUYER).not.toContain("companies.manage_users");
     expect(TRADE_ROLE_PERMISSIONS.TRADE_ACCOUNT_ADMIN).toContain("companies.manage_users");

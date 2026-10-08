@@ -50,6 +50,13 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "settings.view",
   "settings.edit",
   "integrations.sharepoint.manage",
+  "autopart.import.view",
+  "autopart.import.manage",
+  "autopart.customer.view",
+  "autopart.history.view",
+  "autopart.ledger.view",
+  "autopart.mapping.manage",
+  "autopart.portal-access.manage",
 ];
 
 const SALES_MANAGER_PERMS: PermissionKey[] = [
@@ -87,6 +94,10 @@ const SALES_MANAGER_PERMS: PermissionKey[] = [
   "sales_intelligence.view",
   "reports.view",
   "impersonation.order_for_customer",
+  "autopart.import.view",
+  "autopart.customer.view",
+  "autopart.history.view",
+  "autopart.mapping.manage",
 ];
 
 const SALES_REP_PERMS: PermissionKey[] = [
@@ -116,6 +127,8 @@ const SALES_REP_PERMS: PermissionKey[] = [
   "sales.view_own_accounts",
   "sales_intelligence.view",
   "impersonation.order_for_customer",
+  "autopart.customer.view",
+  "autopart.history.view",
 ];
 
 const CUSTOMER_SERVICE_PERMS: PermissionKey[] = [
@@ -132,6 +145,7 @@ const CUSTOMER_SERVICE_PERMS: PermissionKey[] = [
   "applications.view",
   "tasks.view",
   "tasks.manage",
+  "autopart.customer.view",
 ];
 
 const ACCOUNTS_PERMS: PermissionKey[] = [
@@ -147,6 +161,13 @@ const ACCOUNTS_PERMS: PermissionKey[] = [
   "sales_intelligence.view",
   "purchasing.view",
   "reports.view",
+  "autopart.import.view",
+  "autopart.import.manage",
+  "autopart.customer.view",
+  "autopart.history.view",
+  "autopart.ledger.view",
+  "autopart.mapping.manage",
+  "autopart.portal-access.manage",
 ];
 
 const MARKETING_PERMS: PermissionKey[] = [

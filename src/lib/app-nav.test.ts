@@ -78,6 +78,7 @@ describe("canonical navigation contract", () => {
     expect(visible.map((i) => i.id)).toContain("cost-intelligence");
     expect(visible.map((i) => i.id)).toContain("crm-overview");
     expect(visible.map((i) => i.id)).toContain("crm-leads");
+    expect(visible.map((i) => i.id)).toContain("crm-autopart-imports");
     expect(visible.map((i) => i.id)).toContain("activities");
     expect(visible.map((i) => i.id)).not.toContain("audit-log");
     expect(visible.map((i) => i.id)).toContain("version-updates");
@@ -190,6 +191,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-stock");
     expect(ids).not.toContain("purchasing-forecast");
+    expect(ids).not.toContain("crm-autopart-imports");
     expect(ids).not.toContain("cost-intelligence");
     expect(ids).not.toContain("users");
     expect(ids).not.toContain("settings");
@@ -216,6 +218,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("portal-quick-order");
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-stock");
+    expect(ids).not.toContain("crm-autopart-imports");
     const backoffice = flattenVisible(visibleNav(BACK_OFFICE_NAV, navCtxFromUser(tradeBuyer)));
     expect(backoffice.some((i) => i.id === "website-homepage")).toBe(false);
     expect(backoffice.some((i) => i.id === "purchasing-dashboard")).toBe(false);
