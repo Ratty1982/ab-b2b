@@ -1,13 +1,23 @@
 /**
  * Streaming-friendly CSV recovery for Autopart 561L and SLRB exports.
  *
- * Column names below are the documented headers. The real 561L-ALL and SLRB-ALL
- * files were not available when this parser was written, so callers must preview
- * and may supply a column map when the header differs.
+ * Documented 561L columns: .Acct., Inv & Ln, Part Number, Description, Units, Sales.
+ * Callers may still supply a column map when a header differs.
  *
- * An interior inch mark is recovered when the field still closes. A quote that
- * runs into the next complete record is quarantined with its raw text. The
- * following record is kept. Rows are not dropped without an issue.
+ * Autopart product descriptions use a quotation mark as an inch symbol (`14"`,
+ * `15"`, `16"`), including inside an otherwise quoted field. The previous
+ * scanner closed a quoted field on the first digit-plus-quote, so a real closing
+ * quote was left on the description while the row still had six columns and was
+ * counted as recovered. A quote that was not after a digit set a sticky malformed
+ * flag, which rejected rows such as `O"Ring` as MALFORMED_CSV even when the
+ * columns had already been read correctly.
+ *
+ * RFC 4180 quoting is unchanged. An interior quote stays in the field when a
+ * later quote still closes that same field. A 561L row that still does not
+ * line up is recovered only when the first three columns and the last two
+ * numeric columns identify one description. Adjacent records are not joined
+ * to absorb an unmatched quote. Anything else is quarantined with its source
+ * row number and is not given a fabricated value.
  */
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -17,6 +27,10 @@ import {
   parseAutopartMoney,
 } from "@/domain/autopart-report-money";
 import { parseInvAndLn } from "@/domain/autopart-561l";
+import { addMoney, moneyToString, moneyZero, parseMoney, type Money } from "@/domain/money";
+
+/** Documented 561L export width, including Description between the part and the quantities. */
+const INVOICE_CSV_WIDTH = 6;
 
 export type CsvScanRecord = {
   rowNumber: number;
@@ -34,36 +48,31 @@ type ParsedLine = {
   malformed: boolean;
 };
 
-function hasValidCloser(line: string, from: number, delimiter: string): boolean {
-  let inQuotes = false;
-  for (let i = from; i < line.length; i += 1) {
-    const ch = line[i]!;
-    if (ch === '"') {
-      if (line[i + 1] === '"') {
-        i += 1;
-        continue;
-      }
-      inQuotes = !inQuotes;
+function quoteClosesField(line: string, index: number, delimiter: string): boolean {
+  const next = line[index + 1];
+  return next == null || next === delimiter || next === "\n" || next === "\r";
+}
+
+/** True when a later quote still ends this field before a delimiter. */
+function hasLaterFieldCloser(line: string, from: number, delimiter: string): boolean {
+  for (let k = from; k < line.length; k += 1) {
+    if (line[k] !== '"') continue;
+    if (line[k + 1] === '"') {
+      k += 1;
       continue;
     }
-    if (!inQuotes && (ch === delimiter || ch === "\n")) return true;
+    if (quoteClosesField(line, k, delimiter)) return true;
   }
   return false;
 }
 
-function lastCharIsDigit(field: string): boolean {
-  const last = field.trim().slice(-1);
-  return last >= "0" && last <= "9";
-}
-
-/** Parse one physical or joined record. Does not read later lines. */
+/** Parse one physical line. Does not read later lines or invent missing columns. */
 export function parseCsvRecordLine(line: string, delimiter = ","): ParsedLine {
   const cells: string[] = [];
   let field = "";
   let inQuotes = false;
   let fieldStart = true;
   let recovered = false;
-  let malformed = false;
 
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i]!;
@@ -76,26 +85,20 @@ export function parseCsvRecordLine(line: string, delimiter = ","): ParsedLine {
           fieldStart = false;
           continue;
         }
-        if (next == null || next === delimiter || next === "\n" || next === "\r") {
+        if (quoteClosesField(line, i, delimiter)) {
           inQuotes = false;
           fieldStart = false;
           continue;
         }
-        if (hasValidCloser(line, i + 1, delimiter)) {
+        if (hasLaterFieldCloser(line, i + 1, delimiter)) {
           field += '"';
           recovered = true;
           fieldStart = false;
           continue;
         }
-        if (lastCharIsDigit(field)) {
-          field += '"';
-          inQuotes = false;
-          recovered = true;
-          fieldStart = false;
-          continue;
-        }
-        malformed = true;
         field += ch;
+        recovered = true;
+        fieldStart = false;
         continue;
       }
       if (ch === "\r") continue;
@@ -125,13 +128,280 @@ export function parseCsvRecordLine(line: string, delimiter = ","): ParsedLine {
     fieldStart = false;
   }
   cells.push(field.trim());
-  return { cells, inQuotesAtEnd: inQuotes && !malformed, recovered, malformed };
+  return { cells, inQuotesAtEnd: inQuotes, recovered, malformed: false };
+}
+
+type SettledLine = {
+  cells: string[];
+  recovered: boolean;
+  quarantined: boolean;
+  issue: string | null;
+  /** Unclosed quote on this line alone. The caller must not merge it into the next record. */
+  joinable: boolean;
+};
+
+function isNumericToken(raw: string): boolean {
+  if (!raw.trim()) return false;
+  const money = moneyField(raw);
+  return !money.invalid && money.value != null;
+}
+
+function parseLeadingFields(
+  line: string,
+  delimiter: string,
+  count: number,
+): { fields: string[]; rest: string } | null {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  let i = 0;
+  for (; i < line.length && fields.length < count; i += 1) {
+    const ch = line[i]!;
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === delimiter && !inQuotes) {
+      fields.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (inQuotes) return null;
+  if (fields.length === count) return { fields, rest: line.slice(i) };
+  if (fields.length === count - 1) {
+    fields.push(cur.trim());
+    return { fields, rest: "" };
+  }
+  return null;
+}
+
+function peelTrailingNumericFields(
+  segment: string,
+  delimiter: string,
+  count: number,
+): { fields: string[]; descriptionRaw: string } | null {
+  let rest = segment.replace(/\s+$/, "");
+  const fields: string[] = [];
+  for (let n = 0; n < count; n += 1) {
+    if (!rest.length) return null;
+    if (rest.endsWith('"')) {
+      const end = rest.length - 1;
+      let open = -1;
+      for (let i = end - 1; i >= 0; i -= 1) {
+        if (rest[i] === '"') {
+          if (i > 0 && rest[i - 1] === '"') {
+            i -= 1;
+            continue;
+          }
+          open = i;
+          break;
+        }
+      }
+      if (open < 0) return null;
+      const value = rest.slice(open + 1, end);
+      if (value.includes('"') || !isNumericToken(value)) return null;
+      fields.unshift(value.trim());
+      rest = rest.slice(0, open).replace(/\s+$/, "");
+      if (rest.endsWith(delimiter)) rest = rest.slice(0, -delimiter.length);
+      else if (rest.length > 0) return null;
+      continue;
+    }
+    const delimAt = rest.lastIndexOf(delimiter);
+    const value = delimAt < 0 ? rest : rest.slice(delimAt + delimiter.length);
+    if (!isNumericToken(value)) return null;
+    fields.unshift(value.trim());
+    if (delimAt < 0) {
+      rest = "";
+      if (n !== count - 1) return null;
+    } else {
+      rest = rest.slice(0, delimAt);
+    }
+  }
+  return { fields, descriptionRaw: rest };
+}
+
+function normaliseRecoveredDescription(raw: string): string {
+  let description = raw.trim();
+  if (description.startsWith('"') && description.endsWith('"') && description.length >= 2) {
+    description = description.slice(1, -1);
+  } else if (description.startsWith('"')) {
+    description = description.slice(1);
+  }
+  return description.replace(/""/g, '"').trim();
 }
 
 /**
- * Turn physical lines into records. `expectedColumns` is the header width once known.
- * Pass the header width on the second pass; the first record may establish it.
+ * Rebuild one 561L row from a fixed column layout.
+ * Returns null when the trailing quantity could also be read from more than one numeric field.
  */
+function recoverInvoiceCsvLine(line: string): { cells: string[] } | "ambiguous" | null {
+  const leading = parseLeadingFields(line, ",", 3);
+  if (!leading || leading.fields.length !== 3) return null;
+  if (!leading.fields[0] || !leading.fields[2]) return null;
+  const peeled = peelTrailingNumericFields(leading.rest, ",", 2);
+  if (!peeled || peeled.fields.length !== 2) return null;
+  if (peelTrailingNumericFields(leading.rest, ",", 3)) return "ambiguous";
+  const description = normaliseRecoveredDescription(peeled.descriptionRaw);
+  return {
+    cells: [
+      leading.fields[0],
+      leading.fields[1] ?? "",
+      leading.fields[2],
+      description,
+      peeled.fields[0]!,
+      peeled.fields[1]!,
+    ],
+  };
+}
+
+function looksLike561lRecordStart(line: string): boolean {
+  const leading = parseLeadingFields(line, ",", 2);
+  if (!leading || leading.fields.length < 2) return false;
+  return /^[IC]\//i.test(leading.fields[1] ?? "");
+}
+
+function settleCsvLine(line: string, expected: number | null): SettledLine {
+  const parsed = parseCsvRecordLine(line);
+  const widthOk = expected == null || parsed.cells.length === expected;
+  if (!parsed.inQuotesAtEnd && widthOk) {
+    return {
+      cells: parsed.cells,
+      recovered: parsed.recovered,
+      quarantined: false,
+      issue: null,
+      joinable: false,
+    };
+  }
+  if (expected === INVOICE_CSV_WIDTH) {
+    const recovered = recoverInvoiceCsvLine(line);
+    if (recovered === "ambiguous") {
+      return {
+        cells: parsed.cells,
+        recovered: false,
+        quarantined: true,
+        issue:
+          "Ambiguous CSV quoting. Another trailing numeric field could be the quantity, so this row was not recovered.",
+        joinable: false,
+      };
+    }
+    if (recovered) {
+      return {
+        cells: recovered.cells,
+        recovered: true,
+        quarantined: false,
+        issue: null,
+        joinable: false,
+      };
+    }
+  }
+  if (parsed.inQuotesAtEnd) {
+    return {
+      cells: parsed.cells,
+      recovered: false,
+      quarantined: false,
+      issue: null,
+      joinable: true,
+    };
+  }
+  const columnMismatch = expected != null && parsed.cells.length !== expected;
+  return {
+    cells: parsed.cells,
+    recovered: false,
+    quarantined: true,
+    issue: columnMismatch
+      ? `Column count ${parsed.cells.length} does not match the header width ${expected}`
+      : "Malformed CSV quoting",
+    joinable: false,
+  };
+}
+
+function unclosedQuoteRecord(rowNumber: number, raw: string, cells: string[]): CsvScanRecord {
+  return {
+    rowNumber,
+    cells,
+    raw: raw.slice(0, 2000),
+    recovered: false,
+    quarantined: true,
+    issue: "Unclosed quote. The row was quarantined and the following record was kept.",
+  };
+}
+
+function recordFromSettled(
+  rowNumber: number,
+  raw: string,
+  settled: SettledLine,
+  expected: number | null,
+): { record: CsvScanRecord; expected: number | null } {
+  let nextExpected = expected;
+  if (nextExpected == null && settled.cells.some((cell) => cell.length > 0)) {
+    nextExpected = settled.cells.length;
+  }
+  const columnMismatch = nextExpected != null && settled.cells.length !== nextExpected;
+  const quarantined = settled.quarantined || (columnMismatch && settled.recovered);
+  return {
+    expected: nextExpected,
+    record: {
+      rowNumber,
+      cells: settled.cells,
+      raw: raw.slice(0, 2000),
+      recovered: settled.recovered && !quarantined,
+      quarantined,
+      issue: quarantined
+        ? columnMismatch && !settled.issue
+          ? `Column count ${settled.cells.length} does not match the header width ${nextExpected}`
+          : settled.issue ||
+            (columnMismatch
+              ? `Column count ${settled.cells.length} does not match the header width ${nextExpected}`
+              : "Malformed CSV quoting")
+        : null,
+    },
+  };
+}
+
+function continuationStandsAlone(line: string, expected: number | null): boolean {
+  const settled = settleCsvLine(line, expected);
+  if (settled.quarantined || settled.joinable) return false;
+  if (expected === INVOICE_CSV_WIDTH && looksLike561lRecordStart(line)) return true;
+  return expected != null && settled.cells.length === expected;
+}
+
+/**
+ * Join a wrapped quoted field only when the following physical line is not itself a record.
+ * A 561L row that starts with an account and an I/ or C/ reference is never absorbed.
+ */
+function joinWrappedQuote(
+  lines: string[],
+  start: number,
+  expected: number | null,
+): { settled: SettledLine; raw: string; lastIndex: number } | null {
+  const first = lines[start];
+  if (first == null) return null;
+  const next = lines[start + 1];
+  if (next == null || continuationStandsAlone(next, expected)) return null;
+  let joined = first;
+  let lastIndex = start;
+  let settled = settleCsvLine(first, expected);
+  for (let j = start + 1; j < lines.length && j - start < 8 && settled.joinable; j += 1) {
+    const continuation = lines[j]!;
+    if (looksLike561lRecordStart(continuation) || continuationStandsAlone(continuation, expected))
+      break;
+    joined += `\n${continuation}`;
+    lastIndex = j;
+    settled = settleCsvLine(joined, expected);
+    if (!settled.joinable && !settled.quarantined) {
+      return { settled, raw: joined, lastIndex };
+    }
+  }
+  return null;
+}
+
 /** Stream records from disk. Does not load the file into one string. */
 export async function* streamCsvRecords(filePath: string): AsyncGenerator<CsvScanRecord> {
   const rl = createInterface({
@@ -141,26 +411,15 @@ export async function* streamCsvRecords(filePath: string): AsyncGenerator<CsvSca
   const iterator = rl[Symbol.asyncIterator]();
   let physical = 0;
   let expected: number | null = null;
-  let lookahead: { rowNumber: number; line: string } | null = null;
+  const pending: { rowNumber: number; line: string }[] = [];
 
   const pull = async (): Promise<{ rowNumber: number; line: string } | null> => {
-    if (lookahead) {
-      const current = lookahead;
-      lookahead = null;
-      return current;
-    }
+    const queued = pending.shift();
+    if (queued) return queued;
     const next = await iterator.next();
     if (next.done) return null;
     physical += 1;
     return { rowNumber: physical, line: String(next.value).replace(/^\uFEFF/, "") };
-  };
-  const peek = async (): Promise<{ rowNumber: number; line: string } | null> => {
-    if (lookahead) return lookahead;
-    const next = await iterator.next();
-    if (next.done) return null;
-    physical += 1;
-    lookahead = { rowNumber: physical, line: String(next.value).replace(/^\uFEFF/, "") };
-    return lookahead;
   };
 
   try {
@@ -168,70 +427,38 @@ export async function* streamCsvRecords(filePath: string): AsyncGenerator<CsvSca
       const current = await pull();
       if (!current) break;
       if (!current.line.trim() && expected == null) continue;
-      let parsed = parseCsvRecordLine(current.line);
+      let settled = settleCsvLine(current.line, expected);
       let raw = current.line;
-      if (parsed.inQuotesAtEnd) {
-        const upcoming = await peek();
-        const upcomingParsed = upcoming ? parseCsvRecordLine(upcoming.line) : null;
-        const nextIsComplete =
-          upcomingParsed != null &&
-          !upcomingParsed.inQuotesAtEnd &&
-          !upcomingParsed.malformed &&
-          expected != null &&
-          upcomingParsed.cells.length === expected;
-        if (nextIsComplete || upcoming == null) {
-          yield {
-            rowNumber: current.rowNumber,
-            cells: parsed.cells,
-            raw: raw.slice(0, 2000),
-            recovered: false,
-            quarantined: true,
-            issue: "Unclosed quote. The row was quarantined and the following record was kept.",
-          };
-          continue;
-        }
+      if (settled.joinable) {
+        const buffered: { rowNumber: number; line: string }[] = [];
         let joined = current.line;
-        let steps = 0;
-        let closed = parsed;
-        while (closed.inQuotesAtEnd && steps < 8) {
+        let closed = settled;
+        let consumed = 0;
+        while (closed.joinable && consumed < 8) {
           const more = await pull();
           if (!more) break;
+          if (looksLike561lRecordStart(more.line) || continuationStandsAlone(more.line, expected)) {
+            pending.unshift(more);
+            break;
+          }
+          buffered.push(more);
           joined += `\n${more.line}`;
-          closed = parseCsvRecordLine(joined);
-          steps += 1;
-          if (expected != null && !closed.inQuotesAtEnd && closed.cells.length === expected) break;
+          consumed += 1;
+          closed = settleCsvLine(joined, expected);
+          if (!closed.joinable && !closed.quarantined) break;
         }
-        if (closed.inQuotesAtEnd || closed.malformed) {
-          yield {
-            rowNumber: current.rowNumber,
-            cells: parsed.cells,
-            raw: joined.slice(0, 2000),
-            recovered: false,
-            quarantined: true,
-            issue: "Unclosed quote could not be recovered. The raw text is stored on the issue.",
-          };
+        if (!closed.joinable && !closed.quarantined) {
+          settled = closed;
+          raw = joined;
+        } else {
+          pending.unshift(...buffered);
+          yield unclosedQuoteRecord(current.rowNumber, current.line, settled.cells);
           continue;
         }
-        parsed = closed;
-        raw = joined;
       }
-      if (expected == null && parsed.cells.some((cell) => cell.length > 0)) {
-        expected = parsed.cells.length;
-      }
-      const columnMismatch = expected != null && parsed.cells.length !== expected;
-      const quarantined = parsed.malformed || (columnMismatch && parsed.recovered);
-      yield {
-        rowNumber: current.rowNumber,
-        cells: parsed.cells,
-        raw: raw.slice(0, 2000),
-        recovered: parsed.recovered && !quarantined,
-        quarantined,
-        issue: quarantined
-          ? columnMismatch
-            ? `Column count ${parsed.cells.length} does not match the header width ${expected}`
-            : "Malformed CSV quoting"
-          : null,
-      };
+      const finished = recordFromSettled(current.rowNumber, raw, settled, expected);
+      expected = finished.expected;
+      yield finished.record;
     }
   } finally {
     rl.close();
@@ -241,74 +468,26 @@ export async function* streamCsvRecords(filePath: string): AsyncGenerator<CsvSca
 export function assembleCsvRecords(lines: string[], expectedColumns?: number): CsvScanRecord[] {
   const records: CsvScanRecord[] = [];
   let expected = expectedColumns ?? null;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!.replace(/^\uFEFF/, "");
+  const normalised = lines.map((line) => line.replace(/^\uFEFF/, ""));
+  for (let i = 0; i < normalised.length; i += 1) {
+    const line = normalised[i]!;
     if (!records.length && !line.trim()) continue;
-    let parsed = parseCsvRecordLine(line);
-    let raw = line;
     const rowNumber = i + 1;
-    if (parsed.inQuotesAtEnd) {
-      const next = lines[i + 1];
-      const nextParsed = next == null ? null : parseCsvRecordLine(next);
-      const nextIsComplete =
-        nextParsed != null &&
-        !nextParsed.inQuotesAtEnd &&
-        !nextParsed.malformed &&
-        expected != null &&
-        nextParsed.cells.length === expected;
-      if (nextIsComplete || next == null) {
-        records.push({
-          rowNumber,
-          cells: parsed.cells,
-          raw,
-          recovered: false,
-          quarantined: true,
-          issue: "Unclosed quote. The row was quarantined and the following record was kept.",
-        });
+    let settled = settleCsvLine(line, expected);
+    let raw = line;
+    if (settled.joinable) {
+      const joined = joinWrappedQuote(normalised, i, expected);
+      if (!joined) {
+        records.push(unclosedQuoteRecord(rowNumber, line, settled.cells));
         continue;
       }
-      let j = i + 1;
-      let joined = line;
-      let closed = parsed;
-      while (j < lines.length && closed.inQuotesAtEnd && j - i < 8) {
-        joined += `\n${lines[j]}`;
-        closed = parseCsvRecordLine(joined);
-        j += 1;
-        if (expected != null && !closed.inQuotesAtEnd && closed.cells.length === expected) break;
-      }
-      if (closed.inQuotesAtEnd || closed.malformed) {
-        records.push({
-          rowNumber,
-          cells: parsed.cells,
-          raw: joined.slice(0, 2000),
-          recovered: false,
-          quarantined: true,
-          issue: "Unclosed quote could not be recovered. The raw text is stored on the issue.",
-        });
-        i = j - 1;
-        continue;
-      }
-      parsed = closed;
-      raw = joined;
-      i = j - 1;
+      settled = joined.settled;
+      raw = joined.raw;
+      i = joined.lastIndex;
     }
-    if (expected == null && parsed.cells.some((cell) => cell.length > 0)) {
-      expected = parsed.cells.length;
-    }
-    const columnMismatch = expected != null && parsed.cells.length !== expected;
-    const quarantined = parsed.malformed || (columnMismatch && parsed.recovered);
-    records.push({
-      rowNumber,
-      cells: parsed.cells,
-      raw: raw.slice(0, 2000),
-      recovered: parsed.recovered && !quarantined,
-      quarantined,
-      issue: quarantined
-        ? columnMismatch
-          ? `Column count ${parsed.cells.length} does not match the header width ${expected}`
-          : "Malformed CSV quoting"
-        : null,
-    });
+    const finished = recordFromSettled(rowNumber, raw, settled, expected);
+    expected = finished.expected;
+    records.push(finished.record);
   }
   return records;
 }
@@ -659,6 +838,103 @@ export function interpretLedgerRecord(
       parseIssue: [dateIssue, typeIssue].filter(Boolean).join(". ") || null,
       isSalesDocument: ledgerKind === "INVOICE" || ledgerKind === "CREDIT",
       raw: rawObject(headers, record.cells),
+    },
+  };
+}
+
+export type CsvPreviewExample = {
+  rowNumber: number;
+  issueType: string;
+  explanation: string;
+  redacted: string;
+};
+
+export type CsvPreviewTally = {
+  sourceRecords: number;
+  validRecords: number;
+  recoveredRecords: number;
+  rejectedRecords: number;
+  acceptedSales: string | null;
+  recoveredSales: string | null;
+  rejectionReasons: { issueType: string; count: number }[];
+  rejectedExamples: CsvPreviewExample[];
+  unresolvedParsing: boolean;
+};
+
+/** Hide the account code on a rejected example and keep the quoting problem visible. */
+export function redactCsvExample(raw: string): string {
+  const flat = raw.replace(/\s+/g, " ").trim();
+  const comma = flat.indexOf(",");
+  const account = comma === -1 ? flat : flat.slice(0, comma);
+  const bare = account.replace(/^"|"$/g, "");
+  const masked = bare.length <= 2 ? "***" : `${bare.slice(0, 2)}***`;
+  const shown =
+    comma === -1
+      ? masked
+      : `${account.startsWith('"') ? `"${masked}"` : masked}${flat.slice(comma)}`;
+  return shown.length > 180 ? `${shown.slice(0, 177)}...` : shown;
+}
+
+export function createCsvPreviewTally(kind: "invoice" | "ledger") {
+  let sourceRecords = 0;
+  let validRecords = 0;
+  let recoveredRecords = 0;
+  let rejectedRecords = 0;
+  let accepted = moneyZero();
+  let recovered = moneyZero();
+  const reasons = new Map<string, number>();
+  const rejectedExamples: CsvPreviewExample[] = [];
+
+  const addSales = (total: Money, amount: string): Money => {
+    const parsed = parseMoney(amount);
+    return parsed ? addMoney(total, parsed) : total;
+  };
+
+  return {
+    add(
+      record: CsvScanRecord,
+      result: { row: { accountCode: string; salesAmount?: string } } | { reject: CsvRowRejection },
+    ) {
+      sourceRecords += 1;
+      if ("reject" in result) {
+        rejectedRecords += 1;
+        reasons.set(result.reject.issueType, (reasons.get(result.reject.issueType) ?? 0) + 1);
+        if (rejectedExamples.length < 8) {
+          rejectedExamples.push({
+            rowNumber: result.reject.rowNumber,
+            issueType: result.reject.issueType,
+            explanation: result.reject.explanation,
+            redacted: redactCsvExample(result.reject.raw),
+          });
+        }
+        return;
+      }
+      const salesAmount = result.row.salesAmount;
+      if (record.recovered) {
+        recoveredRecords += 1;
+        if (kind === "invoice" && salesAmount) {
+          recovered = addSales(recovered, salesAmount);
+          accepted = addSales(accepted, salesAmount);
+        }
+        return;
+      }
+      validRecords += 1;
+      if (kind === "invoice" && salesAmount) accepted = addSales(accepted, salesAmount);
+    },
+    finish(): CsvPreviewTally {
+      return {
+        sourceRecords,
+        validRecords,
+        recoveredRecords,
+        rejectedRecords,
+        acceptedSales: kind === "invoice" ? moneyToString(accepted, 2) : null,
+        recoveredSales: kind === "invoice" ? moneyToString(recovered, 2) : null,
+        rejectionReasons: [...reasons.entries()]
+          .map(([issueType, count]) => ({ issueType, count }))
+          .sort((a, b) => b.count - a.count || a.issueType.localeCompare(b.issueType)),
+        rejectedExamples,
+        unresolvedParsing: rejectedRecords > 0,
+      };
     },
   };
 }

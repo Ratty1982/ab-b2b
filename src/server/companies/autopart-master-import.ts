@@ -31,6 +31,7 @@ import {
   interpretInvoiceRecord,
   interpretLedgerRecord,
   reconciliationStatus,
+  createCsvPreviewTally,
   streamCsvRecords,
   type CanonicalColumn,
   type CsvScanRecord,
@@ -271,13 +272,9 @@ async function previewCsv(
   let headers: string[] = [];
   let map: Partial<Record<CanonicalColumn, number>> = {};
   let missing: CanonicalColumn[] = [...required];
-  let dataRows = 0;
-  let validRows = 0;
-  let rejectedRows = 0;
-  let recoveredQuotes = 0;
   const accounts = new Set<string>();
   const samples: unknown[] = [];
-  const issues: { rowNumber: number; issueType: string; explanation: string }[] = [];
+  const tally = createCsvPreviewTally(kind === "INVOICE_LINES" ? "invoice" : "ledger");
   let headerSeen = false;
   for await (const record of streamCsvRecords(filePath)) {
     if (!headerSeen) {
@@ -291,27 +288,26 @@ async function previewCsv(
       if (missing.length > 0) break;
       continue;
     }
-    dataRows += 1;
-    if (record.recovered) recoveredQuotes += 1;
     const interpreted =
       kind === "INVOICE_LINES"
         ? interpretInvoiceRecord(record, headers, map)
         : interpretLedgerRecord(record, headers, map);
-    if ("reject" in interpreted) {
-      rejectedRows += 1;
-      if (issues.length < 20) {
-        issues.push({
-          rowNumber: interpreted.reject.rowNumber,
-          issueType: interpreted.reject.issueType,
-          explanation: interpreted.reject.explanation,
-        });
-      }
-      continue;
-    }
-    validRows += 1;
+    tally.add(record, interpreted);
+    if ("reject" in interpreted) continue;
     accounts.add(interpreted.row.accountCode);
-    if (samples.length < 8) samples.push(interpreted.row);
+    const recoveredSamples = samples.filter(
+      (row) =>
+        row != null && typeof row === "object" && "recovered" in row && row.recovered === true,
+    ).length;
+    if (!record.recovered && samples.length - recoveredSamples < 6) samples.push(interpreted.row);
+    if (record.recovered && recoveredSamples < 2) {
+      samples.push({ ...interpreted.row, recovered: true });
+    }
   }
+  const preview = tally.finish();
+  const dataRows = preview.sourceRecords;
+  const validRows = preview.validRecords + preview.recoveredRecords;
+  const rejectedRows = preview.rejectedRecords;
   const needsMapping = missing.length > 0;
   const ready = !needsMapping && validRows > 0;
   const updated = await prisma.autopartImportBatch.update({
@@ -334,12 +330,20 @@ async function previewCsv(
         missingColumns: missing,
         needsMapping,
         samples,
-        issues,
-        recoveredQuotes,
+        issues: preview.rejectedExamples,
+        recoveredQuotes: preview.recoveredRecords,
+        sourceRecords: preview.sourceRecords,
+        validRecords: preview.validRecords,
+        recoveredRecords: preview.recoveredRecords,
+        rejectedRecords: preview.rejectedRecords,
+        acceptedSales: preview.acceptedSales,
+        recoveredSales: preview.recoveredSales,
+        rejectionReasons: preview.rejectionReasons,
+        unresolvedParsing: preview.unresolvedParsing,
         distinctAccounts: accounts.size,
         salesMeasure: kind === "INVOICE_LINES" ? "NET_EX_VAT" : null,
         structural: ready,
-        provisionalHeaders: true,
+        provisionalHeaders: missing.length > 0,
       } as Prisma.InputJsonValue,
     },
   });

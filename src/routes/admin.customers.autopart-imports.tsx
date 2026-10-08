@@ -104,6 +104,7 @@ type Diagnostics = {
     issueType?: string;
     rowNumber?: number;
     sourceRowNumber?: number;
+    redacted?: string;
   }[];
   summary?: {
     distinctAccounts?: number;
@@ -114,6 +115,14 @@ type Diagnostics = {
     classifications?: Record<string, number>;
   };
   recoveredQuotes?: number;
+  sourceRecords?: number;
+  validRecords?: number;
+  recoveredRecords?: number;
+  rejectedRecords?: number;
+  acceptedSales?: string | null;
+  recoveredSales?: string | null;
+  rejectionReasons?: { issueType: string; count: number }[];
+  unresolvedParsing?: boolean;
   distinctAccounts?: number;
   salesMeasure?: string | null;
   provisionalHeaders?: boolean;
@@ -356,8 +365,17 @@ function AutopartImportsPage() {
               <div>
                 <h2 className="font-display text-sm font-semibold uppercase">{batch.filename}</h2>
                 <p className="text-[12px] text-steel">
-                  {batch.kind} · {batch.dryRun ? "Dry run" : "Database write"} · Rows{" "}
-                  {batch.totalRows} · Valid {batch.validRows} · Rejected {batch.rejectedRows}
+                  {batch.kind} · {batch.dryRun ? "Dry run" : "Database write"} · Source records{" "}
+                  {(diagnostics.sourceRecords ?? batch.totalRows).toLocaleString("en-GB")} · Valid{" "}
+                  {(diagnostics.validRecords ?? batch.validRows).toLocaleString("en-GB")} ·
+                  Recovered{" "}
+                  {(
+                    diagnostics.recoveredRecords ??
+                    diagnostics.recoveredQuotes ??
+                    0
+                  ).toLocaleString("en-GB")}{" "}
+                  · Rejected{" "}
+                  {(diagnostics.rejectedRecords ?? batch.rejectedRows).toLocaleString("en-GB")}
                 </p>
               </div>
               <StatusBadge
@@ -390,10 +408,33 @@ function AutopartImportsPage() {
                   {diagnostics.summary.blankRep ?? 0}
                 </p>
               ) : null}
-              {diagnostics.recoveredQuotes ? (
-                <p className="text-steel">
-                  Recovered quoted rows in the preview sample pass: {diagnostics.recoveredQuotes}
+              {diagnostics.unresolvedParsing ? (
+                <p className="text-bad">
+                  This file still has unresolved parsing errors. Rejected rows stay out of the
+                  accepted sales total and are not imported.
                 </p>
+              ) : null}
+              {diagnostics.acceptedSales != null ? (
+                <p className="text-steel">
+                  Accepted signed sales {diagnostics.acceptedSales} · Recovered signed sales{" "}
+                  {diagnostics.recoveredSales ?? "0.00"} ({diagnostics.salesMeasure ?? "NET_EX_VAT"}
+                  ). Recovered rows are included in the accepted total. Rejected rows are not.
+                </p>
+              ) : null}
+              {diagnostics.recoveredRecords ? (
+                <p className="text-steel">
+                  Safely recovered records: {diagnostics.recoveredRecords.toLocaleString("en-GB")}.
+                  These rows are separate from records that remain rejected.
+                </p>
+              ) : null}
+              {diagnostics.rejectionReasons?.length ? (
+                <ul className="space-y-1 text-steel">
+                  {diagnostics.rejectionReasons.map((reason) => (
+                    <li key={reason.issueType}>
+                      {reason.issueType}: {reason.count.toLocaleString("en-GB")}
+                    </li>
+                  ))}
+                </ul>
               ) : null}
               {diagnostics.needsMapping && diagnostics.headers ? (
                 <div className="grid gap-2 md:grid-cols-2">
@@ -425,14 +466,22 @@ function AutopartImportsPage() {
                 </div>
               ) : null}
               {diagnostics.issues?.length ? (
-                <ul className="space-y-1 text-steel">
-                  {diagnostics.issues.map((issue, index) => (
-                    <li key={`${issue.issueType ?? "issue"}-${index}`}>
-                      Row {issue.rowNumber ?? issue.sourceRowNumber ?? "—"} · {issue.issueType}:{" "}
-                      {issue.explanation}
-                    </li>
-                  ))}
-                </ul>
+                <div className="space-y-2">
+                  <p className="font-semibold">Rejected rows</p>
+                  <ul className="space-y-2 text-steel">
+                    {diagnostics.issues.map((issue, index) => (
+                      <li key={`${issue.issueType ?? "issue"}-${issue.rowNumber ?? index}`}>
+                        <p>
+                          Rejected · row {issue.rowNumber ?? issue.sourceRowNumber ?? "—"} ·{" "}
+                          {issue.issueType}: {issue.explanation}
+                        </p>
+                        {issue.redacted ? (
+                          <p className="font-mono text-[11px] text-steel">{issue.redacted}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
               {diagnostics.samples?.length ? (
                 <pre className="max-h-48 overflow-auto bg-surface/50 p-3 text-[11px]">
