@@ -93,6 +93,8 @@ enum CmsSectionType {
   BRANDS_SHOWCASE
   /// Public /trade-solutions landing page.
   TRADE_SOLUTIONS
+  /// Public /why-automotive-brands company page.
+  WHY_US
 }
 
 /// Company-scoped trade access levels (distinct from system Role).

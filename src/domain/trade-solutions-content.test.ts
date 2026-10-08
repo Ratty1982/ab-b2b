@@ -65,7 +65,7 @@ describe("trade solutions content", () => {
     expect(page?.seoTitle).toContain("Steel Seal");
     expect(page?.seoTitle.indexOf("Steel Seal")).toBeLessThan(page!.seoTitle.indexOf("Power Maxed"));
     expect(() => validateSectionConfig("TRADE_SOLUTIONS", page?.sections[0]?.config)).not.toThrow();
-    expect(marketingCmsPageBySlug("why-automotive-brands")?.sections[0]?.type).toBe("HERO");
+    expect(marketingCmsPageBySlug("why-automotive-brands")?.sections[0]?.type).toBe("WHY_US");
     expect(marketingCmsPageBySlug("brands")?.sections.map((section) => section.type)).toEqual(["BRANDS_SHOWCASE"]);
   });
 

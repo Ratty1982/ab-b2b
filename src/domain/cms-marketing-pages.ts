@@ -6,6 +6,11 @@ import {
   TRADE_SOLUTIONS_PAGE_DESCRIPTION,
   TRADE_SOLUTIONS_PAGE_TITLE,
 } from "@/domain/trade-solutions-content";
+import {
+  defaultWhyUsContent,
+  WHY_US_PAGE_DESCRIPTION,
+  WHY_US_PAGE_TITLE,
+} from "@/domain/why-us-content";
 import { MOTORSPORT_PAGE_DEFAULTS } from "@/domain/motorsport";
 
 export type MarketingPageSeed = {
@@ -93,69 +98,14 @@ export const MARKETING_CMS_PAGES: MarketingPageSeed[] = [
   {
     slug: "why-automotive-brands",
     title: "Why Automotive Brands",
-    seoTitle: "Why Automotive Brands — Trade Supplier for Power Maxed & Steel Seal",
-    metaDescription:
-      "Automotive Brands supplies Power Maxed and Steel Seal to UK trade customers with account pricing, live availability and dedicated support.",
+    seoTitle: WHY_US_PAGE_TITLE,
+    metaDescription: WHY_US_PAGE_DESCRIPTION,
     blurb: "Credibility and trade proposition",
     primaryNav: true,
     sections: [
-      pageHero({
-        eyebrow: "Why Automotive Brands",
-        headline: "Trade supply, without the noise",
-        supporting:
-          "A concise proposition for trade customers who need Power Maxed and Steel Seal from one supplier.",
-        secondaryCtaLabel: "View Brands",
-        secondaryCtaHref: "/brands",
-      }),
       {
-        type: "BENEFITS_GRID",
-        config: {
-          eyebrow: "",
-          heading: "",
-          supporting: "",
-          ctaLabel: "",
-          ctaHref: "/register",
-          items: [
-            {
-              title: "Trade supplier for Power Maxed & Steel Seal",
-              body: "Browse both brands in one catalogue and order through a single Automotive Brands trade account.",
-              icon: "warehouse",
-            },
-            {
-              title: "Commercial pricing for approved accounts",
-              body: "Approved trade customers see their account pricing on products and in the basket.",
-              icon: "clipboard",
-            },
-            {
-              title: "Ordering convenience",
-              body: "Catalogue browsing with case quantities and customer-safe availability for trade supply.",
-              icon: "truck",
-            },
-            {
-              title: "Account support",
-              body: `Dedicated account manager support for trade customers. ${ACCOUNT_MANAGER_HOURS.weekdayLine}. ${ACCOUNT_MANAGER_HOURS.orderCutoffLine}.`,
-              icon: "headphones",
-            },
-          ],
-          customerTypes: [],
-          spacing: "standard",
-          media: { alt: "", fit: "fill" },
-        },
-      },
-      {
-        type: "TRADE_CTA",
-        config: {
-          eyebrow: "Next step",
-          headline: "Open a trade account",
-          supporting: "Apply to access trade pricing and the trade portal.",
-          ctaLabel: "Open a Trade Account",
-          ctaHref: "/register",
-          secondaryCtaLabel: "View Brands",
-          secondaryCtaHref: "/brands",
-          variant: "dark",
-          spacing: "standard",
-          media: { alt: "", fit: "fill" },
-        },
+        type: "WHY_US",
+        config: defaultWhyUsContent(),
       },
     ],
   },

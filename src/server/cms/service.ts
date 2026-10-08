@@ -34,6 +34,14 @@ import {
   tradeSolutionsContentFromLegacy,
   upgradeMigratedTradeSolutions,
 } from "@/domain/trade-solutions-content";
+import {
+  applyWhyUsBrandMedia,
+  LEGACY_WHY_US_SEO,
+  parseWhyUsContent,
+  WHY_US_PAGE_DESCRIPTION,
+  WHY_US_PAGE_TITLE,
+  whyUsContentFromLegacy,
+} from "@/domain/why-us-content";
 import { listPublicBrandLogos } from "@/server/catalogue/service";
 import { listPublicBrands } from "@/server/catalogue/products";
 import { attachFeaturedBrandLogos } from "@/domain/featured-brands";
@@ -68,6 +76,7 @@ export async function getCmsPageDraft(actorUserId: string, slug: string) {
   await requireSystemPermission(actorUserId, "cms.page.read");
   if (slug === "brands") await ensureBrandsShowcaseSection();
   if (slug === "trade-solutions") await ensureTradeSolutionsSection();
+  if (slug === "why-automotive-brands") await ensureWhyUsSection();
   const page = await prisma.cmsPage.findUnique({
     where: { slug },
     include: {
@@ -787,6 +796,7 @@ export async function bootstrapMarketingCmsPages(
 
   await ensureBrandsShowcaseSection(prismaClient);
   await ensureTradeSolutionsSection(prismaClient);
+  await ensureWhyUsSection(prismaClient);
   return { created, existing };
 }
 
@@ -981,6 +991,88 @@ export async function ensureTradeSolutionsSection(
         data: {
           versionId,
           type: "TRADE_SOLUTIONS",
+          config: config as Prisma.InputJsonValue,
+          sortOrder: 0,
+          enabled: true,
+        },
+      });
+    });
+    migratedVersionIds.push(versionId);
+  }
+
+  return { migratedVersionIds };
+}
+
+/**
+ * Move the Why Us page onto the company template once.
+ * Leaves every other page alone and does not change publication status or team records.
+ * A version that already has WHY_US is not overwritten.
+ */
+export async function ensureWhyUsSection(
+  prismaClient: typeof prisma = prisma,
+): Promise<{ migratedVersionIds: string[] }> {
+  const page = await prismaClient.cmsPage.findUnique({
+    where: { slug: "why-automotive-brands" },
+    select: {
+      id: true,
+      draftVersionId: true,
+      publishedVersionId: true,
+      seoTitle: true,
+      metaDescription: true,
+    },
+  });
+  if (!page) return { migratedVersionIds: [] };
+
+  const seoData: { seoTitle?: string; metaDescription?: string } = {};
+  if (page.seoTitle === LEGACY_WHY_US_SEO.seoTitle) seoData.seoTitle = WHY_US_PAGE_TITLE;
+  if (page.metaDescription === LEGACY_WHY_US_SEO.metaDescription) {
+    seoData.metaDescription = WHY_US_PAGE_DESCRIPTION;
+  }
+  if (seoData.seoTitle || seoData.metaDescription) {
+    await prismaClient.cmsPage.update({ where: { id: page.id }, data: seoData });
+    await prismaClient.cmsPageVersion.updateMany({
+      where: {
+        pageId: page.id,
+        AND: [
+          { OR: [{ seoTitle: LEGACY_WHY_US_SEO.seoTitle }, { seoTitle: null }] },
+          { OR: [{ metaDescription: LEGACY_WHY_US_SEO.metaDescription }, { metaDescription: null }] },
+        ],
+      },
+      data: seoData,
+    });
+  }
+
+  const brandsPage = await prismaClient.cmsPage.findUnique({
+    where: { slug: "brands" },
+    select: {
+      publishedVersion: {
+        select: { sections: { where: { type: "BRANDS_SHOWCASE" }, take: 1, select: { config: true } } },
+      },
+    },
+  });
+  const showcaseConfig = brandsPage?.publishedVersion?.sections[0]?.config ?? null;
+  const versionIds = [...new Set([page.draftVersionId, page.publishedVersionId].filter((id): id is string => Boolean(id)))];
+  const migratedVersionIds: string[] = [];
+
+  for (const versionId of versionIds) {
+    const sections = await prismaClient.cmsSection.findMany({
+      where: { versionId },
+      orderBy: { sortOrder: "asc" },
+    });
+    if (sections.some((section) => section.type === "WHY_US")) continue;
+    const content = applyWhyUsBrandMedia(
+      whyUsContentFromLegacy(
+        sections.map((section) => ({ type: section.type, config: section.config, enabled: section.enabled })),
+      ),
+      showcaseConfig,
+    );
+    const config = validateSectionConfig("WHY_US", content);
+    await prismaClient.$transaction(async (tx) => {
+      await tx.cmsSection.deleteMany({ where: { versionId } });
+      await tx.cmsSection.create({
+        data: {
+          versionId,
+          type: "WHY_US",
           config: config as Prisma.InputJsonValue,
           sortOrder: 0,
           enabled: true,

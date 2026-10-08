@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { MediaPicker, type CmsMediaListItem } from "@/components/cms/MediaPicker";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { TradeSolutionsSectionSettings } from "@/components/cms/TradeSolutionsSectionSettings";
+import { WhyUsSectionSettings } from "@/components/cms/WhyUsSectionSettings";
 import heroImage from "@/assets/hero-parts.jpg";
 import { heroRecommendedCopy } from "@/lib/hero-image";
 
@@ -1281,6 +1282,10 @@ export function SectionSettings({
 
   if (type === "TRADE_SOLUTIONS") {
     return <TradeSolutionsSectionSettings config={config} onChange={onChange} />;
+  }
+
+  if (type === "WHY_US") {
+    return <WhyUsSectionSettings config={config} onChange={onChange} />;
   }
 
   if (type === "BRANDS_SHOWCASE") {

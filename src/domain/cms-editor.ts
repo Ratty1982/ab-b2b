@@ -1,6 +1,7 @@
 import { CMS_SECTION_TYPES, type CmsSectionTypeKey } from "@/domain/cms";
 import { defaultBrandsShowcaseContent } from "@/domain/brands-showcase-content";
 import { defaultTradeSolutionsContent } from "@/domain/trade-solutions-content";
+import { defaultWhyUsContent } from "@/domain/why-us-content";
 import { defaultFeaturedBrandsConfig } from "@/domain/featured-brands";
 import { HOMEPAGE_MOTORSPORT_DEFAULTS } from "@/domain/motorsport";
 
@@ -36,6 +37,11 @@ export const SECTION_LIBRARY: Array<{
     name: "Trade Solutions",
     description: "Trade account landing page. Steel Seal stays before Power Maxed.",
   },
+  {
+    type: "WHY_US",
+    name: "Why Us",
+    description: "Company page for Why Automotive Brands. Team stays hidden until switched on.",
+  },
   { type: "BRAND_LOGO_STRIP", name: "Brand Logos", description: "Horizontal strip of brand marks" },
   { type: "FEATURED_BRANDS", name: "Featured Brands", description: "Brand cards with logos and blurbs" },
   { type: "CATEGORY_GRID", name: "Category Grid", description: "Shop-by-category tiles" },
@@ -69,6 +75,8 @@ export function defaultSectionConfig(type: CmsSectionTypeKey): Record<string, un
       return defaultBrandsShowcaseContent();
     case "TRADE_SOLUTIONS":
       return defaultTradeSolutionsContent();
+    case "WHY_US":
+      return defaultWhyUsContent();
     case "HERO":
       return {
         eyebrow: "UK Automotive Aftermarket Supply",

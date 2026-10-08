@@ -7,7 +7,9 @@ import { MotorsportFeatureSection } from "@/components/public/MotorsportFeatureS
 import { MotorsportMediaGallery } from "@/components/public/MotorsportMediaGallery";
 import { PublicBrandsShowcase } from "@/components/public/PublicBrandsShowcase";
 import { PublicTradeSolutions } from "@/components/public/PublicTradeSolutions";
+import { PublicWhyUs } from "@/components/public/PublicWhyUs";
 import { parseTradeSolutionsContent } from "@/domain/trade-solutions-content";
+import { parseWhyUsContent } from "@/domain/why-us-content";
 import { cn } from "@/lib/utils";
 import heroImage from "@/assets/hero-parts.jpg";
 import { cmsMediaDisplaySrc, cmsFocalStyle, cmsImageFitClass, readBrandLogos } from "@/lib/cms-media";
@@ -465,6 +467,8 @@ export function CmsSectionRenderer({
       );
     case "TRADE_SOLUTIONS":
       return <PublicTradeSolutions content={parseTradeSolutionsContent(c)} session={{ signedIn: false }} />;
+    case "WHY_US":
+      return <PublicWhyUs content={parseWhyUsContent(c)} session={{ signedIn: false }} team={[]} />;
 
     default:
       return null;

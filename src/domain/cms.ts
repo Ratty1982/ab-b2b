@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MEDIA_UPLOAD_USAGES } from "@/domain/media-usage";
 import { tradeSolutionsSectionSchema } from "@/domain/trade-solutions-content";
+import { whyUsSectionSchema } from "@/domain/why-us-content";
 
 export const CMS_SECTION_TYPES = [
   "HERO",
@@ -23,6 +24,7 @@ export const CMS_SECTION_TYPES = [
   "MEDIA_GALLERY",
   "BRANDS_SHOWCASE",
   "TRADE_SOLUTIONS",
+  "WHY_US",
 ] as const;
 
 export type CmsSectionTypeKey = (typeof CMS_SECTION_TYPES)[number];
@@ -362,6 +364,7 @@ export const sectionConfigSchemas: Record<CmsSectionTypeKey, z.ZodType> = {
     spacing,
   }),
   TRADE_SOLUTIONS: tradeSolutionsSectionSchema,
+  WHY_US: whyUsSectionSchema,
   BRANDS_SHOWCASE: z.object({
     contentKey,
     hero: z.object({

@@ -40,6 +40,7 @@ describe("CMS editor draft operations", () => {
       "HERO",
       "BRANDS_SHOWCASE",
       "TRADE_SOLUTIONS",
+      "WHY_US",
       "BRAND_LOGO_STRIP",
       "FEATURED_BRANDS",
       "CATEGORY_GRID",
