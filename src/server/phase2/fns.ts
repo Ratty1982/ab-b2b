@@ -4186,6 +4186,18 @@ export const exportStockOverviewCsvFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getStockPartDetailFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const overview = await import("@/server/purchasing/stock-overview");
+      return { ok: true as const, data: await overview.getStockPartDetail(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPurchasingForecastFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
