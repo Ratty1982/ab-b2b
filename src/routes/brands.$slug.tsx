@@ -67,6 +67,7 @@ function BrandLanding({
   description,
   logoSrc,
   total,
+  signedIn,
 }: {
   name: string;
   slug: string;
@@ -74,6 +75,7 @@ function BrandLanding({
   description: string | null;
   logoSrc: string | null;
   total: number;
+  signedIn: boolean;
 }) {
   return (
     <div className="mb-2 grid gap-4 rounded-lg border border-border/70 bg-surface/40 p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
@@ -85,21 +87,23 @@ function BrandLanding({
           {description || `${name} products available to Automotive Brands trade customers.`}
         </p>
         <p className="num mt-2 text-[12px] text-steel">
-          {total.toLocaleString("en-GB")} trade-visible line{total === 1 ? "" : "s"}
+          {total.toLocaleString("en-GB")} trade product{total === 1 ? "" : "s"}
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <a
             href={`/products?brand=${encodeURIComponent(slug)}`}
-            className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-bold uppercase tracking-wide transition-colors hover:border-steel"
+            className="inline-flex h-10 items-center rounded-md border border-border px-4 text-[12px] font-bold uppercase tracking-wide transition-colors hover:border-steel focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Browse all {name}
           </a>
-          <Link
-            to="/register"
-            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110"
-          >
-            Open a trade account
-          </Link>
+          {signedIn ? null : (
+            <Link
+              to="/register"
+              className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              Open a trade account
+            </Link>
+          )}
         </div>
       </div>
       {logoSrc ? (
@@ -149,6 +153,7 @@ function BrandPage() {
             description={brand.description}
             logoSrc={brand.logoSrc}
             total={brand.catalogue.total}
+            signedIn={brand.requestSession.signedIn}
           />
         ) : null
       }

@@ -59,17 +59,17 @@ export const MARKETING_CMS_PAGES: MarketingPageSeed[] = [
   {
     slug: "brands",
     title: "Brands",
-    seoTitle: "Our Brands — Automotive Brands",
+    seoTitle: "Steel Seal & Power Maxed Trade Products | Automotive Brands",
     metaDescription:
-      "Power Maxed and Steel Seal — trade brands supplied through one Automotive Brands account.",
+      "Explore Steel Seal and Power Maxed trade automotive products from Automotive Brands, with professional products for workshops, vehicle care and repair.",
     blurb: "Brand portfolio introduction (catalogue cards load live)",
     primaryNav: true,
     sections: [
       pageHero({
-        eyebrow: "Brands",
-        headline: "Two brands. One trade supplier.",
+        eyebrow: "Our Brands",
+        headline: "Two specialist brands. One trade account.",
         supporting:
-          "Power Maxed and Steel Seal are available through a single Automotive Brands trade account — browse the range, then order with account pricing once approved.",
+          "Professional vehicle care, workshop and engine repair products from Steel Seal and Power Maxed, available through one Automotive Brands trade account.",
         ctaLabel: "Shop Products",
         ctaHref: "/products",
         secondaryCtaLabel: "Open a Trade Account",
