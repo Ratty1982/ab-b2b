@@ -531,6 +531,9 @@ model User {
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
+  autopartHistoricalAccessGrants AutopartAccount[] @relation("AutopartHistoricalAccessGrant")
+  autopartMasterImportBatches AutopartImportBatch[] @relation("AutopartMasterImportCreator")
+  autopartImportIssuesResolved AutopartImportIssue[] @relation("AutopartImportIssueResolver")
   autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
   salesHistoryCoverageVerifications SalesHistoryCoverageVerification[] @relation("SalesHistoryCoverageVerifier")
   customerGroupsCreated CustomerGroup[] @relation("CustomerGroupCreator")
@@ -755,6 +758,7 @@ model Company {
   autopartSalesLines     AutopartSalesLine[]
   autopartCustomerImportRuns AutopartCustomerImportRun[]
   autopartBackorderLines AutopartBackorderLine[]
+  autopartAccounts AutopartAccount[]
 
   @@index([status])
   @@index([name])
@@ -2541,6 +2545,256 @@ model AutopartImportDiagnostic {
   @@index([importRunId, customerAccount])
   @@index([importRunId, sku])
   @@index([importRunId, isWarning])
+}
+
+// ─── Autopart customer master and bulk historical exports ───────────────────
+// Separate from live Orders, Inventory, and the per-company 561L/SLRB importer.
+
+enum AutopartAccountClassification {
+  TRADE_CANDIDATE
+  INTERNAL
+  CASH
+  STAFF
+  OBSOLETE
+  DO_NOT_USE
+  UNIDENTIFIED
+  REQUIRES_REVIEW
+}
+
+enum AutopartAccountClassificationSource {
+  AUTO
+  MANUAL
+}
+
+enum AutopartMasterImportKind {
+  CUSTOMER_MASTER
+  INVOICE_LINES
+  LEDGER
+}
+
+enum AutopartMasterImportStatus {
+  UPLOADED
+  PREVIEWED
+  RUNNING
+  COMMITTED
+  FAILED
+  CANCELLED
+}
+
+enum AutopartImportIssueSeverity {
+  ERROR
+  WARNING
+}
+
+enum AutopartImportIssueResolution {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+enum AutopartLedgerKind {
+  INVOICE
+  CREDIT
+  PAYMENT
+  JOURNAL
+  UNKNOWN
+}
+
+enum AutopartDocumentMatchStatus {
+  MATCHED
+  PARTIALLY_MATCHED
+  LEDGER_ONLY
+  PRODUCT_LINES_ONLY
+  AMOUNT_DISCREPANCY
+  AMBIGUOUS
+  REQUIRES_REVIEW
+}
+
+/// Durable Autopart account identity. A company link is optional and never implied by name.
+model AutopartAccount {
+  id                          String                              @id @default(cuid())
+  sourceSystem                String                              @default("AUTOPART")
+  /// Exact source account code, including punctuation and leading zeroes.
+  accountCode                 String
+  originalName                String
+  nameTruncated               Boolean                             @default(false)
+  areaCode                    String?
+  repCode                     String?
+  classification              AutopartAccountClassification
+  classificationSource        AutopartAccountClassificationSource @default(AUTO)
+  classificationNote          String?
+  companyId                   String?
+  /// Import never sets this. Trade login still uses the existing approval workflow.
+  portalEligible              Boolean                             @default(false)
+  historicalAccessEnabled     Boolean                             @default(false)
+  historicalAccessGrantedAt   DateTime?
+  historicalAccessGrantedById String?
+  historicalAccessRevokedAt   DateTime?
+  lastImportBatchId           String?
+  createdAt                   DateTime                            @default(now())
+  updatedAt                   DateTime                            @updatedAt
+
+  company                   Company?                  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  historicalAccessGrantedBy User?                     @relation("AutopartHistoricalAccessGrant", fields: [historicalAccessGrantedById], references: [id], onDelete: SetNull)
+  invoiceLines              AutopartInvoiceLine[]
+  ledgerTransactions        AutopartLedgerTransaction[]
+  documentMatches           AutopartDocumentMatch[]
+
+  @@unique([sourceSystem, accountCode])
+  @@index([companyId])
+  @@index([classification])
+  @@index([historicalAccessEnabled])
+  @@index([originalName])
+}
+
+model AutopartImportBatch {
+  id                    String                     @id @default(cuid())
+  kind                  AutopartMasterImportKind
+  status                AutopartMasterImportStatus
+  filename              String
+  fileHash              String
+  storagePath           String?
+  dryRun                Boolean                    @default(true)
+  columnMap             Json?
+  totalRows             Int                        @default(0)
+  validRows             Int                        @default(0)
+  importedRows          Int                        @default(0)
+  updatedRows           Int                        @default(0)
+  duplicateRows         Int                        @default(0)
+  rejectedRows          Int                        @default(0)
+  unmatchedAccounts     Int                        @default(0)
+  reconciliationStatus  String?
+  errorSummary          String?
+  diagnostics           Json?
+  cancelRequested       Boolean                    @default(false)
+  createdById           String?
+  startedAt             DateTime?
+  heartbeatAt           DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+
+  createdBy          User?                      @relation("AutopartMasterImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  issues             AutopartImportIssue[]
+  invoiceLines       AutopartInvoiceLine[]
+  ledgerTransactions AutopartLedgerTransaction[]
+  documentMatches    AutopartDocumentMatch[]
+
+  @@index([kind, status, createdAt])
+  @@index([fileHash])
+}
+
+model AutopartImportIssue {
+  id               String                        @id @default(cuid())
+  batchId          String
+  sourceRowNumber  Int?
+  sourceRecordId   String?
+  issueType        String
+  severity         AutopartImportIssueSeverity
+  explanation      String
+  /// Truncated raw source text. Not a public URL and not a full file copy.
+  rawExcerpt       String?
+  resolution       AutopartImportIssueResolution @default(OPEN)
+  resolvedById     String?
+  resolvedAt       DateTime?
+  createdAt        DateTime                      @default(now())
+
+  batch      AutopartImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  resolvedBy User?               @relation("AutopartImportIssueResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([batchId, severity])
+  @@index([batchId, issueType])
+  @@index([sourceRecordId])
+}
+
+/// Historical 561L product line. Not an OrderItem and not warehouse stock.
+model AutopartInvoiceLine {
+  id                 String   @id @default(cuid())
+  sourceIdentity     String   @unique
+  accountCode        String
+  accountId          String?
+  rawInvAndLn        String
+  documentReference  String?
+  documentType       String?
+  sourceLineNumber   Int?
+  partNumber         String
+  description        String?
+  quantity           Decimal  @db.Decimal(14, 3)
+  /// Existing 561L interpretation: signed net sales excluding VAT. Not the invoice total.
+  salesAmount        Decimal  @db.Decimal(14, 2)
+  salesMeasure       String   @default("NET_EX_VAT")
+  importBatchId      String
+  rawSource          Json
+  parseIssue         String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  account AutopartAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  batch   AutopartImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+
+  @@index([accountCode])
+  @@index([accountId])
+  @@index([documentReference])
+  @@index([partNumber])
+  @@index([importBatchId])
+}
+
+/// Historical SLRB ledger row. Running balance is the source value, not current debt.
+model AutopartLedgerTransaction {
+  id               String            @id @default(cuid())
+  sourceIdentity   String            @unique
+  accountCode      String
+  accountId        String?
+  rawType          String
+  ledgerKind       AutopartLedgerKind
+  reference        String
+  transactionDate  DateTime?         @db.Date
+  goodsAmount      Decimal?          @db.Decimal(14, 2)
+  vatAmount        Decimal?          @db.Decimal(14, 2)
+  totalAmount      Decimal?          @db.Decimal(14, 2)
+  runningBalance   Decimal?          @db.Decimal(14, 2)
+  originalName     String?
+  sacct            String?
+  importBatchId    String
+  rawSource        Json
+  parseIssue       String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  account AutopartAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  batch   AutopartImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+
+  @@index([accountCode])
+  @@index([accountId])
+  @@index([reference])
+  @@index([transactionDate])
+  @@index([ledgerKind])
+  @@index([importBatchId])
+}
+
+model AutopartDocumentMatch {
+  id                 String                      @id @default(cuid())
+  accountCode        String
+  accountId          String?
+  documentReference  String
+  documentType       String
+  status             AutopartDocumentMatchStatus
+  lineCount          Int                         @default(0)
+  lineSalesSum       Decimal?                    @db.Decimal(14, 2)
+  ledgerGoods        Decimal?                    @db.Decimal(14, 2)
+  ledgerCount        Int                         @default(0)
+  note               String?
+  importBatchId      String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+
+  account AutopartAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  batch   AutopartImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@unique([accountCode, documentType, documentReference])
+  @@index([status])
+  @@index([accountId])
+  @@index([documentReference])
 }
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────

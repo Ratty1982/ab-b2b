@@ -1,0 +1,18 @@
+ Page : 1            **********************************   15:47:28   08 Oct 2026 
+                     *  A U T O P A R T  S Y S T E M  *                         
+                     **********************************                         
+CUSTOMER LIST FOR EXPORT (407EXP)                                               
+Account    Name                          Area Rep  
+---------------------------------------------------
+00012      Leading Zero Motors           1    4
+A&B        A & B Sample Factors          2    1
+CASH       CASH CUSTOMER                      
+CASHSALE   Cash Sales                         
+DONOTUSE1  SAMPLE GARAGE - DO NOT USE    3    6
+STAFF01    Alex (staff)                  4    11
+ABDEMO     Automotive Brands Demo        1    1
+LONGNAME01 Sample Truncated Company NameX1    2
+BLANKAREA  Blank Area Sample                  9
+Account                                  Area Rep  
+REPEAT1    First Appearance              5    1
+REPEAT1    Second Appearance             5    2

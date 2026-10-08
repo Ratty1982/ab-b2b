@@ -38,6 +38,9 @@ package-lock.json
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# Private Autopart customer and financial uploads. Never commit these.
+/data/autopart-imports/
 *.suo
 *.ntvs*
 *.njsproj
