@@ -248,6 +248,24 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     expect(preview.duplicate).toBe(false);
     expect(preview.completeSnapshot).toBe(false);
     expect(preview.invalidRows).toBe(2);
+    expect(preview.rowsRead).toBe(preview.productsProcessed + preview.invalidRows + preview.duplicateSkus);
+    expect(preview.productsProcessed).toBe(preview.matchedExisting + preview.newProducts);
+    expect(preview.newProducts).toBe(2);
+    expect(preview.productsWithStock).toBe(4);
+    expect(preview.invalidRowDetails.map((row) => row.reason).sort()).toEqual(["invalid_avail", "missing_sku"]);
+    expect(preview.newProductRows.map((row) => row.sku).sort()).toEqual([onlySku, zeroSku].sort());
+    expect(preview.newProductRows.every((row) => row.result === "Create internal product")).toBe(true);
+    expect(preview.stockedProducts.some((row) => row.sku.toUpperCase() === zeroSku)).toBe(false);
+    const catPreview = preview.stockedProducts.find((row) => row.sku.toUpperCase() === catSku);
+    expect(catPreview).toMatchObject({
+      warehouseQty: 10,
+      currentFbaQty: 0,
+      importedFbaQty: 25,
+      change: 25,
+      totalAfterImport: 35,
+      result: "Update FBA quantity",
+    });
+    expect(JSON.stringify(preview)).not.toMatch(/Unknown\/unmatched/);
     expect(await prisma.autopartLocationStock.count({ where: { autopartProduct: { matchKey: skuMatchKey(catSku) } } })).toBe(
       0,
     );
@@ -347,6 +365,7 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     expect(await prisma.autopartBackorderSnapshot.count()).toBe(beforeSnapshots);
     expect(await prisma.autopartSalesLine.count({ where: { sku: { in: [catSku, extSku, onlySku] } } })).toBe(beforeSales);
     expect(await prisma.product.count()).toBe(beforeProducts);
+    expect(await prisma.autopartProduct.findUnique({ where: { matchKey: skuMatchKey(`BAD${stamp}`) } })).toBeNull();
 
     const replaced = await importFbaStock(adminId, {
       fileName: firstName,
@@ -437,6 +456,54 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     });
     expect(still?.suggestedQty).toBe(warehouseCalc.suggestedQty);
     expect(still?.purchase.suggestedQty).toBe(warehouseCalc.suggestedQty);
+  });
+
+  it("previews warehouse and FBA totals without changing B2B sellable stock", async () => {
+    const sku = `FT${stamp}`;
+    const catalogue = await saveProduct(adminId, {
+      sku,
+      name: "FBA total check",
+      brand: "Power Maxed",
+      category: "Cleaning",
+      trade: 4,
+      rrp: 8,
+      packQty: 1,
+      caseQty: 1,
+    });
+    await prisma.product.update({
+      where: { id: catalogue.id },
+      data: { status: "ACTIVE", isActive: true, isTradeVisible: true, slug: `fba-total-${stamp.toLowerCase()}` },
+    });
+    await applyWarehouse([warehouseRow(sku, "120.0000")]);
+    const before = await prisma.inventory.findFirst({
+      where: { variant: { sku: { equals: sku, mode: "insensitive" } } },
+    });
+    const preview = await previewFbaStockImport(adminId, {
+      fileName: `stocked-${stamp}.csv`,
+      text: fbaCsv([csvRow(sku, "17"), csvRow(`FZ2${stamp}`, "0")]),
+    });
+    const stocked = preview.stockedProducts.find((row) => row.sku.toUpperCase() === sku);
+    expect(stocked).toMatchObject({
+      warehouseQty: 120,
+      currentFbaQty: 0,
+      importedFbaQty: 17,
+      change: 17,
+      totalAfterImport: 137,
+    });
+    expect(preview.productsWithStock).toBe(1);
+    expect(preview.zeroStock).toBe(1);
+    expect(preview.newProductRows.map((row) => row.sku)).toEqual([`FZ2${stamp}`]);
+    expect(preview.stockedProducts.some((row) => row.importedFbaQty === 0)).toBe(false);
+    const after = await prisma.inventory.findFirst({
+      where: { variant: { sku: { equals: sku, mode: "insensitive" } } },
+    });
+    expect(after?.qtyOnHand).toBe(120);
+    expect(before?.qtyOnHand).toBe(120);
+    expect((await product(sku)).availQty).toBe(120);
+    expect(await fbaQty(sku)).toBe(0);
+    const anonymous = await getPublicProduct(null, sku);
+    expect(anonymous?.internalStock).toBeNull();
+    expect(JSON.stringify(anonymous)).not.toMatch(/fbaQty|totalAfterImport|OPTIMUS|importedFba/);
   });
 
   it("does not treat FBA stock as warehouse cover in the purchase planner", async () => {

@@ -15,6 +15,7 @@ import {
   FBA_SOURCE_BRANCH,
   FBA_STOCK_STALE_AFTER_DAYS,
   assessFbaStockFile,
+  buildFbaPreviewProducts,
   fbaStockIsStale,
   planFbaSnapshot,
   type FbaFileAssessment,
@@ -90,19 +91,37 @@ function assertAssessed(text: string): Extract<FbaFileAssessment, { ok: true }> 
   return assessed;
 }
 
-async function totalsFor(assessed: Extract<FbaFileAssessment, { ok: true }>): Promise<FbaImportTotals> {
+async function snapshotContext(assessed: Extract<FbaFileAssessment, { ok: true }>) {
   const keys = assessed.rows.map((row) => row.matchKey);
-  const [products, previous] = await Promise.all([
+  const [products, previousQty] = await Promise.all([
     keys.length
-      ? prisma.autopartProduct.findMany({ where: { matchKey: { in: keys } }, select: { matchKey: true } })
+      ? prisma.autopartProduct.findMany({
+          where: { matchKey: { in: keys } },
+          select: {
+            matchKey: true,
+            description: true,
+            availQty: true,
+            groupCode: true,
+            conditionCode: true,
+          },
+        })
       : Promise.resolve([]),
     previousQtyMap(),
   ]);
+  return { products, previousQty };
+}
+
+function totalsFor(
+  assessed: Extract<FbaFileAssessment, { ok: true }>,
+  products: Array<{ matchKey: string }>,
+  previousQty: Map<string, number>,
+): FbaImportTotals {
   return planFbaSnapshot({
     rows: assessed.rows,
     existingProductKeys: new Set(products.map((row) => row.matchKey)),
-    previousQty: previous,
+    previousQty,
     completeSnapshot: assessed.completeSnapshot,
+    rowsRead: assessed.rowsRead,
     invalidRows: assessed.invalidRows,
     duplicateSkus: assessed.duplicateSkus,
     warnings: assessed.warnings,
@@ -118,7 +137,23 @@ export async function previewFbaStockImport(actorUserId: string, raw: unknown) {
   await requirePurchasingManage(actorUserId);
   const input = uploadInput.parse(raw);
   const assessed = assertAssessed(input.text);
-  const totals = await totalsFor(assessed);
+  const { products, previousQty } = await snapshotContext(assessed);
+  const totals = totalsFor(assessed, products, previousQty);
+  const lines = buildFbaPreviewProducts({
+    rows: assessed.rows,
+    existing: new Map(
+      products.map((row) => [
+        row.matchKey,
+        {
+          description: row.description,
+          warehouseQty: row.availQty,
+          groupCode: row.groupCode,
+          conditionCode: row.conditionCode,
+        },
+      ]),
+    ),
+    previousQty,
+  });
   const hash = fbaFileHash(input.text);
   const existing = await prisma.autopartFbaStockImport.findUnique({ where: { fileHash: hash }, select: { id: true } });
   return {
@@ -128,6 +163,10 @@ export async function previewFbaStockImport(actorUserId: string, raw: unknown) {
     duplicate: Boolean(existing),
     completeSnapshot: assessed.completeSnapshot,
     ...totals,
+    invalidRowDetails: assessed.invalidRowDetails,
+    duplicateRowDetails: assessed.duplicateRowDetails,
+    newProductRows: lines.newProducts,
+    stockedProducts: lines.stockedProducts,
   };
 }
 
@@ -199,9 +238,9 @@ export async function importFbaStock(actorUserId: string, raw: unknown) {
     };
   }
   const assessed = assertAssessed(input.text);
-  const totals = await totalsFor(assessed);
+  const context = await snapshotContext(assessed);
+  const totals = totalsFor(assessed, context.products, context.previousQty);
   const products = await ensureProducts(assessed.rows);
-  const previous = await previousQtyMap();
   const now = new Date();
   const fileKeys = new Set(assessed.rows.map((row) => row.matchKey));
   for (const row of assessed.rows) {

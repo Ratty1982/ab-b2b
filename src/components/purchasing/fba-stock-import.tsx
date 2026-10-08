@@ -1,5 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { btnClass, primaryBtnClass, qty } from "@/components/purchasing/workspace";
+import {
+  FBA_NEW_PRODUCT_NOTE,
+  FBA_PARTIAL_CSV_WARNING,
+  FBA_PARTIAL_SNAPSHOT_WARNING,
+  fbaImportSafetyLines,
+  fbaIssuesCsv,
+  fbaMatchingEquation,
+  fbaRowsReadEquation,
+  type FbaDuplicateRow,
+  type FbaInvalidRow,
+  type FbaPreviewProduct,
+} from "@/domain/fba-stock";
 import { formatOperationalDateTime } from "@/lib/datetime";
 import { importFbaStockFn, listFbaStockImportsFn, previewFbaStockImportFn } from "@/server/phase2/fns";
 
@@ -121,34 +133,7 @@ export function FbaStockImportPanel({
         </p>
       ) : null}
 
-      {preview ? (
-        <div className="mt-3 border border-border px-3 py-3 text-[13px]" data-fba-preview>
-          <p className="font-semibold">FBA Stock Import</p>
-          <p className="mt-1">File: {preview.fileName}</p>
-          <p className="mt-1">Source recognised as Amazon FBA</p>
-          <p className="text-[11px] text-steel">Autopart source branch: {preview.sourceBranch}</p>
-          <dl className="mt-2 grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Products in file" value={qty(preview.productsProcessed)} />
-            <Stat label="Matched existing products" value={qty(preview.matchedExisting)} />
-            <Stat label="New internal Autopart products" value={qty(preview.newProducts)} />
-            <Stat label="Products with FBA stock > 0" value={qty(preview.productsWithStock)} />
-            <Stat label="Total FBA units" value={qty(preview.totalUnits)} />
-            <Stat label="Unknown/unmatched rows" value={qty(preview.newProducts)} />
-            <Stat label="Invalid rows" value={qty(preview.invalidRows)} />
-            <Stat label="Changed quantities" value={qty(preview.changedQuantities)} />
-          </dl>
-          <p className="mt-2 text-steel">{warningText(preview.warnings)}</p>
-          {preview.duplicate ? (
-            <p className="mt-2 font-medium" data-fba-duplicate>
-              Already imported. This file content was imported before.
-            </p>
-          ) : (
-            <button type="button" className={`${primaryBtnClass} mt-3`} disabled={busy} onClick={() => void commit()}>
-              {busy ? "Importing…" : "Import"}
-            </button>
-          )}
-        </div>
-      ) : null}
+      {preview ? <FbaPreview preview={preview} busy={busy} onImport={() => void commit()} /> : null}
 
       {result ? (
         <div className="mt-3 border border-border px-3 py-3 text-[13px]" data-fba-result>
@@ -207,6 +192,265 @@ export function FbaStockImportPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function signedQty(value: number): string {
+  const formatted = qty(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `−${formatted}`;
+  return formatted;
+}
+
+function downloadIssues(fileName: string, rows: Array<FbaInvalidRow | FbaDuplicateRow>) {
+  const csv = fbaIssuesCsv(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${fileName.replace(/\.[^.]+$/, "") || "fba-stock"}-issues.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function FbaPreview({
+  preview,
+  busy,
+  onImport,
+}: {
+  preview: Preview;
+  busy: boolean;
+  onImport: () => void;
+}) {
+  const warnings = Array.isArray(preview.warnings) ? preview.warnings.map((item) => String(item)) : [];
+  const partial = warnings.find((item) => item === FBA_PARTIAL_CSV_WARNING || item === FBA_PARTIAL_SNAPSHOT_WARNING);
+  const otherWarnings = warnings.filter((item) => item !== partial);
+  const issues = [...preview.invalidRowDetails, ...preview.duplicateRowDetails];
+  const safety = fbaImportSafetyLines(preview);
+
+  return (
+    <div className="mt-3 border border-border px-3 py-3 text-[13px]" data-fba-preview>
+      <p className="font-semibold">FBA Stock Import</p>
+      <p className="mt-1">File: {preview.fileName}</p>
+      <p className="mt-1">Source recognised as Amazon FBA</p>
+      <p className="text-[11px] text-steel">Autopart source branch: {preview.sourceBranch}</p>
+
+      {partial ? (
+        <div className="mt-3 border border-border/80 bg-surface/40 px-3 py-2" data-fba-partial>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em]">Partial snapshot</p>
+          <p className="mt-1 text-steel">{partial}</p>
+        </div>
+      ) : null}
+
+      <PreviewGroup title="File summary">
+        <Stat label="Rows read" value={qty(preview.rowsRead)} />
+        <Stat label="Valid product rows" value={qty(preview.productsProcessed)} />
+        <Stat label="Invalid rows" value={qty(preview.invalidRows)} />
+        {preview.duplicateSkus > 0 ? <Stat label="Duplicate rows" value={qty(preview.duplicateSkus)} /> : null}
+      </PreviewGroup>
+      <p className="mt-2 text-[12px] text-steel" data-fba-file-equation>
+        {fbaRowsReadEquation(preview)}
+      </p>
+
+      <PreviewGroup title="Matching">
+        <Stat label="Matched existing products" value={qty(preview.matchedExisting)} />
+        <Stat label="New to AB" value={qty(preview.newProducts)} />
+      </PreviewGroup>
+      <p className="mt-2 text-[12px] text-steel" data-fba-matching-equation>
+        {fbaMatchingEquation(preview)}
+      </p>
+      {preview.newProducts > 0 ? <p className="mt-2 max-w-3xl text-[12px] text-steel">{FBA_NEW_PRODUCT_NOTE}</p> : null}
+
+      <PreviewGroup title="FBA stock">
+        <Stat label="Products with FBA stock > 0" value={qty(preview.productsWithStock)} />
+        <Stat label="Total FBA units" value={qty(preview.totalUnits)} />
+        <Stat label="New FBA stock records" value={qty(preview.newFbaRecords)} />
+        <Stat label="FBA quantities changed" value={qty(preview.fbaQuantityChanges)} />
+        <Stat label="Unchanged quantities" value={qty(preview.unchangedQuantities)} />
+      </PreviewGroup>
+      <p className="mt-2 max-w-3xl text-[12px] text-steel">
+        A new FBA stock record includes a first quantity of zero. Unchanged means the imported FBA quantity already matches the current FBA quantity.
+      </p>
+
+      {preview.stockedProducts.length > 0 ? (
+        <Review title={`View ${qty(preview.stockedProducts.length)} stocked products`} testId="fba-stocked">
+          <p className="mb-2 text-[12px] text-steel">
+            Total after import is Warehouse Stock plus imported FBA Stock. It is not B2B sellable stock.
+          </p>
+          <table className="w-full min-w-[760px] text-left text-[12px]">
+            <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+              <tr>
+                <th className="py-1 pr-3">SKU</th>
+                <th className="py-1 pr-3">Product</th>
+                <th className="py-1 pr-3">Warehouse</th>
+                <th className="py-1 pr-3">Current FBA</th>
+                <th className="py-1 pr-3">Imported FBA</th>
+                <th className="py-1 pr-3">Change</th>
+                <th className="py-1">Total after import</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.stockedProducts.map((row) => (
+                <tr key={row.sku} className="border-t border-border/70">
+                  <td className="py-1 pr-3">{row.sku}</td>
+                  <td className="py-1 pr-3">{row.description || "—"}</td>
+                  <td className="py-1 pr-3">{qty(row.warehouseQty)}</td>
+                  <td className="py-1 pr-3">{qty(row.currentFbaQty)}</td>
+                  <td className="py-1 pr-3">{qty(row.importedFbaQty)}</td>
+                  <td className="py-1 pr-3">{signedQty(row.change)}</td>
+                  <td className="py-1">{qty(row.totalAfterImport)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Review>
+      ) : null}
+
+      {preview.newProductRows.length > 0 ? (
+        <Review title={`View ${qty(preview.newProductRows.length)} new products`} testId="fba-new-products">
+          <p className="mb-2 text-[12px] text-steel">
+            Group and condition are shown from the file for review. Import creates an internal Autopart product and does not save them, and it does not create a public catalogue product.
+          </p>
+          <table className="w-full min-w-[720px] text-left text-[12px]">
+            <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+              <tr>
+                <th className="py-1 pr-3">SKU</th>
+                <th className="py-1 pr-3">Description</th>
+                <th className="py-1 pr-3">FBA stock</th>
+                <th className="py-1 pr-3">Group</th>
+                <th className="py-1 pr-3">Condition</th>
+                <th className="py-1">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.newProductRows.map((row) => (
+                <NewProductRow key={row.sku} row={row} />
+              ))}
+            </tbody>
+          </table>
+        </Review>
+      ) : null}
+
+      {preview.invalidRowDetails.length > 0 ? (
+        <Review title={`View ${qty(preview.invalidRowDetails.length)} invalid rows`} testId="fba-invalid-rows">
+          <p className="mb-2 text-[12px] text-steel">These rows will be skipped. Valid rows can still be imported.</p>
+          <table className="w-full min-w-[640px] text-left text-[12px]">
+            <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+              <tr>
+                <th className="py-1 pr-3">Row</th>
+                <th className="py-1 pr-3">SKU</th>
+                <th className="py-1 pr-3">Description</th>
+                <th className="py-1 pr-3">Reason</th>
+                <th className="py-1">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.invalidRowDetails.map((row) => (
+                <tr key={`${row.line}-${row.reason}`} className="border-t border-border/70">
+                  <td className="py-1 pr-3">{row.line}</td>
+                  <td className="py-1 pr-3">{row.sku || "—"}</td>
+                  <td className="py-1 pr-3">{row.description || "—"}</td>
+                  <td className="py-1 pr-3">{row.reasonLabel}</td>
+                  <td className="py-1">{row.value || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Review>
+      ) : null}
+
+      {preview.duplicateRowDetails.length > 0 ? (
+        <Review title={`View ${qty(preview.duplicateRowDetails.length)} duplicate rows`} testId="fba-duplicate-rows">
+          <p className="mb-2 text-[12px] text-steel">A SKU that appears more than once is skipped. It is not imported.</p>
+          <table className="w-full min-w-[640px] text-left text-[12px]">
+            <thead className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
+              <tr>
+                <th className="py-1 pr-3">Row</th>
+                <th className="py-1 pr-3">SKU</th>
+                <th className="py-1 pr-3">Description</th>
+                <th className="py-1 pr-3">Reason</th>
+                <th className="py-1">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.duplicateRowDetails.map((row) => (
+                <tr key={`${row.line}-${row.sku}`} className="border-t border-border/70">
+                  <td className="py-1 pr-3">{row.line}</td>
+                  <td className="py-1 pr-3">{row.sku}</td>
+                  <td className="py-1 pr-3">{row.description || "—"}</td>
+                  <td className="py-1 pr-3">{row.reasonLabel}</td>
+                  <td className="py-1">{row.value || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Review>
+      ) : null}
+
+      {issues.length > 0 ? (
+        <button
+          type="button"
+          className={`${btnClass} mt-3`}
+          onClick={() => downloadIssues(preview.fileName, issues)}
+          data-fba-download-issues
+        >
+          Download issues CSV
+        </button>
+      ) : null}
+
+      {otherWarnings.length > 0 ? <p className="mt-2 text-steel">{otherWarnings.join(" ")}</p> : null}
+
+      {preview.duplicate ? (
+        <p className="mt-2 font-medium" data-fba-duplicate>
+          Already imported. This file content was imported before.
+        </p>
+      ) : (
+        <div className="mt-4 border border-border/80 px-3 py-3" data-fba-safety>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em]">Ready to import</p>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px]">
+            {safety.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <button type="button" className={`${primaryBtnClass} mt-3`} disabled={busy} onClick={onImport}>
+            {busy ? "Importing…" : "Import"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewProductRow({ row }: { row: FbaPreviewProduct }) {
+  return (
+    <tr className="border-t border-border/70">
+      <td className="py-1 pr-3">{row.sku}</td>
+      <td className="py-1 pr-3">{row.description || "—"}</td>
+      <td className="py-1 pr-3">{qty(row.importedFbaQty)}</td>
+      <td className="py-1 pr-3">{row.groupCode || "—"}</td>
+      <td className="py-1 pr-3">{row.conditionCode || "—"}</td>
+      <td className="py-1">{row.result}</td>
+    </tr>
+  );
+}
+
+function PreviewGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="mt-4">
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">{title}</h3>
+      <dl className="mt-2 grid gap-1 sm:grid-cols-2 lg:grid-cols-4">{children}</dl>
+    </div>
+  );
+}
+
+function Review({ title, testId, children }: { title: string; testId: string; children: ReactNode }) {
+  return (
+    <details className="mt-3 border border-border/80 px-3 py-2" data-fba-review={testId}>
+      <summary className="cursor-pointer text-[12px] font-semibold uppercase tracking-[0.08em] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+        {title}
+      </summary>
+      <div className="mt-2 overflow-x-auto">{children}</div>
+    </details>
   );
 }
 

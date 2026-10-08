@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import { buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 import {
+  FBA_PARTIAL_CSV_WARNING,
   FBA_WAREHOUSE_FILE_MESSAGE,
   assessFbaStockFile,
+  buildFbaPreviewProducts,
+  fbaImportSafetyLines,
+  fbaIssuesCsv,
+  fbaMatchingEquation,
+  fbaRowsReadEquation,
   fbaStockIsStale,
   planFbaSnapshot,
   totalOwnedStock,
@@ -118,16 +124,25 @@ describe("FBA snapshot planning", () => {
       existingProductKeys: new Set(["SSAMZ"]),
       previousQty: new Map(),
       completeSnapshot: true,
+      rowsRead: 1,
       invalidRows: 0,
       duplicateSkus: 0,
       warnings: [],
     });
-    expect(first).toMatchObject({ productsProcessed: 1, changedQuantities: 1, totalUnits: 20, newProducts: 0 });
+    expect(first).toMatchObject({
+      productsProcessed: 1,
+      changedQuantities: 1,
+      newFbaRecords: 1,
+      fbaQuantityChanges: 0,
+      totalUnits: 20,
+      newProducts: 0,
+    });
     const second = planFbaSnapshot({
       rows: [{ matchKey: "SSAMZ", availQty: 12 }],
       existingProductKeys: new Set(["SSAMZ"]),
       previousQty: new Map([["SSAMZ", 20]]),
       completeSnapshot: true,
+      rowsRead: 1,
       invalidRows: 0,
       duplicateSkus: 0,
       warnings: [],
@@ -147,6 +162,7 @@ describe("FBA snapshot planning", () => {
       existingProductKeys: new Set(["KEEP", "GONE"]),
       previousQty: previous,
       completeSnapshot: true,
+      rowsRead: 1,
       invalidRows: 0,
       duplicateSkus: 0,
       warnings: [],
@@ -158,6 +174,7 @@ describe("FBA snapshot planning", () => {
       existingProductKeys: new Set(["KEEP", "GONE"]),
       previousQty: previous,
       completeSnapshot: false,
+      rowsRead: 1,
       invalidRows: 0,
       duplicateSkus: 0,
       warnings: [],
@@ -196,10 +213,223 @@ describe("FBA snapshot planning", () => {
     expect(purchase.suggestedQty).toBeGreaterThan(0);
   });
 
+  it("keeps rows read, valid rows, invalid rows, matched products, and new products reconcilable", () => {
+    const header = "Branch,Group,Part Number,C,Description,Latest Cost,Stk,Avail";
+    const lines = [
+      "OPTIMUS,SX,M1,O,Matched one,1.00,9,1",
+      "OPTIMUS,SX,M2,O,Matched two,1.00,9,0",
+      "OPTIMUS,SX,M3,O,Matched three,1.00,9,4",
+      "OPTIMUS,SX,M4,O,Matched four,1.00,9,2",
+      "OPTIMUS,SX,M5,O,Matched five,1.00,9,8",
+      "OPTIMUS,SX,M6,O,Matched six,1.00,9,3",
+      "OPTIMUS,AB,N1,N,New one,1.00,9,6",
+      "OPTIMUS,AB,N2,W,New two,1.00,9,0",
+      ",SX,,O,No sku,1.00,9,5",
+      "OPTIMUS,SX,BAD,O,Bad avail,1.00,9,n/a",
+    ];
+    const assessed = assessFbaStockFile([header, ...lines].join("\n"));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    const totals = planFbaSnapshot({
+      rows: assessed.rows,
+      existingProductKeys: new Set(["M1", "M2", "M3", "M4", "M5", "M6"]),
+      previousQty: new Map(),
+      completeSnapshot: assessed.completeSnapshot,
+      rowsRead: assessed.rowsRead,
+      invalidRows: assessed.invalidRows,
+      duplicateSkus: assessed.duplicateSkus,
+      warnings: assessed.warnings,
+    });
+    expect(totals.rowsRead).toBe(10);
+    expect(totals.productsProcessed).toBe(8);
+    expect(totals.invalidRows).toBe(2);
+    expect(totals.matchedExisting).toBe(6);
+    expect(totals.newProducts).toBe(2);
+    expect(totals.rowsRead).toBe(totals.productsProcessed + totals.invalidRows + totals.duplicateSkus);
+    expect(totals.productsProcessed).toBe(totals.matchedExisting + totals.newProducts);
+    expect(fbaRowsReadEquation(totals)).toBe("8 valid product rows + 2 invalid rows = 10 rows read.");
+    expect(fbaMatchingEquation(totals)).toBe("6 matched existing products + 2 new to AB = 8 valid product rows.");
+    expect(JSON.stringify(totals)).not.toMatch(/unknown/i);
+    expect(assessed.rows.map((row) => row.sku)).toEqual(["M1", "M2", "M3", "M4", "M5", "M6", "N1", "N2"]);
+    const created = assessed.rows.find((row) => row.sku === "N1");
+    expect(created).toMatchObject({ groupCode: "AB", conditionCode: "N", availQty: 6 });
+  });
+
+  it("counts a first zero as a new FBA record and leaves an equal quantity unchanged", () => {
+    const first = planFbaSnapshot({
+      rows: [{ matchKey: "ZERO", availQty: 0 }],
+      existingProductKeys: new Set(["ZERO"]),
+      previousQty: new Map(),
+      completeSnapshot: false,
+      rowsRead: 1,
+      invalidRows: 0,
+      duplicateSkus: 0,
+      warnings: [],
+    });
+    expect(first.productsWithStock).toBe(0);
+    expect(first.zeroStock).toBe(1);
+    expect(first.invalidRows).toBe(0);
+    expect(first.newFbaRecords).toBe(1);
+    expect(first.fbaQuantityChanges).toBe(0);
+    expect(first.changedQuantities).toBe(1);
+    const same = planFbaSnapshot({
+      rows: [{ matchKey: "ZERO", availQty: 0 }],
+      existingProductKeys: new Set(["ZERO"]),
+      previousQty: new Map([["ZERO", 0]]),
+      completeSnapshot: false,
+      rowsRead: 1,
+      invalidRows: 0,
+      duplicateSkus: 0,
+      warnings: [],
+    });
+    expect(same.unchangedQuantities).toBe(1);
+    expect(same.changedQuantities).toBe(0);
+    expect(same.newFbaRecords).toBe(0);
+  });
+
   it("marks an import stale after 14 days and leaves a recent import fresh", () => {
     const now = new Date("2026-10-07T12:00:00.000Z");
     expect(fbaStockIsStale(new Date("2026-10-01T12:00:00.000Z"), now)).toBe(false);
     expect(fbaStockIsStale(new Date("2026-09-01T12:00:00.000Z"), now)).toBe(true);
     expect(fbaStockIsStale(null, now)).toBe(false);
+  });
+});
+
+describe("FBA preview diagnostics", () => {
+  const header = "Branch,Group,Part Number,C,Description,Latest Cost,Stk,Avail";
+
+  function csv(lines: string[]): string {
+    return [header, ...lines].join("\n");
+  }
+
+  it("records a reason, row number, and SKU for each invalid condition the parser produces", () => {
+    const assessed = assessFbaStockFile(
+      csv([
+        "OPTIMUS,SX,KEEP,O,Kept,1.00,9,4",
+        ",SX,,O,No sku,1.00,9,5",
+        "OPTIMUS,SX,BAD,O,Bad avail,1.00,9,n/a",
+        "OPTIMUS,SX,BLANK,O,Blank avail,1.00,9,",
+        "OPTIMUS,SX,NEG,O,Negative,1.00,9,-3",
+        ",SX,NOBRANCH,O,No branch,1.00,9,2",
+      ]),
+    );
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.rows.map((row) => row.sku)).toEqual(["KEEP"]);
+    expect(assessed.invalidRowDetails.map((row) => row.reason)).toEqual([
+      "missing_sku",
+      "invalid_avail",
+      "invalid_avail",
+      "negative_avail",
+      "missing_branch",
+    ]);
+    expect(assessed.invalidRowDetails[0]).toMatchObject({ line: 3, sku: null, description: "No sku", reasonLabel: "Missing SKU" });
+    expect(assessed.invalidRowDetails[1]).toMatchObject({ line: 4, sku: "BAD", value: "n/a", reasonLabel: "Invalid Avail" });
+    expect(assessed.invalidRowDetails[3]).toMatchObject({ line: 6, sku: "NEG", value: "-3", reasonLabel: "Negative Avail" });
+    expect(assessed.invalidRowDetails[4]).toMatchObject({ line: 7, sku: "NOBRANCH", reasonLabel: "Missing branch" });
+    expect(assessed.invalidRows).toBe(5);
+    const csvText = fbaIssuesCsv(assessed.invalidRowDetails);
+    expect(csvText.split("\n")[0]).toBe("row,sku,description,reason,value");
+    expect(csvText).toContain("4,BAD,Bad avail,Invalid Avail,n/a");
+  });
+
+  it("classifies a valid unknown SKU as a new internal product, including zero stock", () => {
+    const assessed = assessFbaStockFile(
+      csv(["OPTIMUS,AB,NEW1,N,New seal,1.00,9,17", "OPTIMUS,AB,NEW0,W,Zero seal,1.00,9,0"]),
+    );
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.invalidRows).toBe(0);
+    const totals = planFbaSnapshot({
+      rows: assessed.rows,
+      existingProductKeys: new Set(),
+      previousQty: new Map(),
+      completeSnapshot: false,
+      rowsRead: assessed.rowsRead,
+      invalidRows: 0,
+      duplicateSkus: 0,
+      warnings: assessed.warnings,
+    });
+    expect(totals.newProducts).toBe(2);
+    expect(totals.matchedExisting).toBe(0);
+    expect(totals.productsWithStock).toBe(1);
+    expect(totals.zeroStock).toBe(1);
+    const lines = buildFbaPreviewProducts({
+      rows: assessed.rows,
+      existing: new Map(),
+      previousQty: new Map(),
+    });
+    expect(lines.newProducts.map((row) => row.result)).toEqual(["Create internal product", "Create internal product"]);
+    expect(lines.stockedProducts.map((row) => row.sku)).toEqual(["NEW1"]);
+    expect(lines.newProducts[0]).toMatchObject({ groupCode: "AB", conditionCode: "N", importedFbaQty: 17 });
+  });
+
+  it("shows warehouse, current FBA, imported FBA, change, and total without treating total as sellable", () => {
+    const assessed = assessFbaStockFile(csv(["OPTIMUS,SX,SSAMZ,O,Steel Seal,1.00,9,17"]));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    const lines = buildFbaPreviewProducts({
+      rows: assessed.rows,
+      existing: new Map([
+        ["SSAMZ", { description: "Steel Seal head gasket", warehouseQty: 120, groupCode: "SX", conditionCode: "O" }],
+      ]),
+      previousQty: new Map([["SSAMZ", 0]]),
+    });
+    expect(lines.stockedProducts).toEqual([
+      {
+        sku: "SSAMZ",
+        description: "Steel Seal head gasket",
+        warehouseQty: 120,
+        currentFbaQty: 0,
+        importedFbaQty: 17,
+        change: 17,
+        totalAfterImport: 137,
+        groupCode: "SX",
+        conditionCode: "O",
+        result: "Update FBA quantity",
+      },
+    ]);
+    expect(lines.newProducts).toEqual([]);
+    expect(totalOwnedStock(120, 17)).toBe(137);
+    expect(totalOwnedStock(120, 17)).not.toBe(120);
+  });
+
+  it("keeps a delimited CSV as a partial snapshot and does not zero absent FBA products", () => {
+    const assessed = assessFbaStockFile(csv(["OPTIMUS,SX,KEEP,O,Keep,1.00,9,8"]));
+    expect(assessed.ok).toBe(true);
+    if (!assessed.ok) return;
+    expect(assessed.completeSnapshot).toBe(false);
+    expect(assessed.warnings[0]).toBe(FBA_PARTIAL_CSV_WARNING);
+    const totals = planFbaSnapshot({
+      rows: assessed.rows,
+      existingProductKeys: new Set(["KEEP", "GONE"]),
+      previousQty: new Map([
+        ["KEEP", 8],
+        ["GONE", 20],
+      ]),
+      completeSnapshot: assessed.completeSnapshot,
+      rowsRead: assessed.rowsRead,
+      invalidRows: assessed.invalidRows,
+      duplicateSkus: assessed.duplicateSkus,
+      warnings: assessed.warnings,
+    });
+    expect(totals.absentZeroed).toBe(0);
+    expect(totals.unchangedQuantities).toBe(1);
+    expect(fbaImportSafetyLines({
+      matchedExisting: 6,
+      newProducts: 2,
+      productsWithStock: 1,
+      invalidRows: 2,
+      duplicateSkus: 0,
+      completeSnapshot: false,
+    })).toEqual([
+      "6 existing products will receive the FBA quantity from this file.",
+      "2 internal Autopart product records will be created. They will not become public catalogue products.",
+      "1 product will have positive FBA stock.",
+      "2 invalid rows will be skipped.",
+      "Products missing from this file will keep their existing FBA quantity.",
+      "Warehouse stock will not be changed.",
+      "B2B sellable stock will not be changed.",
+    ]);
   });
 });
