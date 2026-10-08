@@ -1,4 +1,14 @@
-import { ArrowRight, Globe, Handshake, Megaphone, Quote, Truck, Wrench, type LucideIcon } from "lucide-react";
+import { type ReactNode } from "react";
+import {
+  ArrowRight,
+  Globe,
+  Handshake,
+  Megaphone,
+  Quote,
+  Truck,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import warehouseFallback from "@/assets/warehouse.jpg";
 import { homepageBrandLogoSrc } from "@/domain/homepage-brand-logos";
 import {
@@ -12,7 +22,12 @@ import { cmsFocalStyle, cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { cn } from "@/lib/utils";
 import type { ClientSession } from "@/server/auth/session";
 
-const frameClass = "mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10";
+const frameClass = "mx-auto w-full max-w-[1200px] px-4 sm:px-6 lg:px-8";
+const sectionPad = "py-12 sm:py-14 lg:py-16";
+const eyebrowClass = "text-[11px] font-semibold uppercase tracking-[0.22em] text-primary";
+const sectionHeadingClass =
+  "mt-3 font-display text-3xl font-semibold uppercase leading-[0.95] tracking-tight text-balance sm:text-4xl";
+const bodyClass = "text-[15px] leading-relaxed text-pretty text-steel";
 
 const primaryCtaClass =
   "inline-flex h-11 items-center gap-2 rounded-md bg-primary px-5 text-[13px] font-bold uppercase tracking-wide text-primary-foreground transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none";
@@ -32,6 +47,10 @@ export type WhyUsTeamProfile = {
   jobTitle: string | null;
   photo: { src: string; alt: string; objectPosition?: string } | null;
 };
+
+function SectionFrame({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn(frameClass, className)}>{children}</div>;
+}
 
 function CtaLink({ link }: { link: WhyUsLink }) {
   return (
@@ -56,7 +75,10 @@ function MarkedHeading({
   className?: string;
 }) {
   const needle = highlight?.trim();
-  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   return (
     <Tag id={id} className={className}>
       {lines.map((line) => {
@@ -80,7 +102,17 @@ function MarkedHeading({
   );
 }
 
-function Cover({ media, alt, className, fallbackSrc }: { media: WhyUsMedia; alt: string; className?: string; fallbackSrc?: string }) {
+function Cover({
+  media,
+  alt,
+  className,
+  fallbackSrc,
+}: {
+  media: WhyUsMedia;
+  alt: string;
+  className?: string;
+  fallbackSrc?: string;
+}) {
   const src = cmsMediaDisplaySrc(media) || fallbackSrc;
   if (!src) return null;
   const positioned = typeof media.focalX === "number" || typeof media.focalY === "number";
@@ -112,21 +144,35 @@ function BrandPanel({
   const src = cmsMediaDisplaySrc(media);
   const logo = homepageBrandLogoSrc(slug, null);
   return (
-    <article className="relative min-h-[22rem] overflow-hidden bg-ink lg:min-h-[26rem]" data-why-brand={slug}>
+    <article
+      className="relative min-h-[22rem] overflow-hidden rounded-lg bg-ink"
+      data-why-brand={slug}
+    >
       {src ? (
         <Cover media={media} alt={media.alt || name} />
       ) : (
         <div
           className="absolute inset-0"
           data-why-brand-visual="fallback"
-          style={{ background: "radial-gradient(90% 80% at 50% 40%, var(--color-surface-2), var(--color-ink) 72%)" }}
+          style={{
+            background:
+              "radial-gradient(90% 80% at 50% 40%, var(--color-surface-2), var(--color-ink) 72%)",
+          }}
         />
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/55 to-ink/10" />
-      <div className="relative flex min-h-[22rem] flex-col justify-end p-6 lg:min-h-[26rem] lg:p-8">
-        {logo ? <img src={logo} alt={`${name} logo`} className="mb-4 h-12 w-auto max-w-[12rem] object-contain" /> : null}
+      <div className="relative flex min-h-[20rem] flex-col justify-end p-6 sm:min-h-[22rem] lg:p-8">
+        {logo ? (
+          <img
+            src={logo}
+            alt={`${name} logo`}
+            className="mb-4 h-12 w-auto max-w-[12rem] object-contain"
+          />
+        ) : null}
         <h3 className="font-display text-3xl font-semibold uppercase tracking-tight">{heading}</h3>
-        {description ? <p className="mt-3 max-w-md text-[14px] leading-relaxed text-steel">{description}</p> : null}
+        {description ? (
+          <p className="mt-3 text-[14px] leading-relaxed text-pretty text-steel">{description}</p>
+        ) : null}
         {cta.label ? (
           <div className="mt-5">
             <CtaLink link={cta} />
@@ -148,14 +194,25 @@ export function PublicWhyUs({
 }) {
   const primary = whyUsPrimaryCta(session, content);
   const quotes = publishedTestimonials(content).slice(0, 3);
-  const visibleTeam = content.team.enabled ? team.filter((member) => member.photo?.src && member.displayName.trim()) : [];
+  const visibleTeam = content.team.enabled
+    ? team.filter((member) => member.photo?.src && member.displayName.trim())
+    : [];
   const heroSrc = cmsMediaDisplaySrc(content.hero.media);
   const storySrc = cmsMediaDisplaySrc(content.story.media);
 
   return (
-    <div data-why-page="company" data-why-template="why-us" data-offer-trade-account={primary.offerTradeAccount ? "yes" : "no"} className="overflow-x-hidden">
+    <div
+      data-why-page="company"
+      data-why-template="why-us"
+      data-offer-trade-account={primary.offerTradeAccount ? "yes" : "no"}
+      className="overflow-x-hidden"
+    >
       {content.hero.enabled ? (
-        <section aria-labelledby="why-hero-title" data-why-section="hero" className="relative overflow-hidden">
+        <section
+          aria-labelledby="why-hero-title"
+          data-why-section="hero"
+          className="relative overflow-hidden"
+        >
           {heroSrc || warehouseFallback ? (
             <>
               <Cover
@@ -169,42 +226,60 @@ export function PublicWhyUs({
           ) : (
             <div className="absolute inset-0" data-hero-visual="fallback" />
           )}
-          <div className={cn(frameClass, "relative py-12 sm:py-14 lg:py-16")}>
-            <div className="max-w-xl">
-              {content.hero.eyebrow ? (
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{content.hero.eyebrow}</p>
-              ) : null}
+          <SectionFrame className="relative py-14 sm:py-16 lg:py-[4.5rem]">
+            <div className="max-w-[46rem]">
+              {content.hero.eyebrow ? <p className={eyebrowClass}>{content.hero.eyebrow}</p> : null}
               <MarkedHeading
                 as="h1"
                 id="why-hero-title"
                 text={content.hero.headline}
                 highlight={content.hero.highlight}
-                className="mt-3 font-display text-[2.4rem] font-semibold uppercase leading-[0.92] tracking-tight sm:text-5xl lg:text-[3.25rem]"
+                className="mt-3 font-display text-[2.35rem] font-semibold uppercase leading-[0.95] tracking-tight text-balance sm:text-5xl lg:text-[3.15rem]"
               />
               {content.hero.description ? (
-                <p className="mt-4 text-[15px] leading-relaxed text-steel">{content.hero.description}</p>
+                <p className={cn(bodyClass, "mt-4")}>{content.hero.description}</p>
               ) : null}
               <div className="mt-6" data-why-cta="hero">
                 <CtaLink link={primary} />
               </div>
             </div>
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
 
       {content.stats.enabled && content.stats.items.length ? (
-        <section aria-label="Company credibility" data-why-section="stats" className="border-t border-border/50">
-          <ul className={cn(frameClass, "grid gap-6 py-8 sm:grid-cols-3 sm:py-10")}>
+        <section
+          aria-label="Company credibility"
+          data-why-section="stats"
+          className="border-t border-border/50"
+        >
+          <ul
+            className={cn(
+              frameClass,
+              "grid grid-cols-1 gap-8 py-10 lg:grid-cols-3 lg:grid-rows-[auto_auto_auto_auto] lg:gap-x-10 lg:gap-y-0 lg:py-12",
+            )}
+          >
             {content.stats.items.map((item, index) => {
               const Icon = STAT_ICONS[index] ?? Globe;
               return (
-                <li key={`${item.value}-${item.label}`} className="flex gap-3">
-                  <Icon className="mt-1 size-5 shrink-0 text-primary" aria-hidden />
-                  <div>
-                    <p className="font-display text-3xl font-semibold uppercase tracking-tight">{item.value}</p>
-                    <p className="mt-1 text-[12px] font-semibold uppercase tracking-[0.14em]">{item.label}</p>
-                    {item.body ? <p className="mt-2 text-[13px] leading-relaxed text-steel">{item.body}</p> : null}
-                  </div>
+                <li
+                  key={`${item.value}-${item.label}`}
+                  className="grid content-start gap-2 border-b border-border/50 pb-8 last:border-b-0 last:pb-0 lg:grid-rows-subgrid lg:row-span-4 lg:border-0 lg:pb-0"
+                >
+                  <Icon className="size-5 text-primary" aria-hidden />
+                  <p className="font-display text-3xl font-semibold uppercase leading-none tracking-tight">
+                    {item.value}
+                  </p>
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.14em]">
+                    {item.label}
+                  </p>
+                  {item.body ? (
+                    <p className="text-[13px] leading-relaxed text-pretty text-steel">
+                      {item.body}
+                    </p>
+                  ) : (
+                    <p />
+                  )}
                 </li>
               );
             })}
@@ -213,78 +288,109 @@ export function PublicWhyUs({
       ) : null}
 
       {content.story.enabled ? (
-        <section aria-labelledby="why-story-title" data-why-section="story" className="border-t border-border/50">
-          <div className="grid lg:grid-cols-2">
-            <div className="relative min-h-[16rem] bg-ink lg:min-h-[24rem]" data-why-story-visual={storySrc ? "image" : "fallback"}>
-              {storySrc ? (
-                <Cover media={content.story.media} alt={content.story.media.alt} />
-              ) : (
-                <div
-                  className="absolute inset-0"
-                  style={{ background: "radial-gradient(80% 80% at 50% 40%, var(--color-surface-2), var(--color-ink) 70%)" }}
-                />
-              )}
+        <section
+          aria-labelledby="why-story-title"
+          data-why-section="story"
+          className="border-t border-border/50"
+        >
+          <SectionFrame
+            className={cn(
+              sectionPad,
+              "grid items-center gap-8 lg:grid-cols-[minmax(0,45fr)_minmax(0,55fr)] lg:gap-12",
+            )}
+          >
+            <div
+              className="relative aspect-[4/3] overflow-hidden rounded-lg border border-border/70 bg-ink"
+              data-why-story-visual={storySrc ? "image" : "fallback"}
+            >
+              <Cover
+                media={content.story.media}
+                alt={content.story.media.alt}
+                fallbackSrc={warehouseFallback}
+                className="object-[center_62%]"
+              />
             </div>
-            <div className="flex flex-col justify-center bg-ink px-5 py-10 sm:px-8 lg:px-12">
+            <div className="flex flex-col justify-center">
               {content.story.eyebrow ? (
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{content.story.eyebrow}</p>
+                <p className={eyebrowClass}>{content.story.eyebrow}</p>
               ) : null}
               <MarkedHeading
                 as="h2"
                 id="why-story-title"
                 text={content.story.headline}
                 highlight={content.story.highlight}
-                className="mt-3 font-display text-4xl font-semibold uppercase leading-[0.92] tracking-tight"
+                className={sectionHeadingClass}
               />
-              {content.story.body.split("\n").filter((line) => line.trim()).map((paragraph) => (
-                <p key={paragraph} className="mt-4 max-w-xl text-[15px] leading-relaxed text-steel">
-                  {paragraph}
-                </p>
-              ))}
+              {content.story.body
+                .split("\n")
+                .filter((line) => line.trim())
+                .map((paragraph) => (
+                  <p key={paragraph} className={cn(bodyClass, "mt-4")}>
+                    {paragraph}
+                  </p>
+                ))}
             </div>
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
 
       {content.support.enabled && content.support.items.length ? (
-        <section aria-labelledby="why-support-title" data-why-section="support" className="border-t border-border/50">
-          <div className={cn(frameClass, "py-12 lg:py-16")}>
+        <section
+          aria-labelledby="why-support-title"
+          data-why-section="support"
+          className="border-t border-border/50"
+        >
+          <SectionFrame className={sectionPad}>
             {content.support.eyebrow ? (
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{content.support.eyebrow}</p>
+              <p className={eyebrowClass}>{content.support.eyebrow}</p>
             ) : null}
-            <h2 id="why-support-title" className="mt-3 max-w-3xl font-display text-4xl font-semibold uppercase leading-[0.92] tracking-tight">
+            <h2 id="why-support-title" className={cn(sectionHeadingClass, "max-w-3xl")}>
               {content.support.headline}
             </h2>
-            <ul className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {content.support.items.map((item) => {
                 const Icon = SUPPORT_ICONS[item.icon] ?? Handshake;
                 return (
-                  <li key={item.title} className="rounded-lg border border-border/80 bg-surface px-5 py-5">
+                  <li
+                    key={item.title}
+                    className="h-full rounded-lg border border-border/80 bg-surface px-5 py-5"
+                  >
                     <Icon className="size-5 text-primary" aria-hidden />
-                    <h3 className="mt-4 font-display text-lg font-semibold uppercase tracking-tight">{item.title}</h3>
+                    <h3 className="mt-4 font-display text-lg font-semibold uppercase tracking-tight">
+                      {item.title}
+                    </h3>
                     <p className="mt-2 text-[14px] leading-relaxed text-steel">{item.body}</p>
                   </li>
                 );
               })}
             </ul>
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
 
       {quotes.length ? (
-        <section aria-labelledby="why-quotes-title" data-why-section="testimonials" className="border-t border-border/50">
-          <div className={cn(frameClass, "py-12 lg:py-16")}>
+        <section
+          aria-labelledby="why-quotes-title"
+          data-why-section="testimonials"
+          className="border-t border-border/50"
+        >
+          <SectionFrame className={sectionPad}>
             {content.testimonials.eyebrow ? (
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{content.testimonials.eyebrow}</p>
+              <p className={eyebrowClass}>{content.testimonials.eyebrow}</p>
             ) : null}
-            <h2 id="why-quotes-title" className="mt-3 font-display text-4xl font-semibold uppercase leading-[0.92] tracking-tight">
+            <h2 id="why-quotes-title" className={sectionHeadingClass}>
               {content.testimonials.headline}
             </h2>
-            <ul className="mt-8 grid gap-4 lg:grid-cols-3">
+            <ul className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {quotes.map((item) => (
-                <li key={item.name} className="rounded-lg border border-border/80 bg-surface px-5 py-5">
+                <li
+                  key={item.name}
+                  className="h-full rounded-lg border border-border/80 bg-surface px-5 py-5"
+                >
                   <Quote className="size-5 text-primary" aria-hidden />
-                  <blockquote className="mt-4 text-[14px] leading-relaxed text-foreground">“{item.quote}”</blockquote>
+                  <blockquote className="mt-4 text-[14px] leading-relaxed text-foreground">
+                    “{item.quote}”
+                  </blockquote>
                   <footer className="mt-4 text-[13px] leading-snug">
                     <p className="font-semibold">{item.name}</p>
                     {item.business ? <p className="text-steel">{item.business}</p> : null}
@@ -293,19 +399,26 @@ export function PublicWhyUs({
                 </li>
               ))}
             </ul>
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
 
       {content.brands.enabled ? (
-        <section aria-label="Our brands" data-why-section="brands" className="border-t border-border/50">
-          <div className="grid lg:grid-cols-2">
+        <section
+          aria-label="Our brands"
+          data-why-section="brands"
+          className="border-t border-border/50"
+        >
+          <SectionFrame className={cn(sectionPad, "grid gap-6 md:grid-cols-2 lg:grid-cols-2")}>
             <BrandPanel
               slug="steel-seal"
               name="Steel Seal"
               heading={content.brands.steelSeal.heading}
               description={content.brands.steelSeal.description}
-              cta={{ label: content.brands.steelSeal.ctaLabel, href: content.brands.steelSeal.ctaHref }}
+              cta={{
+                label: content.brands.steelSeal.ctaLabel,
+                href: content.brands.steelSeal.ctaHref,
+              }}
               media={content.brands.steelSeal.media}
             />
             <BrandPanel
@@ -313,32 +426,48 @@ export function PublicWhyUs({
               name="Power Maxed"
               heading={content.brands.powerMaxed.heading}
               description={content.brands.powerMaxed.description}
-              cta={{ label: content.brands.powerMaxed.ctaLabel, href: content.brands.powerMaxed.ctaHref }}
+              cta={{
+                label: content.brands.powerMaxed.ctaLabel,
+                href: content.brands.powerMaxed.ctaHref,
+              }}
               media={content.brands.powerMaxed.media}
             />
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
 
       {visibleTeam.length ? (
-        <section aria-labelledby="why-team-title" data-why-section="team" className="border-t border-border/50">
-          <div className={cn(frameClass, "py-12 lg:py-16")}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">Meet the Team</p>
-            <h2 id="why-team-title" className="mt-3 font-display text-4xl font-semibold uppercase tracking-tight">
+        <section
+          aria-labelledby="why-team-title"
+          data-why-section="team"
+          className="border-t border-border/50"
+        >
+          <SectionFrame className={sectionPad}>
+            <p className={eyebrowClass}>Meet the Team</p>
+            <h2 id="why-team-title" className={sectionHeadingClass}>
               The people behind Automotive Brands
             </h2>
             <ul className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-4">
               {visibleTeam.map((member) => (
-                <li key={member.id} className="overflow-hidden rounded-lg border border-border/80 bg-surface">
+                <li
+                  key={member.id}
+                  className="overflow-hidden rounded-lg border border-border/80 bg-surface"
+                >
                   <img
                     src={member.photo!.src}
                     alt={member.photo!.alt || member.displayName}
                     className="aspect-[4/5] w-full object-cover"
-                    style={member.photo!.objectPosition ? { objectPosition: member.photo!.objectPosition } : undefined}
+                    style={
+                      member.photo!.objectPosition
+                        ? { objectPosition: member.photo!.objectPosition }
+                        : undefined
+                    }
                   />
                   <div className="px-3 py-3">
                     <p className="font-semibold">{member.displayName}</p>
-                    {member.jobTitle ? <p className="text-[13px] text-steel">{member.jobTitle}</p> : null}
+                    {member.jobTitle ? (
+                      <p className="text-[13px] text-steel">{member.jobTitle}</p>
+                    ) : null}
                   </div>
                 </li>
               ))}
@@ -348,38 +477,50 @@ export function PublicWhyUs({
                 Meet the Team
               </a>
             </div>
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
 
       {content.close.enabled ? (
-        <section aria-labelledby="why-close-title" data-why-section="close" className="border-t border-border/50">
-          <div className={cn(frameClass, "flex flex-col gap-6 py-12 lg:flex-row lg:items-center lg:justify-between lg:py-14")}>
+        <section
+          aria-labelledby="why-close-title"
+          data-why-section="close"
+          className="border-t border-border/50"
+        >
+          <SectionFrame
+            className={cn(
+              sectionPad,
+              "flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between",
+            )}
+          >
             <div className="max-w-2xl">
               {content.close.eyebrow ? (
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">{content.close.eyebrow}</p>
+                <p className={eyebrowClass}>{content.close.eyebrow}</p>
               ) : null}
               <MarkedHeading
                 as="h2"
                 id="why-close-title"
                 text={content.close.headline}
                 highlight={content.close.highlight}
-                className="mt-3 font-display text-4xl font-semibold uppercase leading-[0.92] tracking-tight"
+                className={sectionHeadingClass}
               />
               {content.close.description ? (
-                <p className="mt-4 text-[15px] leading-relaxed text-steel">{content.close.description}</p>
+                <p className={cn(bodyClass, "mt-4")}>{content.close.description}</p>
               ) : null}
             </div>
             <div data-why-cta="close">
               <CtaLink
                 link={
                   primary.offerTradeAccount
-                    ? { label: content.close.ctaLabel || primary.label, href: content.close.ctaHref || primary.href }
+                    ? {
+                        label: content.close.ctaLabel || primary.label,
+                        href: content.close.ctaHref || primary.href,
+                      }
                     : primary
                 }
               />
             </div>
-          </div>
+          </SectionFrame>
         </section>
       ) : null}
     </div>

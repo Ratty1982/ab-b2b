@@ -103,10 +103,10 @@ describe("public why us page", () => {
     expect(html).toContain('alt="Steel Seal logo"');
     expect(html).toContain('alt="Power Maxed logo"');
     expect(html).toContain("object-contain");
-    expect(html).toContain("max-w-[1400px]");
+    expect(html).toContain("max-w-[1200px]");
     expect(html).toContain("overflow-x-hidden");
-    expect(html).toContain("sm:grid-cols-3");
-    expect(html).toContain("xl:grid-cols-4");
+    expect(html).toContain("lg:grid-cols-3");
+    expect(html).toContain("lg:grid-cols-4");
     expect(html).toContain("lg:grid-cols-2");
     expect(html).not.toContain("bg-white");
     expect(html).not.toContain("Mug Shots Coming Soon");
