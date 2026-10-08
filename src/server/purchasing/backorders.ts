@@ -8,6 +8,7 @@ import type { AutopartBackorderChangeStatus } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
+import { csvFormulaSafeCell } from "@/domain/csv-formula";
 import { dateOnlyIsoFromDate } from "@/domain/sales-history-period";
 import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import {
@@ -83,9 +84,7 @@ function money(value: { toString(): string } | number | null | undefined): strin
 }
 
 function csvCell(value: string | number | null | undefined): string {
-  const s = value == null ? "" : String(value);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+  return csvFormulaSafeCell(value);
 }
 
 type ProductInclude = {

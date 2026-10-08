@@ -3,6 +3,7 @@ import { getRequestHeaders } from "@tanstack/react-start/server";
 import { auth } from "@/infra/auth";
 import { formatZodError } from "@/domain/cms";
 import type { HomepageJson } from "@/domain/homepage";
+import { clientSafeErrorMessage } from "@/server/http/client-error";
 import { AuthError } from "@/server/rbac/guards";
 import { resolveOptionalRequestUserId } from "@/server/auth/request-session";
 import * as companies from "@/server/companies/service";
@@ -41,10 +42,13 @@ function toError(error: unknown): { ok: false; error: string; code?: string } {
   if (validation) {
     return { ok: false, error: validation, code: "VALIDATION" };
   }
-  if (error instanceof Error && error.message) {
-    return { ok: false, error: error.message, code: "INTERNAL" };
+  const safe = clientSafeErrorMessage(error);
+  if (safe) return { ok: false, error: safe, code: "INTERNAL" };
+  if (error instanceof Error && error.name.startsWith("Prisma")) {
+    console.error("[ab:fn] database request failed", error.name);
+  } else {
+    console.error("[ab:fn] request failed");
   }
-  console.error("[ab:fn]", error);
   return { ok: false, error: "Request failed", code: "INTERNAL" };
 }
 

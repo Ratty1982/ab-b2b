@@ -36,6 +36,8 @@ import {
   type CanonicalColumn,
   type CsvScanRecord,
 } from "@/domain/autopart-bulk-csv";
+import { csvFormulaSafeCell } from "@/domain/csv-formula";
+import { clampListPage } from "@/domain/list-page";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireCompanyAccess, requireSystemPermission } from "@/server/rbac/guards";
 
@@ -60,6 +62,41 @@ export function portalAutopartHistoryEnabled(): boolean {
   return process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] === "true";
 }
 
+const ACTIVE_UPLOAD_LIMIT = 2;
+let activeUploads = 0;
+
+export function autopartUploadInFlight(): number {
+  return activeUploads;
+}
+
+const BLOCKED_UPLOAD_PREFIXES: number[][] = [
+  [0x4d, 0x5a],
+  [0x7f, 0x45, 0x4c, 0x46],
+  [0x50, 0x4b, 0x03, 0x04],
+  [0x50, 0x4b, 0x05, 0x06],
+  [0x1f, 0x8b],
+];
+
+/** Filename stored beside a random id. Rejects traversal and odd characters. */
+export function sanitizeAutopartUploadName(filename: string): string | null {
+  if (/[/\\]/.test(filename) || filename.includes("..")) return null;
+  const safeName = filename
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^\.+/, "")
+    .slice(0, 80);
+  if (!safeName || safeName.includes("..")) return null;
+  return safeName;
+}
+
+/** Reject binaries and NUL bytes. Autopart masters are plain text. */
+export function autopartUploadBytesRejected(bytes: Uint8Array): boolean {
+  if (bytes.includes(0)) return true;
+  return BLOCKED_UPLOAD_PREFIXES.some(
+    (prefix) =>
+      bytes.length >= prefix.length && prefix.every((byte, index) => bytes[index] === byte),
+  );
+}
+
 function assertInsideRoot(filePath: string): string {
   const root = path.resolve(autopartImportRoot());
   const resolved = path.resolve(filePath);
@@ -77,57 +114,82 @@ export async function saveAutopartUpload(input: {
 }): Promise<{ batchId: string; fileHash: string; bytes: number }> {
   await requireSystemPermission(input.actorUserId, "autopart.import.manage");
   if (!input.body) throw new AuthError("Upload body is empty", "VALIDATION", 400);
-  const safeName = input.filename
-    .replace(/[^A-Za-z0-9._-]+/g, "_")
-    .replace(/^\.+/, "")
-    .slice(0, 80);
+  const safeName = sanitizeAutopartUploadName(input.filename);
   if (!safeName) throw new AuthError("Filename is required", "VALIDATION", 400);
-  await mkdir(autopartImportRoot(), { recursive: true });
-  const dest = assertInsideRoot(path.join(autopartImportRoot(), `${randomUUID()}-${safeName}`));
-  const hash = createHash("sha256");
-  const ws = createWriteStream(dest, { flags: "wx" });
-  const reader = input.body.getReader();
-  let bytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      bytes += value.byteLength;
-      if (bytes > autopartImportMaxBytes()) {
-        await reader.cancel();
-        throw new AuthError("File exceeds the Autopart upload limit", "VALIDATION", 400);
-      }
-      hash.update(value);
-      if (!ws.write(value)) await once(ws, "drain");
-    }
-    ws.end();
-    await finished(ws);
-  } catch (error) {
-    ws.destroy();
-    await rm(dest, { force: true });
-    throw error;
+  if (activeUploads >= ACTIVE_UPLOAD_LIMIT) {
+    throw new AuthError("Too many Autopart uploads are in progress", "RATE_LIMITED", 429);
   }
-  const fileHash = hash.digest("hex");
-  const batch = await prisma.autopartImportBatch.create({
-    data: {
-      kind: input.kind,
-      status: "UPLOADED",
-      filename: safeName,
-      fileHash,
-      storagePath: dest,
-      dryRun: true,
-      createdById: input.actorUserId,
-    },
-  });
-  await recordAuditEvent({
-    action: "autopart_master_uploaded",
-    entityType: "AutopartImportBatch",
-    entityId: batch.id,
-    actorUserId: input.actorUserId,
-    metadata: { kind: input.kind, bytes, fileHash },
-  });
-  return { batchId: batch.id, fileHash, bytes };
+  activeUploads += 1;
+  try {
+    await mkdir(autopartImportRoot(), { recursive: true });
+    const dest = assertInsideRoot(path.join(autopartImportRoot(), `${randomUUID()}-${safeName}`));
+    const hash = createHash("sha256");
+    const ws = createWriteStream(dest, { flags: "wx" });
+    const reader = input.body.getReader();
+    let bytes = 0;
+    const head: number[] = [];
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        if (value.includes(0)) {
+          await reader.cancel();
+          throw new AuthError("Upload is not a plain-text Autopart file", "VALIDATION", 400);
+        }
+        for (const byte of value) {
+          if (head.length < 8) head.push(byte);
+          else break;
+        }
+        bytes += value.byteLength;
+        if (bytes > autopartImportMaxBytes()) {
+          await reader.cancel();
+          throw new AuthError("File exceeds the Autopart upload limit", "VALIDATION", 400);
+        }
+        hash.update(value);
+        if (!ws.write(value)) await once(ws, "drain");
+      }
+      if (bytes === 0) throw new AuthError("Upload body is empty", "VALIDATION", 400);
+      if (autopartUploadBytesRejected(Uint8Array.from(head))) {
+        throw new AuthError("Upload is not a plain-text Autopart file", "VALIDATION", 400);
+      }
+      ws.end();
+      await finished(ws);
+    } catch (error) {
+      await new Promise<void>((resolve) => {
+        if (ws.closed) {
+          resolve();
+          return;
+        }
+        ws.once("close", () => resolve());
+        ws.destroy();
+      });
+      await rm(dest, { force: true });
+      throw error;
+    }
+    const fileHash = hash.digest("hex");
+    const batch = await prisma.autopartImportBatch.create({
+      data: {
+        kind: input.kind,
+        status: "UPLOADED",
+        filename: safeName,
+        fileHash,
+        storagePath: dest,
+        dryRun: true,
+        createdById: input.actorUserId,
+      },
+    });
+    await recordAuditEvent({
+      action: "autopart_master_uploaded",
+      entityType: "AutopartImportBatch",
+      entityId: batch.id,
+      actorUserId: input.actorUserId,
+      metadata: { kind: input.kind, bytes, fileHash },
+    });
+    return { batchId: batch.id, fileHash, bytes };
+  } finally {
+    activeUploads -= 1;
+  }
 }
 
 type ColumnMap = Partial<Record<CanonicalColumn, string>>;
@@ -1094,7 +1156,15 @@ export async function cancelAutopartImport(actorUserId: string, batchId: string)
     });
     return { cancelled: false, requested: true };
   }
-  if (batch.storagePath) await rm(batch.storagePath, { force: true }).catch(() => undefined);
+  if (batch.storagePath) {
+    try {
+      await rm(assertInsideRoot(batch.storagePath), { force: true });
+    } catch (error) {
+      if (error instanceof AuthError) {
+        console.error("[ab:autopart-import] refused to delete a file outside private storage");
+      }
+    }
+  }
   await prisma.autopartImportBatch.update({
     where: { id: batch.id },
     data: { status: "CANCELLED", storagePath: null, completedAt: new Date() },
@@ -1111,6 +1181,7 @@ export async function getAutopartImportBatch(actorUserId: string, batchId: strin
 
 export async function listAutopartImportBatches(actorUserId: string, page = 1) {
   await requireSystemPermission(actorUserId, "autopart.import.view");
+  const safePage = clampListPage(page);
   const pageSize = 25;
   const where = {};
   const [total, items] = await Promise.all([
@@ -1118,7 +1189,7 @@ export async function listAutopartImportBatches(actorUserId: string, page = 1) {
     prisma.autopartImportBatch.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
       select: {
         id: true,
@@ -1141,11 +1212,12 @@ export async function listAutopartImportBatches(actorUserId: string, page = 1) {
       },
     }),
   ]);
-  return { total, page, pageSize, items };
+  return { total, page: safePage, pageSize, items };
 }
 
 export async function listAutopartImportIssues(actorUserId: string, batchId: string, page = 1) {
   await requireSystemPermission(actorUserId, "autopart.import.view");
+  const safePage = clampListPage(page);
   const pageSize = 50;
   const where = { batchId };
   const [total, items] = await Promise.all([
@@ -1153,11 +1225,11 @@ export async function listAutopartImportIssues(actorUserId: string, batchId: str
     prisma.autopartImportIssue.findMany({
       where,
       orderBy: { sourceRowNumber: "asc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
     }),
   ]);
-  return { total, page, pageSize, items };
+  return { total, page: safePage, pageSize, items };
 }
 
 export async function listAutopartAccounts(
@@ -1170,7 +1242,7 @@ export async function listAutopartAccounts(
   },
 ) {
   await requireSystemPermission(actorUserId, "autopart.customer.view");
-  const page = input.page ?? 1;
+  const page = clampListPage(input.page);
   const pageSize = 50;
   const q = input.q?.trim() ?? "";
   const where: Prisma.AutopartAccountWhereInput = {
@@ -1218,6 +1290,7 @@ export async function listAutopartAccounts(
 
 export async function listDuplicateAutopartNames(actorUserId: string, page = 1) {
   await requireSystemPermission(actorUserId, "autopart.customer.view");
+  const safePage = clampListPage(page);
   const pageSize = 25;
   const groupedAll = await prisma.autopartAccount.groupBy({
     by: ["originalName"],
@@ -1225,7 +1298,7 @@ export async function listDuplicateAutopartNames(actorUserId: string, page = 1) 
     orderBy: { originalName: "asc" },
   });
   const grouped = groupedAll.filter((row) => row._count._all > 1);
-  const slice = grouped.slice((page - 1) * pageSize, page * pageSize);
+  const slice = grouped.slice((safePage - 1) * pageSize, safePage * pageSize);
   const names = slice.map((row) => row.originalName);
   const accounts = names.length
     ? await prisma.autopartAccount.findMany({
@@ -1242,7 +1315,7 @@ export async function listDuplicateAutopartNames(actorUserId: string, page = 1) 
     : [];
   return {
     total: grouped.length,
-    page,
+    page: safePage,
     pageSize,
     items: slice.map((row) => ({
       originalName: row.originalName,
@@ -1491,7 +1564,7 @@ export async function listAutopartInvoiceLines(
   input: { accountCode?: string; q?: string; page?: number },
 ) {
   await requireSystemPermission(actorUserId, "autopart.history.view");
-  const page = input.page ?? 1;
+  const page = clampListPage(input.page);
   const pageSize = 50;
   const q = input.q?.trim() ?? "";
   const where: Prisma.AutopartInvoiceLineWhereInput = {
@@ -1547,7 +1620,7 @@ export async function listAutopartLedger(
   input: { accountCode?: string; page?: number },
 ) {
   await requireSystemPermission(actorUserId, "autopart.ledger.view");
-  const page = input.page ?? 1;
+  const page = clampListPage(input.page);
   const pageSize = 50;
   const where = input.accountCode ? { accountCode: input.accountCode } : {};
   const [total, items] = await Promise.all([
@@ -1587,7 +1660,7 @@ export async function listAutopartReconciliation(
 ) {
   const profile = await requireSystemPermission(actorUserId, "autopart.history.view");
   const canLedger = profile.permissions.has("autopart.ledger.view");
-  const page = input.page ?? 1;
+  const page = clampListPage(input.page);
   const pageSize = 50;
   const status = documentMatchStatus(input.status);
   const where: Prisma.AutopartDocumentMatchWhereInput = {
@@ -1683,8 +1756,7 @@ function documentMatchStatus(value: string | undefined): AutopartDocumentMatchSt
 }
 
 function csvCell(value: string): string {
-  if (/[",\n]/.test(value)) return `"${value.replaceAll('"', '""')}"`;
-  return value;
+  return csvFormulaSafeCell(value);
 }
 
 export async function listAutopartDocumentMatches(
@@ -1692,7 +1764,9 @@ export async function listAutopartDocumentMatches(
   accountCode: string,
   page = 1,
 ) {
-  await requireSystemPermission(actorUserId, "autopart.history.view");
+  const profile = await requireSystemPermission(actorUserId, "autopart.history.view");
+  const canLedger = profile.permissions.has("autopart.ledger.view");
+  const safePage = clampListPage(page);
   const pageSize = 50;
   const where = { accountCode };
   const [total, items] = await Promise.all([
@@ -1700,18 +1774,19 @@ export async function listAutopartDocumentMatches(
     prisma.autopartDocumentMatch.findMany({
       where,
       orderBy: { documentReference: "asc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
     }),
   ]);
   return {
     total,
-    page,
+    page: safePage,
     pageSize,
     items: items.map((item) => ({
       ...item,
       lineSalesSum: item.lineSalesSum?.toFixed(2) ?? null,
-      ledgerGoods: item.ledgerGoods?.toFixed(2) ?? null,
+      ledgerGoods: canLedger ? (item.ledgerGoods?.toFixed(2) ?? null) : null,
+      ledgerCount: canLedger ? item.ledgerCount : null,
     })),
   };
 }
@@ -1738,12 +1813,13 @@ export async function getAutopartHistoricalSummary(actorUserId: string) {
 }
 
 export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
+  const safePage = clampListPage(page);
   const profile = await requireSystemPermission(actorUserId, "companies.view");
   if (profile.actorType !== "TRADE") {
     throw new AuthError("This history view is for a trade customer", "FORBIDDEN", 403);
   }
   if (!portalAutopartHistoryEnabled()) {
-    return { enabled: false as const, items: [], total: 0, page, pageSize: 50 };
+    return { enabled: false as const, items: [], total: 0, page: safePage, pageSize: 50 };
   }
   const companyIds = profile.companyMemberships
     .filter((membership) => membership.status === "ACTIVE")
@@ -1758,7 +1834,7 @@ export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
   });
   const codes = accounts.map((account) => account.accountCode);
   if (codes.length === 0)
-    return { enabled: true as const, items: [], total: 0, page, pageSize: 50 };
+    return { enabled: true as const, items: [], total: 0, page: safePage, pageSize: 50 };
   const pageSize = 50;
   const where = { accountCode: { in: codes } };
   const [total, items] = await Promise.all([
@@ -1766,7 +1842,7 @@ export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
     prisma.autopartInvoiceLine.findMany({
       where,
       orderBy: { rawInvAndLn: "asc" },
-      skip: (page - 1) * pageSize,
+      skip: (safePage - 1) * pageSize,
       take: pageSize,
       select: {
         id: true,
@@ -1783,7 +1859,7 @@ export async function getPortalAutopartHistory(actorUserId: string, page = 1) {
   return {
     enabled: true as const,
     total,
-    page,
+    page: safePage,
     pageSize,
     label: "Autopart historical purchases for your approved account.",
     items: items.map((item) => ({
