@@ -66,6 +66,7 @@ import { Route as PurchasingBackordersRouteImport } from './routes/purchasing.ba
 import { Route as PurchasingForecastRouteImport } from './routes/purchasing.forecast'
 import { Route as PurchasingOverstockRouteImport } from './routes/purchasing.overstock'
 import { Route as PurchasingPlannerRouteImport } from './routes/purchasing.planner'
+import { Route as PurchasingStockRouteImport } from './routes/purchasing.stock'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing.suppliers'
 import { Route as SalesIndexRouteImport } from './routes/sales.index'
 import { Route as SalesSalesIntelligenceRouteImport } from './routes/sales.sales-intelligence'
@@ -407,6 +408,11 @@ const PurchasingOverstockRoute = PurchasingOverstockRouteImport.update({
 const PurchasingPlannerRoute = PurchasingPlannerRouteImport.update({
   id: '/planner',
   path: '/planner',
+  getParentRoute: () => PurchasingRoute,
+} as any)
+const PurchasingStockRoute = PurchasingStockRouteImport.update({
+  id: '/stock',
+  path: '/stock',
   getParentRoute: () => PurchasingRoute,
 } as any)
 const PurchasingSuppliersRoute = PurchasingSuppliersRouteImport.update({
@@ -763,6 +769,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/forecast': typeof PurchasingForecastRouteWithChildren
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
+  '/purchasing/stock': typeof PurchasingStockRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRouteWithChildren
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
@@ -866,6 +873,7 @@ export interface FileRoutesByTo {
   '/purchasing/backorders': typeof PurchasingBackordersRoute
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
+  '/purchasing/stock': typeof PurchasingStockRoute
   '/admin': typeof AdminIndexRoute
   '/brands': typeof BrandsIndexRoute
   '/crm': typeof CrmIndexRoute
@@ -979,6 +987,7 @@ export interface FileRoutesById {
   '/purchasing/forecast': typeof PurchasingForecastRouteWithChildren
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
+  '/purchasing/stock': typeof PurchasingStockRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRouteWithChildren
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceRouteWithChildren
   '/admin/': typeof AdminIndexRoute
@@ -1097,6 +1106,7 @@ export interface FileRouteTypes {
     | '/purchasing/forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
+    | '/purchasing/stock'
     | '/purchasing/suppliers'
     | '/sales/sales-intelligence'
     | '/admin/'
@@ -1200,6 +1210,7 @@ export interface FileRouteTypes {
     | '/purchasing/backorders'
     | '/purchasing/overstock'
     | '/purchasing/planner'
+    | '/purchasing/stock'
     | '/admin'
     | '/brands'
     | '/crm'
@@ -1312,6 +1323,7 @@ export interface FileRouteTypes {
     | '/purchasing/forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
+    | '/purchasing/stock'
     | '/purchasing/suppliers'
     | '/sales/sales-intelligence'
     | '/admin/'
@@ -1807,6 +1819,13 @@ declare module '@tanstack/react-router' {
       path: '/planner'
       fullPath: '/purchasing/planner'
       preLoaderRoute: typeof PurchasingPlannerRouteImport
+      parentRoute: typeof PurchasingRoute
+    }
+    '/purchasing/stock': {
+      id: '/purchasing/stock'
+      path: '/stock'
+      fullPath: '/purchasing/stock'
+      preLoaderRoute: typeof PurchasingStockRouteImport
       parentRoute: typeof PurchasingRoute
     }
     '/purchasing/suppliers': {
@@ -2498,6 +2517,7 @@ interface PurchasingRouteChildren {
   PurchasingForecastRoute: typeof PurchasingForecastRouteWithChildren
   PurchasingOverstockRoute: typeof PurchasingOverstockRoute
   PurchasingPlannerRoute: typeof PurchasingPlannerRoute
+  PurchasingStockRoute: typeof PurchasingStockRoute
   PurchasingSuppliersRoute: typeof PurchasingSuppliersRouteWithChildren
   PurchasingIndexRoute: typeof PurchasingIndexRoute
 }
@@ -2507,6 +2527,7 @@ const PurchasingRouteChildren: PurchasingRouteChildren = {
   PurchasingForecastRoute: PurchasingForecastRouteWithChildren,
   PurchasingOverstockRoute: PurchasingOverstockRoute,
   PurchasingPlannerRoute: PurchasingPlannerRoute,
+  PurchasingStockRoute: PurchasingStockRoute,
   PurchasingSuppliersRoute: PurchasingSuppliersRouteWithChildren,
   PurchasingIndexRoute: PurchasingIndexRoute,
 }

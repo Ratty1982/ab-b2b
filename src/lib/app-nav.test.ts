@@ -119,6 +119,7 @@ describe("canonical navigation contract", () => {
     const purchasing = BACK_OFFICE_NAV.find((s) => s.id === "purchasing");
     expect(purchasing?.items.map((i) => i.id)).toEqual([
       "purchasing-dashboard",
+      "purchasing-stock",
       "purchasing-forecast",
       "purchasing-planner",
       "purchasing-backorders",
@@ -187,6 +188,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("website-media");
     expect(ids).not.toContain("products");
     expect(ids).not.toContain("purchasing-dashboard");
+    expect(ids).not.toContain("purchasing-stock");
     expect(ids).not.toContain("purchasing-forecast");
     expect(ids).not.toContain("cost-intelligence");
     expect(ids).not.toContain("users");
@@ -213,6 +215,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("portal-users");
     expect(ids).not.toContain("portal-quick-order");
     expect(ids).not.toContain("purchasing-dashboard");
+    expect(ids).not.toContain("purchasing-stock");
     const backoffice = flattenVisible(visibleNav(BACK_OFFICE_NAV, navCtxFromUser(tradeBuyer)));
     expect(backoffice.some((i) => i.id === "website-homepage")).toBe(false);
     expect(backoffice.some((i) => i.id === "purchasing-dashboard")).toBe(false);

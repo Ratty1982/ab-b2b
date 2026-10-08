@@ -87,6 +87,7 @@ export const ROUTES = {
   salesIntelligenceRebates: "/sales/sales-intelligence/rebates",
 
   purchasing: "/purchasing",
+  purchasingStock: "/purchasing/stock",
   purchasingForecast: "/purchasing/forecast",
   purchasingForecastSku: (sku: string) => `/purchasing/forecast/${encodeURIComponent(sku)}` as const,
   purchasingPlanner: "/purchasing/planner",
@@ -406,6 +407,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "layout-dashboard",
         to: ROUTES.purchasing,
         exact: true,
+        permission: "purchasing.view",
+        implemented: true,
+      },
+      {
+        id: "purchasing-stock",
+        label: "Stock Overview",
+        icon: "package",
+        to: ROUTES.purchasingStock,
+        matchPrefixes: [ROUTES.purchasingStock],
         permission: "purchasing.view",
         implemented: true,
       },
