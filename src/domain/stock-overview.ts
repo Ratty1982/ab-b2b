@@ -37,7 +37,11 @@ export function overviewStockStatus(input: {
 }
 
 /** Catalogue-linked sellable stock. Unlinked part numbers are not B2B sellable. */
-export function overviewSellableQty(linked: boolean, availQty: number, reservedQty: number | null): number | null {
+export function overviewSellableQty(
+  linked: boolean,
+  availQty: number,
+  reservedQty: number | null,
+): number | null {
   if (!linked) return null;
   return getEffectiveSellableQuantity({
     autopartAvail: availQty,
@@ -70,7 +74,10 @@ export function warehouseImportHealth(input: {
 }
 
 /** Based on the last successful FBA import file, not on location-stock rows existing. */
-export function fbaImportHealth(input: { importedAt: string | null; stale: boolean }): FbaImportHealth {
+export function fbaImportHealth(input: {
+  importedAt: string | null;
+  stale: boolean;
+}): FbaImportHealth {
   if (!input.importedAt) return "unknown";
   return input.stale ? "delayed" : "current";
 }
@@ -79,5 +86,5 @@ export function overviewStatusLabel(status: OverviewStockStatus): string {
   if (status === "IN_STOCK") return "In Stock";
   if (status === "LOW") return "Low Stock";
   if (status === "OUT_OF_STOCK") return "Out of Stock";
-  return "Unknown";
+  return "Unknown / Data Unavailable";
 }

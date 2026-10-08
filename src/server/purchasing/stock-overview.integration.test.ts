@@ -7,7 +7,11 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { FBA_LOCATION_CODE, FBA_SOURCE_BRANCH } from "@/domain/fba-stock";
 import { skuMatchKey } from "@/domain/stock";
 import { AuthError } from "@/server/rbac/guards";
-import { exportStockOverviewCsv, getStockOverview, getStockPartDetail } from "@/server/purchasing/stock-overview";
+import {
+  exportStockOverviewCsv,
+  getStockOverview,
+  getStockPartDetail,
+} from "@/server/purchasing/stock-overview";
 
 const prisma = new PrismaClient();
 const stamp = `SOV${Date.now().toString(36).slice(-6).toUpperCase()}`;
@@ -27,7 +31,11 @@ let productId = "";
 let runId = "";
 let warehouseName = "Autopart";
 
-async function ensureUser(email: string, roles: string[], actorType: "INTERNAL" | "TRADE" = "INTERNAL") {
+async function ensureUser(
+  email: string,
+  roles: string[],
+  actorType: "INTERNAL" | "TRADE" = "INTERNAL",
+) {
   let user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     user = await prisma.user.create({
@@ -52,7 +60,9 @@ describe("stock overview", () => {
     salesId = await ensureUser("stock-overview.sales@example.invalid", ["SALES_REPRESENTATIVE"]);
     tradeId = await ensureUser("stock-overview.trade@example.invalid", [], "TRADE");
     const now = new Date();
-    const brand = await prisma.brand.create({ data: { name: `Brand ${stamp}`, slug: `brand-${stamp.toLowerCase()}` } });
+    const brand = await prisma.brand.create({
+      data: { name: `Brand ${stamp}`, slug: `brand-${stamp.toLowerCase()}` },
+    });
     brandId = brand.id;
     const product = await prisma.product.create({
       data: {
@@ -158,7 +168,9 @@ describe("stock overview", () => {
         },
       ],
     });
-    const fbaProduct = await prisma.autopartProduct.findUniqueOrThrow({ where: { matchKey: skuMatchKey(fbaSku) } });
+    const fbaProduct = await prisma.autopartProduct.findUniqueOrThrow({
+      where: { matchKey: skuMatchKey(fbaSku) },
+    });
     await prisma.autopartLocationStock.create({
       data: {
         autopartProductId: fbaProduct.id,
@@ -169,7 +181,13 @@ describe("stock overview", () => {
       },
     });
     const run = await prisma.stockSyncRun.create({
-      data: { source: "test-overview", mode: "live", status: "SUCCESS", trigger: "manual", completedAt: now },
+      data: {
+        source: "test-overview",
+        mode: "live",
+        status: "SUCCESS",
+        trigger: "manual",
+        completedAt: now,
+      },
     });
     runId = run.id;
     await prisma.stockSyncChange.create({
@@ -192,8 +210,12 @@ describe("stock overview", () => {
       where: { matchKey: { startsWith: stamp } },
       select: { id: true },
     });
-    await prisma.autopartLocationStock.deleteMany({ where: { autopartProductId: { in: products.map((row) => row.id) } } });
-    await prisma.autopartProduct.deleteMany({ where: { id: { in: products.map((row) => row.id) } } });
+    await prisma.autopartLocationStock.deleteMany({
+      where: { autopartProductId: { in: products.map((row) => row.id) } },
+    });
+    await prisma.autopartProduct.deleteMany({
+      where: { id: { in: products.map((row) => row.id) } },
+    });
     if (productId) await prisma.product.deleteMany({ where: { id: productId } });
     if (brandId) await prisma.brand.deleteMany({ where: { id: brandId } });
     await prisma.$disconnect();
@@ -217,7 +239,13 @@ describe("stock overview", () => {
       stockStatus: "IN_STOCK",
       reorderPoint: null,
     });
-    expect(fba).toMatchObject({ availQty: 2, fbaQty: 15, ownedQty: 17, sellableQty: null, stockStatus: "IN_STOCK" });
+    expect(fba).toMatchObject({
+      availQty: 2,
+      fbaQty: 15,
+      ownedQty: 17,
+      sellableQty: null,
+      stockStatus: "IN_STOCK",
+    });
     expect(low).toMatchObject({
       availQty: 10,
       physicalQty: 18,
@@ -235,7 +263,9 @@ describe("stock overview", () => {
     expect(JSON.stringify(result)).not.toMatch(/latestCost|12\.5|supplier cost/i);
 
     const counted = await prisma.autopartProduct.count({ where: { presentInLatestFeed: true } });
-    const out = await prisma.autopartProduct.count({ where: { presentInLatestFeed: true, availQty: { lte: 0 } } });
+    const out = await prisma.autopartProduct.count({
+      where: { presentInLatestFeed: true, availQty: { lte: 0 } },
+    });
     expect(result.summary.partNumbers).toBe(counted);
     expect(result.summary.outPartNumbers).toBe(out);
     expect(result.summary.lowPartNumbers).toBeGreaterThanOrEqual(1);
@@ -243,6 +273,16 @@ describe("stock overview", () => {
     expect(result.summary.unavailableUnits).toBeGreaterThanOrEqual(4);
     expect(result.summary.physicalUnits).toBeGreaterThanOrEqual(44 + 18);
     expect(result.summary.fbaUnits).toBeGreaterThanOrEqual(15);
+    const filteredSellable = result.items.reduce((sum, row) => sum + (row.sellableQty ?? 0), 0);
+    const filteredPhysical = result.items.reduce((sum, row) => sum + (row.physicalQty ?? 0), 0);
+    expect(filteredSellable).toBe(6);
+    expect(filteredPhysical).toBe(62);
+    expect(result.items.filter((row) => row.stockStatus === "OUT_OF_STOCK")).toHaveLength(1);
+    expect(result.items.filter((row) => row.stockStatus === "LOW")).toHaveLength(1);
+    expect(result.items.some((row) => row.catalogueLabel === "Not linked to catalogue")).toBe(true);
+    expect(["running", "failed", "delayed", "healthy", "unknown"]).toContain(
+      result.importStatus.health,
+    );
 
     const historic = await getStockOverview(adminId, { q: historicSku, feed: "historic" });
     expect(historic.items.map((row) => row.sku)).toEqual([historicSku]);
@@ -253,6 +293,13 @@ describe("stock overview", () => {
 
     const csv = await exportStockOverviewCsv(adminId, { q: warehouseSku });
     expect(csv.csv).toContain(warehouseSku);
+    expect(csv.csv).toContain("Part number");
+    expect(csv.csv).toContain("Product name");
+    expect(csv.csv).toContain("Physical");
+    expect(csv.csv).toContain("Unavailable");
+    expect(csv.csv).toContain("Sellable");
+    expect(csv.csv).toContain("Status");
+    expect(csv.csv).toContain("Last update");
     expect(csv.csv).toContain("Warehouse Avail");
     expect(csv.csv).toContain("Not linked to catalogue");
     expect(csv.csv).not.toContain("12.5");
@@ -265,7 +312,9 @@ describe("stock overview", () => {
     expect(low.items.map((row) => row.sku)).toEqual([lowSku]);
 
     const inStock = await getStockOverview(adminId, { q: stamp, position: "in" });
-    expect(inStock.items.map((row) => row.sku).sort()).toEqual([fbaSku, smallSku, warehouseSku].sort());
+    expect(inStock.items.map((row) => row.sku).sort()).toEqual(
+      [fbaSku, smallSku, warehouseSku].sort(),
+    );
 
     const branded = await getStockOverview(adminId, { brand: brandId, q: stamp });
     expect(branded.items.map((row) => row.sku)).toEqual([lowSku]);
@@ -273,11 +322,19 @@ describe("stock overview", () => {
     const byEan = await getStockOverview(adminId, { q: ean });
     expect(byEan.items.map((row) => row.sku)).toEqual([lowSku]);
 
+    const warehouse = await prisma.warehouse.findUniqueOrThrow({ where: { code: "AUTOPART" } });
+    const inWarehouse = await getStockOverview(adminId, { q: stamp, warehouse: warehouse.id });
+    expect(inWarehouse.items.map((row) => row.sku)).toEqual([lowSku]);
+
     const empty = await getStockOverview(adminId, { q: `missing-${stamp}` });
     expect(empty.items).toEqual([]);
     expect(empty.total).toBe(0);
 
-    const filteredExport = await exportStockOverviewCsv(adminId, { q: stamp, position: "low", feed: "all" });
+    const filteredExport = await exportStockOverviewCsv(adminId, {
+      q: stamp,
+      position: "low",
+      feed: "all",
+    });
     expect(filteredExport.csv).toContain(lowSku);
     expect(filteredExport.csv).not.toContain(warehouseSku);
     expect(filteredExport.exported).toBe(1);
@@ -295,9 +352,12 @@ describe("stock overview", () => {
       expectedArrivalAt: null,
       catalogueLabel: "Linked",
     });
-    expect(low?.locations).toEqual([{ name: warehouseName, code: "AUTOPART", qty: 0, kind: "warehouse" }]);
+    expect(low?.locations).toEqual([
+      { name: warehouseName, code: "AUTOPART", qty: 0, kind: "warehouse" },
+    ]);
     expect(low?.history.available).toBe(true);
     expect(low?.history.points.map((point) => point.qty)).toEqual([10]);
+    expect(low?.lastSuccessfulUpdateAt).toBe(low?.history.points[0]?.at);
     expect(JSON.stringify(low)).not.toMatch(/latestCost|12\.5/);
 
     const external = await getStockPartDetail(adminId, { sku: warehouseSku });
@@ -306,9 +366,36 @@ describe("stock overview", () => {
     expect(external?.history).toMatchObject({ available: false, points: [] });
     expect(external?.sellableQty).toBeNull();
     expect(external?.currentQty).toBe(40);
+    expect(external?.lastSuccessfulUpdateAt).toBeNull();
 
     expect(await getStockPartDetail(adminId, { sku: `missing-${stamp}` })).toBeNull();
     await expect(getStockPartDetail(adminId, { sku: " " })).rejects.toThrow();
+  });
+
+  it("pages through matching part numbers without repeating a row", async () => {
+    const now = new Date();
+    await prisma.autopartProduct.createMany({
+      data: Array.from({ length: 51 }, (_, index) => {
+        const sku = `${stamp}N${String(index).padStart(2, "0")}`;
+        return {
+          sku,
+          matchKey: skuMatchKey(sku),
+          description: "Overview page line",
+          availQty: 1,
+          presentInLatestFeed: true,
+          firstSeenAt: now,
+          lastSeenAt: now,
+        };
+      }),
+    });
+    const first = await getStockOverview(adminId, { q: `${stamp}N`, sort: "sku", page: 1 });
+    const second = await getStockOverview(adminId, { q: `${stamp}N`, sort: "sku", page: 2 });
+    expect(first.total).toBe(51);
+    expect(first.pageSize).toBe(50);
+    expect(first.items).toHaveLength(50);
+    expect(second.items).toHaveLength(1);
+    expect(second.page).toBe(2);
+    expect(first.items.some((row) => row.sku === second.items[0]?.sku)).toBe(false);
   });
 
   it("refuses sales and trade users", async () => {

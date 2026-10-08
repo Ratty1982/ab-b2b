@@ -23,6 +23,7 @@ type Search = {
   catalogue?: "all" | "catalogue" | "external";
   feed?: "current" | "historic" | "all";
   brand?: string;
+  warehouse?: string;
   sort?: "recent" | "sku" | "name" | "brand" | "physical" | "sellable" | "incoming" | "updated";
   page?: number;
 };
@@ -38,12 +39,16 @@ function parseSearch(raw: Record<string, unknown>): Search {
   const sort = text("sort") === "avail" ? "sellable" : text("sort");
   const page = Number(raw["page"]);
   const brand = text("brand");
+  const warehouse = text("warehouse");
   return {
     ...(text("q") ? { q: text("q") } : {}),
-    ...(POSITIONS.some((item) => item === position) ? { position: position as NonNullable<Search["position"]> } : {}),
+    ...(POSITIONS.some((item) => item === position)
+      ? { position: position as NonNullable<Search["position"]> }
+      : {}),
     ...(catalogue === "catalogue" || catalogue === "external" ? { catalogue } : {}),
     ...(feed === "historic" || feed === "all" ? { feed } : {}),
     ...(brand ? { brand } : {}),
+    ...(warehouse ? { warehouse } : {}),
     ...(SORTS.some((item) => item === sort) ? { sort: sort as NonNullable<Search["sort"]> } : {}),
     ...(Number.isFinite(page) && page > 1 ? { page } : {}),
   };
@@ -130,7 +135,9 @@ function StockOverviewPage() {
     }
     downloadCsv(result.data.csv, result.data.filename);
     if (result.data.truncated) {
-      setError(`Export includes the first ${result.data.exported.toLocaleString("en-GB")} of ${result.data.total.toLocaleString("en-GB")} part numbers.`);
+      setError(
+        `Export includes the first ${result.data.exported.toLocaleString("en-GB")} of ${result.data.total.toLocaleString("en-GB")} part numbers.`,
+      );
     }
   }
 
@@ -143,8 +150,13 @@ function StockOverviewPage() {
         sub="Live visibility of imported stock across all part numbers."
         crumbs={[{ label: "Purchasing", to: ROUTES.purchasing }, { label: "Stock Overview" }]}
         actions={
-          <button type="button" className={btnClass} disabled={exporting || !data} onClick={() => void exportCsv()}>
-            {exporting ? "Exporting" : "Export CSV"}
+          <button
+            type="button"
+            className={btnClass}
+            disabled={exporting || !data}
+            onClick={() => void exportCsv()}
+          >
+            {exporting ? "Preparing CSV" : "Download CSV"}
           </button>
         }
       />
@@ -155,7 +167,11 @@ function StockOverviewPage() {
           <ImportStatus status={data.importStatus} />
           <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 xl:grid-cols-3">
             <div data-summary-card="part-numbers">
-              <Metric label="Total Part Numbers" value={qty(summary.partNumbers)} hint="Latest import. One row per part number." />
+              <Metric
+                label="Total Part Numbers"
+                value={qty(summary.partNumbers)}
+                hint="Latest import. One row per part number."
+              />
             </div>
             <div data-summary-card="physical">
               <Metric
@@ -169,7 +185,11 @@ function StockOverviewPage() {
               />
             </div>
             <div data-summary-card="unavailable">
-              <Metric label="Total Unavailable Stock" value={qty(summary.unavailableUnits)} hint="Reserved against catalogue warehouse Avail" />
+              <Metric
+                label="Total Unavailable Stock"
+                value={qty(summary.unavailableUnits)}
+                hint="Reserved against catalogue warehouse Avail"
+              />
             </div>
             <div data-summary-card="sellable">
               <Metric
@@ -217,7 +237,12 @@ function StockOverviewPage() {
               <select
                 className={controlClass}
                 value={search.position ?? "all"}
-                onChange={(event) => patch({ position: event.target.value as NonNullable<Search["position"]>, page: 1 })}
+                onChange={(event) =>
+                  patch({
+                    position: event.target.value as NonNullable<Search["position"]>,
+                    page: 1,
+                  })
+                }
               >
                 <option value="all">All statuses</option>
                 <option value="in">In stock</option>
@@ -245,11 +270,31 @@ function StockOverviewPage() {
               </select>
             </label>
             <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
+              Warehouse
+              <select
+                className={controlClass}
+                value={search.warehouse ?? ""}
+                onChange={(event) => patch({ warehouse: event.target.value, page: 1 })}
+              >
+                <option value="">All warehouses</option>
+                {data.warehouses.map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
               Catalogue
               <select
                 className={controlClass}
                 value={search.catalogue ?? "all"}
-                onChange={(event) => patch({ catalogue: event.target.value as NonNullable<Search["catalogue"]>, page: 1 })}
+                onChange={(event) =>
+                  patch({
+                    catalogue: event.target.value as NonNullable<Search["catalogue"]>,
+                    page: 1,
+                  })
+                }
               >
                 <option value="all">All products</option>
                 <option value="catalogue">Linked</option>
@@ -261,7 +306,9 @@ function StockOverviewPage() {
               <select
                 className={controlClass}
                 value={search.feed ?? "current"}
-                onChange={(event) => patch({ feed: event.target.value as NonNullable<Search["feed"]>, page: 1 })}
+                onChange={(event) =>
+                  patch({ feed: event.target.value as NonNullable<Search["feed"]>, page: 1 })
+                }
               >
                 <option value="current">Latest import</option>
                 <option value="historic">Missing from latest import</option>
@@ -276,26 +323,59 @@ function StockOverviewPage() {
             </Link>
           </form>
           <p className="px-4 py-2 text-[12px] text-steel sm:px-6">
-            {qty(data.total)} part numbers
+            {qty(data.total)} {data.total === 1 ? "part number" : "part numbers"}
             {loading ? " · updating" : ""}
           </p>
           {data.items.length === 0 ? (
-            <EmptyState title="No stock rows" body="No imported part numbers match these filters." />
+            <EmptyState
+              title="No stock rows"
+              body="No imported part numbers match these filters."
+            />
           ) : (
             <>
               <div className="max-w-full overflow-x-auto">
                 <table className="w-full min-w-[980px] text-left text-[13px]">
                   <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
                     <tr>
-                      <SortHeader label="Part number" sortKey="sku" search={search} onSort={(sort) => patch({ sort, page: 1 })} />
-                      <SortHeader label="Product" sortKey="name" search={search} onSort={(sort) => patch({ sort, page: 1 })} />
-                      <SortHeader label="Brand" sortKey="brand" search={search} onSort={(sort) => patch({ sort, page: 1 })} />
+                      <SortHeader
+                        label="Part number"
+                        sortKey="sku"
+                        search={search}
+                        onSort={(sort) => patch({ sort, page: 1 })}
+                      />
+                      <SortHeader
+                        label="Product"
+                        sortKey="name"
+                        search={search}
+                        onSort={(sort) => patch({ sort, page: 1 })}
+                      />
+                      <SortHeader
+                        label="Brand"
+                        sortKey="brand"
+                        search={search}
+                        onSort={(sort) => patch({ sort, page: 1 })}
+                      />
                       <th className="px-3 py-2">SKU / EAN</th>
-                      <SortHeader label="Physical" sortKey="physical" search={search} onSort={(sort) => patch({ sort, page: 1 })} />
+                      <SortHeader
+                        label="Physical"
+                        sortKey="physical"
+                        search={search}
+                        onSort={(sort) => patch({ sort, page: 1 })}
+                      />
                       <th className="px-3 py-2">Unavailable</th>
-                      <SortHeader label="Sellable" sortKey="sellable" search={search} onSort={(sort) => patch({ sort, page: 1 })} />
+                      <SortHeader
+                        label="Sellable"
+                        sortKey="sellable"
+                        search={search}
+                        onSort={(sort) => patch({ sort, page: 1 })}
+                      />
                       <th className="px-3 py-2">Status</th>
-                      <SortHeader label="Updated" sortKey="updated" search={search} onSort={(sort) => patch({ sort, page: 1 })} />
+                      <SortHeader
+                        label="Updated"
+                        sortKey="updated"
+                        search={search}
+                        onSort={(sort) => patch({ sort, page: 1 })}
+                      />
                       <th className="px-3 py-2">Catalogue</th>
                       <th className="px-3 py-2">Warehouse</th>
                       <th className="px-3 py-2" title={INCOMING_SOURCE_HINT}>
@@ -305,7 +385,11 @@ function StockOverviewPage() {
                   </thead>
                   <tbody>
                     {data.items.map((row) => (
-                      <tr key={row.sku} className="border-t border-border/70" data-stock-sku={row.sku}>
+                      <tr
+                        key={row.sku}
+                        className="border-t border-border/70"
+                        data-stock-sku={row.sku}
+                      >
                         <td className="px-3 py-2">
                           <button
                             type="button"
@@ -321,17 +405,27 @@ function StockOverviewPage() {
                           <div>{row.catalogueSku || row.sku}</div>
                           <div className="text-[11px] text-steel">{row.ean || "—"}</div>
                         </td>
-                        <td className="px-3 py-2 tabular-nums">{row.physicalQty == null ? "—" : qty(row.physicalQty)}</td>
-                        <td className="px-3 py-2 tabular-nums">{row.unavailableQty == null ? "—" : qty(row.unavailableQty)}</td>
-                        <td className="px-3 py-2 tabular-nums">{row.sellableQty == null ? "—" : qty(row.sellableQty)}</td>
+                        <td className="px-3 py-2 tabular-nums">
+                          {row.physicalQty == null ? "—" : qty(row.physicalQty)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">
+                          {row.unavailableQty == null ? "—" : qty(row.unavailableQty)}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">
+                          {row.sellableQty == null ? "—" : qty(row.sellableQty)}
+                        </td>
                         <td className="px-3 py-2">
-                          <StatusBadge tone={statusTone(row.stockStatus)}>{row.statusLabel}</StatusBadge>
+                          <StatusBadge tone={statusTone(row.stockStatus)}>
+                            {row.statusLabel}
+                          </StatusBadge>
                         </td>
                         <td className="px-3 py-2">{ukDate(row.lastSeenAt)}</td>
                         <td className="px-3 py-2">{row.catalogueLabel}</td>
                         <td className="px-3 py-2">
                           {row.warehouseName || "—"}
-                          {row.fbaQty > 0 ? <div className="text-[11px] text-steel">FBA {qty(row.fbaQty)}</div> : null}
+                          {row.fbaQty > 0 ? (
+                            <div className="text-[11px] text-steel">FBA {qty(row.fbaQty)}</div>
+                          ) : null}
                         </td>
                         <td className="px-3 py-2 tabular-nums">{qty(row.incomingQty)}</td>
                       </tr>
@@ -339,7 +433,12 @@ function StockOverviewPage() {
                   </tbody>
                 </table>
               </div>
-              <Pager page={data.page} pageSize={data.pageSize} total={data.total} onPage={(page) => patch({ page })} />
+              <Pager
+                page={data.page}
+                pageSize={data.pageSize}
+                total={data.total}
+                onPage={(page) => patch({ page })}
+              />
             </>
           )}
         </>
@@ -363,7 +462,11 @@ function SortHeader({
   const active = (search.sort ?? "recent") === sortKey;
   return (
     <th className="px-3 py-2">
-      <button type="button" className={active ? "text-ink" : undefined} onClick={() => onSort(sortKey)}>
+      <button
+        type="button"
+        className={active ? "text-ink" : undefined}
+        onClick={() => onSort(sortKey)}
+      >
         {label}
         {active ? " ▲" : ""}
       </button>
@@ -379,22 +482,38 @@ function ImportStatus({ status }: { status: Data["importStatus"] }) {
     healthy: "Import healthy",
     unknown: "Import status unknown",
   }[status.health];
-  const tone = status.health === "healthy" ? "good" : status.health === "failed" ? "bad" : status.health === "running" ? "info" : "warn";
+  const tone =
+    status.health === "healthy"
+      ? "good"
+      : status.health === "failed"
+        ? "bad"
+        : status.health === "running"
+          ? "info"
+          : "warn";
   const fbaLabel = {
     current: "FBA import current",
     delayed: "FBA import delayed",
     unknown: "FBA import not recorded",
   }[status.fbaHealth];
   return (
-    <div className="grid gap-2 border-b border-border/70 px-4 py-4 sm:px-6" data-import-status={status.health}>
+    <div
+      className="grid gap-2 border-b border-border/70 px-4 py-4 sm:px-6"
+      data-import-status={status.health}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge tone={tone}>{label}</StatusBadge>
-        <StatusBadge tone={status.fbaHealth === "current" ? "good" : "warn"}>{fbaLabel}</StatusBadge>
+        <StatusBadge tone={status.fbaHealth === "current" ? "good" : "warn"}>
+          {fbaLabel}
+        </StatusBadge>
       </div>
       <p className="text-[13px] text-steel">
-        Last successful import: {status.lastSuccessfulImportAt ? ukDate(status.lastSuccessfulImportAt) : "Not recorded"}
+        Last successful import:{" "}
+        {status.lastSuccessfulImportAt ? ukDate(status.lastSuccessfulImportAt) : "Not recorded"}
         {" · "}
-        Last successful update: {status.lastSuccessfulUpdateAt ? ukDate(status.lastSuccessfulUpdateAt) : "No quantity changes recorded"}
+        Last successful update:{" "}
+        {status.lastSuccessfulUpdateAt
+          ? ukDate(status.lastSuccessfulUpdateAt)
+          : "No quantity changes recorded"}
         {" · "}
         Last updated: {status.lastUpdatedAt ? ukDate(status.lastUpdatedAt) : "—"}
       </p>

@@ -26,9 +26,21 @@ function HistoryChart({ points }: { points: { at: string; qty: number }[] }) {
     return `${x},${y}`;
   });
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="mt-3 h-36 w-full text-primary" role="img" aria-label="Stock history">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="mt-3 h-36 w-full text-primary"
+      role="img"
+      aria-label="Stock history"
+    >
       <polyline fill="none" stroke="currentColor" strokeWidth="2" points={coords.join(" ")} />
-      {points.length === 1 ? <circle cx={coords[0]?.split(",")[0]} cy={coords[0]?.split(",")[1]} r="3" fill="currentColor" /> : null}
+      {points.length === 1 ? (
+        <circle
+          cx={coords[0]?.split(",")[0]}
+          cy={coords[0]?.split(",")[1]}
+          r="3"
+          fill="currentColor"
+        />
+      ) : null}
     </svg>
   );
 }
@@ -36,7 +48,9 @@ function HistoryChart({ points }: { points: { at: string; qty: number }[] }) {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="border border-border/80 bg-surface/40 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">
+        {label}
+      </div>
       <div className="mt-1 text-[13px]">{value}</div>
     </div>
   );
@@ -76,12 +90,17 @@ export function StockPartDrawer({ sku, onClose }: { sku: string; onClose: () => 
           </div>
         ) : null}
         {detail === null && !error ? (
-          <EmptyState title="Part number not found" body="This part number is not in the imported stock records." />
+          <EmptyState
+            title="Part number not found"
+            body="This part number is not in the imported stock records."
+          />
         ) : null}
         {detail ? (
           <div className="grid gap-6">
             <section>
-              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">Product</h3>
+              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">
+                Product
+              </h3>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <Fact label="Part number" value={detail.sku} />
                 <Fact label="Product name" value={detail.productName || "—"} />
@@ -95,28 +114,59 @@ export function StockPartDrawer({ sku, onClose }: { sku: string; onClose: () => 
               <h3 className="font-display text-sm font-semibold uppercase tracking-tight">Stock</h3>
               <div className="mt-2 flex items-center gap-2">
                 <StatusBadge tone={tone(detail.stockStatus)}>{detail.statusLabel}</StatusBadge>
-                <span className="text-[12px] text-steel">Updated {ukDate(detail.lastSeenAt)}</span>
+                <span className="text-[12px] text-steel">
+                  Last seen {ukDate(detail.lastSeenAt)}
+                </span>
               </div>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <Fact label="Physical" value={detail.physicalQty == null ? "—" : qty(detail.physicalQty)} />
-                <Fact label="Unavailable" value={detail.unavailableQty == null ? "—" : qty(detail.unavailableQty)} />
-                <Fact label="Sellable" value={detail.sellableQty == null ? "—" : qty(detail.sellableQty)} />
+                <Fact
+                  label="Physical"
+                  value={detail.physicalQty == null ? "—" : qty(detail.physicalQty)}
+                />
+                <Fact
+                  label="Unavailable"
+                  value={detail.unavailableQty == null ? "—" : qty(detail.unavailableQty)}
+                />
+                <Fact
+                  label="Sellable"
+                  value={detail.sellableQty == null ? "—" : qty(detail.sellableQty)}
+                />
                 <Fact label="Warehouse Avail" value={qty(detail.availQty)} />
+                <Fact
+                  label="Last successful update"
+                  value={
+                    detail.lastSuccessfulUpdateAt
+                      ? ukDate(detail.lastSuccessfulUpdateAt)
+                      : "No quantity change is recorded"
+                  }
+                />
                 <Fact label="Incoming" value={qty(detail.incomingQty)} />
-                <Fact label="Reorder threshold" value={detail.reorderPoint == null ? "Not configured" : qty(detail.reorderPoint)} />
+                <Fact
+                  label="Reorder threshold"
+                  value={detail.reorderPoint == null ? "Not configured" : qty(detail.reorderPoint)}
+                />
               </div>
             </section>
             <section>
-              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">Warehouse</h3>
+              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">
+                Warehouse
+              </h3>
               {detail.locations.length === 0 ? (
-                <p className="mt-2 text-[13px] text-steel">No warehouse breakdown is stored for this part number.</p>
+                <p className="mt-2 text-[13px] text-steel">
+                  No warehouse breakdown is stored for this part number.
+                </p>
               ) : (
                 <ul className="mt-2 divide-y divide-border/70 border border-border/80">
                   {detail.locations.map((location) => (
-                    <li key={`${location.kind}-${location.code}`} className="flex items-center justify-between px-3 py-2 text-[13px]">
+                    <li
+                      key={`${location.kind}-${location.code}`}
+                      className="flex items-center justify-between px-3 py-2 text-[13px]"
+                    >
                       <span>
                         {location.name}
-                        <span className="ml-2 text-[11px] uppercase tracking-[0.12em] text-steel">{location.kind}</span>
+                        <span className="ml-2 text-[11px] uppercase tracking-[0.12em] text-steel">
+                          {location.kind}
+                        </span>
                       </span>
                       <span className="tabular-nums">{qty(location.qty)}</span>
                     </li>
@@ -125,14 +175,28 @@ export function StockPartDrawer({ sku, onClose }: { sku: string; onClose: () => 
               )}
             </section>
             <section>
-              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">Purchasing</h3>
+              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">
+                Purchasing
+              </h3>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <Fact label="Preferred supplier" value={detail.supplierName || "No preferred supplier is recorded"} />
-                <Fact label="Expected arrival" value={detail.expectedArrivalAt ? ukDate(detail.expectedArrivalAt) : "Arrival date is not available"} />
+                <Fact
+                  label="Preferred supplier"
+                  value={detail.supplierName || "No preferred supplier is recorded"}
+                />
+                <Fact
+                  label="Expected arrival"
+                  value={
+                    detail.expectedArrivalAt
+                      ? ukDate(detail.expectedArrivalAt)
+                      : "Arrival date is not available"
+                  }
+                />
               </div>
             </section>
             <section>
-              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">Stock history</h3>
+              <h3 className="font-display text-sm font-semibold uppercase tracking-tight">
+                Stock history
+              </h3>
               {detail.history.available ? (
                 <>
                   <p className="mt-2 text-[12px] text-steel">
@@ -142,7 +206,8 @@ export function StockPartDrawer({ sku, onClose }: { sku: string; onClose: () => 
                 </>
               ) : (
                 <p className="mt-2 text-[13px] text-steel">
-                  Current warehouse Avail is {qty(detail.currentQty)}. Historical data is unavailable.
+                  Current warehouse Avail is {qty(detail.currentQty)}. Historical data is
+                  unavailable.
                 </p>
               )}
             </section>

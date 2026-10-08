@@ -7,7 +7,12 @@ import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AUTOPART_PRODUCT_KIND_LABEL, classifyAutopartProduct } from "@/domain/autopart-product";
 import { autopartConditionLabel } from "@/domain/autopart-product-condition";
-import { FBA_LOCATION_CODE, FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL, totalOwnedStock } from "@/domain/fba-stock";
+import {
+  FBA_LOCATION_CODE,
+  FBA_STOCK_LABEL,
+  WAREHOUSE_STOCK_LABEL,
+  totalOwnedStock,
+} from "@/domain/fba-stock";
 import { sellableQuantityFromAvail, skuMatchKey } from "@/domain/stock";
 import {
   configuredReorderPoint,
@@ -33,7 +38,21 @@ const querySchema = z.object({
   catalogue: z.enum(["all", "catalogue", "external"]).optional().nullable(),
   feed: z.enum(["current", "historic", "all"]).optional().nullable(),
   brand: z.string().max(80).optional().nullable(),
-  sort: z.enum(["recent", "sku", "name", "brand", "physical", "sellable", "avail", "incoming", "updated"]).optional().nullable(),
+  warehouse: z.string().max(80).optional().nullable(),
+  sort: z
+    .enum([
+      "recent",
+      "sku",
+      "name",
+      "brand",
+      "physical",
+      "sellable",
+      "avail",
+      "incoming",
+      "updated",
+    ])
+    .optional()
+    .nullable(),
   page: z.number().int().positive().optional().nullable(),
 });
 
@@ -57,6 +76,14 @@ function overviewWhere(
   const feed = input.feed ?? "current";
   const sort = input.sort ?? "recent";
   const brand = input.brand?.trim() ?? "";
+  const warehouse = input.warehouse?.trim() ?? "";
+  const catalogueVariantFilter =
+    (brand && brand !== "unlinked") || warehouse
+      ? {
+          ...(brand && brand !== "unlinked" ? { product: { brandId: brand } } : {}),
+          ...(warehouse ? { inventory: { some: { warehouseId: warehouse } } } : {}),
+        }
+      : null;
   const feedWhere =
     feed === "historic"
       ? { presentInLatestFeed: false }
@@ -64,7 +91,9 @@ function overviewWhere(
         ? {}
         : { presentInLatestFeed: true };
   const confirmedWhere =
-    position === "in" || position === "low" || position === "out" ? { presentInLatestFeed: true } : {};
+    position === "in" || position === "low" || position === "out"
+      ? { presentInLatestFeed: true }
+      : {};
   return {
     page: input.page ?? 1,
     sort,
@@ -80,13 +109,17 @@ function overviewWhere(
               { catalogueVariant: { sku: { contains: q, mode: "insensitive" } } },
               { catalogueVariant: { barcode: { contains: q, mode: "insensitive" } } },
               { catalogueVariant: { product: { name: { contains: q, mode: "insensitive" } } } },
-              { catalogueVariant: { product: { brand: { name: { contains: q, mode: "insensitive" } } } } },
+              {
+                catalogueVariant: {
+                  product: { brand: { name: { contains: q, mode: "insensitive" } } },
+                },
+              },
             ],
           }
         : {}),
       ...(catalogue === "catalogue" ? { catalogueVariantId: { not: null } } : {}),
       ...(catalogue === "external" ? { catalogueVariantId: null } : {}),
-      ...(brand && brand !== "unlinked" ? { catalogueVariant: { product: { brandId: brand } } } : {}),
+      ...(catalogueVariantFilter ? { catalogueVariant: catalogueVariantFilter } : {}),
       ...(brand === "unlinked" ? { catalogueVariantId: null } : {}),
       ...(position === "in"
         ? { availQty: { gt: 0 }, ...(lowIds.length > 0 ? { id: { notIn: lowIds } } : {}) }
@@ -106,10 +139,14 @@ function orderBy(sort: NonNullable<StockOverviewQuery["sort"]>) {
   if (sort === "sku") return [{ sku: "asc" as const }];
   if (sort === "name") return [{ description: "asc" as const }, { sku: "asc" as const }];
   if (sort === "brand") {
-    return [{ catalogueVariant: { product: { brand: { name: "asc" as const } } } }, { sku: "asc" as const }];
+    return [
+      { catalogueVariant: { product: { brand: { name: "asc" as const } } } },
+      { sku: "asc" as const },
+    ];
   }
   if (sort === "physical") return [{ physicalQty: "desc" as const }, { sku: "asc" as const }];
-  if (sort === "sellable" || sort === "avail") return [{ availQty: "desc" as const }, { sku: "asc" as const }];
+  if (sort === "sellable" || sort === "avail")
+    return [{ availQty: "desc" as const }, { sku: "asc" as const }];
   if (sort === "incoming") return [{ incomingQty: "desc" as const }, { sku: "asc" as const }];
   if (sort === "updated") return [{ lastSeenAt: "desc" as const }, { sku: "asc" as const }];
   return [{ lastSeenAt: "desc" as const }, { sku: "asc" as const }];
@@ -190,7 +227,11 @@ function presentRow(row: {
   catalogueVariant: {
     sku: string;
     barcode: string | null;
-    inventory: { qtyOnHand: number; qtyReserved: number; warehouse: { code: string; name: string } }[];
+    inventory: {
+      qtyOnHand: number;
+      qtyReserved: number;
+      warehouse: { code: string; name: string };
+    }[];
     purchasingSettings: { safetyStockQty: number | null; supplierName: string | null } | null;
     product: { name: string; brand: { id: string; name: string } };
   } | null;
@@ -216,7 +257,9 @@ function presentRow(row: {
     reorderPoint,
   });
   const warehouses = [
-    ...new Set((row.catalogueVariant?.inventory ?? []).map((item) => item.warehouse.name).filter(Boolean)),
+    ...new Set(
+      (row.catalogueVariant?.inventory ?? []).map((item) => item.warehouse.name).filter(Boolean),
+    ),
   ];
   return {
     sku: row.sku,
@@ -281,30 +324,31 @@ async function catalogueSellableUnits(): Promise<number> {
 async function positionSummary(lowIds: string[]) {
   const current = { presentInLatestFeed: true };
   const fba = { locationCode: FBA_LOCATION_CODE };
-  const [feed, physical, out, low, sellableUnits, reserved, fbaUnits, fbaSkus, linked] = await Promise.all([
-    prisma.autopartProduct.aggregate({
-      where: current,
-      _count: true,
-      _sum: { incomingQty: true },
-    }),
-    prisma.autopartProduct.aggregate({
-      where: { ...current, physicalQty: { not: null } },
-      _count: true,
-      _sum: { physicalQty: true },
-    }),
-    prisma.autopartProduct.count({ where: { ...current, availQty: { lte: 0 } } }),
-    lowIds.length === 0
-      ? Promise.resolve(0)
-      : prisma.autopartProduct.count({ where: { ...current, id: { in: lowIds } } }),
-    catalogueSellableUnits(),
-    prisma.inventory.aggregate({
-      where: { variant: { autopartProduct: { is: { presentInLatestFeed: true } } } },
-      _sum: { qtyReserved: true },
-    }),
-    prisma.autopartLocationStock.aggregate({ where: fba, _sum: { availableQty: true } }),
-    prisma.autopartLocationStock.count({ where: { ...fba, availableQty: { gt: 0 } } }),
-    prisma.autopartProduct.count({ where: { ...current, catalogueVariantId: { not: null } } }),
-  ]);
+  const [feed, physical, out, low, sellableUnits, reserved, fbaUnits, fbaSkus, linked] =
+    await Promise.all([
+      prisma.autopartProduct.aggregate({
+        where: current,
+        _count: true,
+        _sum: { incomingQty: true },
+      }),
+      prisma.autopartProduct.aggregate({
+        where: { ...current, physicalQty: { not: null } },
+        _count: true,
+        _sum: { physicalQty: true },
+      }),
+      prisma.autopartProduct.count({ where: { ...current, availQty: { lte: 0 } } }),
+      lowIds.length === 0
+        ? Promise.resolve(0)
+        : prisma.autopartProduct.count({ where: { ...current, id: { in: lowIds } } }),
+      catalogueSellableUnits(),
+      prisma.inventory.aggregate({
+        where: { variant: { autopartProduct: { is: { presentInLatestFeed: true } } } },
+        _sum: { qtyReserved: true },
+      }),
+      prisma.autopartLocationStock.aggregate({ where: fba, _sum: { availableQty: true } }),
+      prisma.autopartLocationStock.count({ where: { ...fba, availableQty: { gt: 0 } } }),
+      prisma.autopartProduct.count({ where: { ...current, catalogueVariantId: { not: null } } }),
+    ]);
   const physicalKnown = physical._count;
   return {
     partNumbers: feed._count,
@@ -323,7 +367,12 @@ async function positionSummary(lowIds: string[]) {
   };
 }
 
-async function loadImportStatus(lowFba: { updatedAt: string | null; stale: boolean; fileName: string | null; staleAfterDays: number }) {
+async function loadImportStatus(lowFba: {
+  updatedAt: string | null;
+  stale: boolean;
+  fileName: string | null;
+  staleAfterDays: number;
+}) {
   const [running, latest, freshness, lastChange] = await Promise.all([
     prisma.stockSyncRun.findFirst({
       where: { status: "RUNNING", mode: "live" },
@@ -383,6 +432,15 @@ async function brandOptions() {
   });
 }
 
+async function warehouseOptions() {
+  return prisma.warehouse.findMany({
+    where: { inventory: { some: { variant: { autopartProduct: { isNot: null } } } } },
+    select: { id: true, code: true, name: true },
+    orderBy: { name: "asc" },
+    take: 50,
+  });
+}
+
 export async function getStockOverview(actorUserId: string, raw: unknown) {
   await requirePurchasingAccess(actorUserId);
   const input = querySchema.parse(raw ?? {});
@@ -401,15 +459,17 @@ export async function getStockOverview(actorUserId: string, raw: unknown) {
     position === "low" || position === "in" ? Promise.resolve(lowIds) : lowStockProductIds(),
     loadFbaFreshness(),
   ]);
-  const [summary, importStatus, brands] = await Promise.all([
+  const [summary, importStatus, brands, warehouses] = await Promise.all([
     positionSummary(summaryLowIds),
     loadImportStatus(fba),
     brandOptions(),
+    warehouseOptions(),
   ]);
   return {
     summary,
     importStatus,
     brands,
+    warehouses,
     total,
     page,
     pageSize: PAGE_SIZE,
@@ -430,7 +490,9 @@ export async function exportStockOverviewCsv(actorUserId: string, raw: unknown) 
   const lowIds = position === "low" || position === "in" ? await lowStockProductIds() : [];
   const { where, sort } = overviewWhere(input, lowIds);
   const total = await prisma.autopartProduct.count({ where });
-  const rows: Awaited<ReturnType<typeof prisma.autopartProduct.findMany<{ include: typeof rowInclude }>>> = [];
+  const rows: Awaited<
+    ReturnType<typeof prisma.autopartProduct.findMany<{ include: typeof rowInclude }>>
+  > = [];
   let skip = 0;
   while (rows.length < total && rows.length < EXPORT_LIMIT) {
     const batch = await prisma.autopartProduct.findMany({
@@ -533,7 +595,10 @@ export async function getStockPartDetail(actorUserId: string, raw: unknown) {
       select: { supplier: { select: { name: true } } },
     }),
   ]);
-  const syncPoints = changes.map((change) => ({ at: change.createdAt.toISOString(), qty: change.newQty }));
+  const syncPoints = changes.map((change) => ({
+    at: change.createdAt.toISOString(),
+    qty: change.newQty,
+  }));
   const usagePoints = usage.flatMap((snapshot) => {
     const qty = decimalQty(snapshot.physicalStk) ?? decimalQty(snapshot.stk);
     if (qty == null) return [];
@@ -541,10 +606,20 @@ export async function getStockPartDetail(actorUserId: string, raw: unknown) {
   });
   const history =
     syncPoints.length > 0
-      ? { available: true as const, source: "Imported quantity changes" as const, points: syncPoints }
+      ? {
+          available: true as const,
+          source: "Imported quantity changes" as const,
+          points: syncPoints,
+        }
       : usagePoints.length > 0
-        ? { available: true as const, source: "Physical stock snapshots" as const, points: usagePoints }
+        ? {
+            available: true as const,
+            source: "Physical stock snapshots" as const,
+            points: usagePoints,
+          }
         : { available: false as const, source: null, points: [] as { at: string; qty: number }[] };
+  const lastSuccessfulUpdateAt =
+    syncPoints.length > 0 ? syncPoints[syncPoints.length - 1]!.at : null;
   const warehouseLocations = (row.catalogueVariant?.inventory ?? []).map((entry) => ({
     name: entry.warehouse.name,
     code: entry.warehouse.code,
@@ -568,6 +643,7 @@ export async function getStockPartDetail(actorUserId: string, raw: unknown) {
     expectedArrivalAt: null as string | null,
     locations: [...warehouseLocations, ...otherLocations],
     history,
+    lastSuccessfulUpdateAt,
     currentQty: item.availQty,
   };
 }
