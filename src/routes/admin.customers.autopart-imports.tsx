@@ -20,6 +20,7 @@ import {
   listAutopartMasterAccountsFn,
   listAutopartReconciliationFn,
   listDuplicateAutopartNamesFn,
+  downloadAutopartInvoiceValidationFn,
   previewAutopartImportFn,
 } from "@/server/companies/autopart-master-fns";
 
@@ -127,6 +128,33 @@ type Diagnostics = {
   salesMeasure?: string | null;
   provisionalHeaders?: boolean;
   issueLogTruncated?: boolean;
+  financialValidation?: {
+    salesMeasure: "NET_EX_VAT";
+    dryRun: true;
+    nameMatching: "never";
+    netSales: string;
+    positiveSales: string;
+    positiveCount: number;
+    negativeSales: string;
+    negativeCount: number;
+    zeroCount: number;
+    matchedLines: number;
+    unmatchedLines: number;
+    distinctUnmatchedAccounts: number;
+    unmatchedSales: string;
+    checks: { id: string; label: string; outcome: "PASS" | "WARNING" | "FAIL"; summary: string }[];
+    exceptions: {
+      checkId: string;
+      outcome: "PASS" | "WARNING" | "FAIL";
+      rowNumber: number | null;
+      accountCode: string | null;
+      invoiceReference: string | null;
+      partNumber: string | null;
+      salesAmount: string | null;
+      detail: string;
+    }[];
+    exceptionSampleTruncated: boolean;
+  };
 };
 
 function diagnosticsOf(batch: Batch | null): Diagnostics {
@@ -270,6 +298,28 @@ function AutopartImportsPage() {
         return;
       }
       setBatch(preview.data);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadValidation() {
+    if (!batch) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await downloadAutopartInvoiceValidationFn({ data: { batchId: batch.id } });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      const blob = new Blob([result.data.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = result.data.filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
     } finally {
       setBusy(false);
     }
@@ -420,6 +470,89 @@ function AutopartImportsPage() {
                   {diagnostics.recoveredSales ?? "0.00"} ({diagnostics.salesMeasure ?? "NET_EX_VAT"}
                   ). Recovered rows are included in the accepted total. Rejected rows are not.
                 </p>
+              ) : null}
+              {diagnostics.financialValidation ? (
+                <div className="space-y-3 border border-border px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-display text-sm font-semibold uppercase">
+                      Pre-import validation
+                    </h3>
+                    <button
+                      type="button"
+                      className="h-9 border border-border px-3 text-[11px] font-semibold uppercase"
+                      disabled={busy}
+                      onClick={() => void downloadValidation()}
+                    >
+                      Download validation report
+                    </button>
+                  </div>
+                  <p className="text-steel">
+                    Dry run of the complete file. Signed sales are{" "}
+                    {diagnostics.financialValidation.salesMeasure}. Unmatched account codes stay
+                    quarantined for manual mapping. Customer names are not used. This report does
+                    not write invoice lines, activate customers, or change stock.
+                  </p>
+                  <p>
+                    Net {diagnostics.financialValidation.netSales} · Positive{" "}
+                    {diagnostics.financialValidation.positiveSales} (
+                    {diagnostics.financialValidation.positiveCount.toLocaleString("en-GB")}) ·
+                    Credits {diagnostics.financialValidation.negativeSales} (
+                    {diagnostics.financialValidation.negativeCount.toLocaleString("en-GB")}) ·
+                    Zero-value {diagnostics.financialValidation.zeroCount.toLocaleString("en-GB")}
+                  </p>
+                  <p className="text-steel">
+                    Matched lines{" "}
+                    {diagnostics.financialValidation.matchedLines.toLocaleString("en-GB")} ·
+                    Unmatched lines{" "}
+                    {diagnostics.financialValidation.unmatchedLines.toLocaleString("en-GB")} ·
+                    Unmatched accounts{" "}
+                    {diagnostics.financialValidation.distinctUnmatchedAccounts.toLocaleString(
+                      "en-GB",
+                    )}{" "}
+                    · Unmatched signed sales {diagnostics.financialValidation.unmatchedSales}
+                  </p>
+                  <ul className="space-y-2">
+                    {diagnostics.financialValidation.checks.map((item) => (
+                      <li key={item.id} className="flex flex-wrap items-start gap-2">
+                        <StatusBadge
+                          tone={
+                            item.outcome === "PASS"
+                              ? "good"
+                              : item.outcome === "WARNING"
+                                ? "warn"
+                                : "bad"
+                          }
+                        >
+                          {item.outcome}
+                        </StatusBadge>
+                        <span>
+                          <span className="font-semibold">{item.label}.</span> {item.summary}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {diagnostics.financialValidation.exceptions.length ? (
+                    <ul className="space-y-1 text-steel">
+                      {diagnostics.financialValidation.exceptions
+                        .slice(0, 8)
+                        .map((exception, index) => (
+                          <li key={`${exception.checkId}-${exception.rowNumber ?? index}`}>
+                            {exception.outcome} · row {exception.rowNumber ?? "—"} ·{" "}
+                            {exception.checkId}
+                            {exception.accountCode ? ` · ${exception.accountCode}` : ""}
+                            {exception.salesAmount ? ` · ${exception.salesAmount}` : ""} ·{" "}
+                            {exception.detail}
+                          </li>
+                        ))}
+                    </ul>
+                  ) : null}
+                  {diagnostics.financialValidation.exceptionSampleTruncated ? (
+                    <p className="text-steel">
+                      The on-screen sample is shorter than the file. The download includes the rest
+                      of the exception log up to its limit. Totals include every row.
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
               {diagnostics.recoveredRecords ? (
                 <p className="text-steel">

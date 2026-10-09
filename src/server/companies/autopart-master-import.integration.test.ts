@@ -9,6 +9,7 @@ import {
   cancelAutopartImport,
   confirmAutopartImport,
   createCompanyForAutopartAccount,
+  downloadAutopartInvoiceValidationReport,
   getAutopartImportBatch,
   getPortalAutopartHistory,
   linkAutopartAccountToCompany,
@@ -325,5 +326,104 @@ describe("Autopart customer master import", () => {
     expect(bytes.length).toBeGreaterThan(10);
     const cancelled = await cancelAutopartImport(adminId, saved.batchId);
     expect(cancelled.cancelled).toBe(true);
+  });
+
+  it("validates a complete 561L file against the 407EXP master without writing invoice lines", async () => {
+    const code = `${stamp}V`;
+    const unknown = `${stamp}U`;
+    const name = `${stamp}VAL`.slice(0, 30);
+    const master = [
+      "CUSTOMER LIST FOR EXPORT (407EXP)",
+      "Account    Name                          Area Rep",
+      "---------------------------------------------------",
+      `${code.padEnd(10).slice(0, 10)} ${name.padEnd(30).slice(0, 30)}1    4`,
+    ].join("\n");
+    const masterId = await stage("CUSTOMER_MASTER", `${stamp}-val-407.txt`, master);
+    const previewedMaster = await previewAutopartImport(adminId, { batchId: masterId });
+    expect(previewedMaster.status).toBe("PREVIEWED");
+    const committed = await commit(masterId);
+    expect(committed.status).toBe("COMMITTED");
+    const linesBefore = await prisma.autopartInvoiceLine.count({
+      where: { accountCode: { in: [code, unknown] } },
+    });
+    const invoice = [
+      ".Acct.,Inv & Ln,Part Number,Description,Units,Sales",
+      `${code},I/SS1/1,PART-A,Pad,1,10.00`,
+      `${code},C/SC1/1,PART-C,Credit,-1,-2.50`,
+      `${code},I/SS1/2,PART-Z,Zero,1,0.00`,
+      `${code},I/SS1/1,PART-B,Same invoice,1,4.00`,
+      `"${code}","I/SS2/1","SWUX14","14" Phoenix","1","24.99"`,
+      `${unknown},I/SS9/1,"=HYPERLINK(""http://evil"")",Formula,1,3.00`,
+      `${code},,PART-R,Missing ref,1,2.00`,
+      `,I/SS8/1,PART-M,Missing,1,1.00`,
+      `${code},I/SS7/1,PART-X,Bad,1,not-money`,
+      `${code},I/SS6/1,PART,Pad,2,1,10.00`,
+    ].join("\n");
+    const invoiceId = await stage("INVOICE_LINES", `${stamp}-val-561.csv`, invoice);
+    const preview = await previewAutopartImport(adminId, { batchId: invoiceId });
+    expect(preview.dryRun).toBe(true);
+    expect(preview.status).toBe("PREVIEWED");
+    expect(
+      await prisma.autopartInvoiceLine.count({ where: { accountCode: { in: [code, unknown] } } }),
+    ).toBe(linesBefore);
+    const diagnostics = preview.diagnostics as {
+      acceptedSales?: string;
+      financialValidation?: {
+        netSales: string;
+        positiveSales: string;
+        negativeSales: string;
+        zeroCount: number;
+        matchedLines: number;
+        unmatchedLines: number;
+        distinctUnmatchedAccounts: number;
+        unmatchedSales: string;
+        nameMatching: string;
+        recoveredLines: number;
+        preservedSeparateLines: number;
+        checks: { id: string; outcome: string }[];
+      };
+    };
+    const report = diagnostics.financialValidation;
+    expect(report).toBeTruthy();
+    if (!report) return;
+    expect(report.netSales).toBe("41.49");
+    expect(diagnostics.acceptedSales).toBe(report.netSales);
+    expect(report.positiveSales).toBe("43.99");
+    expect(report.negativeSales).toBe("-2.50");
+    expect(report.zeroCount).toBe(1);
+    expect(report.matchedLines).toBe(6);
+    expect(report.unmatchedLines).toBe(1);
+    expect(report.distinctUnmatchedAccounts).toBe(1);
+    expect(report.unmatchedSales).toBe("3.00");
+    expect(report.nameMatching).toBe("never");
+    expect(report.recoveredLines).toBe(1);
+    expect(report.preservedSeparateLines).toBe(1);
+    const outcome = (id: string) => report.checks.find((item) => item.id === id)?.outcome;
+    expect(outcome("signed_net_sales")).toBe("PASS");
+    expect(outcome("recovered_fields")).toBe("PASS");
+    expect(outcome("no_merged_lines")).toBe("PASS");
+    expect(outcome("account_master_match")).toBe("WARNING");
+    expect(outcome("missing_account_codes")).toBe("FAIL");
+    expect(outcome("missing_invoice_references")).toBe("FAIL");
+    expect(outcome("invalid_numeric_amounts")).toBe("FAIL");
+    expect(outcome("ambiguous_recovered")).toBe("FAIL");
+    expect(outcome("unexpected_duplicate_identities")).toBe("PASS");
+    const stored = await prisma.autopartAccount.findUniqueOrThrow({
+      where: { sourceSystem_accountCode: { sourceSystem: "AUTOPART", accountCode: code } },
+    });
+    expect(stored.companyId).toBeNull();
+    expect(stored.portalEligible).toBe(false);
+    const csv = await downloadAutopartInvoiceValidationReport(adminId, invoiceId);
+    expect(csv.filename).toBe("561l-preimport-validation.csv");
+    expect(csv.csv).toContain("summary,signed_net_sales,PASS,,,,,,41.49,");
+    expect(csv.csv).toContain('"\'=HYPERLINK(""http://evil"")"');
+    expect(csv.csv).not.toContain(",=HYPERLINK");
+    await expect(
+      downloadAutopartInvoiceValidationReport(salesId, invoiceId),
+    ).rejects.toBeInstanceOf(AuthError);
+    const afterDownload = await prisma.autopartInvoiceLine.count({
+      where: { accountCode: { in: [code, unknown] } },
+    });
+    expect(afterDownload).toBe(linesBefore);
   });
 });

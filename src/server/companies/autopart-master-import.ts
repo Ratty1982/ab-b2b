@@ -36,11 +36,19 @@ import {
   type CanonicalColumn,
   type CsvScanRecord,
 } from "@/domain/autopart-bulk-csv";
+import {
+  DOWNLOAD_EXCEPTION_LIMIT,
+  INVOICE_IMPORT_CHUNK,
+  PREVIEW_EXCEPTION_LIMIT,
+  createInvoicePreimportValidation,
+  invoiceValidationReportCsv,
+  type InvoicePreimportValidation,
+} from "@/domain/autopart-561l-preimport-validation";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireCompanyAccess, requireSystemPermission } from "@/server/rbac/guards";
 
 const ISSUE_CAP = 2000;
-const CHUNK = 200;
+const CHUNK = INVOICE_IMPORT_CHUNK;
 const STALE_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024;
 
@@ -261,6 +269,42 @@ async function previewCustomers(batchId: string, filePath: string, actorUserId: 
   return publicBatch(updated);
 }
 
+async function knownAutopartAccountCodes(): Promise<Set<string>> {
+  const rows = await prisma.autopartAccount.findMany({
+    where: { sourceSystem: AUTOPART_SOURCE_SYSTEM },
+    select: { accountCode: true },
+  });
+  return new Set(rows.map((row) => row.accountCode));
+}
+
+async function scanInvoiceValidation(
+  filePath: string,
+  columnMap: ColumnMap,
+  exceptionLimit: number,
+): Promise<InvoicePreimportValidation | null> {
+  const validation = createInvoicePreimportValidation({
+    knownAccountCodes: await knownAutopartAccountCodes(),
+    exceptionLimit,
+  });
+  let headers: string[] = [];
+  let map: Partial<Record<CanonicalColumn, number>> = {};
+  let headerSeen = false;
+  for await (const record of streamCsvRecords(filePath)) {
+    if (!headerSeen) {
+      headerSeen = true;
+      headers = record.cells;
+      map = Object.keys(columnMap).length
+        ? applyColumnMap(headers, columnMap)
+        : detectColumnMap(headers, INVOICE_REQUIRED_COLUMNS).map;
+      if (INVOICE_REQUIRED_COLUMNS.some((column) => map[column] == null)) return null;
+      continue;
+    }
+    validation.observe(record, interpretInvoiceRecord(record, headers, map), map);
+  }
+  if (!headerSeen) return null;
+  return validation.finish();
+}
+
 async function previewCsv(
   batchId: string,
   filePath: string,
@@ -275,6 +319,13 @@ async function previewCsv(
   const accounts = new Set<string>();
   const samples: unknown[] = [];
   const tally = createCsvPreviewTally(kind === "INVOICE_LINES" ? "invoice" : "ledger");
+  const validation =
+    kind === "INVOICE_LINES"
+      ? createInvoicePreimportValidation({
+          knownAccountCodes: await knownAutopartAccountCodes(),
+          exceptionLimit: PREVIEW_EXCEPTION_LIMIT,
+        })
+      : null;
   let headerSeen = false;
   for await (const record of streamCsvRecords(filePath)) {
     if (!headerSeen) {
@@ -293,6 +344,13 @@ async function previewCsv(
         ? interpretInvoiceRecord(record, headers, map)
         : interpretLedgerRecord(record, headers, map);
     tally.add(record, interpreted);
+    if (validation && kind === "INVOICE_LINES") {
+      validation.observe(
+        record,
+        interpreted as Parameters<NonNullable<typeof validation>["observe"]>[1],
+        map,
+      );
+    }
     if ("reject" in interpreted) continue;
     accounts.add(interpreted.row.accountCode);
     const recoveredSamples = samples.filter(
@@ -310,6 +368,8 @@ async function previewCsv(
   const rejectedRows = preview.rejectedRecords;
   const needsMapping = missing.length > 0;
   const ready = !needsMapping && validRows > 0;
+  const financialValidation =
+    kind === "INVOICE_LINES" && validation && !needsMapping ? validation.finish() : null;
   const updated = await prisma.autopartImportBatch.update({
     where: { id: batchId },
     data: {
@@ -344,6 +404,7 @@ async function previewCsv(
         salesMeasure: kind === "INVOICE_LINES" ? "NET_EX_VAT" : null,
         structural: ready,
         provisionalHeaders: missing.length > 0,
+        ...(financialValidation ? { financialValidation } : {}),
       } as Prisma.InputJsonValue,
     },
   });
@@ -352,9 +413,59 @@ async function previewCsv(
     entityType: "AutopartImportBatch",
     entityId: batchId,
     actorUserId,
-    metadata: { kind, validRows, rejectedRows, needsMapping },
+    metadata: {
+      kind,
+      validRows,
+      rejectedRows,
+      needsMapping,
+      ...(financialValidation
+        ? {
+            netSales: financialValidation.netSales,
+            unmatchedLines: financialValidation.unmatchedLines,
+          }
+        : {}),
+    },
   });
   return publicBatch(updated);
+}
+
+export async function downloadAutopartInvoiceValidationReport(
+  actorUserId: string,
+  batchId: string,
+) {
+  await requireSystemPermission(actorUserId, "autopart.import.manage");
+  const batch = await ownBatch(actorUserId, batchId);
+  if (batch.kind !== "INVOICE_LINES") {
+    throw new AuthError("Validation reports are for 561L invoice lines", "VALIDATION", 400);
+  }
+  if (!batch.storagePath) {
+    throw new AuthError("The upload file is no longer stored", "VALIDATION", 400);
+  }
+  const report = await scanInvoiceValidation(
+    assertInsideRoot(batch.storagePath),
+    readColumnMap(batch.columnMap),
+    DOWNLOAD_EXCEPTION_LIMIT,
+  );
+  if (!report) {
+    throw new AuthError("Column mapping is required before a validation report", "VALIDATION", 400);
+  }
+  await recordAuditEvent({
+    action: "autopart_invoice_validation_downloaded",
+    entityType: "AutopartImportBatch",
+    entityId: batchId,
+    actorUserId,
+    metadata: {
+      acceptedLines: report.acceptedLines,
+      netSales: report.netSales,
+      unmatchedLines: report.unmatchedLines,
+      exceptionRows: report.exceptions.length,
+    },
+  });
+  return {
+    filename: "561l-preimport-validation.csv",
+    csv: invoiceValidationReportCsv(report),
+    truncated: report.exceptionSampleTruncated,
+  };
 }
 
 export async function confirmAutopartImport(actorUserId: string, batchId: string) {

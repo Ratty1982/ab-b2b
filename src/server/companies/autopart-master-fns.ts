@@ -48,6 +48,22 @@ export const getAutopartImportBatchFn = createServerFn({ method: "GET" })
     }
   });
 
+export const downloadAutopartInvoiceValidationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { batchId: string })
+  .handler(async ({ data }) => {
+    try {
+      return {
+        ok: true as const,
+        data: await master.downloadAutopartInvoiceValidationReport(
+          await requireUserId(),
+          data.batchId,
+        ),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
 export const previewAutopartImportFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) => data as { batchId: string; columnMap?: Record<string, string> },
