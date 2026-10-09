@@ -27,13 +27,13 @@ Local volumes used for timing: 98,228 `AutopartProduct` rows, 87 supplier links,
 
 ## Timings
 
-| Path | Before | After |
-| --- | --- | --- |
-| Low-stock id query | 179–265ms sequential scan | 0.3ms warm index nested loop (14.7ms on the first settings-driven plan) |
-| Valuation of 98,228 products | 1,512ms, 197 queries | 148–167ms, 1 query |
-| Stock Overview, all feeds, warm | valuation alone was 1,512ms | 199ms for the page, including totals |
-| Stock Overview, current feed, warm | low-stock scan about 265ms on the critical path | 37ms for the page |
-| Historic feed page, warm | same walk shape as the full set | 245ms |
+| Path                               | Before                                          | After                                                                   |
+| ---------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| Low-stock id query                 | 179–265ms sequential scan                       | 0.3ms warm index nested loop (14.7ms on the first settings-driven plan) |
+| Valuation of 98,228 products       | 1,512ms, 197 queries                            | 148–167ms, 1 query                                                      |
+| Stock Overview, all feeds, warm    | valuation alone was 1,512ms                     | 199ms for the page, including totals                                    |
+| Stock Overview, current feed, warm | low-stock scan about 265ms on the critical path | 37ms for the page                                                       |
+| Historic feed page, warm           | same walk shape as the full set                 | 245ms                                                                   |
 
 Full-set totals matched before and after: physical £25,749.83, sellable £11,570.83, 90,364 missing costs, 7,864 valued physical lines, 145 valued sellable lines.
 
@@ -49,4 +49,12 @@ With sequential scans disabled, account history plans are index scans on `Autopa
 
 ## Deploy note
 
-`20261008233000_history_list_indexes` builds indexes in a transaction and takes a short lock. At the expected history volume that is seconds, not a table rewrite. It was applied only to the local development database.
+`20261008233000_history_list_indexes` runs inside Prisma's migration transaction. `CREATE INDEX` takes a share lock and blocks writes until the build finishes. Reads continue. `DROP INDEX` then takes a brief exclusive lock. The new index is created before the old `accountCode` index is dropped. At the expected history volume each build is seconds. Deploy it when no Autopart import is writing those tables. `CREATE INDEX CONCURRENTLY` would avoid the write block and cannot run inside this transaction. The migration was applied only to the local development database.
+
+## Review follow-up
+
+A reused Inv & Ln such as `/1` on two product rows is stored as two lines. The older test expected one row, which is the last-wins behaviour the importer no longer uses.
+
+Sole non-preferred supplier cost is the existing `resolvePlanningSupplier` rule: one active supplier is used even when it is not marked preferred. Several active suppliers with no single preferred stay ambiguous and fall back to latest cost. The SQL aggregate follows that rule.
+
+Security PR #2 upload checks, formula-safe reconciliation, price-list, and FBA CSV cells, ledger redaction, and page clamps are included on this branch. Session-cache and general server-function changes remain on that pull request.
