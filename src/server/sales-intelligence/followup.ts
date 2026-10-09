@@ -25,6 +25,8 @@ import {
 import { getCustomerGapAnalysis } from "@/server/sales-intelligence/gap";
 import { getCustomerRangeOpportunities } from "@/server/sales-intelligence/opportunity";
 import { getCustomerSalesEnquiry } from "@/server/sales-intelligence/enquiry";
+import { getGlobalCustomerSalesEnquiry } from "@/server/sales-intelligence/global-history";
+import { GLOBAL_AUTOPART_SALES_PERIOD } from "@/server/sales-intelligence/history-sources";
 import { getCustomerRebateAnalysis } from "@/server/sales-intelligence/rebate";
 import { ROUTES } from "@/lib/app-nav";
 
@@ -84,6 +86,7 @@ const previewSchema = z.object({
   sku: z.string().max(120).optional().nullable(),
   ...periodBits,
   opportunityPeriod: z.string().optional().nullable(),
+  historySource: z.enum(["dated", "global"]).optional(),
 });
 
 const createSchema = previewSchema.extend({
@@ -384,6 +387,92 @@ async function buildSnapshot(
         period: input.period ?? "ALL",
         from: input.from ?? undefined,
         to: input.to ?? undefined,
+      })}`,
+      capturedAt,
+    };
+  }
+
+  if (input.historySource === "global") {
+    const sku = input.sku?.trim() || null;
+    const reason =
+      input.sourceReason === "PRODUCT" || input.sourceReason === "CROSS_SELL" || input.sourceReason === "CUSTOMER"
+        ? input.sourceReason
+        : sku
+          ? "PRODUCT"
+          : "CUSTOMER";
+    const enquiry = await getGlobalCustomerSalesEnquiry(actorUserId, {
+      companyId: input.companyId,
+      ...(reason === "PRODUCT" && sku ? { sku } : {}),
+      page: 1,
+      pageSize: 25,
+    });
+    let productId: string | null = null;
+    let productName: string | null = null;
+    let brandName: string | null = null;
+    let categoryName: string | null = null;
+    let historicOnly = false;
+    if (reason === "PRODUCT") {
+      const row = enquiry.products.items.find((item) => item.sku.trim().toUpperCase() === sku?.toUpperCase());
+      if (!row) {
+        throw new AuthError(
+          "Product is not in this customer's undated Autopart invoice history",
+          "NOT_FOUND",
+          404,
+        );
+      }
+      productId = row.productId;
+      productName = row.description;
+      brandName = row.brandName;
+      categoryName = row.categoryName;
+      historicOnly = !row.inCatalogue;
+    } else if (reason === "CROSS_SELL" && sku) {
+      const variant = await prisma.productVariant.findFirst({
+        where: { sku: { equals: sku, mode: "insensitive" } },
+        select: {
+          productId: true,
+          sku: true,
+          product: { select: { name: true, brand: { select: { name: true } }, category: { select: { name: true } } } },
+        },
+      });
+      productId = variant?.productId ?? null;
+      productName = variant?.product.name ?? sku;
+      brandName = variant?.product.brand?.name ?? null;
+      categoryName = variant?.product.category?.name ?? null;
+      historicOnly = !variant;
+    }
+    return {
+      sourceModule: "SALES_ENQUIRY",
+      sourceReason: reason,
+      companyId: company.id,
+      companyName: company.name,
+      autopartCustomerCode: company.autopartCustomerCode,
+      productId,
+      sku,
+      productName,
+      brandName,
+      categoryName,
+      historicOnly,
+      selectedPeriod: {
+        from: null,
+        to: null,
+        label: GLOBAL_AUTOPART_SALES_PERIOD.label,
+      },
+      comparisonPeriod: null,
+      metrics: {
+        "History period": GLOBAL_AUTOPART_SALES_PERIOD.label,
+        "Invoice dates": "Not available on global 561L lines",
+        "Net sales ex VAT": enquiry.summary.netSales,
+        "Gross positive sales": enquiry.summary.grossSales,
+        Credits: enquiry.summary.credits,
+        "Product lines": enquiry.summary.lineCount,
+        Note: "Undated history is not a stopped-buying or inactivity signal.",
+        ...(reason === "CROSS_SELL" && sku ? { "Catalogue suggestion": productName ?? sku } : {}),
+      },
+      deepLinkPath: `${ROUTES.salesIntelligence}${qs({
+        source: "global",
+        mode: "customers",
+        companyId: company.id,
+        ...(sku ? { sku } : {}),
       })}`,
       capturedAt,
     };

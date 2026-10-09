@@ -303,6 +303,76 @@ describe("Autopart customer master import", () => {
     await prisma.company.delete({ where: { id: otherCompany.id } });
   });
 
+  it("reimports 561L and SLRB without a second transaction or a changed amount", async () => {
+    const code = `${stamp}R`;
+    const invoiceHeader = ".Acct.,Inv & Ln,Part Number,Description,Units,Sales";
+    const originalInvoice = [
+      invoiceHeader,
+      `${code},I/INC${stamp}/1,PART-R,Rotor,2,12.50`,
+    ].join("\n");
+    const invoiceId = await stage("INVOICE_LINES", `${stamp}-inc.csv`, originalInvoice);
+    await previewAutopartImport(adminId, { batchId: invoiceId });
+    const imported = await commit(invoiceId);
+    expect(imported.status).toBe("COMMITTED");
+    expect(imported.importedRows).toBe(1);
+
+    const repeatInvoice = [
+      invoiceHeader,
+      `${code},I/INC${stamp}/1,PART-CHANGED,Rotor renamed,9,99.99`,
+      `${code},I/INC${stamp}/2,PART-NEW,New rotor,1,3.00`,
+    ].join("\n");
+    const repeatId = await stage("INVOICE_LINES", `${stamp}-inc-again.csv`, repeatInvoice);
+    await previewAutopartImport(adminId, { batchId: repeatId });
+    const repeated = await commit(repeatId);
+    expect(repeated.status).toBe("COMMITTED");
+    expect(repeated.importedRows).toBe(1);
+    expect(repeated.updatedRows).toBe(1);
+    const lines = await prisma.autopartInvoiceLine.findMany({
+      where: { accountCode: code },
+      orderBy: { rawInvAndLn: "asc" },
+    });
+    expect(lines).toHaveLength(2);
+    const kept = lines.find((line) => line.rawInvAndLn === `I/INC${stamp}/1`);
+    expect(kept?.salesAmount.toFixed(2)).toBe("12.50");
+    expect(kept?.quantity.toFixed(3)).toBe("2.000");
+    expect(kept?.partNumber).toBe("PART-R");
+    expect(kept?.description).toBe("Rotor renamed");
+    expect(lines.find((line) => line.partNumber === "PART-NEW")?.salesAmount.toFixed(2)).toBe("3.00");
+
+    const ledgerHeader = "A/C,Name,Sacct,Type,Ref,Date,Tot Goods,,Tot VAT,,Total,Run Bal";
+    const originalLedger = [
+      ledgerHeader,
+      `${code},Hidden name,,INV,INC${stamp},06 Oct 14,15.00,,3.00,,18.00,18.00`,
+    ].join("\n");
+    const ledgerId = await stage("LEDGER", `${stamp}-inc-slrb.csv`, originalLedger);
+    await previewAutopartImport(adminId, { batchId: ledgerId });
+    const ledgerImported = await commit(ledgerId);
+    expect(ledgerImported.status).toBe("COMMITTED");
+    expect(ledgerImported.importedRows).toBe(1);
+
+    const repeatLedger = [
+      ledgerHeader,
+      `${code},Hidden name,,INV,INC${stamp},06 Oct 14,100.00,,20.00,,120.00,500.00`,
+      `${code},Hidden name,,INV,NEW${stamp},07 Oct 14,4.00,,0.80,,4.80,4.80`,
+    ].join("\n");
+    const ledgerRepeatId = await stage("LEDGER", `${stamp}-inc-slrb-again.csv`, repeatLedger);
+    await previewAutopartImport(adminId, { batchId: ledgerRepeatId });
+    const ledgerRepeated = await commit(ledgerRepeatId);
+    expect(ledgerRepeated.status).toBe("COMMITTED");
+    expect(ledgerRepeated.importedRows).toBe(1);
+    const ledgerRows = await prisma.autopartLedgerTransaction.findMany({
+      where: { accountCode: code },
+      orderBy: { reference: "asc" },
+    });
+    expect(ledgerRows).toHaveLength(2);
+    const keptLedger = ledgerRows.find((row) => row.reference === `INC${stamp}`);
+    expect(keptLedger?.goodsAmount?.toFixed(2)).toBe("15.00");
+    expect(keptLedger?.vatAmount?.toFixed(2)).toBe("3.00");
+    expect(keptLedger?.totalAmount?.toFixed(2)).toBe("18.00");
+    expect(keptLedger?.runningBalance?.toFixed(2)).toBe("18.00");
+    expect(ledgerRows.find((row) => row.reference === `NEW${stamp}`)?.goodsAmount?.toFixed(2)).toBe("4.00");
+  });
+
   it("stores an upload outside the public tree and can cancel before commit", async () => {
     const body = new ReadableStream<Uint8Array>({
       start(controller) {

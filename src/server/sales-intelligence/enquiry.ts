@@ -5,6 +5,9 @@
  * (historic 561L/SLRB + ongoing 504/TRM21QC).
  * AB Orders and legacy 504C are intentionally excluded from realised sales metrics
  * so AB-originated orders are not double-counted once Autopart invoices arrive.
+ *
+ * Undated global AutopartInvoiceLine rows are a separate mode
+ * (All Historical Autopart Sales). Do not add them to these period totals.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";

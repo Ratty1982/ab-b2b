@@ -8,6 +8,7 @@ export type StaffWorkspaceOpenAction =
   | "si.daily_brief.opened"
   | "si.portfolio.opened"
   | "si.enquiry.opened"
+  | "si.global_history.opened"
   | "si.gaps.opened"
   | "si.opportunities.opened"
   | "si.rebate.opened";

@@ -41,6 +41,41 @@ export function SalesIntelligenceHeader({
   );
 }
 
+export function SiHistorySourceSwitch({
+  source,
+  onChange,
+}: {
+  source: "dated" | "global";
+  onChange: (source: "dated" | "global") => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2" role="tablist" aria-label="Sales history source">
+      {(
+        [
+          ["dated", "Dated sales"],
+          ["global", "All Historical Autopart Sales"],
+        ] as const
+      ).map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          role="tab"
+          aria-selected={source === value}
+          onClick={() => onChange(value)}
+          className={cn(
+            "h-9 rounded-md border px-3 text-[11px] font-bold uppercase tracking-wide",
+            source === value
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border text-steel hover:text-foreground",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SiModeSwitch({
   mode,
   onChange,

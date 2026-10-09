@@ -4666,5 +4666,65 @@ export const pollBackorderMailboxNowFn = createServerFn({ method: "POST" }).hand
   }
 });
 
+export const getGlobalAutopartSalesDashboardFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/sales-intelligence/global-history");
+      return { ok: true as const, data: await history.getGlobalAutopartSalesDashboard(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getGlobalCustomerSalesEnquiryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/sales-intelligence/global-history");
+      return { ok: true as const, data: await history.getGlobalCustomerSalesEnquiry(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getGlobalProductSalesEnquiryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/sales-intelligence/global-history");
+      return { ok: true as const, data: await history.getGlobalProductSalesEnquiry(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchGlobalAutopartSalesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/sales-intelligence/global-history");
+      return { ok: true as const, data: await history.searchGlobalAutopartSales(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportGlobalAutopartSalesCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/sales-intelligence/global-history");
+      return { ok: true as const, data: await history.exportGlobalAutopartSalesCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 
 

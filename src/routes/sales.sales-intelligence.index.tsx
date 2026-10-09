@@ -9,6 +9,7 @@ import {
   SiExportButton,
   SiField,
   SiMetricCard,
+  SiHistorySourceSwitch,
   SiModeSwitch,
   SiPager,
   SiPeriodSummary,
@@ -37,6 +38,10 @@ import {
   type FollowUpRequest,
 } from "@/components/sales-intelligence/create-followup-drawer";
 import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
+import {
+  GlobalAutopartSalesPanel,
+  downloadGlobalHistoryCsv,
+} from "@/components/sales-intelligence/global-history-panel";
 import {
   exportCustomerGroupSalesCsvFn,
   exportCustomerSalesEnquiryCsvFn,
@@ -106,6 +111,7 @@ function SalesEnquiryPage() {
   const navigate = Route.useNavigate();
   const freshnessLabel = useSalesIntelligenceFreshnessLabel();
   const mode = search.mode ?? "customers";
+  const historical = search.source === "global";
   const period = (search.period ?? "LAST_30") as SalesEnquiryPeriodPreset;
   const compare = search.compare ?? "OFF";
   const page = search.page ?? 1;
@@ -200,7 +206,7 @@ function SalesEnquiryPage() {
   }
 
   useEffect(() => {
-    if (mode !== "customers" || customerQ.trim().length < 1) {
+    if (historical || mode !== "customers" || customerQ.trim().length < 1) {
       setCustomerHits([]);
       return;
     }
@@ -212,10 +218,10 @@ function SalesEnquiryPage() {
       );
     }, 200);
     return () => window.clearTimeout(t);
-  }, [customerQ, mode]);
+  }, [customerQ, mode, historical]);
 
   useEffect(() => {
-    if (mode !== "products" || productQ.trim().length < 1) {
+    if (historical || mode !== "products" || productQ.trim().length < 1) {
       setProductHits([]);
       return;
     }
@@ -227,16 +233,17 @@ function SalesEnquiryPage() {
       );
     }, 200);
     return () => window.clearTimeout(t);
-  }, [productQ, mode]);
+  }, [productQ, mode, historical]);
 
   useEffect(() => {
+    if (historical) return;
     const t = window.setTimeout(() => {
       if ((filterQ.trim() || "") === (search.q ?? "")) return;
       patch({ q: filterQ.trim() || null, page: 1 });
     }, 250);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterQ]);
+  }, [filterQ, historical]);
 
   useEffect(() => {
     setFilterQ(search.q ?? "");
@@ -251,7 +258,7 @@ function SalesEnquiryPage() {
   }, [search.companyId, search.customerGroupId, search.sku, mode]);
 
   useEffect(() => {
-    if (mode !== "customers" || !search.customerGroupId) {
+    if (historical || mode !== "customers" || !search.customerGroupId) {
       setGroupData(null);
       return;
     }
@@ -294,10 +301,10 @@ function SalesEnquiryPage() {
       }
       setLoading(false);
     })();
-  }, [mode, search.customerGroupId, period, search.from, search.to]);
+  }, [historical, mode, search.customerGroupId, period, search.from, search.to]);
 
   useEffect(() => {
-    if (mode !== "customers" || !search.companyId || search.customerGroupId) {
+    if (historical || mode !== "customers" || !search.companyId || search.customerGroupId) {
       if (!search.companyId) setCustomerData(null);
       return;
     }
@@ -348,10 +355,11 @@ function SalesEnquiryPage() {
     page,
     expandedSku,
     search.txPage,
+    historical,
   ]);
 
   useEffect(() => {
-    if (mode !== "products" || !search.sku) {
+    if (historical || mode !== "products" || !search.sku) {
       setProductData(null);
       return;
     }
@@ -399,6 +407,7 @@ function SalesEnquiryPage() {
     page,
     expandedCompanyId,
     search.txPage,
+    historical,
   ]);
 
   const totalPages = useMemo(() => {
@@ -428,6 +437,11 @@ function SalesEnquiryPage() {
   });
 
   async function exportCsv() {
+    if (historical) {
+      const exportError = await downloadGlobalHistoryCsv(search);
+      if (exportError) setError(exportError);
+      return;
+    }
     if (mode === "customers" && search.customerGroupId) {
       const mappedPeriod =
         period === "THIS_MONTH"
@@ -500,6 +514,7 @@ function SalesEnquiryPage() {
   }
 
   const canExport =
+    historical ||
     (mode === "customers" && Boolean(search.companyId || search.customerGroupId)) ||
     (mode === "products" && Boolean(search.sku));
 
@@ -507,11 +522,31 @@ function SalesEnquiryPage() {
     <div>
       <SalesIntelligenceHeader
         title="Sales Enquiry"
-        freshnessLabel={freshnessLabel}
+        freshnessLabel={historical ? null : freshnessLabel}
         actions={canExport ? <SiExportButton onClick={() => void exportCsv()} /> : null}
       />
 
       <div className="space-y-3 p-4 sm:p-5">
+        <SiHistorySourceSwitch
+          source={historical ? "global" : "dated"}
+          onChange={(source) => {
+            const draft: SalesEnquiryUrlSearch = { ...search };
+            if (source === "global") draft.source = "global";
+            else delete draft.source;
+            void navigate({ search: compactSalesEnquiryUrlSearch(draft) });
+          }}
+        />
+        {historical ? (
+          <GlobalAutopartSalesPanel
+            search={search}
+            onSearch={(next) => {
+              void navigate({ search: compactSalesEnquiryUrlSearch({ ...next, source: "global" }) });
+            }}
+            onFollowUp={setFollowUp}
+            onExport={() => void exportCsv()}
+          />
+        ) : (
+        <>
         <SiModeSwitch
           mode={mode}
           onChange={(value) => {
@@ -892,6 +927,8 @@ function SalesEnquiryPage() {
             Search and select a product or historic SKU to begin.
           </p>
         ) : null}
+        </>
+        )}
       </div>
       <CreateFollowUpDrawer
         open={Boolean(followUp)}

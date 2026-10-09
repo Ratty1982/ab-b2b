@@ -19,6 +19,9 @@ import { moneyToString, moneyZero, parseMoney, type Money } from "@/domain/money
 
 export type SalesEnquiryMode = "customers" | "products";
 
+/** Dated document history, or undated global 561L invoice lines. */
+export type SalesEnquiryHistorySource = "dated" | "global";
+
 export type SalesEnquiryCompareMode = "OFF" | "PREVIOUS" | "PREVIOUS_YEAR" | "CUSTOM";
 
 export type CustomerProductSort =
@@ -189,6 +192,10 @@ export function compareSalesTotals(
 
 export type SalesEnquiryUrlSearch = {
   mode?: SalesEnquiryMode;
+  /** Defaults to dated Sales Enquiry. `global` is All Historical Autopart Sales. */
+  source?: SalesEnquiryHistorySource;
+  /** Exact Autopart account code. Names are never used to link an account. */
+  accountCode?: string;
   companyId?: string;
   /** Customer Group aggregation (mutually exclusive with companyId in UI). */
   customerGroupId?: string;
@@ -225,6 +232,10 @@ export function parseSalesEnquiryUrlSearch(
   const out: SalesEnquiryUrlSearch = {};
   if (search["mode"] === "products" || search["mode"] === "customers") {
     out.mode = search["mode"];
+  }
+  if (search["source"] === "global") out.source = "global";
+  if (typeof search["accountCode"] === "string" && search["accountCode"].trim()) {
+    out.accountCode = search["accountCode"].trim().slice(0, 40);
   }
   if (typeof search["companyId"] === "string" && search["companyId"]) {
     out.companyId = search["companyId"];
@@ -276,6 +287,8 @@ export function parseSalesEnquiryUrlSearch(
 export function compactSalesEnquiryUrlSearch(search: SalesEnquiryUrlSearch): SalesEnquiryUrlSearch {
   const out: SalesEnquiryUrlSearch = {};
   if (search.mode && search.mode !== "customers") out.mode = search.mode;
+  if (search.source === "global") out.source = "global";
+  if (search.accountCode) out.accountCode = search.accountCode;
   if (search.companyId) out.companyId = search.companyId;
   if (search.customerGroupId) out.customerGroupId = search.customerGroupId;
   if (search.sku) out.sku = search.sku;

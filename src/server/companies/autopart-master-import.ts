@@ -755,7 +755,9 @@ async function upsertInvoiceRows(
       );
     }
   }
-  return writeFinancialRows("invoice", batchId, prepared, issues, rejected);
+  const retained = await retainExistingInvoiceLines(prepared);
+  const written = await writeFinancialRows("invoice", batchId, retained.rows, issues, rejected);
+  return { ...written, updated: written.updated + retained.attached };
 }
 
 async function upsertLedgerRows(
@@ -828,7 +830,145 @@ async function upsertLedgerRows(
       );
     }
   }
-  return writeFinancialRows("ledger", batchId, prepared, issues, rejected);
+  const retained = await retainExistingLedgerTransactions(prepared);
+  const written = await writeFinancialRows("ledger", batchId, retained.rows, issues, rejected);
+  return { ...written, updated: written.updated + retained.attached };
+}
+
+/**
+ * Source identity still includes quantity and amount so rows already stored keep
+ * matching. A later file with the same account and Inv & Ln but a different amount
+ * would otherwise insert a second line. Attach that row to the stored line and
+ * leave quantity, sales amount, part, account, and document fields unchanged.
+ */
+async function retainExistingInvoiceLines(rows: Prisma.AutopartInvoiceLineCreateManyInput[]) {
+  if (rows.length === 0) return { rows, attached: 0 };
+  const existing = await prisma.autopartInvoiceLine.findMany({
+    where: {
+      accountCode: { in: [...new Set(rows.map((row) => row.accountCode))] },
+      rawInvAndLn: { in: [...new Set(rows.map((row) => row.rawInvAndLn))] },
+    },
+    select: { id: true, accountCode: true, rawInvAndLn: true, sourceIdentity: true },
+  });
+  const byKey = new Map<string, { id: string; sourceIdentity: string }>();
+  for (const row of existing) {
+    const key = `${row.accountCode}\u001e${row.rawInvAndLn}`;
+    if (!byKey.has(key)) byKey.set(key, row);
+  }
+  const kept: Prisma.AutopartInvoiceLineCreateManyInput[] = [];
+  const seenIdentity = new Set<string>();
+  const seenKey = new Set<string>();
+  let attached = 0;
+  for (const row of rows) {
+    const key = `${row.accountCode}\u001e${row.rawInvAndLn}`;
+    const stored = byKey.get(key);
+    if (seenIdentity.has(row.sourceIdentity)) {
+      attached += 1;
+      continue;
+    }
+    if (stored && stored.sourceIdentity !== row.sourceIdentity) {
+      await prisma.autopartInvoiceLine.update({
+        where: { id: stored.id },
+        data: {
+          description: row.description ?? null,
+          parseIssue: row.parseIssue ?? null,
+          importBatchId: row.importBatchId,
+        },
+      });
+      attached += 1;
+      continue;
+    }
+    if (seenKey.has(key)) {
+      attached += 1;
+      continue;
+    }
+    seenIdentity.add(row.sourceIdentity);
+    seenKey.add(key);
+    kept.push(row);
+  }
+  return { rows: kept, attached };
+}
+
+function ledgerDay(value: Date | string | null | undefined): string {
+  if (value == null || value === "") return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function ledgerCommercialKey(row: {
+  accountCode: string;
+  rawType: string;
+  reference: string;
+  transactionDate?: Date | string | null;
+}): string {
+  return [row.accountCode, row.rawType, row.reference, ledgerDay(row.transactionDate)].join("\u001e");
+}
+
+/**
+ * Ledger identity includes the amounts, so a changed goods or balance figure would
+ * insert a second transaction. The same account, type, reference, and date stay one
+ * stored row. Amounts, reference, and date are not rewritten.
+ */
+async function retainExistingLedgerTransactions(
+  rows: Prisma.AutopartLedgerTransactionCreateManyInput[],
+) {
+  if (rows.length === 0) return { rows, attached: 0 };
+  const existing = await prisma.autopartLedgerTransaction.findMany({
+    where: {
+      accountCode: { in: [...new Set(rows.map((row) => row.accountCode))] },
+      reference: { in: [...new Set(rows.map((row) => row.reference))] },
+    },
+    select: {
+      id: true,
+      accountCode: true,
+      rawType: true,
+      reference: true,
+      transactionDate: true,
+      sourceIdentity: true,
+    },
+  });
+  const byKey = new Map<string, { id: string; sourceIdentity: string }>();
+  for (const row of existing) {
+    const key = ledgerCommercialKey(row);
+    if (!byKey.has(key)) byKey.set(key, row);
+  }
+  const kept: Prisma.AutopartLedgerTransactionCreateManyInput[] = [];
+  const seenIdentity = new Set<string>();
+  const seenKey = new Set<string>();
+  let attached = 0;
+  for (const row of rows) {
+    const key = ledgerCommercialKey({
+      accountCode: row.accountCode,
+      rawType: row.rawType,
+      reference: row.reference,
+      transactionDate: row.transactionDate ?? null,
+    });
+    const stored = byKey.get(key);
+    if (seenIdentity.has(row.sourceIdentity)) {
+      attached += 1;
+      continue;
+    }
+    if (stored && stored.sourceIdentity !== row.sourceIdentity) {
+      await prisma.autopartLedgerTransaction.update({
+        where: { id: stored.id },
+        data: {
+          parseIssue: row.parseIssue ?? null,
+          importBatchId: row.importBatchId,
+        },
+      });
+      attached += 1;
+      continue;
+    }
+    if (seenKey.has(key)) {
+      attached += 1;
+      continue;
+    }
+    seenIdentity.add(row.sourceIdentity);
+    seenKey.add(key);
+    kept.push(row);
+  }
+  return { rows: kept, attached };
 }
 
 async function writeFinancialRows(
@@ -1739,7 +1879,7 @@ export async function getAutopartHistoricalSummary(actorUserId: string) {
     updatedInvoiceRows,
     committedInvoiceRows: importedInvoiceRows + updatedInvoiceRows,
     countNote:
-      "Product lines count stored AutopartInvoiceLine rows, one per source identity. Committed batch rows add new rows and rows that updated an existing identity. An update does not add a stored line and does not change the stored sales amount, quantity, account, or document. Source identity occurrence is counted inside each 200-row write, so the same natural key in a later chunk updates the earlier row.",
+      "Product lines count stored AutopartInvoiceLine rows, one per source identity. Committed batch rows add new rows and rows that updated an existing identity. An update does not add a stored line and does not change the stored sales amount, quantity, account, or document. Source identity occurrence is counted inside each 200-row write, so the same natural key in a later chunk updates the earlier row. A later file that repeats the same account and invoice-line reference does not insert another product line and does not change the stored quantity or sales amount.",
     historicalLineSales: sales._sum.salesAmount?.toFixed(2) ?? "0.00",
     salesMeasure: "NET_EX_VAT",
   };
