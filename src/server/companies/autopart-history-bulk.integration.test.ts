@@ -258,8 +258,16 @@ ${code},INV,SS1,06 Oct 14,10.00,2.00,12.00,12.00
       where: { id: ok.runId },
     });
     expect(run.status).toBe("COMMITTED");
-    // Adjacent duplicate Inv&Ln must upsert once (no ON CONFLICT twice error)
-    expect(await prisma.autopartSalesLine.count({ where: { companyId: company.id } })).toBe(1);
+    // Reused /1 references stay separate product rows. Last-wins would drop the earlier line.
+    const stored = await prisma.autopartSalesLine.findMany({
+      where: { companyId: company.id },
+      orderBy: { lineNumber: "asc" },
+    });
+    expect(stored.map((row) => row.lineNumber)).toEqual([1, 2]);
+    expect(stored.map((row) => row.descriptionSnapshot)).toEqual(["Item", "Dup adjacent"]);
+    expect(stored.every((row) => row.sku === "BULK-SKU-A" && row.salesNet.toFixed(2) === "10.00")).toBe(
+      true,
+    );
   });
 
   it("surfaces friendly error (not raw Prisma) when confirm is blocked", async () => {
