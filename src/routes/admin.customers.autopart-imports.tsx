@@ -184,6 +184,14 @@ function AutopartImportsPage() {
   }, [accountClass, accountLink, accountPage, accountQuery]);
 
   useEffect(() => {
+    const account = new URLSearchParams(window.location.search).get("account")?.trim() ?? "";
+    if (!account) return;
+    setAccountQuery(account);
+    setAccountLink("all");
+    setAccountPage(1);
+  }, []);
+
+  useEffect(() => {
     void loadBatches();
     void getAutopartHistoricalSummaryFn().then((result) => {
       if (result.ok) setSummary(result.data);
@@ -353,9 +361,12 @@ function AutopartImportsPage() {
             <p className="mt-1 text-steel">{summary.label}</p>
             <p className="mt-2">
               Accounts {summary.accounts.toLocaleString("en-GB")} · Product lines{" "}
-              {summary.invoiceLines.toLocaleString("en-GB")} · Line sales{" "}
+              {summary.invoiceLines.toLocaleString("en-GB")} · Committed invoice rows{" "}
+              {summary.committedInvoiceRows.toLocaleString("en-GB")} · Updated existing identities{" "}
+              {summary.updatedInvoiceRows.toLocaleString("en-GB")} · Line sales{" "}
               {summary.historicalLineSales} ({summary.salesMeasure})
             </p>
+            <p className="mt-1 text-steel">{summary.countNote}</p>
           </section>
         ) : null}
 
@@ -397,6 +408,15 @@ function AutopartImportsPage() {
                 <p className="text-steel">
                   Product line sales measure: {diagnostics.salesMeasure}. This is not the invoice
                   total.
+                </p>
+              ) : null}
+              {batch.status === "COMMITTED" && batch.kind === "INVOICE_LINES" ? (
+                <p className="text-steel">
+                  New stored rows {batch.importedRows.toLocaleString("en-GB")} · Updated existing
+                  source identities {batch.updatedRows.toLocaleString("en-GB")} · Accepted rows{" "}
+                  {(batch.importedRows + batch.updatedRows).toLocaleString("en-GB")}. Stored product
+                  lines count unique source identities. Updating an existing identity does not add a
+                  row and does not change the stored sales amount.
                 </p>
               ) : null}
               {diagnostics.summary ? (
@@ -701,7 +721,8 @@ function AutopartImportsPage() {
                             Create prospect
                           </button>
                           <p className="text-[11px] text-steel">
-                            Does not enable history or portal access.
+                            Creates a prospect and links this account. Does not approve customer
+                            portal history.
                           </p>
                         </div>
                       )}

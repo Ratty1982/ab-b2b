@@ -3513,6 +3513,21 @@ export const getCompanyAutopartHistoryWorkspaceFn = createServerFn({ method: "GE
     }
   });
 
+export const listCompanyAutopartInvoiceLinesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string; q?: string; page?: number })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/companies/autopart-internal-history");
+      return {
+        ok: true as const,
+        data: await history.listCompanyAutopartInvoiceLines(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const verifyAutopartAccountAliasFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

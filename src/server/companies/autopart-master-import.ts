@@ -38,6 +38,7 @@ import {
 } from "@/domain/autopart-bulk-csv";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireCompanyAccess, requireSystemPermission } from "@/server/rbac/guards";
+import { loadCompanyGlobalAutopartHistory } from "@/server/companies/autopart-internal-history";
 
 const ISSUE_CAP = 2000;
 const CHUNK = 200;
@@ -1412,7 +1413,7 @@ export async function setAutopartHistoricalAccess(
   const company = await prisma.company.findUniqueOrThrow({ where: { id: account.companyId } });
   if (company.status !== "ACTIVE") {
     throw new AuthError(
-      "The company must be an active trade account before historical access is enabled",
+      "Customer portal history requires an active trade account. Internal CRM history does not use this switch.",
       "VALIDATION",
       400,
     );
@@ -1451,22 +1452,12 @@ export async function setAutopartHistoricalAccess(
 
 export async function getCompanyAutopartMaster(actorUserId: string, companyId: string) {
   await requireCompanyAccess(actorUserId, companyId);
-  const profile = await requireSystemPermission(actorUserId, "autopart.customer.view");
-  const canHistory = profile.permissions.has("autopart.history.view");
+  await requireSystemPermission(actorUserId, "autopart.customer.view");
+  const history = await loadCompanyGlobalAutopartHistory(actorUserId, companyId);
   const accounts = await prisma.autopartAccount.findMany({
     where: { companyId },
     orderBy: { accountCode: "asc" },
   });
-  const codes = accounts.map((account) => account.accountCode);
-  const [lineCount, ledgerCount] = await Promise.all([
-    canHistory && codes.length
-      ? prisma.autopartInvoiceLine.count({ where: { accountCode: { in: codes } } })
-      : Promise.resolve(0),
-    codes.length
-      ? prisma.autopartLedgerTransaction.count({ where: { accountCode: { in: codes } } })
-      : Promise.resolve(0),
-  ]);
-  const canLedger = profile.permissions.has("autopart.ledger.view");
   return {
     accounts: accounts.map((account) => ({
       id: account.id,
@@ -1479,10 +1470,16 @@ export async function getCompanyAutopartMaster(actorUserId: string, companyId: s
       portalEligible: account.portalEligible,
       historicalAccessEnabled: account.historicalAccessEnabled,
       historicalAccessGrantedAt: account.historicalAccessGrantedAt,
+      mappingStatus: "LINKED" as const,
     })),
-    lineCount: canHistory ? lineCount : null,
-    ledgerCount: canLedger ? ledgerCount : null,
-    historicalLabel: "Autopart historical records. Not native B2B orders.",
+    lineCount: history.lineCount,
+    ledgerCount: history.ledgerRowCount,
+    source: history.source,
+    mappingStatus: history.mappingStatus,
+    latestBatch: history.latestBatch,
+    portalHistoricalAccess: accounts.some((account) => account.historicalAccessEnabled),
+    historicalLabel:
+      "Autopart historical records from the global import. Not native B2B orders. Customer portal history is a separate approval.",
   };
 }
 
@@ -1718,20 +1715,31 @@ export async function listAutopartDocumentMatches(
 
 export async function getAutopartHistoricalSummary(actorUserId: string) {
   await requireSystemPermission(actorUserId, "autopart.history.view");
-  const [accounts, lines, sales] = await Promise.all([
+  const [accounts, lines, sales, committed] = await Promise.all([
     prisma.autopartAccount.count(),
     prisma.autopartInvoiceLine.count(),
     prisma.autopartInvoiceLine.aggregate({
       _sum: { salesAmount: true },
       where: { documentType: { in: ["INVOICE", "CREDIT"] } },
     }),
+    prisma.autopartImportBatch.aggregate({
+      where: { kind: "INVOICE_LINES", status: "COMMITTED", dryRun: false },
+      _sum: { importedRows: true, updatedRows: true },
+    }),
   ]);
+  const importedInvoiceRows = committed._sum.importedRows ?? 0;
+  const updatedInvoiceRows = committed._sum.updatedRows ?? 0;
   return {
     source: "AUTOPART_HISTORICAL",
     label:
       "Autopart historical line sales. This is not native B2B order turnover and not a customer balance.",
     accounts,
     invoiceLines: lines,
+    importedInvoiceRows,
+    updatedInvoiceRows,
+    committedInvoiceRows: importedInvoiceRows + updatedInvoiceRows,
+    countNote:
+      "Product lines count stored AutopartInvoiceLine rows, one per source identity. Committed batch rows add new rows and rows that updated an existing identity. An update does not add a stored line and does not change the stored sales amount, quantity, account, or document. Source identity occurrence is counted inside each 200-row write, so the same natural key in a later chunk updates the earlier row.",
     historicalLineSales: sales._sum.salesAmount?.toFixed(2) ?? "0.00",
     salesMeasure: "NET_EX_VAT",
   };

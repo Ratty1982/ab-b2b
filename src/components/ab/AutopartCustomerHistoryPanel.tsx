@@ -5,6 +5,7 @@ import {
   confirmAutopartHistoryImportFn,
   getCompanyAutopartHistoryWorkspaceFn,
   getHistoricImportRunStatusFn,
+  listCompanyAutopartInvoiceLinesFn,
   previewAutopartHistoryImportFn,
   verifyAutopartAccountAliasFn,
 } from "@/server/phase2/fns";
@@ -19,6 +20,10 @@ type HistoryPreview = Extract<
 >["data"];
 type ImportRunStatus = Extract<
   Awaited<ReturnType<typeof getHistoricImportRunStatusFn>>,
+  { ok: true }
+>["data"];
+type InvoicePage = Extract<
+  Awaited<ReturnType<typeof listCompanyAutopartInvoiceLinesFn>>,
   { ok: true }
 >["data"];
 
@@ -46,6 +51,10 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   const [importProgress, setImportProgress] = useState<ImportRunStatus | null>(null);
   const [alias, setAlias] = useState("");
   const [aliasNote, setAliasNote] = useState("");
+  const [lineQuery, setLineQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const [linePage, setLinePage] = useState(1);
+  const [invoiceLines, setInvoiceLines] = useState<InvoicePage | null>(null);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -64,6 +73,23 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadLines = useCallback(async () => {
+    const result = await listCompanyAutopartInvoiceLinesFn({
+      data: { companyId, q: submittedQuery, page: linePage },
+    });
+    if (!result.ok) {
+      setInvoiceLines(null);
+      return;
+    }
+    setInvoiceLines(result.data);
+  }, [companyId, linePage, submittedQuery]);
+
+  useEffect(() => {
+    if (!workspace || workspace.globalHistory.restricted) return;
+    if ((workspace.globalHistory.lineCount ?? 0) === 0) return;
+    void loadLines();
+  }, [workspace, loadLines]);
 
   useEffect(() => {
     return () => {
@@ -222,33 +248,158 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
     <div className="space-y-6 p-4 sm:p-6">
       <section className="rounded-lg border border-border p-5">
         <h2 className="font-display text-base font-semibold uppercase">Autopart account</h2>
+        <p className="mt-2 text-[12px] text-steel">
+          Account mapping, imported history, and customer portal approval are separate. Internal
+          CRM history does not require an active trade account.
+        </p>
         <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2">
           <div>
-            <dt className="text-steel">Verified account</dt>
+            <dt className="text-steel">Linked Autopart account</dt>
             <dd className="font-mono font-semibold">
-              {workspace.company.autopartCustomerCode || "—"}
+              {workspace.globalHistory.accounts.length
+                ? workspace.globalHistory.accounts.map((account) => account.accountCode).join(", ")
+                : "—"}
             </dd>
           </div>
           <div>
-            <dt className="text-steel">Verification status</dt>
+            <dt className="text-steel">Account mapping status</dt>
+            <dd>{workspace.globalHistory.mappingStatus === "LINKED" ? "Linked" : "Not linked"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Company code verification</dt>
             <dd>{workspace.company.verified ? "Verified" : "Not verified"}</dd>
           </div>
           <div>
             <dt className="text-steel">Historic purchase data</dt>
-            <dd>{workspace.historic.imported ? "Imported" : "Not imported"}</dd>
+            <dd>
+              {workspace.purchaseDataStatus === "GLOBAL"
+                ? "Global Autopart Import"
+                : workspace.purchaseDataStatus === "LEGACY"
+                  ? "Legacy company import"
+                  : workspace.purchaseDataStatus === "RESTRICTED"
+                    ? "Restricted"
+                    : "Not imported"}
+            </dd>
           </div>
           <div>
-            <dt className="text-steel">Last historic import</dt>
+            <dt className="text-steel">Historical invoice lines</dt>
             <dd>
-              {workspace.historic.lastImportedAt
-                ? formatDateTime(workspace.historic.lastImportedAt)
-                : "—"}
+              {workspace.globalHistory.lineCount == null
+                ? "Restricted"
+                : workspace.globalHistory.lineCount.toLocaleString("en-GB")}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-steel">Historical ledger transactions</dt>
+            <dd>
+              {workspace.globalHistory.ledgerRowCount == null
+                ? "Restricted"
+                : workspace.globalHistory.ledgerRowCount.toLocaleString("en-GB")}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-steel">Source</dt>
+            <dd>
+              {workspace.globalHistory.restricted
+                ? "Restricted"
+                : workspace.globalHistory.source === "GLOBAL_AUTOPART_IMPORT"
+                  ? "Global Autopart Import"
+                  : workspace.historic.imported
+                    ? "Legacy company import"
+                    : "Not imported"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-steel">Latest applicable import batch</dt>
+            <dd>
+              {workspace.globalHistory.latestBatch
+                ? `${workspace.globalHistory.latestBatch.filename}${
+                    workspace.globalHistory.latestBatch.completedAt
+                      ? ` · ${formatDateTime(workspace.globalHistory.latestBatch.completedAt)}`
+                      : ""
+                  }`
+                : workspace.historic.lastImportedAt
+                  ? formatDateTime(workspace.historic.lastImportedAt)
+                  : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-steel">Customer portal history</dt>
+            <dd>
+              {workspace.globalHistory.accounts.some((account) => account.portalHistoricalAccess)
+                ? "Approved"
+                : "Not approved"}
             </dd>
           </div>
         </dl>
+        {workspace.globalHistory.accounts.length ? (
+          <ul className="mt-3 space-y-1 text-[13px]">
+            {workspace.globalHistory.accounts.map((account) => (
+              <li key={account.id}>
+                <a
+                  className="text-cyan underline"
+                  href={`/admin/customers/autopart-imports?account=${encodeURIComponent(account.accountCode)}`}
+                >
+                  View Autopart master record {account.accountCode}
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {workspace.globalHistory.restricted ? null : (workspace.globalHistory.lineCount ?? 0) > 0 ? (
+          <div className="mt-4 border-t border-border pt-4">
+            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-steel">
+              Internal historical sales
+            </h3>
+            <p className="mt-1 text-[12px] text-steel">{workspace.globalHistory.label}</p>
+            <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-4">
+              <div>
+                <dt className="text-steel">Net sales ex VAT</dt>
+                <dd className="font-semibold">{gbp(workspace.globalHistory.netSalesExVat)}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Sales ex VAT</dt>
+                <dd className="font-semibold">{gbp(workspace.globalHistory.salesExVat)}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Credits ex VAT</dt>
+                <dd className="font-semibold">{gbp(workspace.globalHistory.creditsExVat)}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Invoice documents</dt>
+                <dd className="font-semibold">
+                  {(workspace.globalHistory.documentCount ?? 0).toLocaleString("en-GB")}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-steel">Products purchased</dt>
+                <dd className="font-semibold">
+                  {(workspace.globalHistory.productsPurchased ?? 0).toLocaleString("en-GB")}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-steel">Net quantity</dt>
+                <dd className="font-semibold">{workspace.globalHistory.netQuantity}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Purchase date</dt>
+                <dd className="font-semibold">—</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Zero-value lines</dt>
+                <dd className="font-semibold">{workspace.globalHistory.zeroLineCount}</dd>
+              </div>
+            </dl>
+            <p className="mt-2 text-[12px] text-steel">{workspace.globalHistory.purchaseDateNote}</p>
+          </div>
+        ) : null}
 
         {workspace.historic.imported ? (
           <dl className="mt-4 grid gap-2 border-t border-border pt-4 text-[13px] sm:grid-cols-4">
+            <div className="sm:col-span-4 text-[12px] font-semibold uppercase tracking-wide text-steel">
+              Legacy company import
+            </div>
             <div>
               <dt className="text-steel">Historic net spend</dt>
               <dd className="font-semibold">{gbp(workspace.historic.netSpend)}</dd>
@@ -270,6 +421,98 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
           </dl>
         ) : null}
       </section>
+
+      {workspace.globalHistory.restricted || (workspace.globalHistory.lineCount ?? 0) === 0 ? null : (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="font-display text-base font-semibold uppercase">
+            Historical invoice lines
+          </h2>
+          <p className="mt-2 text-[12px] text-steel">
+            {workspace.globalHistory.purchaseDateNote} Sales and credits stay on separate amounts.
+            Native B2B orders are not included.
+          </p>
+          <form
+            className="mt-3 flex flex-wrap gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setLinePage(1);
+              setSubmittedQuery(lineQuery);
+            }}
+          >
+            <input
+              className="h-9 min-w-[200px] flex-1 rounded-md border border-border px-3 text-[13px]"
+              placeholder="Search part, description, or invoice reference"
+              value={lineQuery}
+              onChange={(event) => setLineQuery(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
+            >
+              Search
+            </button>
+          </form>
+          {invoiceLines && invoiceLines.items.length === 0 ? (
+            <p className="mt-3 text-[13px] text-steel">No invoice lines match this search.</p>
+          ) : null}
+          {invoiceLines && invoiceLines.items.length > 0 ? (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-left text-[13px]">
+                <thead>
+                  <tr className="border-b border-border text-[11px] uppercase text-steel">
+                    <th className="py-2 pr-2">Account</th>
+                    <th className="py-2 pr-2">Document</th>
+                    <th className="py-2 pr-2">Part</th>
+                    <th className="py-2 pr-2">Description</th>
+                    <th className="py-2 pr-2 text-right">Qty</th>
+                    <th className="py-2 pr-2 text-right">Net ex VAT</th>
+                    <th className="py-2">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceLines.items.map((line) => (
+                    <tr key={line.id} className="border-b border-border/50">
+                      <td className="py-2 pr-2 font-mono">{line.accountCode}</td>
+                      <td className="py-2 pr-2 font-mono">
+                        {line.documentReference || line.rawInvAndLn}
+                        {line.documentType ? (
+                          <span className="block text-[11px] text-steel">{line.documentType}</span>
+                        ) : null}
+                      </td>
+                      <td className="py-2 pr-2 font-mono">{line.partNumber}</td>
+                      <td className="py-2 pr-2">{line.description || "—"}</td>
+                      <td className="py-2 pr-2 text-right">{line.quantity}</td>
+                      <td className="py-2 pr-2 text-right">{gbp(line.salesAmount)}</td>
+                      <td className="py-2 text-steel">—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-3 flex items-center gap-2 text-[12px]">
+                <button
+                  type="button"
+                  className="h-8 border border-border px-3 uppercase"
+                  disabled={linePage <= 1}
+                  onClick={() => setLinePage((page) => Math.max(1, page - 1))}
+                >
+                  Previous
+                </button>
+                <span className="text-steel">
+                  Page {invoiceLines.page} · {invoiceLines.total.toLocaleString("en-GB")} lines
+                </span>
+                <button
+                  type="button"
+                  className="h-8 border border-border px-3 uppercase"
+                  disabled={linePage * invoiceLines.pageSize >= invoiceLines.total}
+                  onClick={() => setLinePage((page) => page + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      )}
 
       <section className="rounded-lg border border-border p-5">
         <h2 className="font-display text-base font-semibold uppercase">Verified account aliases</h2>
@@ -546,9 +789,41 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         ) : null}
       </section>
 
-      {workspace.topProducts.length ? (
+      {workspace.globalHistory.products.length ? (
         <section className="rounded-lg border border-border p-5">
-          <h2 className="font-display text-base font-semibold uppercase">Top purchased products</h2>
+          <h2 className="font-display text-base font-semibold uppercase">
+            Historical products purchased
+          </h2>
+          <p className="mt-2 text-[12px] text-steel">
+            Quantities and net sales exclude VAT from the global Autopart import. Legacy company
+            import products are listed separately when that import exists.
+          </p>
+          <table className="mt-3 w-full text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-border text-[11px] uppercase text-steel">
+                <th className="py-2">Part</th>
+                <th className="py-2 text-right">Quantity</th>
+                <th className="py-2 text-right">Net ex VAT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workspace.globalHistory.products.map((product) => (
+                <tr key={product.partNumber} className="border-b border-border/50">
+                  <td className="py-2 font-mono">{product.partNumber}</td>
+                  <td className="py-2 text-right">{product.quantity}</td>
+                  <td className="py-2 text-right">{gbp(product.netSalesExVat)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {workspace.historic.imported && workspace.topProducts.length ? (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="font-display text-base font-semibold uppercase">
+            Legacy company import products
+          </h2>
           <table className="mt-3 w-full text-left text-[13px]">
             <thead>
               <tr className="border-b border-border text-[11px] uppercase text-steel">

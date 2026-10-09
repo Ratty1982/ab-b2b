@@ -22,6 +22,10 @@ import {
 } from "@/domain/autopart-report-money";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
 import {
+  loadCompanyGlobalAutopartHistory,
+  purchaseDataStatus,
+} from "@/server/companies/autopart-internal-history";
+import {
   SAFE_HISTORIC_DOCUMENT_UPSERT_CHUNK,
   SAFE_HISTORIC_LINE_UPSERT_CHUNK,
   SAFE_IN_LIST_CHUNK,
@@ -782,6 +786,8 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
     select: { documentDate: true },
   });
 
+  const globalHistory = await loadCompanyGlobalAutopartHistory(actorUserId, companyId);
+
   return {
     company: {
       id: company.id,
@@ -789,6 +795,12 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
       autopartCustomerCode: company.autopartCustomerCode,
       verified,
     },
+    purchaseDataStatus: purchaseDataStatus({
+      restricted: globalHistory.restricted,
+      globalLines: globalHistory.lineCount,
+      legacyLines: lineCount,
+    }),
+    globalHistory,
     historic: {
       imported: lineCount > 0,
       lineCount,

@@ -38,6 +38,10 @@ export function AutopartMasterAccessPanel({ companyId }: { companyId: string }) 
           Autopart master
         </h3>
         <p className="mt-1 text-[13px] text-steel">{data.historicalLabel}</p>
+        <p className="mt-1 text-[12px] text-steel">
+          Allow Customer Portal History approves the customer portal only. Internal staff can
+          already see imported history for a linked prospect or active account.
+        </p>
       </div>
       {data.accounts.length === 0 ? (
         <p className="px-4 py-4 text-[13px] text-steel">
@@ -61,10 +65,11 @@ export function AutopartMasterAccessPanel({ companyId }: { companyId: string }) 
                   <StatusBadge tone="neutral">
                     {account.classification.replaceAll("_", " ")}
                   </StatusBadge>
+                  <StatusBadge tone="neutral">Linked Autopart account</StatusBadge>
                   <StatusBadge tone={account.historicalAccessEnabled ? "good" : "warn"}>
                     {account.historicalAccessEnabled
-                      ? "Historical access on"
-                      : "Historical access off"}
+                      ? "Customer portal history on"
+                      : "Customer portal history off"}
                   </StatusBadge>
                   <StatusBadge tone="neutral">
                     {account.portalEligible ? "Portal flag on" : "No automatic portal access"}
@@ -100,19 +105,43 @@ export function AutopartMasterAccessPanel({ companyId }: { companyId: string }) 
                   });
                 }}
               >
-                {account.historicalAccessEnabled ? "Revoke history" : "Enable history"}
+                {account.historicalAccessEnabled
+                  ? "Revoke Customer Portal History"
+                  : "Allow Customer Portal History"}
               </button>
             </li>
           ))}
         </ul>
       )}
       <p className="border-t border-border/70 px-4 py-2 text-[12px] text-steel">
-        Historical product lines:{" "}
+        Source:{" "}
+        {data.source === "GLOBAL_AUTOPART_IMPORT"
+          ? "Global Autopart Import"
+          : "No global invoice lines"}
+        {" · "}
+        Mapping: {data.mappingStatus === "LINKED" ? "Linked" : "Not linked"}
+        {" · "}
+        Historical invoice lines:{" "}
         {data.lineCount == null ? "restricted" : data.lineCount.toLocaleString("en-GB")}
         {" · "}
-        Ledger rows:{" "}
+        Historical ledger transactions:{" "}
         {data.ledgerCount == null ? "restricted" : data.ledgerCount.toLocaleString("en-GB")}
+        {" · "}
+        Portal historical access: {data.portalHistoricalAccess ? "Approved" : "Not approved"}
+        {data.latestBatch ? (
+          <>
+            {" · "}
+            Latest import batch: {data.latestBatch.filename}
+            {data.latestBatch.completedAt ? ` · ${data.latestBatch.completedAt.slice(0, 10)}` : ""}
+          </>
+        ) : null}
       </p>
+      {data.ledgerCount != null ? (
+        <p className="px-4 pb-2 text-[12px] text-steel">
+          Ledger rows stay separate from product turnover. A historic running balance is not the
+          current amount due.
+        </p>
+      ) : null}
     </section>
   );
 }
