@@ -128,6 +128,30 @@ type Diagnostics = {
   salesMeasure?: string | null;
   provisionalHeaders?: boolean;
   issueLogTruncated?: boolean;
+  fileHashVerified?: boolean;
+  incremental?: {
+    newRecords: number;
+    identicalRecords: number;
+    ambiguousRecords: number;
+    financialConflicts: number;
+    rejectedRecords: number;
+    expectedStoredTotalChange: string;
+    classifiedNewAmount: string;
+    storedFinancialTotal: string;
+    projectedFinancialTotal: string;
+    totalMeasure: "NET_EX_VAT" | "LEDGER_GOODS";
+    canCommit: boolean;
+    blockedReason: string | null;
+    matchingRule: string;
+    examples: {
+      classification: string;
+      rowNumber: number;
+      accountCode: string;
+      reference: string;
+      partNumber: string | null;
+      explanation: string;
+    }[];
+  } | null;
 };
 
 function diagnosticsOf(batch: Batch | null): Diagnostics {
@@ -441,7 +465,45 @@ function AutopartImportsPage() {
                   Accepted signed sales {diagnostics.acceptedSales} · Recovered signed sales{" "}
                   {diagnostics.recoveredSales ?? "0.00"} ({diagnostics.salesMeasure ?? "NET_EX_VAT"}
                   ). Recovered rows are included in the accepted total. Rejected rows are not.
+                  Accepted file sales are not the change to stored history.
                 </p>
+              ) : null}
+              {diagnostics.incremental ? (
+                <div className="space-y-2">
+                  <p>
+                    All available history match · New {diagnostics.incremental.newRecords.toLocaleString("en-GB")}{" "}
+                    · Identical existing {diagnostics.incremental.identicalRecords.toLocaleString("en-GB")} ·
+                    Ambiguous {diagnostics.incremental.ambiguousRecords.toLocaleString("en-GB")} · Financial
+                    conflicts {diagnostics.incremental.financialConflicts.toLocaleString("en-GB")} · Rejected{" "}
+                    {diagnostics.incremental.rejectedRecords.toLocaleString("en-GB")}
+                  </p>
+                  <p className="text-steel">
+                    Expected change to stored{" "}
+                    {diagnostics.incremental.totalMeasure === "LEDGER_GOODS"
+                      ? "ledger goods"
+                      : "net sales ex VAT"}{" "}
+                    {diagnostics.incremental.expectedStoredTotalChange}. Stored total for these accounts{" "}
+                    {diagnostics.incremental.storedFinancialTotal}. After import{" "}
+                    {diagnostics.incremental.projectedFinancialTotal}. Classified new amount{" "}
+                    {diagnostics.incremental.classifiedNewAmount} is written only when the file can be
+                    committed.
+                  </p>
+                  <p className="text-steel">{diagnostics.incremental.matchingRule}</p>
+                  {diagnostics.incremental.blockedReason ? (
+                    <p className="text-bad">{diagnostics.incremental.blockedReason}</p>
+                  ) : null}
+                  {diagnostics.incremental.examples.length ? (
+                    <ul className="space-y-1 text-steel">
+                      {diagnostics.incremental.examples.map((example) => (
+                        <li key={`${example.classification}-${example.rowNumber}-${example.reference}-${example.partNumber ?? ""}`}>
+                          {example.classification} · row {example.rowNumber} · {example.accountCode} ·{" "}
+                          {example.reference}
+                          {example.partNumber ? ` · ${example.partNumber}` : ""} · {example.explanation}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
               {diagnostics.recoveredRecords ? (
                 <p className="text-steel">
@@ -510,7 +572,8 @@ function AutopartImportsPage() {
                   {JSON.stringify(diagnostics.samples, null, 2)}
                 </pre>
               ) : null}
-              {batch.status === "PREVIEWED" || batch.status === "FAILED" ? (
+              {(batch.status === "PREVIEWED" || batch.status === "FAILED") &&
+              diagnostics.incremental?.canCommit !== false ? (
                 <label className="flex items-start gap-2">
                   <input
                     type="checkbox"
@@ -529,6 +592,7 @@ function AutopartImportsPage() {
                   disabled={
                     busy ||
                     !confirmWrite ||
+                    diagnostics.incremental?.canCommit === false ||
                     (batch.status !== "PREVIEWED" && batch.status !== "FAILED")
                   }
                   className="h-9 bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground disabled:opacity-40"

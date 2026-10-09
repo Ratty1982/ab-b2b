@@ -39,6 +39,18 @@ import {
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireCompanyAccess, requireSystemPermission } from "@/server/rbac/guards";
 import { loadCompanyGlobalAutopartHistory } from "@/server/companies/autopart-internal-history";
+import {
+  FINANCIAL_IMPORT_CHUNK,
+  analysePreparedInvoices,
+  analysePreparedLedger,
+  prepareInvoiceChunk,
+  prepareLedgerChunk,
+  type IncrementalMatchReport,
+  type PreparedInvoiceLine,
+  type PreparedLedgerLine,
+  type StoredInvoiceCandidate,
+  type StoredLedgerCandidate,
+} from "@/server/companies/autopart-incremental-match";
 
 const ISSUE_CAP = 2000;
 const CHUNK = 200;
@@ -172,6 +184,24 @@ function publicBatch<T extends { storagePath: string | null }>(batch: T) {
   return rest;
 }
 
+async function hashStoredFile(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  const stream = createReadStream(assertInsideRoot(filePath));
+  for await (const chunk of stream) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+async function assertStoredFileHash(filePath: string, fileHash: string) {
+  const actual = await hashStoredFile(filePath);
+  if (actual !== fileHash) {
+    throw new AuthError(
+      "Uploaded file hash does not match the stored file. No rows were written.",
+      "VALIDATION",
+      409,
+    );
+  }
+}
+
 export async function previewAutopartImport(
   actorUserId: string,
   input: { batchId: string; columnMap?: ColumnMap },
@@ -184,6 +214,7 @@ export async function previewAutopartImport(
     throw new AuthError("This batch can no longer be previewed", "VALIDATION", 400);
   }
   await recoverStale(batch.id, batch.status, batch.heartbeatAt);
+  await assertStoredFileHash(batch.storagePath, batch.fileHash);
   const columnMap = input.columnMap ?? readColumnMap(batch.columnMap);
   if (batch.kind === "CUSTOMER_MASTER")
     return previewCustomers(batch.id, batch.storagePath, actorUserId);
@@ -249,7 +280,7 @@ async function previewCustomers(batchId: string, filePath: string, actorUserId: 
       duplicateRows: summary.duplicateAccounts,
       rejectedRows: summary.rejectedRows,
       errorSummary: ready ? null : "No customer accounts were found in this file.",
-      diagnostics: { summary, samples, issues, structural: ready },
+      diagnostics: { summary, samples, issues, structural: ready, fileHashVerified: true },
     },
   });
   await recordAuditEvent({
@@ -310,7 +341,10 @@ async function previewCsv(
   const validRows = preview.validRecords + preview.recoveredRecords;
   const rejectedRows = preview.rejectedRecords;
   const needsMapping = missing.length > 0;
-  const ready = !needsMapping && validRows > 0;
+  const incremental = needsMapping
+    ? null
+    : await evaluateIncrementalImport(filePath, kind, columnMap);
+  const ready = !needsMapping && incremental?.canCommit === true;
   const updated = await prisma.autopartImportBatch.update({
     where: { id: batchId },
     data: {
@@ -323,9 +357,11 @@ async function previewCsv(
       unmatchedAccounts: 0,
       errorSummary: needsMapping
         ? `Column mapping required: ${missing.join(", ")}`
-        : ready
-          ? null
-          : "No valid data rows were found.",
+        : incremental?.blockedReason
+          ? incremental.blockedReason
+          : ready
+            ? null
+            : "No valid data rows were found.",
       diagnostics: {
         headers,
         missingColumns: missing,
@@ -345,6 +381,8 @@ async function previewCsv(
         salesMeasure: kind === "INVOICE_LINES" ? "NET_EX_VAT" : null,
         structural: ready,
         provisionalHeaders: missing.length > 0,
+        fileHashVerified: true,
+        incremental,
       } as Prisma.InputJsonValue,
     },
   });
@@ -374,6 +412,32 @@ export async function confirmAutopartImport(actorUserId: string, batchId: string
   const storagePath = batch.storagePath;
   const kind = batch.kind;
   const columnMap = readColumnMap(batch.columnMap);
+  await assertStoredFileHash(storagePath, batch.fileHash);
+  if (kind === "INVOICE_LINES" || kind === "LEDGER") {
+    const incremental = await evaluateIncrementalImport(storagePath, kind, columnMap);
+    if (!incremental.canCommit) {
+      const reason = incremental.blockedReason ?? "No valid data rows were found.";
+      const current = batch.diagnostics;
+      const base =
+        current && typeof current === "object" && !Array.isArray(current)
+          ? (current as Record<string, unknown>)
+          : {};
+      await prisma.autopartImportBatch.update({
+        where: { id: batch.id },
+        data: {
+          status: "UPLOADED",
+          dryRun: true,
+          errorSummary: reason.slice(0, 500),
+          diagnostics: {
+            ...base,
+            incremental,
+            fileHashVerified: true,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      throw new AuthError(reason, "VALIDATION", 409);
+    }
+  }
   await prisma.autopartImportBatch.update({
     where: { id: batch.id },
     data: {
@@ -391,6 +455,7 @@ export async function confirmAutopartImport(actorUserId: string, batchId: string
     storagePath,
     kind,
     columnMap,
+    fileHash: batch.fileHash,
     actorUserId,
   }).finally(() => {
     runningBatches.delete(batch.id);
@@ -404,9 +469,25 @@ async function executeConfirmedImport(input: {
   storagePath: string;
   kind: AutopartMasterImportKind;
   columnMap: ColumnMap;
+  fileHash: string;
   actorUserId: string;
 }) {
   try {
+    await assertStoredFileHash(input.storagePath, input.fileHash);
+    if (input.kind === "INVOICE_LINES" || input.kind === "LEDGER") {
+      const incremental = await evaluateIncrementalImport(
+        input.storagePath,
+        input.kind,
+        input.columnMap,
+      );
+      if (!incremental.canCommit) {
+        throw new AuthError(
+          incremental.blockedReason ?? "No valid data rows were found.",
+          "VALIDATION",
+          409,
+        );
+      }
+    }
     if (input.kind === "CUSTOMER_MASTER") await commitCustomers(input.batchId, input.storagePath);
     else await commitCsv(input.batchId, input.storagePath, input.kind, input.columnMap);
     await rm(assertInsideRoot(input.storagePath), { force: true });
@@ -656,7 +737,7 @@ async function commitCsv(
       continue;
     }
     buffer.push(record);
-    if (buffer.length >= CHUNK) await flush();
+    if (buffer.length >= FINANCIAL_IMPORT_CHUNK) await flush();
   }
   await flush();
   await relinkHistoricalRows();
@@ -679,10 +760,6 @@ async function commitCsv(
   });
 }
 
-function sourceIdentity(parts: string[]): string {
-  return createHash("sha256").update(parts.join("\u001e")).digest("hex");
-}
-
 async function accountIdMap(codes: string[]) {
   const rows = await prisma.autopartAccount.findMany({
     where: { sourceSystem: AUTOPART_SOURCE_SYSTEM, accountCode: { in: codes } },
@@ -697,67 +774,48 @@ async function upsertInvoiceRows(
   map: Partial<Record<CanonicalColumn, number>>,
   records: CsvScanRecord[],
 ) {
-  const occurrences = new Map<string, number>();
-  const prepared: Prisma.AutopartInvoiceLineCreateManyInput[] = [];
+  const prepared = prepareInvoiceChunk(headers, map, records);
   const issues: Prisma.AutopartImportIssueCreateManyInput[] = [];
-  let rejected = 0;
-  for (const record of records) {
-    const interpreted = interpretInvoiceRecord(record, headers, map);
-    if ("reject" in interpreted) {
-      rejected += 1;
-      issues.push(
-        issueInput(batchId, {
-          sourceRowNumber: interpreted.reject.rowNumber,
-          sourceRecordId: interpreted.reject.sourceRecordId,
-          issueType: interpreted.reject.issueType,
-          severity: "ERROR",
-          explanation: interpreted.reject.explanation,
-          raw: interpreted.reject.raw,
-        }),
-      );
-      continue;
-    }
-    const row = interpreted.row;
-    const natural = [
-      row.accountCode,
-      row.rawInvAndLn,
-      row.partNumber,
-      row.quantity,
-      row.salesAmount,
-    ].join("\u001e");
-    const occurrence = (occurrences.get(natural) ?? 0) + 1;
-    occurrences.set(natural, occurrence);
-    prepared.push({
-      sourceIdentity: sourceIdentity([natural, String(occurrence)]),
-      accountCode: row.accountCode,
-      rawInvAndLn: row.rawInvAndLn,
-      documentReference: row.documentReference,
-      documentType: row.documentType,
-      sourceLineNumber: row.sourceLineNumber,
-      partNumber: row.partNumber,
-      description: row.description,
-      quantity: row.quantity,
-      salesAmount: row.salesAmount,
-      salesMeasure: row.salesMeasure,
-      importBatchId: batchId,
-      rawSource: row.raw,
-      parseIssue: row.parseIssue,
-    });
-    if (row.parseIssue) {
-      issues.push(
-        issueInput(batchId, {
-          sourceRowNumber: row.rowNumber,
-          sourceRecordId: `${row.accountCode}:${row.rawInvAndLn}`,
-          issueType: "MALFORMED_REFERENCE",
-          severity: "WARNING",
-          explanation: row.parseIssue,
-        }),
-      );
-    }
+  for (const rejection of prepared.rejections) {
+    issues.push(
+      issueInput(batchId, {
+        sourceRowNumber: rejection.rowNumber,
+        sourceRecordId: rejection.sourceRecordId,
+        issueType: rejection.issueType,
+        severity: "ERROR",
+        explanation: rejection.explanation,
+        raw: rejection.raw,
+      }),
+    );
   }
-  const retained = await retainExistingInvoiceLines(prepared);
-  const written = await writeFinancialRows("invoice", batchId, retained.rows, issues, rejected);
-  return { ...written, updated: written.updated + retained.attached };
+  for (const warning of prepared.warnings) {
+    issues.push(
+      issueInput(batchId, {
+        sourceRowNumber: warning.rowNumber,
+        sourceRecordId: warning.sourceRecordId,
+        issueType: warning.issueType,
+        severity: "WARNING",
+        explanation: warning.explanation,
+      }),
+    );
+  }
+  const rows: Prisma.AutopartInvoiceLineCreateManyInput[] = prepared.lines.map((line) => ({
+    sourceIdentity: line.sourceIdentity,
+    accountCode: line.accountCode,
+    rawInvAndLn: line.rawInvAndLn,
+    documentReference: line.documentReference,
+    documentType: line.documentType,
+    sourceLineNumber: line.sourceLineNumber,
+    partNumber: line.partNumber,
+    description: line.description,
+    quantity: line.quantity,
+    salesAmount: line.salesAmount,
+    salesMeasure: line.salesMeasure,
+    importBatchId: batchId,
+    rawSource: line.rawSource,
+    parseIssue: line.parseIssue,
+  }));
+  return writeFinancialRows("invoice", batchId, rows, issues, prepared.rejections.length);
 }
 
 async function upsertLedgerRows(
@@ -766,209 +824,188 @@ async function upsertLedgerRows(
   map: Partial<Record<CanonicalColumn, number>>,
   records: CsvScanRecord[],
 ) {
-  const occurrences = new Map<string, number>();
-  const prepared: Prisma.AutopartLedgerTransactionCreateManyInput[] = [];
+  const prepared = prepareLedgerChunk(headers, map, records);
   const issues: Prisma.AutopartImportIssueCreateManyInput[] = [];
+  for (const rejection of prepared.rejections) {
+    issues.push(
+      issueInput(batchId, {
+        sourceRowNumber: rejection.rowNumber,
+        sourceRecordId: rejection.sourceRecordId,
+        issueType: rejection.issueType,
+        severity: "ERROR",
+        explanation: rejection.explanation,
+        raw: rejection.raw,
+      }),
+    );
+  }
+  for (const warning of prepared.warnings) {
+    issues.push(
+      issueInput(batchId, {
+        sourceRowNumber: warning.rowNumber,
+        sourceRecordId: warning.sourceRecordId,
+        issueType: warning.issueType,
+        severity: "WARNING",
+        explanation: warning.explanation,
+      }),
+    );
+  }
+  const rows: Prisma.AutopartLedgerTransactionCreateManyInput[] = prepared.lines.map((line) => ({
+    sourceIdentity: line.sourceIdentity,
+    accountCode: line.accountCode,
+    rawType: line.rawType,
+    ledgerKind: line.ledgerKind,
+    reference: line.reference,
+    transactionDate: line.transactionDate
+      ? new Date(`${line.transactionDate}T00:00:00.000Z`)
+      : null,
+    goodsAmount: line.goodsAmount,
+    vatAmount: line.vatAmount,
+    totalAmount: line.totalAmount,
+    runningBalance: line.runningBalance,
+    originalName: line.originalName,
+    sacct: line.sacct,
+    importBatchId: batchId,
+    rawSource: line.rawSource,
+    parseIssue: line.parseIssue,
+  }));
+  return writeFinancialRows("ledger", batchId, rows, issues, prepared.rejections.length);
+}
+
+type IncrementalDiagnostics = IncrementalMatchReport & {
+  storedFinancialTotal: string;
+  projectedFinancialTotal: string;
+};
+
+async function sumInvoiceSales(codes: string[]): Promise<Prisma.Decimal> {
+  let total = new Prisma.Decimal(0);
+  for (let index = 0; index < codes.length; index += 500) {
+    const aggregate = await prisma.autopartInvoiceLine.aggregate({
+      where: { accountCode: { in: codes.slice(index, index + 500) } },
+      _sum: { salesAmount: true },
+    });
+    if (aggregate._sum.salesAmount) total = total.plus(aggregate._sum.salesAmount);
+  }
+  return total;
+}
+
+async function sumLedgerGoods(codes: string[]): Promise<Prisma.Decimal> {
+  let total = new Prisma.Decimal(0);
+  for (let index = 0; index < codes.length; index += 500) {
+    const aggregate = await prisma.autopartLedgerTransaction.aggregate({
+      where: { accountCode: { in: codes.slice(index, index + 500) } },
+      _sum: { goodsAmount: true },
+    });
+    if (aggregate._sum.goodsAmount) total = total.plus(aggregate._sum.goodsAmount);
+  }
+  return total;
+}
+
+async function loadStoredInvoices(codes: string[]): Promise<StoredInvoiceCandidate[]> {
+  const rows: StoredInvoiceCandidate[] = [];
+  for (let index = 0; index < codes.length; index += 200) {
+    rows.push(
+      ...(await prisma.autopartInvoiceLine.findMany({
+        where: { accountCode: { in: codes.slice(index, index + 200) } },
+        select: {
+          sourceIdentity: true,
+          accountCode: true,
+          rawInvAndLn: true,
+          partNumber: true,
+          quantity: true,
+          salesAmount: true,
+        },
+      })),
+    );
+  }
+  return rows;
+}
+
+async function loadStoredLedger(codes: string[]): Promise<StoredLedgerCandidate[]> {
+  const rows: StoredLedgerCandidate[] = [];
+  for (let index = 0; index < codes.length; index += 200) {
+    rows.push(
+      ...(await prisma.autopartLedgerTransaction.findMany({
+        where: { accountCode: { in: codes.slice(index, index + 200) } },
+        select: {
+          sourceIdentity: true,
+          accountCode: true,
+          rawType: true,
+          reference: true,
+          transactionDate: true,
+          goodsAmount: true,
+          vatAmount: true,
+          totalAmount: true,
+          runningBalance: true,
+        },
+      })),
+    );
+  }
+  return rows;
+}
+
+/**
+ * Preview and commit both call this. Occurrence resets on each 200-row raw chunk,
+ * matching the write path and the identities already stored in production.
+ */
+export async function evaluateIncrementalImport(
+  filePath: string,
+  kind: "INVOICE_LINES" | "LEDGER",
+  columnMap: ColumnMap,
+): Promise<IncrementalDiagnostics> {
+  const required = kind === "INVOICE_LINES" ? INVOICE_REQUIRED_COLUMNS : LEDGER_REQUIRED_COLUMNS;
+  let headers: string[] = [];
+  let map: Partial<Record<CanonicalColumn, number>> = {};
+  let headerSeen = false;
+  let buffer: CsvScanRecord[] = [];
+  const invoiceLines: PreparedInvoiceLine[] = [];
+  const ledgerLines: PreparedLedgerLine[] = [];
   let rejected = 0;
-  for (const record of records) {
-    const interpreted = interpretLedgerRecord(record, headers, map);
-    if ("reject" in interpreted) {
-      rejected += 1;
-      issues.push(
-        issueInput(batchId, {
-          sourceRowNumber: interpreted.reject.rowNumber,
-          sourceRecordId: interpreted.reject.sourceRecordId,
-          issueType: interpreted.reject.issueType,
-          severity: "ERROR",
-          explanation: interpreted.reject.explanation,
-          raw: interpreted.reject.raw,
-        }),
-      );
+  const flush = () => {
+    if (!buffer.length) return;
+    if (kind === "INVOICE_LINES") {
+      const prepared = prepareInvoiceChunk(headers, map, buffer);
+      invoiceLines.push(...prepared.lines);
+      rejected += prepared.rejections.length;
+    } else {
+      const prepared = prepareLedgerChunk(headers, map, buffer);
+      ledgerLines.push(...prepared.lines);
+      rejected += prepared.rejections.length;
+    }
+    buffer = [];
+  };
+  for await (const record of streamCsvRecords(filePath)) {
+    if (!headerSeen) {
+      headerSeen = true;
+      headers = record.cells;
+      map = Object.keys(columnMap).length
+        ? applyColumnMap(headers, columnMap)
+        : detectColumnMap(headers, required).map;
+      const missing = required.filter((column) => map[column] == null);
+      if (missing.length) {
+        throw new AuthError(`Column mapping required: ${missing.join(", ")}`, "VALIDATION", 400);
+      }
       continue;
     }
-    const row = interpreted.row;
-    const natural = [
-      row.accountCode,
-      row.rawType,
-      row.reference,
-      row.transactionDate ?? "",
-      row.goodsAmount ?? "",
-      row.vatAmount ?? "",
-      row.totalAmount ?? "",
-      row.runningBalance ?? "",
-    ].join("\u001e");
-    const occurrence = (occurrences.get(natural) ?? 0) + 1;
-    occurrences.set(natural, occurrence);
-    prepared.push({
-      sourceIdentity: sourceIdentity([natural, String(occurrence)]),
-      accountCode: row.accountCode,
-      rawType: row.rawType,
-      ledgerKind: row.ledgerKind,
-      reference: row.reference,
-      transactionDate: row.transactionDate
-        ? new Date(`${row.transactionDate}T00:00:00.000Z`)
-        : null,
-      goodsAmount: row.goodsAmount,
-      vatAmount: row.vatAmount,
-      totalAmount: row.totalAmount,
-      runningBalance: row.runningBalance,
-      originalName: row.originalName,
-      sacct: row.sacct,
-      importBatchId: batchId,
-      rawSource: row.raw,
-      parseIssue: row.parseIssue,
-    });
-    if (row.parseIssue) {
-      issues.push(
-        issueInput(batchId, {
-          sourceRowNumber: row.rowNumber,
-          sourceRecordId: `${row.accountCode}:${row.reference}`,
-          issueType: row.ledgerKind === "UNKNOWN" ? "UNKNOWN_TRANSACTION_TYPE" : "INVALID_DATE",
-          severity: "WARNING",
-          explanation: row.parseIssue,
-        }),
-      );
-    }
+    buffer.push(record);
+    if (buffer.length >= FINANCIAL_IMPORT_CHUNK) flush();
   }
-  const retained = await retainExistingLedgerTransactions(prepared);
-  const written = await writeFinancialRows("ledger", batchId, retained.rows, issues, rejected);
-  return { ...written, updated: written.updated + retained.attached };
-}
-
-/**
- * Source identity still includes quantity and amount so rows already stored keep
- * matching. A later file with the same account and Inv & Ln but a different amount
- * would otherwise insert a second line. Attach that row to the stored line and
- * leave quantity, sales amount, part, account, and document fields unchanged.
- */
-async function retainExistingInvoiceLines(rows: Prisma.AutopartInvoiceLineCreateManyInput[]) {
-  if (rows.length === 0) return { rows, attached: 0 };
-  const existing = await prisma.autopartInvoiceLine.findMany({
-    where: {
-      accountCode: { in: [...new Set(rows.map((row) => row.accountCode))] },
-      rawInvAndLn: { in: [...new Set(rows.map((row) => row.rawInvAndLn))] },
-    },
-    select: { id: true, accountCode: true, rawInvAndLn: true, sourceIdentity: true },
-  });
-  const byKey = new Map<string, { id: string; sourceIdentity: string }>();
-  for (const row of existing) {
-    const key = `${row.accountCode}\u001e${row.rawInvAndLn}`;
-    if (!byKey.has(key)) byKey.set(key, row);
-  }
-  const kept: Prisma.AutopartInvoiceLineCreateManyInput[] = [];
-  const seenIdentity = new Set<string>();
-  const seenKey = new Set<string>();
-  let attached = 0;
-  for (const row of rows) {
-    const key = `${row.accountCode}\u001e${row.rawInvAndLn}`;
-    const stored = byKey.get(key);
-    if (seenIdentity.has(row.sourceIdentity)) {
-      attached += 1;
-      continue;
-    }
-    if (stored && stored.sourceIdentity !== row.sourceIdentity) {
-      await prisma.autopartInvoiceLine.update({
-        where: { id: stored.id },
-        data: {
-          description: row.description ?? null,
-          parseIssue: row.parseIssue ?? null,
-          importBatchId: row.importBatchId,
-        },
-      });
-      attached += 1;
-      continue;
-    }
-    if (seenKey.has(key)) {
-      attached += 1;
-      continue;
-    }
-    seenIdentity.add(row.sourceIdentity);
-    seenKey.add(key);
-    kept.push(row);
-  }
-  return { rows: kept, attached };
-}
-
-function ledgerDay(value: Date | string | null | undefined): string {
-  if (value == null || value === "") return "";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
-}
-
-function ledgerCommercialKey(row: {
-  accountCode: string;
-  rawType: string;
-  reference: string;
-  transactionDate?: Date | string | null;
-}): string {
-  return [row.accountCode, row.rawType, row.reference, ledgerDay(row.transactionDate)].join("\u001e");
-}
-
-/**
- * Ledger identity includes the amounts, so a changed goods or balance figure would
- * insert a second transaction. The same account, type, reference, and date stay one
- * stored row. Amounts, reference, and date are not rewritten.
- */
-async function retainExistingLedgerTransactions(
-  rows: Prisma.AutopartLedgerTransactionCreateManyInput[],
-) {
-  if (rows.length === 0) return { rows, attached: 0 };
-  const existing = await prisma.autopartLedgerTransaction.findMany({
-    where: {
-      accountCode: { in: [...new Set(rows.map((row) => row.accountCode))] },
-      reference: { in: [...new Set(rows.map((row) => row.reference))] },
-    },
-    select: {
-      id: true,
-      accountCode: true,
-      rawType: true,
-      reference: true,
-      transactionDate: true,
-      sourceIdentity: true,
-    },
-  });
-  const byKey = new Map<string, { id: string; sourceIdentity: string }>();
-  for (const row of existing) {
-    const key = ledgerCommercialKey(row);
-    if (!byKey.has(key)) byKey.set(key, row);
-  }
-  const kept: Prisma.AutopartLedgerTransactionCreateManyInput[] = [];
-  const seenIdentity = new Set<string>();
-  const seenKey = new Set<string>();
-  let attached = 0;
-  for (const row of rows) {
-    const key = ledgerCommercialKey({
-      accountCode: row.accountCode,
-      rawType: row.rawType,
-      reference: row.reference,
-      transactionDate: row.transactionDate ?? null,
-    });
-    const stored = byKey.get(key);
-    if (seenIdentity.has(row.sourceIdentity)) {
-      attached += 1;
-      continue;
-    }
-    if (stored && stored.sourceIdentity !== row.sourceIdentity) {
-      await prisma.autopartLedgerTransaction.update({
-        where: { id: stored.id },
-        data: {
-          parseIssue: row.parseIssue ?? null,
-          importBatchId: row.importBatchId,
-        },
-      });
-      attached += 1;
-      continue;
-    }
-    if (seenKey.has(key)) {
-      attached += 1;
-      continue;
-    }
-    seenIdentity.add(row.sourceIdentity);
-    seenKey.add(key);
-    kept.push(row);
-  }
-  return { rows: kept, attached };
+  flush();
+  const codes = [
+    ...new Set(
+      (kind === "INVOICE_LINES" ? invoiceLines : ledgerLines).map((line) => line.accountCode),
+    ),
+  ];
+  const report =
+    kind === "INVOICE_LINES"
+      ? analysePreparedInvoices(invoiceLines, rejected, await loadStoredInvoices(codes))
+      : analysePreparedLedger(ledgerLines, rejected, await loadStoredLedger(codes));
+  const stored = kind === "INVOICE_LINES" ? await sumInvoiceSales(codes) : await sumLedgerGoods(codes);
+  const projected = stored.plus(report.expectedStoredTotalChange);
+  return {
+    ...report,
+    storedFinancialTotal: stored.toFixed(2),
+    projectedFinancialTotal: projected.toFixed(2),
+  };
 }
 
 async function writeFinancialRows(
@@ -1879,7 +1916,7 @@ export async function getAutopartHistoricalSummary(actorUserId: string) {
     updatedInvoiceRows,
     committedInvoiceRows: importedInvoiceRows + updatedInvoiceRows,
     countNote:
-      "Product lines count stored AutopartInvoiceLine rows, one per source identity. Committed batch rows add new rows and rows that updated an existing identity. An update does not add a stored line and does not change the stored sales amount, quantity, account, or document. Source identity occurrence is counted inside each 200-row write, so the same natural key in a later chunk updates the earlier row. A later file that repeats the same account and invoice-line reference does not insert another product line and does not change the stored quantity or sales amount.",
+      "Product lines count stored AutopartInvoiceLine rows, one per source identity. Committed batch rows add new rows and rows that updated an existing identity. An update does not add a stored line and does not change the stored sales amount, quantity, account, or document. Source identity occurrence is counted inside each 200-row write, so the same natural key in a later chunk updates the earlier row. A shared Inv & Ln reference is not a unique product line. A different part on that reference is stored as its own line. A changed quantity or sales amount is a financial conflict and blocks the import before any row is written.",
     historicalLineSales: sales._sum.salesAmount?.toFixed(2) ?? "0.00",
     salesMeasure: "NET_EX_VAT",
   };

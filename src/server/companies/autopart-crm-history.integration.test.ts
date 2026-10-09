@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -393,7 +394,7 @@ describe("internal CRM Autopart history", () => {
         kind: "INVOICE_LINES",
         status: "UPLOADED",
         filename,
-        fileHash: `${stamp}-gap`,
+        fileHash: createHash("sha256").update(rows.join("\n")).digest("hex"),
         storagePath: filePath,
         dryRun: true,
         createdById: adminId,

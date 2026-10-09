@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -101,7 +102,7 @@ async function stage(
       kind,
       status: "UPLOADED",
       filename,
-      fileHash: stamp + filename,
+      fileHash: createHash("sha256").update(text).digest("hex"),
       storagePath: filePath,
       dryRun: true,
       createdById: adminId,
@@ -303,7 +304,7 @@ describe("Autopart customer master import", () => {
     await prisma.company.delete({ where: { id: otherCompany.id } });
   });
 
-  it("reimports 561L and SLRB without a second transaction or a changed amount", async () => {
+  it("keeps a changed invoice reference as a separate line and blocks a changed ledger amount", async () => {
     const code = `${stamp}R`;
     const invoiceHeader = ".Acct.,Inv & Ln,Part Number,Description,Units,Sales";
     const originalInvoice = [
@@ -322,21 +323,25 @@ describe("Autopart customer master import", () => {
       `${code},I/INC${stamp}/2,PART-NEW,New rotor,1,3.00`,
     ].join("\n");
     const repeatId = await stage("INVOICE_LINES", `${stamp}-inc-again.csv`, repeatInvoice);
-    await previewAutopartImport(adminId, { batchId: repeatId });
+    const repeatPreview = await previewAutopartImport(adminId, { batchId: repeatId });
+    expect(repeatPreview.status).toBe("PREVIEWED");
     const repeated = await commit(repeatId);
     expect(repeated.status).toBe("COMMITTED");
-    expect(repeated.importedRows).toBe(1);
-    expect(repeated.updatedRows).toBe(1);
+    expect(repeated.importedRows).toBe(2);
+    expect(repeated.updatedRows).toBe(0);
     const lines = await prisma.autopartInvoiceLine.findMany({
       where: { accountCode: code },
-      orderBy: { rawInvAndLn: "asc" },
+      orderBy: { partNumber: "asc" },
     });
-    expect(lines).toHaveLength(2);
-    const kept = lines.find((line) => line.rawInvAndLn === `I/INC${stamp}/1`);
+    expect(lines).toHaveLength(3);
+    const kept = lines.find((line) => line.partNumber === "PART-R");
     expect(kept?.salesAmount.toFixed(2)).toBe("12.50");
     expect(kept?.quantity.toFixed(3)).toBe("2.000");
-    expect(kept?.partNumber).toBe("PART-R");
-    expect(kept?.description).toBe("Rotor renamed");
+    expect(kept?.description).toBe("Rotor");
+    expect(kept?.importBatchId).toBe(invoiceId);
+    expect(lines.find((line) => line.partNumber === "PART-CHANGED")?.salesAmount.toFixed(2)).toBe(
+      "99.99",
+    );
     expect(lines.find((line) => line.partNumber === "PART-NEW")?.salesAmount.toFixed(2)).toBe("3.00");
 
     const ledgerHeader = "A/C,Name,Sacct,Type,Ref,Date,Tot Goods,,Tot VAT,,Total,Run Bal";
@@ -356,21 +361,18 @@ describe("Autopart customer master import", () => {
       `${code},Hidden name,,INV,NEW${stamp},07 Oct 14,4.00,,0.80,,4.80,4.80`,
     ].join("\n");
     const ledgerRepeatId = await stage("LEDGER", `${stamp}-inc-slrb-again.csv`, repeatLedger);
-    await previewAutopartImport(adminId, { batchId: ledgerRepeatId });
-    const ledgerRepeated = await commit(ledgerRepeatId);
-    expect(ledgerRepeated.status).toBe("COMMITTED");
-    expect(ledgerRepeated.importedRows).toBe(1);
+    const ledgerPreview = await previewAutopartImport(adminId, { batchId: ledgerRepeatId });
+    expect(ledgerPreview.status).toBe("UPLOADED");
+    await expect(confirmAutopartImport(adminId, ledgerRepeatId)).rejects.toThrow(/Preview the file/);
     const ledgerRows = await prisma.autopartLedgerTransaction.findMany({
       where: { accountCode: code },
-      orderBy: { reference: "asc" },
     });
-    expect(ledgerRows).toHaveLength(2);
-    const keptLedger = ledgerRows.find((row) => row.reference === `INC${stamp}`);
-    expect(keptLedger?.goodsAmount?.toFixed(2)).toBe("15.00");
-    expect(keptLedger?.vatAmount?.toFixed(2)).toBe("3.00");
-    expect(keptLedger?.totalAmount?.toFixed(2)).toBe("18.00");
-    expect(keptLedger?.runningBalance?.toFixed(2)).toBe("18.00");
-    expect(ledgerRows.find((row) => row.reference === `NEW${stamp}`)?.goodsAmount?.toFixed(2)).toBe("4.00");
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0]?.goodsAmount?.toFixed(2)).toBe("15.00");
+    expect(ledgerRows[0]?.vatAmount?.toFixed(2)).toBe("3.00");
+    expect(ledgerRows[0]?.totalAmount?.toFixed(2)).toBe("18.00");
+    expect(ledgerRows[0]?.runningBalance?.toFixed(2)).toBe("18.00");
+    expect(ledgerRows[0]?.importBatchId).toBe(ledgerId);
   });
 
   it("stores an upload outside the public tree and can cancel before commit", async () => {
