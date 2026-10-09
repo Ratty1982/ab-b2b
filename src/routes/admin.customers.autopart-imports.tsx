@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
+import { AutopartProspectConversionPanel } from "@/components/ab/AutopartProspectConversionPanel";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
@@ -335,6 +336,7 @@ function AutopartImportsPage() {
           Uploads stay private. Preview does not write historical rows. A database import starts
           only after the confirmation box is ticked. Historical access stays off.
         </p>
+        <AutopartProspectConversionPanel />
 
         <section className="grid gap-3 md:grid-cols-3">
           {KINDS.map((item) => (

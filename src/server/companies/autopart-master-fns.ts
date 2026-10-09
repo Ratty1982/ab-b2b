@@ -5,6 +5,7 @@ import { formatZodError } from "@/domain/cms";
 import type { AutopartAccountClassification } from "@prisma/client";
 import { AuthError } from "@/server/rbac/guards";
 import * as master from "@/server/companies/autopart-master-import";
+import * as prospectConversion from "@/server/companies/autopart-prospect-conversion";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -260,6 +261,96 @@ export const listAutopartReconciliationFn = createServerFn({ method: "GET" })
       return {
         ok: true as const,
         data: await master.listAutopartReconciliation(await requireUserId(), data),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const previewAutopartProspectConversionFn = createServerFn({ method: "POST" }).handler(
+  async () => {
+    try {
+      return {
+        ok: true as const,
+        data: await prospectConversion.previewAutopartProspectConversion(await requireUserId()),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  },
+);
+
+export const getAutopartProspectConversionFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      return {
+        ok: true as const,
+        data: await prospectConversion.getAutopartProspectConversion(
+          await requireUserId(),
+          data.runId,
+        ),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const getLatestAutopartProspectConversionFn = createServerFn({ method: "GET" }).handler(
+  async () => {
+    try {
+      return {
+        ok: true as const,
+        data: await prospectConversion.getLatestAutopartProspectConversion(await requireUserId()),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  },
+);
+
+export const confirmAutopartProspectConversionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { runId: string; confirmed: boolean })
+  .handler(async ({ data }) => {
+    try {
+      return {
+        ok: true as const,
+        data: await prospectConversion.confirmAutopartProspectConversion(
+          await requireUserId(),
+          data,
+        ),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const resumeAutopartProspectConversionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      return {
+        ok: true as const,
+        data: await prospectConversion.resumeAutopartProspectConversion(
+          await requireUserId(),
+          data.runId,
+        ),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const cancelAutopartProspectConversionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { runId: string })
+  .handler(async ({ data }) => {
+    try {
+      return {
+        ok: true as const,
+        data: await prospectConversion.cancelAutopartProspectConversion(
+          await requireUserId(),
+          data.runId,
+        ),
       };
     } catch (error) {
       return toError(error);

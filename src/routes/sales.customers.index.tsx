@@ -24,6 +24,9 @@ function CustomerList() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [autopartLink, setAutopartLink] = useState<"" | "linked" | "unlinked">("");
+  const [historicalSales, setHistoricalSales] = useState<"" | "with" | "without">("");
+  const [page, setPage] = useState(1);
   const [items, setItems] = useState<
     Array<{
       id: string;
@@ -39,8 +42,17 @@ function CustomerList() {
 
   async function load() {
     setLoading(true);
+    const closedGroup = status === "CLOSED_OR_SUSPENDED";
     const r = await listCompaniesFn({
-      data: { q: query || undefined, status: status || undefined, page: 1, pageSize: 50 },
+      data: {
+        q: query || undefined,
+        status: !closedGroup && status ? status : undefined,
+        statusGroup: closedGroup ? "CLOSED_OR_SUSPENDED" : undefined,
+        autopartLink: autopartLink || undefined,
+        historicalSales: historicalSales || undefined,
+        page,
+        pageSize: 50,
+      },
     });
     if (r.ok) {
       setItems(r.data.items as typeof items);
@@ -52,7 +64,7 @@ function CustomerList() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, autopartLink, historicalSales, page]);
 
   return (
     <div>
@@ -63,14 +75,22 @@ function CustomerList() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void load()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (page === 1) void load();
+                else setPage(1);
+              }
+            }}
             placeholder="Search company or account"
             className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
           />
         </div>
         <select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            setPage(1);
+          }}
           className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
         >
           <option value="">All statuses</option>
@@ -79,10 +99,38 @@ function CustomerList() {
               {v}
             </option>
           ))}
+          <option value="CLOSED_OR_SUSPENDED">Closed / Suspended</option>
+        </select>
+        <select
+          value={autopartLink}
+          onChange={(e) => {
+            setAutopartLink(e.target.value as "" | "linked" | "unlinked");
+            setPage(1);
+          }}
+          className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
+        >
+          <option value="">Autopart linked or not</option>
+          <option value="linked">Autopart linked</option>
+          <option value="unlinked">Autopart unlinked</option>
+        </select>
+        <select
+          value={historicalSales}
+          onChange={(e) => {
+            setHistoricalSales(e.target.value as "" | "with" | "without");
+            setPage(1);
+          }}
+          className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
+        >
+          <option value="">Historical sales</option>
+          <option value="with">With historical sales</option>
+          <option value="without">Without historical sales</option>
         </select>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => {
+            if (page === 1) void load();
+            else setPage(1);
+          }}
           className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
         >
           Search
@@ -116,6 +164,25 @@ function CustomerList() {
             ))}
           </ul>
         )}
+        <div className="mt-4 flex items-center gap-3 text-[12px]">
+          <button
+            type="button"
+            disabled={page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            className="h-8 rounded-md border border-border px-3 font-semibold disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-steel">Page {page}</span>
+          <button
+            type="button"
+            disabled={page * 50 >= total}
+            onClick={() => setPage((current) => current + 1)}
+            className="h-8 rounded-md border border-border px-3 font-semibold disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
         <p className="mt-4 text-[12px] text-steel">
           Full customer workspace opens in Admin chrome.{" "}
           <Link to="/admin/customers" className="text-primary hover:underline">

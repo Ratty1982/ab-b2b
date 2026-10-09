@@ -42,9 +42,18 @@ export type CompanyGlobalAutopartHistory = {
   netQuantity: string | null;
   purchaseDate: null;
   purchaseDateNote: string;
+  /** 561L lines have no source date, so a trend series is not invented. */
+  purchaseTrend: "UNAVAILABLE";
+  lastPurchase: null;
   ledgerRowCount: number | null;
   latestBatch: GlobalHistoryBatch | null;
   products: Array<{ partNumber: string; quantity: string; netSalesExVat: string }>;
+  frequentProducts: Array<{
+    partNumber: string;
+    lineCount: number;
+    quantity: string;
+    netSalesExVat: string;
+  }>;
   nativeOrdersIncluded: false;
   label: string;
 };
@@ -115,9 +124,12 @@ export async function loadCompanyGlobalAutopartHistory(
       netQuantity: null,
       purchaseDate: null,
       purchaseDateNote,
+      purchaseTrend: "UNAVAILABLE",
+      lastPurchase: null,
       ledgerRowCount: null,
       latestBatch: null,
       products: [],
+      frequentProducts: [],
       nativeOrdersIncluded: false,
       label: "Autopart historical sales are restricted for this user.",
     };
@@ -128,39 +140,49 @@ export async function loadCompanyGlobalAutopartHistory(
   }
 
   const where = { accountCode: { in: codes } };
-  const [all, sales, credits, documents, productsPurchased, products, latestBatch, ledgerRowCount] =
-    await Promise.all([
-      prisma.autopartInvoiceLine.aggregate({
-        where,
-        _count: { _all: true },
-        _sum: { salesAmount: true, quantity: true },
-      }),
-      prisma.autopartInvoiceLine.aggregate({
-        where: { ...where, salesAmount: { gt: 0 } },
-        _count: { _all: true },
-        _sum: { salesAmount: true },
-      }),
-      prisma.autopartInvoiceLine.aggregate({
-        where: { ...where, salesAmount: { lt: 0 } },
-        _count: { _all: true },
-        _sum: { salesAmount: true },
-      }),
-      countDistinctDocuments(codes),
-      countDistinctProducts(codes),
-      prisma.autopartInvoiceLine.groupBy({
-        by: ["partNumber"],
-        where,
-        _sum: { quantity: true, salesAmount: true },
-        orderBy: { _sum: { salesAmount: "desc" } },
-        take: 10,
-      }),
-      prisma.autopartImportBatch.findFirst({
-        where: { invoiceLines: { some: where } },
-        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-        select: { id: true, filename: true, kind: true, completedAt: true },
-      }),
-      canLedger ? prisma.autopartLedgerTransaction.count({ where }) : Promise.resolve(null),
-    ]);
+  const [
+    all,
+    sales,
+    credits,
+    documents,
+    productsPurchased,
+    products,
+    frequent,
+    latestBatch,
+    ledgerRowCount,
+  ] = await Promise.all([
+    prisma.autopartInvoiceLine.aggregate({
+      where,
+      _count: { _all: true },
+      _sum: { salesAmount: true, quantity: true },
+    }),
+    prisma.autopartInvoiceLine.aggregate({
+      where: { ...where, salesAmount: { gt: 0 } },
+      _count: { _all: true },
+      _sum: { salesAmount: true },
+    }),
+    prisma.autopartInvoiceLine.aggregate({
+      where: { ...where, salesAmount: { lt: 0 } },
+      _count: { _all: true },
+      _sum: { salesAmount: true },
+    }),
+    countDistinctDocuments(codes),
+    countDistinctProducts(codes),
+    prisma.autopartInvoiceLine.groupBy({
+      by: ["partNumber"],
+      where,
+      _sum: { quantity: true, salesAmount: true },
+      orderBy: { _sum: { salesAmount: "desc" } },
+      take: 10,
+    }),
+    frequentProducts(codes),
+    prisma.autopartImportBatch.findFirst({
+      where: { invoiceLines: { some: where } },
+      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+      select: { id: true, filename: true, kind: true, completedAt: true },
+    }),
+    canLedger ? prisma.autopartLedgerTransaction.count({ where }) : Promise.resolve(null),
+  ]);
 
   const lineCount = all._count._all;
   const salesLineCount = sales._count._all;
@@ -182,6 +204,8 @@ export async function loadCompanyGlobalAutopartHistory(
     netQuantity: qty3(all._sum.quantity),
     purchaseDate: null,
     purchaseDateNote,
+    purchaseTrend: "UNAVAILABLE",
+    lastPurchase: null,
     ledgerRowCount,
     latestBatch: latestBatch
       ? {
@@ -196,6 +220,7 @@ export async function loadCompanyGlobalAutopartHistory(
       quantity: qty3(row._sum.quantity),
       netSalesExVat: money2(row._sum.salesAmount),
     })),
+    frequentProducts: frequent,
     nativeOrdersIncluded: false,
     label:
       "Autopart historical product lines for the linked account. Net sales exclude VAT. This is not native B2B order turnover and not a customer balance.",
@@ -224,9 +249,12 @@ function emptyHistory(
     netQuantity: "0.000",
     purchaseDate: null,
     purchaseDateNote,
+    purchaseTrend: "UNAVAILABLE",
+    lastPurchase: null,
     ledgerRowCount,
     latestBatch: null,
     products: [],
+    frequentProducts: [],
     nativeOrdersIncluded: false,
     label:
       "No global Autopart invoice lines are linked to this company. A missing legacy company import is not treated as missing global history.",
@@ -246,6 +274,30 @@ async function countDistinctDocuments(codes: string[]): Promise<number> {
     ) docs
   `;
   return Number(rows[0]?.documents ?? 0);
+}
+
+async function frequentProducts(
+  codes: string[],
+): Promise<CompanyGlobalAutopartHistory["frequentProducts"]> {
+  const rows = await prisma.$queryRaw<
+    Array<{ partNumber: string; lines: number; quantity: Prisma.Decimal; sales: Prisma.Decimal }>
+  >`
+    SELECT "partNumber",
+           COUNT(*)::int AS lines,
+           COALESCE(SUM("quantity"), 0) AS quantity,
+           COALESCE(SUM("salesAmount"), 0) AS sales
+    FROM "AutopartInvoiceLine"
+    WHERE "accountCode" IN (${Prisma.join(codes)})
+    GROUP BY "partNumber"
+    ORDER BY COUNT(*) DESC, "partNumber" ASC
+    LIMIT 10
+  `;
+  return rows.map((row) => ({
+    partNumber: row.partNumber,
+    lineCount: Number(row.lines),
+    quantity: qty3(row.quantity),
+    netSalesExVat: money2(row.sales),
+  }));
 }
 
 async function countDistinctProducts(codes: string[]): Promise<number> {

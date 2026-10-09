@@ -168,6 +168,18 @@ export const inviteCompanyUserFn = createServerFn({ method: "POST" })
     }
   });
 
+export const revokeCompanyUserInvitationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const result = await companies.revokeCompanyUserInvitation(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listCompanyActivityFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { companyId: string })
   .handler(async ({ data }) => {

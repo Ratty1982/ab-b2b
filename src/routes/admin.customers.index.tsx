@@ -7,11 +7,7 @@ import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, type CompanyStatusKey } from "@/domain/company";
 import { DEFAULT_TRADE_PRICE_HELP, DEFAULT_TRADE_PRICE_LABEL } from "@/domain/default-trade-price";
-import {
-  createCompanyFn,
-  listCompaniesFn,
-  listSalesRepsFn,
-} from "@/server/phase2/fns";
+import { createCompanyFn, listCompaniesFn, listSalesRepsFn } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -48,6 +44,8 @@ function AdminCustomers() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("");
   const [salesRepId, setSalesRepId] = useState("");
+  const [autopartLink, setAutopartLink] = useState<"" | "linked" | "unlinked">("");
+  const [historicalSales, setHistoricalSales] = useState<"" | "with" | "without">("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,11 +57,15 @@ function AdminCustomers() {
   async function load() {
     setLoading(true);
     setError(null);
+    const closedGroup = status === "CLOSED_OR_SUSPENDED";
     const result = await listCompaniesFn({
       data: {
         q: q || undefined,
-        status: status || undefined,
+        status: !closedGroup && status ? status : undefined,
+        statusGroup: closedGroup ? "CLOSED_OR_SUSPENDED" : undefined,
         salesRepId: salesRepId || undefined,
+        autopartLink: autopartLink || undefined,
+        historicalSales: historicalSales || undefined,
         page,
         pageSize: 25,
       },
@@ -81,7 +83,7 @@ function AdminCustomers() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, status, salesRepId]);
+  }, [page, status, salesRepId, autopartLink, historicalSales]);
 
   useEffect(() => {
     void listSalesRepsFn().then((r) => {
@@ -151,6 +153,31 @@ function AdminCustomers() {
               {COMPANY_STATUS_LABEL[s]}
             </option>
           ))}
+          <option value="CLOSED_OR_SUSPENDED">Closed / Suspended</option>
+        </select>
+        <select
+          value={autopartLink}
+          onChange={(e) => {
+            setAutopartLink(e.target.value as "" | "linked" | "unlinked");
+            setPage(1);
+          }}
+          className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
+        >
+          <option value="">Autopart linked or not</option>
+          <option value="linked">Autopart linked</option>
+          <option value="unlinked">Autopart unlinked</option>
+        </select>
+        <select
+          value={historicalSales}
+          onChange={(e) => {
+            setHistoricalSales(e.target.value as "" | "with" | "without");
+            setPage(1);
+          }}
+          className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
+        >
+          <option value="">Historical sales</option>
+          <option value="with">Customers with historical sales</option>
+          <option value="without">Customers without historical sales</option>
         </select>
         <select
           value={salesRepId}
@@ -181,14 +208,18 @@ function AdminCustomers() {
 
       <div className="p-4 sm:p-6">
         {error ? (
-          <div className="rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">{error}</div>
+          <div className="rounded-md border border-bad/40 bg-bad/10 px-4 py-3 text-sm text-bad">
+            {error}
+          </div>
         ) : null}
         {loading ? (
           <div className="text-sm text-steel">Loading customers…</div>
         ) : items.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-6 py-16 text-center">
             <p className="font-display text-xl uppercase">No customers yet</p>
-            <p className="mt-2 text-sm text-steel">Create a customer or approve a trade application.</p>
+            <p className="mt-2 text-sm text-steel">
+              Create a customer or approve a trade application.
+            </p>
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
@@ -373,10 +404,19 @@ function CreateCustomerDrawer({
         }}
       >
         <Field label="Legal / company name">
-          <input required value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
+          <input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
+          />
         </Field>
         <Field label="Trading name">
-          <input value={tradingName} onChange={(e) => setTradingName(e.target.value)} className={inputClass} />
+          <input
+            value={tradingName}
+            onChange={(e) => setTradingName(e.target.value)}
+            className={inputClass}
+          />
         </Field>
         <Field label="Primary email">
           <input

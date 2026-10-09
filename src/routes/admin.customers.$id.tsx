@@ -23,6 +23,7 @@ import {
   deleteCustomerPriceFn,
   getCompanyWorkspaceFn,
   inviteCompanyUserFn,
+  revokeCompanyUserInvitationFn,
   linkAndVerifyCompanyAutopartCustomerCodeFn,
   listCompanyActivityFn,
   listCompanyAutopartAccountsFn,
@@ -309,11 +310,21 @@ function CustomerWorkspace() {
 
         {tab === "Users" ? (
           <div className="grid gap-6">
+            {permissions.canManageUsers && company.status !== "ACTIVE" ? (
+              <p className="text-[13px] text-steel">
+                Invite the customer to the trade portal only after the account is Active. Prospects
+                stay internal: historical sales are visible to authorised staff, and no login is
+                sent automatically.
+              </p>
+            ) : null}
             <WorkspaceList
               title="Portal users"
               empty="No portal users"
-              {...(permissions.canManageUsers
-                ? { actionLabel: "Invite user", onAction: () => setInviteOpen(true) }
+              {...(permissions.canManageUsers && company.status === "ACTIVE"
+                ? {
+                    actionLabel: "Invite Customer to Trade Portal",
+                    onAction: () => setInviteOpen(true),
+                  }
                 : {})}
             >
               {users.map((u: {
@@ -337,7 +348,8 @@ function CustomerWorkspace() {
                       Last login <InstantText value={u.user.lastLoginAt} variant="audit" />
                     </span>
                   </div>
-                  {u.status === "INVITED" || u.user.status === "INVITED" ? (
+                  {company.status === "ACTIVE" &&
+                  (u.status === "INVITED" || u.user.status === "INVITED") ? (
                     <button
                       type="button"
                       className="mt-3 h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase hover:border-steel"
@@ -395,6 +407,26 @@ function CustomerWorkspace() {
                           </>
                         ) : null}
                       </div>
+                      {permissions.canManageUsers && inv.status === "PENDING" ? (
+                        <button
+                          type="button"
+                          className="mt-2 h-8 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
+                          onClick={() => {
+                            void (async () => {
+                              const r = await revokeCompanyUserInvitationFn({
+                                data: { invitationId: inv.id },
+                              });
+                              if (!r.ok) toast.error(r.error);
+                              else {
+                                toast.success("Invitation revoked");
+                                await reload();
+                              }
+                            })();
+                          }}
+                        >
+                          Revoke invitation
+                        </button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -542,6 +574,9 @@ function CustomerWorkspace() {
       {inviteOpen ? (
         <InviteDrawer
           companyId={company.id}
+          contactEmails={(contacts as Array<{ email: string | null }>)
+            .map((contact) => contact.email)
+            .filter((email): email is string => Boolean(email))}
           onClose={() => setInviteOpen(false)}
           onSaved={async () => {
             setInviteOpen(false);
@@ -1353,18 +1388,21 @@ function AddressDrawer({
 
 function InviteDrawer({
   companyId,
+  contactEmails,
   onClose,
   onSaved,
 }: {
   companyId: string;
+  contactEmails: string[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(contactEmails[0] ?? "");
   const [role, setRole] = useState("TRADE_BUYER");
+  const knownEmails = Array.from(new Set(contactEmails.map((value) => value.toLowerCase())));
 
   return (
-    <Drawer open title="Invite portal user" onClose={onClose}>
+    <Drawer open title="Invite Customer to Trade Portal" onClose={onClose}>
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -1388,9 +1426,25 @@ function InviteDrawer({
         }}
       >
         <p className="text-[12px] text-steel">
-          Sends a branded activation email via Admin → Settings → Email. The activation link is
-          never shown in this workspace.
+          Sends a secure expiring activation link. The customer sets their own password. The link
+          is never shown here, and portal historical invoices stay off until separately allowed.
         </p>
+        {knownEmails.length ? (
+          <Field label="Verified contact">
+            <select
+              value={knownEmails.includes(email.toLowerCase()) ? email.toLowerCase() : ""}
+              onChange={(e) => setEmail(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Enter a different email</option>
+              {knownEmails.map((contactEmail) => (
+                <option key={contactEmail} value={contactEmail}>
+                  {contactEmail}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
         <Field label="Email">
           <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
         </Field>
