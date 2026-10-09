@@ -8,6 +8,14 @@ import { FBA_LOCATION_CODE, FBA_SOURCE_BRANCH } from "@/domain/fba-stock";
 import { skuMatchKey } from "@/domain/stock";
 import { AuthError } from "@/server/rbac/guards";
 import {
+  accumulateOverviewValue,
+  emptyOverviewValue,
+  finishOverviewValue,
+  overviewLineValues,
+  overviewSellableQty,
+} from "@/domain/stock-overview";
+import { resolvePlanningSupplier } from "@/domain/purchasing-planner";
+import {
   exportStockOverviewCsv,
   getStockOverview,
   getStockPartDetail,
@@ -747,6 +755,144 @@ describe("stock overview", () => {
         where: { supplierId: { in: [supplier.id, supplierTwo.id] } },
       });
       await prisma.supplier.deleteMany({ where: { id: { in: [supplier.id, supplierTwo.id] } } });
+    }
+  });
+
+  it("uses one non-preferred supplier cost and keeps filtered totals aligned", async () => {
+    const now = new Date();
+    const soleSku = `${stamp}Q`;
+    const missingSku = `${stamp}M`;
+    const soleVariant = await prisma.productVariant.create({
+      data: { productId, sku: `VAR-${stamp}-Q`, isActive: true },
+    });
+    const warehouse = await prisma.warehouse.findUniqueOrThrow({ where: { code: "AUTOPART" } });
+    await prisma.inventory.create({
+      data: {
+        variantId: soleVariant.id,
+        warehouseId: warehouse.id,
+        qtyOnHand: 4,
+        qtyReserved: 1,
+        status: "IN_STOCK",
+      },
+    });
+    await prisma.autopartProduct.createMany({
+      data: [
+        {
+          sku: soleSku,
+          matchKey: skuMatchKey(soleSku),
+          description: "Overview sole supplier",
+          availQty: 4,
+          physicalQty: 4,
+          latestCost: "9.0000",
+          presentInLatestFeed: true,
+          catalogueVariantId: soleVariant.id,
+          firstSeenAt: now,
+          lastSeenAt: now,
+        },
+        {
+          sku: missingSku,
+          matchKey: skuMatchKey(missingSku),
+          description: "Overview missing cost",
+          availQty: 3,
+          physicalQty: 3,
+          presentInLatestFeed: true,
+          firstSeenAt: now,
+          lastSeenAt: now,
+        },
+      ],
+    });
+    const sole = await prisma.autopartProduct.findUniqueOrThrow({
+      where: { matchKey: skuMatchKey(soleSku) },
+      include: { catalogueVariant: { include: { inventory: true } } },
+    });
+    const supplier = await prisma.supplier.create({
+      data: { name: `Supplier ${stamp} Q`, code: `${stamp}Q`, active: true },
+    });
+    await prisma.productSupplier.create({
+      data: {
+        supplierId: supplier.id,
+        matchKey: sole.matchKey,
+        sku: sole.sku,
+        autopartProductId: sole.id,
+        isPreferred: false,
+        unitCost: "1.5000",
+        active: true,
+        source: "MANUAL",
+      },
+    });
+    try {
+      const plan = resolvePlanningSupplier([
+        {
+          id: supplier.id,
+          supplierId: supplier.id,
+          supplierName: supplier.name,
+          supplierActive: true,
+          active: true,
+          isPreferred: false,
+          unitCost: "1.5000",
+        },
+      ]);
+      const expectedLine = overviewLineValues({
+        physicalQty: 4,
+        sellableQty: overviewSellableQty(
+          true,
+          4,
+          sole.catalogueVariant?.inventory[0]?.qtyReserved ?? 0,
+        ),
+        supplierUnitCost: plan.relation?.unitCost ?? null,
+        latestCost: "9.0000",
+      });
+      const totals = emptyOverviewValue();
+      accumulateOverviewValue(totals, expectedLine);
+      const expected = finishOverviewValue(totals);
+      const view = await getStockOverview(adminId, {
+        q: soleSku,
+        feed: "current",
+        supplier: supplier.id,
+      });
+      expect(view.total).toBe(1);
+      expect(view.valuation.products).toBe(view.total);
+      expect(view.items[0]).toMatchObject({
+        unitCost: "1.5000",
+        unitCostSource: "SUPPLIER_OVERRIDE",
+        stockValue: expectedLine.physicalValue,
+      });
+      expect(view.valuation).toMatchObject({
+        physicalValue: expected.physicalValue,
+        sellableValue: expected.sellableValue,
+        missingCost: 0,
+        products: 1,
+        valuedPhysical: 1,
+      });
+      expect(expectedLine.physicalValue).toBe("6.00");
+
+      const missing = await getStockOverview(adminId, {
+        q: missingSku,
+        feed: "current",
+        supplier: "unassigned",
+      });
+      expect(missing.total).toBe(1);
+      expect(missing.valuation).toMatchObject({
+        products: 1,
+        missingCost: 1,
+        physicalValue: null,
+        valuedPhysical: 0,
+      });
+
+      const branded = await getStockOverview(adminId, {
+        q: stamp,
+        brand: brandId,
+        warehouse: warehouse.id,
+        catalogue: "catalogue",
+        feed: "current",
+      });
+      expect(branded.valuation.products).toBe(branded.total);
+      expect(branded.items.every((row) => row.brandName === `Brand ${stamp}`)).toBe(true);
+      expect(branded.items.some((row) => row.sku === soleSku)).toBe(true);
+      expect(branded.items.some((row) => row.sku === missingSku)).toBe(false);
+    } finally {
+      await prisma.productSupplier.deleteMany({ where: { supplierId: supplier.id } });
+      await prisma.supplier.deleteMany({ where: { id: supplier.id } });
     }
   });
 
