@@ -533,6 +533,7 @@ model User {
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   autopartHistoricalAccessGrants AutopartAccount[] @relation("AutopartHistoricalAccessGrant")
   autopartMasterImportBatches AutopartImportBatch[] @relation("AutopartMasterImportCreator")
+  autopartProspectConversionRuns AutopartProspectConversionRun[] @relation("AutopartProspectConversionCreator")
   autopartImportIssuesResolved AutopartImportIssue[] @relation("AutopartImportIssueResolver")
   autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
   salesHistoryCoverageVerifications SalesHistoryCoverageVerification[] @relation("SalesHistoryCoverageVerifier")
@@ -2581,6 +2582,14 @@ enum AutopartMasterImportStatus {
   CANCELLED
 }
 
+enum AutopartProspectConversionStatus {
+  PREVIEWED
+  RUNNING
+  COMMITTED
+  FAILED
+  CANCELLED
+}
+
 enum AutopartImportIssueSeverity {
   ERROR
   WARNING
@@ -2643,6 +2652,7 @@ model AutopartAccount {
   @@unique([sourceSystem, accountCode])
   @@index([companyId])
   @@index([classification])
+  @@index([classification, companyId, id])
   @@index([historicalAccessEnabled])
   @@index([originalName])
 }
@@ -2682,6 +2692,51 @@ model AutopartImportBatch {
 
   @@index([kind, status, createdAt])
   @@index([fileHash])
+}
+
+/// Durable bulk conversion of Autopart accounts into CRM prospects. Does not copy invoice rows.
+model AutopartProspectConversionRun {
+  id                String                            @id @default(cuid())
+  status            AutopartProspectConversionStatus
+  dryRun            Boolean                           @default(true)
+  summary           Json
+  processed         Int                               @default(0)
+  createdProspects  Int                               @default(0)
+  reusedCompanies   Int                               @default(0)
+  skippedLinked     Int                               @default(0)
+  conflicts         Int                               @default(0)
+  errors            Int                               @default(0)
+  /// Last AutopartAccount id finished. Resume continues after this id.
+  cursorAccountId   String?
+  errorSummary      String?
+  cancelRequested   Boolean                           @default(false)
+  createdById       String?
+  startedAt         DateTime?
+  heartbeatAt       DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime                          @default(now())
+  updatedAt         DateTime                          @updatedAt
+
+  createdBy User?                             @relation("AutopartProspectConversionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  issues    AutopartProspectConversionIssue[]
+
+  @@index([status, heartbeatAt])
+  @@index([createdAt])
+}
+
+model AutopartProspectConversionIssue {
+  id          String   @id @default(cuid())
+  runId       String
+  accountCode String?
+  issueType   String
+  severity    String
+  explanation String
+  createdAt   DateTime @default(now())
+
+  run AutopartProspectConversionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, issueType])
+  @@index([accountCode])
 }
 
 model AutopartImportIssue {

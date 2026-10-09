@@ -124,6 +124,7 @@ import { Route as AdminCustomersGroupsIndexRouteImport } from './routes/admin.cu
 import { Route as AdminCustomersGroupsGroupIdRouteImport } from './routes/admin.customers.groups.$groupId'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
+import { Route as ApiAutopartImportsProspectExceptionsCsvRouteImport } from './routes/api/autopart-imports/prospect-exceptions.csv'
 import { Route as ApiAutopartImportsReconciliationCsvRouteImport } from './routes/api/autopart-imports/reconciliation.csv'
 import { Route as PortalOrdersOrderIdIndexRouteImport } from './routes/portal.orders.$orderId.index'
 import { Route as PortalOrdersOrderIdConfirmationRouteImport } from './routes/portal.orders.$orderId.confirmation'
@@ -719,6 +720,12 @@ const AdminProductsImportsIdRoute = AdminProductsImportsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AdminProductsImportsRoute,
 } as any)
+const ApiAutopartImportsProspectExceptionsCsvRoute =
+  ApiAutopartImportsProspectExceptionsCsvRouteImport.update({
+    id: '/api/autopart-imports/prospect-exceptions/csv',
+    path: '/api/autopart-imports/prospect-exceptions/csv',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAutopartImportsReconciliationCsvRoute =
   ApiAutopartImportsReconciliationCsvRouteImport.update({
     id: '/api/autopart-imports/reconciliation/csv',
@@ -858,6 +865,7 @@ export interface FileRoutesByFullPath {
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
@@ -962,6 +970,7 @@ export interface FileRoutesByTo {
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups': typeof AdminCustomersGroupsIndexRoute
@@ -1084,6 +1093,7 @@ export interface FileRoutesById {
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
+  '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
   '/portal/orders/$orderId/confirmation': typeof PortalOrdersOrderIdConfirmationRoute
   '/admin/customers/groups/': typeof AdminCustomersGroupsIndexRoute
@@ -1207,6 +1217,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
+    | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups/'
@@ -1311,6 +1322,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
+    | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups'
@@ -1432,6 +1444,7 @@ export interface FileRouteTypes {
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
     | '/admin/products/imports/$id'
+    | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
     | '/portal/orders/$orderId/confirmation'
     | '/admin/customers/groups/'
@@ -1470,6 +1483,7 @@ export interface RootRouteChildren {
   ApiInternalStockSyncRoute: typeof ApiInternalStockSyncRoute
   ApiProductDocumentsIdRoute: typeof ApiProductDocumentsIdRoute
   ProductsCategorySlugRoute: typeof ProductsCategorySlugRoute
+  ApiAutopartImportsProspectExceptionsCsvRoute: typeof ApiAutopartImportsProspectExceptionsCsvRoute
   ApiAutopartImportsReconciliationCsvRoute: typeof ApiAutopartImportsReconciliationCsvRoute
 }
 
@@ -2280,6 +2294,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminProductsImportsIdRouteImport
       parentRoute: typeof AdminProductsImportsRoute
     }
+    '/api/autopart-imports/prospect-exceptions/csv': {
+      id: '/api/autopart-imports/prospect-exceptions/csv'
+      path: '/api/autopart-imports/prospect-exceptions/csv'
+      fullPath: '/api/autopart-imports/prospect-exceptions/csv'
+      preLoaderRoute: typeof ApiAutopartImportsProspectExceptionsCsvRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/autopart-imports/reconciliation/csv': {
       id: '/api/autopart-imports/reconciliation/csv'
       path: '/api/autopart-imports/reconciliation/csv'
@@ -2699,6 +2720,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalStockSyncRoute: ApiInternalStockSyncRoute,
   ApiProductDocumentsIdRoute: ApiProductDocumentsIdRoute,
   ProductsCategorySlugRoute: ProductsCategorySlugRoute,
+  ApiAutopartImportsProspectExceptionsCsvRoute:
+    ApiAutopartImportsProspectExceptionsCsvRoute,
   ApiAutopartImportsReconciliationCsvRoute:
     ApiAutopartImportsReconciliationCsvRoute,
 }

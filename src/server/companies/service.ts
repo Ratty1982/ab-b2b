@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
@@ -122,6 +123,9 @@ export async function listCompaniesForActor(
     where.id = { in: scope.length ? scope : ["__none__"] };
   }
   if (query.status) where.status = query.status;
+  else if (query.statusGroup === "CLOSED_OR_SUSPENDED") {
+    where.status = { in: ["CLOSED", "SUSPENDED", "ON_HOLD"] };
+  }
   if (query.salesRepId) {
     where.assignments = { some: { salesRepId: query.salesRepId } };
   }
@@ -143,6 +147,20 @@ export async function listCompaniesForActor(
       { autopartAccountAliases: { some: { alias: { contains: q, mode: "insensitive" } } } },
     ];
   }
+  const and: Prisma.CompanyWhereInput[] = [];
+  if (query.autopartLink === "linked") {
+    and.push({
+      OR: [{ autopartAccounts: { some: {} } }, { autopartCustomerCode: { not: null } }],
+    });
+  } else if (query.autopartLink === "unlinked") {
+    and.push({ autopartAccounts: { none: {} }, autopartCustomerCode: null });
+  }
+  if (query.historicalSales === "with") {
+    and.push({ autopartAccounts: { some: { invoiceLines: { some: {} } } } });
+  } else if (query.historicalSales === "without") {
+    and.push({ NOT: { autopartAccounts: { some: { invoiceLines: { some: {} } } } } });
+  }
+  if (and.length) where.AND = and;
 
   const skip = (query.page - 1) * query.pageSize;
   const [total, rows] = await Promise.all([
@@ -471,6 +489,7 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
   }
   if (input.externalRef !== undefined) data.externalRef = emptyToNull(input.externalRef);
 
+  let portalRevoked = 0;
   const priorPrimary = await prisma.companyAssignment.findFirst({
     where: { companyId: input.id, isPrimary: true },
     orderBy: { createdAt: "desc" },
@@ -540,6 +559,34 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
       });
     }
 
+    const closingPortal =
+      input.status !== undefined &&
+      input.status !== before.status &&
+      (input.status === "CLOSED" || input.status === "SUSPENDED" || input.status === "ON_HOLD");
+    if (closingPortal) {
+      const memberships = await tx.companyUser.updateMany({
+        where: { companyId: input.id, status: { in: ["ACTIVE", "INVITED"] } },
+        data: { status: "DISABLED" },
+      });
+      const invites = await tx.userInvitation.updateMany({
+        where: { companyId: input.id, status: "PENDING" },
+        data: { status: "REVOKED" },
+      });
+      portalRevoked = memberships.count + invites.count;
+      if (portalRevoked > 0) {
+        await tx.activity.create({
+          data: {
+            companyId: input.id,
+            userId: actorUserId,
+            type: "SYSTEM",
+            subject: "Portal access revoked",
+            body: "Portal memberships were disabled and pending invitations revoked. Historical records were kept.",
+            metadata: { action: "company.portal_access_revoked" },
+          },
+        });
+      }
+    }
+
     return row;
   });
 
@@ -569,6 +616,17 @@ export async function updateCompany(actorUserId: string, raw: unknown) {
       actorUserId,
       companyId: input.id,
       before: { status: before.status },
+      after: { status: input.status },
+    });
+  }
+
+  if (portalRevoked > 0 && input.status) {
+    await recordAuditEvent({
+      action: "company.portal_access_revoked",
+      entityType: "Company",
+      entityId: input.id,
+      actorUserId,
+      companyId: input.id,
       after: { status: input.status },
     });
   }
@@ -960,6 +1018,18 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
   await requireSystemPermission(actorUserId, "companies.manage_users");
   const input = inviteUserSchema.parse(raw);
   await requireCompanyAccess(actorUserId, input.companyId);
+  const companyStatus = await prisma.company.findUnique({
+    where: { id: input.companyId },
+    select: { status: true },
+  });
+  if (!companyStatus) throw new AuthError("Company not found", "NOT_FOUND", 404);
+  if (companyStatus.status !== "ACTIVE") {
+    throw new AuthError(
+      "Invite the customer to the trade portal only after the account is active. Prospects do not receive logins.",
+      "VALIDATION",
+      400,
+    );
+  }
 
   const email = input.email.toLowerCase();
   const { token, tokenHash } = generateInviteToken();
@@ -1071,6 +1141,44 @@ export async function inviteCompanyUser(actorUserId: string, raw: unknown) {
     emailSent,
     expiresAt: invitation.expiresAt.toISOString(),
   };
+}
+
+export async function revokeCompanyUserInvitation(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "companies.manage_users");
+  const input = z.object({ invitationId: z.string().cuid() }).parse(raw);
+  const invitation = await prisma.userInvitation.findUnique({ where: { id: input.invitationId } });
+  if (!invitation || !invitation.companyId) {
+    throw new AuthError("Invitation was not found", "NOT_FOUND", 404);
+  }
+  await requireCompanyAccess(actorUserId, invitation.companyId);
+  if (invitation.status !== "PENDING") {
+    return { id: invitation.id, status: invitation.status };
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.userInvitation.update({
+      where: { id: invitation.id },
+      data: { status: "REVOKED" },
+    });
+    if (invitation.userId) {
+      await tx.companyUser.updateMany({
+        where: {
+          companyId: invitation.companyId!,
+          userId: invitation.userId,
+          status: "INVITED",
+        },
+        data: { status: "DISABLED" },
+      });
+    }
+  });
+  await recordAuditEvent({
+    action: "user.invitation_revoked",
+    entityType: "UserInvitation",
+    entityId: invitation.id,
+    actorUserId,
+    companyId: invitation.companyId,
+    after: { email: invitation.email, status: "REVOKED" },
+  });
+  return { id: invitation.id, status: "REVOKED" as const };
 }
 
 export async function listCompanyActivity(actorUserId: string, companyId: string, limit = 40) {

@@ -391,7 +391,10 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                 <dd className="font-semibold">{workspace.globalHistory.zeroLineCount}</dd>
               </div>
             </dl>
-            <p className="mt-2 text-[12px] text-steel">{workspace.globalHistory.purchaseDateNote}</p>
+            <p className="mt-2 text-[12px] text-steel">
+              {workspace.globalHistory.purchaseDateNote} Purchase trends and a last purchase date
+              stay blank because no reliable source date is available.
+            </p>
           </div>
         ) : null}
 
@@ -810,6 +813,38 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               {workspace.globalHistory.products.map((product) => (
                 <tr key={product.partNumber} className="border-b border-border/50">
                   <td className="py-2 font-mono">{product.partNumber}</td>
+                  <td className="py-2 text-right">{product.quantity}</td>
+                  <td className="py-2 text-right">{gbp(product.netSalesExVat)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {workspace.globalHistory.frequentProducts.length ? (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="font-display text-base font-semibold uppercase">
+            Most frequently purchased
+          </h2>
+          <p className="mt-2 text-[12px] text-steel">
+            Ranked by imported invoice-line count. This is Autopart history, separate from native
+            B2B orders.
+          </p>
+          <table className="mt-3 w-full text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-border text-[11px] uppercase text-steel">
+                <th className="py-2">Part</th>
+                <th className="py-2 text-right">Lines</th>
+                <th className="py-2 text-right">Quantity</th>
+                <th className="py-2 text-right">Net ex VAT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workspace.globalHistory.frequentProducts.map((product) => (
+                <tr key={product.partNumber} className="border-b border-border/50">
+                  <td className="py-2 font-mono">{product.partNumber}</td>
+                  <td className="py-2 text-right">{product.lineCount}</td>
                   <td className="py-2 text-right">{product.quantity}</td>
                   <td className="py-2 text-right">{gbp(product.netSalesExVat)}</td>
                 </tr>
