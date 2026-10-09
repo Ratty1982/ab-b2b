@@ -8,6 +8,7 @@ import {
 import {
   INVOICE_IMPORT_CHUNK,
   createInvoicePreimportValidation,
+  failedValidationChecks,
   invoiceValidationReportCsv,
   type InvoicePreimportValidation,
 } from "@/domain/autopart-561l-preimport-validation";
@@ -143,21 +144,26 @@ describe("561L pre-import financial validation", () => {
     ).toBe(true);
   });
 
-  it("fails when the same source identity would be reused in the next import chunk", () => {
-    const first = "ACME,I/SS1/1,PART-A,Pad,1,10.00";
+  it("keeps a repeated natural key in the next chunk as a separate occurrence", () => {
+    const first = "ACME,I/SS1/1,PART-A,First,1,10.00";
     const filler = Array.from({ length: INVOICE_IMPORT_CHUNK - 1 }, (_, index) => {
       return `ACME,I/SS${index + 2}/1,PART-${index + 2},Pad,1,1.00`;
     });
-    const report = validate([first, ...filler, first], ["ACME"]);
+    const report = validate([first, ...filler, "ACME,I/SS1/1,PART-A,Second,1,10.00"], ["ACME"]);
     expect(report.acceptedLines).toBe(INVOICE_IMPORT_CHUNK + 1);
-    expect(report.identityCollisions).toBe(1);
-    expect(check(report, "unexpected_duplicate_identities").outcome).toBe("FAIL");
-    expect(check(report, "legitimate_duplicate_lines").outcome).toBe("FAIL");
-    const collision = report.exceptions.find(
-      (row) => row.checkId === "unexpected_duplicate_identities",
-    );
-    expect(collision?.detail).toMatch(/row 2/);
+    expect(report.identityCollisions).toBe(0);
+    expect(report.preservedSeparateLines).toBe(1);
+    expect(check(report, "unexpected_duplicate_identities").outcome).toBe("PASS");
+    expect(check(report, "legitimate_duplicate_lines").outcome).toBe("PASS");
     expect(report.netSales).toBe("219.00");
+  });
+
+  it("blocks import when any check fails and allows a warning for unmatched accounts", () => {
+    const failed = validate(["ACME,I/SS9/1,PART,Pad,2,1,10.00"], ["ACME"]);
+    expect(failedValidationChecks(failed).map((item) => item.id)).toContain("ambiguous_recovered");
+    const unmatched = validate(["OTHER,I/SS1/1,PART-A,KEEP,1,3.00"], ["KEEP"]);
+    expect(failedValidationChecks(unmatched)).toEqual([]);
+    expect(check(unmatched, "account_master_match").outcome).toBe("WARNING");
   });
 
   it("keeps two identical lines inside one chunk as separate identities", () => {

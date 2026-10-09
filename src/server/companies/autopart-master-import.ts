@@ -41,7 +41,10 @@ import {
   INVOICE_IMPORT_CHUNK,
   PREVIEW_EXCEPTION_LIMIT,
   createInvoicePreimportValidation,
+  failedValidationChecks,
   invoiceValidationReportCsv,
+  nextInvoiceSourceIdentity,
+  sameInvoiceNatural,
   type InvoicePreimportValidation,
 } from "@/domain/autopart-561l-preimport-validation";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -75,6 +78,13 @@ function assertInsideRoot(filePath: string): string {
     throw new AuthError("Import file path is not in private storage", "VALIDATION", 400);
   }
   return resolved;
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  const stream = createReadStream(assertInsideRoot(filePath));
+  for await (const chunk of stream) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }
 
 export async function saveAutopartUpload(input: {
@@ -468,6 +478,146 @@ export async function downloadAutopartInvoiceValidationReport(
   };
 }
 
+async function assertPreviewedFileUnchanged(filePath: string, fileHash: string) {
+  const actualHash = await sha256File(filePath);
+  if (actualHash !== fileHash) {
+    throw new AuthError(
+      "The uploaded file no longer matches the previewed file. Preview it again before importing.",
+      "VALIDATION",
+      400,
+    );
+  }
+}
+
+async function assertInvoiceBatchSafe(
+  pending: Array<{
+    sourceIdentity: string;
+    accountCode: string;
+    rawInvAndLn: string;
+    partNumber: string;
+    quantity: string;
+    salesAmount: string;
+    rowNumber: number | null;
+  }>,
+) {
+  if (!pending.length) return;
+  const seen = new Set<string>();
+  for (const row of pending) {
+    if (seen.has(row.sourceIdentity)) {
+      throw new AuthError(
+        `Import blocked. Row ${row.rowNumber ?? "unknown"} repeats a source identity already assigned in this file.`,
+        "VALIDATION",
+        400,
+      );
+    }
+    seen.add(row.sourceIdentity);
+  }
+  const existing = await prisma.autopartInvoiceLine.findMany({
+    where: { sourceIdentity: { in: pending.map((row) => row.sourceIdentity) } },
+    select: {
+      sourceIdentity: true,
+      accountCode: true,
+      rawInvAndLn: true,
+      partNumber: true,
+      quantity: true,
+      salesAmount: true,
+    },
+  });
+  const byIdentity = new Map(existing.map((row) => [row.sourceIdentity, row]));
+  for (const row of pending) {
+    const prior = byIdentity.get(row.sourceIdentity);
+    if (!prior) continue;
+    if (
+      !sameInvoiceNatural(
+        {
+          accountCode: prior.accountCode,
+          rawInvAndLn: prior.rawInvAndLn,
+          partNumber: prior.partNumber,
+          quantity: prior.quantity.toString(),
+          salesAmount: prior.salesAmount.toString(),
+        },
+        row,
+      )
+    ) {
+      throw new AuthError(
+        `Import blocked. Row ${row.rowNumber ?? "unknown"} would overwrite a different invoice line that already uses its source identity.`,
+        "VALIDATION",
+        400,
+      );
+    }
+  }
+}
+
+async function assertInvoiceIdentitiesWontOverwrite(filePath: string, columnMap: ColumnMap) {
+  const occurrences = new Map<string, number>();
+  const pending: Array<{
+    sourceIdentity: string;
+    accountCode: string;
+    rawInvAndLn: string;
+    partNumber: string;
+    quantity: string;
+    salesAmount: string;
+    rowNumber: number;
+  }> = [];
+  let headers: string[] = [];
+  let map: Partial<Record<CanonicalColumn, number>> = {};
+  let headerSeen = false;
+  const flush = async () => {
+    await assertInvoiceBatchSafe(pending);
+    pending.length = 0;
+  };
+  for await (const record of streamCsvRecords(assertInsideRoot(filePath))) {
+    if (!headerSeen) {
+      headerSeen = true;
+      headers = record.cells;
+      map = Object.keys(columnMap).length
+        ? applyColumnMap(headers, columnMap)
+        : detectColumnMap(headers, INVOICE_REQUIRED_COLUMNS).map;
+      if (INVOICE_REQUIRED_COLUMNS.some((column) => map[column] == null)) {
+        throw new AuthError(
+          "Column mapping is required before importing invoice lines",
+          "VALIDATION",
+          400,
+        );
+      }
+      continue;
+    }
+    const interpreted = interpretInvoiceRecord(record, headers, map);
+    if ("reject" in interpreted) continue;
+    pending.push({
+      sourceIdentity: nextInvoiceSourceIdentity(occurrences, interpreted.row),
+      accountCode: interpreted.row.accountCode,
+      rawInvAndLn: interpreted.row.rawInvAndLn,
+      partNumber: interpreted.row.partNumber,
+      quantity: interpreted.row.quantity,
+      salesAmount: interpreted.row.salesAmount,
+      rowNumber: interpreted.row.rowNumber,
+    });
+    if (pending.length >= INVOICE_IMPORT_CHUNK) await flush();
+  }
+  await flush();
+}
+
+async function assertInvoiceImportAllowed(filePath: string, columnMap: ColumnMap) {
+  const report = await scanInvoiceValidation(filePath, columnMap, PREVIEW_EXCEPTION_LIMIT);
+  if (!report) {
+    throw new AuthError(
+      "Column mapping is required before importing invoice lines",
+      "VALIDATION",
+      400,
+    );
+  }
+  const failed = failedValidationChecks(report);
+  if (failed.length > 0) {
+    throw new AuthError(
+      `Import blocked until validation passes: ${failed.map((check) => check.label).join(", ")}`,
+      "VALIDATION",
+      400,
+    );
+  }
+  await assertInvoiceIdentitiesWontOverwrite(filePath, columnMap);
+}
+
 export async function confirmAutopartImport(actorUserId: string, batchId: string) {
   await requireSystemPermission(actorUserId, "autopart.import.manage");
   const batch = await ownBatch(actorUserId, batchId);
@@ -476,14 +626,16 @@ export async function confirmAutopartImport(actorUserId: string, batchId: string
   }
   if (!batch.storagePath)
     throw new AuthError("The upload file is no longer stored", "VALIDATION", 400);
+  const storagePath = assertInsideRoot(batch.storagePath);
+  await assertPreviewedFileUnchanged(storagePath, batch.fileHash);
+  const columnMap = readColumnMap(batch.columnMap);
+  if (batch.kind === "INVOICE_LINES") await assertInvoiceImportAllowed(storagePath, columnMap);
   const conflict = await prisma.autopartImportBatch.findFirst({
     where: { kind: batch.kind, status: "RUNNING", id: { not: batch.id } },
   });
   if (conflict)
     throw new AuthError("Another import of this type is already running", "CONFLICT", 409);
-  const storagePath = batch.storagePath;
   const kind = batch.kind;
-  const columnMap = readColumnMap(batch.columnMap);
   await prisma.autopartImportBatch.update({
     where: { id: batch.id },
     data: {
@@ -501,6 +653,7 @@ export async function confirmAutopartImport(actorUserId: string, batchId: string
     storagePath,
     kind,
     columnMap,
+    fileHash: batch.fileHash,
     actorUserId,
   }).finally(() => {
     runningBatches.delete(batch.id);
@@ -514,9 +667,14 @@ async function executeConfirmedImport(input: {
   storagePath: string;
   kind: AutopartMasterImportKind;
   columnMap: ColumnMap;
+  fileHash: string;
   actorUserId: string;
 }) {
   try {
+    await assertPreviewedFileUnchanged(input.storagePath, input.fileHash);
+    if (input.kind === "INVOICE_LINES") {
+      await assertInvoiceImportAllowed(input.storagePath, input.columnMap);
+    }
     if (input.kind === "CUSTOMER_MASTER") await commitCustomers(input.batchId, input.storagePath);
     else await commitCsv(input.batchId, input.storagePath, input.kind, input.columnMap);
     await rm(assertInsideRoot(input.storagePath), { force: true });
@@ -723,6 +881,7 @@ async function commitCsv(
   let issuesStored = 0;
   const accounts = new Set<string>();
   const unmatched = new Set<string>();
+  const invoiceOccurrences = new Map<string, number>();
   let buffer: CsvScanRecord[] = [];
   const pendingIssues: Prisma.AutopartImportIssueCreateManyInput[] = [];
   const flushIssues = async () => {
@@ -736,7 +895,7 @@ async function commitCsv(
     if (!buffer.length) return;
     const result =
       kind === "INVOICE_LINES"
-        ? await upsertInvoiceRows(batchId, headers, map, buffer)
+        ? await upsertInvoiceRows(batchId, headers, map, buffer, invoiceOccurrences)
         : await upsertLedgerRows(batchId, headers, map, buffer);
     imported += result.imported;
     updated += result.updated;
@@ -806,8 +965,8 @@ async function upsertInvoiceRows(
   headers: string[],
   map: Partial<Record<CanonicalColumn, number>>,
   records: CsvScanRecord[],
+  occurrences: Map<string, number>,
 ) {
-  const occurrences = new Map<string, number>();
   const prepared: Prisma.AutopartInvoiceLineCreateManyInput[] = [];
   const issues: Prisma.AutopartImportIssueCreateManyInput[] = [];
   let rejected = 0;
@@ -828,17 +987,8 @@ async function upsertInvoiceRows(
       continue;
     }
     const row = interpreted.row;
-    const natural = [
-      row.accountCode,
-      row.rawInvAndLn,
-      row.partNumber,
-      row.quantity,
-      row.salesAmount,
-    ].join("\u001e");
-    const occurrence = (occurrences.get(natural) ?? 0) + 1;
-    occurrences.set(natural, occurrence);
     prepared.push({
-      sourceIdentity: sourceIdentity([natural, String(occurrence)]),
+      sourceIdentity: nextInvoiceSourceIdentity(occurrences, row),
       accountCode: row.accountCode,
       rawInvAndLn: row.rawInvAndLn,
       documentReference: row.documentReference,
@@ -1016,6 +1166,11 @@ async function insertInvoiceSql(
       "parseIssue" = EXCLUDED."parseIssue",
       "importBatchId" = EXCLUDED."importBatchId",
       "updatedAt" = NOW()
+    WHERE "AutopartInvoiceLine"."accountCode" IS NOT DISTINCT FROM EXCLUDED."accountCode"
+      AND "AutopartInvoiceLine"."rawInvAndLn" IS NOT DISTINCT FROM EXCLUDED."rawInvAndLn"
+      AND "AutopartInvoiceLine"."partNumber" IS NOT DISTINCT FROM EXCLUDED."partNumber"
+      AND "AutopartInvoiceLine"."quantity" IS NOT DISTINCT FROM EXCLUDED."quantity"
+      AND "AutopartInvoiceLine"."salesAmount" IS NOT DISTINCT FROM EXCLUDED."salesAmount"
   `;
 }
 

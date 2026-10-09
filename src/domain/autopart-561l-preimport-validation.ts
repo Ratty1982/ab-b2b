@@ -5,9 +5,10 @@
  * already stored on AutopartAccount. Customer names are never compared.
  * Nothing here writes invoice lines, accounts, stock, or orders.
  *
- * Source identities follow the importer: a 200-row chunk, then
- * sha256(account, Inv & Ln, part, quantity, sales, occurrence). A repeated
- * identity in a later chunk would overwrite an earlier line on commit.
+ * Source identities follow the importer across the whole file, not per chunk:
+ * sha256(account, Inv & Ln, part, quantity, sales, occurrence). The occurrence
+ * counts every accepted copy of that natural key. A repeated identity blocks
+ * the import instead of overwriting an earlier line.
  */
 import { createHash } from "node:crypto";
 import type {
@@ -118,8 +119,74 @@ function continuationIsInvoiceLine(line: string): boolean {
   return /^[IC]\//i.test(inv);
 }
 
-function sourceIdentity(natural: string, occurrence: number): string {
-  return createHash("sha256").update(`${natural}\u001e${occurrence}`).digest("hex");
+export function invoiceNaturalKey(row: {
+  accountCode: string;
+  rawInvAndLn: string;
+  partNumber: string;
+  quantity: string;
+  salesAmount: string;
+}): string {
+  return [row.accountCode, row.rawInvAndLn, row.partNumber, row.quantity, row.salesAmount].join(
+    "\u001e",
+  );
+}
+
+export function invoiceLineSourceIdentity(natural: string, occurrence: number): string {
+  return createHash("sha256")
+    .update(`${natural}\u001e${String(occurrence)}`)
+    .digest("hex");
+}
+
+export function nextInvoiceSourceIdentity(
+  occurrences: Map<string, number>,
+  row: {
+    accountCode: string;
+    rawInvAndLn: string;
+    partNumber: string;
+    quantity: string;
+    salesAmount: string;
+  },
+): string {
+  const natural = invoiceNaturalKey(row);
+  const occurrence = (occurrences.get(natural) ?? 0) + 1;
+  occurrences.set(natural, occurrence);
+  return invoiceLineSourceIdentity(natural, occurrence);
+}
+
+function sameMoneyText(left: string, right: string): boolean {
+  const a = parseMoney(left);
+  const b = parseMoney(right);
+  if (!a || !b) return left === right;
+  return a.minor === b.minor;
+}
+
+export function sameInvoiceNatural(
+  left: {
+    accountCode: string;
+    rawInvAndLn: string;
+    partNumber: string;
+    quantity: string;
+    salesAmount: string;
+  },
+  right: {
+    accountCode: string;
+    rawInvAndLn: string;
+    partNumber: string;
+    quantity: string;
+    salesAmount: string;
+  },
+): boolean {
+  return (
+    left.accountCode === right.accountCode &&
+    left.rawInvAndLn === right.rawInvAndLn &&
+    left.partNumber === right.partNumber &&
+    sameMoneyText(left.quantity, right.quantity) &&
+    sameMoneyText(left.salesAmount, right.salesAmount)
+  );
+}
+
+export function failedValidationChecks(report: InvoicePreimportValidation): ValidationCheck[] {
+  return report.checks.filter((check) => check.outcome === "FAIL");
 }
 
 export function validationCsvCell(value: string | number | null | undefined): string {
@@ -228,12 +295,11 @@ export function createInvoicePreimportValidation(input: {
   let ambiguousRecovered = 0;
   let otherRejected = 0;
   let arithmeticFailures = 0;
-  let chunkCount = 0;
   let exceptionsOmitted = 0;
   const unmatchedCodes = new Set<string>();
   const invoiceLines = new Map<string, number>();
   const seenIdentity = new Map<string, number>();
-  let occurrences = new Map<string, number>();
+  const occurrences = new Map<string, number>();
   const exceptions: ValidationException[] = [];
 
   const pushException = (exception: ValidationException) => {
@@ -389,16 +455,7 @@ export function createInvoicePreimportValidation(input: {
     if (seenOnInvoice > 0) preservedSeparateLines += 1;
     invoiceLines.set(invoiceKey, seenOnInvoice + 1);
 
-    const natural = [
-      row.accountCode,
-      row.rawInvAndLn,
-      row.partNumber,
-      row.quantity,
-      row.salesAmount,
-    ].join("\u001e");
-    const occurrence = (occurrences.get(natural) ?? 0) + 1;
-    occurrences.set(natural, occurrence);
-    const identity = sourceIdentity(natural, occurrence);
+    const identity = nextInvoiceSourceIdentity(occurrences, row);
     const firstRow = seenIdentity.get(identity);
     if (firstRow != null) {
       identityCollisions += 1;
@@ -411,7 +468,7 @@ export function createInvoicePreimportValidation(input: {
         partNumber: row.partNumber,
         quantity: row.quantity,
         salesAmount: row.salesAmount,
-        detail: `This line repeats the source identity first used on row ${firstRow}. A database write would overwrite that row. The file was not changed.`,
+        detail: `This line repeats the source identity first used on row ${firstRow}. Import is blocked so the earlier line is not overwritten.`,
       });
     } else {
       seenIdentity.set(identity, row.rowNumber);
@@ -481,11 +538,6 @@ export function createInvoicePreimportValidation(input: {
         }
       } else {
         observeAccepted(record, interpreted.row, map);
-      }
-      chunkCount += 1;
-      if (chunkCount >= INVOICE_IMPORT_CHUNK) {
-        chunkCount = 0;
-        occurrences = new Map();
       }
     },
     finish(): InvoicePreimportValidation {
@@ -590,8 +642,8 @@ export function createInvoicePreimportValidation(input: {
           outcome: identityCollisions > 0 ? "FAIL" : "PASS",
           summary:
             identityCollisions > 0
-              ? `${identityCollisions.toLocaleString("en-GB")} lines repeat a source identity from an earlier 200-row chunk.`
-              : "No accepted line repeats a source identity from another import chunk.",
+              ? `${identityCollisions.toLocaleString("en-GB")} lines repeat a source identity. Import is blocked.`
+              : "No accepted line repeats a source identity.",
         },
         {
           id: "ambiguous_recovered",

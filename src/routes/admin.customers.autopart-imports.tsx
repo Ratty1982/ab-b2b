@@ -359,6 +359,8 @@ function AutopartImportsPage() {
 
   const diagnostics = diagnosticsOf(batch);
   const fields = batch?.kind === "LEDGER" ? LEDGER_FIELDS : INVOICE_FIELDS;
+  const validationFailed =
+    diagnostics.financialValidation?.checks.some((item) => item.outcome === "FAIL") ?? false;
 
   return (
     <div>
@@ -621,11 +623,18 @@ function AutopartImportsPage() {
                   {JSON.stringify(diagnostics.samples, null, 2)}
                 </pre>
               ) : null}
+              {validationFailed ? (
+                <p className="text-bad">
+                  Import is blocked until every validation check passes. Unmatched account codes can
+                  still be imported later and stay quarantined. They are not matched by name.
+                </p>
+              ) : null}
               {batch.status === "PREVIEWED" || batch.status === "FAILED" ? (
                 <label className="flex items-start gap-2">
                   <input
                     type="checkbox"
                     checked={confirmWrite}
+                    disabled={validationFailed}
                     onChange={(event) => setConfirmWrite(event.target.checked)}
                   />
                   <span>
@@ -639,6 +648,7 @@ function AutopartImportsPage() {
                   type="button"
                   disabled={
                     busy ||
+                    validationFailed ||
                     !confirmWrite ||
                     (batch.status !== "PREVIEWED" && batch.status !== "FAILED")
                   }
