@@ -12,6 +12,7 @@
  */
 
 import { detectCsvDelimiter } from "@/domain/catalogue-csv";
+import { csvFormulaSafeCell } from "@/domain/csv-formula";
 import { parseFbaCsvDocument } from "@/domain/fba-csv";
 import { isAutopart504Report } from "@/domain/autopart-504";
 import { isAutopart216vReport } from "@/domain/autopart-216v";
@@ -703,8 +704,7 @@ export function fbaIssuesCsv(rows: Array<FbaInvalidRow | FbaDuplicateRow>): stri
 }
 
 function csvCell(value: string): string {
-  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
-  return value;
+  return csvFormulaSafeCell(value);
 }
 
 /** Company-owned units. Not B2B sellable availability. */

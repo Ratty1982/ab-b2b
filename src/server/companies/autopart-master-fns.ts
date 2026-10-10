@@ -3,6 +3,7 @@ import { getRequestHeaders } from "@tanstack/react-start/server";
 import { auth } from "@/infra/auth";
 import { formatZodError } from "@/domain/cms";
 import type { AutopartAccountClassification } from "@prisma/client";
+import { clientSafeErrorMessage } from "@/server/http/client-error";
 import { AuthError } from "@/server/rbac/guards";
 import * as master from "@/server/companies/autopart-master-import";
 import * as prospectConversion from "@/server/companies/autopart-prospect-conversion";
@@ -18,8 +19,11 @@ function toError(error: unknown): { ok: false; error: string; code?: string } {
   if (error instanceof AuthError) return { ok: false, error: error.message, code: error.code };
   const validation = formatZodError(error);
   if (validation) return { ok: false, error: validation, code: "VALIDATION" };
-  if (error instanceof Error && error.message)
-    return { ok: false, error: error.message, code: "INTERNAL" };
+  const safe = clientSafeErrorMessage(error);
+  if (safe) return { ok: false, error: safe, code: "INTERNAL" };
+  if (error instanceof Error && error.name.startsWith("Prisma")) {
+    console.error("[ab:autopart-import] database request failed", error.name);
+  }
   return { ok: false, error: "Request failed", code: "INTERNAL" };
 }
 
