@@ -232,6 +232,16 @@ describe("Autopart customer master import", () => {
     expect(
       matches.items.some((item) => item.status === "MATCHED" && item.lineSalesSum === "15.00"),
     ).toBe(true);
+    await prisma.autopartDocumentMatch.updateMany({
+      where: { accountCode: tradeCode },
+      data: { ledgerGoods: "15.00", ledgerCount: 1 },
+    });
+    const salesMatches = await listAutopartDocumentMatches(salesId, tradeCode);
+    expect(
+      salesMatches.items.every((item) => item.ledgerGoods == null && item.ledgerCount == null),
+    ).toBe(true);
+    const accountsMatches = await listAutopartDocumentMatches(accountsId, tradeCode);
+    expect(accountsMatches.items.some((item) => item.ledgerGoods === "15.00")).toBe(true);
     const payments = await prisma.autopartLedgerTransaction.findMany({
       where: { accountCode: tradeCode, ledgerKind: "PAYMENT" },
     });
@@ -397,5 +407,32 @@ describe("Autopart customer master import", () => {
     expect(bytes.length).toBeGreaterThan(10);
     const cancelled = await cancelAutopartImport(adminId, saved.batchId);
     expect(cancelled.cancelled).toBe(true);
+
+    await expect(
+      saveAutopartUpload({
+        actorUserId: adminId,
+        filename: "../../secret.csv",
+        kind: "CUSTOMER_MASTER",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("account\n"));
+            controller.close();
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(
+      saveAutopartUpload({
+        actorUserId: adminId,
+        filename: "binary.csv",
+        kind: "CUSTOMER_MASTER",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("a\0b"));
+            controller.close();
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
   });
 });
