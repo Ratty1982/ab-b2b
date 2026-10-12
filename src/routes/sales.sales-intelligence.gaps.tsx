@@ -22,6 +22,7 @@ import {
 } from "@/components/sales-intelligence/workspace";
 import { useSalesIntelligenceFreshnessLabel } from "@/components/sales-intelligence/freshness";
 import { ROUTES } from "@/lib/app-nav";
+import { formatQuantity } from "@/lib/format-quantity";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import type { SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
 import {
@@ -985,8 +986,8 @@ function CustomerGapView({
                         />
                       )}
                     </td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{r.comparisonQty}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{r.selectedQty}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(r.comparisonQty)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(r.selectedQty)}</td>
                     <td className="py-2 pr-2 text-right">
                       <SiMovementValue change={r.qtyChange} emphasize />
                     </td>
@@ -1049,11 +1050,11 @@ function CustomerGapView({
                 <dl className="mt-2 grid grid-cols-2 gap-1 text-[12px]">
                   <div>
                     <dt className="text-steel">Previous Qty</dt>
-                    <dd className="tabular-nums">{r.comparisonQty}</dd>
+                    <dd className="tabular-nums">{formatQuantity(r.comparisonQty)}</dd>
                   </div>
                   <div>
                     <dt className="text-steel">Selected Qty</dt>
-                    <dd className="tabular-nums">{r.selectedQty}</dd>
+                    <dd className="tabular-nums">{formatQuantity(r.selectedQty)}</dd>
                   </div>
                   <div>
                     <dt className="text-steel">Previous Net</dt>
@@ -1313,8 +1314,8 @@ function ProductGapView({
                       <div className="font-mono text-[11px] text-steel">{r.account || "—"}</div>
                     </td>
                     <td className="py-2 pr-2 text-steel">{r.salespersonName || "—"}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{r.comparisonQty}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{r.selectedQty}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(r.comparisonQty)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(r.selectedQty)}</td>
                     <td className="py-2 pr-2 text-right">
                       <SiMovementValue change={r.qtyChange} emphasize />
                     </td>
@@ -1365,11 +1366,11 @@ function ProductGapView({
                 <dl className="mt-2 grid grid-cols-2 gap-1 text-[12px]">
                   <div>
                     <dt className="text-steel">Previous Qty</dt>
-                    <dd className="tabular-nums">{r.comparisonQty}</dd>
+                    <dd className="tabular-nums">{formatQuantity(r.comparisonQty)}</dd>
                   </div>
                   <div>
                     <dt className="text-steel">Selected Qty</dt>
-                    <dd className="tabular-nums">{r.selectedQty}</dd>
+                    <dd className="tabular-nums">{formatQuantity(r.selectedQty)}</dd>
                   </div>
                   <div>
                     <dt className="text-steel">Qty Change</dt>

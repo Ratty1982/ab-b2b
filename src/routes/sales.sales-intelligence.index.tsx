@@ -43,6 +43,7 @@ import {
   UnifiedProductSalesPanel,
   UnifiedReconciliationQueue,
 } from "@/components/sales-intelligence/unified-sales";
+import { formatQuantity } from "@/lib/format-quantity";
 import {
   exportCustomerGroupSalesCsvFn,
   exportCustomerSalesEnquiryCsvFn,
@@ -679,7 +680,7 @@ function SalesEnquiryPage() {
                   ["Net Sales", formatGbp(groupData.summary.netSales)],
                   ["Invoice Sales", formatGbp(groupData.summary.invoiceSales)],
                   ["Credits", formatGbp(groupData.summary.credits)],
-                  ["Units", String(groupData.summary.units)],
+                  ["Units", formatQuantity(groupData.summary.units)],
                 ] as const
               ).map(([label, value]) => (
                 <SiMetricCard key={label} label={label} value={value} />
@@ -851,7 +852,7 @@ function EnquiryMetrics({
       />
       <SiMetricCard
         label="Units"
-        value={String(summary.units)}
+        value={formatQuantity(summary.units)}
         primary
         movement={
           comparison
@@ -1033,7 +1034,7 @@ function CustomerEnquiryView({
                           : "—"}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{item.purchaseCount}</td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums">{item.units}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{formatQuantity(item.units)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">
                         {gbp(item.invoiceSales)}
                       </td>
@@ -1237,7 +1238,7 @@ function ProductEnquiryView({
                         {c.lastPurchasedDate ? formatQuoteDateOnlyUk(c.lastPurchasedDate) : "—"}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{c.purchaseCount}</td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums">{c.units}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{formatQuantity(c.units)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{gbp(c.invoiceSales)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{gbp(c.credits)}</td>
                       <td className="py-2.5 text-right font-medium tabular-nums">
@@ -1289,9 +1290,9 @@ function ComparisonTable({
     {
       label: "Units",
       m: {
-        primary: String(comparison.units.primary),
-        comparison: String(comparison.units.comparison),
-        difference: String(comparison.units.difference),
+        primary: formatQuantity(comparison.units.primary),
+        comparison: formatQuantity(comparison.units.comparison),
+        difference: formatQuantity(comparison.units.difference),
         percentChange: comparison.units.percentChange,
       },
       money: false,
@@ -1357,7 +1358,7 @@ function BreakdownTable({
             <tr key={r.key} className="border-b border-border/40">
               <td className="py-1.5 pr-2">{r.label}</td>
               <td className="py-1.5 pr-2 text-right tabular-nums">{r.products}</td>
-              <td className="py-1.5 pr-2 text-right tabular-nums">{r.units}</td>
+              <td className="py-1.5 pr-2 text-right tabular-nums">{formatQuantity(r.units)}</td>
               <td className="py-1.5 text-right tabular-nums">{gbp(r.netSales)}</td>
             </tr>
           ))}
@@ -1401,7 +1402,7 @@ function TxTable({
             <td className="py-1 pr-2 font-mono">{t.ref}</td>
             <td className="py-1 pr-2">{t.type === "CREDIT" ? "Credit" : "Invoice"}</td>
             <td className="py-1 pr-2 text-steel">{t.detail || "—"}</td>
-            <td className="py-1 pr-2 text-right tabular-nums">{t.units}</td>
+            <td className="py-1 pr-2 text-right tabular-nums">{formatQuantity(t.units)}</td>
             <td className="py-1 text-right tabular-nums">{gbp(t.net)}</td>
           </tr>
         ))}
