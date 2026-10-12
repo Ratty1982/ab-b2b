@@ -10,9 +10,21 @@
  * source agrees on every line (type, SKU, signed qty, signed net). The copy counted is the TRM21QC
  * feed, then the company 561L/SLRB import, then global 561L history. Any other overlap is
  * UNRECONCILED and is excluded from certified totals.
+ *
+ * A 504 document is a goods header, not another product-line copy. Its goods total is never added
+ * on top of the lines. When it disagrees with those lines by more than 1p, or it has no lines, the
+ * document stays unreconciled.
+ *
+ * Repeated identical 561L rows are the rows the importer actually stored. Inside each 200-row
+ * import chunk a second identical natural key is stored and then held back here, so it is not
+ * added to certified sales. The same natural key in a later chunk shares the first row's identity
+ * and does not create another stored row. Those extra occurrences are not reconstructed.
  */
 
-export const UNIFIED_SOURCES = ["HISTORICAL_561L", "COMPANY_561L_SLRB", "TRM21QC_FEED"] as const;
+export const UNIFIED_SOURCES = ["HISTORICAL_561L", "COMPANY_561L_SLRB", "TRM21QC_FEED", "ONGOING_504"] as const;
+
+/** Importer chunk size that resets 561L occurrence numbering. Reporting does not change it. */
+export const SOURCE_IDENTITY_CHUNK = 200;
 export type UnifiedSource = (typeof UNIFIED_SOURCES)[number];
 
 export const UNIFIED_LINE_STATUSES = [
@@ -29,6 +41,7 @@ export const UNIFIED_UNRECONCILED_REASONS = [
   "NO_DOCUMENT_REFERENCE",
   "UNKNOWN_DOCUMENT_TYPE",
   "CONFLICTING_OVERLAP",
+  "DOCUMENT_GOODS_MISMATCH",
 ] as const;
 export type UnifiedUnreconciledReason = (typeof UNIFIED_UNRECONCILED_REASONS)[number];
 
@@ -42,6 +55,7 @@ export const UNIFIED_SOURCE_LABELS: Record<UnifiedSource, string> = {
   HISTORICAL_561L: "561L history (undated)",
   COMPANY_561L_SLRB: "561L + SLRB import",
   TRM21QC_FEED: "TRM21QC feed",
+  ONGOING_504: "504 goods header",
 };
 
 export const UNIFIED_STATUS_LABELS: Record<UnifiedLineStatus, string> = {
@@ -61,6 +75,8 @@ export const UNIFIED_REASON_LABELS: Record<UnifiedUnreconciledReason, string> = 
     "The 561L Inv & Ln does not show invoice or credit, so the sign cannot be proven.",
   CONFLICTING_OVERLAP:
     "The same document is in more than one source but the lines do not agree. Every copy is held back.",
+  DOCUMENT_GOODS_MISMATCH:
+    "The 504 goods total does not agree with the product lines, or the 504 document has no product lines. The 504 amount is not added to certified sales.",
 };
 
 export function unifiedSourceLabel(source: string): string {
@@ -141,6 +157,24 @@ export function effectiveDating(filters: Pick<UnifiedTxFilters, "dating" | "from
 }
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+export type SalesEnquirySurface = "unified-customer" | "unified-product" | "dated-group" | "picker";
+
+/**
+ * A selected customer or product is one unified enquiry. Dated period analysis stays available
+ * for customer groups, which are not an Autopart account.
+ */
+export function salesEnquirySurface(input: {
+  mode: "customers" | "products";
+  companyId?: string | null;
+  customerGroupId?: string | null;
+  sku?: string | null;
+}): SalesEnquirySurface {
+  if (input.mode === "customers" && input.customerGroupId) return "dated-group";
+  if (input.mode === "customers" && input.companyId) return "unified-customer";
+  if (input.mode === "products" && input.sku) return "unified-product";
+  return "picker";
+}
 
 export function parseIsoDay(value: string | null | undefined): Date | null {
   if (!value || !ISO_DAY.test(value)) return null;

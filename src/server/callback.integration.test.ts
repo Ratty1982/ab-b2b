@@ -231,9 +231,11 @@ describe("authenticated callback submission", () => {
     expect(tos).toContain(`cb.luke.${suffix}@automotivebrands.co.uk`);
     expect(tos).toContain(`trade.cb.${suffix}@example.invalid`);
     expect(emails[0]!.htmlBody).not.toContain("<script>");
-    expect(emails.some((e) => e.subject.includes("REQUEST A CALLBACK") || e.textBody.includes("REQUEST A CALLBACK"))).toBe(
-      true,
-    );
+    expect(
+      emails.some(
+        (e) => e.subject.includes("Request a callback") || e.textBody.includes("CALLBACK REQUEST"),
+      ),
+    ).toBe(true);
 
     // Company master record unchanged by form company field
     const company = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });

@@ -25,6 +25,7 @@ import {
   type SalesEnquiryUrlSearch,
 } from "@/domain/sales-intelligence";
 import type { SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
+import { salesEnquirySurface } from "@/domain/unified-sales";
 import {
   clearedEnquiryTableFilters,
   creditMovementHint,
@@ -111,6 +112,12 @@ function SalesEnquiryPage() {
   const navigate = Route.useNavigate();
   const freshnessLabel = useSalesIntelligenceFreshnessLabel();
   const mode = search.mode ?? "customers";
+  const surface = salesEnquirySurface({
+    mode,
+    companyId: search.companyId ?? null,
+    customerGroupId: search.customerGroupId ?? null,
+    sku: search.sku ?? null,
+  });
   const period = (search.period ?? "LAST_30") as SalesEnquiryPeriodPreset;
   const compare = search.compare ?? "OFF";
   const page = search.page ?? 1;
@@ -302,109 +309,15 @@ function SalesEnquiryPage() {
   }, [mode, search.customerGroupId, period, search.from, search.to]);
 
   useEffect(() => {
-    if (mode !== "customers" || !search.companyId || search.customerGroupId) {
-      if (!search.companyId) setCustomerData(null);
-      return;
-    }
-    void (async () => {
-      setLoading(true);
-      const r = await getCustomerSalesEnquiryFn({
-        data: {
-          companyId: search.companyId,
-          period,
-          from: search.from ?? null,
-          to: search.to ?? null,
-          compare,
-          compareFrom: search.compareFrom ?? null,
-          compareTo: search.compareTo ?? null,
-          q: search.q ?? null,
-          brandId: search.brandId ?? null,
-          categoryId: search.categoryId ?? null,
-          sort: sort as "NET_SALES",
-          page,
-          pageSize: 25,
-          txSku: expandedSku,
-          txPage: search.txPage ?? 1,
-        },
-      });
-      if (!r.ok) {
-        setError(r.error);
-        setCustomerData(null);
-      } else {
-        setError(null);
-        setCustomerData(r.data);
-      }
-      setLoading(false);
-    })();
-  }, [
-    mode,
-    search.companyId,
-    search.customerGroupId,
-    period,
-    search.from,
-    search.to,
-    compare,
-    search.compareFrom,
-    search.compareTo,
-    search.q,
-    search.brandId,
-    search.categoryId,
-    sort,
-    page,
-    expandedSku,
-    search.txPage,
-  ]);
+    // A selected customer uses the unified enquiry. The dated period enquiry is not loaded
+    // beside it, so its period total cannot be read as the customer's sales.
+    setCustomerData(null);
+  }, [search.companyId]);
 
   useEffect(() => {
-    if (mode !== "products" || !search.sku) {
-      setProductData(null);
-      return;
-    }
-    void (async () => {
-      setLoading(true);
-      const r = await getProductSalesEnquiryFn({
-        data: {
-          sku: search.sku,
-          period,
-          from: search.from ?? null,
-          to: search.to ?? null,
-          compare,
-          compareFrom: search.compareFrom ?? null,
-          compareTo: search.compareTo ?? null,
-          q: search.q ?? null,
-          salesRepId: search.salesRepId ?? null,
-          sort: sort as "NET_SALES",
-          page,
-          pageSize: 25,
-          txCompanyId: expandedCompanyId,
-          txPage: search.txPage ?? 1,
-        },
-      });
-      if (!r.ok) {
-        setError(r.error);
-        setProductData(null);
-      } else {
-        setError(null);
-        setProductData(r.data);
-      }
-      setLoading(false);
-    })();
-  }, [
-    mode,
-    search.sku,
-    period,
-    search.from,
-    search.to,
-    compare,
-    search.compareFrom,
-    search.compareTo,
-    search.q,
-    search.salesRepId,
-    sort,
-    page,
-    expandedCompanyId,
-    search.txPage,
-  ]);
+    // A selected product uses the unified customer list. The dated period enquiry is not loaded beside it.
+    setProductData(null);
+  }, [search.sku]);
 
   const totalPages = useMemo(() => {
     if (mode === "customers" && customerData) {
@@ -504,9 +417,7 @@ function SalesEnquiryPage() {
     }
   }
 
-  const canExport =
-    (mode === "customers" && Boolean(search.companyId || search.customerGroupId)) ||
-    (mode === "products" && Boolean(search.sku));
+  const canExport = surface === "dated-group";
 
   return (
     <div>
@@ -544,33 +455,15 @@ function SalesEnquiryPage() {
               onChange={() => setChangingEntity(true)}
               changeLabel="Change customer / group"
             />
-          ) : customerSelected && customerData && !changingEntity ? (
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <SiEntityContext
-                eyebrow="Customer"
-                title={customerData.company.name}
-                meta={[
-                  customerData.company.autopartCustomerCode ||
-                    customerData.company.accountNumber ||
-                    "No Autopart code",
-                  customerData.company.salesperson?.name ?? "",
-                  customerData.company.paymentTerms ?? "",
-                ]}
-                onChange={() => setChangingEntity(true)}
-                changeLabel="Change customer"
-              />
-              <SiCreateFollowUpButton
-                onClick={() =>
-                  setFollowUp({
-                    sourceModule: "SALES_ENQUIRY",
-                    sourceReason: "CUSTOMER",
-                    companyId: customerData.company.id,
-                    period,
-                    from: search.from ?? null,
-                    to: search.to ?? null,
-                  })
-                }
-              />
+          ) : surface === "unified-customer" && !changingEntity ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="inline-flex h-8 items-center rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide"
+                onClick={() => setChangingEntity(true)}
+              >
+                Change customer
+              </button>
             </div>
           ) : (
             <SiField label="Customer" className="max-w-xl">
@@ -615,21 +508,16 @@ function SalesEnquiryPage() {
               ) : null}
             </SiField>
           )
-        ) : productSelected && productData && !changingEntity ? (
-          <SiEntityContext
-            eyebrow="Product"
-            title={productData.product.name}
-            meta={[
-              productData.product.sku,
-              productData.product.brandName ?? "",
-              productData.product.productKindLabel &&
-              productData.product.productKind !== "CATALOGUE"
-                ? productData.product.productKindLabel
-                : "",
-            ]}
-            onChange={() => setChangingEntity(true)}
-            changeLabel="Change product"
-          />
+        ) : surface === "unified-product" && !changingEntity ? (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="inline-flex h-8 items-center rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide"
+              onClick={() => setChangingEntity(true)}
+            >
+              Change product
+            </button>
+          </div>
         ) : (
           <SiField label="Product / SKU" className="max-w-xl">
             <input
@@ -682,17 +570,8 @@ function SalesEnquiryPage() {
             }
           />
         ) : null}
-        {customerSelected || productSelected ? (
-          <div className="pt-2">
-            <h2 className="text-[11px] font-bold uppercase tracking-wide text-steel">
-              Dated period analysis
-            </h2>
-            <p className="text-[12px] text-steel">
-              Dated invoices and credits only. Undated 561L history is never placed in a period.
-            </p>
-          </div>
-        ) : null}
-
+        {surface === "dated-group" ? (
+        <>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 lg:max-w-3xl">
           <SiField label="Period">
             <select
@@ -785,6 +664,8 @@ function SalesEnquiryPage() {
               />
             </SiField>
           </div>
+        ) : null}
+        </>
         ) : null}
 
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
