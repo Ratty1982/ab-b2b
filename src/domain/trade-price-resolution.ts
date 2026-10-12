@@ -87,7 +87,7 @@ export type TradePriceResolution = {
   source: TradePriceSource;
   sourceId: string | null;
   quantityBreakApplied: { id: string; minQty: number } | null;
-  promotionApplied: { id: string; code: string } | null;
+  promotionApplied: { id: string; code: string; name: string } | null;
   explanation: TradePriceExplanation;
 };
 
@@ -227,7 +227,7 @@ export function resolveTradePriceFromFacts(facts: PriceResolutionFacts): TradePr
       unit = winner.next;
       source = "PROMOTION";
       sourceId = winner.promo.id;
-      promotionApplied = { id: winner.promo.id, code: winner.promo.code };
+      promotionApplied = { id: winner.promo.id, code: winner.promo.code, name: winner.promo.name };
     }
   }
 

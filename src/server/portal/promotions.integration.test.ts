@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { saveProduct } from "@/server/catalogue/service";
+import { moneyToString, parseMoney, toCustomerSellUnitPrice } from "@/domain/money";
 import { getPortalDashboard } from "@/server/portal/dashboard";
 import { listCustomerPromotions } from "@/server/portal/promotions";
+import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { AuthError } from "@/server/rbac/guards";
 
 const prisma = new PrismaClient();
@@ -12,8 +14,10 @@ const at = new Date("2026-10-12T11:00:00.000Z");
 
 let adminId = "";
 let buyerId = "";
+let buyerBId = "";
 let internalId = "";
 let companyId = "";
+let companyBId = "";
 let productId = "";
 const promotionIds: string[] = [];
 
@@ -61,7 +65,8 @@ afterAll(async () => {
   }
   if (productId) await prisma.product.delete({ where: { id: productId } });
   if (companyId) await prisma.company.delete({ where: { id: companyId } });
-  const userIds = [adminId, buyerId, internalId].filter(Boolean);
+  if (companyBId) await prisma.company.delete({ where: { id: companyBId } });
+  const userIds = [adminId, buyerId, buyerBId, internalId].filter(Boolean);
   if (userIds.length) {
     await prisma.userRole.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -94,6 +99,10 @@ describe("customer promotions", () => {
           type: "PERCENT",
           value: "10.0000",
           isActive: true,
+          metadata: {
+            description: `Trade offer ${suffix}`,
+            imageUrl: "javascript:alert(1)",
+          },
         },
         {
           code: `PPROMO-B-${suffix}`,
@@ -137,6 +146,29 @@ describe("customer promotions", () => {
       ],
     });
     promotionIds.push(...created.map((row) => row.id));
+    const companyB = await prisma.company.create({
+      data: { name: `Portal Promo B ${suffix}`, status: "ACTIVE" },
+    });
+    companyBId = companyB.id;
+    const buyerB = await prisma.user.create({
+      data: {
+        email: `portal.promo.buyer.b.${suffix}@example.invalid`,
+        name: `Portal Buyer B ${suffix}`,
+        status: "ACTIVE",
+        actorType: "TRADE",
+        emailVerified: true,
+      },
+    });
+    buyerBId = buyerB.id;
+    await prisma.companyUser.create({
+      data: { companyId: companyBId, userId: buyerBId, role: "TRADE_BUYER", status: "ACTIVE", isDefault: true },
+    });
+    await prisma.customerPrice.create({
+      data: { companyId, variantId: variant.id, unitPrice: "8.0000" },
+    });
+    await prisma.customerPrice.create({
+      data: { companyId: companyBId, variantId: variant.id, unitPrice: "4.0000" },
+    });
     const before = await prisma.promotion.findMany({
       where: { id: { in: promotionIds } },
       orderBy: { code: "asc" },
@@ -153,11 +185,37 @@ describe("customer promotions", () => {
     expect(percent?.offerLabel).toBe("10% off");
     expect(percent?.scope).toBe("catalogue");
     expect(percent?.validityLabel).toBe("Open ended");
+    expect(percent?.description).toBe(`Trade offer ${suffix}`);
+    expect(percent?.imageUrl).toBeNull();
     const fixed = ours.find((row) => row.code === `PPROMO-B-${suffix}`);
     expect(fixed?.offerLabel).toBe("£1.50 off each unit");
     const scoped = ours.find((row) => row.code === `PPROMO-C-${suffix}`);
-    expect(scoped?.products).toEqual([{ sku: variant.sku, name: `Portal Promo Cleaner ${suffix}` }]);
     expect(scoped?.products.some((product) => product.sku.includes("MISSING"))).toBe(false);
+    expect(scoped?.products.some((product) => product.sku === variant.sku)).toBe(false);
+
+    const resolved = await resolveVariantTradePrices({
+      companyId,
+      quantity: 1,
+      at,
+      variants: [{ id: variant.id, sku: variant.sku, tradePrice: variant.tradePrice, vatCode: variant.vatCode }],
+    });
+    const resolution = resolved.get(variant.id);
+    const sell = resolution ? toCustomerSellUnitPrice(parseMoney(resolution.unitPriceExVat)!) : null;
+    const expectedLabel = sell ? `£${moneyToString(sell, 2)}` : null;
+    const winner = ours.find((row) => row.id === resolution?.promotionApplied?.id);
+    const priced = winner?.products.find((product) => product.sku === variant.sku);
+    expect(priced?.unitPriceLabel).toBe(expectedLabel);
+    expect(priced?.quantity).toBe(6);
+    expect(priced?.variantId).toBe(variant.id);
+
+    const listedB = await listCustomerPromotions(buyerBId, at);
+    const pricedB = listedB
+      .flatMap((row) => row.products)
+      .find((product) => product.sku === variant.sku);
+    expect(pricedB?.unitPriceLabel).toBeTruthy();
+    expect(pricedB?.unitPriceLabel).not.toBe(priced?.unitPriceLabel);
+    expect(JSON.stringify(listed)).not.toContain("4.0000");
+    expect(JSON.stringify(listedB)).not.toContain("8.0000");
 
     const after = await prisma.promotion.findMany({
       where: { id: { in: promotionIds } },

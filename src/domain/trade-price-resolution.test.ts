@@ -175,6 +175,7 @@ describe("promotions", () => {
     const twenty = { ...windowed, id: "b", code: "BBB20", value: "20" };
     const resolved = resolveTradePriceFromFacts(facts({ promotions: [ten, twenty] }));
     expect(resolved.promotionApplied?.code).toBe("BBB20");
+    expect(resolved.promotionApplied?.name).toBe("Spring");
     expect(resolved.source).toBe("PROMOTION");
     const applied = applyPromotion(parseMoney("8.6967")!, twenty)!;
     expect(resolved.unitPriceExVat).toBe(moneyToString(applied));

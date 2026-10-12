@@ -45,6 +45,22 @@ export function catalogueListShowsOrder(items: PublicProductCard[]) {
   return items.some((item) => item.ordering != null);
 }
 
+export function PromotionOfferBadge({
+  offer,
+}: {
+  offer?: { code: string; name: string } | null | undefined;
+}) {
+  if (!offer) return null;
+  return (
+    <span
+      className="inline-flex max-w-full truncate rounded-sm bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary"
+      title={offer.code}
+    >
+      {offer.name}
+    </span>
+  );
+}
+
 export function ProductCard({ product }: { product: PublicProductCard }) {
   return (
     <Link
@@ -56,7 +72,10 @@ export function ProductCard({ product }: { product: PublicProductCard }) {
     >
       <ProductImage src={product.imageSrc} alt={product.name} layout="card" />
       <div className="mt-3 min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan">{product.brand}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan">{product.brand}</p>
+          <PromotionOfferBadge offer={product.price.offer} />
+        </div>
         <h2 className="mt-1 line-clamp-2 min-h-[2.5rem] font-display text-sm font-semibold uppercase leading-snug">
           {product.name}
         </h2>
@@ -108,6 +127,9 @@ export function ProductListRow({
           <span aria-hidden> · </span>
           <span className="num">{product.sku}</span>
         </p>
+        <div className="mt-1">
+          <PromotionOfferBadge offer={product.price.offer} />
+        </div>
         <div className="mt-1 lg:hidden" data-catalogue-stock="true">
           <CatalogueStockLine product={product} />
         </div>

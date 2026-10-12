@@ -21,6 +21,11 @@ export type DisplayPrice = {
   /** Null for anonymous visitors and anyone without pricing.view / products.view. */
   trade: number | null;
   source: "hidden" | "base_catalogue" | "price_list" | "customer" | "quantity_break" | "promotion";
+  /**
+   * Set only when this viewer's resolved unit price uses a promotion.
+   * Never includes cost, margin, or another customer's price.
+   */
+  offer?: { code: string; name: string } | null;
 };
 
 export function moneyNumber(value: unknown): number | null {
@@ -45,15 +50,20 @@ export function toDisplayPrice(input: {
 }): DisplayPrice {
   const rrp = moneyNumber(input.rrp);
   if (!canViewTrade(input.viewer) || !input.resolution || input.resolution.source === "NONE") {
-    return { currency: "GBP", rrp, trade: null, source: "hidden" };
+    return { currency: "GBP", rrp, trade: null, source: "hidden", offer: null };
   }
   const commercial = parseMoney(input.resolution.unitPriceExVat);
   const sell = commercial ? toCustomerSellUnitPrice(commercial) : null;
+  const applied = input.resolution.promotionApplied;
   return {
     currency: "GBP",
     rrp,
     trade: sell ? moneyToNumber(sell) : null,
     source: PUBLIC_PRICE_SOURCE[input.resolution.source],
+    offer:
+      input.resolution.source === "PROMOTION" && applied
+        ? { code: applied.code, name: applied.name }
+        : null,
   };
 }
 

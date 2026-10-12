@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  customerPromotionCopy,
   customerPromotionOfferLabel,
   customerPromotionValidityLabel,
   promotionVisibleToCustomer,
+  safePromotionImageUrl,
   type CustomerPromotionSource,
 } from "@/domain/customer-promotions";
 import { promotionApplies } from "@/domain/trade-price-resolution";
@@ -68,5 +70,20 @@ describe("customer promotion visibility", () => {
     expect(customerPromotionOfferLabel("PERCENT", "12.1250")).toBe("12.125% off");
     expect(customerPromotionOfferLabel("FIXED", "1.5000")).toBe("£1.50 off each unit");
     expect(customerPromotionValidityLabel(null, null)).toBe("Open ended");
+  });
+
+  it("keeps optional customer copy and rejects unsafe image URLs", () => {
+    expect(
+      customerPromotionCopy({
+        description: "  Spring trade offer  ",
+        imageUrl: "https://cdn.example.com/offer.png",
+      }),
+    ).toEqual({
+      description: "Spring trade offer",
+      imageUrl: "https://cdn.example.com/offer.png",
+    });
+    expect(safePromotionImageUrl("javascript:alert(1)")).toBeNull();
+    expect(safePromotionImageUrl("http://cdn.example.com/offer.png")).toBeNull();
+    expect(safePromotionImageUrl("/media/offer.png")).toBe("/media/offer.png");
   });
 });

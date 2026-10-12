@@ -69,6 +69,33 @@ export function customerPromotionScope(metadata: unknown): {
   return parsePromotionMetadata(metadata);
 }
 
+/** Optional customer copy stored on promotion metadata. Plain text and a safe image URL only. */
+export function customerPromotionCopy(metadata: unknown): {
+  description: string | null;
+  imageUrl: string | null;
+} {
+  if (!metadata || typeof metadata !== "object") return { description: null, imageUrl: null };
+  const rec = metadata as Record<string, unknown>;
+  const descriptionValue = rec["description"];
+  const raw = typeof descriptionValue === "string" ? descriptionValue.trim() : "";
+  const description = raw ? raw.slice(0, 500) : null;
+  return { description, imageUrl: safePromotionImageUrl(rec["imageUrl"]) };
+}
+
+export function safePromotionImageUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 500) return null;
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.includes("\\")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol === "https:" && !url.username && !url.password) return url.toString();
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function londonDateOnly(value: Date): string {
   return londonBusinessDate(londonCivilTime(value));
 }
