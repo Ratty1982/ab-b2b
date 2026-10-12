@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
 import { formatGbp } from "@/domain/sales-intelligence";
+import { formatQuantity } from "@/lib/format-quantity";
 import {
   parseUkOrIsoDateOnly,
   type BusinessPeriodPreset,
@@ -329,7 +330,7 @@ function CustomerGroupWorkspace() {
               ["Net Sales", formatGbp(sales.summary.netSales)],
               ["Invoice Sales", formatGbp(sales.summary.invoiceSales)],
               ["Credits", formatGbp(sales.summary.credits)],
-              ["Units", String(sales.summary.units)],
+              ["Units", formatQuantity(sales.summary.units)],
               ["Documents", String(sales.summary.documents)],
               ["Products", String(sales.summary.productsPurchased)],
               ["Companies", String(sales.group.companyCount)],
@@ -542,7 +543,7 @@ function CustomerGroupWorkspace() {
                     <td className="px-3 py-2 font-semibold">{l.sku}</td>
                     <td className="px-3 py-2 text-steel">{l.description ?? "—"}</td>
                     <td className="px-3 py-2">{l.mamAccount}</td>
-                    <td className="num px-3 py-2">{l.units}</td>
+                    <td className="num px-3 py-2">{formatQuantity(l.units)}</td>
                     <td className="num px-3 py-2">{formatGbp(l.netSales)}</td>
                   </tr>
                 ))}

@@ -15,6 +15,7 @@ import { COMPANY_STATUS_LABEL } from "@/domain/company";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import { formatGbp } from "@/domain/sales-intelligence";
 import { DATE_UNAVAILABLE } from "@/domain/unified-sales";
+import { formatQuantity } from "@/lib/format-quantity";
 import {
   createCrmOpportunityFn,
   exportUnifiedCustomerSalesCsvFn,
@@ -125,7 +126,7 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
         <SiMetricCard label="Invoices" value={String(summary.invoiceCount)} />
         <SiMetricCard label="Product lines" value={String(summary.lineCount)} />
         <SiMetricCard label="Distinct products" value={String(summary.productCount)} />
-        <SiMetricCard label="Signed units" value={summary.units} />
+        <SiMetricCard label="Signed units" value={formatQuantity(summary.units)} />
         <SiMetricCard
           label="Last dated invoice"
           value={dateUk(summary.lastDatedInvoice, "None dated")}
@@ -573,7 +574,7 @@ export function UnifiedCustomerSalesPanel({
           <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-steel">
             <span>
               {tx
-                ? `${tx.total} rows · counted net ${formatGbp(tx.filteredCountedNet)} · counted units ${tx.filteredCountedUnits}`
+                ? `${tx.total} rows · counted net ${formatGbp(tx.filteredCountedNet)} · counted units ${formatQuantity(tx.filteredCountedUnits)}`
                 : "Loading transactions…"}
               {tx?.dateFilterNote ? ` · ${tx.dateFilterNote}` : ""}
             </span>
@@ -637,7 +638,7 @@ export function UnifiedCustomerSalesPanel({
                     <td className="py-2 pr-2 font-mono text-[12px]">{item.accountCode}</td>
                     <td className="py-2 pr-2 font-mono text-[12px]">{item.sku}</td>
                     <td className="py-2 pr-2">{item.description ?? "—"}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{item.qty}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(item.qty)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums">{formatGbp(item.net)}</td>
                     <td className="py-2 pr-2 text-[12px] text-steel">{item.sourceLabel}</td>
                     <td className="py-2" title={item.reasonLabel ?? undefined}>
@@ -727,7 +728,7 @@ export function UnifiedCustomerSalesPanel({
                         </div>
                       ) : null}
                     </td>
-                    <td className="py-2 pr-2 text-right tabular-nums">{item.units}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(item.units)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums">
                       {formatGbp(item.netSales)}
                     </td>
@@ -794,7 +795,7 @@ export function UnifiedCustomerSalesPanel({
                             void createOpportunity(
                               `sku:${item.sku}`,
                               `${item.sku} — ${company.name}`,
-                              `${company.name} has bought ${item.sku} (${item.units} units, ${formatGbp(item.netSales)} net ex VAT). Latest confirmed date: ${item.latestConfirmedDate ?? DATE_UNAVAILABLE}. No customer message was sent.`,
+                              `${company.name} has bought ${item.sku} (${formatQuantity(item.units)} units, ${formatGbp(item.netSales)} net ex VAT). Latest confirmed date: ${item.latestConfirmedDate ?? DATE_UNAVAILABLE}. No customer message was sent.`,
                             )
                           }
                         >
@@ -901,7 +902,7 @@ export function UnifiedProductSalesPanel({
           primary
         />
         <SiMetricCard label="Customers" value={String(data.summary.customers)} />
-        <SiMetricCard label="Signed units" value={data.summary.units} />
+        <SiMetricCard label="Signed units" value={formatQuantity(data.summary.units)} />
         <SiMetricCard label="Credits" value={formatGbp(data.summary.credits)} />
       </div>
       {!complete ? (
@@ -980,7 +981,7 @@ export function UnifiedProductSalesPanel({
                 <td className="py-2 pr-2">{statusLabel(item.status)}</td>
                 <td className="py-2 pr-2 font-mono text-[12px]">{item.accountCodes ?? "—"}</td>
                 <td className="py-2 pr-2">{item.salespersonName ?? "—"}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{item.units}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">{formatQuantity(item.units)}</td>
                 <td className="py-2 pr-2 text-right tabular-nums">{formatGbp(item.netSales)}</td>
                 <td className="py-2 pr-2 text-right tabular-nums">{formatGbp(item.credits)}</td>
                 <td className="py-2 pr-2 whitespace-nowrap">

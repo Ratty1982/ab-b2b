@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
+import { formatQuantity } from "@/lib/format-quantity";
 import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
 import {
   confirmAutopartHistoryImportFn,
@@ -393,7 +394,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               </div>
               <div>
                 <dt className="text-steel">Net quantity</dt>
-                <dd className="font-semibold">{workspace.globalHistory.netQuantity}</dd>
+                <dd className="font-semibold">{formatQuantity(workspace.globalHistory.netQuantity)}</dd>
               </div>
               <div>
                 <dt className="text-steel">Purchase date</dt>
@@ -422,7 +423,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             </div>
             <div>
               <dt className="text-steel">Historic net units</dt>
-              <dd className="font-semibold">{workspace.historic.netUnits}</dd>
+              <dd className="font-semibold">{formatQuantity(workspace.historic.netUnits)}</dd>
             </div>
             <div>
               <dt className="text-steel">Products</dt>
@@ -497,7 +498,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                       </td>
                       <td className="py-2 pr-2 font-mono">{line.partNumber}</td>
                       <td className="py-2 pr-2">{line.description || "—"}</td>
-                      <td className="py-2 pr-2 text-right">{line.quantity}</td>
+                      <td className="py-2 pr-2 text-right">{formatQuantity(line.quantity)}</td>
                       <td className="py-2 pr-2 text-right">{gbp(line.salesAmount)}</td>
                       <td className="py-2 text-steel">—</td>
                     </tr>
@@ -827,7 +828,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               {workspace.globalHistory.products.map((product) => (
                 <tr key={product.partNumber} className="border-b border-border/50">
                   <td className="py-2 font-mono">{product.partNumber}</td>
-                  <td className="py-2 text-right">{product.quantity}</td>
+                  <td className="py-2 text-right">{formatQuantity(product.quantity)}</td>
                   <td className="py-2 text-right">{gbp(product.netSalesExVat)}</td>
                 </tr>
               ))}
@@ -859,7 +860,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                 <tr key={product.partNumber} className="border-b border-border/50">
                   <td className="py-2 font-mono">{product.partNumber}</td>
                   <td className="py-2 text-right">{product.lineCount}</td>
-                  <td className="py-2 text-right">{product.quantity}</td>
+                  <td className="py-2 text-right">{formatQuantity(product.quantity)}</td>
                   <td className="py-2 text-right">{gbp(product.netSalesExVat)}</td>
                 </tr>
               ))}
@@ -885,7 +886,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               {workspace.topProducts.map((p) => (
                 <tr key={p.sku} className="border-b border-border/50">
                   <td className="py-2 font-mono">{p.sku}</td>
-                  <td className="py-2 text-right">{p.netUnits}</td>
+                  <td className="py-2 text-right">{formatQuantity(p.netUnits)}</td>
                   <td className="py-2 text-right">{gbp(p.netSpend)}</td>
                 </tr>
               ))}

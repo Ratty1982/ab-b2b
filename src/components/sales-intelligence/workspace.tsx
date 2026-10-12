@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { ArrowDown, ArrowRight, ArrowUp, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatGbp } from "@/domain/sales-intelligence";
+import { formatQuantity } from "@/lib/format-quantity";
 import {
   formatPeriodRangeLong,
   gapStatusHint,
@@ -205,7 +206,7 @@ export function SiMovementValue({
   emphasize?: boolean | undefined;
 }) {
   const dir = movementDirection(change);
-  const display = money ? formatGbp(String(change)) : String(change);
+  const display = money ? formatGbp(String(change)) : formatQuantity(change);
   const pct =
     percentChange == null
       ? null
@@ -354,10 +355,10 @@ export function SiComparisonSummary({
             <tr key={r.label} className="border-b border-border/40 last:border-0">
               <td className="px-3 py-2.5 pr-3 font-medium">{r.label}</td>
               <td className="px-3 py-2.5 pr-3 text-right tabular-nums">
-                {r.money ? formatGbp(String(r.selected)) : r.selected}
+                {r.money ? formatGbp(String(r.selected)) : formatQuantity(r.selected)}
               </td>
               <td className="px-3 py-2.5 pr-3 text-right tabular-nums text-steel">
-                {r.money ? formatGbp(String(r.comparison)) : r.comparison}
+                {r.money ? formatGbp(String(r.comparison)) : formatQuantity(r.comparison)}
               </td>
               <td className="px-3 py-2.5 text-right">
                 <SiMovementValue
