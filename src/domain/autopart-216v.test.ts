@@ -566,23 +566,30 @@ describe("216V freshness", () => {
 
   it("keeps a Saturday-dated snapshot visible over the weekend without an overdue warning", () => {
     const saturdayEvening = new Date("2026-10-10T18:30:00.000Z"); // 19:30 BST
-    const result = resolveAutopart216vFreshness({
-      lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
-      lastBusinessDate: "2026-10-10",
-      now: saturdayEvening,
-    });
-    expect(result.status).toBe("WEEKEND_USING_LAST_WORKING_DAY");
-    expect(result.stale).toBe(false);
-    expect(result.lastBusinessDate).toBeNull();
-    expect(result.warning).toMatch(/kept for review/i);
-    expect(
-      headline216vFeedHealth({
+    const sundayEvening = new Date("2026-10-11T18:30:00.000Z"); // 19:30 BST
+    for (const now of [saturdayEvening, sundayEvening]) {
+      const result = resolveAutopart216vFreshness({
+        lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
+        lastBusinessDate: "2026-10-10",
+        now,
+      });
+      expect(result.status).toBe("WEEKEND_DATE_REVIEW");
+      expect(result.stale).toBe(false);
+      expect(result.lastBusinessDate).toBeNull();
+      expect(result.warning).toMatch(/REVIEW REQUIRED/);
+      expect(result.warning).toMatch(/outstanding lines/i);
+      expect(result.warning).not.toMatch(/overdue/i);
+      const headline = headline216vFeedHealth({
         status: result.status,
         stale: result.stale,
-        lastBusinessDate: "2026-10-10",
-        now: saturdayEvening,
-      }).key,
-    ).toBe("CURRENT");
+        lastBusinessDate: result.lastBusinessDate,
+        now,
+      });
+      expect(headline.key).toBe("REVIEW_REQUIRED");
+      expect(headline.label).toBe("REVIEW REQUIRED");
+      expect(headline.tone).not.toBe("good");
+      expect(headline.key).not.toBe("REPORT_OVERDUE");
+    }
   });
 
   it("expects Monday's report and shows REPORT OVERDUE after the 90-minute grace", () => {
@@ -655,23 +662,25 @@ describe("216V freshness", () => {
     expect(result.nextExpectedLabel).toContain("13/10/2026");
   });
 
-  it("keeps Monday morning on the previous report without calling it overdue", () => {
+  it("keeps Monday morning on a weekend-only snapshot as review, not a green current feed", () => {
     const mondayMorning = new Date("2026-10-12T08:00:00.000Z"); // 09:00 BST
     const result = resolveAutopart216vFreshness({
       lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
       lastBusinessDate: "2026-10-10",
       now: mondayMorning,
     });
-    expect(result.status).toBe("CURRENT");
+    expect(result.status).toBe("WEEKEND_DATE_REVIEW");
+    expect(result.stale).toBe(false);
     expect(result.nextExpectedLabel).toContain("today");
-    expect(
-      headline216vFeedHealth({
-        status: result.status,
-        stale: result.stale,
-        lastBusinessDate: "2026-10-10",
-        now: mondayMorning,
-      }).key,
-    ).toBe("WAITING_FOR_TODAYS_REPORT");
+    const headline = headline216vFeedHealth({
+      status: result.status,
+      stale: result.stale,
+      lastBusinessDate: result.lastBusinessDate,
+      now: mondayMorning,
+    });
+    expect(headline.key).toBe("REVIEW_REQUIRED");
+    expect(headline.tone).not.toBe("good");
+    expect(headline.key).not.toBe("REPORT_OVERDUE");
   });
 
   it("headlines import failure when there is no usable snapshot", () => {

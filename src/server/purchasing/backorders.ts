@@ -10,7 +10,7 @@ import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
 import {
   describe216vWeekendReportReview,
-  previous216vSnapshot,
+  previous216vBaseline,
   resolveAutopart216vReportDate,
   verified216vReportDate,
 } from "@/domain/autopart-216v-report-date";
@@ -489,18 +489,14 @@ export type BackorderMovementRowView = {
 };
 
 async function loadPreviousCommittedSnapshot(current: LoadedSnapshot) {
-  if (current.previousSnapshotId) {
-    const linked = await prisma.autopartBackorderSnapshot.findFirst({
-      where: { id: current.previousSnapshotId, status: "COMMITTED" },
-      select: { id: true, importedAt: true, receivedAt: true, filename: true },
-    });
-    if (linked) return linked;
-  }
   const headers = await prisma.autopartBackorderSnapshot.findMany({
     where: { status: "COMMITTED", id: { not: current.id } },
     select: { id: true, filename: true, businessDate: true, receivedAt: true, importedAt: true },
   });
-  const previous = previous216vSnapshot(headers, current);
+  const linked = current.previousSnapshotId
+    ? headers.find((header) => header.id === current.previousSnapshotId) ?? null
+    : null;
+  const previous = previous216vBaseline(headers, current, linked);
   if (!previous) return null;
   return {
     id: previous.id,

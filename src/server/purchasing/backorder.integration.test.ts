@@ -1233,5 +1233,89 @@ describe("216V report chronology", () => {
       }
     }
   });
+
+  it("keeps a weekend-only snapshot and its lines, and does not call that feed current", async () => {
+    const saturdayName = `216V_20261010-only-${chrono}.csv`;
+    const imported = await confirmAutopart216vImport(adminId, {
+      text: oneRow(`ONLY${chrono}`, 5),
+      filename: saturdayName,
+      source: "EMAIL",
+      receivedAt: new Date("2026-10-10T17:01:37.000Z"),
+    });
+    try {
+      const lines = await prisma.autopartBackorderLine.findMany({ where: { snapshotId: imported.id } });
+      const outstanding = lines.filter((line) => line.changeStatus !== "CLEARED");
+      expect(outstanding).toHaveLength(1);
+      expect(outstanding[0]?.orderNumber).toBe(`ONLY${chrono}`);
+      expect(outstanding[0]?.outstandingQty.toString()).toBe("5");
+      const saturdayEvening = new Date("2026-10-10T18:30:00.000Z");
+      const review = resolveAutopart216vFreshness({
+        lastSuccessAt: new Date("2026-10-10T17:16:07.000Z"),
+        lastBusinessDate: imported.reportDate,
+        now: saturdayEvening,
+      });
+      expect(review.status).toBe("WEEKEND_DATE_REVIEW");
+      expect(review.stale).toBe(false);
+      const headline = headline216vFeedHealth({
+        status: review.status,
+        stale: review.stale,
+        lastBusinessDate: review.lastBusinessDate,
+        now: saturdayEvening,
+      });
+      expect(headline.key).toBe("REVIEW_REQUIRED");
+      expect(headline.tone).not.toBe("good");
+      expect(headline.key).not.toBe("REPORT_OVERDUE");
+    } finally {
+      await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: imported.id } });
+    }
+  });
+
+  it("ignores a previousSnapshotId that points at an unverified weekend snapshot", async () => {
+    const fridayName = `216V_20261023-${chrono}.csv`;
+    const saturdayName = `216V_20261024-${chrono}.csv`;
+    const mondayName = `216V_20261026-${chrono}.csv`;
+    const ids: string[] = [];
+    try {
+      const friday = await confirmAutopart216vImport(adminId, {
+        text: oneRow(`FRI${chrono}P`, 2),
+        filename: fridayName,
+        source: "EMAIL",
+        receivedAt: new Date("2026-10-23T17:02:00.000Z"),
+      });
+      ids.push(friday.id);
+      const saturday = await confirmAutopart216vImport(adminId, {
+        text: oneRow(`SAT${chrono}P`, 9),
+        filename: saturdayName,
+        source: "EMAIL",
+        receivedAt: new Date("2026-10-24T17:01:37.000Z"),
+      });
+      ids.push(saturday.id);
+      const monday = await confirmAutopart216vImport(adminId, {
+        text: oneRow(`MON${chrono}P`, 4),
+        filename: mondayName,
+        source: "EMAIL",
+        receivedAt: new Date("2026-10-26T17:20:00.000Z"),
+      });
+      ids.push(monday.id);
+      await prisma.autopartBackorderSnapshot.update({
+        where: { id: monday.id },
+        data: { previousSnapshotId: saturday.id },
+      });
+
+      const workspace = await getBackorderWorkspace(adminId, { movement: "NEW" });
+      expect(workspace.current?.snapshotId).toBe(monday.id);
+      expect(workspace.movement?.previousSnapshot?.id).toBe(friday.id);
+      expect(workspace.movement?.previousSnapshot?.id).not.toBe(saturday.id);
+      expect(workspace.movement?.previousSnapshot?.filename).toBe(fridayName);
+      const saturdayLines = await prisma.autopartBackorderLine.findMany({ where: { snapshotId: saturday.id } });
+      expect(saturdayLines.some((line) => line.orderNumber === `SAT${chrono}P` && line.changeStatus !== "CLEARED")).toBe(
+        true,
+      );
+    } finally {
+      if (ids.length) {
+        await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: { in: ids } } });
+      }
+    }
+  });
 });
 

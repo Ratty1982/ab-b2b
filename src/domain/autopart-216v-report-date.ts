@@ -239,3 +239,21 @@ export function previous216vSnapshot<T extends Autopart216vSnapshotChronology>(
   }
   return best;
 }
+
+/**
+ * Movement baseline. A stored previousSnapshotId is kept when it is a verified
+ * working day. An unverified weekend link is ignored so it cannot stand in for
+ * the previous Monday–Friday report.
+ */
+export function previous216vBaseline<T extends Autopart216vSnapshotChronology>(
+  rows: readonly T[],
+  current: T,
+  linked: T | null,
+): T | null {
+  const chronological = previous216vSnapshot(rows, current);
+  if (!linked || linked.id === current.id) return chronological;
+  const currentVerified = resolveAutopart216vReportDate(current).verifiedWorkingDay;
+  const linkedVerified = resolveAutopart216vReportDate(linked).verifiedWorkingDay;
+  if (currentVerified && !linkedVerified) return chronological;
+  return linked;
+}

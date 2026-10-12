@@ -3,6 +3,7 @@ import {
   compare216vSnapshotChronology,
   describe216vWeekendReportReview,
   pickCurrent216vSnapshot,
+  previous216vBaseline,
   previous216vSnapshot,
   reportDateFrom216vFilename,
   resolveAutopart216vReportDate,
@@ -127,6 +128,32 @@ describe("216V report date", () => {
     expect(pickCurrent216vSnapshot([friday, saturday])?.id).toBe("fri");
     expect(previous216vSnapshot([friday, saturday], saturday)?.id).toBe("fri");
     expect(pickCurrent216vSnapshot([monday, saturday])?.filename).toBe("216V_20261012.csv");
+  });
+
+  it("does not use a stored weekend snapshot as the previous verified weekday report", () => {
+    const friday = {
+      id: "fri",
+      filename: "216V_20261009.csv",
+      receivedAt: new Date("2026-10-09T17:02:00.000Z"),
+      importedAt: new Date("2026-10-09T17:05:00.000Z"),
+    };
+    const saturday = {
+      id: "sat",
+      filename: "216V_20261010.csv",
+      receivedAt: new Date("2026-10-10T17:01:37.000Z"),
+      importedAt: new Date("2026-10-12T17:16:07.000Z"),
+    };
+    const monday = {
+      id: "mon",
+      filename: "216V_20261012.csv",
+      receivedAt: new Date("2026-10-12T17:20:00.000Z"),
+      importedAt: new Date("2026-10-12T17:25:00.000Z"),
+    };
+    const rows = [friday, saturday, monday];
+    expect(previous216vBaseline(rows, monday, saturday)?.id).toBe("fri");
+    expect(previous216vBaseline(rows, monday, saturday)?.id).not.toBe("sat");
+    expect(previous216vBaseline([saturday, monday], monday, saturday)).toBeNull();
+    expect(previous216vBaseline(rows, monday, friday)?.id).toBe("fri");
   });
 
   it("breaks equal report dates by received time, then import time, then id", () => {

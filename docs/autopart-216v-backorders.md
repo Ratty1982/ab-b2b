@@ -108,7 +108,7 @@ Examples:
 
 ## Freshness
 
-Expected: Monday to Friday, ~18:15 Europe/London, 90-minute grace (overdue from 19:45). Freshness uses the verified Monday–Friday report date, not the import clock and not a weekend filename. After 19:45 Europe/London, a missing Monday–Friday report is REPORT OVERDUE, including Monday when Monday's file has not arrived. On Saturday and Sunday the latest verified working-day snapshot stays on screen, with no overdue warning only because a weekend file did not arrive. A weekend-dated file that is the only snapshot stays visible and flagged; it still does not count as Monday's report.
+Expected: Monday to Friday, ~18:15 Europe/London, 90-minute grace (overdue from 19:45). Freshness uses the verified Monday–Friday report date, not the import clock and not a weekend filename. After 19:45 Europe/London, a missing Monday–Friday report is REPORT OVERDUE, including Monday when Monday's file has not arrived. On Saturday and Sunday the latest verified working-day snapshot stays on screen, with no overdue warning only because a weekend file did not arrive. A weekend-dated file that is the only snapshot stays visible with its outstanding lines and shows REVIEW REQUIRED. It is not a green CURRENT feed, and the absence of a Saturday or Sunday file is not REPORT OVERDUE. It still does not count as Monday's report.
 
 ## Purchasing forecast
 

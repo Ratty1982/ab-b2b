@@ -18,6 +18,7 @@ export type Autopart216vFeedHealth =
   | "CURRENT"
   | "EXPECTED_REPORT_NOT_RECEIVED"
   | "WEEKEND_USING_LAST_WORKING_DAY"
+  | "WEEKEND_DATE_REVIEW"
   | "NO_SNAPSHOT";
 
 export type Autopart216vFreshness = {
@@ -103,6 +104,18 @@ export function resolveAutopart216vFreshness(input: {
 
   if (!working) {
     const lastWorking = previousLondonWorkingDate(today);
+    if (weekendObserved && !lastBusinessDate) {
+      return {
+        status: "WEEKEND_DATE_REVIEW",
+        stale: false,
+        expectedHour: hour,
+        lastBusinessDate: null,
+        expectedBusinessDate: lastWorking,
+        nextExpectedLabel,
+        warning:
+          "REVIEW REQUIRED. The only 216V snapshot is dated on a weekend. The file and its outstanding lines are kept. No Saturday or Sunday report is expected.",
+      };
+    }
     const stale = Boolean(lastBusinessDate && lastBusinessDate < lastWorking);
     return {
       status: stale ? "EXPECTED_REPORT_NOT_RECEIVED" : "WEEKEND_USING_LAST_WORKING_DAY",
@@ -113,9 +126,7 @@ export function resolveAutopart216vFreshness(input: {
       nextExpectedLabel,
       warning: stale
         ? "Latest 216V is older than the last working day. Showing last available snapshot — backorders were not cleared."
-        : weekendObserved
-          ? "A weekend-dated 216V file is kept for review. No Saturday or Sunday report is expected."
-          : null,
+        : null,
     };
   }
 
@@ -148,6 +159,19 @@ export function resolveAutopart216vFreshness(input: {
     };
   }
 
+  if (weekendObserved && !lastBusinessDate) {
+    return {
+      status: "WEEKEND_DATE_REVIEW",
+      stale: false,
+      expectedHour: hour,
+      lastBusinessDate: null,
+      expectedBusinessDate,
+      nextExpectedLabel,
+      warning:
+        "REVIEW REQUIRED. The only 216V snapshot is dated on a weekend. The file and its outstanding lines are kept. No Saturday or Sunday report is expected.",
+    };
+  }
+
   return {
     status: "CURRENT",
     stale: false,
@@ -176,7 +200,8 @@ export type Autopart216vFeedHeadline =
   | "WAITING_FOR_TODAYS_REPORT"
   | "REPORT_OVERDUE"
   | "IMPORT_FAILED"
-  | "NO_SNAPSHOT";
+  | "NO_SNAPSHOT"
+  | "REVIEW_REQUIRED";
 
 export const AUTOPART_216V_FEED_HEADLINE_LABEL: Record<Autopart216vFeedHeadline, string> = {
   CURRENT: "CURRENT",
@@ -184,6 +209,7 @@ export const AUTOPART_216V_FEED_HEADLINE_LABEL: Record<Autopart216vFeedHeadline,
   REPORT_OVERDUE: "REPORT OVERDUE",
   IMPORT_FAILED: "IMPORT FAILED",
   NO_SNAPSHOT: "WAITING FOR TODAY'S REPORT",
+  REVIEW_REQUIRED: "REVIEW REQUIRED",
 };
 
 /**
@@ -206,6 +232,9 @@ export function headline216vFeedHealth(input: {
   }
   if (input.status === "NO_SNAPSHOT") {
     return { key: "NO_SNAPSHOT", label: AUTOPART_216V_FEED_HEADLINE_LABEL.NO_SNAPSHOT, tone: "warn" };
+  }
+  if (input.status === "WEEKEND_DATE_REVIEW") {
+    return { key: "REVIEW_REQUIRED", label: AUTOPART_216V_FEED_HEADLINE_LABEL.REVIEW_REQUIRED, tone: "warn" };
   }
   const local = londonCivilTime(now);
   const today = londonBusinessDate(local);

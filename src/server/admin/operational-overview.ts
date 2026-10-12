@@ -377,6 +377,7 @@ async function loadFreshness(input: {
     if (headline.key === "IMPORT_FAILED") status = "failed";
     else if (resolved.status === "NO_SNAPSHOT") status = "no_data";
     else if (resolved.status === "EXPECTED_REPORT_NOT_RECEIVED") status = "late";
+    else if (resolved.status === "WEEKEND_DATE_REVIEW" || headline.key === "REVIEW_REQUIRED") status = "partial";
     else if (resolved.status === "CURRENT" && isLondonWorkingDayOngoing(now)) {
       const local = londonCivilTime(now);
       const due = (settings?.scheduleHour ?? 18) * 60 + AUTOPART_216V_SCHEDULE_MINUTE;
