@@ -106,7 +106,9 @@ function describePoll(data: {
   if (!data.ran) return { tone: "bad", message: data.reason ?? "Mailbox poll did not run." };
   if (data.errors.length) return { tone: "bad", message: data.errors.slice(0, 3).join(" ") };
   if (data.processed > 0) {
-    const detail = data.notes?.find((note) => note.includes("imported"));
+    const historical = data.notes?.find((note) => note.includes("older than the current snapshot"));
+    const detail = data.notes?.find((note) => note.includes(": imported "));
+    if (historical && !detail) return { tone: "warn", message: historical };
     return {
       tone: "good",
       message: detail ?? `Imported ${data.processed} 216V report${data.processed === 1 ? "" : "s"}.`,
@@ -235,12 +237,17 @@ function BackordersPage() {
       if (imported.duplicate) {
         setNotice({
           tone: "warn",
-          message: `Already imported (${imported.filename ?? file.name}). Snapshot unchanged: ${imported.orderCount} orders, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
+          message: `Already imported (${imported.filename ?? file.name}, report ${imported.reportDate}). No second snapshot was created.`,
+        });
+      } else if (!imported.becameCurrent) {
+        setNotice({
+          tone: "warn",
+          message: `Saved ${file.name} for history (report ${imported.reportDate}). It is older than the current snapshot, so the outstanding position was not replaced.`,
         });
       } else {
         setNotice({
           tone: "good",
-          message: `Imported ${file.name}: ${imported.orderCount} orders, ${imported.lineCount} lines, ${imported.accountCount} accounts, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
+          message: `Imported ${file.name}: report ${imported.reportDate}, ${imported.orderCount} orders, ${imported.lineCount} lines, ${imported.accountCount} accounts, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
         });
       }
       load();
@@ -453,7 +460,11 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
           <span>{headline.label}</span>
         </p>
         <span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot</span>{" "}
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Latest report date</span>{" "}
+          {freshness.latestReportDateLabel}
+        </span>
+        <span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Report received</span>{" "}
           {freshness.lastReceivedLabel}
         </span>
         {freshness.sourceLabel ? (
@@ -918,7 +929,11 @@ function SettingsBody({
             <dd className="mt-1">{AUTOPART_216V_SCHEDULE_LABEL}</dd>
           </div>
           <div>
-            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful report</dt>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Latest report date</dt>
+            <dd className="mt-1">{freshness?.latestReportDateLabel ?? "Never"}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Report received</dt>
             <dd className="mt-1">{freshness?.lastReceivedLabel ?? "Never"}</dd>
           </div>
           <div>
@@ -928,6 +943,10 @@ function SettingsBody({
           <div>
             <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful import</dt>
             <dd className="mt-1">{formatOrDash(formatOperationalDateTime(feed?.lastSuccessAt))}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot imported</dt>
+            <dd className="mt-1">{formatOrDash(formatOperationalDateTime(freshness?.currentSnapshotImportedAt))}</dd>
           </div>
           <div>
             <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last error</dt>

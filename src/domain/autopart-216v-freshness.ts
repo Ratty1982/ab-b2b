@@ -51,14 +51,18 @@ export function previousLondonWorkingDate(iso: string): string {
   return shiftBusinessDate(iso, -3);
 }
 
-export function next216vExpectedLabel(now = new Date()): string {
+/**
+ * Next report the feed still needs.
+ * A working day whose report is not the current snapshot stays "today", even after 18:15.
+ * Tomorrow is only next once today's report date is already current.
+ */
+export function next216vExpectedLabel(now = new Date(), lastReportDate: string | null = null): string {
   const local = londonCivilTime(now);
   const today = londonBusinessDate(local);
-  if (isLondonWorkingDayOngoing(now)) {
-    const minutes = local.hour * 60 + local.minute;
-    if (minutes < AUTOPART_216V_SCHEDULE_HOUR * 60 + AUTOPART_216V_SCHEDULE_MINUTE) {
-      return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London today`;
-    }
+  const time = `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London`;
+  const reportCoversToday = Boolean(lastReportDate && lastReportDate >= today);
+  if (isLondonWorkingDayOngoing(now) && !reportCoversToday) {
+    return `${time} today`;
   }
   let cursor = today;
   for (let i = 1; i <= 7; i++) {
@@ -67,10 +71,10 @@ export function next216vExpectedLabel(now = new Date()): string {
     const weekday = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
     if (weekday !== 0 && weekday !== 6) {
       const [yy, mm, dd] = cursor.split("-");
-      return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London ${dd}/${mm}/${yy}`;
+      return `${time} ${dd}/${mm}/${yy}`;
     }
   }
-  return `approximately ${pad(AUTOPART_216V_SCHEDULE_HOUR)}:${pad(AUTOPART_216V_SCHEDULE_MINUTE)} Europe/London next working day`;
+  return `${time} next working day`;
 }
 
 export function resolveAutopart216vFreshness(input: {
@@ -86,8 +90,8 @@ export function resolveAutopart216vFreshness(input: {
   const local = londonCivilTime(now);
   const today = londonBusinessDate(local);
   const working = isLondonWorkingDayOngoing(now);
-  const nextExpectedLabel = next216vExpectedLabel(now);
   const lastBusinessDate = input.lastBusinessDate;
+  const nextExpectedLabel = next216vExpectedLabel(now, lastBusinessDate);
 
   if (!input.lastSuccessAt || !lastBusinessDate) {
     return {

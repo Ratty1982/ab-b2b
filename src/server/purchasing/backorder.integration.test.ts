@@ -13,6 +13,7 @@ import {
   buildAutopart216vExpandedFixture,
   buildAutopart216vFixture,
 } from "@/domain/autopart-216v-fixture";
+import { dateOnlyIsoFromDate } from "@/domain/sales-history-period";
 import { confirmAutopart216vImport } from "@/server/purchasing/backorder-import";
 import {
   exportBackordersCsv,
@@ -1002,6 +1003,144 @@ describe("216V movement drill-down", () => {
     expect(ws.current?.newToday).toBe(0);
     expect(ws.current?.clearedSincePrevious).toBe(0);
     expect(ws.lines.total).toBe(5);
+  });
+});
+
+describe("216V report chronology", () => {
+  const chrono = `chrono-${stamp}`;
+
+  function oneRow(order: string, qty: number) {
+    return csv216v([
+      {
+        order,
+        account: "CHRONACC",
+        name: "Chronology Factors",
+        part: `BO-CHRON-${stamp}`,
+        desc: "Chronology part",
+        ref: order,
+        qty,
+        unit: "1.00",
+        value: qty.toFixed(2),
+      },
+    ]);
+  }
+
+  it("keeps Saturday's report date when that file is imported later, and does not let it replace Monday", async () => {
+    const settingsBefore = await prisma.autopartBackorderFeedSettings.findUnique({ where: { id: "default" } });
+    const saturdayName = `216V_20261010-${chrono}.csv`;
+    const mondayName = `216V_20261012-${chrono}.csv`;
+    const saturdayText = oneRow(`SAT${chrono}`, 9);
+    const mondayText = oneRow(`MON${chrono}`, 4);
+
+    const monday = await confirmAutopart216vImport(adminId, {
+      text: mondayText,
+      filename: mondayName,
+      source: "MANUAL",
+      receivedAt: new Date(),
+    });
+    expect(monday.duplicate).toBe(false);
+    expect(monday.becameCurrent).toBe(true);
+    expect(monday.reportDate).toBe("2026-10-12");
+
+    const saturday = await confirmAutopart216vImport(adminId, {
+      text: saturdayText,
+      filename: saturdayName,
+      source: "EMAIL",
+      receivedAt: new Date("2026-10-10T17:01:37.000Z"),
+    });
+    expect(saturday.duplicate).toBe(false);
+    expect(saturday.becameCurrent).toBe(false);
+    expect(saturday.reportDate).toBe("2026-10-10");
+
+    const saturdayRow = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({ where: { id: saturday.id } });
+    const mondayRow = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({
+      where: { id: monday.id },
+      include: { lines: true },
+    });
+    expect(dateOnlyIsoFromDate(saturdayRow.businessDate)).toBe("2026-10-10");
+    expect(dateOnlyIsoFromDate(mondayRow.businessDate)).toBe("2026-10-12");
+    expect((saturdayRow.diagnostics as { reportDateSource?: string }).reportDateSource).toBe("FILENAME");
+    const saturdayLines = await prisma.autopartBackorderLine.findMany({ where: { snapshotId: saturday.id } });
+    expect(saturdayLines.some((line) => line.orderNumber === `MON${chrono}`)).toBe(false);
+    expect(saturdayRow.previousSnapshotId).not.toBe(monday.id);
+
+    const workspace = await getBackorderWorkspace(adminId, {});
+    expect(workspace.freshness.filename).toBe(mondayName);
+    expect(workspace.freshness.latestReportDate).toBe("2026-10-12");
+    expect(workspace.current?.outstandingUnits).toBe(4);
+    expect(workspace.current?.snapshotId).toBe(monday.id);
+    expect(mondayRow.lines.some((line) => line.orderNumber === `MON${chrono}` && line.changeStatus !== "CLEARED")).toBe(
+      true,
+    );
+
+    const settingsAfter = await prisma.autopartBackorderFeedSettings.findUniqueOrThrow({ where: { id: "default" } });
+    expect(settingsAfter.lastPolledAt?.toISOString() ?? null).toBe(settingsBefore?.lastPolledAt?.toISOString() ?? null);
+    expect(settingsAfter.lastSuccessAt).not.toBeNull();
+
+    const again = await confirmAutopart216vImport(adminId, {
+      text: mondayText,
+      filename: mondayName,
+      source: "MANUAL",
+    });
+    expect(again.duplicate).toBe(true);
+    expect(again.id).toBe(monday.id);
+    expect(again.becameCurrent).toBe(true);
+    expect(await prisma.autopartBackorderSnapshot.count({ where: { fileHash: monday.fileHash } })).toBe(1);
+    const afterDuplicate = await getBackorderWorkspace(adminId, {});
+    expect(afterDuplicate.current?.snapshotId).toBe(monday.id);
+    expect(afterDuplicate.freshness.latestReportDate).toBe("2026-10-12");
+  });
+
+  it("imports an out-of-order mailbox batch by report date and does not duplicate the newer file", async () => {
+    const olderName = `216V_20261008-${chrono}.csv`;
+    const newerName = `216V_20261009-${chrono}.csv`;
+    const olderText = oneRow(`THU${chrono}`, 2);
+    const newerText = oneRow(`FRI${chrono}`, 3);
+    const olderEmail = {
+      uid: `uid-thu-${chrono}`,
+      messageId: `<thu-${chrono}@example.invalid>`,
+      from: "autopart@example.invalid",
+      subject: "216V Thursday",
+      receivedAt: new Date("2026-10-08T17:02:00.000Z"),
+      attachments: [{ filename: olderName, content: Buffer.from(olderText), contentType: "text/csv" }],
+    };
+    const newerEmail = {
+      uid: `uid-fri-${chrono}`,
+      messageId: `<fri-${chrono}@example.invalid>`,
+      from: "autopart@example.invalid",
+      subject: "216V Friday",
+      receivedAt: new Date("2026-10-09T17:02:00.000Z"),
+      attachments: [{ filename: newerName, content: Buffer.from(newerText), contentType: "text/csv" }],
+    };
+    const batch = await process216vEmailBatch({
+      emails: [newerEmail, olderEmail],
+      actorUserId: adminId,
+      source: "EMAIL",
+    });
+    expect(batch.processed).toBe(2);
+    expect(batch.errors).toEqual([]);
+    const older = await prisma.autopartBackorderSnapshot.findFirstOrThrow({ where: { filename: olderName } });
+    const newer = await prisma.autopartBackorderSnapshot.findFirstOrThrow({ where: { filename: newerName } });
+    expect(dateOnlyIsoFromDate(older.businessDate)).toBe("2026-10-08");
+    expect(dateOnlyIsoFromDate(newer.businessDate)).toBe("2026-10-09");
+    // Newer mail was first in the batch. Report-date order still commits Thursday before Friday.
+    expect(older.importedAt.getTime()).toBeLessThan(newer.importedAt.getTime());
+    expect(older.previousSnapshotId).not.toBe(newer.id);
+    expect(newer.previousSnapshotId).not.toBe(newer.id);
+
+    const duplicate = await process216vEmailBatch({
+      emails: [newerEmail],
+      actorUserId: adminId,
+      source: "EMAIL",
+    });
+    expect(duplicate.processed).toBe(0);
+    expect(duplicate.duplicatesIgnored).toBe(1);
+    expect(await prisma.autopartBackorderSnapshot.count({ where: { filename: newerName } })).toBe(1);
+
+    const workspace = await getBackorderWorkspace(adminId, {});
+    expect(workspace.freshness.filename).not.toBe(olderName);
+    expect(workspace.freshness.filename).not.toBe(newerName);
+    expect(workspace.freshness.latestReportDate && workspace.freshness.latestReportDate > "2026-10-09").toBe(true);
   });
 });
 

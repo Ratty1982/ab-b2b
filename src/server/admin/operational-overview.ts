@@ -36,7 +36,9 @@ import {
   type OperationalAttentionItem,
   type SalesDayPoint,
 } from "@/domain/operational-dashboard";
-import { dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
+import { todayLondonDateOnly } from "@/domain/sales-history-period";
+import { resolveAutopart216vReportDate } from "@/domain/autopart-216v-report-date";
+import { currentCommitted216vSnapshot } from "@/server/purchasing/backorder-chronology";
 import { moneyToString, parseMoney } from "@/domain/money";
 import { formatGbpIncVat } from "@/domain/admin-dashboard";
 import { formatOperationalDateTime, londonCalendarDayBounds, londonWallTimeToUtc } from "@/lib/datetime";
@@ -199,11 +201,7 @@ async function loadBackorderSummary(actorUserId: string): Promise<NonNullable<Op
 
 async function loadConditionCounts(): Promise<NonNullable<OperationalOverview["conditions"]>> {
   try {
-    const snapshot = await prisma.autopartBackorderSnapshot.findFirst({
-      where: { status: "COMMITTED" },
-      orderBy: { importedAt: "desc" },
-      select: { id: true },
-    });
+    const snapshot = await currentCommitted216vSnapshot();
     if (!snapshot) return { error: null, items: [] };
     const grouped = await prisma.$queryRaw<Array<{ code: string; count: number }>>`
       SELECT COALESCE(p."conditionCode", pm."conditionCode") AS code,
@@ -359,13 +357,9 @@ async function loadFreshness(input: {
     );
   }
   if (input.canSeePurchasing) {
-    const snapshot = await prisma.autopartBackorderSnapshot.findFirst({
-      where: { status: "COMMITTED" },
-      orderBy: { importedAt: "desc" },
-      select: { importedAt: true, businessDate: true },
-    });
+    const snapshot = await currentCommitted216vSnapshot();
     const settings = await prisma.autopartBackorderFeedSettings.findUnique({ where: { id: "default" } });
-    const lastBusinessDate = snapshot ? dateOnlyIsoFromDate(snapshot.businessDate) : null;
+    const lastBusinessDate = snapshot ? resolveAutopart216vReportDate(snapshot).iso : null;
     const resolved = resolveAutopart216vFreshness({
       lastSuccessAt: snapshot?.importedAt ?? settings?.lastSuccessAt ?? null,
       lastBusinessDate,

@@ -516,6 +516,58 @@ describe("216V freshness", () => {
     ).toBe("WAITING_FOR_TODAYS_REPORT");
   });
 
+  it("does not treat Saturday's report imported on Monday as Monday's report", () => {
+    const mondayEvening = new Date("2026-10-12T20:53:05.000Z"); // 21:53 BST
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-12T17:16:07.000Z"), // 18:16 BST import
+      lastBusinessDate: "2026-10-10",
+      now: mondayEvening,
+    });
+    expect(result.status).toBe("EXPECTED_REPORT_NOT_RECEIVED");
+    expect(result.stale).toBe(true);
+    expect(result.expectedBusinessDate).toBe("2026-10-12");
+    expect(result.nextExpectedLabel).toContain("today");
+    expect(result.nextExpectedLabel).not.toContain("13/10/2026");
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: "2026-10-10",
+        now: mondayEvening,
+      }).key,
+    ).toBe("REPORT_OVERDUE");
+  });
+
+  it("moves the next expected report to Tuesday only after Monday's report is current", () => {
+    const mondayEvening = new Date("2026-10-12T20:53:05.000Z");
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-12T17:20:00.000Z"),
+      lastBusinessDate: "2026-10-12",
+      now: mondayEvening,
+    });
+    expect(result.status).toBe("CURRENT");
+    expect(result.nextExpectedLabel).toContain("13/10/2026");
+  });
+
+  it("keeps Monday morning on the previous report without calling it overdue", () => {
+    const mondayMorning = new Date("2026-10-12T08:00:00.000Z"); // 09:00 BST
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
+      lastBusinessDate: "2026-10-10",
+      now: mondayMorning,
+    });
+    expect(result.status).toBe("CURRENT");
+    expect(result.nextExpectedLabel).toContain("today");
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: "2026-10-10",
+        now: mondayMorning,
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
+  });
+
   it("headlines import failure when there is no usable snapshot", () => {
     const result = resolveAutopart216vFreshness({
       lastSuccessAt: null,

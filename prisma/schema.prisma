@@ -3385,7 +3385,7 @@ model AutopartBackorderSnapshot {
   filename             String?
   fileHash             String                          @unique
   source               String                          @default("EMAIL")
-  /// Europe/London civil date of import (UTC midnight of that date).
+  /// Report date (UTC midnight of the Europe/London civil day). Filename date, then email received day, then import day. Not rewritten for older rows.
   businessDate         DateTime                        @db.Date
   importedAt           DateTime                        @default(now())
   receivedAt           DateTime?

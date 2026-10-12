@@ -8,8 +8,9 @@ import type { AutopartBackorderChangeStatus } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
-import { dateOnlyIsoFromDate } from "@/domain/sales-history-period";
-import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
+import { previous216vSnapshot, resolveAutopart216vReportDate } from "@/domain/autopart-216v-report-date";
+import { currentCommitted216vSnapshot } from "@/server/purchasing/backorder-chronology";
+import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import {
   AUTOPART_PRODUCT_KIND_LABEL,
   classifyAutopartProduct,
@@ -26,7 +27,7 @@ import {
   type Autopart216vAttentionId,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
-import { next216vExpectedLabel, resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
+import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
 import { requireBackorderManage } from "@/server/purchasing/backorder-import";
 import {
   AUTOPART_216V_MOVEMENTS,
@@ -430,9 +431,10 @@ const lineInclude = {
 } as const;
 
 async function loadLatestSnapshot() {
-  return prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED" },
-    orderBy: { importedAt: "desc" },
+  const current = await currentCommitted216vSnapshot();
+  if (!current) return null;
+  return prisma.autopartBackorderSnapshot.findUnique({
+    where: { id: current.id },
     include: { lines: { include: lineInclude } },
   });
 }
@@ -482,11 +484,25 @@ export type BackorderMovementRowView = {
 };
 
 async function loadPreviousCommittedSnapshot(current: LoadedSnapshot) {
-  return prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED", importedAt: { lt: current.importedAt }, id: { not: current.id } },
-    orderBy: { importedAt: "desc" },
-    select: { id: true, importedAt: true, receivedAt: true, filename: true },
+  if (current.previousSnapshotId) {
+    const linked = await prisma.autopartBackorderSnapshot.findFirst({
+      where: { id: current.previousSnapshotId, status: "COMMITTED" },
+      select: { id: true, importedAt: true, receivedAt: true, filename: true },
+    });
+    if (linked) return linked;
+  }
+  const headers = await prisma.autopartBackorderSnapshot.findMany({
+    where: { status: "COMMITTED", id: { not: current.id } },
+    select: { id: true, filename: true, businessDate: true, receivedAt: true, importedAt: true },
   });
+  const previous = previous216vSnapshot(headers, current);
+  if (!previous) return null;
+  return {
+    id: previous.id,
+    importedAt: previous.importedAt,
+    receivedAt: previous.receivedAt,
+    filename: previous.filename,
+  };
 }
 
 function movementSort(a: BackorderMovementRowView, b: BackorderMovementRowView) {
@@ -666,11 +682,7 @@ async function feedSettingsRow() {
 }
 
 export async function outstandingBackorderUnitsBySku(): Promise<Map<string, number>> {
-  const latest = await prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED" },
-    orderBy: { importedAt: "desc" },
-    select: { id: true },
-  });
+  const latest = await currentCommitted216vSnapshot();
   const out = new Map<string, number>();
   if (!latest) return out;
   const grouped = await prisma.autopartBackorderLine.groupBy({
@@ -689,7 +701,8 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
   const input = listInput.parse(raw ?? {});
   const [snapshot, settings] = await Promise.all([loadLatestSnapshot(), feedSettingsRow()]);
   const now = new Date();
-  const lastBusinessDate = snapshot ? dateOnlyIsoFromDate(snapshot.businessDate) : null;
+  const report = snapshot ? resolveAutopart216vReportDate(snapshot) : null;
+  const lastBusinessDate = report?.iso ?? null;
   const freshness = resolveAutopart216vFreshness({
     lastSuccessAt: snapshot?.importedAt ?? settings.lastSuccessAt,
     lastBusinessDate,
@@ -767,7 +780,9 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",
-      nextExpectedLabel: next216vExpectedLabel(now),
+      latestReportDate: lastBusinessDate,
+      latestReportDateLabel: formatOrDash(formatDate(lastBusinessDate)),
+      currentSnapshotImportedAt: snapshot?.importedAt.toISOString() ?? null,
       filename: snapshot?.filename ?? null,
       emptyValid: snapshot?.emptyValid ?? false,
       source: snapshot?.source ?? null,
@@ -838,18 +853,23 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
       select: {
         outstandingQty: true,
         changeStatus: true,
-        snapshot: { select: { businessDate: true, importedAt: true } },
+        snapshot: {
+          select: { filename: true, businessDate: true, receivedAt: true, importedAt: true },
+        },
       },
-      orderBy: { snapshot: { businessDate: "asc" } },
     }),
     Promise.resolve(enrichLines([current as unknown as LineRow])[0]!),
     import("@/server/purchasing/fba-stock").then((mod) => mod.fbaQtyForMatchKey(current.partMatchKey)),
   ]);
-  const timeline = history.map((h) => ({
-    date: dateOnlyIsoFromDate(h.snapshot.businessDate),
-    qty: num(h.outstandingQty),
-    status: h.changeStatus,
-  }));
+  const timeline = history
+    .map((h) => ({
+      date: resolveAutopart216vReportDate(h.snapshot).iso,
+      qty: num(h.outstandingQty),
+      status: h.changeStatus,
+      sortAt: h.snapshot.receivedAt?.getTime() ?? h.snapshot.importedAt.getTime(),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.sortAt - b.sortAt)
+    .map(({ sortAt: _sortAt, ...row }) => row);
   return {
     line: enriched,
     fbaQty,

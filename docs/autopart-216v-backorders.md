@@ -48,9 +48,11 @@ When the same base repeats in one file, Customer Order / Reference is a secondar
 
 Each successful import is an `AutopartBackorderSnapshot` with `AutopartBackorderLine` rows.
 
-The latest **COMMITTED** snapshot is the current outstanding position. Previous snapshots are retained.
+The current outstanding position is the **COMMITTED** snapshot with the latest report date. Tie-break is email received time, then import time, then id. Import time alone never makes an older report current. Previous snapshots stay for history and audit. A duplicate file hash does not create a second snapshot; if that file is already the latest report, it remains current.
 
-Comparison vs the previous successful snapshot:
+Report date comes from `216V_YYYYMMDD` in the filename, then the email received day, then the import day. A mailbox poll updates the poll clock only. It updates last successful import only when a file is actually committed, and that timestamp is not the report date.
+
+Comparison vs the previous report in that chronology:
 
 | Status | Meaning |
 | --- | --- |
@@ -98,7 +100,7 @@ Examples:
 
 ## Freshness
 
-Expected: working days, ~18:15 Europe/London, 90-minute grace. Weekends use the last working day's report and do not alert merely because Saturday/Sunday had no file.
+Expected: working days, ~18:15 Europe/London, 90-minute grace. Freshness uses the report date, not the import clock. After 19:45 Europe/London, a missing working-day report is overdue and the next expected report stays today. Weekends use the last working day's report and do not alert merely because Saturday/Sunday had no file.
 
 ## Purchasing forecast
 
