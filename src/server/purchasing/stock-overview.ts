@@ -3,6 +3,7 @@
  * Amazon FBA stays on AutopartLocationStock and is never added to sellable stock.
  * This module only reads stock. It does not import, adjust, or write stock back.
  */
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AUTOPART_PRODUCT_KIND_LABEL, classifyAutopartProduct } from "@/domain/autopart-product";
@@ -18,11 +19,8 @@ import { resolvePlanningSupplier } from "@/domain/purchasing-planner";
 import { sellableQuantityFromAvail, skuMatchKey, warehouseDisplayName } from "@/domain/stock";
 import {
   STOCK_VALUE_HELP,
-  accumulateOverviewValue,
   configuredReorderPoint,
-  emptyOverviewValue,
   fbaImportHealth,
-  finishOverviewValue,
   overviewLineValues,
   overviewSellableQty,
   overviewStatusLabel,
@@ -38,7 +36,6 @@ import { requirePurchasingAccess } from "@/server/rbac/guards";
 
 const UK_FBA_CODE = fbaLocationForImport("UK")?.locationCode ?? FBA_LOCATION_CODE;
 const PAGE_SIZE = 50;
-const EXPORT_BATCH = 500;
 const EXPORT_LIMIT = 20000;
 
 const querySchema = z.object({
@@ -385,18 +382,45 @@ function presentRow(row: {
   };
 }
 
-/** Parts at or below a stored safety-stock quantity. No fixed quantity band. */
-async function lowStockProductIds(): Promise<string[]> {
-  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+/**
+ * Parts at or below a stored safety-stock quantity. No fixed quantity band.
+ * Variant safety stock wins, including when it is the only configured value.
+ * Starts from the settings tables so the product master is not scanned.
+ */
+function lowStockIdQuery() {
+  return Prisma.sql`
     SELECT p.id
-    FROM "AutopartProduct" p
-    LEFT JOIN "VariantPurchasingSettings" vps ON vps."variantId" = p."catalogueVariantId"
-    LEFT JOIN "AutopartProductPurchasingSettings" aps ON aps."autopartProductId" = p.id
+    FROM "VariantPurchasingSettings" vps
+    INNER JOIN "AutopartProduct" p ON p."catalogueVariantId" = vps."variantId"
     WHERE p."availQty" > 0
-      AND COALESCE(vps."safetyStockQty", aps."safetyStockQty") IS NOT NULL
-      AND p."availQty" <= COALESCE(vps."safetyStockQty", aps."safetyStockQty")
+      AND vps."safetyStockQty" IS NOT NULL
+      AND p."availQty" <= vps."safetyStockQty"
+    UNION
+    SELECT p.id
+    FROM "AutopartProductPurchasingSettings" aps
+    INNER JOIN "AutopartProduct" p ON p.id = aps."autopartProductId"
+    LEFT JOIN "VariantPurchasingSettings" vps ON vps."variantId" = p."catalogueVariantId"
+    WHERE p."availQty" > 0
+      AND vps."safetyStockQty" IS NULL
+      AND aps."safetyStockQty" IS NOT NULL
+      AND p."availQty" <= aps."safetyStockQty"
   `;
+}
+
+async function lowStockProductIds(): Promise<string[]> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>(lowStockIdQuery());
   return rows.map((row) => row.id);
+}
+
+/** Summary card count. Limited to the current feed, which is what the card displays. */
+async function currentFeedLowStockCount(): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ count: number }>>(Prisma.sql`
+    SELECT COUNT(*)::int AS count
+    FROM "AutopartProduct" feed
+    WHERE feed."presentInLatestFeed" = true
+      AND feed.id IN (${lowStockIdQuery()})
+  `);
+  return Number(rows[0]?.count ?? 0);
 }
 
 async function catalogueSellableUnits(): Promise<number> {
@@ -414,10 +438,10 @@ async function catalogueSellableUnits(): Promise<number> {
   return Number(rows[0]?.sellable ?? 0);
 }
 
-async function positionSummary(lowIds: string[]) {
+async function positionSummary(lowPartNumbers: number) {
   const current = { presentInLatestFeed: true };
   const fba = { locationCode: UK_FBA_CODE };
-  const [feed, physical, out, low, sellableUnits, reserved, fbaUnits, fbaSkus, linked] =
+  const [feed, physical, out, sellableUnits, reserved, fbaUnits, fbaSkus, linked] =
     await Promise.all([
       prisma.autopartProduct.aggregate({
         where: current,
@@ -430,9 +454,6 @@ async function positionSummary(lowIds: string[]) {
         _sum: { physicalQty: true },
       }),
       prisma.autopartProduct.count({ where: { ...current, availQty: { lte: 0 } } }),
-      lowIds.length === 0
-        ? Promise.resolve(0)
-        : prisma.autopartProduct.count({ where: { ...current, id: { in: lowIds } } }),
       catalogueSellableUnits(),
       prisma.inventory.aggregate({
         where: { variant: { autopartProduct: { is: { presentInLatestFeed: true } } } },
@@ -449,7 +470,7 @@ async function positionSummary(lowIds: string[]) {
     physicalKnown,
     unavailableUnits: reserved._sum.qtyReserved ?? 0,
     sellableUnits,
-    lowPartNumbers: low,
+    lowPartNumbers,
     outPartNumbers: out,
     incomingUnits: feed._sum.incomingQty ?? 0,
     catalogueLinked: linked,
@@ -550,57 +571,222 @@ async function supplierOptions() {
   });
 }
 
-const valueSelect = {
-  physicalQty: true,
-  availQty: true,
-  latestCost: true,
-  catalogueVariantId: true,
-  catalogueVariant: { select: { inventory: { select: { qtyReserved: true } } } },
-  productSuppliers: {
-    where: { active: true },
-    select: {
-      isPreferred: true,
-      active: true,
-      unitCost: true,
-      supplier: { select: { id: true, name: true, active: true } },
-    },
-  },
-} as const;
+function likeContains(value: string): string {
+  return `%${value.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+}
 
-async function filteredValuation(
-  where: import("@prisma/client").Prisma.AutopartProductWhereInput,
-): Promise<OverviewValueTotals> {
-  const totals = emptyOverviewValue();
-  let cursor: string | undefined;
-  for (;;) {
-    const batch = await prisma.autopartProduct.findMany({
-      where,
-      select: { id: true, ...valueSelect },
-      orderBy: { id: "asc" },
-      take: 500,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
-    for (const row of batch) {
-      const linked = Boolean(row.catalogueVariantId);
-      const reserved = row.catalogueVariant
-        ? row.catalogueVariant.inventory.reduce((sum, item) => sum + item.qtyReserved, 0)
-        : null;
-      const supplier = supplierView(row.productSuppliers);
-      accumulateOverviewValue(
-        totals,
-        overviewLineValues({
-          physicalQty: row.physicalQty,
-          sellableQty: overviewSellableQty(linked, row.availQty, reserved),
-          supplierUnitCost: supplier.supplierUnitCost,
-          latestCost: decimalText(row.latestCost),
-        }),
-      );
-    }
-    const last = batch[batch.length - 1];
-    if (!last || batch.length < 500) break;
-    cursor = last.id;
+/** Same predicates as overviewWhere, kept in SQL so totals are one aggregate. */
+function valuationPredicates(input: StockOverviewQuery, lowIds: string[]): Prisma.Sql[] {
+  const q = input.q?.trim() ?? "";
+  const position = input.position ?? "all";
+  const catalogue = input.catalogue ?? "all";
+  const feed = input.feed ?? "current";
+  const brand = input.brand?.trim() ?? "";
+  const warehouse = input.warehouse?.trim() ?? "";
+  const supplier = input.supplier?.trim() ?? "";
+  const parts: Prisma.Sql[] = [];
+  if (feed === "historic") parts.push(Prisma.sql`p."presentInLatestFeed" = false`);
+  else if (feed === "current") parts.push(Prisma.sql`p."presentInLatestFeed" = true`);
+  if (position === "in" || position === "low" || position === "out") {
+    parts.push(Prisma.sql`p."presentInLatestFeed" = true`);
   }
-  return finishOverviewValue(totals);
+  if (position === "unknown") parts.push(Prisma.sql`p."presentInLatestFeed" = false`);
+  if (catalogue === "catalogue") parts.push(Prisma.sql`p."catalogueVariantId" IS NOT NULL`);
+  if (catalogue === "external" || brand === "unlinked") {
+    parts.push(Prisma.sql`p."catalogueVariantId" IS NULL`);
+  }
+  if (brand && brand !== "unlinked") {
+    parts.push(Prisma.sql`
+      EXISTS (
+        SELECT 1 FROM "ProductVariant" v
+        INNER JOIN "Product" pr ON pr.id = v."productId"
+        WHERE v.id = p."catalogueVariantId" AND pr."brandId" = ${brand}
+      )
+    `);
+  }
+  if (warehouse) {
+    parts.push(Prisma.sql`
+      EXISTS (
+        SELECT 1 FROM "Inventory" i
+        WHERE i."variantId" = p."catalogueVariantId" AND i."warehouseId" = ${warehouse}
+      )
+    `);
+  }
+  if (supplier === "unassigned") {
+    parts.push(Prisma.sql`
+      NOT EXISTS (
+        SELECT 1 FROM "ProductSupplier" ps
+        INNER JOIN "Supplier" su ON su.id = ps."supplierId"
+        WHERE ps."autopartProductId" = p.id AND ps.active = true AND su.active = true
+      )
+    `);
+  } else if (supplier) {
+    parts.push(Prisma.sql`
+      EXISTS (
+        SELECT 1 FROM "ProductSupplier" ps
+        INNER JOIN "Supplier" su ON su.id = ps."supplierId"
+        WHERE ps."autopartProductId" = p.id
+          AND ps."supplierId" = ${supplier}
+          AND ps.active = true
+          AND su.active = true
+      )
+    `);
+  }
+  if (position === "in" || position === "low") parts.push(Prisma.sql`p."availQty" > 0`);
+  if (position === "in" && lowIds.length > 0) parts.push(Prisma.sql`NOT (p.id = ANY(${lowIds}))`);
+  if (position === "low") {
+    parts.push(lowIds.length > 0 ? Prisma.sql`p.id = ANY(${lowIds})` : Prisma.sql`FALSE`);
+  }
+  if (position === "out") parts.push(Prisma.sql`p."availQty" <= 0`);
+  if (position === "incoming") parts.push(Prisma.sql`p."incomingQty" > 0`);
+  if (position === "fba") {
+    parts.push(Prisma.sql`
+      EXISTS (
+        SELECT 1 FROM "AutopartLocationStock" loc
+        WHERE loc."autopartProductId" = p.id
+          AND loc."locationCode" = ${UK_FBA_CODE}
+          AND loc."availableQty" > 0
+      )
+    `);
+  }
+  if (q) {
+    const like = likeContains(q);
+    const matchLike = likeContains(q.toUpperCase());
+    const escape = "\\";
+    parts.push(Prisma.sql`(
+      p.sku ILIKE ${like} ESCAPE ${escape}
+      OR COALESCE(p.description, '') ILIKE ${like} ESCAPE ${escape}
+      OR p."matchKey" LIKE ${matchLike} ESCAPE ${escape}
+      OR COALESCE(p."groupCode", '') ILIKE ${like} ESCAPE ${escape}
+      OR EXISTS (
+        SELECT 1 FROM "ProductVariant" v
+        LEFT JOIN "Product" pr ON pr.id = v."productId"
+        LEFT JOIN "Brand" b ON b.id = pr."brandId"
+        WHERE v.id = p."catalogueVariantId"
+          AND (
+            v.sku ILIKE ${like} ESCAPE ${escape}
+            OR COALESCE(v.barcode, '') ILIKE ${like} ESCAPE ${escape}
+            OR pr.name ILIKE ${like} ESCAPE ${escape}
+            OR b.name ILIKE ${like} ESCAPE ${escape}
+          )
+      )
+    )`);
+  }
+  return parts;
+}
+
+function gbpTotal(value: { toFixed(digits: number): string } | string | null): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string") return value.toFixed(2);
+  const negative = value.startsWith("-");
+  const digits = negative ? value.slice(1) : value;
+  const [whole, frac = ""] = digits.split(".");
+  return `${negative ? "-" : ""}${whole}.${frac.padEnd(2, "0").slice(0, 2)}`;
+}
+
+/**
+ * One aggregate for the filtered set. Supplier links are collapsed before the
+ * product row is valued, so several suppliers cannot duplicate quantity or value.
+ * FBA location stock is not read. Missing costs stay out of the money totals.
+ */
+async function filteredValuation(
+  input: StockOverviewQuery,
+  lowIds: string[],
+): Promise<OverviewValueTotals> {
+  const predicates = valuationPredicates(input, lowIds);
+  const whereSql =
+    predicates.length > 0 ? Prisma.sql`WHERE ${Prisma.join(predicates, " AND ")}` : Prisma.empty;
+  const rows = await prisma.$queryRaw<
+    Array<{
+      products: number;
+      missingCost: number;
+      valuedPhysical: number;
+      valuedSellable: number;
+      physicalValue: { toFixed(digits: number): string } | string | null;
+      sellableValue: { toFixed(digits: number): string } | string | null;
+    }>
+  >(Prisma.sql`
+    WITH supplier_choice AS (
+      SELECT
+        ps."autopartProductId" AS product_id,
+        COUNT(*) FILTER (WHERE ps."isPreferred")::int AS pref_count,
+        COUNT(*)::int AS usable_count,
+        MAX(ps."unitCost") FILTER (WHERE ps."isPreferred") AS pref_cost,
+        MAX(ps."unitCost") AS only_cost
+      FROM "ProductSupplier" ps
+      INNER JOIN "Supplier" su ON su.id = ps."supplierId"
+      WHERE ps.active = true
+        AND su.active = true
+        AND ps."autopartProductId" IS NOT NULL
+      GROUP BY ps."autopartProductId"
+    ),
+    reserved AS (
+      SELECT "variantId", SUM("qtyReserved")::int AS reserved
+      FROM "Inventory"
+      GROUP BY "variantId"
+    ),
+    base AS (
+      SELECT
+        p."physicalQty",
+        CASE
+          WHEN COALESCE(s.pref_count, 0) = 1 THEN s.pref_cost
+          WHEN COALESCE(s.pref_count, 0) = 0 AND COALESCE(s.usable_count, 0) = 1 THEN s.only_cost
+          ELSE NULL
+        END AS supplier_cost,
+        p."latestCost",
+        CASE
+          WHEN p."catalogueVariantId" IS NULL THEN NULL
+          ELSE GREATEST(0, p."availQty" - GREATEST(0, COALESCE(inv.reserved, 0)))
+        END AS sellable_qty
+      FROM "AutopartProduct" p
+      LEFT JOIN supplier_choice s ON s.product_id = p.id
+      LEFT JOIN reserved inv ON inv."variantId" = p."catalogueVariantId"
+      ${whereSql}
+    ),
+    priced AS (
+      SELECT
+        "physicalQty",
+        sellable_qty,
+        CASE
+          WHEN supplier_cost IS NOT NULL AND supplier_cost > 0 THEN supplier_cost
+          WHEN "latestCost" IS NOT NULL AND "latestCost" > 0 THEN "latestCost"
+          ELSE NULL
+        END AS unit_cost
+      FROM base
+    ),
+    lines AS (
+      SELECT
+        unit_cost,
+        CASE
+          WHEN unit_cost IS NULL OR "physicalQty" IS NULL THEN NULL
+          WHEN "physicalQty" <= 0 THEN 0::numeric
+          ELSE ROUND(("physicalQty"::numeric) * unit_cost, 2)
+        END AS physical_line,
+        CASE
+          WHEN unit_cost IS NULL OR sellable_qty IS NULL THEN NULL
+          WHEN sellable_qty <= 0 THEN 0::numeric
+          ELSE ROUND((sellable_qty::numeric) * unit_cost, 2)
+        END AS sellable_line
+      FROM priced
+    )
+    SELECT
+      COUNT(*)::int AS products,
+      COUNT(*) FILTER (WHERE unit_cost IS NULL)::int AS "missingCost",
+      COUNT(physical_line)::int AS "valuedPhysical",
+      COUNT(sellable_line)::int AS "valuedSellable",
+      SUM(physical_line) AS "physicalValue",
+      SUM(sellable_line) AS "sellableValue"
+    FROM lines
+  `);
+  const row = rows[0];
+  return {
+    physicalValue: gbpTotal(row?.physicalValue ?? null),
+    sellableValue: gbpTotal(row?.sellableValue ?? null),
+    missingCost: Number(row?.missingCost ?? 0),
+    products: Number(row?.products ?? 0),
+    valuedPhysical: Number(row?.valuedPhysical ?? 0),
+    valuedSellable: Number(row?.valuedSellable ?? 0),
+  };
 }
 
 export async function getStockOverview(actorUserId: string, raw: unknown) {
@@ -609,7 +795,7 @@ export async function getStockOverview(actorUserId: string, raw: unknown) {
   const position = input.position ?? "all";
   const lowIds = position === "low" || position === "in" ? await lowStockProductIds() : [];
   const { where, page, sort } = overviewWhere(input, lowIds);
-  const [total, rows, summaryLowIds, fba] = await Promise.all([
+  const [total, rows, lowPartNumbers, fba] = await Promise.all([
     prisma.autopartProduct.count({ where }),
     prisma.autopartProduct.findMany({
       where,
@@ -618,12 +804,12 @@ export async function getStockOverview(actorUserId: string, raw: unknown) {
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
-    position === "low" || position === "in" ? Promise.resolve(lowIds) : lowStockProductIds(),
+    currentFeedLowStockCount(),
     loadFbaFreshness(),
   ]);
   const [summary, valuation, importStatus, brands, warehouses, suppliers] = await Promise.all([
-    positionSummary(summaryLowIds),
-    filteredValuation(where),
+    positionSummary(lowPartNumbers),
+    filteredValuation(input, lowIds),
     loadImportStatus(fba),
     brandOptions(),
     warehouseOptions(),
@@ -661,22 +847,12 @@ export async function exportStockOverviewCsv(actorUserId: string, raw: unknown) 
   const lowIds = position === "low" || position === "in" ? await lowStockProductIds() : [];
   const { where, sort } = overviewWhere(input, lowIds);
   const total = await prisma.autopartProduct.count({ where });
-  const rows: Awaited<
-    ReturnType<typeof prisma.autopartProduct.findMany<{ include: typeof rowInclude }>>
-  > = [];
-  let skip = 0;
-  while (rows.length < total && rows.length < EXPORT_LIMIT) {
-    const batch = await prisma.autopartProduct.findMany({
-      where,
-      include: rowInclude,
-      orderBy: orderBy(sort),
-      skip,
-      take: Math.min(EXPORT_BATCH, EXPORT_LIMIT - rows.length),
-    });
-    rows.push(...batch);
-    if (batch.length === 0) break;
-    skip += batch.length;
-  }
+  const rows = await prisma.autopartProduct.findMany({
+    where,
+    include: rowInclude,
+    orderBy: orderBy(sort),
+    take: EXPORT_LIMIT,
+  });
   const header = [
     "Part number",
     "Product name",
