@@ -4726,5 +4726,77 @@ export const exportGlobalAutopartSalesCsvFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getUnifiedCustomerSalesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return { ok: true as const, data: await unified.getUnifiedCustomerSales(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
 
+export const listUnifiedCustomerTransactionsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return {
+        ok: true as const,
+        data: await unified.listUnifiedCustomerTransactions(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
 
+export const listUnifiedCustomerProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return { ok: true as const, data: await unified.listUnifiedCustomerProducts(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getUnifiedProductSalesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return { ok: true as const, data: await unified.getUnifiedProductSales(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getUnifiedReconciliationQueueFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return { ok: true as const, data: await unified.getUnifiedReconciliationQueue(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportUnifiedCustomerSalesCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return { ok: true as const, data: await unified.exportUnifiedCustomerSalesCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });

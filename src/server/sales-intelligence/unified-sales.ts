@@ -1,0 +1,1247 @@
+/**
+ * Unified customer sales — one read-only reporting layer over every Autopart sales source.
+ *
+ * Nothing is copied or rewritten. Each query builds the same reconciled line set in SQL:
+ *
+ * 1. Identity: an account code belongs to a CRM company only through an explicit link —
+ *    a verified primary code, a verified alias, or an AutopartAccount row linked to the company.
+ *    Codes linked to more than one company are excluded and listed for reconciliation.
+ *    Names are never used.
+ * 2. Lines: global 561L AutopartInvoiceLine rows (undated) for linked codes, plus dated
+ *    AutopartSalesLine rows (per-company 561L/SLRB import and the TRM21QC feed) for the company,
+ *    including feed lines still waiting for a company whose exact code is now linked.
+ * 3. Overlap: lines are grouped per company + document reference and source. When a reference
+ *    appears in more than one source (global 561L, company 561L/SLRB import, TRM21QC feed), one copy
+ *    is counted — TRM21QC, then company import, then global 561L — and the others are suppressed,
+ *    only when every source agrees on every line (type, SKU, signed qty, signed net). Otherwise all
+ *    copies are UNRECONCILED and stay out of certified totals.
+ * 4. Repeated identical 561L rows (same account, Inv & Ln, part, qty and sales) beyond the first
+ *    are UNRECONCILED, so a repeated export row can never add sales.
+ *
+ * SLRB ledger rows (payments, receipts, balances) and native B2B orders are never read here.
+ * Dated Sales Intelligence modules keep using dated rows only; undated 561L never reaches them.
+ */
+import { z } from "zod";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/infra/database/client";
+import { AuthError } from "@/server/rbac/guards";
+import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { buildCsv } from "@/domain/sales-intelligence";
+import {
+  DATE_UNAVAILABLE,
+  UNIFIED_TX_DATING,
+  UNIFIED_TX_STATUS,
+  UNIFIED_TX_TYPES,
+  certifyUnifiedTotals,
+  dayAfter,
+  effectiveDating,
+  parseIsoDay,
+  purchaseFrequencyDays,
+  purchaseFrequencyLabel,
+  unifiedReasonLabel,
+  unifiedSourceLabel,
+  unifiedStatusLabel,
+  type UnifiedCertification,
+} from "@/domain/unified-sales";
+import {
+  assertCompanyInScope,
+  csvSafe,
+  customer360Href,
+  decimalString,
+  enrichProducts,
+  likeContains,
+  loadScope,
+  productWorkspaceHref,
+  requireSalesIntelligence,
+} from "@/server/sales-intelligence/global-history";
+
+const AUTOPART_SOURCE = "AUTOPART";
+const EXPORT_PAGE_SIZE = 500;
+const EXPORT_MAX_ROWS = 20_000;
+
+type CompanyUniverse = string[] | "all";
+
+function companyIn(universe: CompanyUniverse, column: Prisma.Sql): Prisma.Sql {
+  if (universe === "all") return Prisma.sql`TRUE`;
+  if (universe.length === 0) return Prisma.sql`FALSE`;
+  return Prisma.sql`${column} IN (${Prisma.join(universe)})`;
+}
+
+function normalisedSku(sku: string): string {
+  return sku.trim().toUpperCase();
+}
+
+/**
+ * Builds the reconciled line set `u` as a WITH clause.
+ * `sku` restricts the work to documents that contain that SKU on either side, so whole documents
+ * are still compared and product enquiries do not scan every invoice.
+ */
+function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.Sql {
+  const skuKey = sku ? normalisedSku(sku) : null;
+  const skuRefs = skuKey
+    ? Prisma.sql`
+      sku_refs AS (
+        SELECT l."documentReference" AS ref
+        FROM "AutopartInvoiceLine" l
+        WHERE UPPER(btrim(l."partNumber")) = ${skuKey}
+          AND l."documentReference" IS NOT NULL
+        UNION
+        SELECT l."documentReference" AS ref
+        FROM "AutopartSalesLine" l
+        WHERE UPPER(btrim(l."sku")) = ${skuKey}
+      ),`
+    : Prisma.empty;
+  const hRestrict = skuKey
+    ? Prisma.sql`(UPPER(btrim(l."partNumber")) = ${skuKey} OR l."documentReference" IN (SELECT ref FROM sku_refs))`
+    : Prisma.sql`TRUE`;
+  const dRestrict = skuKey
+    ? Prisma.sql`l."documentReference" IN (SELECT ref FROM sku_refs)`
+    : Prisma.sql`TRUE`;
+  const dColumns = Prisma.sql`
+      l.id AS line_id,
+      CASE WHEN l."source" = 'ONGOING_TRM21QC' THEN 'TRM21QC_FEED' ELSE 'COMPANY_561L_SLRB' END AS source,
+      UPPER(btrim(l."autopartCustomerCode")) AS account_code,
+      l."documentType"::text AS doc_type,
+      NULLIF(UPPER(btrim(l."documentReference")), '') AS doc_ref,
+      UPPER(btrim(l."sku")) AS sku,
+      l."descriptionSnapshot" AS description,
+      (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."units") ELSE l."units" END)::numeric(18, 3) AS qty,
+      (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."salesNet") ELSE l."salesNet" END)::numeric(18, 2) AS net,
+      doc."documentDate" AS doc_date`;
+  return Prisma.sql`
+    WITH
+    idmap_raw AS (
+      SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
+      FROM "Company" c
+      WHERE c."autopartCustomerCode" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+      UNION ALL
+      SELECT UPPER(btrim(al."alias")), al."companyId"
+      FROM "AutopartCustomerAccountAlias" al
+      UNION ALL
+      SELECT UPPER(btrim(a."accountCode")), a."companyId"
+      FROM "AutopartAccount" a
+      WHERE a."sourceSystem" = ${AUTOPART_SOURCE}
+        AND a."companyId" IS NOT NULL
+    ),
+    idmap AS (
+      SELECT code, MIN(company_id) AS company_id
+      FROM idmap_raw
+      WHERE code <> ''
+      GROUP BY code
+      HAVING COUNT(DISTINCT company_id) = 1
+    ),
+    ${skuRefs}
+    h_raw AS (
+      SELECT
+        im.company_id,
+        l.id AS line_id,
+        'HISTORICAL_561L'::text AS source,
+        UPPER(btrim(l."accountCode")) AS account_code,
+        CASE WHEN l."documentType" IN ('INVOICE', 'CREDIT') THEN l."documentType" ELSE 'UNKNOWN' END AS doc_type,
+        NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), '') AS doc_ref,
+        UPPER(btrim(l."partNumber")) AS sku,
+        l."description" AS description,
+        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."quantity") ELSE l."quantity" END)::numeric(18, 3) AS qty,
+        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."salesAmount") ELSE l."salesAmount" END)::numeric(18, 2) AS net,
+        NULL::timestamp(3) AS doc_date,
+        ROW_NUMBER() OVER (
+          PARTITION BY UPPER(btrim(l."accountCode")), l."rawInvAndLn", UPPER(btrim(l."partNumber")), l."quantity", l."salesAmount"
+          ORDER BY l.id
+        ) AS repeat_no
+      FROM "AutopartInvoiceLine" l
+      INNER JOIN idmap im ON im.code = UPPER(btrim(l."accountCode"))
+      WHERE l."salesMeasure" = 'NET_EX_VAT'
+        AND ${companyIn(universe, Prisma.sql`im.company_id`)}
+        AND ${hRestrict}
+    ),
+    d_raw AS (
+      SELECT l."companyId" AS company_id, ${dColumns}
+      FROM "AutopartSalesLine" l
+      LEFT JOIN "AutopartSalesDocument" doc ON doc.id = l."documentId"
+      WHERE l."companyId" IS NOT NULL
+        AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
+        AND ${companyIn(universe, Prisma.sql`l."companyId"`)}
+        AND ${dRestrict}
+      UNION ALL
+      SELECT im.company_id AS company_id, ${dColumns}
+      FROM "AutopartSalesLine" l
+      INNER JOIN idmap im ON im.code = UPPER(btrim(l."autopartCustomerCode"))
+      LEFT JOIN "AutopartSalesDocument" doc ON doc.id = l."documentId"
+      WHERE l."companyId" IS NULL
+        AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
+        AND ${companyIn(universe, Prisma.sql`im.company_id`)}
+        AND ${dRestrict}
+    ),
+    all_raw AS (
+      SELECT company_id, line_id, source, account_code, doc_type, doc_ref, sku, description,
+        qty, net, doc_date, repeat_no
+      FROM h_raw
+      UNION ALL
+      SELECT company_id, line_id, source, account_code, doc_type, doc_ref, sku, description,
+        qty, net, doc_date, 1::bigint AS repeat_no
+      FROM d_raw
+    ),
+    source_doc AS (
+      SELECT company_id, doc_ref, source,
+        string_agg(doc_type || '|' || sku || '|' || qty::text || '|' || net::text, ';' ORDER BY doc_type, sku, qty, net) AS sig
+      FROM all_raw
+      WHERE doc_ref IS NOT NULL AND repeat_no = 1
+      GROUP BY company_id, doc_ref, source
+    ),
+    doc_status AS (
+      SELECT company_id, doc_ref,
+        COUNT(*)::int AS sources,
+        COUNT(DISTINCT sig)::int AS signatures,
+        CASE
+          WHEN bool_or(source = 'TRM21QC_FEED') THEN 'TRM21QC_FEED'
+          WHEN bool_or(source = 'COMPANY_561L_SLRB') THEN 'COMPANY_561L_SLRB'
+          ELSE 'HISTORICAL_561L'
+        END AS preferred
+      FROM source_doc
+      GROUP BY company_id, doc_ref
+    ),
+    u AS (
+      SELECT
+        r.company_id, r.line_id, r.source, r.account_code, r.doc_type, r.doc_ref, r.sku, r.description,
+        r.qty, r.net, r.doc_date,
+        CASE
+          WHEN r.repeat_no > 1 THEN 'UNRECONCILED'
+          WHEN r.source = 'HISTORICAL_561L' AND (r.doc_ref IS NULL OR r.doc_type = 'UNKNOWN') THEN 'UNRECONCILED'
+          WHEN r.doc_ref IS NULL OR ds.sources = 1 THEN
+            CASE WHEN r.source = 'HISTORICAL_561L' THEN 'HISTORICAL' ELSE 'DATED' END
+          WHEN ds.signatures = 1 THEN
+            CASE WHEN r.source = ds.preferred THEN 'MATCHED' ELSE 'DUPLICATE' END
+          ELSE 'UNRECONCILED'
+        END AS status,
+        CASE
+          WHEN r.repeat_no > 1 THEN 'REPEATED_SOURCE_ROW'
+          WHEN r.source = 'HISTORICAL_561L' AND r.doc_ref IS NULL THEN 'NO_DOCUMENT_REFERENCE'
+          WHEN r.source = 'HISTORICAL_561L' AND r.doc_type = 'UNKNOWN' THEN 'UNKNOWN_DOCUMENT_TYPE'
+          WHEN r.doc_ref IS NULL OR ds.sources = 1 OR ds.signatures = 1 THEN NULL
+          ELSE 'CONFLICTING_OVERLAP'
+        END AS reason
+      FROM all_raw r
+      LEFT JOIN doc_status ds ON ds.company_id = r.company_id AND ds.doc_ref = r.doc_ref
+    )
+  `;
+}
+
+const COUNTED = Prisma.sql`u.status IN ('HISTORICAL', 'DATED', 'MATCHED')`;
+const ADJUSTMENT = Prisma.sql`(u.doc_type = 'CREDIT' OR u.net < 0)`;
+
+export type UnifiedSalesSummary = {
+  historicalSales: string;
+  datedInvoicedSales: string;
+  creditsAndAdjustments: string;
+  historicalNet: string;
+  datedNet: string;
+  certifiedNet: string;
+  combinedNet: string | null;
+  certification: UnifiedCertification;
+  invoiceCount: number;
+  creditNoteCount: number;
+  lineCount: number;
+  productCount: number;
+  units: string;
+  undatedLineCount: number;
+  lastDatedInvoice: string | null;
+  unreconciledLines: number;
+  unreconciledDocuments: number;
+  unreconciledHistoricalNet: string;
+  unreconciledDatedNet: string;
+  suppressedDuplicateLines: number;
+  suppressedDuplicateNet: string;
+};
+
+type SummaryRow = {
+  historicalSales: Prisma.Decimal | null;
+  datedInvoicedSales: Prisma.Decimal | null;
+  creditsAndAdjustments: Prisma.Decimal | null;
+  historicalNet: Prisma.Decimal | null;
+  datedNet: Prisma.Decimal | null;
+  certifiedNet: Prisma.Decimal | null;
+  invoiceCount: number;
+  creditNoteCount: number;
+  lineCount: number;
+  productCount: number;
+  units: Prisma.Decimal | null;
+  undatedLineCount: number;
+  lastDatedInvoice: Date | null;
+  unreconciledLines: number;
+  unreconciledDocuments: number;
+  unreconciledHistoricalNet: Prisma.Decimal | null;
+  unreconciledDatedNet: Prisma.Decimal | null;
+  suppressedDuplicateLines: number;
+  suppressedDuplicateNet: Prisma.Decimal | null;
+};
+
+function isoDay(value: Date | null | undefined): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+function toSummary(row: SummaryRow | undefined): UnifiedSalesSummary {
+  const certifiedNet = decimalString(row?.certifiedNet, 2);
+  const unreconciledLines = Number(row?.unreconciledLines ?? 0);
+  const certification = certifyUnifiedTotals({ certifiedNet, unreconciledLines });
+  return {
+    historicalSales: decimalString(row?.historicalSales, 2),
+    datedInvoicedSales: decimalString(row?.datedInvoicedSales, 2),
+    creditsAndAdjustments: decimalString(row?.creditsAndAdjustments, 2),
+    historicalNet: decimalString(row?.historicalNet, 2),
+    datedNet: decimalString(row?.datedNet, 2),
+    certifiedNet,
+    combinedNet: certification.combinedNet,
+    certification: certification.status,
+    invoiceCount: Number(row?.invoiceCount ?? 0),
+    creditNoteCount: Number(row?.creditNoteCount ?? 0),
+    lineCount: Number(row?.lineCount ?? 0),
+    productCount: Number(row?.productCount ?? 0),
+    units: decimalString(row?.units, 3),
+    undatedLineCount: Number(row?.undatedLineCount ?? 0),
+    lastDatedInvoice: isoDay(row?.lastDatedInvoice),
+    unreconciledLines,
+    unreconciledDocuments: Number(row?.unreconciledDocuments ?? 0),
+    unreconciledHistoricalNet: decimalString(row?.unreconciledHistoricalNet, 2),
+    unreconciledDatedNet: decimalString(row?.unreconciledDatedNet, 2),
+    suppressedDuplicateLines: Number(row?.suppressedDuplicateLines ?? 0),
+    suppressedDuplicateNet: decimalString(row?.suppressedDuplicateNet, 2),
+  };
+}
+
+const SUMMARY_SELECT = Prisma.sql`
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'HISTORICAL' AND NOT ${ADJUSTMENT}), 0) AS "historicalSales",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status IN ('DATED', 'MATCHED') AND NOT ${ADJUSTMENT}), 0) AS "datedInvoicedSales",
+  COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT}), 0) AS "creditsAndAdjustments",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'HISTORICAL'), 0) AS "historicalNet",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status IN ('DATED', 'MATCHED')), 0) AS "datedNet",
+  COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "certifiedNet",
+  COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE')::int AS "invoiceCount",
+  COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'CREDIT')::int AS "creditNoteCount",
+  COUNT(*) FILTER (WHERE ${COUNTED})::int AS "lineCount",
+  COUNT(DISTINCT u.sku) FILTER (WHERE ${COUNTED})::int AS "productCount",
+  COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS units,
+  COUNT(*) FILTER (WHERE ${COUNTED} AND u.doc_date IS NULL)::int AS "undatedLineCount",
+  MAX(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "lastDatedInvoice",
+  COUNT(*) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledLines",
+  COUNT(DISTINCT COALESCE(u.doc_ref, u.line_id)) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledDocuments",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'UNRECONCILED' AND u.source = 'HISTORICAL_561L'), 0) AS "unreconciledHistoricalNet",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'UNRECONCILED' AND u.source <> 'HISTORICAL_561L'), 0) AS "unreconciledDatedNet",
+  COUNT(*) FILTER (WHERE u.status = 'DUPLICATE')::int AS "suppressedDuplicateLines",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'DUPLICATE'), 0) AS "suppressedDuplicateNet"
+`;
+
+async function querySummary(companyId: string): Promise<UnifiedSalesSummary> {
+  const rows = await prisma.$queryRaw<SummaryRow[]>`
+    ${unifiedLinesCte([companyId], null)}
+    SELECT ${SUMMARY_SELECT}
+    FROM u
+    WHERE u.company_id = ${companyId}
+  `;
+  return toSummary(rows[0]);
+}
+
+export type UnifiedIdentityCode = {
+  code: string;
+  via: Array<"PRIMARY_VERIFIED" | "PRIMARY_UNVERIFIED" | "ALIAS" | "ACCOUNT_LINK">;
+  attached: boolean;
+  note: string | null;
+};
+
+/** Verified account codes for one company. Unverified primary codes are listed but never attach 561L history. */
+export async function loadUnifiedIdentity(companyId: string): Promise<UnifiedIdentityCode[]> {
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: {
+      autopartCustomerCode: true,
+      autopartCustomerCodeVerifiedAt: true,
+      autopartAccountAliases: { select: { alias: true } },
+      autopartAccounts: { where: { sourceSystem: AUTOPART_SOURCE }, select: { accountCode: true } },
+    },
+  });
+  if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
+  const byCode = new Map<string, UnifiedIdentityCode>();
+  const add = (raw: string | null | undefined, via: UnifiedIdentityCode["via"][number]) => {
+    const code = raw?.trim().toUpperCase();
+    if (!code) return;
+    const entry = byCode.get(code) ?? { code, via: [], attached: false, note: null };
+    if (!entry.via.includes(via)) entry.via.push(via);
+    byCode.set(code, entry);
+  };
+  if (company.autopartCustomerCode) {
+    add(
+      company.autopartCustomerCode,
+      company.autopartCustomerCodeVerifiedAt ? "PRIMARY_VERIFIED" : "PRIMARY_UNVERIFIED",
+    );
+  }
+  for (const alias of company.autopartAccountAliases) add(alias.alias, "ALIAS");
+  for (const account of company.autopartAccounts) add(account.accountCode, "ACCOUNT_LINK");
+  const codes = [...byCode.keys()];
+  if (codes.length) {
+    const owners = await prisma.$queryRaw<Array<{ code: string; companies: number }>>`
+      SELECT code, COUNT(DISTINCT company_id)::int AS companies
+      FROM (
+        SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
+        FROM "Company" c
+        WHERE c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+          AND UPPER(btrim(c."autopartCustomerCode")) IN (${Prisma.join(codes)})
+        UNION ALL
+        SELECT UPPER(btrim(al."alias")), al."companyId"
+        FROM "AutopartCustomerAccountAlias" al
+        WHERE UPPER(btrim(al."alias")) IN (${Prisma.join(codes)})
+        UNION ALL
+        SELECT UPPER(btrim(a."accountCode")), a."companyId"
+        FROM "AutopartAccount" a
+        WHERE a."sourceSystem" = ${AUTOPART_SOURCE}
+          AND a."companyId" IS NOT NULL
+          AND UPPER(btrim(a."accountCode")) IN (${Prisma.join(codes)})
+      ) owners
+      GROUP BY code
+    `;
+    const ownerCount = new Map(owners.map((row) => [row.code, Number(row.companies)]));
+    for (const entry of byCode.values()) {
+      const verified = entry.via.some((via) => via !== "PRIMARY_UNVERIFIED");
+      const shared = (ownerCount.get(entry.code) ?? 0) > 1;
+      entry.attached = verified && !shared;
+      entry.note = shared
+        ? "Linked to more than one CRM company. Held for reconciliation and not counted."
+        : verified
+          ? null
+          : "Primary code is not verified. Dated feed rows already assigned still count; 561L history is not attached.";
+    }
+  }
+  return [...byCode.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+
+export type UnifiedRefreshStatus = {
+  ongoing504At: string | null;
+  ongoingTrm21qcAt: string | null;
+  global561lAt: string | null;
+  customerImportAt: string | null;
+  latestAt: string | null;
+};
+
+export async function loadUnifiedRefreshStatus(
+  companyId: string | null,
+): Promise<UnifiedRefreshStatus> {
+  const [settings, batch, run] = await Promise.all([
+    prisma.autopartOngoingSalesFeedSettings.findUnique({
+      where: { id: "default" },
+      select: { lastSuccess504At: true, lastSuccessTrm21qcAt: true },
+    }),
+    prisma.autopartImportBatch.findFirst({
+      where: { kind: "INVOICE_LINES", status: "COMMITTED", completedAt: { not: null } },
+      orderBy: { completedAt: "desc" },
+      select: { completedAt: true },
+    }),
+    prisma.autopartCustomerImportRun.findFirst({
+      where: {
+        status: "COMMITTED",
+        completedAt: { not: null },
+        ...(companyId ? { companyId } : {}),
+      },
+      orderBy: { completedAt: "desc" },
+      select: { completedAt: true },
+    }),
+  ]);
+  const stamps = [
+    settings?.lastSuccess504At ?? null,
+    settings?.lastSuccessTrm21qcAt ?? null,
+    batch?.completedAt ?? null,
+    run?.completedAt ?? null,
+  ].filter((value): value is Date => value instanceof Date);
+  const latest = stamps.length
+    ? new Date(Math.max(...stamps.map((value) => value.getTime())))
+    : null;
+  return {
+    ongoing504At: settings?.lastSuccess504At?.toISOString() ?? null,
+    ongoingTrm21qcAt: settings?.lastSuccessTrm21qcAt?.toISOString() ?? null,
+    global561lAt: batch?.completedAt?.toISOString() ?? null,
+    customerImportAt: run?.completedAt?.toISOString() ?? null,
+    latestAt: latest?.toISOString() ?? null,
+  };
+}
+
+export type UnifiedCustomerSummary = {
+  identity: UnifiedIdentityCode[];
+  summary: UnifiedSalesSummary;
+  refresh: UnifiedRefreshStatus;
+};
+
+/**
+ * The single figure set for a company. Sales Enquiry and both Customer 360 views call this,
+ * so their totals always agree. Callers must authorise access to the company first.
+ */
+export async function loadUnifiedCustomerSummary(
+  companyId: string,
+): Promise<UnifiedCustomerSummary> {
+  const [identity, summary, refresh] = await Promise.all([
+    loadUnifiedIdentity(companyId),
+    querySummary(companyId),
+    loadUnifiedRefreshStatus(companyId),
+  ]);
+  return { identity, summary, refresh };
+}
+
+async function loadCompanyHeader(companyId: string) {
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: {
+      id: true,
+      name: true,
+      tradingName: true,
+      status: true,
+      accountNumber: true,
+      autopartCustomerCode: true,
+      assignments: {
+        orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+        take: 1,
+        select: {
+          salesRep: {
+            select: {
+              id: true,
+              code: true,
+              displayName: true,
+              user: { select: { name: true, email: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
+  const rep = company.assignments[0]?.salesRep;
+  return {
+    id: company.id,
+    name: company.name,
+    tradingName: company.tradingName,
+    status: company.status,
+    accountNumber: company.accountNumber,
+    autopartCustomerCode: company.autopartCustomerCode,
+    salesperson: rep
+      ? { id: rep.id, code: rep.code, name: rep.displayName || rep.user.name || rep.user.email }
+      : null,
+  };
+}
+
+const customerSchema = z.object({ companyId: z.string().min(1) });
+
+export async function getUnifiedCustomerSales(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const input = customerSchema.parse(raw ?? {});
+  await assertCompanyInScope(profile, input.companyId);
+  const [company, unified, brands] = await Promise.all([
+    loadCompanyHeader(input.companyId),
+    loadUnifiedCustomerSummary(input.companyId),
+    prisma.brand.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 500,
+    }),
+  ]);
+  return {
+    company: { ...company, customer360Href: customer360Href(profile, company.id) },
+    ...unified,
+    brands,
+    pricingPermitted: hasPermission(profile, "pricing.view"),
+    studleyStockPermitted: hasPermission(profile, "inventory.view"),
+  };
+}
+
+const txSchema = z.object({
+  companyId: z.string().min(1),
+  type: z.enum(UNIFIED_TX_TYPES).optional(),
+  dating: z.enum(UNIFIED_TX_DATING).optional(),
+  status: z.enum(UNIFIED_TX_STATUS).optional(),
+  from: z.string().max(10).optional().nullable(),
+  to: z.string().max(10).optional().nullable(),
+  q: z.string().max(200).optional().nullable(),
+  sku: z.string().max(120).optional().nullable(),
+  brandId: z.string().min(1).optional().nullable(),
+  accountCode: z.string().max(40).optional().nullable(),
+  page: z.number().int().min(1).max(100_000).optional(),
+  pageSize: z.number().int().min(1).max(EXPORT_PAGE_SIZE).optional(),
+});
+
+type TxInput = z.infer<typeof txSchema>;
+
+function txWhere(input: TxInput): { where: Prisma.Sql; contradiction: boolean } {
+  const parts: Prisma.Sql[] = [Prisma.sql`u.company_id = ${input.companyId}`];
+  const from = parseIsoDay(input.from);
+  const to = parseIsoDay(input.to);
+  const dating = effectiveDating({
+    dating: input.dating ?? "ALL",
+    from: from ? input.from! : null,
+    to: to ? input.to! : null,
+  });
+  switch (input.status ?? "COUNTED") {
+    case "COUNTED":
+      parts.push(Prisma.sql`u.status <> 'DUPLICATE'`);
+      break;
+    case "UNRECONCILED":
+      parts.push(Prisma.sql`u.status = 'UNRECONCILED'`);
+      break;
+    case "SUPPRESSED":
+      parts.push(Prisma.sql`u.status = 'DUPLICATE'`);
+      break;
+    default:
+      break;
+  }
+  if (input.type === "INVOICE") parts.push(Prisma.sql`u.doc_type = 'INVOICE'`);
+  if (input.type === "CREDIT") parts.push(Prisma.sql`u.doc_type = 'CREDIT'`);
+  if (dating.dating === "DATED") parts.push(Prisma.sql`u.doc_date IS NOT NULL`);
+  if (dating.dating === "UNDATED") parts.push(Prisma.sql`u.doc_date IS NULL`);
+  if (dating.contradiction) parts.push(Prisma.sql`FALSE`);
+  if (from) parts.push(Prisma.sql`u.doc_date >= ${from}`);
+  if (to) parts.push(Prisma.sql`u.doc_date < ${dayAfter(to)}`);
+  if (input.sku?.trim()) parts.push(Prisma.sql`u.sku = ${normalisedSku(input.sku)}`);
+  if (input.q?.trim()) {
+    const pattern = likeContains(input.q.trim());
+    parts.push(Prisma.sql`(
+      u.sku ILIKE ${pattern} ESCAPE '\\'
+      OR COALESCE(u.description, '') ILIKE ${pattern} ESCAPE '\\'
+      OR COALESCE(u.doc_ref, '') ILIKE ${pattern} ESCAPE '\\'
+    )`);
+  }
+  if (input.accountCode?.trim()) {
+    parts.push(Prisma.sql`u.account_code = ${input.accountCode.trim().toUpperCase()}`);
+  }
+  if (input.brandId) {
+    parts.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ProductVariant" v
+      INNER JOIN "Product" p ON p.id = v."productId"
+      WHERE p."brandId" = ${input.brandId} AND UPPER(btrim(v.sku)) = u.sku
+    )`);
+  }
+  return { where: Prisma.join(parts, " AND "), contradiction: dating.contradiction };
+}
+
+type TxRow = {
+  lineId: string;
+  docDate: Date | null;
+  docRef: string | null;
+  docType: string;
+  accountCode: string;
+  sku: string;
+  description: string | null;
+  qty: Prisma.Decimal;
+  net: Prisma.Decimal;
+  source: string;
+  status: string;
+  reason: string | null;
+};
+
+async function queryTransactions(input: TxInput) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 50;
+  const { where, contradiction } = txWhere(input);
+  const cte = unifiedLinesCte([input.companyId], null);
+  const [rows, totals] = await Promise.all([
+    prisma.$queryRaw<TxRow[]>`
+      ${cte}
+      SELECT
+        u.line_id AS "lineId", u.doc_date AS "docDate", u.doc_ref AS "docRef", u.doc_type AS "docType",
+        u.account_code AS "accountCode", u.sku, u.description, u.qty, u.net, u.source, u.status, u.reason
+      FROM u
+      WHERE ${where}
+      ORDER BY u.doc_date DESC NULLS LAST, u.doc_ref ASC NULLS LAST, u.sku ASC, u.line_id ASC
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `,
+    prisma.$queryRaw<
+      Array<{ total: number; net: Prisma.Decimal | null; qty: Prisma.Decimal | null }>
+    >`
+      ${cte}
+      SELECT COUNT(*)::int AS total,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS net,
+        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS qty
+      FROM u
+      WHERE ${where}
+    `,
+  ]);
+  return {
+    items: rows.map((row) => ({
+      lineId: row.lineId,
+      date: isoDay(row.docDate),
+      dateLabel: row.docDate ? isoDay(row.docDate)! : DATE_UNAVAILABLE,
+      reference: row.docRef,
+      documentType: row.docType,
+      accountCode: row.accountCode,
+      sku: row.sku,
+      description: row.description,
+      qty: decimalString(row.qty, 3),
+      net: decimalString(row.net, 2),
+      source: row.source,
+      sourceLabel: unifiedSourceLabel(row.source),
+      status: row.status,
+      statusLabel: unifiedStatusLabel(row.status),
+      reason: row.reason,
+      reasonLabel: unifiedReasonLabel(row.reason),
+      counted: row.status === "HISTORICAL" || row.status === "DATED" || row.status === "MATCHED",
+    })),
+    page,
+    pageSize,
+    total: Number(totals[0]?.total ?? 0),
+    filteredCountedNet: decimalString(totals[0]?.net, 2),
+    filteredCountedUnits: decimalString(totals[0]?.qty, 3),
+    dateFilterNote: contradiction
+      ? "A date range only includes dated transactions, so undated rows are not shown."
+      : input.from || input.to
+        ? "Date range applied. Undated 561L history is excluded."
+        : null,
+  };
+}
+
+export async function listUnifiedCustomerTransactions(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const input = txSchema.parse(raw ?? {});
+  await assertCompanyInScope(profile, input.companyId);
+  return queryTransactions(input);
+}
+
+const productHistorySchema = z.object({
+  companyId: z.string().min(1),
+  q: z.string().max(200).optional().nullable(),
+  brandId: z.string().min(1).optional().nullable(),
+  sort: z.enum(["NET_SALES", "QTY", "RECENT", "NAME_AZ"]).optional(),
+  page: z.number().int().min(1).max(10_000).optional(),
+  pageSize: z.number().int().min(1).max(EXPORT_PAGE_SIZE).optional(),
+});
+
+type ProductHistoryRow = {
+  sku: string;
+  description: string | null;
+  lines: number;
+  qty: Prisma.Decimal;
+  grossSales: Prisma.Decimal;
+  credits: Prisma.Decimal;
+  netSales: Prisma.Decimal;
+  datedInvoices: number;
+  firstDated: Date | null;
+  lastDated: Date | null;
+  unreconciledLines: number;
+};
+
+function productHistoryOrder(sort: string | undefined): Prisma.Sql {
+  switch (sort) {
+    case "QTY":
+      return Prisma.sql`qty DESC, sku ASC`;
+    case "RECENT":
+      return Prisma.sql`"lastDated" DESC NULLS LAST, sku ASC`;
+    case "NAME_AZ":
+      return Prisma.sql`sku ASC`;
+    default:
+      return Prisma.sql`"netSales" DESC, sku ASC`;
+  }
+}
+
+async function queryProductHistory(input: z.infer<typeof productHistorySchema>) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 25;
+  const parts: Prisma.Sql[] = [
+    Prisma.sql`u.company_id = ${input.companyId}`,
+    Prisma.sql`u.status <> 'DUPLICATE'`,
+  ];
+  if (input.q?.trim()) {
+    const pattern = likeContains(input.q.trim());
+    parts.push(
+      Prisma.sql`(u.sku ILIKE ${pattern} ESCAPE '\\' OR COALESCE(u.description, '') ILIKE ${pattern} ESCAPE '\\')`,
+    );
+  }
+  if (input.brandId) {
+    parts.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ProductVariant" v
+      INNER JOIN "Product" p ON p.id = v."productId"
+      WHERE p."brandId" = ${input.brandId} AND UPPER(btrim(v.sku)) = u.sku
+    )`);
+  }
+  const where = Prisma.join(parts, " AND ");
+  const cte = unifiedLinesCte([input.companyId], null);
+  const [rows, totals] = await Promise.all([
+    prisma.$queryRaw<ProductHistoryRow[]>`
+      ${cte}
+      SELECT * FROM (
+        SELECT
+          u.sku AS sku,
+          MAX(u.description) AS description,
+          COUNT(*) FILTER (WHERE ${COUNTED})::int AS lines,
+          COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS qty,
+          COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND NOT ${ADJUSTMENT}), 0) AS "grossSales",
+          COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT}), 0) AS credits,
+          COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "netSales",
+          COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE' AND u.doc_date IS NOT NULL)::int AS "datedInvoices",
+          MIN(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "firstDated",
+          MAX(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "lastDated",
+          COUNT(*) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledLines"
+        FROM u
+        WHERE ${where}
+        GROUP BY u.sku
+      ) products
+      ORDER BY ${productHistoryOrder(input.sort)}
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `,
+    prisma.$queryRaw<Array<{ total: number }>>`
+      ${cte}
+      SELECT COUNT(DISTINCT u.sku)::int AS total FROM u WHERE ${where}
+    `,
+  ]);
+  return { rows, page, pageSize, total: Number(totals[0]?.total ?? 0) };
+}
+
+export async function listUnifiedCustomerProducts(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const input = productHistorySchema.parse(raw ?? {});
+  await assertCompanyInScope(profile, input.companyId);
+  const result = await queryProductHistory(input);
+  const enriched = await enrichProducts(
+    profile,
+    result.rows.map((row) => ({
+      partNumber: row.sku,
+      description: row.description,
+      lines: row.lines,
+      qty: row.qty,
+      grossSales: row.grossSales,
+      credits: row.credits,
+      netSales: row.netSales,
+    })),
+    input.companyId,
+  );
+  return {
+    items: result.rows.map((row, index) => {
+      const frequency = purchaseFrequencyDays({
+        datedInvoiceCount: row.datedInvoices,
+        firstDated: row.firstDated,
+        lastDated: row.lastDated,
+      });
+      return {
+        ...enriched[index]!,
+        datedInvoices: Number(row.datedInvoices),
+        latestConfirmedDate: isoDay(row.lastDated),
+        purchaseFrequencyDays: frequency,
+        purchaseFrequencyLabel: purchaseFrequencyLabel(frequency),
+        unreconciledLines: Number(row.unreconciledLines),
+      };
+    }),
+    page: result.page,
+    pageSize: result.pageSize,
+    total: result.total,
+    pricingPermitted: hasPermission(profile, "pricing.view"),
+    studleyStockPermitted: hasPermission(profile, "inventory.view"),
+  };
+}
+
+const productEnquirySchema = z.object({
+  sku: z.string().min(1).max(120),
+  q: z.string().max(200).optional().nullable(),
+  salesRepId: z.string().min(1).optional().nullable(),
+  sort: z.enum(["NET_SALES", "QTY", "RECENT", "NAME_AZ"]).optional(),
+  page: z.number().int().min(1).max(10_000).optional(),
+  pageSize: z.number().int().min(1).max(EXPORT_PAGE_SIZE).optional(),
+});
+
+type ProductCustomerRow = {
+  companyId: string;
+  companyName: string;
+  status: string;
+  accountCodes: string | null;
+  repCode: string | null;
+  salespersonName: string | null;
+  lines: number;
+  qty: Prisma.Decimal;
+  netSales: Prisma.Decimal;
+  credits: Prisma.Decimal;
+  lastDated: Date | null;
+  unreconciledLines: number;
+};
+
+function productCustomerOrder(sort: string | undefined): Prisma.Sql {
+  switch (sort) {
+    case "QTY":
+      return Prisma.sql`agg.qty DESC, c.name ASC`;
+    case "RECENT":
+      return Prisma.sql`agg."lastDated" DESC NULLS LAST, c.name ASC`;
+    case "NAME_AZ":
+      return Prisma.sql`c.name ASC`;
+    default:
+      return Prisma.sql`agg."netSales" DESC, c.name ASC`;
+  }
+}
+
+export async function getUnifiedProductSales(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const input = productEnquirySchema.parse(raw ?? {});
+  const scope = await loadScope(profile);
+  const sku = normalisedSku(input.sku);
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 25;
+  const companyParts: Prisma.Sql[] = [Prisma.sql`TRUE`];
+  if (input.q?.trim()) {
+    const pattern = likeContains(input.q.trim());
+    companyParts.push(
+      Prisma.sql`(c.name ILIKE ${pattern} ESCAPE '\\' OR COALESCE(c."tradingName", '') ILIKE ${pattern} ESCAPE '\\')`,
+    );
+  }
+  if (input.salesRepId) {
+    companyParts.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "CompanyAssignment" ca WHERE ca."companyId" = c.id AND ca."salesRepId" = ${input.salesRepId}
+    )`);
+  }
+  const companyWhere = Prisma.join(companyParts, " AND ");
+  const cte = unifiedLinesCte(scope, sku);
+  const aggregate = Prisma.sql`
+    agg AS (
+      SELECT
+        u.company_id,
+        string_agg(DISTINCT u.account_code, ', ') AS "accountCodes",
+        COUNT(*) FILTER (WHERE ${COUNTED})::int AS lines,
+        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS qty,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "netSales",
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT}), 0) AS credits,
+        MAX(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "lastDated",
+        COUNT(*) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledLines"
+      FROM u
+      WHERE u.sku = ${sku} AND u.status <> 'DUPLICATE'
+      GROUP BY u.company_id
+    )`;
+  const [rows, totals, variant] = await Promise.all([
+    prisma.$queryRaw<ProductCustomerRow[]>`
+      ${cte}, ${aggregate}
+      SELECT
+        c.id AS "companyId", c.name AS "companyName", c.status::text AS status,
+        agg."accountCodes", rep.code AS "repCode", rep."salespersonName",
+        agg.lines, agg.qty, agg."netSales", agg.credits, agg."lastDated", agg."unreconciledLines"
+      FROM agg
+      INNER JOIN "Company" c ON c.id = agg.company_id
+      LEFT JOIN LATERAL (
+        SELECT sr.code AS code, COALESCE(NULLIF(sr."displayName", ''), us.name, us.email) AS "salespersonName"
+        FROM "CompanyAssignment" ca
+        INNER JOIN "SalesRep" sr ON sr.id = ca."salesRepId"
+        INNER JOIN "User" us ON us.id = sr."userId"
+        WHERE ca."companyId" = c.id
+        ORDER BY ca."isPrimary" DESC, ca."createdAt" ASC
+        LIMIT 1
+      ) rep ON TRUE
+      WHERE ${companyWhere}
+      ORDER BY ${productCustomerOrder(input.sort)}
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `,
+    prisma.$queryRaw<
+      Array<{
+        total: number;
+        netSales: Prisma.Decimal | null;
+        qty: Prisma.Decimal | null;
+        credits: Prisma.Decimal | null;
+        unreconciledLines: number;
+      }>
+    >`
+      ${cte}, ${aggregate}
+      SELECT COUNT(*)::int AS total,
+        COALESCE(SUM(agg."netSales"), 0) AS "netSales",
+        COALESCE(SUM(agg.qty), 0) AS qty,
+        COALESCE(SUM(agg.credits), 0) AS credits,
+        COALESCE(SUM(agg."unreconciledLines"), 0)::int AS "unreconciledLines"
+      FROM agg
+      INNER JOIN "Company" c ON c.id = agg.company_id
+      WHERE ${companyWhere}
+    `,
+    prisma.productVariant.findFirst({
+      where: { sku: { equals: input.sku.trim(), mode: "insensitive" } },
+      select: {
+        sku: true,
+        productId: true,
+        product: {
+          select: { name: true, status: true, isActive: true, brand: { select: { name: true } } },
+        },
+      },
+    }),
+  ]);
+  const inCatalogue = Boolean(
+    variant?.product && variant.product.status === "ACTIVE" && variant.product.isActive,
+  );
+  const total = totals[0];
+  const unreconciledLines = Number(total?.unreconciledLines ?? 0);
+  const certifiedNet = decimalString(total?.netSales, 2);
+  const certification = certifyUnifiedTotals({ certifiedNet, unreconciledLines });
+  return {
+    product: {
+      sku: variant?.sku ?? input.sku.trim(),
+      name: variant?.product?.name ?? input.sku.trim(),
+      inCatalogue,
+      catalogueStatus: inCatalogue ? "In catalogue" : "Not in the current catalogue",
+      productId: variant?.productId ?? null,
+      productHref: productWorkspaceHref(
+        profile,
+        variant?.productId ?? null,
+        variant?.sku ?? input.sku,
+        inCatalogue,
+      ),
+      brandName: variant?.product?.brand?.name ?? null,
+    },
+    summary: {
+      customers: Number(total?.total ?? 0),
+      certifiedNet,
+      combinedNet: certification.combinedNet,
+      certification: certification.status,
+      units: decimalString(total?.qty, 3),
+      credits: decimalString(total?.credits, 2),
+      unreconciledLines,
+    },
+    customers: {
+      items: rows.map((row) => ({
+        companyId: row.companyId,
+        name: row.companyName,
+        status: row.status,
+        accountCodes: row.accountCodes,
+        salespersonName: row.salespersonName,
+        salespersonCode: row.repCode,
+        lines: Number(row.lines),
+        units: decimalString(row.qty, 3),
+        netSales: decimalString(row.netSales, 2),
+        credits: decimalString(row.credits, 2),
+        lastDatedPurchase: isoDay(row.lastDated),
+        unreconciledLines: Number(row.unreconciledLines),
+        customer360Href: customer360Href(profile, row.companyId),
+      })),
+      page,
+      pageSize,
+      total: Number(total?.total ?? 0),
+    },
+    scopeNote:
+      scope === "all"
+        ? "All CRM companies with a verified Autopart account link."
+        : "Only CRM companies in your sales scope. Unlinked Autopart accounts are omitted.",
+  };
+}
+
+const queueSchema = z.object({
+  page: z.number().int().min(1).max(1_000).optional(),
+  pageSize: z.number().int().min(1).max(100).optional(),
+});
+
+/**
+ * Internal reconciliation queue: account codes with sales rows that no verified link attaches to
+ * exactly one CRM company. Management scope only, because these accounts are outside any CRM scope.
+ */
+export async function getUnifiedReconciliationQueue(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const scope = await loadScope(profile);
+  if (scope !== "all") return { permitted: false as const };
+  const input = queueSchema.parse(raw ?? {});
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 25;
+  const cte = Prisma.sql`
+    WITH
+    idmap_raw AS (
+      SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
+      FROM "Company" c
+      WHERE c."autopartCustomerCode" IS NOT NULL AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+      UNION ALL
+      SELECT UPPER(btrim(al."alias")), al."companyId" FROM "AutopartCustomerAccountAlias" al
+      UNION ALL
+      SELECT UPPER(btrim(a."accountCode")), a."companyId"
+      FROM "AutopartAccount" a
+      WHERE a."sourceSystem" = ${AUTOPART_SOURCE} AND a."companyId" IS NOT NULL
+    ),
+    owners AS (
+      SELECT code, COUNT(DISTINCT company_id)::int AS companies FROM idmap_raw GROUP BY code
+    ),
+    pending AS (
+      SELECT UPPER(btrim(l."accountCode")) AS code, 'HISTORICAL_561L'::text AS source,
+        COUNT(*)::int AS lines, COALESCE(SUM(l."salesAmount"), 0) AS net
+      FROM "AutopartInvoiceLine" l
+      WHERE l."salesMeasure" = 'NET_EX_VAT'
+        AND NOT EXISTS (
+          SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."accountCode")) AND o.companies = 1
+        )
+      GROUP BY 1
+      UNION ALL
+      SELECT UPPER(btrim(l."autopartCustomerCode")), 'DATED_FEED'::text,
+        COUNT(*)::int, COALESCE(SUM(l."salesNet"), 0)
+      FROM "AutopartSalesLine" l
+      WHERE l."companyId" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."autopartCustomerCode")) AND o.companies = 1
+        )
+      GROUP BY 1
+    ),
+    queue AS (
+      SELECT p.code,
+        string_agg(DISTINCT p.source, ', ') AS sources,
+        SUM(p.lines)::int AS lines,
+        SUM(p.net) AS net,
+        COALESCE(MAX(o.companies), 0)::int AS companies
+      FROM pending p
+      LEFT JOIN owners o ON o.code = p.code
+      GROUP BY p.code
+    )
+  `;
+  const [rows, totals] = await Promise.all([
+    prisma.$queryRaw<
+      Array<{
+        code: string;
+        sources: string;
+        lines: number;
+        net: Prisma.Decimal;
+        companies: number;
+        accountName: string | null;
+        classification: string | null;
+      }>
+    >`
+      ${cte}
+      SELECT q.code, q.sources, q.lines, q.net, q.companies,
+        a."originalName" AS "accountName", a."classification"::text AS classification
+      FROM queue q
+      LEFT JOIN "AutopartAccount" a
+        ON a."sourceSystem" = ${AUTOPART_SOURCE} AND UPPER(btrim(a."accountCode")) = q.code
+      ORDER BY ABS(q.net) DESC, q.code ASC
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `,
+    prisma.$queryRaw<Array<{ total: number; lines: number; net: Prisma.Decimal | null }>>`
+      ${cte}
+      SELECT COUNT(*)::int AS total, COALESCE(SUM(q.lines), 0)::int AS lines, COALESCE(SUM(q.net), 0) AS net
+      FROM queue q
+    `,
+  ]);
+  return {
+    permitted: true as const,
+    items: rows.map((row) => ({
+      code: row.code,
+      sources: row.sources,
+      lines: Number(row.lines),
+      net: decimalString(row.net, 2),
+      linkedCompanies: Number(row.companies),
+      accountName: row.accountName,
+      classification: row.classification,
+      reason:
+        Number(row.companies) > 1
+          ? "Linked to more than one CRM company"
+          : row.accountName
+            ? "Autopart account not linked to a CRM company"
+            : "Account code not in the Autopart customer master",
+    })),
+    page,
+    pageSize,
+    total: Number(totals[0]?.total ?? 0),
+    totalLines: Number(totals[0]?.lines ?? 0),
+    totalNet: decimalString(totals[0]?.net, 2),
+    note: "These rows are not in any customer total. Link the exact account code to one CRM company to include them. Names are never used to match.",
+  };
+}
+
+const exportSchema = z
+  .object({ kind: z.enum(["transactions", "products"]), companyId: z.string().min(1) })
+  .passthrough();
+
+export async function exportUnifiedCustomerSalesCsv(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const input = exportSchema.parse(raw ?? {});
+  await assertCompanyInScope(profile, input.companyId);
+  const company = await loadCompanyHeader(input.companyId);
+  const safeName = company.name.replace(/[^\w.-]+/g, "_").slice(0, 60) || company.id;
+  if (input.kind === "transactions") {
+    const filters = txSchema.parse({ ...input, page: 1, pageSize: EXPORT_PAGE_SIZE });
+    const items: Awaited<ReturnType<typeof queryTransactions>>["items"] = [];
+    let total = 0;
+    for (let page = 1; items.length < EXPORT_MAX_ROWS; page += 1) {
+      const next = await queryTransactions({ ...filters, page, pageSize: EXPORT_PAGE_SIZE });
+      total = next.total;
+      items.push(...next.items);
+      if (next.items.length < EXPORT_PAGE_SIZE) break;
+    }
+    const headers = [
+      "Customer",
+      "Status",
+      "Date",
+      "Reference",
+      "Document type",
+      "Account",
+      "SKU",
+      "Description",
+      "Qty",
+      "Net ex VAT",
+      "Source",
+      "Reconciliation status",
+      "Counted in certified total",
+      "Reason",
+    ];
+    const rows = items.map((item) => [
+      company.name,
+      company.status,
+      item.dateLabel,
+      item.reference ?? "",
+      item.documentType,
+      item.accountCode,
+      item.sku,
+      item.description ?? "",
+      item.qty,
+      item.net,
+      item.sourceLabel,
+      item.statusLabel,
+      item.counted ? "Yes" : "No",
+      item.reasonLabel ?? "",
+    ]);
+    return {
+      filename: `customer-sales-transactions-${safeName}.csv`,
+      csv: buildCsv(
+        headers,
+        rows.map((row) => row.map(csvSafe)),
+      ),
+      truncated: items.length < total,
+      rowCount: items.length,
+      total,
+    };
+  }
+  const filters = productHistorySchema.parse({ ...input, page: 1, pageSize: EXPORT_PAGE_SIZE });
+  const items: Awaited<ReturnType<typeof listUnifiedCustomerProducts>>["items"] = [];
+  let total = 0;
+  for (let page = 1; items.length < EXPORT_MAX_ROWS; page += 1) {
+    const next = await listUnifiedCustomerProducts(actorUserId, {
+      ...filters,
+      page,
+      pageSize: EXPORT_PAGE_SIZE,
+    });
+    total = next.total;
+    items.push(...next.items);
+    if (next.items.length < EXPORT_PAGE_SIZE) break;
+  }
+  const canPrice = hasPermission(profile, "pricing.view");
+  const headers = [
+    "Customer",
+    "SKU",
+    "Description",
+    "Lines",
+    "Units",
+    "Sales",
+    "Credits",
+    "Net ex VAT",
+    "Latest confirmed date",
+    "Purchase frequency",
+    "Catalogue",
+    ...(canPrice ? ["Trade price"] : []),
+    "Unreconciled lines",
+  ];
+  const rows = items.map((item) => [
+    company.name,
+    item.sku,
+    item.description,
+    item.lines,
+    item.units,
+    item.grossSales,
+    item.credits,
+    item.netSales,
+    item.latestConfirmedDate ?? DATE_UNAVAILABLE,
+    item.purchaseFrequencyLabel,
+    item.catalogueStatus,
+    ...(canPrice ? [item.customerPrice ?? item.tradePrice ?? ""] : []),
+    item.unreconciledLines,
+  ]);
+  return {
+    filename: `customer-sales-products-${safeName}.csv`,
+    csv: buildCsv(
+      headers,
+      rows.map((row) => row.map(csvSafe)),
+    ),
+    truncated: items.length < total,
+    rowCount: items.length,
+    total,
+  };
+}

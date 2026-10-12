@@ -7,11 +7,7 @@ import { prisma } from "@/infra/database/client";
 import { AuthError } from "@/server/rbac/guards";
 import { ROUTES } from "@/lib/app-nav";
 import { resolveSalesRepAssignmentRoute } from "@/server/sales/account-manager";
-import {
-  summarizeHistoricLinesDto,
-  loadHistoricSalesLines,
-} from "@/server/sales-intelligence/historic-lines";
-import { ALL_DATED_HISTORY_QUERY_RANGE } from "@/domain/sales-history-period";
+import { loadUnifiedCustomerSummary } from "@/server/sales-intelligence/unified-sales";
 import { OPEN_OPPORTUNITY_STAGES } from "@/domain/crm";
 import {
   assertCrmCompanyAccess,
@@ -66,67 +62,49 @@ export async function getCompanyCrmWorkspace(actorUserId: string, raw: unknown) 
 
   const route = await resolveSalesRepAssignmentRoute(companyId);
 
-  const [
-    openTasks,
-    openOpps,
-    openQuotes,
-    recentOrders,
-    activities,
-    notes,
-    lines,
-  ] = await Promise.all([
-    prisma.task.count({
-      where: { companyId, status: { in: ["OPEN", "IN_PROGRESS"] } },
-    }),
-    prisma.opportunity.count({
-      where: { companyId, stage: { in: [...OPEN_OPPORTUNITY_STAGES] } },
-    }),
-    prisma.quote.count({
-      where: {
-        companyId,
-        status: { in: ["DRAFT", "SENT", "VIEWED", "ACCEPTED"] },
-      },
-    }),
-    prisma.order.findMany({
-      where: { companyId },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-      select: {
-        id: true,
-        orderNumber: true,
-        status: true,
-        grandTotal: true,
-        createdAt: true,
-      },
-    }),
-    prisma.activity.findMany({
-      where: { companyId },
-      orderBy: { occurredAt: "desc" },
-      take: 40,
-      include: { user: { select: { name: true, email: true } } },
-    }),
-    prisma.note.findMany({
-      where: { companyId },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-      include: { author: { select: { name: true, email: true } } },
-    }),
-    company.autopartCustomerCode
-      ? loadHistoricSalesLines({
+  const [openTasks, openOpps, openQuotes, recentOrders, activities, notes, unifiedSales] =
+    await Promise.all([
+      prisma.task.count({
+        where: { companyId, status: { in: ["OPEN", "IN_PROGRESS"] } },
+      }),
+      prisma.opportunity.count({
+        where: { companyId, stage: { in: [...OPEN_OPPORTUNITY_STAGES] } },
+      }),
+      prisma.quote.count({
+        where: {
           companyId,
-          range: ALL_DATED_HISTORY_QUERY_RANGE,
-        })
-      : Promise.resolve([]),
-  ]);
+          status: { in: ["DRAFT", "SENT", "VIEWED", "ACCEPTED"] },
+        },
+      }),
+      prisma.order.findMany({
+        where: { companyId },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+          grandTotal: true,
+          createdAt: true,
+        },
+      }),
+      prisma.activity.findMany({
+        where: { companyId },
+        orderBy: { occurredAt: "desc" },
+        take: 40,
+        include: { user: { select: { name: true, email: true } } },
+      }),
+      prisma.note.findMany({
+        where: { companyId },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        include: { author: { select: { name: true, email: true } } },
+      }),
+      loadUnifiedCustomerSummary(companyId),
+    ]);
 
-  const summary = lines.length ? summarizeHistoricLinesDto(lines) : null;
-  let lastPurchased: string | null = null;
-  for (const l of lines) {
-    const d = l.document?.documentDate
-      ? l.document.documentDate.toISOString().slice(0, 10)
-      : null;
-    if (d && (!lastPurchased || d > lastPurchased)) lastPurchased = d;
-  }
+  const unifiedSummary = unifiedSales.summary;
+  const hasSales = unifiedSummary.lineCount > 0 || unifiedSummary.unreconciledLines > 0;
 
   const primary = company.contacts[0] ?? null;
   const address =
@@ -194,8 +172,10 @@ export async function getCompanyCrmWorkspace(actorUserId: string, raw: unknown) 
         }
       : null,
     snapshot: {
-      historicNetSales: summary?.netSales ?? null,
-      lastPurchased,
+      historicNetSales: hasSales
+        ? (unifiedSummary.combinedNet ?? unifiedSummary.certifiedNet)
+        : null,
+      lastPurchased: unifiedSummary.lastDatedInvoice,
       openTasks,
       openOpportunities: openOpps,
       openQuotes,
@@ -207,6 +187,7 @@ export async function getCompanyCrmWorkspace(actorUserId: string, raw: unknown) 
         createdAt: o.createdAt.toISOString(),
       })),
     },
+    unifiedSales,
     timeline,
     links: {
       salesEnquiry: `${ROUTES.salesIntelligence}?mode=customers&companyId=${company.id}`,

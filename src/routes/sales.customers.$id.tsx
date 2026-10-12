@@ -8,6 +8,7 @@ import { activityTypeLabel, formatGbpExact, formatOpportunityValue } from "@/dom
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
+import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
 import {
   createCrmOpportunityFn,
   createCrmTaskFn,
@@ -135,9 +136,7 @@ function SalesCustomer() {
               <div>
                 <dt className="text-steel">Autopart account</dt>
                 <dd className="font-mono">
-                  {crm?.company.autopartCustomerCode ??
-                    company.autopartAccount?.code ??
-                    "—"}
+                  {crm?.company.autopartCustomerCode ?? company.autopartAccount?.code ?? "—"}
                 </dd>
               </div>
               <div>
@@ -155,20 +154,40 @@ function SalesCustomer() {
             </dl>
             {crm ? (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Snap label="Historic net sales" value={formatGbpExact(crm.snapshot.historicNetSales)} />
-                <Snap label="Last purchased" value={crm.snapshot.lastPurchased ?? "—"} />
+                <Snap
+                  label={
+                    crm.unifiedSales.summary.certification === "COMPLETE"
+                      ? "Net sales ex VAT (all sources)"
+                      : "Certified net ex VAT (incomplete)"
+                  }
+                  value={formatGbpExact(crm.snapshot.historicNetSales)}
+                />
+                <Snap label="Last dated invoice" value={crm.snapshot.lastPurchased ?? "—"} />
                 <Snap label="Open opportunities" value={String(crm.snapshot.openOpportunities)} />
                 <Snap label="Open tasks" value={String(crm.snapshot.openTasks)} />
               </div>
             ) : null}
+            {crm &&
+            (crm.unifiedSales.summary.lineCount > 0 ||
+              crm.unifiedSales.summary.unreconciledLines > 0) ? (
+              <section className="space-y-2">
+                <h2 className="font-display text-base font-semibold uppercase">
+                  Customer sales — all sources
+                </h2>
+                <UnifiedSalesFigures figures={crm.unifiedSales} />
+              </section>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <QuickBtn label="Log call" onClick={() => setLogType("CALL")} />
               <QuickBtn label="Log email" onClick={() => setLogType("EMAIL")} />
-              <QuickBtn label="Create opportunity" onClick={() => {
-                void createCrmOpportunityFn({
-                  data: { companyId: id, title: `Opportunity — ${company.name}` },
-                }).then(() => setTab("CRM"));
-              }} />
+              <QuickBtn
+                label="Create opportunity"
+                onClick={() => {
+                  void createCrmOpportunityFn({
+                    data: { companyId: id, title: `Opportunity — ${company.name}` },
+                  }).then(() => setTab("CRM"));
+                }}
+              />
               <Link
                 to={ROUTES.salesIntelligence}
                 search={{ mode: "customers", companyId: id }}
@@ -229,8 +248,15 @@ function SalesCustomer() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Snap label="Historic net sales" value={formatGbpExact(crm.snapshot.historicNetSales)} />
-                <Snap label="Last purchased" value={crm.snapshot.lastPurchased ?? "—"} />
+                <Snap
+                  label={
+                    crm.unifiedSales.summary.certification === "COMPLETE"
+                      ? "Net sales ex VAT (all sources)"
+                      : "Certified net ex VAT (incomplete)"
+                  }
+                  value={formatGbpExact(crm.snapshot.historicNetSales)}
+                />
+                <Snap label="Last dated invoice" value={crm.snapshot.lastPurchased ?? "—"} />
                 <Snap label="Open quotes" value={String(crm.snapshot.openQuotes)} />
                 <Snap label="Open opportunities" value={String(crm.snapshot.openOpportunities)} />
                 <Snap label="Open tasks" value={String(crm.snapshot.openTasks)} />
