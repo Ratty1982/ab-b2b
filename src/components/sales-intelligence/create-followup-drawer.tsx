@@ -24,7 +24,7 @@ export type FollowUpRequest = {
   compareFrom?: string | null;
   compareTo?: string | null;
   opportunityPeriod?: string | null;
-  historySource?: "dated" | "global";
+  historySource?: "dated" | "global" | "unified";
 };
 
 type PreviewData = Extract<

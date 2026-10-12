@@ -95,6 +95,22 @@ async function resolveCompanyByAutopartCode(code: string): Promise<{
       code: alias.company.autopartCustomerCode ?? normalised,
     };
   }
+  const linked = await prisma.autopartAccount.findMany({
+    where: {
+      sourceSystem: "AUTOPART",
+      accountCode: { equals: normalised, mode: "insensitive" },
+      companyId: { not: null },
+    },
+    select: { companyId: true, company: { select: { autopartCustomerCode: true } } },
+    take: 2,
+  });
+  const owners = new Set(linked.map((row) => row.companyId));
+  if (owners.size === 1 && linked[0]?.companyId) {
+    return {
+      companyId: linked[0].companyId,
+      code: linked[0].company?.autopartCustomerCode ?? normalised,
+    };
+  }
   return null;
 }
 
@@ -626,11 +642,12 @@ export async function previewAutopartTrm21qcImport(
         description: d.description ?? null,
         qty: d.quantity ?? null,
         salesNet: d.salesNet ?? null,
-        productMatch: d.reasonCode === "NOT_IN_AB_CATALOGUE" || d.isWarning
-          ? "NOT_IN_AB_CATALOGUE"
-          : d.sku
-            ? "MATCHED"
-            : "—",
+        productMatch:
+          d.reasonCode === "NOT_IN_AB_CATALOGUE" || d.isWarning
+            ? "NOT_IN_AB_CATALOGUE"
+            : d.sku
+              ? "MATCHED"
+              : "—",
         customerMatch: d.reasonCode === "UNMAPPED_CUSTOMER" ? "UNMAPPED" : "MATCHED",
         status: d.status,
         reasonCode: d.reasonCode,

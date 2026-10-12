@@ -192,6 +192,12 @@ export async function searchSalesIntelligenceCustomers(actorUserId: string, raw:
         { tradingName: { contains: q, mode: "insensitive" } },
         { accountNumber: { contains: q, mode: "insensitive" } },
         { autopartCustomerCode: { contains: q, mode: "insensitive" } },
+        {
+          autopartAccounts: {
+            some: { sourceSystem: "AUTOPART", accountCode: { contains: q, mode: "insensitive" } },
+          },
+        },
+        { autopartAccountAliases: { some: { alias: { contains: q, mode: "insensitive" } } } },
         { addresses: { some: { postcode: { contains: q, mode: "insensitive" } } } },
       ],
     },
@@ -358,6 +364,39 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
         categoryName: null,
         inCatalogue: Boolean(row.catalogueVariantId),
         variantId: row.catalogueVariantId,
+      });
+      seen.add(key);
+      if (items.length >= limit) break;
+    }
+  }
+
+  if (items.length < limit) {
+    const globalHistoric = await prisma.autopartInvoiceLine.findMany({
+      where: {
+        salesMeasure: "NET_EX_VAT",
+        account:
+          scope === "all"
+            ? { companyId: { not: null } }
+            : { companyId: { in: scope.length ? scope : ["__none__"] } },
+        OR: [
+          { partNumber: { contains: q, mode: "insensitive" } },
+          { description: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: { partNumber: true, description: true },
+      distinct: ["partNumber"],
+      take: limit * 2,
+    });
+    for (const row of globalHistoric) {
+      const key = row.partNumber.trim().toUpperCase();
+      if (seen.has(key)) continue;
+      items.push({
+        sku: row.partNumber.trim(),
+        name: row.description?.trim() || row.partNumber.trim(),
+        brandName: null,
+        categoryName: null,
+        inCatalogue: false,
+        variantId: null,
       });
       seen.add(key);
       if (items.length >= limit) break;

@@ -26,6 +26,10 @@ import { getCustomerGapAnalysis } from "@/server/sales-intelligence/gap";
 import { getCustomerRangeOpportunities } from "@/server/sales-intelligence/opportunity";
 import { getCustomerSalesEnquiry } from "@/server/sales-intelligence/enquiry";
 import { getGlobalCustomerSalesEnquiry } from "@/server/sales-intelligence/global-history";
+import {
+  listUnifiedCustomerProducts,
+  loadUnifiedCustomerSummary,
+} from "@/server/sales-intelligence/unified-sales";
 import { GLOBAL_AUTOPART_SALES_PERIOD } from "@/server/sales-intelligence/history-sources";
 import { getCustomerRebateAnalysis } from "@/server/sales-intelligence/rebate";
 import { ROUTES } from "@/lib/app-nav";
@@ -86,7 +90,7 @@ const previewSchema = z.object({
   sku: z.string().max(120).optional().nullable(),
   ...periodBits,
   opportunityPeriod: z.string().optional().nullable(),
-  historySource: z.enum(["dated", "global"]).optional(),
+  historySource: z.enum(["dated", "global", "unified"]).optional(),
 });
 
 const createSchema = previewSchema.extend({
@@ -387,6 +391,78 @@ async function buildSnapshot(
         period: input.period ?? "ALL",
         from: input.from ?? undefined,
         to: input.to ?? undefined,
+      })}`,
+      capturedAt,
+    };
+  }
+
+  if (input.historySource === "unified") {
+    const sku = input.sku?.trim() || null;
+    const reason = input.sourceReason === "PRODUCT" && sku ? "PRODUCT" : "CUSTOMER";
+    const unified = await loadUnifiedCustomerSummary(company.id);
+    let productId: string | null = null;
+    let productName: string | null = null;
+    let brandName: string | null = null;
+    let categoryName: string | null = null;
+    let historicOnly = false;
+    let productMetrics: Record<string, string | number> = {};
+    if (reason === "PRODUCT" && sku) {
+      const products = await listUnifiedCustomerProducts(actorUserId, {
+        companyId: company.id,
+        q: sku,
+        page: 1,
+        pageSize: 25,
+      });
+      const row = products.items.find(
+        (item) => item.sku.trim().toUpperCase() === sku.toUpperCase(),
+      );
+      if (!row) {
+        throw new AuthError("Product is not in this customer's sales history", "NOT_FOUND", 404);
+      }
+      productId = row.productId;
+      productName = row.description;
+      brandName = row.brandName;
+      categoryName = row.categoryName;
+      historicOnly = !row.inCatalogue;
+      productMetrics = {
+        "Product net ex VAT": row.netSales,
+        "Product units": row.units,
+        "Latest confirmed date": row.latestConfirmedDate ?? "Date unavailable",
+      };
+    }
+    const summary = unified.summary;
+    return {
+      sourceModule: "SALES_ENQUIRY",
+      sourceReason: reason,
+      companyId: company.id,
+      companyName: company.name,
+      autopartCustomerCode: company.autopartCustomerCode,
+      productId,
+      sku,
+      productName,
+      brandName,
+      categoryName,
+      historicOnly,
+      selectedPeriod: { from: null, to: null, label: "All sales history" },
+      comparisonPeriod: null,
+      metrics: {
+        "Account codes":
+          unified.identity
+            .filter((code) => code.attached)
+            .map((code) => code.code)
+            .join(", ") || "None verified",
+        "Historical sales ex VAT": summary.historicalSales,
+        "Dated invoiced sales ex VAT": summary.datedInvoicedSales,
+        "Credits and adjustments": summary.creditsAndAdjustments,
+        "Combined net ex VAT":
+          summary.combinedNet ?? `Incomplete — certified ${summary.certifiedNet}`,
+        "Unreconciled lines": summary.unreconciledLines,
+        "Last dated invoice": summary.lastDatedInvoice ?? "None",
+        ...productMetrics,
+      },
+      deepLinkPath: `${ROUTES.salesIntelligence}${qs({
+        mode: "customers",
+        companyId: company.id,
       })}`,
       capturedAt,
     };

@@ -21,6 +21,7 @@ import {
   normaliseAccountToken,
 } from "@/domain/autopart-report-money";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
+import { loadUnifiedCustomerSummary } from "@/server/sales-intelligence/unified-sales";
 import {
   loadCompanyGlobalAutopartHistory,
   purchaseDataStatus,
@@ -787,8 +788,12 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
   });
 
   const globalHistory = await loadCompanyGlobalAutopartHistory(actorUserId, companyId);
+  const unifiedSales = globalHistory.restricted
+    ? null
+    : await loadUnifiedCustomerSummary(companyId);
 
   return {
+    unifiedSales,
     company: {
       id: company.id,
       name: company.name,
@@ -946,8 +951,7 @@ async function buildHistoryPreview(
 
   const reportStartCustomer =
     parsed561.reportStartCustomer ?? parsedSlrb.reportStartCustomer ?? null;
-  const reportEndCustomer =
-    parsed561.reportEndCustomer ?? parsedSlrb.reportEndCustomer ?? null;
+  const reportEndCustomer = parsed561.reportEndCustomer ?? parsedSlrb.reportEndCustomer ?? null;
   // Source-aware identity — do NOT flatten 561L short + SLRB full into one set.
   const identity: HistoricAccountIdentity = {
     reportCustomer: reportStartCustomer,
@@ -1484,8 +1488,7 @@ async function bulkUpsertHistoricLines(
             : Prisma.sql`${l.descriptionSnapshot}`;
         const matchedVariantSql =
           l.matchedVariantId == null ? Prisma.sql`NULL` : Prisma.sql`${l.matchedVariantId}`;
-        const rawInvSql =
-          l.rawInvAndLn == null ? Prisma.sql`NULL` : Prisma.sql`${l.rawInvAndLn}`;
+        const rawInvSql = l.rawInvAndLn == null ? Prisma.sql`NULL` : Prisma.sql`${l.rawInvAndLn}`;
         // units/salesNet are required — fall back to 0 when the source value is not numeric
         const unitsFinal =
           l.units && /^-?\d+(\.\d+)?$/.test(l.units.trim())
@@ -2120,5 +2123,8 @@ export async function getHistoricImportRunStatus(actorUserId: string, runId: str
 // Credit limits and available credit remain authoritative in Autopart/MAM.
 
 /** @deprecated Prefer listPortalPurchaseHistory — kept as a thin compat shim. */
-export { listPortalHistoricPurchases, listPortalPurchaseHistory, getPortalPurchaseProductInsight } from "@/server/companies/purchase-history";
-
+export {
+  listPortalHistoricPurchases,
+  listPortalPurchaseHistory,
+  getPortalPurchaseProductInsight,
+} from "@/server/companies/purchase-history";

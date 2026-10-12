@@ -105,7 +105,7 @@ function cleanFilters(raw: z.infer<typeof filterSchema>): Filters {
   };
 }
 
-function decimalString(value: unknown, places: number): string {
+export function decimalString(value: unknown, places: number): string {
   if (
     value != null &&
     typeof value === "object" &&
@@ -117,7 +117,7 @@ function decimalString(value: unknown, places: number): string {
   return new Prisma.Decimal(value == null || value === "" ? 0 : String(value)).toFixed(places);
 }
 
-function likeContains(value: string): string {
+export function likeContains(value: string): string {
   return `%${value.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
 
@@ -241,7 +241,7 @@ function customerOrder(sort: Filters["sort"]): Prisma.Sql {
   }
 }
 
-function csvSafe(value: string | number | null | undefined): string {
+export function csvSafe(value: string | number | null | undefined): string {
   const text = value == null ? "" : String(value);
   return /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
 }
@@ -250,11 +250,11 @@ function canOpenAdmin(profile: LoadedAccessProfile): boolean {
   return ADMIN_SHELL_PERMISSIONS.some((key) => hasPermission(profile, key));
 }
 
-function customer360Href(profile: LoadedAccessProfile, companyId: string): string {
+export function customer360Href(profile: LoadedAccessProfile, companyId: string): string {
   return canOpenAdmin(profile) ? `/admin/customers/${companyId}` : `/sales/customers/${companyId}`;
 }
 
-function productWorkspaceHref(
+export function productWorkspaceHref(
   profile: LoadedAccessProfile,
   productId: string | null,
   sku: string,
@@ -265,7 +265,7 @@ function productWorkspaceHref(
   return `/products/${encodeURIComponent(sku)}`;
 }
 
-async function requireSalesIntelligence(actorUserId: string): Promise<LoadedAccessProfile> {
+export async function requireSalesIntelligence(actorUserId: string): Promise<LoadedAccessProfile> {
   const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Sales Intelligence is internal only", "FORBIDDEN", 403);
@@ -273,11 +273,11 @@ async function requireSalesIntelligence(actorUserId: string): Promise<LoadedAcce
   return profile;
 }
 
-async function loadScope(profile: LoadedAccessProfile) {
+export async function loadScope(profile: LoadedAccessProfile) {
   return resolveSalesIntelligenceCompanyScope(profile);
 }
 
-async function assertCompanyInScope(profile: LoadedAccessProfile, companyId: string) {
+export async function assertCompanyInScope(profile: LoadedAccessProfile, companyId: string) {
   const scope = await loadScope(profile);
   if (scope !== "all" && !scope.includes(companyId)) {
     throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
@@ -432,7 +432,7 @@ export async function getGlobalAutopartSalesDashboard(actorUserId: string, raw: 
   };
 }
 
-type ProductAggregate = {
+export type ProductAggregate = {
   partNumber: string;
   description: string | null;
   lines: number;
@@ -481,7 +481,7 @@ function priceCurrent(row: { startsAt: Date | null; endsAt: Date | null }, now: 
   return true;
 }
 
-async function enrichProducts(
+export async function enrichProducts(
   profile: LoadedAccessProfile,
   rows: ProductAggregate[],
   companyId: string | null,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
+import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
 import {
   confirmAutopartHistoryImportFn,
   getCompanyAutopartHistoryWorkspaceFn,
@@ -246,6 +247,18 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
+      {workspace.unifiedSales ? (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="font-display text-base font-semibold uppercase">
+            Customer sales — all sources
+          </h2>
+          <p className="mt-2 mb-3 text-[12px] text-steel">
+            The same reconciled figures as Sales Enquiry. Sales history does not activate a portal
+            account.
+          </p>
+          <UnifiedSalesFigures figures={workspace.unifiedSales} />
+        </section>
+      ) : null}
       <section className="rounded-lg border border-border p-5">
         <h2 className="font-display text-base font-semibold uppercase">Autopart account</h2>
         <p className="mt-2 text-[12px] text-steel">
@@ -566,8 +579,8 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         <h2 className="font-display text-base font-semibold uppercase">Import historic data</h2>
         <p className="mt-2 text-[12px] text-steel">
           Upload 561L (lines) and SLRB (document dates). Format is detected from file content —
-          extension does not matter. Dry-run first — no database writes until confirm. Large
-          retail histories process server-side with live progress.
+          extension does not matter. Dry-run first — no database writes until confirm. Large retail
+          histories process server-side with live progress.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="text-[12px]">
@@ -628,7 +641,9 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                 <p>{progress.message}</p>
                 <p className="text-steel">
                   Documents {progress.documentsWritten.toLocaleString()}
-                  {progress.phase === "documents" || progress.phase === "lines" || progress.phase === "complete"
+                  {progress.phase === "documents" ||
+                  progress.phase === "lines" ||
+                  progress.phase === "complete"
                     ? ` · Lines ${progress.linesWritten.toLocaleString()}`
                     : null}
                 </p>
@@ -710,9 +725,8 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             historyPreview.accountMatch.rowAccount !==
               historyPreview.accountMatch.verifiedAccount ? (
               <p className="text-[11px] text-steel">
-                561L account code {historyPreview.accountMatch.rowAccount} — 561L uses a
-                shortened {historyPreview.accountMatch.accountFieldWidth ?? 7}-character
-                account field.
+                561L account code {historyPreview.accountMatch.rowAccount} — 561L uses a shortened{" "}
+                {historyPreview.accountMatch.accountFieldWidth ?? 7}-character account field.
               </p>
             ) : null}
             {historyPreview.accountMatch?.status === "MULTIPLE_ACCOUNTS" &&
