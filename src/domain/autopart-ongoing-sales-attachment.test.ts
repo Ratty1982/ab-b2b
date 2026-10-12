@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
 import { filenameMatchesStockPattern } from "@/domain/stock-email";
 import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
 import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
@@ -25,8 +26,12 @@ const SAMPLE_504C = `${AUTOPART_504C_REPORT_TITLE}\n${AUTOPART_504C_HEADER}\n`;
 
 describe("ongoing sales attachment candidates", () => {
   it("treats 504.TXT / 504.txt as candidates regardless of case", () => {
-    expect(isOngoingSalesAttachmentCandidate({ filename: "504.TXT", mime: "text/plain" }).candidate).toBe(true);
-    expect(isOngoingSalesAttachmentCandidate({ filename: "504.txt", mime: "text/plain" }).candidate).toBe(true);
+    expect(
+      isOngoingSalesAttachmentCandidate({ filename: "504.TXT", mime: "text/plain" }).candidate,
+    ).toBe(true);
+    expect(
+      isOngoingSalesAttachmentCandidate({ filename: "504.txt", mime: "text/plain" }).candidate,
+    ).toBe(true);
     expect(isOngoingSalesAttachmentCandidate({ filename: "504.Txt" }).candidate).toBe(true);
   });
 
@@ -41,7 +46,8 @@ describe("ongoing sales attachment candidates", () => {
       }).candidate,
     ).toBe(true);
     expect(
-      isOngoingSalesAttachmentCandidate({ filename: "504", mime: "application/octet-stream" }).candidate,
+      isOngoingSalesAttachmentCandidate({ filename: "504", mime: "application/octet-stream" })
+        .candidate,
     ).toBe(true);
   });
 
@@ -56,7 +62,8 @@ describe("ongoing sales attachment candidates", () => {
 
   it("rejects 231PO3NEW even though it is TXT", () => {
     expect(
-      isOngoingSalesAttachmentCandidate({ filename: "231PO3NEW.txt", mime: "text/plain" }).candidate,
+      isOngoingSalesAttachmentCandidate({ filename: "231PO3NEW.txt", mime: "text/plain" })
+        .candidate,
     ).toBe(false);
   });
 
@@ -116,7 +123,9 @@ describe("ongoing sales content detection", () => {
   it("hashes report content stably (string and Buffer) for duplicate identity", () => {
     const a = ongoingSalesReportContentHash(SAMPLE_504);
     const b = ongoingSalesReportContentHash(Buffer.from(SAMPLE_504, "utf8"));
-    const changed = ongoingSalesReportContentHash(`${SAMPLE_504}ACCOUNT,SS999999,29/09/2026,18:00,X,1,0.2,1.2,WR,Z\n`);
+    const changed = ongoingSalesReportContentHash(
+      `${SAMPLE_504}ACCOUNT,SS999999,29/09/2026,18:00,X,1,0.2,1.2,WR,Z\n`,
+    );
     expect(a).toMatch(/^[a-f0-9]{64}$/);
     expect(a).toBe(b);
     expect(changed).not.toBe(a);
@@ -152,5 +161,12 @@ describe("ongoing sales content detection", () => {
     });
     expect(skipped).toContain("Detected: UNKNOWN");
     expect(skipped).toContain("Skipped — content not recognised");
+  });
+
+  it("does not classify a 216V backorder file as 504 or TRM21QC", () => {
+    const text = buildAutopart216vFixture();
+    expect(detectOngoingSalesAttachmentType("216V.CSV", text)).toBe("UNKNOWN");
+    expect(detectOngoingSalesAttachmentType("216V_20261012.csv", text)).toBe("UNKNOWN");
+    expect(classifyOngoingSalesAttachment("216V.CSV", text)).toBe("UNKNOWN");
   });
 });

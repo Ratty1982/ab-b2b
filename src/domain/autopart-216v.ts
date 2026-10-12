@@ -18,15 +18,12 @@
 
 import { skuMatchKey } from "@/domain/stock";
 import { parseAutopartMoneyToken } from "@/domain/autopart-504";
+import { parseLeadingCsvFields } from "@/domain/autopart-trm21qc";
 
 export const AUTOPART_216V_REPORT = "216V";
 
 export type Autopart216vChangeStatus =
-  | "NEW"
-  | "UNCHANGED"
-  | "QUANTITY_REDUCED"
-  | "QUANTITY_INCREASED"
-  | "CLEARED";
+  "NEW" | "UNCHANGED" | "QUANTITY_REDUCED" | "QUANTITY_INCREASED" | "CLEARED";
 
 export type Autopart216vRow = {
   lineNumber: number;
@@ -68,7 +65,11 @@ const HEADER_ALIASES: Record<string, string[]> = {
 };
 
 function normaliseHeader(h: string): string {
-  return h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\s+/g, " ");
+  return h
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
 function detectDelimiter(headerLine: string): "," | "\t" | ";" {
@@ -130,7 +131,8 @@ function looksLike216vHeaderCells(cells: string[]): boolean {
   if (!joined.includes("order no")) return false;
   if (!joined.includes("part number")) return false;
   if (!joined.includes("osqty") && !joined.includes("os qty")) return false;
-  if (!joined.includes("o/s val") && !joined.includes("os val") && !joined.includes("osval")) return false;
+  if (!joined.includes("o/s val") && !joined.includes("os val") && !joined.includes("osval"))
+    return false;
   return joined.includes("custome") || joined.includes("customer");
 }
 
@@ -139,23 +141,195 @@ export function isAutopart216vFilename(filename: string): boolean {
   return /(^| )216V( |$)/.test(f) || filename.toUpperCase().includes("216V.");
 }
 
+const INSPECTED_216V_FILE_HASH = "589ca1a940390e82f7551b3bab0be7118bc3680f03c167a062805f3fbabfe492";
+
+/**
+ * A 216V file is a duplicate only when this exact content hash is already a
+ * committed snapshot. The inspected 12 Oct 2026 hash is not special-cased.
+ * Mailbox receipts from 504, TRM21QC or 231PO3NEW are not 216V identity.
+ */
+export function isCommitted216vSnapshotHash(
+  fileHash: string,
+  committedHashes: ReadonlySet<string>,
+): boolean {
+  return committedHashes.has(fileHash);
+}
+
+export function inspected216vFileHash(): string {
+  return INSPECTED_216V_FILE_HASH;
+}
+
+export type Autopart216vDecoded = {
+  text: string;
+  encoding: "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
+};
+
+function looksLikeUtf16Le(bytes: Uint8Array): boolean {
+  const n = Math.min(bytes.length - (bytes.length % 2), 240);
+  if (n < 16) return false;
+  let zeros = 0;
+  let checked = 0;
+  for (let i = 1; i < n; i += 2) {
+    checked += 1;
+    if (bytes[i] === 0) zeros += 1;
+  }
+  return checked > 0 && zeros / checked > 0.8;
+}
+
+/**
+ * Decode the original file bytes. Autopart/Excel attachments are often
+ * UTF-16 LE. Reading those as UTF-8 hides the header, so neither upload nor
+ * mailbox import can see a valid 216V report.
+ */
+export function decodeAutopart216vBytes(bytes: Uint8Array): Autopart216vDecoded {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return { text: new TextDecoder("utf-16le").decode(bytes), encoding: "utf-16le" };
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return { text: new TextDecoder("utf-16be").decode(bytes), encoding: "utf-16be" };
+  }
+  if (looksLikeUtf16Le(bytes)) {
+    return { text: new TextDecoder("utf-16le").decode(bytes), encoding: "utf-16le" };
+  }
+  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  if (isAutopart216vReport(utf8)) return { text: utf8, encoding: "utf-8" };
+  try {
+    const latin = new TextDecoder("windows-1252").decode(bytes);
+    if (latin !== utf8 && isAutopart216vReport(latin))
+      return { text: latin, encoding: "windows-1252" };
+  } catch {
+    /* windows-1252 is unavailable — keep the UTF-8 decode */
+  }
+  return { text: utf8, encoding: "utf-8" };
+}
+
 /**
  * Content-authoritative 216V detection. Filename is never enough.
+ * Other-report titles reject the file only when they appear in the preamble,
+ * not when a later product description happens to contain the same words.
  */
 export function isAutopart216vReport(text: string, filename?: string): boolean {
   const raw = text.replace(/^\uFEFF/, "");
-  const sample = raw.slice(0, 12_000).toUpperCase();
-  if (sample.includes("TRM21QC") || sample.includes("231PO3NEW")) return false;
-  if (sample.includes("LISTING OF INVOICES AND CREDITS BY CUSTOMER")) return false;
   const lines = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  for (const line of lines.slice(0, 40)) {
+  let headerAt = -1;
+  for (let i = 0; i < Math.min(lines.length, 40); i++) {
+    const line = lines[i]!;
     if (!line.trim()) continue;
     const cells = splitCsvLine(line, detectDelimiter(line));
-    if (looksLike216vHeaderCells(cells) && mapHeaders(cells)) return true;
+    if (looksLike216vHeaderCells(cells) && mapHeaders(cells)) {
+      headerAt = i;
+      break;
+    }
   }
+  const preamble = lines
+    .slice(0, headerAt < 0 ? 15 : headerAt)
+    .join("\n")
+    .toUpperCase();
+  if (preamble.includes("TRM21QC") || preamble.includes("231PO3NEW")) return false;
+  if (preamble.includes("LISTING OF INVOICES AND CREDITS BY CUSTOMER")) return false;
   // Filename never overrides a failed content match.
   void filename;
-  return false;
+  return headerAt >= 0;
+}
+
+function parse216vMoney(raw: string): string | null {
+  return parseAutopartMoneyToken(raw.replace(/[£$€\u00A0]/g, "").replace(/\s+/g, ""));
+}
+
+function peelOneCsvField(
+  segment: string,
+  delimiter: string,
+): { value: string; rest: string } | null {
+  let rest = segment.replace(/\s+$/, "");
+  if (!rest.length) return null;
+  if (rest.endsWith('"')) {
+    const end = rest.length - 1;
+    let open = -1;
+    for (let i = end - 1; i >= 0; i--) {
+      if (rest[i] !== '"') continue;
+      if (i > 0 && rest[i - 1] === '"') {
+        i -= 1;
+        continue;
+      }
+      open = i;
+      break;
+    }
+    if (open < 0) return null;
+    const value = rest.slice(open + 1, end);
+    if (value.includes('"')) return null;
+    rest = rest.slice(0, open).replace(/\s+$/, "");
+    if (rest.endsWith(delimiter)) rest = rest.slice(0, -delimiter.length);
+    else if (rest.length > 0) return null;
+    return { value: value.trim(), rest };
+  }
+  const delimAt = rest.lastIndexOf(delimiter);
+  const value = delimAt < 0 ? rest : rest.slice(delimAt + delimiter.length);
+  return { value: value.trim(), rest: delimAt < 0 ? "" : rest.slice(0, delimAt) };
+}
+
+function normaliseRecoveredDescription(raw: string): string {
+  let d = raw.trim();
+  if (d.startsWith('"') && d.endsWith('"') && d.length >= 2) d = d.slice(1, -1);
+  else if (d.startsWith('"')) d = d.slice(1);
+  else if (d.endsWith('"')) d = d.slice(0, -1);
+  return d.replace(/""/g, '"').trim();
+}
+
+/**
+ * Autopart sometimes leaves an inch mark unescaped inside a quoted Description
+ * (`"14" Hose"`). Strict CSV then shifts OSQty. Recover from the stable fields
+ * before the description and the numeric tail. Never invent a quantity.
+ */
+function recover216vCells(
+  line: string,
+  delimiter: string,
+  headerMap: Record<string, number>,
+  width: number,
+): string[] | null {
+  const descIndex = headerMap["description"];
+  if (descIndex == null || headerMap["qty"] == null) return null;
+  const leading = parseLeadingCsvFields(line, delimiter, descIndex);
+  if (!leading || leading.fields.length !== descIndex) return null;
+  const validators: Array<(value: string) => boolean> = [];
+  for (let i = descIndex + 1; i < width; i++) {
+    const key = Object.entries(headerMap).find(([, idx]) => idx === i)?.[0];
+    if (key === "qty") validators.push((value) => parseAutopart216vQty(value) != null);
+    else if (key === "unit" || key === "value")
+      validators.push((value) => value.trim() === "" || parse216vMoney(value) != null);
+    else validators.push(() => true);
+  }
+  let rest = leading.rest;
+  const tail: string[] = [];
+  for (let n = validators.length - 1; n >= 0; n--) {
+    const peeled = peelOneCsvField(rest, delimiter);
+    if (!peeled || !validators[n]!(peeled.value)) return null;
+    tail.unshift(peeled.value);
+    rest = peeled.rest;
+  }
+  const cells = new Array<string>(width).fill("");
+  leading.fields.forEach((field, i) => {
+    cells[i] = field;
+  });
+  cells[descIndex] = normaliseRecoveredDescription(rest);
+  tail.forEach((field, offset) => {
+    cells[descIndex + 1 + offset] = field;
+  });
+  const qty = cells[headerMap["qty"]!] ?? "";
+  if (parseAutopart216vQty(qty) == null) return null;
+  return cells;
+}
+
+function cellsFor216vRow(
+  line: string,
+  delimiter: string,
+  headerMap: Record<string, number>,
+): string[] {
+  const standard = splitCsvLine(line, delimiter);
+  const width = Math.max(...Object.values(headerMap)) + 1;
+  const qtyAt = headerMap["qty"];
+  const qty = qtyAt == null ? "" : (standard[qtyAt] ?? "");
+  if (standard.length === width && parseAutopart216vQty(qty) != null) return standard;
+  return recover216vCells(line, delimiter, headerMap, width) ?? standard;
 }
 
 export function parseAutopart216vQty(raw: string): string | null {
@@ -275,7 +449,10 @@ export type Autopart216vMatchableLine = {
   customerOrderRef: string;
 };
 
-export type Autopart216vSnapshotMatch<P extends Autopart216vMatchableLine, N extends Autopart216vMatchableLine> = {
+export type Autopart216vSnapshotMatch<
+  P extends Autopart216vMatchableLine,
+  N extends Autopart216vMatchableLine,
+> = {
   previous: P;
   next: N;
   /** Preserve history continuity when Autopart expands truncated text fields. */
@@ -376,7 +553,8 @@ export function matchAutopart216vAcrossSnapshots<
         const pref = prevRemaining.get(pIdx)!;
         for (const nIdx of nextIdxs) {
           const nrow = nextRemaining.get(nIdx)!;
-          if (!autopart216vRefsPrefixCompatible(pref.customerOrderRef, nrow.customerOrderRef)) continue;
+          if (!autopart216vRefsPrefixCompatible(pref.customerOrderRef, nrow.customerOrderRef))
+            continue;
           const pl = prevToNext.get(pIdx) ?? [];
           pl.push(nIdx);
           prevToNext.set(pIdx, pl);
@@ -441,7 +619,7 @@ export function parseAutopart216vReport(text: string): Autopart216vParseResult {
       }
       continue;
     }
-    const cells = splitCsvLine(line, delimiter);
+    const cells = cellsFor216vRow(line, delimiter, headerMap!);
     const get = (key: string) => {
       const at = headerMap![key];
       return at == null ? "" : (cells[at] ?? "").trim();
@@ -476,8 +654,8 @@ export function parseAutopart216vReport(text: string): Autopart216vParseResult {
       description,
       customerOrderRef,
       outstandingQty,
-      unitValue: parseAutopartMoneyToken(unitRaw),
-      outstandingValue: parseAutopartMoneyToken(valueRaw),
+      unitValue: parse216vMoney(unitRaw),
+      outstandingValue: parse216vMoney(valueRaw),
       rawLine: line,
     });
   }
@@ -499,14 +677,17 @@ export function parseAutopart216vReport(text: string): Autopart216vParseResult {
     valueSum += Number(row.outstandingValue ?? 0);
   }
 
-  const qtyDisplay = Number.isInteger(qtySum) ? String(qtySum) : qtySum.toFixed(4).replace(/\.?0+$/, "");
+  const qtyDisplay = Number.isInteger(qtySum)
+    ? String(qtySum)
+    : qtySum.toFixed(4).replace(/\.?0+$/, "");
 
   return {
     headerFound,
     rows,
     errors,
     orderCount: new Set(rows.map((r) => r.orderNumber.toUpperCase())).size,
-    accountCount: new Set(rows.map((r) => r.customerAccount.trim().toUpperCase()).filter(Boolean)).size,
+    accountCount: new Set(rows.map((r) => r.customerAccount.trim().toUpperCase()).filter(Boolean))
+      .size,
     skuCount: new Set(rows.map((r) => r.partMatchKey)).size,
     outstandingQty: qtyDisplay,
     outstandingValue: valueSum.toFixed(2),
@@ -517,7 +698,8 @@ export function compare216vQty(previous: string | null, next: string): Autopart2
   if (previous == null) return "NEW";
   const a = Number(previous);
   const b = Number(next);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a - b) < 0.000_000_1) return "UNCHANGED";
+  if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a - b) < 0.000_000_1)
+    return "UNCHANGED";
   if (b < a) return "QUANTITY_REDUCED";
   return "QUANTITY_INCREASED";
 }

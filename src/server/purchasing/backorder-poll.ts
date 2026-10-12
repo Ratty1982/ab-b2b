@@ -11,8 +11,38 @@ import { fetchUnprocessedStockEmails } from "@/server/stock/imap";
 import type { InboundStockEmail } from "@/server/stock/imap";
 import { loadImapRuntimeConfig, getOrCreateImapSettings } from "@/server/stock/settings";
 import { isTxtOrCsvAttachment, normaliseAttachmentFilename } from "@/domain/stock-email";
-import { isAutopart216vFilename, isAutopart216vReport } from "@/domain/autopart-216v";
-import { confirmAutopart216vImport, requireBackorderManage } from "@/server/purchasing/backorder-import";
+import { createHash } from "node:crypto";
+import {
+  decodeAutopart216vBytes,
+  isAutopart216vFilename,
+  isAutopart216vReport,
+  isCommitted216vSnapshotHash,
+} from "@/domain/autopart-216v";
+import {
+  confirmAutopart216vImport,
+  requireBackorderManage,
+} from "@/server/purchasing/backorder-import";
+
+export type BackorderMailboxDecision =
+  | { action: "import" }
+  | { action: "duplicate"; reason: string }
+  | { action: "skip"; reason: string };
+
+/**
+ * Duplicate identity is the 216V file hash of a committed snapshot.
+ * A receipt written by 504, TRM21QC or 231PO3NEW must not skip a new 216V file.
+ */
+export function decide216vMailboxAttachment(input: {
+  is216v: boolean;
+  contentHash: string;
+  committedHashes: ReadonlySet<string>;
+}): BackorderMailboxDecision {
+  if (!input.is216v) return { action: "skip", reason: "Not a 216V report" };
+  if (isCommitted216vSnapshotHash(input.contentHash, input.committedHashes)) {
+    return { action: "duplicate", reason: "This file is already a committed 216V snapshot" };
+  }
+  return { action: "import" };
+}
 
 export type BackorderPollResult = {
   ran: boolean;
@@ -21,10 +51,40 @@ export type BackorderPollResult = {
   duplicatesIgnored: number;
   skipped: number;
   errors: string[];
+  /** Visible per-attachment notes (skipped, duplicate, imported, failed). */
+  notes: string[];
 };
 
+export function summarise216vPoll(result: BackorderPollResult): string {
+  if (!result.ran && result.reason) return result.reason;
+  const parts: string[] = [];
+  if (result.processed) {
+    parts.push(`Imported ${result.processed} 216V report${result.processed === 1 ? "" : "s"}`);
+  }
+  if (result.duplicatesIgnored) {
+    parts.push(
+      `${result.duplicatesIgnored} duplicate file${result.duplicatesIgnored === 1 ? "" : "s"} left the current snapshot unchanged`,
+    );
+  }
+  if (result.skipped)
+    parts.push(`${result.skipped} attachment${result.skipped === 1 ? "" : "s"} skipped`);
+  if (result.errors.length) parts.push(result.errors.slice(0, 5).join("; "));
+  if (!parts.length) return "Mailbox poll finished. No 216V attachment was found.";
+  const notes = result.notes.filter(Boolean).slice(0, 6);
+  const head = `${parts.join(". ")}.`;
+  return notes.length ? `${head} ${notes.join(" | ")}` : head;
+}
+
 function emptyResult(partial?: Partial<BackorderPollResult>): BackorderPollResult {
-  return { ran: false, processed: 0, duplicatesIgnored: 0, skipped: 0, errors: [], ...partial };
+  return {
+    ran: false,
+    processed: 0,
+    duplicatesIgnored: 0,
+    skipped: 0,
+    errors: [],
+    notes: [],
+    ...partial,
+  };
 }
 
 export function isAutopart216vAttachmentCandidate(filename: string, mime?: string | null): boolean {
@@ -34,7 +94,11 @@ export function isAutopart216vAttachmentCandidate(filename: string, mime?: strin
     .split(";")[0]
     ?.trim()
     .toLowerCase();
-  if (mimeBase && !/text\/|csv|excel|octet-stream/.test(mimeBase) && mimeBase !== "application/vnd.ms-excel") {
+  if (
+    mimeBase &&
+    !/text\/|csv|excel|octet-stream/.test(mimeBase) &&
+    mimeBase !== "application/vnd.ms-excel"
+  ) {
     return false;
   }
   return isAutopart216vFilename(filename) || n.endsWith(".csv") || n.endsWith(".txt");
@@ -46,43 +110,61 @@ export async function process216vEmailBatch(input: {
   source: "EMAIL" | "SCHEDULE";
 }): Promise<BackorderPollResult> {
   const result = emptyResult({ ran: true });
-  const handled = new Set(
+  const committedHashes = new Set(
     (
-      await prisma.stockEmailReceipt.findMany({
-        where: { consumed: true, receiptKey: { contains: "|att:" } },
-        select: { receiptKey: true },
-        take: 8000,
+      await prisma.autopartBackorderSnapshot.findMany({
+        where: { status: "COMMITTED" },
+        select: { fileHash: true },
       })
-    ).map((r) => r.receiptKey),
+    ).map((row) => row.fileHash),
   );
 
   for (const email of input.emails) {
     for (const att of email.attachments) {
+      const label = att.filename || "(unnamed)";
       if (!isAutopart216vAttachmentCandidate(att.filename, att.contentType)) {
         result.skipped += 1;
+        result.notes.push(`${label}: not a CSV/TXT candidate`);
         continue;
       }
-      const text = att.content.toString("utf8");
-      if (!isAutopart216vReport(text, att.filename)) {
+      const bytes = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
+      const text = decodeAutopart216vBytes(bytes).text;
+      const contentHash = createHash("sha256").update(bytes).digest("hex");
+      const decision = decide216vMailboxAttachment({
+        is216v: isAutopart216vReport(text, att.filename),
+        contentHash,
+        committedHashes,
+      });
+      if (decision.action === "skip") {
         result.skipped += 1;
+        result.notes.push(`${label}: ${decision.reason}`);
         continue;
       }
-      const attKey = attachmentReceiptKey(email.messageId, email.uid, att.filename);
-      if (attKey && handled.has(attKey)) {
+      if (decision.action === "duplicate") {
         result.duplicatesIgnored += 1;
+        result.notes.push(`${label}: ${decision.reason}`);
         continue;
       }
       try {
         const imported = await confirmAutopart216vImport(input.actorUserId, {
-          text,
+          bytesBase64: bytes.toString("base64"),
           filename: att.filename,
           source: input.source,
           receivedAt: email.receivedAt,
         });
-        if (imported.duplicate) result.duplicatesIgnored += 1;
-        else result.processed += 1;
+        if (imported.duplicate) {
+          result.duplicatesIgnored += 1;
+          result.notes.push(`${label}: already imported, snapshot unchanged`);
+          committedHashes.add(imported.fileHash);
+        } else {
+          result.processed += 1;
+          result.notes.push(
+            `${label}: imported ${imported.orderCount} orders, ${imported.outstandingQty} units, £${imported.outstandingValue}`,
+          );
+          committedHashes.add(imported.fileHash);
+        }
+        const attKey = attachmentReceiptKey(email.messageId, email.uid, att.filename);
         if (attKey) {
-          handled.add(attKey);
           await prisma.stockEmailReceipt
             .upsert({
               where: { receiptKey: attKey },
@@ -102,24 +184,37 @@ export async function process216vEmailBatch(input: {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "216V import failed";
-        result.errors.push(`${att.filename}: ${message}`);
+        result.errors.push(`${label}: ${message}`);
+        result.notes.push(`${label}: ${message}`);
       }
     }
   }
   return result;
 }
 
-async function run216vMailboxPoll(actorUserId: string | null, source: "EMAIL" | "SCHEDULE"): Promise<BackorderPollResult> {
+async function run216vMailboxPoll(
+  actorUserId: string | null,
+  source: "EMAIL" | "SCHEDULE",
+): Promise<BackorderPollResult> {
   const settings = await prisma.autopartBackorderFeedSettings.upsert({
     where: { id: "default" },
     create: { id: "default" },
     update: {},
   });
   if (!settings.enabled || !settings.configured) {
-    return emptyResult({
+    const disabled = emptyResult({
       ran: false,
-      reason: "216V backorder feed is DISABLED. Enable it under Purchasing → Backorders (purchasing.manage).",
+      reason:
+        "216V backorder feed is DISABLED. Enable it under Purchasing → Backorders (purchasing.manage).",
     });
+    await prisma.autopartBackorderFeedSettings.update({
+      where: { id: "default" },
+      data: {
+        lastPolledAt: new Date(),
+        lastError: disabled.reason ?? "216V backorder feed is disabled.",
+      },
+    });
+    return disabled;
   }
   const base = await loadImapRuntimeConfig();
   if (!base) {
@@ -146,11 +241,14 @@ async function run216vMailboxPoll(actorUserId: string | null, source: "EMAIL" | 
     acceptAttachment: isAutopart216vAttachmentCandidate,
   });
   const result = await process216vEmailBatch({ emails, actorUserId, source });
+  const summary = summarise216vPoll(result);
+  const failed =
+    result.errors.length > 0 || (result.processed === 0 && result.duplicatesIgnored === 0);
   await prisma.autopartBackorderFeedSettings.update({
     where: { id: "default" },
     data: {
       lastPolledAt: new Date(),
-      lastError: result.errors.length ? result.errors.slice(0, 5).join("; ") : null,
+      lastError: failed ? summary : null,
       ...(result.processed ? { lastSuccessAt: new Date() } : {}),
     },
   });

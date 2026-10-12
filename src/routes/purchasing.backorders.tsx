@@ -50,7 +50,7 @@ import {
 import { AUTOPART_216V_SCHEDULE_LABEL } from "@/domain/autopart-216v-freshness";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { ROUTES } from "@/lib/app-nav";
-import { formatDate, formatOperationalDateTime } from "@/lib/datetime";
+import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import {
   confirmAutopart216vFn,
   exportPurchasingBackordersCsvFn,
@@ -79,6 +79,53 @@ type LineDetail = Extract<Awaited<ReturnType<typeof getPurchasingBackorderLineFn
 type LineRow = Data["lines"]["rows"][number];
 type MovementData = NonNullable<Data["movement"]>;
 type MovementRow = MovementData["rows"][number];
+type ImportNotice = { tone: "good" | "warn" | "bad"; message: string };
+
+function uncachedFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: "no-store" });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const size = 0x8000;
+  for (let i = 0; i < bytes.length; i += size) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + size));
+  }
+  return btoa(binary);
+}
+
+function describePoll(data: {
+  ran: boolean;
+  reason?: string;
+  processed: number;
+  duplicatesIgnored: number;
+  skipped: number;
+  errors: string[];
+  notes?: string[];
+}): ImportNotice {
+  if (!data.ran) return { tone: "bad", message: data.reason ?? "Mailbox poll did not run." };
+  if (data.errors.length) return { tone: "bad", message: data.errors.slice(0, 3).join(" ") };
+  if (data.processed > 0) {
+    const detail = data.notes?.find((note) => note.includes("imported"));
+    return {
+      tone: "good",
+      message: detail ?? `Imported ${data.processed} 216V report${data.processed === 1 ? "" : "s"}.`,
+    };
+  }
+  if (data.duplicatesIgnored > 0) {
+    return {
+      tone: "warn",
+      message: `${data.duplicatesIgnored} file${data.duplicatesIgnored === 1 ? " was" : "s were"} already imported. The current snapshot was not replaced.`,
+    };
+  }
+  const note = data.notes?.slice(0, 3).join(" | ");
+  return {
+    tone: "warn",
+    message: note
+      ? `No 216V report imported. ${data.skipped} skipped. ${note}`
+      : "No 216V report imported. Nothing in the mailbox matched a 216V file.",
+  };
+}
 
 function BackordersPage() {
   const search = Route.useSearch();
@@ -91,6 +138,7 @@ function BackordersPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<ImportNotice | null>(null);
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [clearedDetail, setClearedDetail] = useState<MovementRow | null>(null);
   const view = search.view ?? "lines";
@@ -102,7 +150,6 @@ function BackordersPage() {
   }, [search.q]);
 
   function load() {
-    setData(null);
     void getPurchasingBackordersFn({
       data: {
         view,
@@ -118,10 +165,10 @@ function BackordersPage() {
         page: search.page ?? 1,
         pageSize: 50,
       },
+      fetch: uncachedFetch,
     }).then((result) => {
       if (!result.ok) {
         setError(result.error);
-        setData(null);
         return;
       }
       setError(null);
@@ -173,14 +220,37 @@ function BackordersPage() {
 
   async function onUpload(file: File) {
     setBusy(true);
-    const text = await file.text();
-    const result = await confirmAutopart216vFn({ data: { text, filename: file.name } });
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    setNotice(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const result = await confirmAutopart216vFn({
+        data: { bytesBase64: bytesToBase64(bytes), filename: file.name },
+      });
+      if (!result.ok) {
+        setError(result.error);
+        setNotice({ tone: "bad", message: result.error });
+        return;
+      }
+      const imported = result.data;
+      if (imported.duplicate) {
+        setNotice({
+          tone: "warn",
+          message: `Already imported (${imported.filename ?? file.name}). Snapshot unchanged: ${imported.orderCount} orders, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
+        });
+      } else {
+        setNotice({
+          tone: "good",
+          message: `Imported ${file.name}: ${imported.orderCount} orders, ${imported.lineCount} lines, ${imported.accountCount} accounts, ${imported.outstandingQty} units, £${imported.outstandingValue}.`,
+        });
+      }
+      load();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "216V upload failed";
+      setError(message);
+      setNotice({ tone: "bad", message });
+    } finally {
+      setBusy(false);
     }
-    load();
   }
 
   async function saveFeed(enabled: boolean) {
@@ -199,13 +269,25 @@ function BackordersPage() {
 
   async function pollNow() {
     setBusy(true);
-    const result = await pollBackorderMailboxNowFn();
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    setNotice(null);
+    try {
+      const result = await pollBackorderMailboxNowFn();
+      if (!result.ok) {
+        setError(result.error);
+        setNotice({ tone: "bad", message: result.error });
+        return;
+      }
+      const outcome = describePoll(result.data);
+      setNotice(outcome);
+      if (outcome.tone === "bad") setError(outcome.message);
+      load();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Mailbox poll failed";
+      setError(message);
+      setNotice({ tone: "bad", message });
+    } finally {
+      setBusy(false);
     }
-    load();
   }
 
   const current = data?.current;
@@ -229,7 +311,8 @@ function BackordersPage() {
           </button>
         }
       />
-      {error ? <ErrorState message={error} /> : null}
+      {notice ? <ImportNoticeBanner notice={notice} /> : null}
+      {error && error !== notice?.message ? <ErrorState message={error} /> : null}
       {data?.freshness ? <FreshnessBar freshness={data.freshness} /> : null}
       {current && data ? (
         <Metrics
@@ -327,6 +410,7 @@ function BackordersPage() {
           onPoll={() => void pollNow()}
           onToggle={() => void saveFeed(!data?.feed.enabled)}
           onUpload={onUpload}
+          notice={notice}
         />
       </Drawer>
       <Drawer
@@ -777,6 +861,22 @@ function QuickFilter({
   );
 }
 
+function ImportNoticeBanner({ notice }: { notice: ImportNotice }) {
+  const toneClass =
+    notice.tone === "good"
+      ? "border-good/40 bg-good/10 text-ink"
+      : notice.tone === "bad"
+        ? "border-destructive/40 bg-destructive/10 text-destructive"
+        : "border-warn/40 bg-warn/10 text-ink";
+  const label = notice.tone === "good" ? "Imported" : notice.tone === "bad" ? "Error" : "Not imported";
+  return (
+    <div className={cn("border px-4 py-3 text-[13px]", toneClass)} role="status">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em]">{label}</p>
+      <p className="mt-1 whitespace-pre-wrap">{notice.message}</p>
+    </div>
+  );
+}
+
 function SettingsBody({
   data,
   busy,
@@ -786,6 +886,7 @@ function SettingsBody({
   onPoll,
   onToggle,
   onUpload,
+  notice,
 }: {
   data: Data | null;
   busy: boolean;
@@ -795,11 +896,13 @@ function SettingsBody({
   onPoll: () => void;
   onToggle: () => void;
   onUpload: (file: File) => void;
+  notice: ImportNotice | null;
 }) {
   const feed = data?.feed;
   const freshness = data?.freshness;
   return (
     <div className="grid gap-6 text-[13px]">
+      {notice ? <ImportNoticeBanner notice={notice} /> : null}
       <section>
         <h3 className="font-display text-base font-semibold uppercase">Automatic import</h3>
         <dl className="mt-3 grid gap-2">
@@ -817,6 +920,18 @@ function SettingsBody({
           <div>
             <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful report</dt>
             <dd className="mt-1">{freshness?.lastReceivedLabel ?? "Never"}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last poll</dt>
+            <dd className="mt-1">{formatOrDash(formatOperationalDateTime(feed?.lastPolledAt))}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last successful import</dt>
+            <dd className="mt-1">{formatOrDash(formatOperationalDateTime(feed?.lastSuccessAt))}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Last error</dt>
+            <dd className="mt-1 whitespace-pre-wrap">{feed?.lastError?.trim() ? feed.lastError : "None"}</dd>
           </div>
           <div>
             <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">Current snapshot</dt>

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   assignAutopart216vIdentityKeys,
@@ -5,8 +6,11 @@ import {
   autopart216vIdentityKey,
   autopart216vRefsPrefixCompatible,
   compare216vQty,
+  decodeAutopart216vBytes,
+  inspected216vFileHash,
   isAutopart216vFilename,
   isAutopart216vReport,
+  isCommitted216vSnapshotHash,
   isStrongEmpty216vReport,
   matchAutopart216vAcrossSnapshots,
   parseAutopart216vReport,
@@ -14,11 +18,17 @@ import {
 import {
   AUTOPART_216V_EXPANDED_PROFILE,
   AUTOPART_216V_HEADER,
+  AUTOPART_216V_INSPECTED_PROFILE,
   AUTOPART_216V_PROFILE,
   buildAutopart216vExpandedFixture,
   buildAutopart216vFixture,
+  buildAutopart216vInspectedProfileFixture,
 } from "@/domain/autopart-216v-fixture";
-import { firstSeenAgeLabel, resolveAutopart216vSkuCover, attentionIdsForBackorder } from "@/domain/autopart-216v-position";
+import {
+  firstSeenAgeLabel,
+  resolveAutopart216vSkuCover,
+  attentionIdsForBackorder,
+} from "@/domain/autopart-216v-position";
 import {
   AUTOPART_216V_SCHEDULE_LABEL,
   due216vPollWindow,
@@ -39,9 +49,11 @@ describe("Autopart 216V detector/parser", () => {
     expect(isAutopart216vFilename("216V.csv")).toBe(true);
     expect(isAutopart216vFilename("notes.csv")).toBe(false);
     expect(isAutopart216vReport("Order,Qty\nA,1")).toBe(false);
-    expect(isAutopart216vReport(`LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}`)).toBe(
-      false,
-    );
+    expect(
+      isAutopart216vReport(
+        `LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}`,
+      ),
+    ).toBe(false);
   });
 
   it("parses the 66-line production-shaped fixture", () => {
@@ -182,10 +194,14 @@ describe("Autopart 216V detector/parser", () => {
   });
 
   it("does not let 216V detection steal 504 / TRM / 231PO3NEW content", () => {
-    expect(isAutopart216vReport(`LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)\n${AUTOPART_216V_HEADER}`)).toBe(
-      false,
-    );
-    expect(isAutopart216vReport(`Cust,Group,Document\nTRM21QC sample\n${AUTOPART_216V_HEADER}`)).toBe(false);
+    expect(
+      isAutopart216vReport(
+        `LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)\n${AUTOPART_216V_HEADER}`,
+      ),
+    ).toBe(false);
+    expect(
+      isAutopart216vReport(`Cust,Group,Document\nTRM21QC sample\n${AUTOPART_216V_HEADER}`),
+    ).toBe(false);
     expect(isAutopart216vReport(`231PO3NEW stock\n${AUTOPART_216V_HEADER}`)).toBe(false);
   });
 });
@@ -515,5 +531,69 @@ describe("216V freshness", () => {
         now: new Date("2026-10-06T19:00:00.000Z"),
       }).key,
     ).toBe("IMPORT_FAILED");
+  });
+});
+
+describe("216V real-file import regression", () => {
+  const profile = buildAutopart216vInspectedProfileFixture();
+
+  it("parses a synthetic file with the inspected 12 Oct 2026 totals", () => {
+    expect(isAutopart216vReport(profile, "216V_20261012.csv")).toBe(true);
+    const parsed = parseAutopart216vReport(profile);
+    expect(parsed.headerFound).toBe(true);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows).toHaveLength(AUTOPART_216V_INSPECTED_PROFILE.lines);
+    expect(parsed.orderCount).toBe(AUTOPART_216V_INSPECTED_PROFILE.orders);
+    expect(parsed.accountCount).toBe(AUTOPART_216V_INSPECTED_PROFILE.accounts);
+    expect(Number(parsed.outstandingQty)).toBe(AUTOPART_216V_INSPECTED_PROFILE.units);
+    expect(parsed.outstandingValue).toBe(AUTOPART_216V_INSPECTED_PROFILE.outstandingValue);
+  });
+
+  it("does not treat the inspected file hash as an already committed snapshot", () => {
+    const inspected = inspected216vFileHash();
+    expect(inspected).toBe("589ca1a940390e82f7551b3bab0be7118bc3680f03c167a062805f3fbabfe492");
+    expect(isCommitted216vSnapshotHash(inspected, new Set())).toBe(false);
+    expect(isCommitted216vSnapshotHash(inspected, new Set(["abc123"]))).toBe(false);
+    expect(isCommitted216vSnapshotHash(inspected, new Set([inspected]))).toBe(true);
+    const syntheticHash = createHash("sha256").update(profile).digest("hex");
+    expect(syntheticHash).not.toBe(inspected);
+    expect(isCommitted216vSnapshotHash(syntheticHash, new Set([inspected]))).toBe(false);
+  });
+
+  it("decodes a UTF-16 LE Autopart attachment before header detection", () => {
+    const row = `"SB1","SYNAC01","Synthetic Customer","","SYN-PART","Brake hose","","REF","4","12.50","50.00"`;
+    const utf8 = `${AUTOPART_216V_HEADER}\r\n${row}\r\n`;
+    const encoded = Buffer.from(`\uFEFF${utf8}`, "utf16le");
+    expect(isAutopart216vReport(encoded.toString("utf8"))).toBe(false);
+    const decoded = decodeAutopart216vBytes(encoded);
+    expect(decoded.encoding).toBe("utf-16le");
+    expect(isAutopart216vReport(decoded.text)).toBe(true);
+    const parsed = parseAutopart216vReport(decoded.text);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.outstandingQty).toBe("4");
+    expect(parsed.outstandingValue).toBe("50.00");
+    expect(createHash("sha256").update(encoded).digest("hex")).not.toBe(
+      createHash("sha256").update(utf8).digest("hex"),
+    );
+  });
+
+  it("keeps OSQty when a description contains an unescaped inch mark", () => {
+    const text = [
+      AUTOPART_216V_HEADER,
+      `"SB100","SYNAC01","Synthetic Customer","","PX1","14" Hose, brass","","REF1","6","4.50","£27.00"`,
+    ].join("\r\n");
+    const parsed = parseAutopart216vReport(text);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0]?.description).toContain("Hose");
+    expect(parsed.rows[0]?.outstandingQty).toBe("6");
+    expect(parsed.rows[0]?.outstandingValue).toBe("27.00");
+    expect(parsed.outstandingQty).toBe("6");
+  });
+
+  it("still accepts 216V when a data row mentions another report name", () => {
+    const text = `${AUTOPART_216V_HEADER}\n"SB9","SYNAC01","Synthetic","","P1","TRM21QC adapter","","R","1","2.00","2.00"\n`;
+    expect(isAutopart216vReport(text)).toBe(true);
+    expect(parseAutopart216vReport(text).rows).toHaveLength(1);
   });
 });

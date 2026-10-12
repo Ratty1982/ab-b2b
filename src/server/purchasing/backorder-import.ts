@@ -13,15 +13,59 @@ import { skuMatchKey } from "@/domain/stock";
 import { todayLondonDateOnly } from "@/domain/sales-history-period";
 import {
   compare216vQty,
+  decodeAutopart216vBytes,
   isAutopart216vReport,
+  isCommitted216vSnapshotHash,
   isStrongEmpty216vReport,
   matchAutopart216vAcrossSnapshots,
   parseAutopart216vReport,
   type Autopart216vRow,
 } from "@/domain/autopart-216v";
 
-function fileHash(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
+export type Autopart216vImportOutcome = {
+  id: string;
+  duplicate: boolean;
+  status: "COMMITTED";
+  emptyValid: boolean;
+  filename: string | null;
+  fileHash: string;
+  orderCount: number;
+  lineCount: number;
+  accountCount: number;
+  outstandingQty: string;
+  outstandingValue: string;
+};
+
+function fileHashOf(input: { bytes: Buffer | null; text: string }): string {
+  return createHash("sha256")
+    .update(input.bytes ?? input.text)
+    .digest("hex");
+}
+
+function read216vUpload(raw: { text?: string; bytesBase64?: string }): {
+  text: string;
+  bytes: Buffer | null;
+} {
+  if (raw.bytesBase64) {
+    const bytes = Buffer.from(raw.bytesBase64, "base64");
+    return { text: decodeAutopart216vBytes(bytes).text, bytes };
+  }
+  return { text: raw.text ?? "", bytes: null };
+}
+
+function qtyString(value: { toString(): string } | number | null | undefined): string {
+  const n = Number(value ?? 0);
+  return Number.isInteger(n) ? String(n) : String(n);
+}
+
+async function rememberImportError(message: string) {
+  await prisma.autopartBackorderFeedSettings
+    .upsert({
+      where: { id: "default" },
+      create: { id: "default", lastError: message },
+      update: { lastError: message },
+    })
+    .catch(() => undefined);
 }
 
 function utcDateOnly(iso: string): Date {
@@ -64,36 +108,79 @@ async function mapProducts(matchKeys: string[]): Promise<Map<string, string>> {
 
 export async function confirmAutopart216vImport(
   actorUserId: string | null,
-  raw: { text: string; filename?: string; source?: "MANUAL" | "EMAIL" | "SCHEDULE"; receivedAt?: Date },
-) {
+  raw: {
+    text?: string;
+    bytesBase64?: string;
+    filename?: string;
+    source?: "MANUAL" | "EMAIL" | "SCHEDULE";
+    receivedAt?: Date;
+  },
+): Promise<Autopart216vImportOutcome> {
   if (actorUserId) {
     const profile = await requirePurchasingAccess(actorUserId);
     if (raw.source === "MANUAL" && !hasPermission(profile, "purchasing.manage")) {
       throw new AuthError("Purchasing manage permission required", "FORBIDDEN", 403);
     }
   }
-  if (!isAutopart216vReport(raw.text, raw.filename)) {
-    throw new AuthError("File does not look like an Autopart 216V report", "VALIDATION", 400);
+  const upload = read216vUpload(raw);
+  const reject = async (message: string): Promise<never> => {
+    await rememberImportError(message);
+    throw new AuthError(message, "VALIDATION", 400);
+  };
+  if (!isAutopart216vReport(upload.text, raw.filename)) {
+    await reject(
+      "File does not look like an Autopart 216V report. The previous snapshot was not replaced.",
+    );
   }
-  const parsed = parseAutopart216vReport(raw.text);
+  const parsed = parseAutopart216vReport(upload.text);
   if (!parsed.headerFound) {
-    throw new AuthError("216V header not recognised", "VALIDATION", 400);
+    await reject("216V header not recognised. The previous snapshot was not replaced.");
   }
-  if (parsed.rows.length === 0 && !isStrongEmpty216vReport(raw.text)) {
-    throw new AuthError(
-      "Empty file is not a strongly identified 216V report — previous backorders were not cleared",
-      "VALIDATION",
-      400,
+  if (parsed.rows.length === 0 && !isStrongEmpty216vReport(upload.text)) {
+    const detail = parsed.errors[0] ?? "no readable data rows";
+    await reject(
+      `216V header was found but no data rows could be read (${detail}). The previous snapshot was not replaced.`,
+    );
+  }
+  if (parsed.errors.length > 0) {
+    await reject(
+      `216V file was not imported. ${parsed.errors.length} row(s) could not be read, so the previous snapshot was left unchanged. ${parsed.errors.slice(0, 3).join(" ")}`,
     );
   }
 
-  const hash = fileHash(raw.text);
+  const hash = fileHashOf(upload);
   const existing = await prisma.autopartBackorderSnapshot.findUnique({
     where: { fileHash: hash },
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      filename: true,
+      fileHash: true,
+      emptyValid: true,
+      orderCount: true,
+      lineCount: true,
+      accountCount: true,
+      outstandingQty: true,
+      outstandingValue: true,
+    },
   });
-  if (existing?.status === "COMMITTED") {
-    return { id: existing.id, duplicate: true as const, status: "COMMITTED" as const };
+  if (
+    existing?.status === "COMMITTED" &&
+    isCommitted216vSnapshotHash(hash, new Set([existing.fileHash]))
+  ) {
+    return {
+      id: existing.id,
+      duplicate: true,
+      status: "COMMITTED",
+      emptyValid: existing.emptyValid,
+      filename: existing.filename,
+      fileHash: existing.fileHash,
+      orderCount: existing.orderCount,
+      lineCount: existing.lineCount,
+      accountCount: existing.accountCount,
+      outstandingQty: qtyString(existing.outstandingQty),
+      outstandingValue: Number(existing.outstandingValue).toFixed(2),
+    };
   }
 
   const previous = await prisma.autopartBackorderSnapshot.findFirst({
@@ -220,12 +307,21 @@ export async function confirmAutopart216vImport(
 
   await prisma.autopartBackorderFeedSettings.upsert({
     where: { id: "default" },
-    create: { id: "default", lastSuccessAt: now, lastPolledAt: now, configured: true },
-    update: { lastSuccessAt: now },
+    create: {
+      id: "default",
+      lastSuccessAt: now,
+      lastPolledAt: now,
+      configured: true,
+      lastError: null,
+    },
+    update: { lastSuccessAt: now, lastError: null },
   });
 
   await recordAuditEvent({
-    action: parsed.rows.length === 0 ? "purchasing.backorders.empty_snapshot" : "purchasing.backorders.imported",
+    action:
+      parsed.rows.length === 0
+        ? "purchasing.backorders.empty_snapshot"
+        : "purchasing.backorders.imported",
     entityType: "AutopartBackorderSnapshot",
     entityId: snapshot.id,
     actorUserId: actorUserId ?? null,
@@ -239,10 +335,25 @@ export async function confirmAutopart216vImport(
     },
   });
 
-  return { id: snapshot.id, duplicate: false as const, status: "COMMITTED" as const, emptyValid: parsed.rows.length === 0 };
+  return {
+    id: snapshot.id,
+    duplicate: false,
+    status: "COMMITTED",
+    emptyValid: parsed.rows.length === 0,
+    filename: snapshot.filename,
+    fileHash: hash,
+    orderCount: parsed.orderCount,
+    lineCount: parsed.rows.length,
+    accountCount: parsed.accountCount,
+    outstandingQty: parsed.outstandingQty,
+    outstandingValue: parsed.outstandingValue,
+  };
 }
 
-export async function previewAutopart216vImport(actorUserId: string, raw: { text: string; filename?: string }) {
+export async function previewAutopart216vImport(
+  actorUserId: string,
+  raw: { text: string; filename?: string },
+) {
   await requirePurchasingAccess(actorUserId);
   if (!isAutopart216vReport(raw.text)) {
     throw new AuthError("File does not look like an Autopart 216V report", "VALIDATION", 400);

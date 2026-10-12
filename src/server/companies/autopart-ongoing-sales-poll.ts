@@ -28,6 +28,7 @@ import {
   confirmAutopartTrm21qcImport,
   getOngoingSalesFeedSettings,
 } from "@/server/companies/autopart-ongoing-sales";
+import { decodeAutopart216vBytes, isAutopart216vReport } from "@/domain/autopart-216v";
 
 export { classifyOngoingSalesAttachment };
 
@@ -182,6 +183,22 @@ export async function processOngoingSalesEmailBatch(input: {
           detectedType: "NOT_EXAMINED",
           result: "skipped",
           skipReason: candidate.reason,
+        });
+        result.unknownAttachments += 1;
+        continue;
+      }
+
+      const bytes = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
+      const decoded = decodeAutopart216vBytes(bytes).text;
+      if (isAutopart216vReport(decoded, att.filename)) {
+        result.attachments.push({
+          filename: att.filename || "(unnamed)",
+          mime,
+          candidate: true,
+          candidateType: candidate.hintedType ?? "UNKNOWN",
+          detectedType: "UNKNOWN",
+          result: "skipped",
+          skipReason: "216V backorder report — left for the backorder feed and not marked consumed",
         });
         result.unknownAttachments += 1;
         continue;

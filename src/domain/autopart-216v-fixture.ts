@@ -7,8 +7,7 @@
  * Figures are fixture expectations only — not production constants.
  */
 
-export const AUTOPART_216V_HEADER =
-  `"Order No","Custome","r and Name","","Part Number","Description","","Ord No","OSQty","Unit","O/S Val"`;
+export const AUTOPART_216V_HEADER = `"Order No","Custome","r and Name","","Part Number","Description","","Ord No","OSQty","Unit","O/S Val"`;
 
 export const AUTOPART_216V_PROFILE = {
   lines: 66,
@@ -358,8 +357,50 @@ export function buildAutopart216vExpandedFixture(): string {
     const attachToPrevious = pairRemaining > 0 && i > 0 && i % 2 === 1;
     const order = attachToPrevious ? rows[rows.length - 1]!.order : nextOrder();
     if (attachToPrevious) pairRemaining -= 1;
-    pushLine(order, spec.qty, spec.unit, spec.value, i % 5 === 0 ? `EXPANDEDREF${i}` : `PO-${order}`);
+    pushLine(
+      order,
+      spec.qty,
+      spec.unit,
+      spec.value,
+      i % 5 === 0 ? `EXPANDEDREF${i}` : `PO-${order}`,
+    );
   }
 
   return [AUTOPART_216V_HEADER, ...rows.map(csvRow)].join("\n") + "\n";
+}
+
+/**
+ * Synthetic stand-in for the inspected 12 Oct 2026 profile.
+ * Same shape and totals (51 rows, 43 orders, 22 accounts, 2,938 units, £52,774.80).
+ * Not the private customer file — do not replace this with real account data.
+ */
+export const AUTOPART_216V_INSPECTED_PROFILE = {
+  lines: 51,
+  orders: 43,
+  accounts: 22,
+  units: 2938,
+  outstandingValue: "52774.80",
+} as const;
+
+export function buildAutopart216vInspectedProfileFixture(): string {
+  const orderOf: number[] = [];
+  for (let order = 1; order <= 35; order++) orderOf.push(order);
+  for (let order = 36; order <= 43; order++) orderOf.push(order, order);
+  const rows = orderOf.map((order, index) => {
+    const qty = index === orderOf.length - 1 ? 438 : 50;
+    const value = index === orderOf.length - 1 ? "2774.80" : "1000.00";
+    const account = (index % AUTOPART_216V_INSPECTED_PROFILE.accounts) + 1;
+    return csvRow({
+      order: `SYN${String(order).padStart(4, "0")}`,
+      account: `SYNAC${String(account).padStart(2, "0")}`,
+      name: `Synthetic Customer ${account}`,
+      part: `SYN-PART-${String(index + 1).padStart(3, "0")}`,
+      description: `Synthetic part ${index + 1}`,
+      ref: `REF-${index + 1}`,
+      qty,
+      unit: "1.00",
+      value,
+    });
+  });
+  return [AUTOPART_216V_HEADER, ...rows].join("\r\n") + "\r\n";
 }

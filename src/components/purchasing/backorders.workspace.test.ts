@@ -15,12 +15,17 @@ const src = readFileSync(join(process.cwd(), "src/routes/purchasing.backorders.t
 describe("backorder workspace UX structure", () => {
   it("keeps feed/admin controls in Backorder Settings rather than the main toolbar", () => {
     expect(src).toContain("Backorder Settings");
-    expect(src).toContain("aria-label=\"Open backorder settings\"");
+    expect(src).toContain('aria-label="Open backorder settings"');
     expect(src).toContain("Automatic import");
     expect(src).toContain("Export current view CSV");
     expect(src).toContain("function SettingsBody");
     expect(src).toContain("Upload 216V");
     expect(src).toContain("Poll mailbox");
+    expect(src).toContain("Last poll");
+    expect(src).toContain("Last successful import");
+    expect(src).toContain("Last error");
+    expect(src).toContain("bytesToBase64");
+    expect(src).toContain('cache: "no-store"');
     expect(src.indexOf("function SettingsBody")).toBeLessThan(src.indexOf("Upload 216V"));
   });
 
@@ -53,7 +58,11 @@ describe("backorder filter chips", () => {
     const chips = activeBackorderFilterChips(search);
     expect(chips.some((c) => c.label.includes("NO STOCK"))).toBe(true);
     expect(chips.some((c) => c.label.includes("7+"))).toBe(true);
-    const cleared = mergeBackorderSearch(search, { position: undefined, ageDays: undefined, q: undefined });
+    const cleared = mergeBackorderSearch(search, {
+      position: undefined,
+      ageDays: undefined,
+      q: undefined,
+    });
     expect(activeBackorderFilterChips(cleared)).toEqual([]);
   });
 
@@ -79,12 +88,20 @@ describe("backorder filter chips", () => {
   });
 
   it("keeps existing filters functional when no movement is selected", () => {
-    const search = parseBackorderSearch({ status: "NEW", position: "STOCK_AVAILABLE", ageDays: "7" });
+    const search = parseBackorderSearch({
+      status: "NEW",
+      position: "STOCK_AVAILABLE",
+      ageDays: "7",
+    });
     expect(search.movement).toBeUndefined();
     expect(backorderFilterIgnoredByMovement(search, "status")).toBe(false);
     expect(backorderFilterIgnoredByMovement(search, "position")).toBe(false);
     expect(backorderFilterIgnoredByMovement(search, "ageDays")).toBe(false);
-    expect(activeBackorderFilterChips(search).map((c) => c.key)).toEqual(["status", "position", "ageDays"]);
+    expect(activeBackorderFilterChips(search).map((c) => c.key)).toEqual([
+      "status",
+      "position",
+      "ageDays",
+    ]);
   });
 
   it("uses review wording for stock available without changing the position enum", () => {
@@ -124,7 +141,11 @@ describe("backorder movement drill-down controls", () => {
   });
 
   it("disables current-state filters for cleared history but keeps them for current movements", () => {
-    const cleared = parseBackorderSearch({ movement: "CLEARED", position: "STOCK_AVAILABLE", ageDays: "7" });
+    const cleared = parseBackorderSearch({
+      movement: "CLEARED",
+      position: "STOCK_AVAILABLE",
+      ageDays: "7",
+    });
     expect(backorderFilterIgnoredByMovement(cleared, "position")).toBe(true);
     expect(backorderFilterIgnoredByMovement(cleared, "ageDays")).toBe(true);
     expect(backorderFilterIgnoredByMovement(cleared, "status")).toBe(true);

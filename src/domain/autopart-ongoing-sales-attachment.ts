@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { normaliseAttachmentFilename } from "@/domain/stock-email";
 import { isAutopart504Report } from "@/domain/autopart-504";
+import { isAutopart216vReport } from "@/domain/autopart-216v";
 import { isAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
 
 /** Stable SHA-256 of report bytes/text — sole attachment/report duplicate identity. */
@@ -28,7 +29,12 @@ export function ongoingSalesContentReceiptKey(
   return `ongoing-hash:${detectedType}:${contentHash}`;
 }
 
-export const ONGOING_SALES_DETECTED_TYPES = ["ONGOING_504", "TRM21QC", "LEGACY_504C", "UNKNOWN"] as const;
+export const ONGOING_SALES_DETECTED_TYPES = [
+  "ONGOING_504",
+  "TRM21QC",
+  "LEGACY_504C",
+  "UNKNOWN",
+] as const;
 export type OngoingSalesDetectedType = (typeof ONGOING_SALES_DETECTED_TYPES)[number];
 
 export const ONGOING_SALES_DETECTED_LABEL: Record<OngoingSalesDetectedType, string> = {
@@ -68,7 +74,8 @@ function filenameTokens(filename: string): string {
 export function hintedOngoingSalesType(filename: string): OngoingSalesDetectedType | null {
   const n = normaliseAttachmentFilename(filename);
   const tokens = filenameTokens(filename);
-  if (n.includes("504c") || n.includes("504uf") || /(^| )504c( |$)/.test(tokens)) return "LEGACY_504C";
+  if (n.includes("504c") || n.includes("504uf") || /(^| )504c( |$)/.test(tokens))
+    return "LEGACY_504C";
   if (n.includes("trm21qc")) return "TRM21QC";
   if (/(^| )504( |$)/.test(tokens) || n.includes("504.")) return "ONGOING_504";
   return null;
@@ -138,7 +145,10 @@ export function isOngoingSalesAttachmentCandidate(input: {
 function looksLikeLegacy504c(filename: string, text: string): boolean {
   const f = filename.toUpperCase();
   if (f.includes("504C") || f.includes("504UF")) return true;
-  const sample = text.replace(/^\uFEFF/, "").slice(0, 8000).toUpperCase();
+  const sample = text
+    .replace(/^\uFEFF/, "")
+    .slice(0, 8000)
+    .toUpperCase();
   if (sample.includes("LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)")) return true;
   if (sample.includes("(504C)")) return true;
   if (sample.includes("CUSTOMER ORDER NUMBER") && sample.includes(".ACCT.")) return true;
@@ -148,7 +158,11 @@ function looksLikeLegacy504c(filename: string, text: string): boolean {
 /**
  * Content-authoritative classification. Filename/subject never override parsers.
  */
-export function detectOngoingSalesAttachmentType(filename: string, text: string): OngoingSalesDetectedType {
+export function detectOngoingSalesAttachmentType(
+  filename: string,
+  text: string,
+): OngoingSalesDetectedType {
+  if (isAutopart216vReport(text, filename)) return "UNKNOWN";
   if (looksLikeLegacy504c(filename, text)) return "LEGACY_504C";
   if (isAutopartTrm21qcReport(text)) return "TRM21QC";
   if (isAutopart504Report(text)) return "ONGOING_504";
@@ -167,11 +181,7 @@ export function classifyOngoingSalesAttachment(
   return "UNKNOWN";
 }
 
-export type OngoingSalesAttachmentResult =
-  | "imported"
-  | "duplicate"
-  | "skipped"
-  | "failed";
+export type OngoingSalesAttachmentResult = "imported" | "duplicate" | "skipped" | "failed";
 
 export type OngoingSalesAttachmentDiagnostic = {
   filename: string;
@@ -183,7 +193,9 @@ export type OngoingSalesAttachmentDiagnostic = {
   skipReason: string | null;
 };
 
-export function formatOngoingSalesAttachmentDiagnostic(row: OngoingSalesAttachmentDiagnostic): string {
+export function formatOngoingSalesAttachmentDiagnostic(
+  row: OngoingSalesAttachmentDiagnostic,
+): string {
   const detected = row.detectedType === "NOT_EXAMINED" ? "n/a" : row.detectedType;
   const candidate = row.candidateType === "NOT_CANDIDATE" ? "no" : row.candidateType;
   const mime = row.mime || "unknown";

@@ -480,6 +480,61 @@ describe("216V matching, cover, RBAC, export", () => {
     expect(emailed.freshness.source).toBe("EMAIL");
     expect(emailed.freshness.sourceLabel).toBe("Mailbox poll");
   });
+
+  it("imports a new 216V file when another feed already consumed the email receipt", async () => {
+    const { attachmentReceiptKey, emailReceiptKey } = await import("@/domain/stock-email");
+    const text = csv216v([
+      {
+        order: `SB${stamp}R`,
+        account: "NOCOMPANY",
+        name: "Receipt Customer",
+        part: `BO-RCPT-${stamp}`,
+        desc: "Receipt row",
+        ref: "RCPT-1",
+        qty: 9,
+        unit: "2.00",
+        value: "18.00",
+      },
+    ]);
+    const email = {
+      uid: `uid-rcpt-${stamp}`,
+      messageId: `<216v-rcpt-${stamp}@example.invalid>`,
+      from: "autopart@example.invalid",
+      subject: "216V plus stock",
+      receivedAt: new Date(),
+      attachments: [{ filename: "216V.CSV", content: Buffer.from(text), contentType: "text/csv" }],
+    };
+    const messageKey = emailReceiptKey(email.messageId, email.uid);
+    const attKey = attachmentReceiptKey(email.messageId, email.uid, "216V.CSV");
+    await prisma.stockEmailReceipt.createMany({
+      data: [
+        {
+          receiptKey: messageKey!,
+          emailUid: email.uid,
+          emailMessageId: email.messageId,
+          fromAddress: email.from,
+          subject: email.subject,
+          receivedAt: email.receivedAt,
+          consumed: true,
+          attachmentFilename: "231PO3NEW.csv",
+        },
+        {
+          receiptKey: attKey!,
+          emailUid: email.uid,
+          emailMessageId: email.messageId,
+          fromAddress: email.from,
+          subject: email.subject,
+          receivedAt: email.receivedAt,
+          consumed: true,
+          attachmentFilename: "216V.CSV",
+        },
+      ],
+    });
+    const result = await process216vEmailBatch({ emails: [email], actorUserId: adminId, source: "EMAIL" });
+    expect(result.processed).toBe(1);
+    expect(result.duplicatesIgnored).toBe(0);
+    expect(result.errors).toEqual([]);
+  });
 });
 
 describe("216V expanded-field identity continuity", () => {
