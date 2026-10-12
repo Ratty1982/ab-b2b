@@ -72,6 +72,7 @@ export const ROUTES = {
   portalQuotes: "/portal/quotes",
   portalQuote: (id: string) => `/portal/quotes/${id}` as const,
   portalPurchases: "/portal/purchases",
+  portalPromotions: "/portal/promotions",
   portalInvoices: "/portal/invoices",
   portalFavourites: "/portal/favourites",
   portalUsers: "/portal/users",
@@ -703,6 +704,13 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         label: "Shop",
         icon: "store",
         to: ROUTES.products,
+        implemented: true,
+      },
+      {
+        id: "portal-promotions",
+        label: "Promotions",
+        icon: "tags",
+        to: ROUTES.portalPromotions,
         implemented: true,
       },
       {

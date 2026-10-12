@@ -207,6 +207,8 @@ describe("canonical navigation contract", () => {
     const ids = portal.map((i) => i.id);
     expect(ids).toContain("portal-dashboard");
     expect(ids).toContain("portal-shop");
+    expect(ids).toContain("portal-promotions");
+    expect(portal.find((item) => item.id === "portal-promotions")?.to).toBe(ROUTES.portalPromotions);
     expect(ids).toContain("portal-basket");
     expect(ids).toContain("portal-orders");
     expect(ids).toContain("portal-quotes");

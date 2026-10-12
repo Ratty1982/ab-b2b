@@ -2764,6 +2764,16 @@ export const getPortalDashboardFn = createServerFn({ method: "GET" }).handler(as
   }
 });
 
+export const listPortalPromotionsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const promotions = await import("@/server/portal/promotions");
+    return { ok: true as const, data: await promotions.listCustomerPromotions(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
 export const getPortalSupportContactFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();
