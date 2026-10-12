@@ -26,6 +26,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "products.import",
   "products.export",
   "pricing.view",
+  "pricing.approve",
   "inventory.view",
   "orders.view",
   "quotes.view",

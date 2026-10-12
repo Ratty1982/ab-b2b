@@ -8,6 +8,7 @@ import { activityTypeLabel, formatGbpExact, formatOpportunityValue } from "@/dom
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
+import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
 import {
   createCrmOpportunityFn,
@@ -334,20 +335,23 @@ function SalesCustomer() {
           </ul>
         ) : null}
         {tab === "Commercial" ? (
-          <dl className="grid max-w-xl gap-3">
-            <div>
-              <dt className="text-steel">Price list</dt>
-              <dd>{company.priceList?.name ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Payment terms</dt>
-              <dd>{company.paymentTerms ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Tax status</dt>
-              <dd>{company.taxStatus}</dd>
-            </div>
-          </dl>
+          <div className="grid gap-8">
+            <dl className="grid max-w-xl gap-3">
+              <div>
+                <dt className="text-steel">Price list</dt>
+                <dd>{company.priceList?.name ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Payment terms</dt>
+                <dd>{company.paymentTerms ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Tax status</dt>
+                <dd>{company.taxStatus}</dd>
+              </div>
+            </dl>
+            <CustomerPriceImportPanel companyId={company.id} />
+          </div>
         ) : null}
         {tab === "Activity" ? (
           activity.length === 0 ? (

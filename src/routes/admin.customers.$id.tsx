@@ -8,6 +8,7 @@ import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { AutopartCustomerHistoryPanel } from "@/components/ab/AutopartCustomerHistoryPanel";
 import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
+import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
 import {
   companyPriceListLabel,
@@ -502,6 +503,7 @@ function CustomerWorkspace() {
             registrationClaim={registrationAutopartClaim ?? null}
             onChanged={reload}
           />
+          <CustomerPriceImportPanel companyId={company.id} showPrices={false} />
           <CustomerPricesEditor
             companyId={company.id}
             canEdit={permissions.canEditPricing}
@@ -1511,8 +1513,8 @@ function CustomerPricesEditor({
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
         Assigned price list: {assignedPriceListName ?? DEFAULT_TRADE_PRICE_LABEL}.{" "}
         {rows.length} negotiated product price{rows.length === 1 ? "" : "s"}.
-        Sales can override individual lines below. Promotions are catalogue-scoped, not
-        company-specific.
+        Manual edits here apply immediately for users who can edit pricing. Uploaded files
+        for this customer go through approval and do not change any other customer's prices.
       </p>
       {canEdit ? (
         <form

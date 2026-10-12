@@ -31,6 +31,8 @@ export const PERMISSIONS = [
 
   "pricing.view",
   "pricing.edit",
+  /// Approve a salesperson's customer-specific trade price upload. Does not grant immediate manual edits.
+  "pricing.approve",
 
   "inventory.view",
 
