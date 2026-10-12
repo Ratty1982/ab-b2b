@@ -7,6 +7,7 @@ import {
   parseIsoDay,
   purchaseFrequencyDays,
   purchaseFrequencyLabel,
+  salesEnquirySurface,
   unifiedReasonLabel,
   unifiedSourceLabel,
   unifiedStatusLabel,
@@ -100,6 +101,20 @@ describe("labels", () => {
     expect(unifiedSourceLabel("TRM21QC_FEED")).toBe("TRM21QC feed");
     expect(unifiedStatusLabel("DUPLICATE")).toBe("Duplicate suppressed");
     expect(unifiedReasonLabel("REPEATED_SOURCE_ROW")).toMatch(/not counted/);
+    expect(unifiedReasonLabel("DOCUMENT_GOODS_MISMATCH")).toMatch(/not added/);
     expect(unifiedReasonLabel(null)).toBeNull();
+  });
+});
+
+describe("sales enquiry surface", () => {
+  it("keeps a selected customer or product on one unified screen", () => {
+    expect(
+      salesEnquirySurface({ mode: "customers", companyId: "c1", customerGroupId: null, sku: null }),
+    ).toBe("unified-customer");
+    expect(salesEnquirySurface({ mode: "products", sku: "BRAKE" })).toBe("unified-product");
+    expect(
+      salesEnquirySurface({ mode: "customers", customerGroupId: "g1", companyId: null }),
+    ).toBe("dated-group");
+    expect(salesEnquirySurface({ mode: "customers" })).toBe("picker");
   });
 });

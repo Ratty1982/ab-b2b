@@ -258,8 +258,9 @@ ${code},INV,SS1,06 Oct 14,10.00,2.00,12.00,12.00
       where: { id: ok.runId },
     });
     expect(run.status).toBe("COMMITTED");
-    // Adjacent duplicate Inv&Ln must upsert once (no ON CONFLICT twice error)
-    expect(await prisma.autopartSalesLine.count({ where: { companyId: company.id } })).toBe(1);
+    // A shared Inv & Ln is not a unique product line. Both rows are stored, so the
+    // insert does not fail with two writes of the same conflict target.
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: company.id } })).toBe(2);
   });
 
   it("surfaces friendly error (not raw Prisma) when confirm is blocked", async () => {

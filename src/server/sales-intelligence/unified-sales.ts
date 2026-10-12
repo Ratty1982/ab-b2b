@@ -16,7 +16,10 @@
  *    only when every source agrees on every line (type, SKU, signed qty, signed net). Otherwise all
  *    copies are UNRECONCILED and stay out of certified totals.
  * 4. Repeated identical 561L rows (same account, Inv & Ln, part, qty and sales) beyond the first
- *    are UNRECONCILED, so a repeated export row can never add sales.
+ *    are UNRECONCILED, so a repeated export row can never add sales. A different Inv & Ln, part,
+ *    quantity or amount is a separate line and stays counted.
+ * 5. 504 goods headers are not product lines. They are never added to the line total. A header that
+ *    differs from the counted lines by more than 1p, or a header with no lines, is UNRECONCILED.
  *
  * SLRB ledger rows (payments, receipts, balances) and native B2B orders are never read here.
  * Dated Sales Intelligence modules keep using dated rows only; undated 561L never reaches them.
@@ -32,6 +35,7 @@ import {
   UNIFIED_TX_DATING,
   UNIFIED_TX_STATUS,
   UNIFIED_TX_TYPES,
+  SOURCE_IDENTITY_CHUNK,
   certifyUnifiedTotals,
   dayAfter,
   effectiveDating,
@@ -67,6 +71,13 @@ function companyIn(universe: CompanyUniverse, column: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`${column} IN (${Prisma.join(universe)})`;
 }
 
+/** Keeps the shared-code exclusion (counted across every company) and then limits the map. */
+function idmapCompanyHaving(universe: CompanyUniverse): Prisma.Sql {
+  if (universe === "all") return Prisma.sql`TRUE`;
+  if (universe.length === 0) return Prisma.sql`FALSE`;
+  return Prisma.sql`MIN(company_id) IN (${Prisma.join(universe)})`;
+}
+
 function normalisedSku(sku: string): string {
   return sku.trim().toUpperCase();
 }
@@ -91,9 +102,26 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
         WHERE UPPER(btrim(l."sku")) = ${skuKey}
       ),`
     : Prisma.empty;
-  const hRestrict = skuKey
-    ? Prisma.sql`(UPPER(btrim(l."partNumber")) = ${skuKey} OR l."documentReference" IN (SELECT ref FROM sku_refs))`
-    : Prisma.sql`TRUE`;
+  const hFrom = skuKey
+    ? Prisma.sql`
+      FROM (
+        SELECT l.id
+        FROM "AutopartInvoiceLine" l
+        WHERE l."salesMeasure" = 'NET_EX_VAT'
+          AND UPPER(btrim(l."partNumber")) = ${skuKey}
+        UNION
+        SELECT l.id
+        FROM "AutopartInvoiceLine" l
+        WHERE l."salesMeasure" = 'NET_EX_VAT'
+          AND l."documentReference" IN (SELECT ref FROM sku_refs)
+      ) picked
+      INNER JOIN "AutopartInvoiceLine" l ON l.id = picked.id
+      INNER JOIN idmap im ON im.code = UPPER(btrim(l."accountCode"))`
+    : Prisma.sql`
+      FROM idmap im
+      INNER JOIN "AutopartInvoiceLine" l
+        ON UPPER(btrim(l."accountCode")) = im.code
+      WHERE l."salesMeasure" = 'NET_EX_VAT'`;
   const dRestrict = skuKey
     ? Prisma.sql`l."documentReference" IN (SELECT ref FROM sku_refs)`
     : Prisma.sql`TRUE`;
@@ -130,6 +158,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
       WHERE code <> ''
       GROUP BY code
       HAVING COUNT(DISTINCT company_id) = 1
+        AND ${idmapCompanyHaving(universe)}
     ),
     ${skuRefs}
     h_raw AS (
@@ -149,11 +178,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
           PARTITION BY UPPER(btrim(l."accountCode")), l."rawInvAndLn", UPPER(btrim(l."partNumber")), l."quantity", l."salesAmount"
           ORDER BY l.id
         ) AS repeat_no
-      FROM "AutopartInvoiceLine" l
-      INNER JOIN idmap im ON im.code = UPPER(btrim(l."accountCode"))
-      WHERE l."salesMeasure" = 'NET_EX_VAT'
-        AND ${companyIn(universe, Prisma.sql`im.company_id`)}
-        AND ${hRestrict}
+      ${hFrom}
     ),
     d_raw AS (
       SELECT l."companyId" AS company_id, ${dColumns}
@@ -201,6 +226,41 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
       FROM source_doc
       GROUP BY company_id, doc_ref
     ),
+    pref_lines AS (
+      SELECT r.company_id, r.doc_ref, r.doc_type, SUM(r.net)::numeric(18, 2) AS net
+      FROM all_raw r
+      INNER JOIN doc_status ds ON ds.company_id = r.company_id AND ds.doc_ref = r.doc_ref
+      WHERE r.repeat_no = 1 AND r.source = ds.preferred AND r.doc_ref IS NOT NULL
+      GROUP BY r.company_id, r.doc_ref, r.doc_type
+    ),
+    headers AS (
+      SELECT
+        COALESCE(d."companyId", im.company_id) AS company_id,
+        d.id AS doc_id,
+        NULLIF(UPPER(btrim(d."documentReference")), '') AS doc_ref,
+        d."documentType"::text AS doc_type,
+        UPPER(btrim(d."autopartCustomerCode")) AS account_code,
+        d."goodsNet"::numeric(18, 2) AS goods_net,
+        d."documentDate" AS doc_date
+      FROM "AutopartSalesDocument" d
+      LEFT JOIN idmap im ON im.code = UPPER(btrim(d."autopartCustomerCode"))
+      WHERE d."has504" = TRUE
+        AND COALESCE(d."companyId", im.company_id) IS NOT NULL
+        AND ${companyIn(universe, Prisma.sql`COALESCE(d."companyId", im.company_id)`)}
+    ),
+    goods_flag AS (
+      SELECT h.company_id, h.doc_ref,
+        bool_or(
+          pl.net IS NULL
+          OR h.goods_net IS NULL
+          OR ABS(h.goods_net - pl.net) > 0.01
+        ) AS hold
+      FROM headers h
+      LEFT JOIN pref_lines pl
+        ON pl.company_id = h.company_id AND pl.doc_ref = h.doc_ref AND pl.doc_type = h.doc_type
+      WHERE h.doc_ref IS NOT NULL
+      GROUP BY h.company_id, h.doc_ref
+    ),
     u AS (
       SELECT
         r.company_id, r.line_id, r.source, r.account_code, r.doc_type, r.doc_ref, r.sku, r.description,
@@ -208,6 +268,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
         CASE
           WHEN r.repeat_no > 1 THEN 'UNRECONCILED'
           WHEN r.source = 'HISTORICAL_561L' AND (r.doc_ref IS NULL OR r.doc_type = 'UNKNOWN') THEN 'UNRECONCILED'
+          WHEN gf.hold AND (r.doc_ref IS NULL OR ds.sources = 1 OR ds.signatures = 1) THEN 'UNRECONCILED'
           WHEN r.doc_ref IS NULL OR ds.sources = 1 THEN
             CASE WHEN r.source = 'HISTORICAL_561L' THEN 'HISTORICAL' ELSE 'DATED' END
           WHEN ds.signatures = 1 THEN
@@ -218,11 +279,26 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
           WHEN r.repeat_no > 1 THEN 'REPEATED_SOURCE_ROW'
           WHEN r.source = 'HISTORICAL_561L' AND r.doc_ref IS NULL THEN 'NO_DOCUMENT_REFERENCE'
           WHEN r.source = 'HISTORICAL_561L' AND r.doc_type = 'UNKNOWN' THEN 'UNKNOWN_DOCUMENT_TYPE'
+          WHEN gf.hold AND (r.doc_ref IS NULL OR ds.sources IS NULL OR ds.sources = 1 OR ds.signatures = 1)
+            THEN 'DOCUMENT_GOODS_MISMATCH'
           WHEN r.doc_ref IS NULL OR ds.sources = 1 OR ds.signatures = 1 THEN NULL
           ELSE 'CONFLICTING_OVERLAP'
         END AS reason
       FROM all_raw r
       LEFT JOIN doc_status ds ON ds.company_id = r.company_id AND ds.doc_ref = r.doc_ref
+      LEFT JOIN goods_flag gf ON gf.company_id = r.company_id AND gf.doc_ref = r.doc_ref
+      UNION ALL
+      SELECT
+        h.company_id, h.doc_id, 'ONGOING_504'::text, h.account_code, h.doc_type, h.doc_ref,
+        ''::text, '504 goods header with no product lines'::text,
+        0::numeric(18, 3), COALESCE(h.goods_net, 0)::numeric(18, 2), h.doc_date,
+        'UNRECONCILED'::text, 'DOCUMENT_GOODS_MISMATCH'::text
+      FROM headers h
+      WHERE h.doc_ref IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM all_raw r
+          WHERE r.company_id = h.company_id AND r.doc_ref = h.doc_ref AND r.doc_type = h.doc_type
+        )
     )
   `;
 }
@@ -339,6 +415,127 @@ async function querySummary(companyId: string): Promise<UnifiedSalesSummary> {
     WHERE u.company_id = ${companyId}
   `;
   return toSummary(rows[0]);
+}
+
+export type UnifiedFinancialCertification = {
+  linesExamined: number;
+  distinctCountedDocuments: number;
+  certifiedNet: string;
+  rawAttachedNet: string;
+  duplicateDocuments: number;
+  duplicateNet: string;
+  unreconciledDocuments: number;
+  unreconciledNet: string;
+  repeatedRowsExcluded: number;
+  repeatedNetExcluded: string;
+  unknownTypeLines: number;
+  unknownTypeNet: string;
+  missingReferenceLines: number;
+  missingReferenceNet: string;
+  headerOnlyDocuments: number;
+  headerOnlyNet: string;
+  unexplainedDiscrepancy: string;
+  discrepancyNote: string | null;
+  occurrenceLimitation: string;
+};
+
+type CertificationRow = {
+  linesExamined: number;
+  distinctCountedDocuments: number;
+  certifiedNet: Prisma.Decimal | null;
+  rawAttachedNet: Prisma.Decimal | null;
+  duplicateDocuments: number;
+  duplicateNet: Prisma.Decimal | null;
+  unreconciledDocuments: number;
+  unreconciledNet: Prisma.Decimal | null;
+  repeatedRowsExcluded: number;
+  repeatedNetExcluded: Prisma.Decimal | null;
+  unknownTypeLines: number;
+  unknownTypeNet: Prisma.Decimal | null;
+  missingReferenceLines: number;
+  missingReferenceNet: Prisma.Decimal | null;
+  headerOnlyDocuments: number;
+  headerOnlyNet: Prisma.Decimal | null;
+};
+
+/**
+ * Read-only certification for one company. Raw attached lines, suppressed duplicates and
+ * unreconciled lines are reported separately. Nothing is rewritten to force a match.
+ * Repeated, unknown-type and missing-reference amounts are subsets of the unreconciled net.
+ */
+async function queryCertification(
+  universe: CompanyUniverse,
+  companyId: string | null,
+): Promise<UnifiedFinancialCertification> {
+  const companyFilter = companyId
+    ? Prisma.sql`WHERE u.company_id = ${companyId}`
+    : Prisma.empty;
+  const rows = await prisma.$queryRaw<CertificationRow[]>`
+    ${unifiedLinesCte(universe, null)}
+    SELECT
+      COUNT(*) FILTER (WHERE u.source <> 'ONGOING_504')::int AS "linesExamined",
+      COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_ref IS NOT NULL)::int AS "distinctCountedDocuments",
+      COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "certifiedNet",
+      COALESCE(SUM(u.net) FILTER (WHERE u.source <> 'ONGOING_504'), 0) AS "rawAttachedNet",
+      COUNT(DISTINCT u.doc_ref) FILTER (WHERE u.status = 'DUPLICATE' AND u.doc_ref IS NOT NULL)::int AS "duplicateDocuments",
+      COALESCE(SUM(u.net) FILTER (WHERE u.status = 'DUPLICATE'), 0) AS "duplicateNet",
+      COUNT(DISTINCT COALESCE(u.doc_ref, u.line_id)) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledDocuments",
+      COALESCE(SUM(u.net) FILTER (WHERE u.status = 'UNRECONCILED'), 0) AS "unreconciledNet",
+      COUNT(*) FILTER (WHERE u.reason = 'REPEATED_SOURCE_ROW')::int AS "repeatedRowsExcluded",
+      COALESCE(SUM(u.net) FILTER (WHERE u.reason = 'REPEATED_SOURCE_ROW'), 0) AS "repeatedNetExcluded",
+      COUNT(*) FILTER (WHERE u.reason = 'UNKNOWN_DOCUMENT_TYPE')::int AS "unknownTypeLines",
+      COALESCE(SUM(u.net) FILTER (WHERE u.reason = 'UNKNOWN_DOCUMENT_TYPE'), 0) AS "unknownTypeNet",
+      COUNT(*) FILTER (WHERE u.reason = 'NO_DOCUMENT_REFERENCE')::int AS "missingReferenceLines",
+      COALESCE(SUM(u.net) FILTER (WHERE u.reason = 'NO_DOCUMENT_REFERENCE'), 0) AS "missingReferenceNet",
+      COUNT(*) FILTER (WHERE u.source = 'ONGOING_504')::int AS "headerOnlyDocuments",
+      COALESCE(SUM(u.net) FILTER (WHERE u.source = 'ONGOING_504'), 0) AS "headerOnlyNet"
+    FROM u
+    ${companyFilter}
+  `;
+  const row = rows[0];
+  const raw = new Prisma.Decimal(row?.rawAttachedNet ?? 0);
+  const certified = new Prisma.Decimal(row?.certifiedNet ?? 0);
+  const duplicates = new Prisma.Decimal(row?.duplicateNet ?? 0);
+  const unreconciled = new Prisma.Decimal(row?.unreconciledNet ?? 0);
+  const headerOnly = new Prisma.Decimal(row?.headerOnlyNet ?? 0);
+  const unexplained = raw.minus(certified).minus(duplicates).minus(unreconciled.minus(headerOnly));
+  const unexplainedDiscrepancy = unexplained.toFixed(2);
+  return {
+    linesExamined: Number(row?.linesExamined ?? 0),
+    distinctCountedDocuments: Number(row?.distinctCountedDocuments ?? 0),
+    certifiedNet: certified.toFixed(2),
+    rawAttachedNet: raw.toFixed(2),
+    duplicateDocuments: Number(row?.duplicateDocuments ?? 0),
+    duplicateNet: duplicates.toFixed(2),
+    unreconciledDocuments: Number(row?.unreconciledDocuments ?? 0),
+    unreconciledNet: unreconciled.toFixed(2),
+    repeatedRowsExcluded: Number(row?.repeatedRowsExcluded ?? 0),
+    repeatedNetExcluded: new Prisma.Decimal(row?.repeatedNetExcluded ?? 0).toFixed(2),
+    unknownTypeLines: Number(row?.unknownTypeLines ?? 0),
+    unknownTypeNet: new Prisma.Decimal(row?.unknownTypeNet ?? 0).toFixed(2),
+    missingReferenceLines: Number(row?.missingReferenceLines ?? 0),
+    missingReferenceNet: new Prisma.Decimal(row?.missingReferenceNet ?? 0).toFixed(2),
+    headerOnlyDocuments: Number(row?.headerOnlyDocuments ?? 0),
+    headerOnlyNet: headerOnly.toFixed(2),
+    unexplainedDiscrepancy,
+    discrepancyNote:
+      unexplainedDiscrepancy === "0.00"
+        ? null
+        : "Raw attached lines do not equal certified plus suppressed duplicates plus unreconciled product lines. Historic rows were not rewritten.",
+    occurrenceLimitation: `Identical 561L natural keys are numbered inside each ${SOURCE_IDENTITY_CHUNK}-row import chunk. A repeat stored inside that chunk is held as unreconciled and is not certified. The same natural key in a later chunk updates the first stored row instead of creating another, so those extra occurrences are absent and are not invented here.`,
+  };
+}
+
+/** Read-only certification for one company. Nothing is rewritten to force a match. */
+export async function loadUnifiedFinancialCertification(
+  companyId: string,
+): Promise<UnifiedFinancialCertification> {
+  return queryCertification([companyId], companyId);
+}
+
+/** Read-only certification of every uniquely linked account. Does not write. */
+export async function loadUnifiedDatabaseCertification(): Promise<UnifiedFinancialCertification> {
+  return queryCertification("all", null);
 }
 
 export type UnifiedIdentityCode = {
@@ -1062,6 +1259,17 @@ export async function getUnifiedReconciliationQueue(actorUserId: string, raw: un
           SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."autopartCustomerCode")) AND o.companies = 1
         )
       GROUP BY 1
+      UNION ALL
+      SELECT UPPER(btrim(d."autopartCustomerCode")), 'ONGOING_504'::text,
+        COUNT(*)::int, COALESCE(SUM(d."goodsNet"), 0)
+      FROM "AutopartSalesDocument" d
+      WHERE d."has504" = TRUE
+        AND d."companyId" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM owners o
+          WHERE o.code = UPPER(btrim(d."autopartCustomerCode")) AND o.companies = 1
+        )
+      GROUP BY 1
     ),
     queue AS (
       SELECT p.code,
@@ -1243,5 +1451,63 @@ export async function exportUnifiedCustomerSalesCsv(actorUserId: string, raw: un
     truncated: items.length < total,
     rowCount: items.length,
     total,
+  };
+}
+
+async function explainPlan(statement: Prisma.Sql): Promise<string> {
+  const rows = await prisma.$queryRaw<Array<{ "QUERY PLAN": string }>>`
+    EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+    ${statement}
+  `;
+  return rows.map((row) => row["QUERY PLAN"]).join("\n");
+}
+
+/** Diagnostic plans for the unified reporting queries. Read-only. Not used by page loads. */
+export async function explainUnifiedReporting(companyId: string, sku: string): Promise<{
+  customerSummary: string;
+  customerTransactions: string;
+  productEnquiry: string;
+  reconciliationQueue: string;
+}> {
+  const customer = unifiedLinesCte([companyId], null);
+  const product = unifiedLinesCte("all", sku);
+  return {
+    customerSummary: await explainPlan(Prisma.sql`
+      ${customer}
+      SELECT ${SUMMARY_SELECT}
+      FROM u
+      WHERE u.company_id = ${companyId}
+    `),
+    customerTransactions: await explainPlan(Prisma.sql`
+      ${customer}
+      SELECT u.line_id, u.doc_ref, u.net, u.status
+      FROM u
+      WHERE u.company_id = ${companyId}
+      ORDER BY u.doc_date DESC NULLS LAST, u.doc_ref ASC NULLS LAST, u.sku ASC, u.line_id ASC
+      LIMIT 50
+    `),
+    productEnquiry: await explainPlan(Prisma.sql`
+      ${product}
+      SELECT u.company_id, COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS net
+      FROM u
+      WHERE u.sku = ${normalisedSku(sku)} AND u.status <> 'DUPLICATE'
+      GROUP BY u.company_id
+    `),
+    reconciliationQueue: await explainPlan(Prisma.sql`
+      WITH owners AS (
+        SELECT UPPER(btrim(a."accountCode")) AS code, COUNT(DISTINCT a."companyId")::int AS companies
+        FROM "AutopartAccount" a
+        WHERE a."sourceSystem" = ${AUTOPART_SOURCE} AND a."companyId" IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT UPPER(btrim(l."accountCode")) AS code, COUNT(*)::int AS lines
+      FROM "AutopartInvoiceLine" l
+      WHERE l."salesMeasure" = 'NET_EX_VAT'
+        AND NOT EXISTS (
+          SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."accountCode")) AND o.companies = 1
+        )
+      GROUP BY 1
+      LIMIT 25
+    `),
   };
 }
