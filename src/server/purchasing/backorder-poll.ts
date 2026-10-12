@@ -18,7 +18,7 @@ import {
   isAutopart216vReport,
   isCommitted216vSnapshotHash,
 } from "@/domain/autopart-216v";
-import { compare216vSnapshotChronology } from "@/domain/autopart-216v-report-date";
+import { compare216vSnapshotChronology, weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
 import {
   confirmAutopart216vImport,
   requireBackorderManage,
@@ -203,6 +203,16 @@ export async function process216vEmailBatch(input: {
       if (imported.duplicate) {
         result.duplicatesIgnored += 1;
         result.notes.push(`${label}: already imported, snapshot unchanged`);
+        committedHashes.add(imported.fileHash);
+      } else if (imported.reportDateReview) {
+        result.processed += 1;
+        result.notes.push(
+          `${label}: ${weekend216vImportNotice({
+            filename: label,
+            observedDate: imported.reportDate,
+            becameCurrent: imported.becameCurrent,
+          })}`,
+        );
         committedHashes.add(imported.fileHash);
       } else if (!imported.becameCurrent) {
         result.processed += 1;

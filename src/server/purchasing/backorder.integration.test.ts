@@ -14,6 +14,7 @@ import {
   buildAutopart216vFixture,
 } from "@/domain/autopart-216v-fixture";
 import { dateOnlyIsoFromDate } from "@/domain/sales-history-period";
+import { headline216vFeedHealth, resolveAutopart216vFreshness } from "@/domain/autopart-216v-freshness";
 import { confirmAutopart216vImport } from "@/server/purchasing/backorder-import";
 import {
   exportBackordersCsv,
@@ -1059,7 +1060,15 @@ describe("216V report chronology", () => {
     });
     expect(dateOnlyIsoFromDate(saturdayRow.businessDate)).toBe("2026-10-10");
     expect(dateOnlyIsoFromDate(mondayRow.businessDate)).toBe("2026-10-12");
-    expect((saturdayRow.diagnostics as { reportDateSource?: string }).reportDateSource).toBe("FILENAME");
+    expect(saturday.reportDateReview).toBe("WEEKEND_DATE_UNVERIFIED");
+    const saturdayDiagnostics = saturdayRow.diagnostics as {
+      reportDateSource?: string;
+      reportDateVerified?: boolean;
+      reportDateReview?: string;
+    };
+    expect(saturdayDiagnostics.reportDateSource).toBe("FILENAME");
+    expect(saturdayDiagnostics.reportDateVerified).toBe(false);
+    expect(saturdayDiagnostics.reportDateReview).toBe("WEEKEND_DATE_UNVERIFIED");
     const saturdayLines = await prisma.autopartBackorderLine.findMany({ where: { snapshotId: saturday.id } });
     expect(saturdayLines.some((line) => line.orderNumber === `MON${chrono}`)).toBe(false);
     expect(saturdayRow.previousSnapshotId).not.toBe(monday.id);
@@ -1141,6 +1150,88 @@ describe("216V report chronology", () => {
     expect(workspace.freshness.filename).not.toBe(olderName);
     expect(workspace.freshness.filename).not.toBe(newerName);
     expect(workspace.freshness.latestReportDate && workspace.freshness.latestReportDate > "2026-10-09").toBe(true);
+  });
+
+  it("keeps a Saturday file for review and leaves Friday as the verified snapshot", async () => {
+    const fridayName = `216V_20261016-${chrono}.csv`;
+    const saturdayName = `216V_20261017-${chrono}.csv`;
+    let fridayId: string | null = null;
+    let saturdayId: string | null = null;
+    try {
+      const friday = await confirmAutopart216vImport(adminId, {
+        text: oneRow(`FRI${chrono}`, 6),
+        filename: fridayName,
+        source: "EMAIL",
+        receivedAt: new Date("2026-10-16T17:02:00.000Z"),
+      });
+      fridayId = friday.id;
+      expect(friday.becameCurrent).toBe(true);
+      expect(friday.reportDate).toBe("2026-10-16");
+      expect(friday.reportDateReview).toBeNull();
+
+      const saturday = await confirmAutopart216vImport(adminId, {
+        text: oneRow(`SAT${chrono}B`, 8),
+        filename: saturdayName,
+        source: "EMAIL",
+        receivedAt: new Date("2026-10-17T17:01:37.000Z"),
+      });
+      saturdayId = saturday.id;
+      expect(saturday.duplicate).toBe(false);
+      expect(saturday.becameCurrent).toBe(false);
+      expect(saturday.reportDate).toBe("2026-10-17");
+      expect(saturday.reportDateReview).toBe("WEEKEND_DATE_UNVERIFIED");
+
+      const saturdayRow = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({ where: { id: saturday.id } });
+      const fridayRow = await prisma.autopartBackorderSnapshot.findUniqueOrThrow({ where: { id: friday.id } });
+      expect(dateOnlyIsoFromDate(saturdayRow.businessDate)).toBe("2026-10-17");
+      expect(dateOnlyIsoFromDate(fridayRow.businessDate)).toBe("2026-10-16");
+      expect(await prisma.autopartBackorderSnapshot.count({ where: { filename: saturdayName } })).toBe(1);
+
+      const workspace = await getBackorderWorkspace(adminId, {});
+      expect(workspace.freshness.filename).toBe(fridayName);
+      expect(workspace.freshness.latestReportDate).toBe("2026-10-16");
+      expect(workspace.current?.snapshotId).toBe(friday.id);
+      expect(workspace.freshness.warning).toContain("Saturday 2026-10-17");
+      expect(workspace.freshness.warning).toContain(saturdayName);
+
+      const saturdayAfternoon = new Date("2026-10-17T15:00:00.000Z");
+      const weekend = resolveAutopart216vFreshness({
+        lastSuccessAt: fridayRow.importedAt,
+        lastBusinessDate: "2026-10-16",
+        now: saturdayAfternoon,
+      });
+      expect(weekend.status).toBe("WEEKEND_USING_LAST_WORKING_DAY");
+      expect(weekend.stale).toBe(false);
+      expect(
+        headline216vFeedHealth({
+          status: weekend.status,
+          stale: weekend.stale,
+          lastBusinessDate: weekend.lastBusinessDate,
+          now: saturdayAfternoon,
+        }).key,
+      ).toBe("CURRENT");
+
+      const mondayAfterGrace = new Date("2026-10-19T18:45:00.000Z");
+      const monday = resolveAutopart216vFreshness({
+        lastSuccessAt: fridayRow.importedAt,
+        lastBusinessDate: "2026-10-16",
+        now: mondayAfterGrace,
+      });
+      expect(monday.expectedBusinessDate).toBe("2026-10-19");
+      expect(
+        headline216vFeedHealth({
+          status: monday.status,
+          stale: monday.stale,
+          lastBusinessDate: "2026-10-16",
+          now: mondayAfterGrace,
+        }).label,
+      ).toBe("REPORT OVERDUE");
+    } finally {
+      const ids = [saturdayId, fridayId].filter((id): id is string => Boolean(id));
+      if (ids.length) {
+        await prisma.autopartBackorderSnapshot.deleteMany({ where: { id: { in: ids } } });
+      }
+    }
   });
 });
 

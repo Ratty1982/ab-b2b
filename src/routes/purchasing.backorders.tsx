@@ -48,6 +48,7 @@ import {
   type Autopart216vMovement,
 } from "@/domain/autopart-216v-movement";
 import { AUTOPART_216V_SCHEDULE_LABEL } from "@/domain/autopart-216v-freshness";
+import { weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
@@ -234,7 +235,16 @@ function BackordersPage() {
         return;
       }
       const imported = result.data;
-      if (imported.duplicate) {
+      if (imported.reportDateReview) {
+        setNotice({
+          tone: "warn",
+          message: weekend216vImportNotice({
+            filename: file.name,
+            observedDate: imported.reportDate,
+            becameCurrent: imported.becameCurrent,
+          }),
+        });
+      } else if (imported.duplicate) {
         setNotice({
           tone: "warn",
           message: `Already imported (${imported.filename ?? file.name}, report ${imported.reportDate}). No second snapshot was created.`,

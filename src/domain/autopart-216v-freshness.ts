@@ -6,6 +6,7 @@
 
 import { londonBusinessDate, londonCivilTime } from "@/domain/stock-schedule";
 import { isLondonWorkingDayOngoing, londonIsoWeekdayOngoing } from "@/domain/autopart-ongoing-sales-schedule";
+import { is216vWeekendCivilDate, previous216vWorkingDate, verified216vReportDate } from "@/domain/autopart-216v-report-date";
 
 export const AUTOPART_216V_SCHEDULE_HOUR = 18;
 export const AUTOPART_216V_SCHEDULE_MINUTE = 15;
@@ -40,15 +41,7 @@ function shiftBusinessDate(iso: string, days: number): string {
 }
 
 export function previousLondonWorkingDate(iso: string): string {
-  let cursor = iso;
-  for (let i = 0; i < 10; i++) {
-    cursor = shiftBusinessDate(cursor, -1);
-    const [y, m, d] = cursor.split("-").map(Number);
-    const weekday = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
-    // UTC date of a London civil date matches weekday for this calendar (no TZ shift on date-only).
-    if (weekday !== 0 && weekday !== 6) return cursor;
-  }
-  return shiftBusinessDate(iso, -3);
+  return previous216vWorkingDate(iso);
 }
 
 /**
@@ -90,10 +83,13 @@ export function resolveAutopart216vFreshness(input: {
   const local = londonCivilTime(now);
   const today = londonBusinessDate(local);
   const working = isLondonWorkingDayOngoing(now);
-  const lastBusinessDate = input.lastBusinessDate;
+  const observedBusinessDate = input.lastBusinessDate;
+  // A Saturday/Sunday stamp does not satisfy a Monday–Friday report.
+  const lastBusinessDate = verified216vReportDate(observedBusinessDate);
   const nextExpectedLabel = next216vExpectedLabel(now, lastBusinessDate);
+  const weekendObserved = is216vWeekendCivilDate(observedBusinessDate);
 
-  if (!input.lastSuccessAt || !lastBusinessDate) {
+  if (!input.lastSuccessAt && !observedBusinessDate) {
     return {
       status: "NO_SNAPSHOT",
       stale: true,
@@ -107,7 +103,7 @@ export function resolveAutopart216vFreshness(input: {
 
   if (!working) {
     const lastWorking = previousLondonWorkingDate(today);
-    const stale = lastBusinessDate < lastWorking;
+    const stale = Boolean(lastBusinessDate && lastBusinessDate < lastWorking);
     return {
       status: stale ? "EXPECTED_REPORT_NOT_RECEIVED" : "WEEKEND_USING_LAST_WORKING_DAY",
       stale,
@@ -117,7 +113,9 @@ export function resolveAutopart216vFreshness(input: {
       nextExpectedLabel,
       warning: stale
         ? "Latest 216V is older than the last working day. Showing last available snapshot — backorders were not cleared."
-        : null,
+        : weekendObserved
+          ? "A weekend-dated 216V file is kept for review. No Saturday or Sunday report is expected."
+          : null,
     };
   }
 
@@ -126,7 +124,7 @@ export function resolveAutopart216vFreshness(input: {
   const todayDue = minutes >= dueMinutes;
   const expectedBusinessDate = todayDue ? today : previousLondonWorkingDate(today);
 
-  if (lastBusinessDate >= expectedBusinessDate) {
+  if (lastBusinessDate && lastBusinessDate >= expectedBusinessDate) {
     return {
       status: "CURRENT",
       stale: false,
@@ -214,13 +212,8 @@ export function headline216vFeedHealth(input: {
   const working = isLondonWorkingDayOngoing(now);
   const minutes = local.hour * 60 + local.minute;
   const beforeTodayDue = minutes < AUTOPART_216V_SCHEDULE_HOUR * 60 + AUTOPART_216V_SCHEDULE_MINUTE;
-  if (
-    working &&
-    beforeTodayDue &&
-    input.lastBusinessDate &&
-    input.lastBusinessDate < today &&
-    input.status === "CURRENT"
-  ) {
+  const verifiedToday = Boolean(input.lastBusinessDate && !is216vWeekendCivilDate(input.lastBusinessDate) && input.lastBusinessDate >= today);
+  if (working && beforeTodayDue && input.status === "CURRENT" && !verifiedToday) {
     return {
       key: "WAITING_FOR_TODAYS_REPORT",
       label: AUTOPART_216V_FEED_HEADLINE_LABEL.WAITING_FOR_TODAYS_REPORT,

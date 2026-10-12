@@ -2,11 +2,35 @@
  * 216V report date is the report's own business day, not the moment it was imported.
  * Filename `216V_YYYYMMDD` wins, then the email received day, then a previously
  * stored business date, then the import clock.
+ *
+ * Autopart sends scheduled 216V reports Monday to Friday at about 18:15 Europe/London.
+ * A Saturday or Sunday calendar date is stored as observed and flagged for review.
+ * It is not a verified reporting day. Nothing here rewrites that date onto Friday.
+ *
+ * `216V_20261010.csv`: 10 October 2026 is a Saturday. The 216V body has no date
+ * column, and this app keeps the mailbox attachment name unchanged. The recorded
+ * receipt instant for that name is 2026-10-10T17:01:37Z (18:01 Europe/London);
+ * the import instant is Monday 2026-10-12T17:16:07Z. The Saturday stamp therefore
+ * matches the attachment name and the receipt day, not the import day. Filename
+ * and receipt agree, which fits a file generated and emailed on Saturday. That
+ * is not evidence of the scheduled reporting business day.
  */
 
 import { dateOnlyIsoFromDate, todayLondonDateOnly } from "@/domain/sales-history-period";
 
 export type Autopart216vReportDateSource = "FILENAME" | "RECEIVED_AT" | "BUSINESS_DATE" | "IMPORT_TIME";
+
+export type Autopart216vReportDateReview = "WEEKEND_DATE_UNVERIFIED";
+
+export type Autopart216vResolvedReportDate = {
+  /** Observed calendar date. Weekend dates stay on that weekend day. */
+  iso: string;
+  source: Autopart216vReportDateSource;
+  /** True only for a Monday–Friday date. Weekend dates never qualify. */
+  verifiedWorkingDay: boolean;
+  review: Autopart216vReportDateReview | null;
+  filenameDate: string | null;
+};
 
 export type Autopart216vSnapshotChronology = {
   id: string;
@@ -36,6 +60,86 @@ export function reportDateFrom216vFilename(filename: string | null | undefined):
   return isRealIsoDate(iso) ? iso : null;
 }
 
+const CIVIL_WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function shiftCivilDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d! + days));
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+}
+
+/** Saturday or Sunday for a civil YYYY-MM-DD. Invalid dates are not weekend report days. */
+export function is216vWeekendCivilDate(iso: string | null | undefined): boolean {
+  if (!iso || !isRealIsoDate(iso)) return false;
+  const [y, m, d] = iso.split("-").map(Number);
+  const weekday = new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+export function civilWeekdayName(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return CIVIL_WEEKDAYS[new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()] ?? "weekend";
+}
+
+/** Previous Monday–Friday civil date. The input date itself is not returned. */
+export function previous216vWorkingDate(iso: string): string {
+  let cursor = iso;
+  for (let i = 0; i < 10; i++) {
+    cursor = shiftCivilDate(cursor, -1);
+    if (!is216vWeekendCivilDate(cursor)) return cursor;
+  }
+  return shiftCivilDate(iso, -3);
+}
+
+export function verified216vReportDate(iso: string | null | undefined): string | null {
+  if (!iso || !isRealIsoDate(iso) || is216vWeekendCivilDate(iso)) return null;
+  return iso;
+}
+
+function finishReportDate(
+  iso: string,
+  source: Autopart216vReportDateSource,
+  filenameDate: string | null,
+): Autopart216vResolvedReportDate {
+  const weekend = is216vWeekendCivilDate(iso);
+  return {
+    iso,
+    source,
+    verifiedWorkingDay: !weekend,
+    review: weekend ? "WEEKEND_DATE_UNVERIFIED" : null,
+    filenameDate,
+  };
+}
+
+/**
+ * Review copy for a weekend-dated 216V file whose reporting business day
+ * cannot be established. The observed date is left unchanged.
+ */
+export function describe216vWeekendReportReview(input: {
+  filename?: string | null;
+  observedDate: string;
+}): string {
+  const name = input.filename?.trim() || "This 216V file";
+  const weekday = civilWeekdayName(input.observedDate);
+  return `${name} carries ${weekday} ${input.observedDate}. Scheduled 216V reports arrive Monday to Friday at about 18:15 Europe/London. The file contents have no reporting date, so this calendar date is kept and flagged for review.`;
+}
+
+export function weekend216vImportNotice(input: {
+  filename?: string | null;
+  observedDate: string;
+  becameCurrent: boolean;
+}): string {
+  const review = describe216vWeekendReportReview(input);
+  const position = input.becameCurrent
+    ? "It stays visible because no Monday–Friday snapshot is on file."
+    : "The latest Monday–Friday snapshot stays in place.";
+  return `${review} ${position}`;
+}
+
 function isoFromBusinessDate(value: Date | string): string | null {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null;
@@ -52,17 +156,17 @@ export function resolveAutopart216vReportDate(input: {
   businessDate?: Date | string | null;
   importedAt?: Date | null;
   now?: Date;
-}): { iso: string; source: Autopart216vReportDateSource } {
-  const fromFilename = reportDateFrom216vFilename(input.filename);
-  if (fromFilename) return { iso: fromFilename, source: "FILENAME" };
+}): Autopart216vResolvedReportDate {
+  const filenameDate = reportDateFrom216vFilename(input.filename);
+  if (filenameDate) return finishReportDate(filenameDate, "FILENAME", filenameDate);
   if (input.receivedAt && !Number.isNaN(input.receivedAt.getTime())) {
-    return { iso: todayLondonDateOnly(input.receivedAt), source: "RECEIVED_AT" };
+    return finishReportDate(todayLondonDateOnly(input.receivedAt), "RECEIVED_AT", null);
   }
   if (input.businessDate) {
     const stored = isoFromBusinessDate(input.businessDate);
-    if (stored) return { iso: stored, source: "BUSINESS_DATE" };
+    if (stored) return finishReportDate(stored, "BUSINESS_DATE", null);
   }
-  return { iso: todayLondonDateOnly(input.importedAt ?? input.now ?? new Date()), source: "IMPORT_TIME" };
+  return finishReportDate(todayLondonDateOnly(input.importedAt ?? input.now ?? new Date()), "IMPORT_TIME", null);
 }
 
 function receivedMillis(value: Date | null | undefined): number {
@@ -94,23 +198,43 @@ export function compare216vSnapshotChronology(
   return a.id < b.id ? -1 : 1;
 }
 
+/**
+ * Current outstanding position is the latest verified Monday–Friday snapshot.
+ * A weekend-dated file is shown only when no verified working-day snapshot exists.
+ */
 export function pickCurrent216vSnapshot<T extends Autopart216vSnapshotChronology>(rows: readonly T[]): T | null {
+  const verified = rows.filter((row) => resolveAutopart216vReportDate(row).verifiedWorkingDay);
+  const pool = verified.length > 0 ? verified : rows;
   let best: T | null = null;
-  for (const row of rows) {
+  for (const row of pool) {
     if (!best || compare216vSnapshotChronology(row, best) > 0) best = row;
   }
   return best;
 }
 
-/** Latest committed snapshot that is strictly older than `current`. */
+/**
+ * Baseline for movement. A verified report compares with the previous verified
+ * working day. A weekend file compares with the latest verified day on or
+ * before the previous working day, so a later Monday snapshot is left untouched.
+ */
 export function previous216vSnapshot<T extends Autopart216vSnapshotChronology>(
   rows: readonly T[],
   current: T,
 ): T | null {
+  const currentReport = resolveAutopart216vReportDate(current);
+  const priorWorking = previous216vWorkingDate(currentReport.iso);
   let best: T | null = null;
   for (const row of rows) {
     if (row.id === current.id) continue;
-    if (compare216vSnapshotChronology(row, current) >= 0) continue;
+    const rowReport = resolveAutopart216vReportDate(row);
+    if (currentReport.verifiedWorkingDay) {
+      if (!rowReport.verifiedWorkingDay) continue;
+      if (compare216vSnapshotChronology(row, current) >= 0) continue;
+    } else if (rowReport.verifiedWorkingDay) {
+      if (rowReport.iso > priorWorking) continue;
+    } else if (compare216vSnapshotChronology(row, current) >= 0) {
+      continue;
+    }
     if (!best || compare216vSnapshotChronology(row, best) > 0) best = row;
   }
   return best;

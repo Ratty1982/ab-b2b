@@ -8,8 +8,13 @@ import type { AutopartBackorderChangeStatus } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
-import { previous216vSnapshot, resolveAutopart216vReportDate } from "@/domain/autopart-216v-report-date";
-import { currentCommitted216vSnapshot } from "@/server/purchasing/backorder-chronology";
+import {
+  describe216vWeekendReportReview,
+  previous216vSnapshot,
+  resolveAutopart216vReportDate,
+  verified216vReportDate,
+} from "@/domain/autopart-216v-report-date";
+import { currentCommitted216vSnapshot, listCommitted216vSnapshots } from "@/server/purchasing/backorder-chronology";
 import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import {
   AUTOPART_PRODUCT_KIND_LABEL,
@@ -699,13 +704,25 @@ export async function outstandingBackorderUnitsBySku(): Promise<Map<string, numb
 export async function getBackorderWorkspace(actorUserId: string, raw: unknown = {}) {
   const profile = await requirePurchasingAccess(actorUserId);
   const input = listInput.parse(raw ?? {});
-  const [snapshot, settings] = await Promise.all([loadLatestSnapshot(), feedSettingsRow()]);
+  const [snapshot, settings, headers] = await Promise.all([
+    loadLatestSnapshot(),
+    feedSettingsRow(),
+    listCommitted216vSnapshots(),
+  ]);
   const now = new Date();
   const report = snapshot ? resolveAutopart216vReportDate(snapshot) : null;
-  const lastBusinessDate = report?.iso ?? null;
+  const lastBusinessDate = verified216vReportDate(report?.iso ?? null);
+  const weekendReview = headers
+    .map((header) => {
+      const resolved = resolveAutopart216vReportDate(header);
+      if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") return null;
+      return describe216vWeekendReportReview({ filename: header.filename, observedDate: resolved.iso });
+    })
+    .filter((line): line is string => Boolean(line))
+    .join(" ");
   const freshness = resolveAutopart216vFreshness({
     lastSuccessAt: snapshot?.importedAt ?? settings.lastSuccessAt,
-    lastBusinessDate,
+    lastBusinessDate: report?.iso ?? null,
     now,
     scheduleHour: settings.scheduleHour,
   });
@@ -777,11 +794,16 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
         lastError: settings.lastError,
         lastBusinessDate,
       }),
+      warning: [freshness.warning, weekendReview].filter(Boolean).join(" ") || null,
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",
       latestReportDate: lastBusinessDate,
-      latestReportDateLabel: formatOrDash(formatDate(lastBusinessDate)),
+      latestReportDateLabel: lastBusinessDate
+        ? formatOrDash(formatDate(lastBusinessDate))
+        : report?.review
+          ? "Review"
+          : "Never",
       currentSnapshotImportedAt: snapshot?.importedAt.toISOString() ?? null,
       filename: snapshot?.filename ?? null,
       emptyValid: snapshot?.emptyValid ?? false,

@@ -11,7 +11,6 @@ import { hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { skuMatchKey } from "@/domain/stock";
 import {
-  compare216vSnapshotChronology,
   pickCurrent216vSnapshot,
   previous216vSnapshot,
   resolveAutopart216vReportDate,
@@ -42,8 +41,9 @@ export type Autopart216vImportOutcome = {
   outstandingValue: string;
   /** True when this file is the current outstanding position after chronology ranking. */
   becameCurrent: boolean;
-  /** Europe/London report date. Not the import clock. */
+  /** Observed calendar date. A weekend date is not a verified reporting day. */
   reportDate: string;
+  reportDateReview: "WEEKEND_DATE_UNVERIFIED" | null;
 };
 
 function fileHashOf(input: { bytes: Buffer | null; text: string }): string {
@@ -182,6 +182,7 @@ export async function confirmAutopart216vImport(
     isCommitted216vSnapshotHash(hash, new Set([existing.fileHash]))
   ) {
     const currentId = pickCurrent216vSnapshot(await listCommitted216vSnapshots())?.id ?? null;
+    const existingReport = resolveAutopart216vReportDate(existing);
     return {
       id: existing.id,
       duplicate: true,
@@ -195,7 +196,8 @@ export async function confirmAutopart216vImport(
       outstandingQty: qtyString(existing.outstandingQty),
       outstandingValue: Number(existing.outstandingValue).toFixed(2),
       becameCurrent: currentId === existing.id,
-      reportDate: resolveAutopart216vReportDate(existing).iso,
+      reportDate: existingReport.iso,
+      reportDateReview: existingReport.review,
     };
   }
 
@@ -217,7 +219,7 @@ export async function confirmAutopart216vImport(
     receivedAt,
     importedAt: now,
   };
-  const becameCurrent = !headers.some((header) => compare216vSnapshotChronology(header, incoming) > 0);
+  const becameCurrent = pickCurrent216vSnapshot([...headers, incoming])?.id === incoming.id;
   const previousHeader = previous216vSnapshot(headers, incoming);
   const previous = previousHeader
     ? await prisma.autopartBackorderSnapshot.findUnique({
@@ -334,6 +336,9 @@ export async function confirmAutopart216vImport(
         identityAmbiguities: matched.ambiguities,
         reportDate: report.iso,
         reportDateSource: report.source,
+        reportDateVerified: report.verifiedWorkingDay,
+        reportDateReview: report.review,
+        filenameDate: report.filenameDate,
         becameCurrent,
       },
       lines: { createMany: { data: lineData } },
@@ -368,6 +373,8 @@ export async function confirmAutopart216vImport(
       identityAmbiguities: matched.ambiguities.length,
       reportDate: report.iso,
       reportDateSource: report.source,
+      reportDateVerified: report.verifiedWorkingDay,
+      reportDateReview: report.review,
       becameCurrent,
     },
   });
@@ -386,6 +393,7 @@ export async function confirmAutopart216vImport(
     outstandingValue: parsed.outstandingValue,
     becameCurrent,
     reportDate: report.iso,
+    reportDateReview: report.review,
   };
 }
 

@@ -3385,7 +3385,7 @@ model AutopartBackorderSnapshot {
   filename             String?
   fileHash             String                          @unique
   source               String                          @default("EMAIL")
-  /// Report date (UTC midnight of the Europe/London civil day). Filename date, then email received day, then import day. Not rewritten for older rows.
+  /// Observed calendar date (UTC midnight). Weekday filename, then weekday receipt, then weekday import. A Saturday or Sunday date is kept for review and is not a verified reporting day. Existing rows are not rewritten.
   businessDate         DateTime                        @db.Date
   importedAt           DateTime                        @default(now())
   receivedAt           DateTime?
