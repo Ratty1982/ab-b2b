@@ -10,7 +10,12 @@ import { AuthError, requirePurchasingAccess, requireSystemPermission } from "@/s
 import { hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { skuMatchKey } from "@/domain/stock";
-import { todayLondonDateOnly } from "@/domain/sales-history-period";
+import {
+  pickCurrent216vSnapshot,
+  previous216vSnapshot,
+  resolveAutopart216vReportDate,
+} from "@/domain/autopart-216v-report-date";
+import { listCommitted216vSnapshots } from "@/server/purchasing/backorder-chronology";
 import {
   compare216vQty,
   decodeAutopart216vBytes,
@@ -34,6 +39,11 @@ export type Autopart216vImportOutcome = {
   accountCount: number;
   outstandingQty: string;
   outstandingValue: string;
+  /** True when this file is the current outstanding position after chronology ranking. */
+  becameCurrent: boolean;
+  /** Observed calendar date. A weekend date is not a verified reporting day. */
+  reportDate: string;
+  reportDateReview: "WEEKEND_DATE_UNVERIFIED" | null;
 };
 
 function fileHashOf(input: { bytes: Buffer | null; text: string }): string {
@@ -156,6 +166,9 @@ export async function confirmAutopart216vImport(
       status: true,
       filename: true,
       fileHash: true,
+      businessDate: true,
+      receivedAt: true,
+      importedAt: true,
       emptyValid: true,
       orderCount: true,
       lineCount: true,
@@ -168,6 +181,8 @@ export async function confirmAutopart216vImport(
     existing?.status === "COMMITTED" &&
     isCommitted216vSnapshotHash(hash, new Set([existing.fileHash]))
   ) {
+    const currentId = pickCurrent216vSnapshot(await listCommitted216vSnapshots())?.id ?? null;
+    const existingReport = resolveAutopart216vReportDate(existing);
     return {
       id: existing.id,
       duplicate: true,
@@ -180,21 +195,40 @@ export async function confirmAutopart216vImport(
       accountCount: existing.accountCount,
       outstandingQty: qtyString(existing.outstandingQty),
       outstandingValue: Number(existing.outstandingValue).toFixed(2),
+      becameCurrent: currentId === existing.id,
+      reportDate: existingReport.iso,
+      reportDateReview: existingReport.review,
     };
   }
-
-  const previous = await prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED" },
-    orderBy: { importedAt: "desc" },
-    include: { lines: true },
-  });
-  const previousOutstanding = (previous?.lines ?? []).filter((l) => l.changeStatus !== "CLEARED");
-  const matched = matchAutopart216vAcrossSnapshots(previousOutstanding, parsed.rows);
 
   const accounts = await mapAccounts(parsed.rows.map((r) => r.customerAccount));
   const products = await mapProducts(parsed.rows.map((r) => r.partMatchKey));
   const now = new Date();
-  const businessDate = utcDateOnly(todayLondonDateOnly(now));
+  const receivedAt = raw.receivedAt ?? now;
+  const report = resolveAutopart216vReportDate({
+    filename: raw.filename ?? null,
+    receivedAt: raw.receivedAt ?? null,
+    importedAt: now,
+  });
+  const businessDate = utcDateOnly(report.iso);
+  const headers = await listCommitted216vSnapshots();
+  const incoming = {
+    id: "incoming",
+    filename: raw.filename ?? "216V.csv",
+    businessDate,
+    receivedAt,
+    importedAt: now,
+  };
+  const becameCurrent = pickCurrent216vSnapshot([...headers, incoming])?.id === incoming.id;
+  const previousHeader = previous216vSnapshot(headers, incoming);
+  const previous = previousHeader
+    ? await prisma.autopartBackorderSnapshot.findUnique({
+        where: { id: previousHeader.id },
+        include: { lines: true },
+      })
+    : null;
+  const previousOutstanding = (previous?.lines ?? []).filter((l) => l.changeStatus !== "CLEARED");
+  const matched = matchAutopart216vAcrossSnapshots(previousOutstanding, parsed.rows);
 
   const lineData: Prisma.AutopartBackorderLineCreateManySnapshotInput[] = [];
 
@@ -283,7 +317,7 @@ export async function confirmAutopart216vImport(
       fileHash: hash,
       source: raw.source ?? "MANUAL",
       businessDate,
-      receivedAt: raw.receivedAt ?? now,
+      receivedAt,
       lineCount: parsed.rows.length,
       outstandingLineCount: outstanding.length,
       orderCount: parsed.orderCount,
@@ -300,6 +334,12 @@ export async function confirmAutopart216vImport(
         clearedCount: matched.unmatchedPrevious.length,
         newCount: outstanding.filter((l) => l.changeStatus === "NEW").length,
         identityAmbiguities: matched.ambiguities,
+        reportDate: report.iso,
+        reportDateSource: report.source,
+        reportDateVerified: report.verifiedWorkingDay,
+        reportDateReview: report.review,
+        filenameDate: report.filenameDate,
+        becameCurrent,
       },
       lines: { createMany: { data: lineData } },
     },
@@ -310,7 +350,6 @@ export async function confirmAutopart216vImport(
     create: {
       id: "default",
       lastSuccessAt: now,
-      lastPolledAt: now,
       configured: true,
       lastError: null,
     },
@@ -332,6 +371,11 @@ export async function confirmAutopart216vImport(
       cleared: matched.unmatchedPrevious.length,
       emptyValid: parsed.rows.length === 0,
       identityAmbiguities: matched.ambiguities.length,
+      reportDate: report.iso,
+      reportDateSource: report.source,
+      reportDateVerified: report.verifiedWorkingDay,
+      reportDateReview: report.review,
+      becameCurrent,
     },
   });
 
@@ -347,6 +391,9 @@ export async function confirmAutopart216vImport(
     accountCount: parsed.accountCount,
     outstandingQty: parsed.outstandingQty,
     outstandingValue: parsed.outstandingValue,
+    becameCurrent,
+    reportDate: report.iso,
+    reportDateReview: report.review,
   };
 }
 

@@ -22,7 +22,10 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain("Upload 216V");
     expect(src).toContain("Poll mailbox");
     expect(src).toContain("Last poll");
+    expect(src).toContain("Latest report date");
+    expect(src).toContain("Report received");
     expect(src).toContain("Last successful import");
+    expect(src).toContain("Current snapshot imported");
     expect(src).toContain("Last error");
     expect(src).toContain("bytesToBase64");
     expect(src).toContain('cache: "no-store"');

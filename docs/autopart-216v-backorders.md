@@ -48,9 +48,19 @@ When the same base repeats in one file, Customer Order / Reference is a secondar
 
 Each successful import is an `AutopartBackorderSnapshot` with `AutopartBackorderLine` rows.
 
-The latest **COMMITTED** snapshot is the current outstanding position. Previous snapshots are retained.
+The current outstanding position is the latest **verified Monday–Friday** COMMITTED snapshot. Tie-break is email received time, then import time, then id. Import time alone never makes an older report current. Previous snapshots stay for history and audit. A duplicate file hash does not create a second snapshot; if that file is already the latest verified report, it remains current.
 
-Comparison vs the previous successful snapshot:
+Report date comes from `216V_YYYYMMDD` in the filename, then the email received day, then the import day. A mailbox poll updates the poll clock only. It updates last successful import only when a file is actually committed, and that timestamp is not the report date.
+
+Scheduled 216V reports are Monday to Friday. A Saturday or Sunday date on the filename or the email receipt is stored as that observed calendar date and flagged for review. It does not become the current position while a Monday–Friday snapshot exists, and it is not rewritten to the previous Friday. The CSV has no date column, so the reporting business day cannot be taken from the file body.
+
+### `216V_20261010.csv`
+
+10 October 2026 is a Saturday. This application does not rename mailbox attachments, so `216V_YYYYMMDD` is the name on the email. The chronology record pairs that name with receipt time `2026-10-10T17:01:37Z` (18:01 Europe/London) and import time `2026-10-12T17:16:07Z` (Monday 18:16 Europe/London). Local databases do not hold this production file, and this change does not read or write production snapshots.
+
+The Saturday stamp matches the attachment name and the receipt day. It does not match the import day. Filename and receipt on the same Saturday fit a file generated and emailed that day. They do not establish a scheduled reporting business day, because Autopart does not send 216V on Saturday or Sunday. The file stays in history with date 10 October 2026 and a review flag.
+
+Comparison vs the previous report in that chronology:
 
 | Status | Meaning |
 | --- | --- |
@@ -98,7 +108,7 @@ Examples:
 
 ## Freshness
 
-Expected: working days, ~18:15 Europe/London, 90-minute grace. Weekends use the last working day's report and do not alert merely because Saturday/Sunday had no file.
+Expected: Monday to Friday, ~18:15 Europe/London, 90-minute grace (overdue from 19:45). Freshness uses the verified Monday–Friday report date, not the import clock and not a weekend filename. After 19:45 Europe/London, a missing Monday–Friday report is REPORT OVERDUE, including Monday when Monday's file has not arrived. On Saturday and Sunday the latest verified working-day snapshot stays on screen, with no overdue warning only because a weekend file did not arrive. A weekend-dated file that is the only snapshot stays visible with its outstanding lines and shows REVIEW REQUIRED. It is not a green CURRENT feed, and the absence of a Saturday or Sunday file is not REPORT OVERDUE. It still does not count as Monday's report.
 
 ## Purchasing forecast
 

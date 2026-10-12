@@ -18,6 +18,7 @@ import {
   isAutopart216vReport,
   isCommitted216vSnapshotHash,
 } from "@/domain/autopart-216v";
+import { compare216vSnapshotChronology, weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
 import {
   confirmAutopart216vImport,
   requireBackorderManage,
@@ -58,6 +59,9 @@ export type BackorderPollResult = {
 export function summarise216vPoll(result: BackorderPollResult): string {
   if (!result.ran && result.reason) return result.reason;
   const parts: string[] = [];
+  if (result.ran && result.processed === 0) {
+    parts.push("No new 216V report was imported");
+  }
   if (result.processed) {
     parts.push(`Imported ${result.processed} 216V report${result.processed === 1 ? "" : "s"}`);
   }
@@ -73,6 +77,18 @@ export function summarise216vPoll(result: BackorderPollResult): string {
   const notes = result.notes.filter(Boolean).slice(0, 6);
   const head = `${parts.join(". ")}.`;
   return notes.length ? `${head} ${notes.join(" | ")}` : head;
+}
+
+/** A poll updates the poll clock. It sets last success only when a report was actually committed. */
+export function backorderFeedPatchAfterPoll(result: BackorderPollResult, now = new Date()) {
+  const summary = summarise216vPoll(result);
+  const failed =
+    result.errors.length > 0 || (result.processed === 0 && result.duplicatesIgnored === 0);
+  return {
+    lastPolledAt: now,
+    lastError: failed ? summary : null,
+    ...(result.processed > 0 ? { lastSuccessAt: now } : {}),
+  };
 }
 
 function emptyResult(partial?: Partial<BackorderPollResult>): BackorderPollResult {
@@ -119,6 +135,15 @@ export async function process216vEmailBatch(input: {
     ).map((row) => row.fileHash),
   );
 
+  type PendingImport = {
+    email: InboundStockEmail;
+    filename: string;
+    label: string;
+    bytes: Buffer;
+    contentHash: string;
+  };
+  const pending: PendingImport[] = [];
+
   for (const email of input.emails) {
     for (const att of email.attachments) {
       const label = att.filename || "(unnamed)";
@@ -145,48 +170,86 @@ export async function process216vEmailBatch(input: {
         result.notes.push(`${label}: ${decision.reason}`);
         continue;
       }
-      try {
-        const imported = await confirmAutopart216vImport(input.actorUserId, {
-          bytesBase64: bytes.toString("base64"),
-          filename: att.filename,
-          source: input.source,
-          receivedAt: email.receivedAt,
-        });
-        if (imported.duplicate) {
-          result.duplicatesIgnored += 1;
-          result.notes.push(`${label}: already imported, snapshot unchanged`);
-          committedHashes.add(imported.fileHash);
-        } else {
-          result.processed += 1;
-          result.notes.push(
-            `${label}: imported ${imported.orderCount} orders, ${imported.outstandingQty} units, £${imported.outstandingValue}`,
-          );
-          committedHashes.add(imported.fileHash);
-        }
-        const attKey = attachmentReceiptKey(email.messageId, email.uid, att.filename);
-        if (attKey) {
-          await prisma.stockEmailReceipt
-            .upsert({
-              where: { receiptKey: attKey },
-              create: {
-                receiptKey: attKey,
-                emailUid: email.uid,
-                emailMessageId: email.messageId,
-                fromAddress: email.from,
-                subject: email.subject ?? "",
-                receivedAt: email.receivedAt,
-                consumed: true,
-                attachmentFilename: att.filename,
-              },
-              update: { consumed: true, attachmentFilename: att.filename },
-            })
-            .catch(() => undefined);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "216V import failed";
-        result.errors.push(`${label}: ${message}`);
-        result.notes.push(`${label}: ${message}`);
+      pending.push({ email, filename: att.filename, label, bytes, contentHash });
+    }
+  }
+
+  pending.sort((a, b) =>
+    compare216vSnapshotChronology(
+      {
+        id: a.contentHash,
+        filename: a.filename,
+        receivedAt: a.email.receivedAt,
+        importedAt: new Date(0),
+      },
+      {
+        id: b.contentHash,
+        filename: b.filename,
+        receivedAt: b.email.receivedAt,
+        importedAt: new Date(0),
+      },
+    ),
+  );
+
+  for (const item of pending) {
+    const { email, filename, label, bytes } = item;
+    try {
+      const imported = await confirmAutopart216vImport(input.actorUserId, {
+        bytesBase64: bytes.toString("base64"),
+        filename,
+        source: input.source,
+        receivedAt: email.receivedAt,
+      });
+      if (imported.duplicate) {
+        result.duplicatesIgnored += 1;
+        result.notes.push(`${label}: already imported, snapshot unchanged`);
+        committedHashes.add(imported.fileHash);
+      } else if (imported.reportDateReview) {
+        result.processed += 1;
+        result.notes.push(
+          `${label}: ${weekend216vImportNotice({
+            filename: label,
+            observedDate: imported.reportDate,
+            becameCurrent: imported.becameCurrent,
+          })}`,
+        );
+        committedHashes.add(imported.fileHash);
+      } else if (!imported.becameCurrent) {
+        result.processed += 1;
+        result.notes.push(
+          `${label}: saved report ${imported.reportDate} for history. It is older than the current snapshot, so the outstanding position was not replaced.`,
+        );
+        committedHashes.add(imported.fileHash);
+      } else {
+        result.processed += 1;
+        result.notes.push(
+          `${label}: imported ${imported.orderCount} orders, ${imported.outstandingQty} units, £${imported.outstandingValue}`,
+        );
+        committedHashes.add(imported.fileHash);
       }
+      const attKey = attachmentReceiptKey(email.messageId, email.uid, filename);
+      if (attKey) {
+        await prisma.stockEmailReceipt
+          .upsert({
+            where: { receiptKey: attKey },
+            create: {
+              receiptKey: attKey,
+              emailUid: email.uid,
+              emailMessageId: email.messageId,
+              fromAddress: email.from,
+              subject: email.subject ?? "",
+              receivedAt: email.receivedAt,
+              consumed: true,
+              attachmentFilename: filename,
+            },
+            update: { consumed: true, attachmentFilename: filename },
+          })
+          .catch(() => undefined);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "216V import failed";
+      result.errors.push(`${label}: ${message}`);
+      result.notes.push(`${label}: ${message}`);
     }
   }
   return result;
@@ -241,16 +304,9 @@ async function run216vMailboxPoll(
     acceptAttachment: isAutopart216vAttachmentCandidate,
   });
   const result = await process216vEmailBatch({ emails, actorUserId, source });
-  const summary = summarise216vPoll(result);
-  const failed =
-    result.errors.length > 0 || (result.processed === 0 && result.duplicatesIgnored === 0);
   await prisma.autopartBackorderFeedSettings.update({
     where: { id: "default" },
-    data: {
-      lastPolledAt: new Date(),
-      lastError: failed ? summary : null,
-      ...(result.processed ? { lastSuccessAt: new Date() } : {}),
-    },
+    data: backorderFeedPatchAfterPoll(result),
   });
   return result;
 }

@@ -516,6 +516,173 @@ describe("216V freshness", () => {
     ).toBe("WAITING_FOR_TODAYS_REPORT");
   });
 
+  it("does not treat Saturday's report imported on Monday as Monday's report", () => {
+    const mondayEvening = new Date("2026-10-12T20:53:05.000Z"); // 21:53 BST
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-12T17:16:07.000Z"), // 18:16 BST import
+      lastBusinessDate: "2026-10-10",
+      now: mondayEvening,
+    });
+    expect(result.status).toBe("EXPECTED_REPORT_NOT_RECEIVED");
+    expect(result.stale).toBe(true);
+    expect(result.expectedBusinessDate).toBe("2026-10-12");
+    expect(result.nextExpectedLabel).toContain("today");
+    expect(result.nextExpectedLabel).not.toContain("13/10/2026");
+    expect(
+      headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: "2026-10-10",
+        now: mondayEvening,
+      }).key,
+    ).toBe("REPORT_OVERDUE");
+  });
+
+  it("does not show REPORT OVERDUE on Saturday or Sunday when Friday's report is the latest verified snapshot", () => {
+    const friday = {
+      lastSuccessAt: new Date("2026-10-09T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-09",
+    };
+    const saturday = new Date("2026-10-10T17:15:00.000Z"); // 18:15 BST Saturday
+    const sunday = new Date("2026-10-11T16:15:00.000Z"); // 17:15 BST Sunday
+    for (const now of [saturday, sunday]) {
+      const result = resolveAutopart216vFreshness({ ...friday, now });
+      expect(result.status).toBe("WEEKEND_USING_LAST_WORKING_DAY");
+      expect(result.stale).toBe(false);
+      expect(result.lastBusinessDate).toBe("2026-10-09");
+      expect(result.warning).toBeNull();
+      expect(
+        headline216vFeedHealth({
+          status: result.status,
+          stale: result.stale,
+          lastBusinessDate: result.lastBusinessDate,
+          now,
+        }).key,
+      ).toBe("CURRENT");
+    }
+    expect(due216vPollWindow(saturday)).toBe(false);
+    expect(due216vPollWindow(sunday)).toBe(false);
+  });
+
+  it("keeps a Saturday-dated snapshot visible over the weekend without an overdue warning", () => {
+    const saturdayEvening = new Date("2026-10-10T18:30:00.000Z"); // 19:30 BST
+    const sundayEvening = new Date("2026-10-11T18:30:00.000Z"); // 19:30 BST
+    for (const now of [saturdayEvening, sundayEvening]) {
+      const result = resolveAutopart216vFreshness({
+        lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
+        lastBusinessDate: "2026-10-10",
+        now,
+      });
+      expect(result.status).toBe("WEEKEND_DATE_REVIEW");
+      expect(result.stale).toBe(false);
+      expect(result.lastBusinessDate).toBeNull();
+      expect(result.warning).toMatch(/REVIEW REQUIRED/);
+      expect(result.warning).toMatch(/outstanding lines/i);
+      expect(result.warning).not.toMatch(/overdue/i);
+      const headline = headline216vFeedHealth({
+        status: result.status,
+        stale: result.stale,
+        lastBusinessDate: result.lastBusinessDate,
+        now,
+      });
+      expect(headline.key).toBe("REVIEW_REQUIRED");
+      expect(headline.label).toBe("REVIEW REQUIRED");
+      expect(headline.tone).not.toBe("good");
+      expect(headline.key).not.toBe("REPORT_OVERDUE");
+    }
+  });
+
+  it("expects Monday's report and shows REPORT OVERDUE after the 90-minute grace", () => {
+    const friday = {
+      lastSuccessAt: new Date("2026-10-09T17:04:00.000Z"),
+      lastBusinessDate: "2026-10-09",
+    };
+    const beforeDue = new Date("2026-10-12T17:14:00.000Z"); // 18:14 BST
+    const waiting = resolveAutopart216vFreshness({ ...friday, now: beforeDue });
+    expect(waiting.status).toBe("CURRENT");
+    expect(
+      headline216vFeedHealth({
+        status: waiting.status,
+        stale: waiting.stale,
+        lastBusinessDate: "2026-10-09",
+        now: beforeDue,
+      }).key,
+    ).toBe("WAITING_FOR_TODAYS_REPORT");
+
+    const insideGrace = new Date("2026-10-12T18:44:00.000Z"); // 19:44 BST
+    const grace = resolveAutopart216vFreshness({ ...friday, now: insideGrace });
+    expect(grace.status).toBe("CURRENT");
+    expect(
+      headline216vFeedHealth({
+        status: grace.status,
+        stale: grace.stale,
+        lastBusinessDate: "2026-10-09",
+        now: insideGrace,
+      }).key,
+    ).toBe("CURRENT");
+
+    const afterGrace = new Date("2026-10-12T18:45:00.000Z"); // 19:45 BST
+    const overdue = resolveAutopart216vFreshness({ ...friday, now: afterGrace });
+    expect(overdue.status).toBe("EXPECTED_REPORT_NOT_RECEIVED");
+    expect(overdue.expectedBusinessDate).toBe("2026-10-12");
+    expect(
+      headline216vFeedHealth({
+        status: overdue.status,
+        stale: overdue.stale,
+        lastBusinessDate: "2026-10-09",
+        now: afterGrace,
+      }).label,
+    ).toBe("REPORT OVERDUE");
+
+    const saturdayOnly = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
+      lastBusinessDate: "2026-10-10",
+      now: afterGrace,
+    });
+    expect(saturdayOnly.status).toBe("EXPECTED_REPORT_NOT_RECEIVED");
+    expect(saturdayOnly.lastBusinessDate).toBeNull();
+    expect(
+      headline216vFeedHealth({
+        status: saturdayOnly.status,
+        stale: saturdayOnly.stale,
+        lastBusinessDate: null,
+        now: afterGrace,
+      }).key,
+    ).toBe("REPORT_OVERDUE");
+  });
+
+  it("moves the next expected report to Tuesday only after Monday's report is current", () => {
+    const mondayEvening = new Date("2026-10-12T20:53:05.000Z");
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-12T17:20:00.000Z"),
+      lastBusinessDate: "2026-10-12",
+      now: mondayEvening,
+    });
+    expect(result.status).toBe("CURRENT");
+    expect(result.nextExpectedLabel).toContain("13/10/2026");
+  });
+
+  it("keeps Monday morning on a weekend-only snapshot as review, not a green current feed", () => {
+    const mondayMorning = new Date("2026-10-12T08:00:00.000Z"); // 09:00 BST
+    const result = resolveAutopart216vFreshness({
+      lastSuccessAt: new Date("2026-10-10T17:01:37.000Z"),
+      lastBusinessDate: "2026-10-10",
+      now: mondayMorning,
+    });
+    expect(result.status).toBe("WEEKEND_DATE_REVIEW");
+    expect(result.stale).toBe(false);
+    expect(result.nextExpectedLabel).toContain("today");
+    const headline = headline216vFeedHealth({
+      status: result.status,
+      stale: result.stale,
+      lastBusinessDate: result.lastBusinessDate,
+      now: mondayMorning,
+    });
+    expect(headline.key).toBe("REVIEW_REQUIRED");
+    expect(headline.tone).not.toBe("good");
+    expect(headline.key).not.toBe("REPORT_OVERDUE");
+  });
+
   it("headlines import failure when there is no usable snapshot", () => {
     const result = resolveAutopart216vFreshness({
       lastSuccessAt: null,

@@ -8,8 +8,14 @@ import type { AutopartBackorderChangeStatus } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
-import { dateOnlyIsoFromDate } from "@/domain/sales-history-period";
-import { formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
+import {
+  describe216vWeekendReportReview,
+  previous216vBaseline,
+  resolveAutopart216vReportDate,
+  verified216vReportDate,
+} from "@/domain/autopart-216v-report-date";
+import { currentCommitted216vSnapshot, listCommitted216vSnapshots } from "@/server/purchasing/backorder-chronology";
+import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
 import {
   AUTOPART_PRODUCT_KIND_LABEL,
   classifyAutopartProduct,
@@ -26,7 +32,7 @@ import {
   type Autopart216vAttentionId,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
-import { next216vExpectedLabel, resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
+import { resolveAutopart216vFreshness, headline216vFeedHealth, label216vSnapshotSource } from "@/domain/autopart-216v-freshness";
 import { requireBackorderManage } from "@/server/purchasing/backorder-import";
 import {
   AUTOPART_216V_MOVEMENTS,
@@ -430,9 +436,10 @@ const lineInclude = {
 } as const;
 
 async function loadLatestSnapshot() {
-  return prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED" },
-    orderBy: { importedAt: "desc" },
+  const current = await currentCommitted216vSnapshot();
+  if (!current) return null;
+  return prisma.autopartBackorderSnapshot.findUnique({
+    where: { id: current.id },
     include: { lines: { include: lineInclude } },
   });
 }
@@ -482,11 +489,21 @@ export type BackorderMovementRowView = {
 };
 
 async function loadPreviousCommittedSnapshot(current: LoadedSnapshot) {
-  return prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED", importedAt: { lt: current.importedAt }, id: { not: current.id } },
-    orderBy: { importedAt: "desc" },
-    select: { id: true, importedAt: true, receivedAt: true, filename: true },
+  const headers = await prisma.autopartBackorderSnapshot.findMany({
+    where: { status: "COMMITTED", id: { not: current.id } },
+    select: { id: true, filename: true, businessDate: true, receivedAt: true, importedAt: true },
   });
+  const linked = current.previousSnapshotId
+    ? headers.find((header) => header.id === current.previousSnapshotId) ?? null
+    : null;
+  const previous = previous216vBaseline(headers, current, linked);
+  if (!previous) return null;
+  return {
+    id: previous.id,
+    importedAt: previous.importedAt,
+    receivedAt: previous.receivedAt,
+    filename: previous.filename,
+  };
 }
 
 function movementSort(a: BackorderMovementRowView, b: BackorderMovementRowView) {
@@ -666,11 +683,7 @@ async function feedSettingsRow() {
 }
 
 export async function outstandingBackorderUnitsBySku(): Promise<Map<string, number>> {
-  const latest = await prisma.autopartBackorderSnapshot.findFirst({
-    where: { status: "COMMITTED" },
-    orderBy: { importedAt: "desc" },
-    select: { id: true },
-  });
+  const latest = await currentCommitted216vSnapshot();
   const out = new Map<string, number>();
   if (!latest) return out;
   const grouped = await prisma.autopartBackorderLine.groupBy({
@@ -687,12 +700,25 @@ export async function outstandingBackorderUnitsBySku(): Promise<Map<string, numb
 export async function getBackorderWorkspace(actorUserId: string, raw: unknown = {}) {
   const profile = await requirePurchasingAccess(actorUserId);
   const input = listInput.parse(raw ?? {});
-  const [snapshot, settings] = await Promise.all([loadLatestSnapshot(), feedSettingsRow()]);
+  const [snapshot, settings, headers] = await Promise.all([
+    loadLatestSnapshot(),
+    feedSettingsRow(),
+    listCommitted216vSnapshots(),
+  ]);
   const now = new Date();
-  const lastBusinessDate = snapshot ? dateOnlyIsoFromDate(snapshot.businessDate) : null;
+  const report = snapshot ? resolveAutopart216vReportDate(snapshot) : null;
+  const lastBusinessDate = verified216vReportDate(report?.iso ?? null);
+  const weekendReview = headers
+    .map((header) => {
+      const resolved = resolveAutopart216vReportDate(header);
+      if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") return null;
+      return describe216vWeekendReportReview({ filename: header.filename, observedDate: resolved.iso });
+    })
+    .filter((line): line is string => Boolean(line))
+    .join(" ");
   const freshness = resolveAutopart216vFreshness({
     lastSuccessAt: snapshot?.importedAt ?? settings.lastSuccessAt,
-    lastBusinessDate,
+    lastBusinessDate: report?.iso ?? null,
     now,
     scheduleHour: settings.scheduleHour,
   });
@@ -764,10 +790,17 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
         lastError: settings.lastError,
         lastBusinessDate,
       }),
+      warning: [freshness.warning, weekendReview].filter(Boolean).join(" ") || null,
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",
-      nextExpectedLabel: next216vExpectedLabel(now),
+      latestReportDate: lastBusinessDate,
+      latestReportDateLabel: lastBusinessDate
+        ? formatOrDash(formatDate(lastBusinessDate))
+        : report?.review
+          ? "Review"
+          : "Never",
+      currentSnapshotImportedAt: snapshot?.importedAt.toISOString() ?? null,
       filename: snapshot?.filename ?? null,
       emptyValid: snapshot?.emptyValid ?? false,
       source: snapshot?.source ?? null,
@@ -838,18 +871,23 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
       select: {
         outstandingQty: true,
         changeStatus: true,
-        snapshot: { select: { businessDate: true, importedAt: true } },
+        snapshot: {
+          select: { filename: true, businessDate: true, receivedAt: true, importedAt: true },
+        },
       },
-      orderBy: { snapshot: { businessDate: "asc" } },
     }),
     Promise.resolve(enrichLines([current as unknown as LineRow])[0]!),
     import("@/server/purchasing/fba-stock").then((mod) => mod.fbaQtyForMatchKey(current.partMatchKey)),
   ]);
-  const timeline = history.map((h) => ({
-    date: dateOnlyIsoFromDate(h.snapshot.businessDate),
-    qty: num(h.outstandingQty),
-    status: h.changeStatus,
-  }));
+  const timeline = history
+    .map((h) => ({
+      date: resolveAutopart216vReportDate(h.snapshot).iso,
+      qty: num(h.outstandingQty),
+      status: h.changeStatus,
+      sortAt: h.snapshot.receivedAt?.getTime() ?? h.snapshot.importedAt.getTime(),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.sortAt - b.sortAt)
+    .map(({ sortAt: _sortAt, ...row }) => row);
   return {
     line: enriched,
     fbaQty,
