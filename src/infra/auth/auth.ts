@@ -59,9 +59,10 @@ function createAuth() {
       modelName: "authSession",
       expiresIn: 60 * 60 * 24 * 7, // 7 days
       updateAge: 60 * 60 * 24, // refresh expiry daily when active
+      // Session revocation reads the database. A signed session-data cookie
+      // would keep a deleted or logged-out session valid until maxAge.
       cookieCache: {
-        enabled: true,
-        maxAge: 60 * 5,
+        enabled: false,
       },
     },
     account: {
@@ -78,9 +79,8 @@ function createAuth() {
       sendResetPassword: async ({ user, url }) => {
         // Wire through transactional outbox (same SMTP + shell as all other mail).
         // Never record the reset URL/token in AuditEvent metadata.
-        const { sendPasswordResetTransactionalEmail } = await import(
-          "@/server/email/transactional"
-        );
+        const { sendPasswordResetTransactionalEmail } =
+          await import("@/server/email/transactional");
         let deliveryOk = false;
         try {
           deliveryOk = await sendPasswordResetTransactionalEmail({

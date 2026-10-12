@@ -1,3 +1,4 @@
+import { csvFormulaSafeCell } from "@/domain/csv-formula";
 import {
   moneyFromUnknown,
   moneyToString,
@@ -237,8 +238,7 @@ export function priceListExportCsv(rows: Array<{
 }
 
 function csvCell(value: string): string {
-  if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
-  return value;
+  return csvFormulaSafeCell(value);
 }
 
 function splitCsvLine(line: string): string[] {

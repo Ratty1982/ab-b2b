@@ -8,8 +8,10 @@ describe("auth and transport security configuration", () => {
     expect(source).toContain("rateLimit");
     expect(source).toContain('"/sign-in/email"');
     expect(source).toContain('"/forget-password"');
-    expect(source).toContain("sameSite: \"lax\"");
+    expect(source).toContain('sameSite: "lax"');
     expect(source).toContain("httpOnly: true");
+    expect(source).toContain("Session revocation reads the database");
+    expect(source).toContain("enabled: false");
     expect(source).toContain("twoFactor");
     expect(source).toContain("Automotive Brands");
   });
