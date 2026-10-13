@@ -20,33 +20,36 @@ function scrub(value: unknown): unknown {
   return out;
 }
 
+export function auditEventCreateData(input: AuditEventInput): Prisma.AuditEventUncheckedCreateInput {
+  const data: Prisma.AuditEventUncheckedCreateInput = {
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.entityId ?? null,
+    actorUserId: input.actorUserId ?? null,
+    targetUserId: input.targetUserId ?? null,
+    companyId: input.companyId ?? null,
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+  };
+  if (input.metadata) {
+    data.metadata = scrub(input.metadata) as Prisma.InputJsonValue;
+  }
+  if (input.before) {
+    data.before = scrub(input.before) as Prisma.InputJsonValue;
+  }
+  if (input.after) {
+    data.after = scrub(input.after) as Prisma.InputJsonValue;
+  }
+  return data;
+}
+
 /**
- * Persist an audit event. Failures are logged but do not break the primary flow
- * except when callers explicitly await and rethrow.
+ * Persist an audit event. Failures are logged but do not break the primary flow.
+ * Sensitive commercial transitions use recordAuditEventInTransaction instead.
  */
 export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
   try {
-    const data: Prisma.AuditEventUncheckedCreateInput = {
-      action: input.action,
-      entityType: input.entityType,
-      entityId: input.entityId ?? null,
-      actorUserId: input.actorUserId ?? null,
-      targetUserId: input.targetUserId ?? null,
-      companyId: input.companyId ?? null,
-      ipAddress: input.ipAddress ?? null,
-      userAgent: input.userAgent ?? null,
-    };
-    if (input.metadata) {
-      data.metadata = scrub(input.metadata) as Prisma.InputJsonValue;
-    }
-    if (input.before) {
-      data.before = scrub(input.before) as Prisma.InputJsonValue;
-    }
-    if (input.after) {
-      data.after = scrub(input.after) as Prisma.InputJsonValue;
-    }
-
-    await prisma.auditEvent.create({ data });
+    await prisma.auditEvent.create({ data: auditEventCreateData(input) });
   } catch (error) {
     console.error("[ab:audit] Failed to record event", {
       action: input.action,
@@ -54,4 +57,12 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
       error: error instanceof Error ? error.message : "unknown",
     });
   }
+}
+
+/** Write an audit row on the caller's transaction. A failure rolls that transaction back. */
+export async function recordAuditEventInTransaction(
+  tx: Prisma.TransactionClient,
+  input: AuditEventInput,
+): Promise<void> {
+  await tx.auditEvent.create({ data: auditEventCreateData(input) });
 }

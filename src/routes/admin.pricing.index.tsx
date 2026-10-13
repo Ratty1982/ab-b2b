@@ -237,6 +237,8 @@ function PromotionsPanel() {
     endsAt: string | null;
     catalogueWide: boolean;
     skus: string[];
+    campaignLabel: string;
+    managedInSales: boolean;
   }>>([]);
   const [editor, setEditor] = useState<null | { id?: string }>(null);
 
@@ -288,7 +290,10 @@ function PromotionsPanel() {
               <p className="mt-2 text-[12px] text-steel">{p.typeLabel}{p.value != null ? ` · ${p.value}` : ""}</p>
               <p className="mt-1 text-[12px] text-steel">{p.catalogueWide ? "Entire catalogue" : `Selected products (${p.skus.length || "variant ids"})`}</p>
               {!p.engineApplies ? <p className="mt-2 text-[12px] text-warn">{p.engineNote}</p> : null}
-              {canEdit ? (
+              {p.managedInSales ? (
+                <p className="mt-2 text-[12px] text-steel">Sales campaign · {p.campaignLabel}</p>
+              ) : null}
+              {canEdit && !p.managedInSales ? (
                 <button type="button" className="mt-3 text-[12px] font-semibold text-primary" onClick={() => setEditor({ id: p.id })}>
                   Edit
                 </button>

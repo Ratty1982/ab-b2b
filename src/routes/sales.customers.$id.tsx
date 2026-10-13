@@ -8,6 +8,7 @@ import { activityTypeLabel, formatGbpExact, formatOpportunityValue } from "@/dom
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
+import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
 import {
   createCrmOpportunityFn,
@@ -107,7 +108,16 @@ function SalesCustomer() {
         title={company.name}
         {...(company.accountNumber ? { sub: company.accountNumber } : {})}
         actions={
-          <StatusBadge>{COMPANY_STATUS_LABEL[company.status]}</StatusBadge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/sales/orders/new"
+              search={{ companyId: company.id }}
+              className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-[12px] font-bold uppercase tracking-wide text-primary-foreground"
+            >
+              Create order
+            </Link>
+            <StatusBadge>{COMPANY_STATUS_LABEL[company.status]}</StatusBadge>
+          </div>
         }
       />
       <div className="flex gap-1 overflow-x-auto border-b border-border/70 px-4 sm:px-6">
@@ -334,20 +344,23 @@ function SalesCustomer() {
           </ul>
         ) : null}
         {tab === "Commercial" ? (
-          <dl className="grid max-w-xl gap-3">
-            <div>
-              <dt className="text-steel">Price list</dt>
-              <dd>{company.priceList?.name ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Payment terms</dt>
-              <dd>{company.paymentTerms ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-steel">Tax status</dt>
-              <dd>{company.taxStatus}</dd>
-            </div>
-          </dl>
+          <div className="grid gap-8">
+            <dl className="grid max-w-xl gap-3">
+              <div>
+                <dt className="text-steel">Price list</dt>
+                <dd>{company.priceList?.name ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Payment terms</dt>
+                <dd>{company.paymentTerms ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-steel">Tax status</dt>
+                <dd>{company.taxStatus}</dd>
+              </div>
+            </dl>
+            <CustomerPriceImportPanel companyId={company.id} />
+          </div>
         ) : null}
         {tab === "Activity" ? (
           activity.length === 0 ? (

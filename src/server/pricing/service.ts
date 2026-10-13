@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAnySystemPermission, requireSystemPermission } from "@/server/rbac/guards";
@@ -32,6 +33,7 @@ import {
   promotionDisplayState,
   winningRuleLabel,
 } from "@/domain/pricing-management";
+import { campaignDisplayStatus } from "@/domain/promotion-campaigns";
 import { moneyNumber } from "@/server/pricing/trade-price";
 import { loadTradePriceFactsForVariants } from "@/server/pricing/resolve-trade-price";
 import { resolveTradePriceFromFacts } from "@/domain/trade-price-resolution";
@@ -640,10 +642,18 @@ function serializePromotion(row: {
   endsAt: Date | null;
   isActive: boolean;
   metadata: unknown;
+  campaignStatus: "LEGACY" | "DRAFT" | "PENDING_APPROVAL" | "REJECTED" | "APPROVED" | "CANCELLED";
 }) {
   const at = new Date();
   const scope = parsePromotionMetadata(row.metadata);
   const engineApplies = row.type !== "QUANTITY_DEAL";
+  const campaign = campaignDisplayStatus({
+    campaignStatus: row.campaignStatus,
+    isActive: row.isActive,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    at,
+  });
   return {
     id: row.id,
     code: row.code,
@@ -665,6 +675,9 @@ function serializePromotion(row: {
     catalogueWide: scope.catalogueWide,
     variantIds: scope.variantIds,
     skus: scope.skus,
+    campaignStatus: row.campaignStatus,
+    campaignLabel: campaign.label,
+    managedInSales: row.campaignStatus !== "LEGACY",
   };
 }
 
@@ -691,6 +704,13 @@ export async function upsertPromotion(actorUserId: string, raw: unknown) {
   if (input.type === "QUANTITY_DEAL" && existing && existing.type !== "QUANTITY_DEAL") {
     throw new AuthError("Cannot change a live promotion to QUANTITY_DEAL", "VALIDATION", 400);
   }
+  if (existing && existing.campaignStatus !== "LEGACY") {
+    throw new AuthError(
+      "This campaign is managed in Sales Promotions",
+      "CAMPAIGN_MANAGED",
+      400,
+    );
+  }
 
   const scoped =
     input.catalogueWide === true
@@ -699,13 +719,19 @@ export async function upsertPromotion(actorUserId: string, raw: unknown) {
           variantIds: input.variantIds ?? [],
           skus: input.skus ?? [],
         };
-  const metadata =
-    scoped.variantIds.length || scoped.skus.length
-      ? {
-          ...(scoped.variantIds.length ? { variantIds: scoped.variantIds } : {}),
-          ...(scoped.skus.length ? { skus: scoped.skus } : {}),
-        }
+  const previous =
+    existing?.metadata && typeof existing.metadata === "object"
+      ? (existing.metadata as Record<string, unknown>)
       : {};
+  const metadata: Record<string, unknown> = {};
+  if (typeof previous["description"] === "string" && previous["description"].trim()) {
+    metadata["description"] = previous["description"];
+  }
+  if (typeof previous["imageUrl"] === "string" && previous["imageUrl"].trim()) {
+    metadata["imageUrl"] = previous["imageUrl"];
+  }
+  if (scoped.variantIds.length) metadata["variantIds"] = scoped.variantIds;
+  if (scoped.skus.length) metadata["skus"] = scoped.skus;
 
   const data = {
     code: input.code.toUpperCase(),
@@ -715,7 +741,7 @@ export async function upsertPromotion(actorUserId: string, raw: unknown) {
     startsAt: input.startsAt ? new Date(input.startsAt) : null,
     endsAt: input.endsAt ? new Date(input.endsAt) : null,
     isActive: input.isActive ?? true,
-    metadata,
+    metadata: metadata as Prisma.InputJsonValue,
   };
   const row = existing
     ? await prisma.promotion.update({ where: { id: existing.id }, data })

@@ -50,6 +50,18 @@ describe("permission catalogue", () => {
     }
   });
 
+  it("lets authorised sales staff place orders for customers", () => {
+    for (const key of ["SUPER_ADMIN", "MANAGEMENT", "SALES_MANAGER", "SALES_REPRESENTATIVE"] as const) {
+      expect(SYSTEM_ROLE_PERMISSIONS[key]).toContain("orders.place_for_customer");
+    }
+    for (const key of ["CUSTOMER_SERVICE", "ACCOUNTS", "MARKETING"] as const) {
+      expect(SYSTEM_ROLE_PERMISSIONS[key]).not.toContain("orders.place_for_customer");
+    }
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("orders.place_for_customer");
+    }
+  });
+
   it("does not give marketing invoice rights", () => {
     const m = SYSTEM_ROLE_PERMISSIONS.MARKETING;
     expect(m).not.toContain("invoices.view");
@@ -99,6 +111,20 @@ describe("permission catalogue", () => {
     expect(r).toContain("impersonation.order_for_customer");
   });
 
+  it("lets management approve customer price uploads and keeps sales from self-approving", () => {
+    expect(isPermissionKey("pricing.approve")).toBe(true);
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("pricing.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("pricing.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("pricing.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).not.toContain("pricing.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.CUSTOMER_SERVICE).not.toContain("pricing.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTS).not.toContain("pricing.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("pricing.approve");
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("pricing.approve");
+    }
+  });
+
   it("does not expose obsolete credit-control permissions", () => {
     expect(isPermissionKey("credit.edit")).toBe(false);
     expect(isPermissionKey("credit.view")).toBe(false);
@@ -138,6 +164,23 @@ describe("permission catalogue", () => {
   it("trade accounts cannot place orders by default", () => {
     expect(TRADE_ROLE_PERMISSIONS.TRADE_ACCOUNTS).not.toContain("orders.create");
     expect(TRADE_ROLE_PERMISSIONS.TRADE_ACCOUNTS).toContain("invoices.view");
+  });
+
+  it("lets sales staff submit promotions and only management approve them", () => {
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).toContain("promotions.submit");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).toContain("promotions.report");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).toContain("promotions.submit");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).not.toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.CUSTOMER_SERVICE).not.toContain("promotions.submit");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("promotions.approve");
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("promotions.submit");
+      expect(perms).not.toContain("promotions.approve");
+      expect(perms).not.toContain("promotions.report");
+    }
   });
 });
 

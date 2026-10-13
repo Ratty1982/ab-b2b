@@ -330,6 +330,21 @@ function AdminOrderDetailPage() {
                 {order.salesRepCodeSnapshot ? ` (${order.salesRepCodeSnapshot})` : ""}
               </dd>
             </div>
+            {order.placedByStaffName ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Placed by</dt>
+                <dd>
+                  {order.placedByStaffName}
+                  {order.entrySource === "TELEPHONE"
+                    ? " · Telephone"
+                    : order.entrySource === "EMAIL"
+                      ? " · Email"
+                      : order.entrySource === "CUSTOMER_VISIT"
+                        ? " · Customer visit"
+                        : ""}
+                </dd>
+              </div>
+            ) : null}
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Customer fulfilment</dt>
               <dd>{order.statusLabel}</dd>

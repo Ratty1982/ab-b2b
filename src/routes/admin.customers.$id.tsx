@@ -8,6 +8,7 @@ import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { AutopartCustomerHistoryPanel } from "@/components/ab/AutopartCustomerHistoryPanel";
 import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
+import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
 import {
   companyPriceListLabel,
@@ -15,6 +16,7 @@ import {
   DEFAULT_TRADE_PRICE_LABEL,
 } from "@/domain/default-trade-price";
 import { ROUTES } from "@/lib/app-nav";
+import { useSession } from "@/lib/session";
 import {
   createAddressFn,
   createContactFn,
@@ -68,6 +70,9 @@ const tabs = [
 function CustomerWorkspace() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const session = useSession();
+  const canPlaceForCustomer =
+    session.signedIn && session.user.navPermissions.includes("orders.place_for_customer");
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +144,15 @@ function CustomerWorkspace() {
         ]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {canPlaceForCustomer ? (
+              <Link
+                to="/sales/orders/new"
+                search={{ companyId: company.id }}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-[12px] font-bold uppercase tracking-wide text-primary-foreground"
+              >
+                Create order
+              </Link>
+            ) : null}
             {permissions.canDelete ? (
               <button
                 type="button"
@@ -502,6 +516,7 @@ function CustomerWorkspace() {
             registrationClaim={registrationAutopartClaim ?? null}
             onChanged={reload}
           />
+          <CustomerPriceImportPanel companyId={company.id} showPrices={false} />
           <CustomerPricesEditor
             companyId={company.id}
             canEdit={permissions.canEditPricing}
@@ -1511,8 +1526,8 @@ function CustomerPricesEditor({
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
         Assigned price list: {assignedPriceListName ?? DEFAULT_TRADE_PRICE_LABEL}.{" "}
         {rows.length} negotiated product price{rows.length === 1 ? "" : "s"}.
-        Sales can override individual lines below. Promotions are catalogue-scoped, not
-        company-specific.
+        Manual edits here apply immediately for users who can edit pricing. Uploaded files
+        for this customer go through approval and do not change any other customer's prices.
       </p>
       {canEdit ? (
         <form

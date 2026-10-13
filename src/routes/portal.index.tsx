@@ -204,6 +204,37 @@ function Dashboard() {
             </div>
           ) : null}
 
+          <div className="rounded-lg border border-border bg-surface/40 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-display text-lg font-semibold uppercase tracking-tight">
+                Current trade promotions
+              </h2>
+              <Link
+                to={ROUTES.portalPromotions}
+                className="text-[12px] font-bold uppercase text-primary hover:underline"
+              >
+                View promotions
+              </Link>
+            </div>
+            {data.currentPromotions.count === 0 ? (
+              <p className="mt-2 text-[13px] text-steel">No current trade promotions.</p>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {data.currentPromotions.items.map((promotion) => (
+                  <li key={promotion.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-semibold">{promotion.name}</span>
+                    <span className="text-[13px] text-primary">{promotion.offerLabel}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {data.currentPromotions.count > data.currentPromotions.items.length ? (
+              <p className="mt-3 text-[12px] text-steel">
+                {data.currentPromotions.count} current offers. Open promotions to see the full list.
+              </p>
+            ) : null}
+          </div>
+
           <div>
             <SectionTitle title="Open orders" href={ROUTES.portalOrders} linkLabel="All orders" />
             <OrderTable
