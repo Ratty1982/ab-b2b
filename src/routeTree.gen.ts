@@ -111,11 +111,11 @@ import { Route as PurchasingSuppliersIndexRouteImport } from './routes/purchasin
 import { Route as PurchasingSuppliersIdRouteImport } from './routes/purchasing.suppliers.$id'
 import { Route as SalesCustomersIndexRouteImport } from './routes/sales.customers.index'
 import { Route as SalesCustomersIdRouteImport } from './routes/sales.customers.$id'
+import { Route as SalesOrdersIndexRouteImport } from './routes/sales.orders.index'
+import { Route as SalesOrdersNewRouteImport } from './routes/sales.orders.new'
 import { Route as SalesPromotionsIndexRouteImport } from './routes/sales.promotions.index'
 import { Route as SalesPromotionsCampaignIdRouteImport } from './routes/sales.promotions.$campaignId'
 import { Route as SalesPromotionsNewRouteImport } from './routes/sales.promotions.new'
-import { Route as SalesOrdersIndexRouteImport } from './routes/sales.orders.index'
-import { Route as SalesOrdersNewRouteImport } from './routes/sales.orders.new'
 import { Route as SalesQuotesIndexRouteImport } from './routes/sales.quotes.index'
 import { Route as SalesQuotesQuoteIdRouteImport } from './routes/sales.quotes.$quoteId'
 import { Route as SalesQuotesNewRouteImport } from './routes/sales.quotes.new'
@@ -652,6 +652,16 @@ const SalesCustomersIdRoute = SalesCustomersIdRouteImport.update({
   path: '/customers/$id',
   getParentRoute: () => SalesRoute,
 } as any)
+const SalesOrdersIndexRoute = SalesOrdersIndexRouteImport.update({
+  id: '/orders/',
+  path: '/orders/',
+  getParentRoute: () => SalesRoute,
+} as any)
+const SalesOrdersNewRoute = SalesOrdersNewRouteImport.update({
+  id: '/orders/new',
+  path: '/orders/new',
+  getParentRoute: () => SalesRoute,
+} as any)
 const SalesPromotionsIndexRoute = SalesPromotionsIndexRouteImport.update({
   id: '/promotions/',
   path: '/promotions/',
@@ -666,16 +676,6 @@ const SalesPromotionsCampaignIdRoute =
 const SalesPromotionsNewRoute = SalesPromotionsNewRouteImport.update({
   id: '/promotions/new',
   path: '/promotions/new',
-  getParentRoute: () => SalesRoute,
-} as any)
-const SalesOrdersIndexRoute = SalesOrdersIndexRouteImport.update({
-  id: '/orders/',
-  path: '/orders/',
-  getParentRoute: () => SalesRoute,
-} as any)
-const SalesOrdersNewRoute = SalesOrdersNewRouteImport.update({
-  id: '/orders/new',
-  path: '/orders/new',
   getParentRoute: () => SalesRoute,
 } as any)
 const SalesQuotesIndexRoute = SalesQuotesIndexRouteImport.update({
@@ -879,9 +879,9 @@ export interface FileRoutesByFullPath {
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
   '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/orders/new': typeof SalesOrdersNewRoute
   '/sales/promotions/$campaignId': typeof SalesPromotionsCampaignIdRoute
   '/sales/promotions/new': typeof SalesPromotionsNewRoute
-  '/sales/orders/new': typeof SalesOrdersNewRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/daily-brief': typeof SalesSalesIntelligenceDailyBriefRoute
@@ -901,8 +901,8 @@ export interface FileRoutesByFullPath {
   '/purchasing/forecast/': typeof PurchasingForecastIndexRoute
   '/purchasing/suppliers/': typeof PurchasingSuppliersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
-  '/sales/promotions/': typeof SalesPromotionsIndexRoute
   '/sales/orders/': typeof SalesOrdersIndexRoute
+  '/sales/promotions/': typeof SalesPromotionsIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -990,9 +990,9 @@ export interface FileRoutesByTo {
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
   '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/orders/new': typeof SalesOrdersNewRoute
   '/sales/promotions/$campaignId': typeof SalesPromotionsCampaignIdRoute
   '/sales/promotions/new': typeof SalesPromotionsNewRoute
-  '/sales/orders/new': typeof SalesOrdersNewRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/daily-brief': typeof SalesSalesIntelligenceDailyBriefRoute
@@ -1012,8 +1012,8 @@ export interface FileRoutesByTo {
   '/purchasing/forecast': typeof PurchasingForecastIndexRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersIndexRoute
   '/sales/customers': typeof SalesCustomersIndexRoute
-  '/sales/promotions': typeof SalesPromotionsIndexRoute
   '/sales/orders': typeof SalesOrdersIndexRoute
+  '/sales/promotions': typeof SalesPromotionsIndexRoute
   '/sales/quotes': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -1119,9 +1119,9 @@ export interface FileRoutesById {
   '/purchasing/forecast/$sku': typeof PurchasingForecastSkuRoute
   '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
   '/sales/customers/$id': typeof SalesCustomersIdRoute
+  '/sales/orders/new': typeof SalesOrdersNewRoute
   '/sales/promotions/$campaignId': typeof SalesPromotionsCampaignIdRoute
   '/sales/promotions/new': typeof SalesPromotionsNewRoute
-  '/sales/orders/new': typeof SalesOrdersNewRoute
   '/sales/quotes/$quoteId': typeof SalesQuotesQuoteIdRoute
   '/sales/quotes/new': typeof SalesQuotesNewRoute
   '/sales/sales-intelligence/daily-brief': typeof SalesSalesIntelligenceDailyBriefRoute
@@ -1141,8 +1141,8 @@ export interface FileRoutesById {
   '/purchasing/forecast/': typeof PurchasingForecastIndexRoute
   '/purchasing/suppliers/': typeof PurchasingSuppliersIndexRoute
   '/sales/customers/': typeof SalesCustomersIndexRoute
-  '/sales/promotions/': typeof SalesPromotionsIndexRoute
   '/sales/orders/': typeof SalesOrdersIndexRoute
+  '/sales/promotions/': typeof SalesPromotionsIndexRoute
   '/sales/quotes/': typeof SalesQuotesIndexRoute
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
@@ -1249,9 +1249,9 @@ export interface FileRouteTypes {
     | '/purchasing/forecast/$sku'
     | '/purchasing/suppliers/$id'
     | '/sales/customers/$id'
+    | '/sales/orders/new'
     | '/sales/promotions/$campaignId'
     | '/sales/promotions/new'
-    | '/sales/orders/new'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/daily-brief'
@@ -1271,8 +1271,8 @@ export interface FileRouteTypes {
     | '/purchasing/forecast/'
     | '/purchasing/suppliers/'
     | '/sales/customers/'
-    | '/sales/promotions/'
     | '/sales/orders/'
+    | '/sales/promotions/'
     | '/sales/quotes/'
     | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
@@ -1360,9 +1360,9 @@ export interface FileRouteTypes {
     | '/purchasing/forecast/$sku'
     | '/purchasing/suppliers/$id'
     | '/sales/customers/$id'
+    | '/sales/orders/new'
     | '/sales/promotions/$campaignId'
     | '/sales/promotions/new'
-    | '/sales/orders/new'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/daily-brief'
@@ -1382,8 +1382,8 @@ export interface FileRouteTypes {
     | '/purchasing/forecast'
     | '/purchasing/suppliers'
     | '/sales/customers'
-    | '/sales/promotions'
     | '/sales/orders'
+    | '/sales/promotions'
     | '/sales/quotes'
     | '/sales/sales-intelligence'
     | '/admin/content/$slug/preview'
@@ -1488,9 +1488,9 @@ export interface FileRouteTypes {
     | '/purchasing/forecast/$sku'
     | '/purchasing/suppliers/$id'
     | '/sales/customers/$id'
+    | '/sales/orders/new'
     | '/sales/promotions/$campaignId'
     | '/sales/promotions/new'
-    | '/sales/orders/new'
     | '/sales/quotes/$quoteId'
     | '/sales/quotes/new'
     | '/sales/sales-intelligence/daily-brief'
@@ -1510,8 +1510,8 @@ export interface FileRouteTypes {
     | '/purchasing/forecast/'
     | '/purchasing/suppliers/'
     | '/sales/customers/'
-    | '/sales/promotions/'
     | '/sales/orders/'
+    | '/sales/promotions/'
     | '/sales/quotes/'
     | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
@@ -2276,6 +2276,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SalesCustomersIdRouteImport
       parentRoute: typeof SalesRoute
     }
+    '/sales/orders/': {
+      id: '/sales/orders/'
+      path: '/orders'
+      fullPath: '/sales/orders/'
+      preLoaderRoute: typeof SalesOrdersIndexRouteImport
+      parentRoute: typeof SalesRoute
+    }
+    '/sales/orders/new': {
+      id: '/sales/orders/new'
+      path: '/orders/new'
+      fullPath: '/sales/orders/new'
+      preLoaderRoute: typeof SalesOrdersNewRouteImport
+      parentRoute: typeof SalesRoute
+    }
     '/sales/promotions/': {
       id: '/sales/promotions/'
       path: '/promotions'
@@ -2295,20 +2309,6 @@ declare module '@tanstack/react-router' {
       path: '/promotions/new'
       fullPath: '/sales/promotions/new'
       preLoaderRoute: typeof SalesPromotionsNewRouteImport
-      parentRoute: typeof SalesRoute
-    }
-    '/sales/orders/': {
-      id: '/sales/orders/'
-      path: '/orders'
-      fullPath: '/sales/orders/'
-      preLoaderRoute: typeof SalesOrdersIndexRouteImport
-      parentRoute: typeof SalesRoute
-    }
-    '/sales/orders/new': {
-      id: '/sales/orders/new'
-      path: '/orders/new'
-      fullPath: '/sales/orders/new'
-      preLoaderRoute: typeof SalesOrdersNewRouteImport
       parentRoute: typeof SalesRoute
     }
     '/sales/quotes/': {
@@ -2789,14 +2789,14 @@ interface SalesRouteChildren {
   SalesSalesIntelligenceRoute: typeof SalesSalesIntelligenceRouteWithChildren
   SalesIndexRoute: typeof SalesIndexRoute
   SalesCustomersIdRoute: typeof SalesCustomersIdRoute
+  SalesOrdersNewRoute: typeof SalesOrdersNewRoute
   SalesPromotionsCampaignIdRoute: typeof SalesPromotionsCampaignIdRoute
   SalesPromotionsNewRoute: typeof SalesPromotionsNewRoute
   SalesQuotesQuoteIdRoute: typeof SalesQuotesQuoteIdRoute
   SalesQuotesNewRoute: typeof SalesQuotesNewRoute
   SalesCustomersIndexRoute: typeof SalesCustomersIndexRoute
-  SalesPromotionsIndexRoute: typeof SalesPromotionsIndexRoute
-  SalesOrdersNewRoute: typeof SalesOrdersNewRoute
   SalesOrdersIndexRoute: typeof SalesOrdersIndexRoute
+  SalesPromotionsIndexRoute: typeof SalesPromotionsIndexRoute
   SalesQuotesIndexRoute: typeof SalesQuotesIndexRoute
 }
 
@@ -2804,14 +2804,14 @@ const SalesRouteChildren: SalesRouteChildren = {
   SalesSalesIntelligenceRoute: SalesSalesIntelligenceRouteWithChildren,
   SalesIndexRoute: SalesIndexRoute,
   SalesCustomersIdRoute: SalesCustomersIdRoute,
+  SalesOrdersNewRoute: SalesOrdersNewRoute,
   SalesPromotionsCampaignIdRoute: SalesPromotionsCampaignIdRoute,
   SalesPromotionsNewRoute: SalesPromotionsNewRoute,
   SalesQuotesQuoteIdRoute: SalesQuotesQuoteIdRoute,
   SalesQuotesNewRoute: SalesQuotesNewRoute,
   SalesCustomersIndexRoute: SalesCustomersIndexRoute,
-  SalesPromotionsIndexRoute: SalesPromotionsIndexRoute,
-  SalesOrdersNewRoute: SalesOrdersNewRoute,
   SalesOrdersIndexRoute: SalesOrdersIndexRoute,
+  SalesPromotionsIndexRoute: SalesPromotionsIndexRoute,
   SalesQuotesIndexRoute: SalesQuotesIndexRoute,
 }
 
