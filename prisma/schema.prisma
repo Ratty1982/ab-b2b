@@ -475,6 +475,16 @@ enum PromotionType {
   QUANTITY_DEAL
 }
 
+/// Governance for sales-managed campaigns. LEGACY rows keep the original isActive behaviour.
+enum PromotionCampaignStatus {
+  LEGACY
+  DRAFT
+  PENDING_APPROVAL
+  REJECTED
+  APPROVED
+  CANCELLED
+}
+
 // ─── Identity & access ───────────────────────────────────────────────────────
 
 model User {
@@ -546,6 +556,7 @@ model User {
   actingContexts     ActingContext[]   @relation("ActingActor")
   productImports     ProductImportJob[]
   testBaskets        Basket[]          @relation("AdminTestBasketOwner")
+  promotionsCreated  Promotion[]       @relation("PromotionCreator")
 
   @@index([actorType, status])
   @@index([tradeTestPriceListId])
@@ -1871,8 +1882,28 @@ model Promotion {
   endsAt    DateTime?
   isActive  Boolean       @default(true)
   metadata  Json?
+  /// LEGACY preserves pre-workflow promotions. New sales campaigns never start as LEGACY.
+  campaignStatus PromotionCampaignStatus @default(LEGACY)
+  description String? @db.Text
+  imageUrl    String?
+  /// Existing rows stay true so a negotiated customer price can still receive the offer.
+  /// New sales campaigns start false until management explicitly allows it.
+  appliesToNegotiatedPrices Boolean @default(true)
+  createdByUserId String?
+  submittedAt DateTime?
+  submittedByUserId String?
+  reviewedAt DateTime?
+  reviewedByUserId String?
+  reviewReason String?
+  cancelledAt DateTime?
+  cancelledByUserId String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+
+  createdBy User? @relation("PromotionCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([campaignStatus])
+  @@index([createdByUserId])
 }
 
 // ─── Commerce ────────────────────────────────────────────────────────────────
@@ -2101,6 +2132,9 @@ model OrderItem {
   priceSource String?
   quantityBreakId String?
   promotionId String?
+  /// Pre-promotion commercial unit ex VAT (4dp) when this line used a promotion.
+  /// Null on historical lines and lines with no order-time baseline. Never backfilled.
+  promotionBaselineUnitPrice Decimal? @db.Decimal(12, 4)
   /// Effective sellable units available when the order was placed (historical snapshot).
   availableQtyAtOrder Int?
   /// Units beyond availableQtyAtOrder at placement (historical snapshot). Never recompute from live stock.
@@ -2113,6 +2147,7 @@ model OrderItem {
 
   @@index([orderId])
   @@index([sku])
+  @@index([promotionId])
   @@index([backorderQtyAtOrder])
   @@index([despatchedQty])
 }
@@ -2220,6 +2255,8 @@ model QuoteItem {
   priceSource String?
   quantityBreakId String?
   promotionId String?
+  /// Pre-promotion commercial unit ex VAT (4dp). Copied onto the order when the quote converts.
+  promotionBaselineUnitPrice Decimal? @db.Decimal(12, 4)
   sortOrder   Int     @default(0)
 
   quote   Quote           @relation(fields: [quoteId], references: [id], onDelete: Cascade)

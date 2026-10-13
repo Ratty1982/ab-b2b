@@ -70,16 +70,21 @@ export function customerPromotionScope(metadata: unknown): {
 }
 
 /** Optional customer copy stored on promotion metadata. Plain text and a safe image URL only. */
-export function customerPromotionCopy(metadata: unknown): {
+export function customerPromotionCopy(
+  metadata: unknown,
+  columns?: { description?: string | null; imageUrl?: string | null },
+): {
   description: string | null;
   imageUrl: string | null;
 } {
-  if (!metadata || typeof metadata !== "object") return { description: null, imageUrl: null };
-  const rec = metadata as Record<string, unknown>;
-  const descriptionValue = rec["description"];
-  const raw = typeof descriptionValue === "string" ? descriptionValue.trim() : "";
+  const rec =
+    metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+  const columnDescription = typeof columns?.description === "string" ? columns.description.trim() : "";
+  const metadataDescription = typeof rec["description"] === "string" ? rec["description"].trim() : "";
+  const raw = columnDescription || metadataDescription;
   const description = raw ? raw.slice(0, 500) : null;
-  return { description, imageUrl: safePromotionImageUrl(rec["imageUrl"]) };
+  const imageUrl = safePromotionImageUrl(columns?.imageUrl) ?? safePromotionImageUrl(rec["imageUrl"]);
+  return { description, imageUrl };
 }
 
 export function safePromotionImageUrl(value: unknown): string | null {

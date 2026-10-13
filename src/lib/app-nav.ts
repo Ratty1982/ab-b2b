@@ -53,6 +53,9 @@ export const ROUTES = {
   salesQuotes: "/sales/quotes",
   salesQuotesNew: "/sales/quotes/new",
   salesQuote: (id: string) => `/sales/quotes/${id}` as const,
+  salesPromotions: "/sales/promotions",
+  salesPromotionsNew: "/sales/promotions/new",
+  salesPromotion: (id: string) => `/sales/promotions/${id}` as const,
 
   crm: "/crm",
   crmOverview: "/crm/overview",
@@ -258,6 +261,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "file-text",
         to: ROUTES.salesQuotes,
         permission: "quotes.view",
+        implemented: true,
+      },
+      {
+        id: "promotions",
+        label: "Promotions",
+        icon: "tags",
+        to: ROUTES.salesPromotions,
+        matchPrefixes: [ROUTES.salesPromotions],
+        permission: ["promotions.submit", "promotions.approve", "promotions.report"],
         implemented: true,
       },
       {

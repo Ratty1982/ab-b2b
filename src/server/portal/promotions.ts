@@ -64,6 +64,8 @@ export async function loadCustomerPromotionViews(at: Date): Promise<CustomerProm
       endsAt: true,
       isActive: true,
       metadata: true,
+      description: true,
+      imageUrl: true,
     },
   });
   const visible = rows.filter((row) => promotionVisibleToCustomer(toSource(row), at));
@@ -73,7 +75,10 @@ export async function loadCustomerPromotionViews(at: Date): Promise<CustomerProm
     if (row.type === "QUANTITY_DEAL") return [];
     const scope = customerPromotionScope(row.metadata);
     const products = scope.catalogueWide ? [] : productsForScope(scope, productsByKey);
-    const copy = customerPromotionCopy(row.metadata);
+    const copy = customerPromotionCopy(row.metadata, {
+      description: row.description,
+      imageUrl: row.imageUrl,
+    });
     return [
       {
         id: row.id,

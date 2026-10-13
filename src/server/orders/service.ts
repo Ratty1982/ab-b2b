@@ -343,6 +343,7 @@ type ResolvedLine = {
   priceSource: string;
   quantityBreakId: string | null;
   promotionId: string | null;
+  promotionBaselineUnit4dp: string | null;
   issue: CheckoutLineIssue;
   issueMessage: string | null;
   availableQtyAtOrder: number;
@@ -683,6 +684,7 @@ async function resolveCheckoutLines(
     let priceSource = "NONE";
     let quantityBreakId: string | null = null;
     let promotionId: string | null = null;
+    let promotionBaselineUnit4dp: string | null = null;
 
     if (hasPrice && resolution) {
       const commercial = parseMoney(resolution.unitPriceExVat)!;
@@ -700,6 +702,7 @@ async function resolveCheckoutLines(
       priceSource = resolution.source;
       quantityBreakId = resolution.quantityBreakApplied?.id ?? null;
       promotionId = resolution.promotionApplied?.id ?? null;
+      promotionBaselineUnit4dp = promotionId ? resolution.promotionBaselineUnitExVat : null;
 
       const expected = expectedMap.get(variant.id);
       if (expected != null && issue === "VALID") {
@@ -734,6 +737,7 @@ async function resolveCheckoutLines(
       priceSource,
       quantityBreakId,
       promotionId,
+      promotionBaselineUnit4dp,
       issue,
       issueMessage: checkoutIssueMessage(issue),
       availableQtyAtOrder: allocation.availableQtyAtOrder,
@@ -1134,6 +1138,7 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
             priceSource: line.priceSource,
             quantityBreakId: line.quantityBreakId,
             promotionId: line.promotionId,
+            promotionBaselineUnitPrice: line.promotionBaselineUnit4dp,
             availableQtyAtOrder: line.availableQtyAtOrder,
             backorderQtyAtOrder: line.backorderQtyAtOrder,
           })),

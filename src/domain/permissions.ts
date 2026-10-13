@@ -32,6 +32,13 @@ export const PERMISSIONS = [
   "pricing.view",
   "pricing.edit",
 
+  /// Create and submit a sales promotion campaign. Does not approve it.
+  "promotions.submit",
+  /// Approve, reject, cancel, and allow a campaign to discount negotiated prices.
+  "promotions.approve",
+  /// Campaign performance. Customer rows stay inside sales-account scope.
+  "promotions.report",
+
   "inventory.view",
 
   "orders.view",

@@ -181,6 +181,48 @@ describe("promotions", () => {
     expect(resolved.unitPriceExVat).toBe(moneyToString(applied));
   });
 
+  it("protects negotiated prices unless the campaign explicitly allows them", () => {
+    const customer = {
+      company: { id: "co-a", taxStatus: "STANDARD", priceListId: null, priceListName: null },
+      customerPrice: { id: "cp-1", unitPrice: "16.5000", startsAt: null, endsAt: null },
+    };
+    const protectedPromo = { ...windowed, appliesToNegotiatedPrices: false };
+    const held = resolveTradePriceFromFacts(facts({ ...customer, promotions: [protectedPromo] }));
+    expect(held.source).toBe("CUSTOMER");
+    expect(held.unitPriceExVat).toBe("16.5000");
+    expect(held.promotionApplied).toBeNull();
+    expect(held.promotionBaselineUnitExVat).toBeNull();
+
+    const allowed = resolveTradePriceFromFacts(
+      facts({ ...customer, promotions: [{ ...windowed, appliesToNegotiatedPrices: true }] }),
+    );
+    expect(allowed.source).toBe("PROMOTION");
+    expect(allowed.unitPriceExVat).toBe("14.8500");
+    expect(allowed.promotionBaselineUnitExVat).toBe("16.5000");
+
+    const legacy = resolveTradePriceFromFacts(facts({ ...customer, promotions: [windowed] }));
+    expect(legacy.source).toBe("PROMOTION");
+    expect(legacy.unitPriceExVat).toBe("14.8500");
+
+    const listOnly = resolveTradePriceFromFacts(facts({ promotions: [protectedPromo] }));
+    expect(listOnly.source).toBe("PROMOTION");
+    expect(listOnly.promotionBaselineUnitExVat).toBe("8.6967");
+  });
+
+  it("does not let a protected campaign discount a negotiated price that a quantity break undercuts", () => {
+    const resolved = resolveTradePriceFromFacts(
+      facts({
+        customerPrice: { id: "cp-1", unitPrice: "16.5000", startsAt: null, endsAt: null },
+        quantity: 10,
+        quantityBreaks: [{ id: "qb-10", minQty: 10, unitPrice: "10.0000" }],
+        promotions: [{ ...windowed, appliesToNegotiatedPrices: false }],
+      }),
+    );
+    expect(resolved.source).toBe("QUANTITY_BREAK");
+    expect(resolved.unitPriceExVat).toBe("10.0000");
+    expect(resolved.promotionApplied).toBeNull();
+  });
+
   it("respects validity helpers", () => {
     const at = new Date("2026-09-21T00:00:00.000Z");
     expect(inValidityWindow(at, null, null)).toBe(true);

@@ -61,6 +61,11 @@ export type PriceResolutionFacts = {
     isActive: boolean;
     variantIds: string[] | null;
     skus: string[] | null;
+    /**
+     * When false, this promotion does not discount a negotiated customer price.
+     * Omitted or true keeps the original behaviour.
+     */
+    appliesToNegotiatedPrices?: boolean;
   }>;
 };
 
@@ -88,6 +93,8 @@ export type TradePriceResolution = {
   sourceId: string | null;
   quantityBreakApplied: { id: string; minQty: number } | null;
   promotionApplied: { id: string; code: string; name: string } | null;
+  /** Commercial unit ex VAT immediately before the applied promotion. Null when no promotion applied. */
+  promotionBaselineUnitExVat: string | null;
   explanation: TradePriceExplanation;
 };
 
@@ -209,9 +216,12 @@ export function resolveTradePriceFromFacts(facts: PriceResolutionFacts): TradePr
   }
 
   let promotionApplied: TradePriceResolution["promotionApplied"] = null;
+  let promotionBaselineUnitExVat: string | null = null;
+  const negotiatedPriceSelected = commercialSource === "CUSTOMER";
   if (unit) {
     const candidates = facts.promotions
       .filter((promo) => promotionApplies(promo, facts))
+      .filter((promo) => promo.appliesToNegotiatedPrices !== false || !negotiatedPriceSelected)
       .map((promo) => {
         const next = applyPromotion(unit!, promo);
         return next ? { promo, next } : null;
@@ -224,6 +234,7 @@ export function resolveTradePriceFromFacts(facts: PriceResolutionFacts): TradePr
       });
     const winner = candidates[0];
     if (winner) {
+      promotionBaselineUnitExVat = moneyToString(unit);
       unit = winner.next;
       source = "PROMOTION";
       sourceId = winner.promo.id;
@@ -261,6 +272,7 @@ export function resolveTradePriceFromFacts(facts: PriceResolutionFacts): TradePr
       sourceId: null,
       quantityBreakApplied: null,
       promotionApplied: null,
+      promotionBaselineUnitExVat: null,
       explanation,
     };
   }
@@ -279,6 +291,7 @@ export function resolveTradePriceFromFacts(facts: PriceResolutionFacts): TradePr
     sourceId,
     quantityBreakApplied,
     promotionApplied,
+    promotionBaselineUnitExVat,
     explanation,
   };
 }

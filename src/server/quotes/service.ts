@@ -208,6 +208,7 @@ type BuiltLine = {
   priceSource: string | null;
   quantityBreakId: string | null;
   promotionId: string | null;
+  promotionBaselineUnitPrice: string | null;
   sortOrder: number;
 };
 
@@ -336,6 +337,10 @@ async function buildQuoteLines(
       priceSource: resolved.source,
       quantityBreakId: resolved.quantityBreakApplied?.id ?? null,
       promotionId: resolved.promotionApplied?.id ?? null,
+      promotionBaselineUnitPrice:
+        priceOverride || !resolved.promotionApplied
+          ? null
+          : resolved.promotionBaselineUnitExVat,
       sortOrder: sortOrder++,
     });
   }
@@ -793,6 +798,7 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
           priceSource: it.priceSource,
           quantityBreakId: it.quantityBreakId,
           promotionId: it.promotionId,
+          promotionBaselineUnitPrice: it.promotionBaselineUnitPrice ? money4(it.promotionBaselineUnitPrice) : null,
           sortOrder: idx,
         }) satisfies BuiltLine,
     );
@@ -836,6 +842,7 @@ export async function updateQuoteDraft(actorUserId: string, raw: unknown) {
             priceSource: l.priceSource,
             quantityBreakId: l.quantityBreakId,
             promotionId: l.promotionId,
+            promotionBaselineUnitPrice: l.promotionBaselineUnitPrice,
             sortOrder: l.sortOrder,
           })),
         });
@@ -1435,6 +1442,7 @@ async function convertQuoteToOrder(input: {
               priceSource: item.priceSource ?? "QUOTE",
               quantityBreakId: item.quantityBreakId,
               promotionId: item.promotionId,
+              promotionBaselineUnitPrice: item.promotionBaselineUnitPrice,
               availableQtyAtOrder: alloc.availableQtyAtOrder,
               backorderQtyAtOrder: alloc.backorderQtyAtOrder,
             };
