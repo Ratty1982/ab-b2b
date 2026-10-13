@@ -147,13 +147,15 @@ describe("canonical navigation contract", () => {
   it("keeps Website nav as Pages, Homepage, Team, Media in that order", () => {
     const website = BACK_OFFICE_NAV.find((s) => s.id === "website");
     expect(website?.items.map((i) => i.id)).toEqual([
+      "customer-surveys",
       "website-pages",
       "website-homepage",
       "website-team",
       "website-media",
     ]);
-    expect(website?.items.map((i) => i.label)).toEqual(["Pages", "Homepage", "Team", "Media"]);
+    expect(website?.items.map((i) => i.label)).toEqual(["Customer Surveys", "Pages", "Homepage", "Team", "Media"]);
     expect(website?.items.map((i) => i.to)).toEqual([
+      ROUTES.adminCustomerSurveys,
       ROUTES.adminContent,
       ROUTES.adminHomepage,
       ROUTES.adminTeam,

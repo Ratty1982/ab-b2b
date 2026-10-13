@@ -46,6 +46,7 @@ export const ROUTES = {
   adminVersionUpdates: "/admin/version-updates",
   adminVersionUpdate: (id: string) => `/admin/version-updates/${id}` as const,
   adminVersionUpdateNew: "/admin/version-updates/new",
+  adminCustomerSurveys: "/admin/customer-surveys",
 
   sales: "/sales",
   salesCustomers: "/sales/customers",
@@ -124,6 +125,7 @@ export const ADMIN_SHELL_PERMISSIONS: PermissionKey[] = [
   "users.manage",
   "roles.manage",
   "settings.edit",
+  "surveys.view",
 ];
 
 export type NavIconName =
@@ -584,6 +586,16 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
     id: "website",
     label: "Website",
     items: [
+      {
+        id: "customer-surveys",
+        label: "Customer Surveys",
+        icon: "clipboard-list",
+        to: ROUTES.adminCustomerSurveys,
+        matchPrefixes: [ROUTES.adminCustomerSurveys],
+        permission: "surveys.view",
+        adminShellOnly: true,
+        implemented: true,
+      },
       {
         id: "website-pages",
         label: "Pages",

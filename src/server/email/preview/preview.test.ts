@@ -39,10 +39,12 @@ describe("email template preview registry", () => {
         "quote-declined-internal",
         "callback-request-internal",
         "motorsport-partnership-internal",
+        "customer-survey-acknowledgement",
+        "customer-survey-internal",
         "user-invitation",
       ]),
     );
-    expect(ids).toHaveLength(18);
+    expect(ids).toHaveLength(20);
   });
 
   it("every registered preview template renders subject + HTML + text", () => {

@@ -15,7 +15,9 @@ import { Route as ActivateRouteImport } from './routes/activate'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as CrmRouteImport } from './routes/crm'
+import { Route as CustomerSurveyRouteImport } from './routes/customer-survey'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as FreePrizeDrawTermsConditionsRouteImport } from './routes/free-prize-draw-terms-conditions'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as MeetTheTeamRouteImport } from './routes/meet-the-team'
 import { Route as MotorsportRouteImport } from './routes/motorsport'
@@ -32,6 +34,7 @@ import { Route as AdminBrandsRouteImport } from './routes/admin.brands'
 import { Route as AdminCategoriesRouteImport } from './routes/admin.categories'
 import { Route as AdminContentRouteImport } from './routes/admin.content'
 import { Route as AdminCostIntelligenceRouteImport } from './routes/admin.cost-intelligence'
+import { Route as AdminCustomerSurveysRouteImport } from './routes/admin.customer-surveys'
 import { Route as AdminOrdersRouteImport } from './routes/admin.orders'
 import { Route as AdminPricingRouteImport } from './routes/admin.pricing'
 import { Route as AdminProductsRouteImport } from './routes/admin.products'
@@ -166,11 +169,22 @@ const CrmRoute = CrmRouteImport.update({
   path: '/crm',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CustomerSurveyRoute = CustomerSurveyRouteImport.update({
+  id: '/customer-survey',
+  path: '/customer-survey',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FreePrizeDrawTermsConditionsRoute =
+  FreePrizeDrawTermsConditionsRouteImport.update({
+    id: '/free-prize-draw-terms-conditions',
+    path: '/free-prize-draw-terms-conditions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -249,6 +263,11 @@ const AdminContentRoute = AdminContentRouteImport.update({
 const AdminCostIntelligenceRoute = AdminCostIntelligenceRouteImport.update({
   id: '/cost-intelligence',
   path: '/cost-intelligence',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminCustomerSurveysRoute = AdminCustomerSurveysRouteImport.update({
+  id: '/customer-surveys',
+  path: '/customer-surveys',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminOrdersRoute = AdminOrdersRouteImport.update({
@@ -795,7 +814,9 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
+  '/customer-survey': typeof CustomerSurveyRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/free-prize-draw-terms-conditions': typeof FreePrizeDrawTermsConditionsRoute
   '/login': typeof LoginRoute
   '/meet-the-team': typeof MeetTheTeamRoute
   '/motorsport': typeof MotorsportRoute
@@ -811,6 +832,7 @@ export interface FileRoutesByFullPath {
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
   '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
+  '/admin/customer-surveys': typeof AdminCustomerSurveysRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/pricing': typeof AdminPricingRouteWithChildren
   '/admin/products': typeof AdminProductsRouteWithChildren
@@ -921,7 +943,9 @@ export interface FileRoutesByTo {
   '/about': typeof AboutRoute
   '/activate': typeof ActivateRoute
   '/contact': typeof ContactRoute
+  '/customer-survey': typeof CustomerSurveyRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/free-prize-draw-terms-conditions': typeof FreePrizeDrawTermsConditionsRoute
   '/login': typeof LoginRoute
   '/meet-the-team': typeof MeetTheTeamRoute
   '/motorsport': typeof MotorsportRoute
@@ -933,6 +957,7 @@ export interface FileRoutesByTo {
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
+  '/admin/customer-surveys': typeof AdminCustomerSurveysRoute
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
@@ -1035,7 +1060,9 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/contact': typeof ContactRoute
   '/crm': typeof CrmRouteWithChildren
+  '/customer-survey': typeof CustomerSurveyRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/free-prize-draw-terms-conditions': typeof FreePrizeDrawTermsConditionsRoute
   '/login': typeof LoginRoute
   '/meet-the-team': typeof MeetTheTeamRoute
   '/motorsport': typeof MotorsportRoute
@@ -1051,6 +1078,7 @@ export interface FileRoutesById {
   '/admin/categories': typeof AdminCategoriesRoute
   '/admin/content': typeof AdminContentRouteWithChildren
   '/admin/cost-intelligence': typeof AdminCostIntelligenceRoute
+  '/admin/customer-surveys': typeof AdminCustomerSurveysRoute
   '/admin/orders': typeof AdminOrdersRouteWithChildren
   '/admin/pricing': typeof AdminPricingRouteWithChildren
   '/admin/products': typeof AdminProductsRouteWithChildren
@@ -1165,7 +1193,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/contact'
     | '/crm'
+    | '/customer-survey'
     | '/forgot-password'
+    | '/free-prize-draw-terms-conditions'
     | '/login'
     | '/meet-the-team'
     | '/motorsport'
@@ -1181,6 +1211,7 @@ export interface FileRouteTypes {
     | '/admin/categories'
     | '/admin/content'
     | '/admin/cost-intelligence'
+    | '/admin/customer-surveys'
     | '/admin/orders'
     | '/admin/pricing'
     | '/admin/products'
@@ -1291,7 +1322,9 @@ export interface FileRouteTypes {
     | '/about'
     | '/activate'
     | '/contact'
+    | '/customer-survey'
     | '/forgot-password'
+    | '/free-prize-draw-terms-conditions'
     | '/login'
     | '/meet-the-team'
     | '/motorsport'
@@ -1303,6 +1336,7 @@ export interface FileRouteTypes {
     | '/admin/brands'
     | '/admin/categories'
     | '/admin/cost-intelligence'
+    | '/admin/customer-surveys'
     | '/admin/roles'
     | '/admin/settings'
     | '/api/build'
@@ -1404,7 +1438,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/contact'
     | '/crm'
+    | '/customer-survey'
     | '/forgot-password'
+    | '/free-prize-draw-terms-conditions'
     | '/login'
     | '/meet-the-team'
     | '/motorsport'
@@ -1420,6 +1456,7 @@ export interface FileRouteTypes {
     | '/admin/categories'
     | '/admin/content'
     | '/admin/cost-intelligence'
+    | '/admin/customer-surveys'
     | '/admin/orders'
     | '/admin/pricing'
     | '/admin/products'
@@ -1533,7 +1570,9 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   ContactRoute: typeof ContactRoute
   CrmRoute: typeof CrmRouteWithChildren
+  CustomerSurveyRoute: typeof CustomerSurveyRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
+  FreePrizeDrawTermsConditionsRoute: typeof FreePrizeDrawTermsConditionsRoute
   LoginRoute: typeof LoginRoute
   MeetTheTeamRoute: typeof MeetTheTeamRoute
   MotorsportRoute: typeof MotorsportRoute
@@ -1604,11 +1643,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CrmRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/customer-survey': {
+      id: '/customer-survey'
+      path: '/customer-survey'
+      fullPath: '/customer-survey'
+      preLoaderRoute: typeof CustomerSurveyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/forgot-password': {
       id: '/forgot-password'
       path: '/forgot-password'
       fullPath: '/forgot-password'
       preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/free-prize-draw-terms-conditions': {
+      id: '/free-prize-draw-terms-conditions'
+      path: '/free-prize-draw-terms-conditions'
+      fullPath: '/free-prize-draw-terms-conditions'
+      preLoaderRoute: typeof FreePrizeDrawTermsConditionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -1721,6 +1774,13 @@ declare module '@tanstack/react-router' {
       path: '/cost-intelligence'
       fullPath: '/admin/cost-intelligence'
       preLoaderRoute: typeof AdminCostIntelligenceRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/customer-surveys': {
+      id: '/admin/customer-surveys'
+      path: '/customer-surveys'
+      fullPath: '/admin/customer-surveys'
+      preLoaderRoute: typeof AdminCustomerSurveysRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/orders': {
@@ -2570,6 +2630,7 @@ interface AdminRouteChildren {
   AdminCategoriesRoute: typeof AdminCategoriesRoute
   AdminContentRoute: typeof AdminContentRouteWithChildren
   AdminCostIntelligenceRoute: typeof AdminCostIntelligenceRoute
+  AdminCustomerSurveysRoute: typeof AdminCustomerSurveysRoute
   AdminOrdersRoute: typeof AdminOrdersRouteWithChildren
   AdminPricingRoute: typeof AdminPricingRouteWithChildren
   AdminProductsRoute: typeof AdminProductsRouteWithChildren
@@ -2592,6 +2653,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminCategoriesRoute: AdminCategoriesRoute,
   AdminContentRoute: AdminContentRouteWithChildren,
   AdminCostIntelligenceRoute: AdminCostIntelligenceRoute,
+  AdminCustomerSurveysRoute: AdminCustomerSurveysRoute,
   AdminOrdersRoute: AdminOrdersRouteWithChildren,
   AdminPricingRoute: AdminPricingRouteWithChildren,
   AdminProductsRoute: AdminProductsRouteWithChildren,
@@ -2824,7 +2886,9 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   ContactRoute: ContactRoute,
   CrmRoute: CrmRouteWithChildren,
+  CustomerSurveyRoute: CustomerSurveyRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
+  FreePrizeDrawTermsConditionsRoute: FreePrizeDrawTermsConditionsRoute,
   LoginRoute: LoginRoute,
   MeetTheTeamRoute: MeetTheTeamRoute,
   MotorsportRoute: MotorsportRoute,
