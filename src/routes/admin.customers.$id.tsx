@@ -15,6 +15,7 @@ import {
   DEFAULT_TRADE_PRICE_LABEL,
 } from "@/domain/default-trade-price";
 import { ROUTES } from "@/lib/app-nav";
+import { useSession } from "@/lib/session";
 import {
   createAddressFn,
   createContactFn,
@@ -68,6 +69,9 @@ const tabs = [
 function CustomerWorkspace() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const session = useSession();
+  const canPlaceForCustomer =
+    session.signedIn && session.user.navPermissions.includes("orders.place_for_customer");
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +143,15 @@ function CustomerWorkspace() {
         ]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {canPlaceForCustomer ? (
+              <Link
+                to="/sales/orders/new"
+                search={{ companyId: company.id }}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-[12px] font-bold uppercase tracking-wide text-primary-foreground"
+              >
+                Create order
+              </Link>
+            ) : null}
             {permissions.canDelete ? (
               <button
                 type="button"

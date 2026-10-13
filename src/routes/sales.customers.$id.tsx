@@ -107,7 +107,16 @@ function SalesCustomer() {
         title={company.name}
         {...(company.accountNumber ? { sub: company.accountNumber } : {})}
         actions={
-          <StatusBadge>{COMPANY_STATUS_LABEL[company.status]}</StatusBadge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/sales/orders/new"
+              search={{ companyId: company.id }}
+              className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-[12px] font-bold uppercase tracking-wide text-primary-foreground"
+            >
+              Create order
+            </Link>
+            <StatusBadge>{COMPANY_STATUS_LABEL[company.status]}</StatusBadge>
+          </div>
         }
       />
       <div className="flex gap-1 overflow-x-auto border-b border-border/70 px-4 sm:px-6">

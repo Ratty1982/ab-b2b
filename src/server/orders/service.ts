@@ -124,6 +124,7 @@ export type CheckoutReviewLine = {
   issue: CheckoutLineIssue;
   issueMessage: string | null;
   priceSource: string | null;
+  promotionCode: string | null;
   availableQtyAtOrder: number;
   backorderQtyAtOrder: number;
   backordersAllowed: boolean;
@@ -186,6 +187,8 @@ export type PublicOrderConfirmation = {
   /** Present when created from an accepted quotation. */
   sourceQuoteId: string | null;
   sourceQuoteNumber: string | null;
+  entrySource: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT" | null;
+  placedByStaffName: string | null;
 };
 
 export type PlaceOrderResult =
@@ -266,6 +269,8 @@ export type PortalOrderDetail = Omit<PublicOrderConfirmation, "status" | "items"
 export type AdminOrderListItem = OrderListItemBase & {
   companyName: string;
   salesRepName: string | null;
+  placedByStaffName: string | null;
+  entrySource: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT" | null;
   autopartAccountLinked: boolean;
   autopartExportStatus: "NOT_EXPORTED" | "EXPORTED";
   autopartCustomerCodeSnapshot: string | null;
@@ -343,6 +348,7 @@ type ResolvedLine = {
   priceSource: string;
   quantityBreakId: string | null;
   promotionId: string | null;
+  promotionCode: string | null;
   issue: CheckoutLineIssue;
   issueMessage: string | null;
   availableQtyAtOrder: number;
@@ -489,7 +495,7 @@ async function loadPrimarySalesRepSnapshot(companyId: string): Promise<{
   };
 }
 
-async function resolveDeliverySnapshot(
+export async function resolveDeliverySnapshot(
   companyId: string,
   input: {
     addressId?: string | null | undefined;
@@ -553,49 +559,41 @@ function buildContactSnapshot(
 }
 
 /**
- * Re-resolve basket lines for checkout (prices, stock, ordering).
- * Does not mutate inventory — reservation happens only inside placeOrder.
+ * Re-resolve explicit order lines (prices, stock, ordering).
+ * Does not mutate inventory — reservation happens only inside order commit.
+ * Shared by customer checkout (from the company basket) and sales order drafts.
  */
-async function resolveCheckoutLines(
+export async function resolveOrderLinesFromItems(
   companyId: string,
+  items: Array<{ variantId: string; qty: number }>,
   expectedPrices?: Array<{ variantId: string; customerUnitPrice: string }> | null,
-): Promise<{ lines: ResolvedLine[]; basketId: string; empty: boolean }> {
-  const basket = await prisma.basket.findFirst({
-    where: { companyId, status: "OPEN" },
+): Promise<ResolvedLine[]> {
+  if (items.length === 0) return [];
+
+  const variants = await prisma.productVariant.findMany({
+    where: { id: { in: items.map((item) => item.variantId) } },
     include: {
-      items: {
-        orderBy: { createdAt: "asc" },
-        include: {
-          variant: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  status: true,
-                  isActive: true,
-                  isTradeVisible: true,
-                },
-              },
-            },
-          },
+      product: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          isActive: true,
+          isTradeVisible: true,
         },
       },
     },
   });
-
-  if (!basket || basket.items.length === 0) {
-    return { lines: [], basketId: basket?.id ?? "", empty: true };
-  }
-
-  const variantIds = basket.items.map((i) => i.variantId);
+  const variantById = new Map(variants.map((variant) => [variant.id, variant]));
+  const present = items.filter((item) => variantById.has(item.variantId));
+  const variantIds = present.map((item) => item.variantId);
   const [stockMap, globalBackorderPolicy] = await Promise.all([
     loadStockByVariantIds(variantIds),
     getGlobalBackorderPolicy(),
   ]);
 
-  const qtyGroups = new Map<number, typeof basket.items>();
-  for (const item of basket.items) {
+  const qtyGroups = new Map<number, typeof present>();
+  for (const item of present) {
     const list = qtyGroups.get(item.qty) ?? [];
     list.push(item);
     qtyGroups.set(item.qty, list);
@@ -611,12 +609,15 @@ async function resolveCheckoutLines(
       priceListId: null,
       adminTestActive: false,
       quantity: qty,
-      variants: group.map((item) => ({
-        id: item.variant.id,
-        sku: item.variant.sku,
-        tradePrice: item.variant.tradePrice,
-        vatCode: item.variant.vatCode,
-      })),
+      variants: group.map((item) => {
+        const variant = variantById.get(item.variantId)!;
+        return {
+          id: variant.id,
+          sku: variant.sku,
+          tradePrice: variant.tradePrice,
+          vatCode: variant.vatCode,
+        };
+      }),
     });
     for (const [id, price] of resolved) priceByVariant.set(id, price);
   }
@@ -626,9 +627,12 @@ async function resolveCheckoutLines(
   );
 
   const lines: ResolvedLine[] = [];
-
-  for (const item of basket.items) {
-    const variant = item.variant;
+  for (const item of items) {
+    const variant = variantById.get(item.variantId);
+    if (!variant) {
+      lines.push(unavailableLine(item.variantId, item.qty));
+      continue;
+    }
     const product = variant.product;
     const stock = stockMap.get(variant.id);
     const stale = stock?.stale ?? true;
@@ -683,6 +687,7 @@ async function resolveCheckoutLines(
     let priceSource = "NONE";
     let quantityBreakId: string | null = null;
     let promotionId: string | null = null;
+    let promotionCode: string | null = null;
 
     if (hasPrice && resolution) {
       const commercial = parseMoney(resolution.unitPriceExVat)!;
@@ -700,6 +705,7 @@ async function resolveCheckoutLines(
       priceSource = resolution.source;
       quantityBreakId = resolution.quantityBreakApplied?.id ?? null;
       promotionId = resolution.promotionApplied?.id ?? null;
+      promotionCode = resolution.promotionApplied?.code ?? null;
 
       const expected = expectedMap.get(variant.id);
       if (expected != null && issue === "VALID") {
@@ -734,6 +740,7 @@ async function resolveCheckoutLines(
       priceSource,
       quantityBreakId,
       promotionId,
+      promotionCode,
       issue,
       issueMessage: checkoutIssueMessage(issue),
       availableQtyAtOrder: allocation.availableQtyAtOrder,
@@ -742,6 +749,53 @@ async function resolveCheckoutLines(
     });
   }
 
+  return lines;
+}
+
+function unavailableLine(variantId: string, quantity: number): ResolvedLine {
+  return {
+    variantId,
+    productId: "",
+    sku: "",
+    name: "Unavailable product",
+    quantity,
+    caseQty: null,
+    orderingMode: null,
+    commercialUnit4dp: "0.0000",
+    customerUnit2dp: "0.00",
+    lineNet2dp: "0.00",
+    lineVat2dp: "0.00",
+    lineGross2dp: "0.00",
+    vatRatePercent: 0,
+    vatCode: null,
+    priceSource: "NONE",
+    quantityBreakId: null,
+    promotionId: null,
+    promotionCode: null,
+    issue: "PRODUCT_UNAVAILABLE",
+    issueMessage: checkoutIssueMessage("PRODUCT_UNAVAILABLE"),
+    availableQtyAtOrder: 0,
+    backorderQtyAtOrder: 0,
+    backordersAllowed: false,
+  };
+}
+
+async function resolveCheckoutLines(
+  companyId: string,
+  expectedPrices?: Array<{ variantId: string; customerUnitPrice: string }> | null,
+): Promise<{ lines: ResolvedLine[]; basketId: string; empty: boolean }> {
+  const basket = await prisma.basket.findFirst({
+    where: { companyId, status: "OPEN" },
+    include: { items: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!basket || basket.items.length === 0) {
+    return { lines: [], basketId: basket?.id ?? "", empty: true };
+  }
+  const lines = await resolveOrderLinesFromItems(
+    companyId,
+    basket.items.map((item) => ({ variantId: item.variantId, qty: item.qty })),
+    expectedPrices,
+  );
   return { lines, basketId: basket.id, empty: false };
 }
 
@@ -761,6 +815,7 @@ function linesToReviewLines(lines: ResolvedLine[]): CheckoutReviewLine[] {
     issue: line.issue,
     issueMessage: line.issueMessage,
     priceSource: line.priceSource === "NONE" ? null : line.priceSource,
+    promotionCode: line.promotionCode,
     availableQtyAtOrder: line.availableQtyAtOrder,
     backorderQtyAtOrder: line.backorderQtyAtOrder,
     backordersAllowed: line.backordersAllowed,
@@ -804,6 +859,32 @@ function sumValidTotals(
 
 function hasBlocking(lines: ResolvedLine[]): boolean {
   return lines.some((l) => l.issue !== "VALID");
+}
+
+/** Review payload shared by customer checkout and sales order entry. */
+export function buildCheckoutReview(input: {
+  company: { id: string; name: string; taxStatus: string; paymentTerms: string | null };
+  lines: ResolvedLine[];
+  deliveryAddress: DeliveryAddressSnapshot | null;
+  contact: ContactSnapshot;
+  poNumber: string | null;
+  deliveryInstructions: string | null;
+}): CheckoutReview {
+  const backorderMeta = backorderNoticeFromLines(input.lines);
+  return {
+    companyId: input.company.id,
+    companyName: input.company.name,
+    lines: linesToReviewLines(input.lines),
+    totals: sumValidTotals(input.lines, input.company.taxStatus),
+    hasBlockingIssues: hasBlocking(input.lines),
+    hasBackorderItems: backorderMeta.hasBackorderItems,
+    backorderNotice: backorderMeta.backorderNotice,
+    deliveryAddress: input.deliveryAddress,
+    contact: input.contact,
+    paymentTerms: input.company.paymentTerms,
+    poNumber: input.poNumber,
+    deliveryInstructions: input.deliveryInstructions,
+  };
 }
 
 export async function getCheckoutContext(userId: string): Promise<CheckoutContext> {
@@ -906,7 +987,7 @@ export async function previewCheckout(
   };
 }
 
-function toConfirmation(
+export function toConfirmation(
   order: {
     id: string;
     orderNumber: string;
@@ -981,7 +1062,184 @@ function toConfirmation(
     externalRef: null,
     sourceQuoteId: order.sourceQuoteId ?? null,
     sourceQuoteNumber: order.sourceQuoteNumber ?? null,
+    entrySource:
+      "entrySource" in order &&
+      (order.entrySource === "TELEPHONE" ||
+        order.entrySource === "EMAIL" ||
+        order.entrySource === "CUSTOMER_VISIT")
+        ? order.entrySource
+        : null,
+    placedByStaffName:
+      "placedByStaffName" in order && typeof order.placedByStaffName === "string"
+        ? order.placedByStaffName
+        : null,
   };
+}
+
+export type SubmittedOrderCommit = {
+  company: {
+    id: string;
+    name: string;
+    paymentTerms: string | null;
+    taxStatus: string;
+    autopartCustomerCode: string | null;
+    autopartCustomerCodeVerifiedAt: Date | null;
+  };
+  lines: ResolvedLine[];
+  deliveryAddress: DeliveryAddressSnapshot;
+  contact: ContactSnapshot;
+  poNumber: string | null;
+  deliveryInstructions: string | null;
+  idempotencyKey: string;
+  orderedByUserId: string;
+  onBehalfOfUserId?: string | null;
+  entrySource?: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT" | null;
+  placedByStaffUserId?: string | null;
+  placedByStaffName?: string | null;
+  notes?: string | null;
+  /** When set, the company OPEN basket is marked CONVERTED inside the same transaction. */
+  convertBasketId?: string | null;
+  salesOrderDraftId?: string | null;
+  withinTransaction?: (
+    tx: Prisma.TransactionClient,
+    order: { id: string; orderNumber: string },
+  ) => Promise<void>;
+};
+
+/**
+ * Shared SUBMITTED-order commit: numbering, snapshots, reservation, fulfilment.
+ * Customer checkout passes convertBasketId. Sales order entry does not.
+ * A reservation failure throws and rolls the whole transaction back.
+ */
+export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
+  const totals = sumValidTotals(input.lines, input.company.taxStatus);
+  const salesRep = await loadPrimarySalesRepSnapshot(input.company.id);
+  const verifiedCode =
+    input.company.autopartCustomerCodeVerifiedAt && input.company.autopartCustomerCode
+      ? input.company.autopartCustomerCode
+      : null;
+
+  return prisma.$transaction(async (tx) => {
+    const again = await tx.order.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      include: { items: true, company: { select: { name: true } } },
+    });
+    if (again) {
+      if (again.companyId !== input.company.id) {
+        throw new AuthError("Idempotency key conflict", "IDEMPOTENCY_CONFLICT", 409);
+      }
+      return { kind: "existing" as const, order: again };
+    }
+
+    if (input.convertBasketId) {
+      const openBasket = await tx.basket.findFirst({
+        where: { id: input.convertBasketId, companyId: input.company.id, status: "OPEN" },
+      });
+      if (!openBasket) {
+        throw new AuthError("Basket is no longer available", "BASKET_NOT_FOUND", 404);
+      }
+    }
+
+    const orderNumber = await allocateOrderNumber(tx);
+    const placedAt = new Date();
+
+    const order = await tx.order.create({
+      data: {
+        orderNumber,
+        companyId: input.company.id,
+        status: "SUBMITTED",
+        poNumber: input.poNumber,
+        orderedByUserId: input.orderedByUserId,
+        onBehalfOfUserId: input.onBehalfOfUserId ?? null,
+        currency: "GBP",
+        subtotal: totals.subtotal,
+        vatTotal: totals.vatTotal,
+        deliveryTotal: totals.deliveryTotal,
+        grandTotal: totals.grandTotal,
+        deliveryAddress: input.deliveryAddress as unknown as Prisma.InputJsonValue,
+        contactSnapshot: input.contact as unknown as Prisma.InputJsonValue,
+        deliveryInstructions: input.deliveryInstructions,
+        paymentTermsSnapshot: input.company.paymentTerms,
+        autopartCustomerCodeSnapshot: verifiedCode,
+        autopartAccountLinked: Boolean(verifiedCode),
+        salesRepIdSnapshot: salesRep.salesRepIdSnapshot,
+        salesRepCodeSnapshot: salesRep.salesRepCodeSnapshot,
+        salesRepNameSnapshot: salesRep.salesRepNameSnapshot,
+        deliveryMethodLabel: "Standard delivery",
+        basketId: input.convertBasketId ?? null,
+        idempotencyKey: input.idempotencyKey,
+        externalRef: null,
+        placedAt,
+        notes: input.notes ?? null,
+        entrySource: input.entrySource ?? null,
+        placedByStaffUserId: input.placedByStaffUserId ?? null,
+        placedByStaffName: input.placedByStaffName ?? null,
+        salesOrderDraftId: input.salesOrderDraftId ?? null,
+        items: {
+          create: input.lines.map((line) => ({
+            variantId: line.variantId,
+            productId: line.productId,
+            sku: line.sku,
+            name: line.name,
+            qty: line.quantity,
+            unitPrice: line.commercialUnit4dp,
+            customerUnitPrice: line.customerUnit2dp,
+            discountPct: 0,
+            vatRate: line.vatRatePercent,
+            vatCode: line.vatCode,
+            lineTotal: line.lineNet2dp,
+            lineVat: line.lineVat2dp,
+            lineGross: line.lineGross2dp,
+            caseQty: line.caseQty,
+            orderingMode: line.orderingMode,
+            priceSource: line.priceSource,
+            quantityBreakId: line.quantityBreakId,
+            promotionId: line.promotionId,
+            availableQtyAtOrder: line.availableQtyAtOrder,
+            backorderQtyAtOrder: line.backorderQtyAtOrder,
+          })),
+        },
+      },
+      include: { items: true, company: { select: { name: true } } },
+    });
+
+    await reserveStockForOrder(tx, {
+      orderId: order.id,
+      lines: order.items.map((item) => ({
+        orderItemId: item.id,
+        variantId: item.variantId!,
+        quantity: item.availableQtyAtOrder ?? 0,
+      })),
+    });
+
+    const backorderUnits = order.items.reduce(
+      (sum, item) => sum + (item.backorderQtyAtOrder ?? 0),
+      0,
+    );
+    await recordFulfilmentEvent(tx, {
+      orderId: order.id,
+      kind: "ORDER_RECEIVED",
+      summary:
+        backorderUnits > 0
+          ? `Order received · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
+          : "Order received",
+      source: "ORDER_PLACE",
+      lineQuantitiesKnown: true,
+    });
+
+    if (input.convertBasketId) {
+      await tx.basket.update({
+        where: { id: input.convertBasketId },
+        data: { status: "CONVERTED" },
+      });
+    }
+
+    if (input.withinTransaction) {
+      await input.withinTransaction(tx, { id: order.id, orderNumber: order.orderNumber });
+    }
+
+    return { kind: "created" as const, order };
+  });
 }
 
 export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrderResult> {
@@ -1057,124 +1315,18 @@ export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrd
     select: { name: true, email: true },
   });
   const contact = buildContactSnapshot(user, input.contact);
-  const salesRep = await loadPrimarySalesRepSnapshot(company.id);
-  const verifiedCode =
-    company.autopartCustomerCodeVerifiedAt && company.autopartCustomerCode
-      ? company.autopartCustomerCode
-      : null;
   const poNumber = input.poNumber ?? input.customerReference ?? null;
-  // Authoritative delivery + VAT recalculated server-side immediately before commit.
-  const totals = sumValidTotals(lines, company.taxStatus);
 
-  const created = await prisma.$transaction(async (tx) => {
-    // Re-check idempotency inside the transaction.
-    const again = await tx.order.findUnique({
-      where: { idempotencyKey: input.idempotencyKey },
-      include: { items: true, company: { select: { name: true } } },
-    });
-    if (again) {
-      return { kind: "existing" as const, order: again };
-    }
-
-    const openBasket = await tx.basket.findFirst({
-      where: { id: basketId, companyId: company.id, status: "OPEN" },
-    });
-    if (!openBasket) {
-      throw new AuthError("Basket is no longer available", "BASKET_NOT_FOUND", 404);
-    }
-
-    const orderNumber = await allocateOrderNumber(tx);
-    const placedAt = new Date();
-
-    const order = await tx.order.create({
-      data: {
-        orderNumber,
-        companyId: company.id,
-        status: "SUBMITTED",
-        poNumber,
-        orderedByUserId: userId,
-        currency: "GBP",
-        subtotal: totals.subtotal,
-        vatTotal: totals.vatTotal,
-        deliveryTotal: totals.deliveryTotal,
-        grandTotal: totals.grandTotal,
-        deliveryAddress: deliveryAddress as unknown as Prisma.InputJsonValue,
-        contactSnapshot: contact as unknown as Prisma.InputJsonValue,
-        deliveryInstructions: input.deliveryInstructions ?? null,
-        // Snapshot only — never invent default payment terms (e.g. "30 days").
-        paymentTermsSnapshot: company.paymentTerms,
-        autopartCustomerCodeSnapshot: verifiedCode,
-        autopartAccountLinked: Boolean(verifiedCode),
-        salesRepIdSnapshot: salesRep.salesRepIdSnapshot,
-        salesRepCodeSnapshot: salesRep.salesRepCodeSnapshot,
-        salesRepNameSnapshot: salesRep.salesRepNameSnapshot,
-        deliveryMethodLabel: "Standard delivery",
-        basketId: openBasket.id,
-        idempotencyKey: input.idempotencyKey,
-        // Phase 6B: never set externalRef (Autopart handoff is Phase 6C).
-        externalRef: null,
-        placedAt,
-        items: {
-          create: lines.map((line) => ({
-            variantId: line.variantId,
-            productId: line.productId,
-            sku: line.sku,
-            name: line.name,
-            qty: line.quantity,
-            unitPrice: line.commercialUnit4dp,
-            customerUnitPrice: line.customerUnit2dp,
-            discountPct: 0,
-            vatRate: line.vatRatePercent,
-            vatCode: line.vatCode,
-            lineTotal: line.lineNet2dp,
-            lineVat: line.lineVat2dp,
-            lineGross: line.lineGross2dp,
-            caseQty: line.caseQty,
-            orderingMode: line.orderingMode,
-            priceSource: line.priceSource,
-            quantityBreakId: line.quantityBreakId,
-            promotionId: line.promotionId,
-            availableQtyAtOrder: line.availableQtyAtOrder,
-            backorderQtyAtOrder: line.backorderQtyAtOrder,
-          })),
-        },
-      },
-      include: { items: true, company: { select: { name: true } } },
-    });
-
-    // AB stock reservation under row locks — authoritative over preview checks.
-    // Basket does NOT reserve; only order creation does.
-    await reserveStockForOrder(tx, {
-      orderId: order.id,
-      lines: order.items.map((item) => ({
-        orderItemId: item.id,
-        variantId: item.variantId!,
-        // Reserve ONLY available allocation — never backordered units.
-        quantity: item.availableQtyAtOrder ?? 0,
-      })),
-    });
-
-    const backorderUnits = order.items.reduce(
-      (sum, item) => sum + (item.backorderQtyAtOrder ?? 0),
-      0,
-    );
-    await recordFulfilmentEvent(tx, {
-      orderId: order.id,
-      kind: "ORDER_RECEIVED",
-      summary:
-        backorderUnits > 0
-          ? `Order received · ${backorderUnits} item${backorderUnits === 1 ? "" : "s"} on backorder`
-          : "Order received",
-      source: "ORDER_PLACE",
-      lineQuantitiesKnown: true,
-    });
-
-    await tx.basket.update({
-      where: { id: openBasket.id },
-      data: { status: "CONVERTED" },
-    });
-
-    return { kind: "created" as const, order };
+  const created = await commitSubmittedOrder({
+    company,
+    lines,
+    deliveryAddress,
+    contact,
+    poNumber,
+    deliveryInstructions: input.deliveryInstructions ?? null,
+    idempotencyKey: input.idempotencyKey,
+    orderedByUserId: userId,
+    convertBasketId: basketId,
   });
 
   if (created.kind === "existing") {
@@ -1584,6 +1736,8 @@ export async function listAdminOrders(
         lineCount: row._count.items,
         companyName: row.company.name,
         salesRepName: row.salesRepNameSnapshot,
+        placedByStaffName: row.placedByStaffName,
+        entrySource: row.entrySource,
         autopartAccountLinked: row.autopartAccountLinked,
         autopartExportStatus: row.autopartExportStatus,
         autopartCustomerCodeSnapshot: row.autopartCustomerCodeSnapshot,

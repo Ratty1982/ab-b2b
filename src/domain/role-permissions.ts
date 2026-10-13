@@ -28,6 +28,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "pricing.view",
   "inventory.view",
   "orders.view",
+  "orders.place_for_customer",
   "quotes.view",
   "invoices.view",
   "crm.view",
