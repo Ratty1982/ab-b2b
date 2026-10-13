@@ -74,6 +74,28 @@ export const salesOrderProductSearchSchema = z.object({
   q: z.string().trim().min(1).max(80),
 });
 
+const reviewedMoney = z.string().trim().regex(/^\d+(\.\d{1,2})?$/, "Expected a price in pounds");
+
+/** Prices and totals the salesperson has already seen. The server compares these to a fresh resolution. */
+export const salesOrderExpectedReviewSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        variantId: z.string().cuid(),
+        qty: z.number().int().min(1).max(99999),
+        customerUnitPrice: reviewedMoney,
+        lineNet: reviewedMoney,
+      }),
+    )
+    .max(100),
+  subtotal: reviewedMoney,
+  vatTotal: reviewedMoney,
+  deliveryTotal: reviewedMoney,
+  grandTotal: reviewedMoney,
+});
+
+export type SalesOrderExpectedReview = z.infer<typeof salesOrderExpectedReviewSchema>;
+
 export const placeSalesOrderSchema = z
   .object({
     draftId: z.string().cuid(),
@@ -92,6 +114,8 @@ export const placeSalesOrderSchema = z
     internalNote: optionalPlain(2000),
     lines: z.array(salesOrderLineInputSchema).max(100).optional(),
     expectedLinePrices: z.array(expectedLinePriceSchema).max(100).optional().nullable(),
+    /** Complete reviewed snapshot. Required for a new order. Ignored when accepting a quotation. */
+    expectedReview: salesOrderExpectedReviewSchema.optional().nullable(),
     /** When set, the existing quotation is accepted instead of pricing a new order. */
     quoteId: z.string().cuid().optional().nullable(),
   })

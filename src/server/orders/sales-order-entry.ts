@@ -13,6 +13,7 @@ import {
   type ContactSnapshot,
   type DeliveryAddressSnapshot,
 } from "@/domain/checkout";
+import { moneyToString, parseMoney } from "@/domain/money";
 import {
   openSalesOrderDraftSchema,
   placeSalesOrderSchema,
@@ -21,6 +22,7 @@ import {
   salesOrderProductSearchSchema,
   type PlaceSalesOrderInput,
   type SalesOrderEntrySource,
+  type SalesOrderExpectedReview,
 } from "@/domain/sales-order-entry";
 import { trustedSellableForOrdering } from "@/server/ordering/policy";
 import {
@@ -36,7 +38,7 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
+import { canAccessCompanyAsSales, getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { acceptQuoteOnBehalf } from "@/server/quotes/service";
 import { loadStockByVariantIds } from "@/server/stock/service";
 
@@ -107,9 +109,41 @@ export type SalesOrderWorkspace = {
   }>;
 };
 
+export type SalesOrderPriceChange = {
+  variantId: string;
+  sku: string;
+  name: string;
+  previousUnitPrice: string | null;
+  newUnitPrice: string | null;
+  previousLineNet: string | null;
+  newLineNet: string | null;
+};
+
+export type SalesOrderReviewedTotals = {
+  subtotal: string;
+  vatTotal: string;
+  deliveryTotal: string;
+  grandTotal: string;
+};
+
 export type SalesPlaceResult =
   | { ok: true; order: PublicOrderConfirmation; alreadyPlaced: boolean }
-  | { ok: false; code: "REVIEW_REQUIRED"; review: CheckoutReview };
+  | {
+      ok: false;
+      code: "REVIEW_REQUIRED";
+      review: CheckoutReview;
+      changes: SalesOrderPriceChange[];
+      totalsChanged: boolean;
+      previousTotals: SalesOrderReviewedTotals | null;
+    };
+
+export type SalesOrderAttribution = {
+  entrySource: SalesOrderEntrySource;
+  placedByStaffUserId: string;
+  placedByStaffName: string;
+  salesOrderDraftId: string;
+  internalNote: string | null;
+};
 
 async function requireSalesOrderStaff(userId: string): Promise<LoadedAccessProfile> {
   const profile = await requireSystemPermission(userId, "orders.place_for_customer");
@@ -201,6 +235,62 @@ async function loadOwnedDraft(userId: string, draftId: string, openOnly: boolean
     throw new AuthError("Sales order draft not found", "DRAFT_NOT_FOUND", 404);
   }
   return draft;
+}
+
+function draftConflict(status: string): AuthError {
+  if (status === "PLACED") {
+    return new AuthError(
+      "This draft has already been placed and can no longer be changed.",
+      "DRAFT_CONFLICT",
+      409,
+    );
+  }
+  if (status === "ABANDONED") {
+    return new AuthError(
+      "This draft was abandoned and cannot be reopened or placed.",
+      "DRAFT_CONFLICT",
+      409,
+    );
+  }
+  return new AuthError(
+    "This draft changed while you were working. Refresh and try again.",
+    "DRAFT_CONFLICT",
+    409,
+  );
+}
+
+async function lockOpenDraft(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  draftId: string,
+): Promise<DraftRow> {
+  const locked = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+    SELECT id, status
+    FROM "SalesOrderDraft"
+    WHERE id = ${draftId} AND "createdByUserId" = ${userId}
+    FOR UPDATE
+  `;
+  if (locked.length !== 1) {
+    throw new AuthError("Sales order draft not found", "DRAFT_NOT_FOUND", 404);
+  }
+  if (locked[0]!.status !== "OPEN") throw draftConflict(locked[0]!.status);
+  return tx.salesOrderDraft.findFirstOrThrow({
+    where: { id: draftId },
+    include: draftInclude,
+  });
+}
+
+function lineKey(lines: Array<{ variantId: string; qty: number }>): string {
+  return [...lines]
+    .map((line) => `${line.variantId}:${line.qty}`)
+    .sort()
+    .join("|");
+}
+
+function money2(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = parseMoney(value);
+  return parsed ? moneyToString(parsed, 2) : null;
 }
 
 async function loadCustomerChoices(companyId: string) {
@@ -370,38 +460,58 @@ async function workspaceFor(profile: LoadedAccessProfile, draft: DraftRow): Prom
   };
 }
 
-async function replaceLines(
-  draftId: string,
-  lines: Array<{ variantId: string; qty: number }>,
-) {
-  const unique = new Map<string, number>();
-  lines.forEach((line, index) => {
-    unique.set(line.variantId, line.qty);
-    void index;
-  });
-  await prisma.$transaction(async (tx) => {
-    await tx.salesOrderDraftLine.deleteMany({ where: { draftId } });
-    if (unique.size === 0) return;
-    await tx.salesOrderDraftLine.createMany({
-      data: [...unique.entries()].map(([variantId, qty], sortOrder) => ({
-        draftId,
-        variantId,
-        qty,
-        sortOrder,
-      })),
-    });
-  });
+function compareReviewedPrices(
+  expected: SalesOrderExpectedReview,
+  lines: Awaited<ReturnType<typeof resolveOrderLinesFromItems>>,
+  review: CheckoutReview,
+): { requiresReview: boolean; totalsChanged: boolean; changes: SalesOrderPriceChange[] } {
+  const changes: SalesOrderPriceChange[] = [];
+  const expectedById = new Map(expected.lines.map((line) => [line.variantId, line]));
+  for (const line of lines) {
+    const reviewed = expectedById.get(line.variantId);
+    const previousUnitPrice = money2(reviewed?.customerUnitPrice);
+    const previousLineNet = money2(reviewed?.lineNet);
+    const newUnitPrice = line.issue === "PRICE_UNAVAILABLE" ? null : line.customerUnit2dp;
+    const newLineNet = line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineNet2dp : null;
+    const qtyChanged = reviewed != null && reviewed.qty !== line.quantity;
+    const unitChanged = previousUnitPrice !== newUnitPrice;
+    const netChanged = previousLineNet !== newLineNet;
+    if (!reviewed || qtyChanged || unitChanged || netChanged) {
+      changes.push({
+        variantId: line.variantId,
+        sku: line.sku,
+        name: line.name,
+        previousUnitPrice,
+        newUnitPrice,
+        previousLineNet,
+        newLineNet,
+      });
+    }
+  }
+  const totalsChanged =
+    money2(expected.subtotal) !== review.totals.subtotal ||
+    money2(expected.vatTotal) !== review.totals.vatTotal ||
+    money2(expected.deliveryTotal) !== review.totals.deliveryTotal ||
+    money2(expected.grandTotal) !== review.totals.grandTotal;
+  return { requiresReview: changes.length > 0 || totalsChanged, totalsChanged, changes };
 }
 
 export async function listSalesOrderDrafts(actorUserId: string) {
-  await requireSalesOrderStaff(actorUserId);
+  const profile = await requireSalesOrderStaff(actorUserId);
   const rows = await prisma.salesOrderDraft.findMany({
     where: { createdByUserId: actorUserId, status: "OPEN" },
     include: draftInclude,
     orderBy: { updatedAt: "desc" },
     take: 50,
   });
-  return rows.map(toDraftDto);
+  const access = await getAccessibleCompanyIdsForSales(profile);
+  const allowed = new Set(access === "all" ? rows.map((row) => row.companyId) : access);
+  const active = await prisma.company.findMany({
+    where: { id: { in: [...allowed] }, status: "ACTIVE" },
+    select: { id: true },
+  });
+  const activeIds = new Set(active.map((company) => company.id));
+  return rows.filter((row) => activeIds.has(row.companyId)).map(toDraftDto);
 }
 
 export async function openSalesOrderDraft(actorUserId: string, raw: unknown) {
@@ -429,6 +539,7 @@ export async function getSalesOrderDraft(actorUserId: string, raw: unknown) {
   const profile = await requireSalesOrderStaff(actorUserId);
   const input = salesOrderDraftIdSchema.parse(raw);
   const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
+  await requireOrderableCompany(profile, draft.companyId);
   if (draft.status !== "OPEN") {
     return {
       draft: toDraftDto(draft),
@@ -446,7 +557,8 @@ export async function getSalesOrderDraft(actorUserId: string, raw: unknown) {
 export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
   const profile = await requireSalesOrderStaff(actorUserId);
   const input = salesOrderDraftHeaderSchema.parse(raw);
-  const draft = await loadOwnedDraft(actorUserId, input.draftId, true);
+  const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
+  if (draft.status !== "OPEN") throw draftConflict(draft.status);
   const company = await requireOrderableCompany(profile, draft.companyId);
 
   if (input.contactId) {
@@ -473,24 +585,43 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
     if (variants.length !== new Set(input.lines.map((line) => line.variantId)).size) {
       throw new AuthError("One or more products are unavailable", "PRODUCT_UNAVAILABLE", 400);
     }
-    await replaceLines(draft.id, input.lines);
   }
 
-  await prisma.salesOrderDraft.update({
-    where: { id: draft.id },
-    data: {
-      ...(input.source !== undefined ? { source: input.source } : {}),
-      ...(input.contactId !== undefined ? { contactId: input.contactId } : {}),
-      ...(input.addressId !== undefined ? { addressId: input.addressId } : {}),
-      ...(input.oneOffAddress !== undefined
-        ? { oneOffAddress: (input.oneOffAddress ?? Prisma.JsonNull) as Prisma.InputJsonValue }
-        : {}),
-      ...(input.poNumber !== undefined ? { poNumber: input.poNumber } : {}),
-      ...(input.deliveryInstructions !== undefined
-        ? { deliveryInstructions: input.deliveryInstructions }
-        : {}),
-      ...(input.internalNote !== undefined ? { internalNote: input.internalNote } : {}),
-    },
+  await prisma.$transaction(async (tx) => {
+    const locked = await lockOpenDraft(tx, actorUserId, draft.id);
+    if (input.lines) {
+      const unique = new Map<string, number>();
+      for (const line of input.lines) unique.set(line.variantId, line.qty);
+      await tx.salesOrderDraftLine.deleteMany({ where: { draftId: locked.id } });
+      if (unique.size > 0) {
+        await tx.salesOrderDraftLine.createMany({
+          data: [...unique.entries()].map(([variantId, qty], sortOrder) => ({
+            draftId: locked.id,
+            variantId,
+            qty,
+            sortOrder,
+          })),
+        });
+      }
+    }
+    const updated = await tx.salesOrderDraft.updateMany({
+      where: { id: locked.id, createdByUserId: actorUserId, status: "OPEN" },
+      data: {
+        updatedAt: new Date(),
+        ...(input.source !== undefined ? { source: input.source } : {}),
+        ...(input.contactId !== undefined ? { contactId: input.contactId } : {}),
+        ...(input.addressId !== undefined ? { addressId: input.addressId } : {}),
+        ...(input.oneOffAddress !== undefined
+          ? { oneOffAddress: (input.oneOffAddress ?? Prisma.JsonNull) as Prisma.InputJsonValue }
+          : {}),
+        ...(input.poNumber !== undefined ? { poNumber: input.poNumber } : {}),
+        ...(input.deliveryInstructions !== undefined
+          ? { deliveryInstructions: input.deliveryInstructions }
+          : {}),
+        ...(input.internalNote !== undefined ? { internalNote: input.internalNote } : {}),
+      },
+    });
+    if (updated.count !== 1) throw draftConflict("UNKNOWN");
   });
 
   const fresh = await loadOwnedDraft(actorUserId, draft.id, true);
@@ -498,12 +629,18 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
 }
 
 export async function abandonSalesOrderDraft(actorUserId: string, raw: unknown) {
-  await requireSalesOrderStaff(actorUserId);
+  const profile = await requireSalesOrderStaff(actorUserId);
   const input = salesOrderDraftIdSchema.parse(raw);
-  const draft = await loadOwnedDraft(actorUserId, input.draftId, true);
-  await prisma.salesOrderDraft.update({
-    where: { id: draft.id },
-    data: { status: "ABANDONED" },
+  const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
+  if (draft.status !== "OPEN") throw draftConflict(draft.status);
+  await requireOrderableCompany(profile, draft.companyId);
+  await prisma.$transaction(async (tx) => {
+    await lockOpenDraft(tx, actorUserId, draft.id);
+    const updated = await tx.salesOrderDraft.updateMany({
+      where: { id: draft.id, createdByUserId: actorUserId, status: "OPEN" },
+      data: { status: "ABANDONED" },
+    });
+    if (updated.count !== 1) throw draftConflict("UNKNOWN");
   });
   return { id: draft.id, status: "ABANDONED" as const };
 }
@@ -569,43 +706,91 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
   });
 }
 
-async function logPlacedActivity(input: {
+type CrmActivityInput = {
   actorUserId: string;
   companyId: string;
   orderId: string;
   orderNumber: string;
   source: SalesOrderEntrySource;
   internalNote: string | null;
-}) {
-  const existing = await prisma.activity.findFirst({
-    where: {
-      companyId: input.companyId,
-      metadata: { path: ["salesOrderId"], equals: input.orderId },
-    },
-    select: { id: true },
-  });
-  if (existing) return;
+};
 
-  await prisma.activity.create({
-    data: {
-      companyId: input.companyId,
-      userId: input.actorUserId,
-      type: "NOTE",
-      subject: `Order ${input.orderNumber} placed for the customer`,
-      body: [
-        `Source: ${SOURCE_LABEL[input.source]}.`,
-        "Staff confirmed they are authorised to submit this order on the customer's behalf.",
-        input.internalNote ? `Internal note: ${input.internalNote}` : null,
-      ]
-        .filter(Boolean)
-        .join(" "),
-      metadata: {
-        kind: "sales_order_entry",
-        salesOrderId: input.orderId,
-        orderNumber: input.orderNumber,
-        source: input.source,
+/** Test seam. Production uses the Prisma activity delegate. */
+export const salesOrderCrmDependencies = {
+  async createActivity(tx: Prisma.TransactionClient, input: CrmActivityInput) {
+    await tx.activity.create({
+      data: {
+        companyId: input.companyId,
+        userId: input.actorUserId,
+        type: "NOTE",
+        subject: `Order ${input.orderNumber} placed for the customer`,
+        body: [
+          `Source: ${SOURCE_LABEL[input.source]}.`,
+          "Staff confirmed they are authorised to submit this order on the customer's behalf.",
+          input.internalNote ? `Internal note: ${input.internalNote}` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        metadata: {
+          kind: "sales_order_entry",
+          salesOrderId: input.orderId,
+          orderNumber: input.orderNumber,
+          source: input.source,
+        },
       },
-    },
+    });
+  },
+};
+
+export async function ensureSalesOrderCrmActivity(input: CrmActivityInput): Promise<"created" | "exists" | "failed"> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sales-order-crm:${input.orderId}`}))`;
+      const existing = await tx.activity.findFirst({
+        where: {
+          companyId: input.companyId,
+          metadata: { path: ["salesOrderId"], equals: input.orderId },
+        },
+        select: { id: true },
+      });
+      if (existing) return "exists" as const;
+      await salesOrderCrmDependencies.createActivity(tx, input);
+      return "created" as const;
+    });
+  } catch (error) {
+    await recordAuditEvent({
+      action: "order.crm_activity_failed",
+      entityType: "Order",
+      entityId: input.orderId,
+      actorUserId: input.actorUserId,
+      companyId: input.companyId,
+      metadata: {
+        detail: error instanceof Error ? error.message : "unknown",
+        orderNumber: input.orderNumber,
+        repair: true,
+      },
+    });
+    return "failed";
+  }
+}
+
+async function repairCrmFromOrder(order: {
+  id: string;
+  orderNumber: string;
+  companyId: string;
+  notes: string | null;
+  entrySource: SalesOrderEntrySource | null;
+  placedByStaffUserId: string | null;
+  orderedByUserId: string | null;
+}) {
+  if (!order.entrySource) return;
+  await ensureSalesOrderCrmActivity({
+    actorUserId: order.placedByStaffUserId ?? order.orderedByUserId ?? "",
+    companyId: order.companyId,
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    source: order.entrySource,
+    internalNote: order.notes,
   });
 }
 
@@ -658,29 +843,25 @@ async function placeFromQuote(
     throw new AuthError("Not permitted to accept quotations for customers", "FORBIDDEN", 403);
   }
 
-  const result = await acceptQuoteOnBehalf(actorUserId, {
-    id: quote.id,
-    idempotencyKey: input.idempotencyKey,
-    note: `Sales order entry (${SOURCE_LABEL[input.source]}). Staff confirmed customer authorisation.`,
-  });
+  const staffName = profile.name?.trim() || profile.email;
+  const internalNote = input.internalNote ?? draft.internalNote ?? null;
+  const result = await acceptQuoteOnBehalf(
+    actorUserId,
+    {
+      id: quote.id,
+      idempotencyKey: input.idempotencyKey,
+      note: `Sales order entry (${SOURCE_LABEL[input.source]}). Staff confirmed customer authorisation.`,
+    },
+    {
+      entrySource: input.source,
+      placedByStaffUserId: actorUserId,
+      placedByStaffName: staffName,
+      salesOrderDraftId: draft.id,
+      internalNote,
+    },
+  );
 
   if (!result.alreadyConverted) {
-    await prisma.order.update({
-      where: { id: result.orderId },
-      data: {
-        entrySource: input.source,
-        placedByStaffUserId: actorUserId,
-        placedByStaffName: profile.name?.trim() || profile.email,
-      },
-    });
-    await logPlacedActivity({
-      actorUserId,
-      companyId: draft.companyId,
-      orderId: result.orderId,
-      orderNumber: result.orderNumber,
-      source: input.source,
-      internalNote: input.internalNote ?? null,
-    });
     await recordAuditEvent({
       action: "order.placed_for_customer",
       entityType: "Order",
@@ -698,13 +879,13 @@ async function placeFromQuote(
     });
   }
 
-  await prisma.salesOrderDraft.updateMany({
-    where: { id: draft.id, createdByUserId: actorUserId, status: "OPEN" },
-    data: {
-      status: "PLACED",
-      placedOrderId: result.orderId,
-      source: input.source,
-    },
+  await ensureSalesOrderCrmActivity({
+    actorUserId,
+    companyId: draft.companyId,
+    orderId: result.orderId,
+    orderNumber: result.orderNumber,
+    source: input.source,
+    internalNote,
   });
 
   const order = await prisma.order.findUniqueOrThrow({
@@ -744,6 +925,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     if (!allowed) {
       throw new AuthError("No access to this customer", "COMPANY_FORBIDDEN", 403);
     }
+    await repairCrmFromOrder(existing);
     return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
   }
 
@@ -760,18 +942,29 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
         select: { id: true },
       });
       if (quote) {
+        await repairCrmFromOrder(
+          await prisma.order.findUniqueOrThrow({ where: { id: draft.placedOrderId } }),
+        );
         return { ok: true, alreadyPlaced: true, order: await confirmationForOrder(draft.placedOrderId) };
       }
     }
-    throw new AuthError("Sales order draft not found", "DRAFT_NOT_FOUND", 404);
+    throw draftConflict(draft.status);
   }
 
   if (input.quoteId) {
     return placeFromQuote(actorUserId, profile, draft, input);
   }
 
-  if (input.lines) {
-    await replaceLines(draft.id, input.lines);
+  const requestedLines = input.lines ?? draft.lines.map((line) => ({ variantId: line.variantId, qty: line.qty }));
+  if (requestedLines.length === 0) {
+    throw new AuthError("Add at least one product", "DRAFT_EMPTY", 400);
+  }
+  if (lineKey(requestedLines) !== lineKey(draft.lines)) {
+    throw new AuthError(
+      "Save the products and quantities, then review the prices before placing this order.",
+      "DRAFT_NOT_SAVED",
+      409,
+    );
   }
 
   const contact = await contactSnapshotForCompany(company.id, input.contactId!);
@@ -780,30 +973,27 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     oneOffAddress: input.oneOffAddress ?? null,
   });
 
-  await prisma.salesOrderDraft.update({
-    where: { id: draft.id },
-    data: {
-      source: input.source,
-      contactId: input.contactId ?? null,
-      addressId: input.oneOffAddress ? null : (input.addressId ?? null),
-      oneOffAddress: input.oneOffAddress
-        ? (input.oneOffAddress as unknown as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-      poNumber: input.poNumber ?? null,
-      deliveryInstructions: input.deliveryInstructions ?? null,
-      internalNote: input.internalNote ?? null,
-    },
-  });
-
-  const current = await loadOwnedDraft(actorUserId, draft.id, true);
-  if (current.lines.length === 0) {
-    throw new AuthError("Add at least one product", "DRAFT_EMPTY", 400);
+  const expected = input.expectedReview;
+  if (!expected || expected.lines.length === 0) {
+    throw new AuthError(
+      "Review the prices, VAT, and delivery total before placing this order.",
+      "EXPECTED_PRICES_REQUIRED",
+      400,
+    );
+  }
+  const expectedIds = new Set(expected.lines.map((line) => line.variantId));
+  if (requestedLines.some((line) => !expectedIds.has(line.variantId)) || expected.lines.length !== requestedLines.length) {
+    throw new AuthError(
+      "Review every product price before placing this order.",
+      "EXPECTED_PRICES_REQUIRED",
+      400,
+    );
   }
 
   const lines = await resolveOrderLinesFromItems(
     company.id,
-    current.lines.map((line) => ({ variantId: line.variantId, qty: line.qty })),
-    input.expectedLinePrices,
+    requestedLines,
+    expected.lines.map((line) => ({ variantId: line.variantId, customerUnitPrice: line.customerUnitPrice })),
   );
   const review = buildCheckoutReview({
     company,
@@ -813,8 +1003,21 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     poNumber: input.poNumber ?? null,
     deliveryInstructions: input.deliveryInstructions ?? null,
   });
-  if (review.hasBlockingIssues) {
-    return { ok: false, code: "REVIEW_REQUIRED", review };
+  const comparison = compareReviewedPrices(expected, lines, review);
+  if (review.hasBlockingIssues || comparison.requiresReview) {
+    return {
+      ok: false,
+      code: "REVIEW_REQUIRED",
+      review,
+      changes: comparison.changes,
+      totalsChanged: comparison.totalsChanged,
+      previousTotals: {
+        subtotal: money2(expected.subtotal) ?? expected.subtotal,
+        vatTotal: money2(expected.vatTotal) ?? expected.vatTotal,
+        deliveryTotal: money2(expected.deliveryTotal) ?? expected.deliveryTotal,
+        grandTotal: money2(expected.grandTotal) ?? expected.grandTotal,
+      },
+    };
   }
 
   const staffName = profile.name?.trim() || profile.email;
@@ -833,18 +1036,39 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     placedByStaffName: staffName,
     notes: input.internalNote ?? null,
     salesOrderDraftId: draft.id,
+    beforeCreate: async (tx) => {
+      const locked = await lockOpenDraft(tx, actorUserId, draft.id);
+      if (lineKey(locked.lines) !== lineKey(requestedLines)) {
+        throw new AuthError(
+          "This draft changed while the order was being placed. Review it and try again.",
+          "DRAFT_CONFLICT",
+          409,
+        );
+      }
+    },
     withinTransaction: async (tx, order) => {
       const marked = await tx.salesOrderDraft.updateMany({
         where: { id: draft.id, createdByUserId: actorUserId, status: "OPEN" },
-        data: { status: "PLACED", placedOrderId: order.id },
+        data: {
+          status: "PLACED",
+          placedOrderId: order.id,
+          source: input.source,
+          contactId: input.contactId ?? null,
+          addressId: input.oneOffAddress ? null : (input.addressId ?? null),
+          oneOffAddress: input.oneOffAddress
+            ? (input.oneOffAddress as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+          poNumber: input.poNumber ?? null,
+          deliveryInstructions: input.deliveryInstructions ?? null,
+          internalNote: input.internalNote ?? null,
+        },
       });
-      if (marked.count !== 1) {
-        throw new AuthError("Draft is no longer open", "DRAFT_NOT_OPEN", 409);
-      }
+      if (marked.count !== 1) throw draftConflict("UNKNOWN");
     },
   });
 
   if (created.kind === "existing") {
+    await repairCrmFromOrder(created.order);
     return {
       ok: true,
       alreadyPlaced: true,
@@ -874,7 +1098,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       externalRef: null,
     },
   });
-  await logPlacedActivity({
+  await ensureSalesOrderCrmActivity({
     actorUserId,
     companyId: company.id,
     orderId: created.order.id,

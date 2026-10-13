@@ -1100,6 +1100,8 @@ export type SubmittedOrderCommit = {
   /** When set, the company OPEN basket is marked CONVERTED inside the same transaction. */
   convertBasketId?: string | null;
   salesOrderDraftId?: string | null;
+  /** Runs inside the order transaction, before the order row is created. */
+  beforeCreate?: (tx: Prisma.TransactionClient) => Promise<void>;
   withinTransaction?: (
     tx: Prisma.TransactionClient,
     order: { id: string; orderNumber: string },
@@ -1139,6 +1141,8 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
         throw new AuthError("Basket is no longer available", "BASKET_NOT_FOUND", 404);
       }
     }
+
+    if (input.beforeCreate) await input.beforeCreate(tx);
 
     const orderNumber = await allocateOrderNumber(tx);
     const placedAt = new Date();
