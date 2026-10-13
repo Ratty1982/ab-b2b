@@ -4,7 +4,8 @@
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
-import { recordAuditEvent } from "@/server/audit/record";
+import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
+import type { AuditEventInput } from "@/server/audit/types";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { previewPromotionUnit, parsePromotionMetadata } from "@/domain/pricing-management";
@@ -20,6 +21,15 @@ import {
 } from "@/domain/promotion-campaigns";
 
 const READ_PERMISSIONS = ["promotions.submit", "promotions.approve", "promotions.report"] as const;
+const CAMPAIGN_CONFLICT_MESSAGE = "This campaign changed after you opened it. Refresh and try again.";
+
+type CampaignAuditWriter = (tx: Prisma.TransactionClient, input: AuditEventInput) => Promise<void>;
+let campaignAuditWriter: CampaignAuditWriter = recordAuditEventInTransaction;
+
+/** Test seam. Production callers keep the transactional audit writer. */
+export function setCampaignAuditWriterForTests(writer: CampaignAuditWriter | null): void {
+  campaignAuditWriter = writer ?? recordAuditEventInTransaction;
+}
 
 type CampaignRow = {
   id: string;
@@ -118,6 +128,7 @@ function present(row: CampaignRow, actorUserId: string, profile: LoadedAccessPro
     canReject: approver && row.campaignStatus === "PENDING_APPROVAL",
     canCancel: approver && row.campaignStatus === "APPROVED",
     canSetNegotiatedPrices: approver && row.campaignStatus === "APPROVED",
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -127,21 +138,48 @@ async function loadCampaign(id: string): Promise<CampaignRow> {
   return row;
 }
 
+function conflict(): AuthError {
+  return new AuthError(CAMPAIGN_CONFLICT_MESSAGE, "CAMPAIGN_CONFLICT", 409);
+}
+
+function versionClause(expectedUpdatedAt?: string): Prisma.PromotionWhereInput {
+  return expectedUpdatedAt ? { updatedAt: new Date(expectedUpdatedAt) } : {};
+}
+
+function assertLoadedVersion(existing: CampaignRow, expectedUpdatedAt?: string) {
+  if (!expectedUpdatedAt) return;
+  if (existing.updatedAt.toISOString() !== expectedUpdatedAt) throw conflict();
+}
+
 /** Status in the WHERE clause makes the transition fail if another reviewer already changed it. */
 async function transitionCampaign(
   where: Prisma.PromotionWhereInput,
   data: Prisma.PromotionUpdateManyMutationInput,
 ): Promise<CampaignRow> {
   const updated = await prisma.promotion.updateMany({ where, data });
-  if (updated.count !== 1) {
-    throw new AuthError(
-      "This campaign was already reviewed or changed. Refresh and try again.",
-      "CAMPAIGN_CONFLICT",
-      409,
-    );
-  }
+  if (updated.count !== 1) throw conflict();
   if (typeof where.id !== "string") throw new AuthError("Promotion not found", "NOT_FOUND", 404);
   return loadCampaign(where.id);
+}
+
+/**
+ * Sensitive commercial changes and their audit row commit together.
+ * A failed audit write rolls the status change back.
+ */
+async function commitCampaignChange(input: {
+  where: Prisma.PromotionWhereInput;
+  data: Prisma.PromotionUpdateManyMutationInput;
+  audit: AuditEventInput;
+}): Promise<CampaignRow> {
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.promotion.updateMany({ where: input.where, data: input.data });
+    if (updated.count !== 1) throw conflict();
+    if (typeof input.where.id !== "string") throw new AuthError("Promotion not found", "NOT_FOUND", 404);
+    await campaignAuditWriter(tx, input.audit);
+    const row = await tx.promotion.findUnique({ where: { id: input.where.id } });
+    if (!row) throw new AuthError("Promotion not found", "NOT_FOUND", 404);
+    return row;
+  });
 }
 
 function metadataFor(input: {
@@ -216,6 +254,9 @@ export async function saveCampaignDraft(actorUserId: string, raw: unknown) {
     if (existing.campaignStatus === "LEGACY") {
       throw new AuthError("Existing promotions stay on the current pricing rules", "CAMPAIGN_LEGACY", 400);
     }
+    if (input.expectedUpdatedAt && existing.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+      throw conflict();
+    }
     if (!view.editable) {
       throw new AuthError("This campaign cannot be edited", "CAMPAIGN_LOCKED", 409);
     }
@@ -246,15 +287,42 @@ export async function saveCampaignDraft(actorUserId: string, raw: unknown) {
     throw new AuthError("Promotion code is already in use", "CODE_TAKEN", 409);
   }
 
-  const row = existing
-    ? await prisma.promotion.update({ where: { id: existing.id }, data })
-    : await prisma.promotion.create({
-        data: {
-          ...data,
-          campaignStatus: "DRAFT",
-          createdByUserId: actorUserId,
-        },
-      });
+  let row: CampaignRow;
+  if (!existing) {
+    row = await prisma.promotion.create({
+      data: {
+        ...data,
+        campaignStatus: "DRAFT",
+        createdByUserId: actorUserId,
+      },
+    });
+  } else {
+    if (!input.expectedUpdatedAt) throw conflict();
+    const editableStatuses = approver
+      ? (["DRAFT", "PENDING_APPROVAL", "REJECTED"] as const)
+      : (["DRAFT", "REJECTED"] as const);
+    const reopenForApproval = existing.campaignStatus === "PENDING_APPROVAL";
+    const updated = await prisma.promotion.updateMany({
+      where: {
+        id: existing.id,
+        updatedAt: new Date(input.expectedUpdatedAt),
+        campaignStatus: { in: [...editableStatuses] },
+      },
+      data: {
+        ...data,
+        ...(reopenForApproval
+          ? {
+              campaignStatus: "DRAFT",
+              submittedAt: null,
+              submittedByUserId: null,
+              reviewReason: null,
+            }
+          : {}),
+      },
+    });
+    if (updated.count !== 1) throw conflict();
+    row = await loadCampaign(existing.id);
+  }
 
   await recordAuditEvent({
     action: existing ? "promotions.campaign.updated" : "promotions.campaign.created",
@@ -329,6 +397,7 @@ export async function approveCampaign(actorUserId: string, raw: unknown) {
   const profile = await requireApprover(actorUserId);
   const input = campaignReviewSchema.parse(raw);
   const existing = await loadCampaign(input.id);
+  assertLoadedVersion(existing, input.expectedUpdatedAt);
   if (existing.campaignStatus !== "PENDING_APPROVAL") {
     throw new AuthError("Only a campaign pending approval can be approved", "CAMPAIGN_LOCKED", 409);
   }
@@ -351,9 +420,13 @@ export async function approveCampaign(actorUserId: string, raw: unknown) {
       400,
     );
   }
-  const row = await transitionCampaign(
-    { id: existing.id, campaignStatus: "PENDING_APPROVAL" },
-    {
+  const row = await commitCampaignChange({
+    where: {
+      id: existing.id,
+      campaignStatus: "PENDING_APPROVAL",
+      ...versionClause(input.expectedUpdatedAt),
+    },
+    data: {
       campaignStatus: "APPROVED",
       isActive: true,
       reviewedAt: now,
@@ -361,17 +434,17 @@ export async function approveCampaign(actorUserId: string, raw: unknown) {
       reviewReason: null,
       appliesToNegotiatedPrices,
     },
-  );
-  await recordAuditEvent({
-    action: "promotions.campaign.approved",
-    entityType: "Promotion",
-    entityId: row.id,
-    actorUserId,
-    after: {
-      code: row.code,
-      campaignStatus: row.campaignStatus,
-      isActive: true,
-      appliesToNegotiatedPrices: row.appliesToNegotiatedPrices,
+    audit: {
+      action: "promotions.campaign.approved",
+      entityType: "Promotion",
+      entityId: existing.id,
+      actorUserId,
+      after: {
+        code: existing.code,
+        campaignStatus: "APPROVED",
+        isActive: true,
+        appliesToNegotiatedPrices,
+      },
     },
   });
   return present(row, actorUserId, profile);
@@ -382,25 +455,30 @@ export async function rejectCampaign(actorUserId: string, raw: unknown) {
   const input = campaignReviewSchema.parse(raw);
   if (!input.reason) throw new AuthError("A rejection reason is required", "VALIDATION", 400);
   const existing = await loadCampaign(input.id);
+  assertLoadedVersion(existing, input.expectedUpdatedAt);
   if (existing.campaignStatus !== "PENDING_APPROVAL") {
     throw new AuthError("Only a campaign pending approval can be rejected", "CAMPAIGN_LOCKED", 409);
   }
-  const row = await transitionCampaign(
-    { id: existing.id, campaignStatus: "PENDING_APPROVAL" },
-    {
+  const row = await commitCampaignChange({
+    where: {
+      id: existing.id,
+      campaignStatus: "PENDING_APPROVAL",
+      ...versionClause(input.expectedUpdatedAt),
+    },
+    data: {
       campaignStatus: "REJECTED",
       isActive: false,
       reviewedAt: new Date(),
       reviewedByUserId: actorUserId,
       reviewReason: input.reason,
     },
-  );
-  await recordAuditEvent({
-    action: "promotions.campaign.rejected",
-    entityType: "Promotion",
-    entityId: row.id,
-    actorUserId,
-    after: { code: row.code, campaignStatus: row.campaignStatus, reason: input.reason },
+    audit: {
+      action: "promotions.campaign.rejected",
+      entityType: "Promotion",
+      entityId: existing.id,
+      actorUserId,
+      after: { code: existing.code, campaignStatus: "REJECTED", reason: input.reason },
+    },
   });
   return present(row, actorUserId, profile);
 }
@@ -410,25 +488,30 @@ export async function cancelCampaign(actorUserId: string, raw: unknown) {
   const input = campaignReviewSchema.parse(raw);
   if (!input.reason) throw new AuthError("A cancellation reason is required", "VALIDATION", 400);
   const existing = await loadCampaign(input.id);
+  assertLoadedVersion(existing, input.expectedUpdatedAt);
   if (existing.campaignStatus !== "APPROVED") {
     throw new AuthError("Only an approved campaign can be cancelled", "CAMPAIGN_LOCKED", 409);
   }
-  const row = await transitionCampaign(
-    { id: existing.id, campaignStatus: "APPROVED" },
-    {
+  const row = await commitCampaignChange({
+    where: {
+      id: existing.id,
+      campaignStatus: "APPROVED",
+      ...versionClause(input.expectedUpdatedAt),
+    },
+    data: {
       campaignStatus: "CANCELLED",
       isActive: false,
       cancelledAt: new Date(),
       cancelledByUserId: actorUserId,
       reviewReason: input.reason,
     },
-  );
-  await recordAuditEvent({
-    action: "promotions.campaign.cancelled",
-    entityType: "Promotion",
-    entityId: row.id,
-    actorUserId,
-    after: { code: row.code, campaignStatus: row.campaignStatus, isActive: false, reason: input.reason },
+    audit: {
+      action: "promotions.campaign.cancelled",
+      entityType: "Promotion",
+      entityId: existing.id,
+      actorUserId,
+      after: { code: existing.code, campaignStatus: "CANCELLED", isActive: false, reason: input.reason },
+    },
   });
   return present(row, actorUserId, profile);
 }
@@ -440,6 +523,7 @@ export async function setNegotiatedEligibility(actorUserId: string, raw: unknown
     throw new AuthError("Choose whether negotiated prices are eligible", "VALIDATION", 400);
   }
   const existing = await loadCampaign(input.id);
+  assertLoadedVersion(existing, input.expectedUpdatedAt);
   if (existing.campaignStatus !== "APPROVED") {
     throw new AuthError("Negotiated-price eligibility is set on an approved campaign", "CAMPAIGN_LOCKED", 409);
   }
@@ -454,21 +538,23 @@ export async function setNegotiatedEligibility(actorUserId: string, raw: unknown
   if (existing.appliesToNegotiatedPrices === input.appliesToNegotiatedPrices) {
     return present(existing, actorUserId, profile);
   }
-  const row = await transitionCampaign(
-    {
+  const nextEligibility = input.appliesToNegotiatedPrices;
+  const row = await commitCampaignChange({
+    where: {
       id: existing.id,
       campaignStatus: "APPROVED",
       appliesToNegotiatedPrices: existing.appliesToNegotiatedPrices,
+      ...versionClause(input.expectedUpdatedAt),
     },
-    { appliesToNegotiatedPrices: input.appliesToNegotiatedPrices },
-  );
-  await recordAuditEvent({
-    action: "promotions.campaign.stacking_updated",
-    entityType: "Promotion",
-    entityId: row.id,
-    actorUserId,
-    before: { appliesToNegotiatedPrices: existing.appliesToNegotiatedPrices },
-    after: { appliesToNegotiatedPrices: row.appliesToNegotiatedPrices, code: row.code },
+    data: { appliesToNegotiatedPrices: nextEligibility },
+    audit: {
+      action: "promotions.campaign.stacking_updated",
+      entityType: "Promotion",
+      entityId: existing.id,
+      actorUserId,
+      before: { appliesToNegotiatedPrices: existing.appliesToNegotiatedPrices },
+      after: { appliesToNegotiatedPrices: nextEligibility, code: existing.code },
+    },
   });
   return present(row, actorUserId, profile);
 }

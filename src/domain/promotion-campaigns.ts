@@ -78,6 +78,7 @@ export const campaignDraftSchema = z.object({
   endsAt: z.string().datetime().nullable().optional(),
   skus: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
   appliesToNegotiatedPrices: z.boolean().optional(),
+  expectedUpdatedAt: z.string().datetime().optional(),
 });
 
 export const campaignReviewSchema = z.object({
@@ -85,6 +86,7 @@ export const campaignReviewSchema = z.object({
   reason: z.string().trim().min(1).max(500).optional(),
   appliesToNegotiatedPrices: z.boolean().optional(),
   confirmNegotiatedPrices: z.boolean().optional(),
+  expectedUpdatedAt: z.string().datetime().optional(),
 });
 
 export function assertCampaignCommercial(input: {

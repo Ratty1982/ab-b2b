@@ -90,6 +90,31 @@ describe("campaign display status", () => {
       }).status,
     ).toBe("EXPIRED");
   });
+
+  it("keeps scheduled, active, expired and cancelled states across the GMT and BST boundary", () => {
+    const beforeChange = new Date("2026-10-25T00:29:00.000Z");
+    const duringBst = new Date("2026-10-25T00:30:00.000Z");
+    const afterGmt = new Date("2026-10-25T01:30:00.000Z");
+    const window = {
+      campaignStatus: "APPROVED" as const,
+      isActive: true,
+      startsAt: duringBst,
+      endsAt: afterGmt,
+    };
+    expect(campaignDisplayStatus({ ...window, at: beforeChange }).status).toBe("SCHEDULED");
+    expect(campaignDisplayStatus({ ...window, at: duringBst }).status).toBe("ACTIVE");
+    expect(campaignDisplayStatus({ ...window, at: afterGmt }).status).toBe("ACTIVE");
+    expect(campaignDisplayStatus({ ...window, at: new Date("2026-10-25T01:30:00.001Z") }).status).toBe("EXPIRED");
+    expect(
+      campaignDisplayStatus({
+        campaignStatus: "CANCELLED",
+        isActive: false,
+        startsAt: duringBst,
+        endsAt: afterGmt,
+        at: duringBst,
+      }).status,
+    ).toBe("CANCELLED");
+  });
 });
 
 describe("promotional savings", () => {

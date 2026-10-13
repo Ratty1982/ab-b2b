@@ -9,6 +9,7 @@ import {
   cancelCampaign,
   rejectCampaign,
   saveCampaignDraft,
+  setCampaignAuditWriterForTests,
   setNegotiatedEligibility,
   submitCampaign,
 } from "@/server/promotions/campaigns";
@@ -212,6 +213,7 @@ describe("sales promotion campaigns", () => {
       type: "PERCENT",
       value: 10,
       skus: [skuA],
+      expectedUpdatedAt: draft.updatedAt,
     });
     expect(edited.name).toContain("revised");
     await expect(
@@ -246,6 +248,7 @@ describe("sales promotion campaigns", () => {
       startsAt: new Date("2026-10-01T00:00:00.000Z").toISOString(),
       endsAt: new Date("2026-12-01T00:00:00.000Z").toISOString(),
       skus: [skuA],
+      expectedUpdatedAt: rejected.updatedAt,
     });
     await submitCampaign(repId, { id: draft.id });
     const approved = await approveCampaign(managementId, { id: draft.id, appliesToNegotiatedPrices: false });
@@ -261,6 +264,7 @@ describe("sales promotion campaigns", () => {
     expect(openPrice.source).toBe("PROMOTION");
     expect(openPrice.promotionApplied?.id).toBe(draft.id);
     expect(openPrice.promotionBaselineUnitExVat).toBe("20.0000");
+    expect(openPrice.unitPriceExVat).toBe("18.0000");
     const otherSku = await price(companyBId, variantBId);
     expect(otherSku.promotionApplied).toBeNull();
 
@@ -516,6 +520,7 @@ describe("sales promotion campaigns", () => {
       startsAt: stored,
       endsAt: draft.endsAt,
       skus: [skuB],
+      expectedUpdatedAt: draft.updatedAt,
     });
     expect(resaved.startsAt).toBe(stored);
     await expect(
@@ -636,5 +641,217 @@ describe("sales promotion campaigns", () => {
       }),
     ).toBe(2);
     await cancelCampaign(managementId, { id: draft.id, reason: "Cleanup" });
+  });
+
+  async function pendingCampaign(code: string, sku: string) {
+    const draft = await saveCampaignDraft(repId, {
+      code,
+      name: code,
+      type: "PERCENT",
+      value: 10,
+      startsAt: new Date("2026-10-01T00:00:00.000Z").toISOString(),
+      endsAt: new Date("2026-12-31T00:00:00.000Z").toISOString(),
+      skus: [sku],
+    });
+    promotionIds.push(draft.id);
+    return submitCampaign(repId, { id: draft.id });
+  }
+
+  it("rejects a stale save and will not approve a pending campaign from an outdated review", async () => {
+    const pending = await pendingCampaign(`STALE-${suffix}`, skuA);
+    const approved = await approveCampaign(managementId, {
+      id: pending.id,
+      appliesToNegotiatedPrices: false,
+      expectedUpdatedAt: pending.updatedAt,
+    });
+    expect(approved.isActive).toBe(true);
+    await expect(
+      saveCampaignDraft(repId, {
+        id: pending.id,
+        code: `STALE-${suffix}`,
+        name: "Older editor",
+        type: "PERCENT",
+        value: 10,
+        skus: [skuA],
+        startsAt: pending.startsAt,
+        endsAt: pending.endsAt,
+        expectedUpdatedAt: pending.updatedAt,
+      }),
+    ).rejects.toMatchObject({
+      code: "CAMPAIGN_CONFLICT",
+      message: expect.stringMatching(/Refresh/),
+    });
+    const stayed = await prisma.promotion.findUniqueOrThrow({ where: { id: pending.id } });
+    expect(stayed.campaignStatus).toBe("APPROVED");
+    expect(stayed.isActive).toBe(true);
+    expect(stayed.name).toBe(pending.name);
+
+    const pendingEdit = await pendingCampaign(`STALE2-${suffix}`, skuB);
+    const edited = await saveCampaignDraft(managementId, {
+      id: pendingEdit.id,
+      code: `STALE2-${suffix}`,
+      name: "Changed while pending",
+      type: "PERCENT",
+      value: 12,
+      startsAt: pendingEdit.startsAt,
+      endsAt: pendingEdit.endsAt,
+      skus: [skuB],
+      expectedUpdatedAt: pendingEdit.updatedAt,
+    });
+    expect(edited.campaignStatus).toBe("DRAFT");
+    expect(edited.isActive).toBe(false);
+    await expect(
+      approveCampaign(managementId, {
+        id: pendingEdit.id,
+        appliesToNegotiatedPrices: false,
+        expectedUpdatedAt: pendingEdit.updatedAt,
+      }),
+    ).rejects.toMatchObject({
+      code: "CAMPAIGN_CONFLICT",
+      message: expect.stringMatching(/Refresh/),
+    });
+    const held = await prisma.promotion.findUniqueOrThrow({ where: { id: pendingEdit.id } });
+    expect(held.campaignStatus).toBe("DRAFT");
+    expect(held.isActive).toBe(false);
+    await cancelCampaign(managementId, { id: pending.id, reason: "Cleanup stale" }).catch(async () => {
+      await prisma.promotion.update({ where: { id: pending.id }, data: { isActive: false } });
+    });
+  });
+
+  it("lets only one of a simultaneous save and approval change the campaign", async () => {
+    const pending = await pendingCampaign(`SIMUL-${suffix}`, skuB);
+    const [saved, approved] = await Promise.allSettled([
+      saveCampaignDraft(repId, {
+        id: pending.id,
+        code: `SIMUL-${suffix}`,
+        name: "Race save",
+        type: "PERCENT",
+        value: 10,
+        startsAt: pending.startsAt,
+        endsAt: pending.endsAt,
+        skus: [skuB],
+        expectedUpdatedAt: pending.updatedAt,
+      }),
+      approveCampaign(managementId, {
+        id: pending.id,
+        appliesToNegotiatedPrices: false,
+        expectedUpdatedAt: pending.updatedAt,
+      }),
+    ]);
+    expect([saved, approved].filter((row) => row.status === "fulfilled")).toHaveLength(1);
+    expect([saved, approved].filter((row) => row.status === "rejected")).toHaveLength(1);
+    const row = await prisma.promotion.findUniqueOrThrow({ where: { id: pending.id } });
+    const approvedAudits = await prisma.auditEvent.count({
+      where: { entityId: pending.id, action: "promotions.campaign.approved" },
+    });
+    if (saved.status === "fulfilled") {
+      expect(row.campaignStatus).toBe("DRAFT");
+      expect(row.isActive).toBe(false);
+      expect(approvedAudits).toBe(0);
+    } else {
+      expect(row.campaignStatus).toBe("APPROVED");
+      expect(row.isActive).toBe(true);
+      expect(row.name).toBe(pending.name);
+      expect(approvedAudits).toBe(1);
+      await cancelCampaign(managementId, { id: pending.id, reason: "Cleanup race" });
+    }
+  });
+
+  it("rolls sensitive campaign changes back when the audit record cannot be written", async () => {
+    const pending = await pendingCampaign(`AUDIT-${suffix}`, skuA);
+    setCampaignAuditWriterForTests(async () => {
+      throw new Error("audit persistence failed");
+    });
+    try {
+      await expect(
+        approveCampaign(managementId, { id: pending.id, appliesToNegotiatedPrices: false }),
+      ).rejects.toThrow(/audit persistence failed/);
+      expect((await prisma.promotion.findUniqueOrThrow({ where: { id: pending.id } })).campaignStatus).toBe(
+        "PENDING_APPROVAL",
+      );
+      expect(
+        await prisma.auditEvent.count({ where: { entityId: pending.id, action: "promotions.campaign.approved" } }),
+      ).toBe(0);
+      expect((await price(companyAId, variantAId)).unitPriceExVat).toBe("16.5000");
+
+      setCampaignAuditWriterForTests(null);
+      const approved = await approveCampaign(managementId, { id: pending.id, appliesToNegotiatedPrices: false });
+      expect(approved.isActive).toBe(true);
+      expect((await price(companyAId, variantAId)).unitPriceExVat).toBe("16.5000");
+      const untouched = await price(companyBId, variantAId);
+      expect(untouched.source).toBe("PROMOTION");
+      expect(untouched.unitPriceExVat).toBe("18.0000");
+
+      setCampaignAuditWriterForTests(async () => {
+        throw new Error("audit persistence failed");
+      });
+      await expect(
+        setNegotiatedEligibility(managementId, {
+          id: pending.id,
+          appliesToNegotiatedPrices: true,
+          confirmNegotiatedPrices: true,
+        }),
+      ).rejects.toThrow(/audit persistence failed/);
+      expect((await prisma.promotion.findUniqueOrThrow({ where: { id: pending.id } })).appliesToNegotiatedPrices).toBe(
+        false,
+      );
+      expect((await price(companyAId, variantAId)).unitPriceExVat).toBe("16.5000");
+
+      setCampaignAuditWriterForTests(null);
+      const opened = await setNegotiatedEligibility(managementId, {
+        id: pending.id,
+        appliesToNegotiatedPrices: true,
+        confirmNegotiatedPrices: true,
+        expectedUpdatedAt: approved.updatedAt,
+      });
+      expect(opened.appliesToNegotiatedPrices).toBe(true);
+      expect((await price(companyAId, variantAId)).unitPriceExVat).toBe("14.8500");
+      const stacking = await prisma.auditEvent.findFirstOrThrow({
+        where: { entityId: pending.id, action: "promotions.campaign.stacking_updated" },
+      });
+      expect(stacking.before).toEqual({ appliesToNegotiatedPrices: false });
+      expect(stacking.after).toEqual({ appliesToNegotiatedPrices: true, code: `AUDIT-${suffix}` });
+
+      const [firstDecision, secondDecision] = await Promise.allSettled([
+        setNegotiatedEligibility(managementId, {
+          id: pending.id,
+          appliesToNegotiatedPrices: false,
+          expectedUpdatedAt: opened.updatedAt,
+        }),
+        setNegotiatedEligibility(adminId, {
+          id: pending.id,
+          appliesToNegotiatedPrices: false,
+          expectedUpdatedAt: opened.updatedAt,
+        }),
+      ]);
+      expect([firstDecision, secondDecision].filter((row) => row.status === "fulfilled")).toHaveLength(1);
+      expect(
+        await prisma.auditEvent.count({
+          where: { entityId: pending.id, action: "promotions.campaign.stacking_updated" },
+        }),
+      ).toBe(2);
+
+      setCampaignAuditWriterForTests(async () => {
+        throw new Error("audit persistence failed");
+      });
+      await expect(cancelCampaign(managementId, { id: pending.id, reason: "Stop" })).rejects.toThrow(
+        /audit persistence failed/,
+      );
+      expect((await prisma.promotion.findUniqueOrThrow({ where: { id: pending.id } })).campaignStatus).toBe("APPROVED");
+
+      const pendingReject = await pendingCampaign(`AUDITR-${suffix}`, skuB);
+      await expect(rejectCampaign(managementId, { id: pendingReject.id, reason: "No" })).rejects.toThrow(
+        /audit persistence failed/,
+      );
+      expect((await prisma.promotion.findUniqueOrThrow({ where: { id: pendingReject.id } })).campaignStatus).toBe(
+        "PENDING_APPROVAL",
+      );
+      expect(
+        await prisma.auditEvent.count({ where: { entityId: pendingReject.id, action: "promotions.campaign.rejected" } }),
+      ).toBe(0);
+    } finally {
+      setCampaignAuditWriterForTests(null);
+    }
+    await cancelCampaign(managementId, { id: pending.id, reason: "Cleanup audit" });
   });
 });

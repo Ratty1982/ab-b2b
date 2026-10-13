@@ -96,6 +96,7 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
       endsAt: localInstant(endsAt, originalEndsAt),
       skus,
       appliesToNegotiatedPrices: allowNegotiated,
+      expectedUpdatedAt: campaign?.updatedAt,
     };
   }
 
@@ -115,7 +116,11 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
       toast.error(result.error);
       return;
     }
-    toast.success("Draft saved");
+    toast.success(
+      campaign?.campaignStatus === "PENDING_APPROVAL"
+        ? "Saved as a draft. Submit it again before it can be approved."
+        : "Draft saved",
+    );
     window.location.assign(ROUTES.salesPromotion(result.data.id));
   }
 
@@ -161,6 +166,7 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
       reason: reason.trim() || undefined,
       appliesToNegotiatedPrices: allowNegotiated,
       confirmNegotiatedPrices: allowNegotiated,
+      expectedUpdatedAt: campaign.updatedAt,
     };
     const result =
       action === "approve"
