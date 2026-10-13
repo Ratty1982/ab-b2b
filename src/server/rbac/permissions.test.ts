@@ -50,6 +50,18 @@ describe("permission catalogue", () => {
     }
   });
 
+  it("lets authorised sales staff place orders for customers", () => {
+    for (const key of ["SUPER_ADMIN", "MANAGEMENT", "SALES_MANAGER", "SALES_REPRESENTATIVE"] as const) {
+      expect(SYSTEM_ROLE_PERMISSIONS[key]).toContain("orders.place_for_customer");
+    }
+    for (const key of ["CUSTOMER_SERVICE", "ACCOUNTS", "MARKETING"] as const) {
+      expect(SYSTEM_ROLE_PERMISSIONS[key]).not.toContain("orders.place_for_customer");
+    }
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("orders.place_for_customer");
+    }
+  });
+
   it("does not give marketing invoice rights", () => {
     const m = SYSTEM_ROLE_PERMISSIONS.MARKETING;
     expect(m).not.toContain("invoices.view");

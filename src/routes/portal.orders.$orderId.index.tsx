@@ -156,6 +156,21 @@ function PortalOrderDetailPage() {
                 </dd>
               </div>
             ) : null}
+            {order.placedByStaffName ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-steel">Placed by</dt>
+                <dd className="text-right">
+                  {order.placedByStaffName}
+                  {order.entrySource === "TELEPHONE"
+                    ? " · Telephone"
+                    : order.entrySource === "EMAIL"
+                      ? " · Email"
+                      : order.entrySource === "CUSTOMER_VISIT"
+                        ? " · Customer visit"
+                        : ""}
+                </dd>
+              </div>
+            ) : null}
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Contact</dt>
               <dd className="text-right">

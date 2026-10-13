@@ -419,6 +419,7 @@ function AdminOrdersPage() {
                   <th className="px-3 py-2">Order</th>
                   <th className="px-3 py-2">Date</th>
                   <th className="px-3 py-2">Company</th>
+                  <th className="px-3 py-2">Placed by</th>
                   <th className="px-3 py-2">Reference</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2 text-right">Total</th>
@@ -453,6 +454,7 @@ function AdminOrdersPage() {
                       {o.placedAt ? formatDate(o.placedAt) : "—"}
                     </td>
                     <td className="px-3 py-2">{o.companyName}</td>
+                    <td className="px-3 py-2 text-steel">{o.placedByStaffName || "—"}</td>
                     <td className="px-3 py-2 text-steel">{o.poNumber || "—"}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-1.5">

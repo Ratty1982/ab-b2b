@@ -1186,6 +1186,14 @@ async function convertQuoteToOrder(input: {
   idempotencyKey: string;
   staffAcceptance: boolean;
   acceptanceNote?: string | null;
+  /** Set only by sales order entry. Written on the new order. A repeat conversion does not change it. */
+  salesOrderAttribution?: {
+    entrySource: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT";
+    placedByStaffUserId: string;
+    placedByStaffName: string;
+    salesOrderDraftId: string;
+    internalNote: string | null;
+  } | null;
 }) {
   const quote = await prisma.quote.findUnique({
     where: { id: input.quoteId },
@@ -1416,6 +1424,15 @@ async function convertQuoteToOrder(input: {
         sourceQuoteNumber: quote.quoteNumber,
         idempotencyKey: `quote-accept:${input.idempotencyKey}`,
         placedAt,
+        ...(input.salesOrderAttribution
+          ? {
+              entrySource: input.salesOrderAttribution.entrySource,
+              placedByStaffUserId: input.salesOrderAttribution.placedByStaffUserId,
+              placedByStaffName: input.salesOrderAttribution.placedByStaffName,
+              salesOrderDraftId: input.salesOrderAttribution.salesOrderDraftId,
+              notes: input.salesOrderAttribution.internalNote,
+            }
+          : {}),
         items: {
           create: quote.items.map((item) => {
             const alloc = allocations.get(item.id) ?? {
@@ -1487,6 +1504,30 @@ async function convertQuoteToOrder(input: {
         convertedOrderId: order.id,
       },
     });
+
+    if (input.salesOrderAttribution) {
+      const marked = await tx.salesOrderDraft.updateMany({
+        where: {
+          id: input.salesOrderAttribution.salesOrderDraftId,
+          createdByUserId: input.actorUserId,
+          companyId: quote.companyId,
+          status: "OPEN",
+        },
+        data: {
+          status: "PLACED",
+          placedOrderId: order.id,
+          source: input.salesOrderAttribution.entrySource,
+          internalNote: input.salesOrderAttribution.internalNote,
+        },
+      });
+      if (marked.count !== 1) {
+        throw new AuthError(
+          "This draft changed while the quotation was being accepted. Refresh and try again.",
+          "DRAFT_CONFLICT",
+          409,
+        );
+      }
+    }
 
     return { kind: "created" as const, order };
   });
@@ -1609,7 +1650,17 @@ export async function acceptQuoteAsCustomer(userId: string, raw: unknown) {
   }
 }
 
-export async function acceptQuoteOnBehalf(actorUserId: string, raw: unknown) {
+export async function acceptQuoteOnBehalf(
+  actorUserId: string,
+  raw: unknown,
+  salesOrderAttribution?: {
+    entrySource: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT";
+    placedByStaffUserId: string;
+    placedByStaffName: string;
+    salesOrderDraftId: string;
+    internalNote: string | null;
+  } | null,
+) {
   await requireQuoteStaff(actorUserId, "quotes.accept_on_behalf");
   const input = quoteAcceptOnBehalfSchema.parse(raw);
   const quote = await prisma.quote.findUnique({ where: { id: input.id } });
@@ -1622,6 +1673,7 @@ export async function acceptQuoteOnBehalf(actorUserId: string, raw: unknown) {
     idempotencyKey: input.idempotencyKey,
     staffAcceptance: true,
     acceptanceNote: input.note,
+    salesOrderAttribution: salesOrderAttribution ?? null,
   });
   const fresh = await prisma.quote.findUniqueOrThrow({
     where: { id: input.id },

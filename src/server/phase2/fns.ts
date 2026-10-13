@@ -2920,6 +2920,88 @@ export const placeOrderFn = createServerFn({ method: "POST" })
     }
   });
 
+export const listSalesOrderDraftsFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const salesOrders = await import("@/server/orders/sales-order-entry");
+    return { ok: true as const, data: await salesOrders.listSalesOrderDrafts(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const openSalesOrderDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.openSalesOrderDraft(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getSalesOrderDraftFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { draftId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.getSalesOrderDraft(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveSalesOrderDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.saveSalesOrderDraft(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const abandonSalesOrderDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { draftId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.abandonSalesOrderDraft(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const searchSalesOrderProductsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string; q: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.searchSalesOrderProducts(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const placeSalesOrderFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.placeSalesOrder(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listPortalOrdersFn = createServerFn({ method: "GET" })
   .inputValidator(
     (data: unknown) =>

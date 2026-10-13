@@ -56,6 +56,8 @@ export const ROUTES = {
   salesPromotions: "/sales/promotions",
   salesPromotionsNew: "/sales/promotions/new",
   salesPromotion: (id: string) => `/sales/promotions/${id}` as const,
+  salesOrders: "/sales/orders",
+  salesOrdersNew: "/sales/orders/new",
 
   crm: "/crm",
   crmOverview: "/crm/overview",
@@ -270,6 +272,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: ROUTES.salesPromotions,
         matchPrefixes: [ROUTES.salesPromotions],
         permission: ["promotions.submit", "promotions.approve", "promotions.report"],
+        implemented: true,
+      },
+      {
+        id: "sales-order-entry",
+        label: "Order entry",
+        icon: "clipboard-list",
+        to: ROUTES.salesOrders,
+        matchPrefixes: [ROUTES.salesOrders],
+        permission: "orders.place_for_customer",
         implemented: true,
       },
       {
