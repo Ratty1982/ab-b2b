@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { inputClass } from "@/components/ab/Drawer";
+import { campaignInstantForSave, utcIsoToDatetimeLocal, CampaignLocalTimeError } from "@/domain/campaign-local-time";
 import { ROUTES } from "@/lib/app-nav";
 import {
   approvePromotionCampaignFn,
@@ -32,6 +33,9 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
   const [value, setValue] = useState("10");
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
+  const [originalStartsAt, setOriginalStartsAt] = useState<string | null>(null);
+  const [originalEndsAt, setOriginalEndsAt] = useState<string | null>(null);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [skus, setSkus] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<Array<{ sku: string; name: string; brand: string }>>([]);
@@ -58,13 +62,15 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
       setImageUrl(row.imageUrl ?? "");
       if (row.type === "PERCENT" || row.type === "FIXED") setType(row.type);
       setValue(String(Number(row.value)));
-      setStartsAt(row.startsAt ? row.startsAt.slice(0, 16) : "");
-      setEndsAt(row.endsAt ? row.endsAt.slice(0, 16) : "");
+      setOriginalStartsAt(row.startsAt);
+      setOriginalEndsAt(row.endsAt);
+      setStartsAt(row.startsAt ? utcIsoToDatetimeLocal(row.startsAt, timeZone) : "");
+      setEndsAt(row.endsAt ? utcIsoToDatetimeLocal(row.endsAt, timeZone) : "");
       setSkus(row.skus);
       setAllowNegotiated(row.appliesToNegotiatedPrices);
       setLocked(!row.editable);
     });
-  }, [campaignId]);
+  }, [campaignId, timeZone]);
 
   useEffect(() => {
     if (!campaignId) return;
@@ -72,6 +78,10 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
       if (result.ok) setPerformance(result.data);
     });
   }, [campaignId]);
+
+  function localInstant(localValue: string, originalIso: string | null): string | null {
+    return campaignInstantForSave({ localValue, originalIso, timeZone });
+  }
 
   function payload(id?: string) {
     return {
@@ -82,8 +92,8 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
       imageUrl: imageUrl.trim() || null,
       type,
       value: Number(value),
-      startsAt: startsAt ? new Date(startsAt).toISOString() : null,
-      endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+      startsAt: localInstant(startsAt, originalStartsAt),
+      endsAt: localInstant(endsAt, originalEndsAt),
       skus,
       appliesToNegotiatedPrices: allowNegotiated,
     };
@@ -91,7 +101,15 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
 
   async function save() {
     setBusy(true);
-    const result = await savePromotionCampaignFn({ data: payload(campaign?.id) });
+    let body: ReturnType<typeof payload>;
+    try {
+      body = payload(campaign?.id);
+    } catch (error) {
+      setBusy(false);
+      toast.error(error instanceof CampaignLocalTimeError ? error.message : "Enter a valid start and end time");
+      return;
+    }
+    const result = await savePromotionCampaignFn({ data: body });
     setBusy(false);
     if (!result.ok) {
       toast.error(result.error);
@@ -104,7 +122,15 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
   async function submit() {
     if (!campaign) return;
     setBusy(true);
-    const saved = await savePromotionCampaignFn({ data: payload(campaign.id) });
+    let body: ReturnType<typeof payload>;
+    try {
+      body = payload(campaign.id);
+    } catch (error) {
+      setBusy(false);
+      toast.error(error instanceof CampaignLocalTimeError ? error.message : "Enter a valid start and end time");
+      return;
+    }
+    const saved = await savePromotionCampaignFn({ data: body });
     if (!saved.ok) {
       setBusy(false);
       toast.error(saved.error);
@@ -122,8 +148,20 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
 
   async function review(action: "approve" | "reject" | "cancel" | "stack") {
     if (!campaign) return;
+    const enablingNegotiated = allowNegotiated && !campaign.appliesToNegotiatedPrices;
+    if ((action === "approve" && allowNegotiated) || (action === "stack" && enablingNegotiated)) {
+      const confirmed = window.confirm(
+        "This discount will apply to negotiated customer prices. Eligible customers may see a lower price immediately for the selected SKUs. Approve this change?",
+      );
+      if (!confirmed) return;
+    }
     setBusy(true);
-    const body = { id: campaign.id, reason: reason.trim() || undefined, appliesToNegotiatedPrices: allowNegotiated };
+    const body = {
+      id: campaign.id,
+      reason: reason.trim() || undefined,
+      appliesToNegotiatedPrices: allowNegotiated,
+      confirmNegotiatedPrices: allowNegotiated,
+    };
     const result =
       action === "approve"
         ? await approvePromotionCampaignFn({ data: body })
@@ -211,14 +249,17 @@ export function CampaignWorkspace({ campaignId }: { campaignId: string | null })
               <input className={inputClass} value={value} disabled={locked} onChange={(e) => setValue(e.target.value)} inputMode="decimal" required />
             </label>
             <label className="grid gap-1 text-[12px] font-semibold">
-              Starts
+              Starts (your local time)
               <input className={inputClass} type="datetime-local" value={startsAt} disabled={locked} onChange={(e) => setStartsAt(e.target.value)} />
             </label>
             <label className="grid gap-1 text-[12px] font-semibold">
-              Ends
+              Ends (your local time)
               <input className={inputClass} type="datetime-local" value={endsAt} disabled={locked} onChange={(e) => setEndsAt(e.target.value)} />
             </label>
           </div>
+          <p className="text-[12px] leading-relaxed text-steel">
+            Times use {timeZone.replaceAll("_", " ")}. The offer starts and ends at these local instants, including GMT and British Summer Time changes. Leaving the times unchanged keeps the stored instants.
+          </p>
           {preview ? <p className="text-[13px] text-steel">{preview}</p> : null}
           <div className="grid gap-2">
             <label className="grid gap-1 text-[12px] font-semibold">
@@ -342,7 +383,7 @@ function PerformancePanel({ report }: { report: Performance }) {
       <h2 className="text-[16px] font-semibold">Performance</h2>
       <p className="text-[13px] text-steel">
         {report.scope === "organisation" ? "Organisation-wide placed orders." : "Customers in your sales scope only."}{" "}
-        Basket additions are not included.
+        Basket additions are not included. {report.revenueNote}
       </p>
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="Placed orders" value={String(report.placed.orders)} detail={`${report.placed.customers} customers · £${report.placed.revenueExVat}`} />
@@ -355,7 +396,7 @@ function PerformancePanel({ report }: { report: Performance }) {
         Savings: {report.savings.savingsExVat == null ? "unavailable" : `£${report.savings.savingsExVat}`} ({report.savings.coverage}). {report.savings.note}
       </p>
       <p className="text-[13px] text-steel">
-        Linked credit documents: {report.credits.linkedCreditDocuments} (£{report.credits.linkedCreditSubtotalExVat}). {report.credits.note}
+        Linked credit documents: {report.credits.linkedCreditDocuments} (£{report.credits.linkedCreditSubtotalExVat} ex VAT). {report.credits.note}
       </p>
       {report.months.length > 0 ? (
         <table className="w-full text-left text-[13px]">

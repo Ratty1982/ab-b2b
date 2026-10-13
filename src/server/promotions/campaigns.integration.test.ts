@@ -9,6 +9,7 @@ import {
   cancelCampaign,
   rejectCampaign,
   saveCampaignDraft,
+  setNegotiatedEligibility,
   submitCampaign,
 } from "@/server/promotions/campaigns";
 import { getCampaignPerformance } from "@/server/promotions/performance";
@@ -280,7 +281,8 @@ describe("sales promotion campaigns", () => {
     promotionIds.push(future.id);
     await submitCampaign(repId, { id: future.id });
     const scheduled = await approveCampaign(managementId, { id: future.id });
-    expect(scheduled.displayStatus).toBe("APPROVED");
+    expect(scheduled.displayStatus).toBe("SCHEDULED");
+    expect(scheduled.displayLabel).toBe("Scheduled");
     expect((await listCustomerPromotions(buyerId)).some((row) => row.id === future.id)).toBe(false);
     await prisma.promotion.update({
       where: { id: future.id },
@@ -417,6 +419,12 @@ describe("sales promotion campaigns", () => {
     expect(scoped.orders.items.some((row) => row.companyId === companyBId)).toBe(false);
     expect(scoped.customers.items.some((row) => row.companyName.includes("Promo B"))).toBe(false);
     expect(scoped.representatives.some((row) => row.name === "Alex Rep")).toBe(true);
+    expect(organisation.revenueNote).toContain("before credit-note adjustments");
+
+    const team = await getCampaignPerformance(managerId, { promotionId: campaign.id });
+    expect(team.scope).toBe("assigned_accounts");
+    expect(team.orders.items.some((row) => row.companyId === companyAId)).toBe(true);
+    expect(team.orders.items.some((row) => row.companyId === companyBId)).toBe(false);
 
     const historical = await prisma.promotion.create({
       data: {
@@ -473,5 +481,160 @@ describe("sales promotion campaigns", () => {
       "promotions.campaign.cancelled",
       "promotions.campaign.created",
     ]);
+  });
+
+  it("rejects a second review and requires confirmation before discounting negotiated prices", async () => {
+    const draft = await saveCampaignDraft(repId, {
+      code: `RACE-${suffix}`,
+      name: `Race ${suffix}`,
+      type: "PERCENT",
+      value: 5,
+      startsAt: new Date("2026-10-01T00:00:00.000Z").toISOString(),
+      endsAt: new Date("2026-12-31T00:00:00.000Z").toISOString(),
+      skus: [skuB],
+      appliesToNegotiatedPrices: true,
+    });
+    promotionIds.push(draft.id);
+    expect(draft.appliesToNegotiatedPrices).toBe(false);
+    const managerDraft = await saveCampaignDraft(managerId, {
+      code: `MGR-${suffix}`,
+      name: `Manager ${suffix}`,
+      type: "PERCENT",
+      value: 5,
+      skus: [skuB],
+      appliesToNegotiatedPrices: true,
+    });
+    promotionIds.push(managerDraft.id);
+    expect(managerDraft.appliesToNegotiatedPrices).toBe(false);
+    const stored = draft.startsAt;
+    const resaved = await saveCampaignDraft(repId, {
+      id: draft.id,
+      code: `RACE-${suffix}`,
+      name: `Race ${suffix}`,
+      type: "PERCENT",
+      value: 5,
+      startsAt: stored,
+      endsAt: draft.endsAt,
+      skus: [skuB],
+    });
+    expect(resaved.startsAt).toBe(stored);
+    await expect(
+      saveCampaignDraft(managerId, {
+        id: draft.id,
+        code: `RACE-${suffix}`,
+        name: `Race ${suffix}`,
+        type: "PERCENT",
+        value: 5,
+        skus: [skuB],
+        appliesToNegotiatedPrices: true,
+      }),
+    ).rejects.toMatchObject({ code: "CAMPAIGN_LOCKED" });
+
+    await submitCampaign(repId, { id: draft.id });
+    await expect(
+      approveCampaign(managementId, { id: draft.id, appliesToNegotiatedPrices: true }),
+    ).rejects.toMatchObject({ code: "NEGOTIATED_CONFIRMATION_REQUIRED" });
+    expect((await prisma.promotion.findUniqueOrThrow({ where: { id: draft.id } })).campaignStatus).toBe(
+      "PENDING_APPROVAL",
+    );
+
+    const [approved, rejected] = await Promise.allSettled([
+      approveCampaign(managementId, { id: draft.id, appliesToNegotiatedPrices: false }),
+      rejectCampaign(adminId, { id: draft.id, reason: "Too soon" }),
+    ]);
+    const outcomes = [approved, rejected];
+    expect(outcomes.filter((row) => row.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((row) => row.status === "rejected")).toHaveLength(1);
+    const failure = outcomes.find((row) => row.status === "rejected");
+    expect(failure?.status === "rejected" ? failure.reason : null).toMatchObject({ code: "CAMPAIGN_CONFLICT" });
+
+    const reviewAudits = await prisma.auditEvent.findMany({
+      where: {
+        entityId: draft.id,
+        action: { in: ["promotions.campaign.approved", "promotions.campaign.rejected"] },
+      },
+    });
+    expect(reviewAudits).toHaveLength(1);
+
+    const current = await prisma.promotion.findUniqueOrThrow({ where: { id: draft.id } });
+    if (current.campaignStatus === "REJECTED") {
+      await submitCampaign(repId, { id: draft.id });
+    } else {
+      await expect(approveCampaign(adminId, { id: draft.id })).rejects.toMatchObject({ code: "CAMPAIGN_LOCKED" });
+      await cancelCampaign(managementId, { id: draft.id, reason: "Reset for confirmation" });
+      const again = await saveCampaignDraft(repId, {
+        code: `RACE2-${suffix}`,
+        name: `Race two ${suffix}`,
+        type: "PERCENT",
+        value: 5,
+        startsAt: new Date("2026-10-01T00:00:00.000Z").toISOString(),
+        endsAt: new Date("2026-12-31T00:00:00.000Z").toISOString(),
+        skus: [skuB],
+      });
+      promotionIds.push(again.id);
+      await submitCampaign(repId, { id: again.id });
+      const confirmed = await approveCampaign(managementId, {
+        id: again.id,
+        appliesToNegotiatedPrices: true,
+        confirmNegotiatedPrices: true,
+      });
+      expect(confirmed.appliesToNegotiatedPrices).toBe(true);
+      await expect(setNegotiatedEligibility(repId, { id: again.id, appliesToNegotiatedPrices: false })).rejects.toMatchObject({
+        code: "FORBIDDEN",
+      });
+      await expect(
+        setNegotiatedEligibility(managerId, { id: again.id, appliesToNegotiatedPrices: false }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      const tightened = await setNegotiatedEligibility(managementId, {
+        id: again.id,
+        appliesToNegotiatedPrices: false,
+      });
+      expect(tightened.appliesToNegotiatedPrices).toBe(false);
+      await expect(
+        setNegotiatedEligibility(managementId, { id: again.id, appliesToNegotiatedPrices: true }),
+      ).rejects.toMatchObject({ code: "NEGOTIATED_CONFIRMATION_REQUIRED" });
+      const opened = await setNegotiatedEligibility(adminId, {
+        id: again.id,
+        appliesToNegotiatedPrices: true,
+        confirmNegotiatedPrices: true,
+      });
+      expect(opened.appliesToNegotiatedPrices).toBe(true);
+      const stacking = await prisma.auditEvent.count({
+        where: { entityId: again.id, action: "promotions.campaign.stacking_updated" },
+      });
+      expect(stacking).toBe(2);
+      await cancelCampaign(managementId, { id: again.id, reason: "Cleanup" });
+      return;
+    }
+
+    const confirmed = await approveCampaign(managementId, {
+      id: draft.id,
+      appliesToNegotiatedPrices: true,
+      confirmNegotiatedPrices: true,
+    });
+    expect(confirmed.appliesToNegotiatedPrices).toBe(true);
+    await expect(approveCampaign(adminId, { id: draft.id, appliesToNegotiatedPrices: true, confirmNegotiatedPrices: true })).rejects.toMatchObject({
+      code: "CAMPAIGN_LOCKED",
+    });
+    await expect(setNegotiatedEligibility(repId, { id: draft.id, appliesToNegotiatedPrices: false })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    const tightened = await setNegotiatedEligibility(managementId, { id: draft.id, appliesToNegotiatedPrices: false });
+    expect(tightened.appliesToNegotiatedPrices).toBe(false);
+    await expect(
+      setNegotiatedEligibility(managementId, { id: draft.id, appliesToNegotiatedPrices: true }),
+    ).rejects.toMatchObject({ code: "NEGOTIATED_CONFIRMATION_REQUIRED" });
+    const opened = await setNegotiatedEligibility(adminId, {
+      id: draft.id,
+      appliesToNegotiatedPrices: true,
+      confirmNegotiatedPrices: true,
+    });
+    expect(opened.appliesToNegotiatedPrices).toBe(true);
+    expect(
+      await prisma.auditEvent.count({
+        where: { entityId: draft.id, action: "promotions.campaign.stacking_updated" },
+      }),
+    ).toBe(2);
+    await cancelCampaign(managementId, { id: draft.id, reason: "Cleanup" });
   });
 });

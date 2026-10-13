@@ -27,6 +27,7 @@ export const CAMPAIGN_DISPLAY_LABEL: Record<string, string> = {
   PENDING_APPROVAL: "Pending approval",
   REJECTED: "Rejected",
   APPROVED: "Approved",
+  SCHEDULED: "Scheduled",
   ACTIVE: "Active",
   EXPIRED: "Expired",
   CANCELLED: "Cancelled",
@@ -46,7 +47,9 @@ export function campaignDisplayStatus(input: {
     return labelled("LEGACY_ACTIVE");
   }
   if (input.campaignStatus !== "APPROVED") return labelled(input.campaignStatus);
+  if (!input.isActive) return labelled("APPROVED");
   if (input.endsAt && input.at > input.endsAt) return labelled("EXPIRED");
+  if (input.startsAt && input.at < input.startsAt) return labelled("SCHEDULED");
   if (!inValidityWindow(input.at, input.startsAt, input.endsAt)) return labelled("APPROVED");
   return labelled("ACTIVE");
 }
@@ -81,6 +84,7 @@ export const campaignReviewSchema = z.object({
   id: z.string().cuid(),
   reason: z.string().trim().min(1).max(500).optional(),
   appliesToNegotiatedPrices: z.boolean().optional(),
+  confirmNegotiatedPrices: z.boolean().optional(),
 });
 
 export function assertCampaignCommercial(input: {

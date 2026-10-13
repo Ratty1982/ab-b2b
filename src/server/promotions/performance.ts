@@ -280,8 +280,9 @@ export async function getCampaignPerformance(
       attributable: false as const,
       linkedCreditDocuments: Number(credits?.credit_count ?? 0),
       linkedCreditSubtotalExVat: moneyString(credits?.credit_subtotal),
-      note: "Linked credit documents are counted only. They are not deducted, because credit lines are not attributed to the promotion.",
+      note: "Reported revenue is ex VAT and before credit-note adjustments. Linked credit documents are counted only and are not deducted, because credit lines are not attributed to the promotion.",
     },
+    revenueNote: "Revenue is ex VAT and before credit-note adjustments.",
     netAfterCancellationExVat: moneyString(stats.standing_revenue),
     months: months.map((row) => ({
       month: monthLabel(row.month),

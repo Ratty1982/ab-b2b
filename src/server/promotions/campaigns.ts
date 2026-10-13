@@ -127,6 +127,23 @@ async function loadCampaign(id: string): Promise<CampaignRow> {
   return row;
 }
 
+/** Status in the WHERE clause makes the transition fail if another reviewer already changed it. */
+async function transitionCampaign(
+  where: Prisma.PromotionWhereInput,
+  data: Prisma.PromotionUpdateManyMutationInput,
+): Promise<CampaignRow> {
+  const updated = await prisma.promotion.updateMany({ where, data });
+  if (updated.count !== 1) {
+    throw new AuthError(
+      "This campaign was already reviewed or changed. Refresh and try again.",
+      "CAMPAIGN_CONFLICT",
+      409,
+    );
+  }
+  if (typeof where.id !== "string") throw new AuthError("Promotion not found", "NOT_FOUND", 404);
+  return loadCampaign(where.id);
+}
+
 function metadataFor(input: {
   variantIds: string[];
   skus: string[];
@@ -288,16 +305,16 @@ export async function submitCampaign(actorUserId: string, raw: unknown) {
   if (existing.type === "QUANTITY_DEAL") {
     throw new AuthError("QUANTITY_DEAL is not applied by the pricing engine", "VALIDATION", 400);
   }
-  const row = await prisma.promotion.update({
-    where: { id: existing.id },
-    data: {
+  const row = await transitionCampaign(
+    { id: existing.id, campaignStatus: { in: ["DRAFT", "REJECTED"] } },
+    {
       campaignStatus: "PENDING_APPROVAL",
       isActive: false,
       submittedAt: new Date(),
       submittedByUserId: actorUserId,
       reviewReason: null,
     },
-  });
+  );
   await recordAuditEvent({
     action: "promotions.campaign.submitted",
     entityType: "Promotion",
@@ -326,17 +343,25 @@ export async function approveCampaign(actorUserId: string, raw: unknown) {
   if (scope.skus.length === 0 && scope.variantIds.length === 0) {
     throw new AuthError("Choose at least one product SKU", "VALIDATION", 400);
   }
-  const row = await prisma.promotion.update({
-    where: { id: existing.id },
-    data: {
+  const appliesToNegotiatedPrices = input.appliesToNegotiatedPrices ?? false;
+  if (appliesToNegotiatedPrices && input.confirmNegotiatedPrices !== true) {
+    throw new AuthError(
+      "Confirm that negotiated customer prices may change immediately before approving this discount.",
+      "NEGOTIATED_CONFIRMATION_REQUIRED",
+      400,
+    );
+  }
+  const row = await transitionCampaign(
+    { id: existing.id, campaignStatus: "PENDING_APPROVAL" },
+    {
       campaignStatus: "APPROVED",
       isActive: true,
       reviewedAt: now,
       reviewedByUserId: actorUserId,
       reviewReason: null,
-      appliesToNegotiatedPrices: input.appliesToNegotiatedPrices ?? false,
+      appliesToNegotiatedPrices,
     },
-  });
+  );
   await recordAuditEvent({
     action: "promotions.campaign.approved",
     entityType: "Promotion",
@@ -360,16 +385,16 @@ export async function rejectCampaign(actorUserId: string, raw: unknown) {
   if (existing.campaignStatus !== "PENDING_APPROVAL") {
     throw new AuthError("Only a campaign pending approval can be rejected", "CAMPAIGN_LOCKED", 409);
   }
-  const row = await prisma.promotion.update({
-    where: { id: existing.id },
-    data: {
+  const row = await transitionCampaign(
+    { id: existing.id, campaignStatus: "PENDING_APPROVAL" },
+    {
       campaignStatus: "REJECTED",
       isActive: false,
       reviewedAt: new Date(),
       reviewedByUserId: actorUserId,
       reviewReason: input.reason,
     },
-  });
+  );
   await recordAuditEvent({
     action: "promotions.campaign.rejected",
     entityType: "Promotion",
@@ -388,16 +413,16 @@ export async function cancelCampaign(actorUserId: string, raw: unknown) {
   if (existing.campaignStatus !== "APPROVED") {
     throw new AuthError("Only an approved campaign can be cancelled", "CAMPAIGN_LOCKED", 409);
   }
-  const row = await prisma.promotion.update({
-    where: { id: existing.id },
-    data: {
+  const row = await transitionCampaign(
+    { id: existing.id, campaignStatus: "APPROVED" },
+    {
       campaignStatus: "CANCELLED",
       isActive: false,
       cancelledAt: new Date(),
       cancelledByUserId: actorUserId,
       reviewReason: input.reason,
     },
-  });
+  );
   await recordAuditEvent({
     action: "promotions.campaign.cancelled",
     entityType: "Promotion",
@@ -418,10 +443,25 @@ export async function setNegotiatedEligibility(actorUserId: string, raw: unknown
   if (existing.campaignStatus !== "APPROVED") {
     throw new AuthError("Negotiated-price eligibility is set on an approved campaign", "CAMPAIGN_LOCKED", 409);
   }
-  const row = await prisma.promotion.update({
-    where: { id: existing.id },
-    data: { appliesToNegotiatedPrices: input.appliesToNegotiatedPrices },
-  });
+  const enabling = input.appliesToNegotiatedPrices === true && !existing.appliesToNegotiatedPrices;
+  if (enabling && input.confirmNegotiatedPrices !== true) {
+    throw new AuthError(
+      "Confirm that negotiated customer prices may change immediately before enabling this discount.",
+      "NEGOTIATED_CONFIRMATION_REQUIRED",
+      400,
+    );
+  }
+  if (existing.appliesToNegotiatedPrices === input.appliesToNegotiatedPrices) {
+    return present(existing, actorUserId, profile);
+  }
+  const row = await transitionCampaign(
+    {
+      id: existing.id,
+      campaignStatus: "APPROVED",
+      appliesToNegotiatedPrices: existing.appliesToNegotiatedPrices,
+    },
+    { appliesToNegotiatedPrices: input.appliesToNegotiatedPrices },
+  );
   await recordAuditEvent({
     action: "promotions.campaign.stacking_updated",
     entityType: "Promotion",

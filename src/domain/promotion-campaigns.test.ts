@@ -43,7 +43,34 @@ describe("campaign display status", () => {
         endsAt: new Date("2026-11-30T00:00:00.000Z"),
         at,
       }).status,
-    ).toBe("APPROVED");
+    ).toBe("SCHEDULED");
+    expect(
+      campaignDisplayStatus({
+        campaignStatus: "APPROVED",
+        isActive: true,
+        startsAt: at,
+        endsAt: new Date("2026-10-13T18:00:00.000Z"),
+        at,
+      }).status,
+    ).toBe("ACTIVE");
+    expect(
+      campaignDisplayStatus({
+        campaignStatus: "APPROVED",
+        isActive: true,
+        startsAt: new Date("2026-10-01T00:00:00.000Z"),
+        endsAt: at,
+        at,
+      }).status,
+    ).toBe("ACTIVE");
+    expect(
+      campaignDisplayStatus({
+        campaignStatus: "CANCELLED",
+        isActive: false,
+        startsAt: new Date("2026-10-01T00:00:00.000Z"),
+        endsAt: new Date("2026-10-31T00:00:00.000Z"),
+        at,
+      }).label,
+    ).toBe("Cancelled");
     expect(
       campaignDisplayStatus({
         campaignStatus: "APPROVED",

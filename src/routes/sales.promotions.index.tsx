@@ -21,7 +21,8 @@ function tone(status: string) {
   if (status === "ACTIVE" || status === "LEGACY_ACTIVE") return "good" as const;
   if (status === "REJECTED" || status === "CANCELLED" || status === "EXPIRED" || status === "LEGACY_EXPIRED")
     return "bad" as const;
-  if (status === "PENDING_APPROVAL" || status === "APPROVED" || status === "LEGACY_SCHEDULED") return "warn" as const;
+  if (status === "PENDING_APPROVAL" || status === "APPROVED" || status === "SCHEDULED" || status === "LEGACY_SCHEDULED")
+    return "warn" as const;
   return "neutral" as const;
 }
 
