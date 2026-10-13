@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { inputClass } from "@/components/ab/Drawer";
+import { customerSearchResponseIsCurrent, pageAfterQueryChange } from "@/components/orders/customer-search-session";
 import { ROUTES } from "@/lib/app-nav";
 import { cn } from "@/lib/utils";
 import { listSalesOrderDraftsFn, searchOrderEntryCustomersFn } from "@/server/phase2/fns";
@@ -29,6 +30,15 @@ type DraftRow = {
   lines: Array<{ id: string }>;
 };
 
+type CustomerSearchPage = {
+  items: CustomerRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+const PAGE_SIZE = 20;
+
 function formatWhen(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -37,33 +47,93 @@ function formatWhen(value: string) {
 
 export function CreateSalesOrderDesk() {
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const requestSeq = useRef(0);
+  const queryRef = useRef(query);
+  const pageRef = useRef(page);
+  queryRef.current = query;
+  pageRef.current = page;
 
   useEffect(() => {
+    let mounted = true;
+    const request = { seq: ++requestSeq.current, query, page };
+    setLoading(true);
     const handle = window.setTimeout(() => {
-      setLoading(true);
-      void searchOrderEntryCustomersFn({ data: { q: query.trim() || undefined } }).then((result) => {
-        setLoading(false);
-        if (!result.ok) {
-          setError(result.error);
+      void searchOrderEntryCustomersFn({
+        data: { q: query.trim() || undefined, page, pageSize: PAGE_SIZE },
+      })
+        .then((result) => {
+          if (
+            !customerSearchResponseIsCurrent({
+              mounted,
+              responseSeq: request.seq,
+              currentSeq: requestSeq.current,
+              responseQuery: request.query,
+              currentQuery: queryRef.current,
+              responsePage: request.page,
+              currentPage: pageRef.current,
+            })
+          ) {
+            return;
+          }
+          setLoading(false);
+          if (!result.ok) {
+            setError(result.error);
+            setCustomers([]);
+            setTotal(0);
+            return;
+          }
+          const data = result.data as CustomerSearchPage;
+          setError(null);
+          setCustomers(data.items);
+          setTotal(data.total);
+          setPageSize(data.pageSize);
+        })
+        .catch(() => {
+          if (
+            !customerSearchResponseIsCurrent({
+              mounted,
+              responseSeq: request.seq,
+              currentSeq: requestSeq.current,
+              responseQuery: request.query,
+              currentQuery: queryRef.current,
+              responsePage: request.page,
+              currentPage: pageRef.current,
+            })
+          ) {
+            return;
+          }
+          setLoading(false);
+          setError("Customer search failed. Try again.");
           setCustomers([]);
-          return;
-        }
-        setError(null);
-        setCustomers(result.data as CustomerRow[]);
-      });
+          setTotal(0);
+        });
     }, 200);
-    return () => window.clearTimeout(handle);
-  }, [query]);
+    return () => {
+      mounted = false;
+      window.clearTimeout(handle);
+    };
+  }, [query, page]);
 
   useEffect(() => {
+    let mounted = true;
     void listSalesOrderDraftsFn().then((result) => {
-      if (result.ok) setDrafts(result.data as DraftRow[]);
+      if (mounted && result.ok) setDrafts(result.data as DraftRow[]);
     });
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+  const matchLabel = query.trim() ? (total === 1 ? "matches" : "match") : total === 1 ? "is open for ordering" : "are open for ordering";
 
   return (
     <div>
@@ -85,15 +155,21 @@ export function CreateSalesOrderDesk() {
               value={query}
               autoFocus
               placeholder="Company, trading name, account, contact, phone, or email"
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPage((current) => pageAfterQueryChange(query, next, current));
+                setQuery(next);
+              }}
             />
           </label>
-          <p className="mt-2 text-[12px] text-steel">
+          <p className="mt-2 text-[12px] text-steel" data-testid="customer-match-count">
             {loading
               ? "Searching active accounts…"
-              : query.trim()
-                ? `${customers.length} active account${customers.length === 1 ? "" : "s"} match`
-                : "Active accounts, alphabetical. Type to narrow the list."}
+              : total === 0
+                ? query.trim()
+                  ? "No active accounts match"
+                  : "No active accounts"
+                : `${total} active account${total === 1 ? "" : "s"} ${matchLabel}. Showing ${start}–${end}.`}
           </p>
           {error ? <p className="mt-3 text-[13px] text-bad">{error}</p> : null}
           <div className="mt-4 overflow-x-auto rounded-lg border border-border">
@@ -110,7 +186,7 @@ export function CreateSalesOrderDesk() {
               </thead>
               <tbody>
                 {customers.map((customer) => (
-                  <tr key={customer.id} className="border-b border-border/60 last:border-0">
+                  <tr key={customer.id} className="border-b border-border/60 last:border-0" data-testid="customer-result">
                     <td className="px-3 py-3">
                       <p className="font-semibold">{customer.name}</p>
                       {customer.tradingName && customer.tradingName !== customer.name ? (
@@ -156,6 +232,31 @@ export function CreateSalesOrderDesk() {
               </tbody>
             </table>
           </div>
+          {total > pageSize ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[12px] text-steel">
+                Page {page} of {Math.ceil(total / pageSize)}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold disabled:opacity-40"
+                  disabled={loading || page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Previous page
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[12px] font-semibold disabled:opacity-40"
+                  disabled={loading || page * pageSize >= total}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  Next page
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
         <aside className="h-fit rounded-lg border border-border p-4">
           <h2 className="font-display text-base uppercase">Your open drafts</h2>

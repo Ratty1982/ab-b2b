@@ -545,35 +545,48 @@ export async function searchOrderEntryCustomers(actorUserId: string, raw: unknow
   await requireSalesOrderStaff(actorUserId);
   const input = salesOrderCustomerSearchSchema.parse(raw ?? {});
   const q = input.q?.trim() ?? "";
-  const rows = await prisma.company.findMany({
-    where: {
-      status: "ACTIVE",
-      ...(q
-        ? {
-            OR: [
-              { name: { contains: q, mode: "insensitive" } },
-              { tradingName: { contains: q, mode: "insensitive" } },
-              { accountNumber: { contains: q, mode: "insensitive" } },
-              { primaryEmail: { contains: q, mode: "insensitive" } },
-              { phone: { contains: q, mode: "insensitive" } },
-              { autopartCustomerCode: { contains: q, mode: "insensitive" } },
-              {
-                contacts: {
-                  some: {
-                    OR: [
-                      { firstName: { contains: q, mode: "insensitive" } },
-                      { lastName: { contains: q, mode: "insensitive" } },
-                      { email: { contains: q, mode: "insensitive" } },
-                    ],
-                  },
+  const page = input.page;
+  const pageSize = input.pageSize;
+  const where = {
+    status: "ACTIVE" as const,
+    ...(q
+      ? {
+          OR: [
+            { name: { contains: q, mode: "insensitive" as const } },
+            { tradingName: { contains: q, mode: "insensitive" as const } },
+            { accountNumber: { contains: q, mode: "insensitive" as const } },
+            { primaryEmail: { contains: q, mode: "insensitive" as const } },
+            { phone: { contains: q, mode: "insensitive" as const } },
+            { autopartCustomerCode: { contains: q, mode: "insensitive" as const } },
+            {
+              autopartAccountAliases: {
+                some: { alias: { contains: q, mode: "insensitive" as const } },
+              },
+            },
+            {
+              contacts: {
+                some: {
+                  OR: [
+                    { firstName: { contains: q, mode: "insensitive" as const } },
+                    { lastName: { contains: q, mode: "insensitive" as const } },
+                    { email: { contains: q, mode: "insensitive" as const } },
+                    { phone: { contains: q, mode: "insensitive" as const } },
+                    { mobile: { contains: q, mode: "insensitive" as const } },
+                  ],
                 },
               },
-            ],
-          }
-        : {}),
-    },
-    orderBy: { name: "asc" },
-    take: 25,
+            },
+          ],
+        }
+      : {}),
+  };
+  const [total, rows] = await prisma.$transaction([
+    prisma.company.count({ where }),
+    prisma.company.findMany({
+    where,
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
     select: {
       id: true,
       name: true,
@@ -599,8 +612,10 @@ export async function searchOrderEntryCustomers(actorUserId: string, raw: unknow
         select: { salesRep: { select: { code: true, user: { select: { name: true } } } } },
       },
     },
-  });
-  return rows.map((row) => ({
+  }),
+  ]);
+  return {
+    items: rows.map((row) => ({
     id: row.id,
     name: row.name,
     tradingName: row.tradingName,
@@ -617,7 +632,11 @@ export async function searchOrderEntryCustomers(actorUserId: string, raw: unknow
           code: row.assignments[0].salesRep.code ?? "",
         }
       : null,
-  }));
+  })),
+    total,
+    page,
+    pageSize,
+  };
 }
 
 export async function openSalesOrderDraft(actorUserId: string, raw: unknown) {
@@ -999,6 +1018,12 @@ async function placeFromQuote(
     where: { id: result.orderId },
     include: { items: true, company: { select: { name: true } } },
   });
+  const usesThisKey =
+    order.idempotencyKey === input.idempotencyKey ||
+    order.idempotencyKey === `quote-accept:${input.idempotencyKey}`;
+  if (usesThisKey && !sameSalesOrderSubmission(order, draft, actorUserId)) {
+    salesOrderIdempotencyConflict();
+  }
   return {
     ok: true,
     alreadyPlaced: result.alreadyConverted,
@@ -1014,9 +1039,30 @@ async function confirmationForOrder(orderId: string): Promise<PublicOrderConfirm
   return toConfirmation(order, order.company.name);
 }
 
+function sameSalesOrderSubmission(
+  order: { salesOrderDraftId: string | null; companyId: string; placedByStaffUserId: string | null },
+  draft: { id: string; companyId: string },
+  actorUserId: string,
+) {
+  return (
+    order.salesOrderDraftId === draft.id &&
+    order.companyId === draft.companyId &&
+    order.placedByStaffUserId === actorUserId
+  );
+}
+
+function salesOrderIdempotencyConflict(): never {
+  throw new AuthError(
+    "This order request was already used for a different order.",
+    "IDEMPOTENCY_CONFLICT",
+    409,
+  );
+}
+
 export async function placeSalesOrder(actorUserId: string, raw: unknown): Promise<SalesPlaceResult> {
   const profile = await requireSalesOrderStaff(actorUserId);
   const input = placeSalesOrderSchema.parse(raw);
+  const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
 
   const existing = await prisma.order.findFirst({
     where: {
@@ -1028,14 +1074,10 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     include: { items: true, company: { select: { name: true } } },
   });
   if (existing) {
-    if (existing.placedByStaffUserId !== actorUserId) {
-      throw new AuthError("No access to this order", "FORBIDDEN", 403);
-    }
+    if (!sameSalesOrderSubmission(existing, draft, actorUserId)) salesOrderIdempotencyConflict();
     await repairCrmFromOrder(existing);
     return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
   }
-
-  const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
   const company = await requireOrderableCompany(profile, draft.companyId);
   if (draft.status !== "OPEN") {
     if (input.quoteId && draft.placedOrderId) {
@@ -1127,7 +1169,9 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
   }
 
   const staffName = profile.name?.trim() || profile.email;
-  const created = await commitSubmittedOrder({
+  let created;
+  try {
+    created = await commitSubmittedOrder({
     company,
     lines,
     deliveryAddress,
@@ -1172,8 +1216,25 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       if (marked.count !== 1) throw draftConflict("UNKNOWN");
     },
   });
+  } catch (error) {
+    const raced = await prisma.order.findFirst({
+      where: {
+        OR: [
+          { idempotencyKey: input.idempotencyKey },
+          { idempotencyKey: `quote-accept:${input.idempotencyKey}` },
+        ],
+      },
+      include: { items: true, company: { select: { name: true } } },
+    });
+    if (raced && sameSalesOrderSubmission(raced, draft, actorUserId)) {
+      await repairCrmFromOrder(raced);
+      return { ok: true, alreadyPlaced: true, order: toConfirmation(raced, raced.company.name) };
+    }
+    throw error;
+  }
 
   if (created.kind === "existing") {
+    if (!sameSalesOrderSubmission(created.order, draft, actorUserId)) salesOrderIdempotencyConflict();
     await repairCrmFromOrder(created.order);
     return {
       ok: true,

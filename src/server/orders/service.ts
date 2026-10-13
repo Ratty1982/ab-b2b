@@ -10,7 +10,7 @@
  *   (OrderStockReservation) — not an Autopart ERP reservation.
  */
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import {
@@ -1126,13 +1126,14 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
       ? input.company.autopartCustomerCode
       : null;
 
-  return prisma.$transaction(async (tx) => {
+  try {
+    return await prisma.$transaction(async (tx) => {
     const again = await tx.order.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
       include: { items: true, company: { select: { name: true } } },
     });
     if (again) {
-      if (again.companyId !== input.company.id) {
+      if (!submittedOrderKeyMatches(again, input)) {
         throw new AuthError("Idempotency key conflict", "IDEMPOTENCY_CONFLICT", 409);
       }
       return { kind: "existing" as const, order: again };
@@ -1249,7 +1250,34 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
     }
 
     return { kind: "created" as const, order };
-  });
+    });
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+      throw error;
+    }
+    const existing = await prisma.order.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      include: { items: true, company: { select: { name: true } } },
+    });
+    if (!existing || !submittedOrderKeyMatches(existing, input)) {
+      throw new AuthError("Idempotency key conflict", "IDEMPOTENCY_CONFLICT", 409);
+    }
+    return { kind: "existing" as const, order: existing };
+  }
+}
+
+function submittedOrderKeyMatches(
+  order: {
+    companyId: string;
+    salesOrderDraftId: string | null;
+    placedByStaffUserId: string | null;
+  },
+  input: SubmittedOrderCommit,
+): boolean {
+  if (order.companyId !== input.company.id) return false;
+  if (input.salesOrderDraftId && order.salesOrderDraftId !== input.salesOrderDraftId) return false;
+  if (input.placedByStaffUserId && order.placedByStaffUserId !== input.placedByStaffUserId) return false;
+  return true;
 }
 
 export async function placeOrder(userId: string, raw: unknown): Promise<PlaceOrderResult> {

@@ -4,7 +4,7 @@
  * Quotes snapshot commercial terms; conversion creates a normal AB Order
  * (SUBMITTED / Received) with AB stock reservation — no Autopart side effects.
  */
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission, requireCompanyPermission } from "@/server/rbac/guards";
 import { hasPermission, loadAccessProfile } from "@/server/rbac/access";
@@ -1180,6 +1180,65 @@ export async function declineQuote(userId: string, raw: unknown) {
   return serializeQuote(updated, { customerView: true });
 }
 
+const quoteIdempotencySelect = {
+  id: true,
+  orderNumber: true,
+  companyId: true,
+  sourceQuoteId: true,
+  salesOrderDraftId: true,
+  placedByStaffUserId: true,
+} as const;
+
+function assertQuoteIdempotencyMatch(
+  order: {
+    companyId: string;
+    sourceQuoteId: string | null;
+    salesOrderDraftId: string | null;
+    placedByStaffUserId: string | null;
+  },
+  quote: { id: string; companyId: string },
+  attribution:
+    | {
+        salesOrderDraftId: string;
+        placedByStaffUserId: string;
+      }
+    | null
+    | undefined,
+) {
+  const sameQuote = order.sourceQuoteId === quote.id && order.companyId === quote.companyId;
+  const sameDraft =
+    !attribution ||
+    (order.salesOrderDraftId === attribution.salesOrderDraftId &&
+      order.placedByStaffUserId === attribution.placedByStaffUserId);
+  if (!sameQuote || !sameDraft) {
+    throw new AuthError(
+      "This order request was already used for a different order.",
+      "IDEMPOTENCY_CONFLICT",
+      409,
+    );
+  }
+}
+
+async function matchingQuoteIdempotentOrder(
+  quote: { id: string; companyId: string },
+  idempotencyKey: string,
+  attribution:
+    | {
+        salesOrderDraftId: string;
+        placedByStaffUserId: string;
+      }
+    | null
+    | undefined,
+) {
+  const order = await prisma.order.findUnique({
+    where: { idempotencyKey: `quote-accept:${idempotencyKey}` },
+    select: quoteIdempotencySelect,
+  });
+  if (!order) return null;
+  assertQuoteIdempotencyMatch(order, quote, attribution);
+  return order;
+}
+
 async function convertQuoteToOrder(input: {
   quoteId: string;
   actorUserId: string;
@@ -1200,6 +1259,11 @@ async function convertQuoteToOrder(input: {
     include: { items: { orderBy: { sortOrder: "asc" } }, company: true },
   });
   if (!quote) throw new AuthError("Quote not found", "NOT_FOUND", 404);
+
+  const priorKey = await matchingQuoteIdempotentOrder(quote, input.idempotencyKey, input.salesOrderAttribution);
+  if (priorKey) {
+    return { alreadyConverted: true as const, orderId: priorKey.id, orderNumber: priorKey.orderNumber };
+  }
 
   if (quote.status === "CONVERTED" && quote.convertedOrderId) {
     const order = await prisma.order.findUnique({
@@ -1340,7 +1404,9 @@ async function convertQuoteToOrder(input: {
     });
   }
 
-  const created = await prisma.$transaction(async (tx) => {
+  let created;
+  try {
+    created = await prisma.$transaction(async (tx) => {
     // Claim the quote atomically so concurrent accepts cannot both convert.
     const claim = await tx.quote.updateMany({
       where: {
@@ -1370,21 +1436,24 @@ async function convertQuoteToOrder(input: {
         if (order) return { kind: "existing" as const, order };
       }
       if (locked.acceptIdempotencyKey === input.idempotencyKey) {
-        // Same idempotency key raced — wait for converted order via unique order key.
         const order = await tx.order.findUnique({
           where: { idempotencyKey: `quote-accept:${input.idempotencyKey}` },
-          select: { id: true, orderNumber: true },
+          select: quoteIdempotencySelect,
         });
-        if (order) return { kind: "existing" as const, order };
+        if (order) {
+          assertQuoteIdempotencyMatch(order, quote, input.salesOrderAttribution);
+          return { kind: "existing" as const, order };
+        }
       }
       throw new AuthError("This quotation cannot be accepted", "CONFLICT", 409);
     }
 
     const existingOrder = await tx.order.findUnique({
       where: { idempotencyKey: `quote-accept:${input.idempotencyKey}` },
-      select: { id: true, orderNumber: true },
+      select: quoteIdempotencySelect,
     });
     if (existingOrder) {
+      assertQuoteIdempotencyMatch(existingOrder, quote, input.salesOrderAttribution);
       await tx.quote.update({
         where: { id: quote.id },
         data: {
@@ -1530,7 +1599,16 @@ async function convertQuoteToOrder(input: {
     }
 
     return { kind: "created" as const, order };
-  });
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const replay = await matchingQuoteIdempotentOrder(quote, input.idempotencyKey, input.salesOrderAttribution);
+      if (replay) {
+        return { alreadyConverted: true as const, orderId: replay.id, orderNumber: replay.orderNumber };
+      }
+    }
+    throw error;
+  }
 
   if (created.kind === "existing") {
     return {

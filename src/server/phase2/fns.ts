@@ -2979,7 +2979,7 @@ export const abandonSalesOrderDraftFn = createServerFn({ method: "POST" })
   });
 
 export const searchOrderEntryCustomersFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { q?: string })
+  .inputValidator((data: unknown) => data as { q?: string; page?: number; pageSize?: number })
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();

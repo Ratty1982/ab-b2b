@@ -77,6 +77,8 @@ export const salesOrderProductSearchSchema = z.object({
 /** Active-customer search for order entry. This is not the CRM customer list. */
 export const salesOrderCustomerSearchSchema = z.object({
   q: z.string().trim().max(80).optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(50).default(20),
 });
 
 const reviewedMoney = z.string().trim().regex(/^\d+(\.\d{1,2})?$/, "Expected a price in pounds");
