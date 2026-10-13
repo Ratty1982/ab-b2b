@@ -385,6 +385,94 @@ describe("sales order entry on behalf of a customer", () => {
     }
   });
 
+  it("keeps a new campaign off negotiated prices until management allows it, and blocks placement when that price changes", async () => {
+    const stamp = Date.now();
+    const priced = await seedVariant(`SOE-PROT-${stamp}`, 20, 1, 30);
+    const { company, address, contact } = await seedCompany(`SOE Protect ${stamp}`);
+    const other = await seedCompany(`SOE Protect Other ${stamp}`);
+    await prisma.customerPrice.create({
+      data: { companyId: company.id, variantId: priced.id, unitPrice: "16.5000" },
+    });
+    const promo = await prisma.promotion.create({
+      data: {
+        code: `PROT${stamp}`.slice(0, 20),
+        name: "Protected campaign",
+        type: "PERCENT",
+        value: "10",
+        isActive: true,
+        campaignStatus: "APPROVED",
+        appliesToNegotiatedPrices: false,
+        metadata: { skus: [priced.sku] },
+      },
+    });
+    const { user: rep } = await ensureRep(`soe-prot-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `PT${stamp}`);
+    await assign(company.id, (await prisma.salesRep.findUniqueOrThrow({ where: { userId: rep.id } })).id, true);
+    const hits = await searchSalesOrderProducts(rep.id, { companyId: company.id, q: priced.sku });
+    expect(hits[0]?.customerUnitPrice).toBe("16.50");
+    expect(hits[0]?.promotionCode).toBeNull();
+    const otherHits = await searchSalesOrderProducts(rep.id, { companyId: other.company.id, q: priced.sku }).catch(
+      (error: unknown) => error,
+    );
+    expect(otherHits).toMatchObject({ code: "COMPANY_FORBIDDEN" });
+
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "TELEPHONE",
+      lines: [{ variantId: priced.id, qty: 1 }],
+    });
+    expect(saved.review?.totals.subtotal).toBe("16.50");
+    const reviewed = expectedFrom(saved.review!);
+
+    await prisma.customerPrice.update({
+      where: { companyId_variantId: { companyId: company.id, variantId: priced.id } },
+      data: { unitPrice: "15.0000" },
+    });
+    const blocked = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `prot-block-${stamp}`,
+      source: "TELEPHONE",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: priced.id, qty: 1 }],
+      expectedReview: reviewed,
+    });
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.code).toBe("REVIEW_REQUIRED");
+      expect(blocked.review.lines[0]?.customerUnitPrice).toBe("15.00");
+    }
+    expect(await prisma.order.count({ where: { companyId: company.id } })).toBe(0);
+
+    const refreshed = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      lines: [{ variantId: priced.id, qty: 1 }],
+    });
+    expect(refreshed.review?.totals.subtotal).toBe("15.00");
+    await prisma.promotion.update({ where: { id: promo.id }, data: { appliesToNegotiatedPrices: true } });
+    const discounted = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      lines: [{ variantId: priced.id, qty: 1 }],
+    });
+    expect(discounted.review?.lines[0]?.customerUnitPrice).toBe("13.50");
+    expect(discounted.review?.lines[0]?.promotionCode).toBe(promo.code);
+    const placed = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `prot-place-${stamp}`,
+      source: "TELEPHONE",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: priced.id, qty: 1 }],
+      expectedReview: expectedFrom(discounted.review!),
+    });
+    expect(placed.ok).toBe(true);
+    await prisma.promotion.update({ where: { id: promo.id }, data: { isActive: false } });
+  });
+
   it("requires review when the price changes and does not write an order", async () => {
     const stamp = Date.now();
     const variant = await seedVariant(`SOE-CHG-${stamp}`, 9, 1, 20);

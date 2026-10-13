@@ -202,7 +202,7 @@ describe("customer price import workflow", () => {
     const historical = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
     expect(moneyToString(moneyFromUnknown(historical.unitPrice)!)).toBe("9.9900");
 
-    await upsertPromotion(adminId, {
+    const legacy = await upsertPromotion(adminId, {
       code: `CPI${stamp}${added.sku}`.slice(0, 40),
       name: "Ten off import",
       type: "PERCENT",
@@ -211,14 +211,54 @@ describe("customer price import workflow", () => {
       skus: [added.sku],
       catalogueWide: false,
     });
-    const promoted = await resolveVariantTradePrices({
+    const legacyResolved = await resolveVariantTradePrices({
       variants: [{ id: added.id, sku: added.sku, tradePrice: added.tradePrice, vatCode: added.vatCode }],
       companyId: company.id,
       quantity: 1,
     });
-    expect(promoted.get(added.id)?.source).toBe("PROMOTION");
-    expect(promoted.get(added.id)?.unitPriceExVat).toBe("14.8500");
+    expect(legacy.campaignStatus).toBe("LEGACY");
+    expect(legacyResolved.get(added.id)?.source).toBe("PROMOTION");
+    expect(legacyResolved.get(added.id)?.unitPriceExVat).toBe("14.8500");
     expect(await priceOf(company.id, added.id)).toBe("16.5000");
+
+    const protectedCampaign = await prisma.promotion.create({
+      data: {
+        code: `NEW${stamp}`.slice(0, 20),
+        name: "Protected negotiated prices",
+        type: "PERCENT",
+        value: "10.0000",
+        isActive: true,
+        campaignStatus: "APPROVED",
+        appliesToNegotiatedPrices: false,
+        metadata: { skus: [added.sku] },
+      },
+    });
+    await prisma.promotion.update({ where: { id: legacy.id }, data: { isActive: false } });
+    const held = await resolveVariantTradePrices({
+      variants: [{ id: added.id, sku: added.sku, tradePrice: added.tradePrice, vatCode: added.vatCode }],
+      companyId: company.id,
+      quantity: 1,
+    });
+    expect(held.get(added.id)?.source).toBe("CUSTOMER");
+    expect(held.get(added.id)?.unitPriceExVat).toBe("16.5000");
+    const otherOffer = await resolveVariantTradePrices({
+      variants: [{ id: added.id, sku: added.sku, tradePrice: added.tradePrice, vatCode: added.vatCode }],
+      companyId: other.id,
+      quantity: 1,
+    });
+    expect(otherOffer.get(added.id)?.source).toBe("PROMOTION");
+    expect(otherOffer.get(added.id)?.unitPriceExVat).toBe("18.0000");
+    await prisma.promotion.update({
+      where: { id: protectedCampaign.id },
+      data: { appliesToNegotiatedPrices: true },
+    });
+    const permitted = await resolveVariantTradePrices({
+      variants: [{ id: added.id, sku: added.sku, tradePrice: added.tradePrice, vatCode: added.vatCode }],
+      companyId: company.id,
+      quantity: 1,
+    });
+    expect(permitted.get(added.id)?.source).toBe("PROMOTION");
+    expect(permitted.get(added.id)?.unitPriceExVat).toBe("14.8500");
   });
 
   it("blocks other accounts, customer service, and a second submission of the same batch", async () => {
