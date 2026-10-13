@@ -404,25 +404,114 @@ function GalleryItemsField({
   onChange: (items: Array<Record<string, unknown>>) => void;
 }) {
   const [open, setOpen] = useState(false);
+
+  function updateItem(index: number, patch: Record<string, unknown>) {
+    onChange(items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  }
+
+  function moveItem(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= items.length) return;
+    const next = items.slice();
+    const [moved] = next.splice(index, 1);
+    if (!moved) return;
+    next.splice(target, 0, moved);
+    onChange(next);
+  }
+
   return (
     <div className="grid gap-2">
-      <ul className="grid gap-2">
+      <p className="text-[12px] text-steel">
+        The first photograph is featured. Move a photograph earlier to feature it.
+      </p>
+      <ul className="grid gap-3">
         {items.map((item, index) => {
           const alt = typeof item["alt"] === "string" ? item["alt"] : "";
+          const caption = typeof item["caption"] === "string" ? item["caption"] : "";
+          const fit = typeof item["fit"] === "string" ? item["fit"] : "fill";
+          const focalX = typeof item["focalX"] === "number" ? item["focalX"] : 50;
+          const focalY = typeof item["focalY"] === "number" ? item["focalY"] : 50;
           const id = typeof item["mediaId"] === "string" ? item["mediaId"] : "";
           return (
             <li
               key={`${id}-${index}`}
-              className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-[12px]"
+              className="grid gap-2 rounded-md border border-border px-3 py-3 text-[12px]"
             >
-              <span className="truncate text-steel">{alt || id || `Image ${index + 1}`}</span>
-              <button
-                type="button"
-                className="text-bad hover:underline"
-                onClick={() => onChange(items.filter((_, i) => i !== index))}
-              >
-                Remove
-              </button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold uppercase tracking-wide text-steel">
+                  {index === 0 ? "Featured photograph" : `Photograph ${index + 1}`}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="font-semibold hover:underline disabled:opacity-40"
+                    disabled={index === 0}
+                    onClick={() => moveItem(index, -1)}
+                  >
+                    Move earlier
+                  </button>
+                  <button
+                    type="button"
+                    className="font-semibold hover:underline disabled:opacity-40"
+                    disabled={index === items.length - 1}
+                    onClick={() => moveItem(index, 1)}
+                  >
+                    Move later
+                  </button>
+                  <button
+                    type="button"
+                    className="text-bad hover:underline"
+                    onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <Field label="Alt text">
+                <input
+                  value={alt}
+                  onChange={(event) => updateItem(index, { alt: event.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Caption">
+                <input
+                  value={caption}
+                  onChange={(event) => updateItem(index, { caption: event.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="How the image fits">
+                <select
+                  value={fit}
+                  onChange={(event) => updateItem(index, { fit: event.target.value })}
+                  className={inputClass}
+                >
+                  {CMS_IMAGE_FITS.map((option) => (
+                    <option key={option} value={option}>
+                      {CMS_IMAGE_FIT_LABELS[option]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Focal position (horizontal)">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={focalX}
+                  onChange={(event) => updateItem(index, { focalX: Number(event.target.value) })}
+                />
+              </Field>
+              <Field label="Focal position (vertical)">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={focalY}
+                  onChange={(event) => updateItem(index, { focalY: Number(event.target.value) })}
+                />
+              </Field>
             </li>
           );
         })}

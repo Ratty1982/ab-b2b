@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cmsFocalStyle, cmsImageFitClass, cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,12 @@ function photosFromConfig(config: Record<string, unknown>): GalleryPhoto[] {
 }
 
 function tileSizes(frame: GalleryFrame): string {
+  if (frame.role === "feature" && frame.desktopSpan === 4) {
+    return "(max-width: 640px) 100vw, (max-width: 1279px) 100vw, 880px";
+  }
+  if (frame.pair) {
+    return "(max-width: 640px) 100vw, (max-width: 1279px) 100vw, 440px";
+  }
   if (frame.role === "feature" || frame.desktopSpan === 6) {
     return "(max-width: 640px) 100vw, (max-width: 1024px) 100vw, 1320px";
   }
@@ -122,7 +129,8 @@ export function MotorsportMediaGallery({ config }: { config: Record<string, unkn
                       alt={photo.alt}
                       className={cn("size-full", cmsImageFitClass(photo.fit))}
                       style={photo.focal}
-                      loading="lazy"
+                      loading={frame.role === "feature" ? "eager" : "lazy"}
+                      fetchPriority={frame.role === "feature" ? "high" : "auto"}
                       decoding="async"
                       sizes={tileSizes(frame)}
                     />
@@ -138,15 +146,18 @@ export function MotorsportMediaGallery({ config }: { config: Record<string, unkn
           </ul>
         )}
       </div>
-      {openIndex !== null && photos[openIndex] ? (
-        <MotorsportGalleryDialog
-          photos={photos}
-          index={openIndex}
-          onIndexChange={setOpenIndex}
-          onClose={() => setOpenIndex(null)}
-          returnFocusRef={triggerRef}
-        />
-      ) : null}
+      {openIndex !== null && photos[openIndex] && typeof document !== "undefined"
+        ? createPortal(
+            <MotorsportGalleryDialog
+              photos={photos}
+              index={openIndex}
+              onIndexChange={setOpenIndex}
+              onClose={() => setOpenIndex(null)}
+              returnFocusRef={triggerRef}
+            />,
+            document.body,
+          )
+        : null}
     </section>
   );
 }
@@ -179,8 +190,10 @@ export function MotorsportGalleryDialog({
   useEffect(() => {
     const returnTo = returnFocusRef?.current ?? null;
     closeRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
 
     function onKey(event: KeyboardEvent) {
       const action = galleryKeyAction(event.key);
@@ -212,7 +225,8 @@ export function MotorsportGalleryDialog({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previousOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
       returnTo?.focus();
     };
   }, [count, returnFocusRef]);
@@ -266,8 +280,8 @@ export function MotorsportGalleryDialog({
               <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </button>
           ) : null}
-          <div className="min-w-0 flex-1 text-center">
-            <p id={titleId} className="text-[13px] text-white/90">
+          <div className="min-w-0 flex-1 text-center" aria-live="polite" aria-atomic="true">
+            <p id={titleId} className="truncate text-[13px] text-white/90">
               {photo.caption || photo.alt}
             </p>
             <p className="mt-0.5 text-[11px] uppercase tracking-[0.16em] text-white/55">

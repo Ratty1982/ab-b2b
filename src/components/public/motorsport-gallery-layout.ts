@@ -7,19 +7,22 @@
  * Desktop uses six columns so a row can be three standard tiles (span 2),
  * two wider tiles (span 3), or one full-width tile (span 6). A remainder of
  * one is borrowed into the previous row so the last photograph is never left
- * alone, except when the mosaic itself is a single supporting image.
+ * alone. Two photographs share one row: the feature is twice as wide as its
+ * companion, so the second image is not another panorama and the row is full.
  *
  * Tablet uses two columns. An odd final tile spans both columns at a shorter
  * ratio so the row stays full without becoming a second hero.
  * Mobile is one column; every tile is full width.
  */
 
-export type GallerySpan = 1 | 2 | 3 | 6;
+export type GallerySpan = 2 | 3 | 4 | 6;
 
 export type GalleryFrame = {
   role: "feature" | "mosaic";
   desktopSpan: GallerySpan;
   tabletSpan: 1 | 2;
+  /** Companion beside the feature when the gallery has exactly two photographs. */
+  pair?: boolean;
 };
 
 export type GalleryKeyAction = "close" | "previous" | "next" | "none";
@@ -55,6 +58,12 @@ export function tabletMosaicSpans(count: number): Array<1 | 2> {
 
 export function galleryFrames(count: number): GalleryFrame[] {
   if (count <= 0) return [];
+  if (count === 2) {
+    return [
+      { role: "feature", desktopSpan: 4, tabletSpan: 2 },
+      { role: "mosaic", desktopSpan: 2, tabletSpan: 2, pair: true },
+    ];
+  }
   const mosaicCount = count - 1;
   const desktop = desktopMosaicSpans(mosaicCount);
   const tablet = tabletMosaicSpans(mosaicCount);
@@ -138,10 +147,18 @@ export function galleryIndexAfterKey(
 export function mosaicFrameClass(frame: GalleryFrame): string {
   const tablet = frame.tabletSpan === 2 ? "sm:col-span-2" : "sm:col-span-1";
   const desktop =
-    frame.desktopSpan === 6 ? "xl:col-span-6" : frame.desktopSpan === 3 ? "xl:col-span-3" : "xl:col-span-2";
+    frame.desktopSpan === 6
+      ? "xl:col-span-6"
+      : frame.desktopSpan === 4
+        ? "xl:col-span-4"
+        : frame.desktopSpan === 3
+          ? "xl:col-span-3"
+          : "xl:col-span-2";
   let aspect = "aspect-[3/2]";
   if (frame.role === "feature") {
     aspect = "aspect-[4/3] sm:aspect-[16/9] xl:aspect-[2/1]";
+  } else if (frame.pair) {
+    aspect = "aspect-[3/2] sm:aspect-[3/2] xl:aspect-square";
   } else if (frame.desktopSpan === 6) {
     aspect = "aspect-[4/3] sm:aspect-[3/1] xl:aspect-[21/9]";
   } else if (frame.desktopSpan === 3 && frame.tabletSpan === 2) {
