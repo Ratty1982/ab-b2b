@@ -13,8 +13,10 @@ import {
   placeSalesOrder,
   salesOrderCrmDependencies,
   saveSalesOrderDraft,
+  searchOrderEntryCustomers,
   searchSalesOrderProducts,
 } from "@/server/orders/sales-order-entry";
+import { listCompaniesForActor } from "@/server/companies/service";
 import { acceptQuoteOnBehalf, createQuote, sendQuote, updateQuoteDraft } from "@/server/quotes/service";
 import { AuthError } from "@/server/rbac/guards";
 
@@ -194,7 +196,7 @@ afterAll(async () => {
 });
 
 describe("sales order entry on behalf of a customer", () => {
-  it("rejects unassigned reps, prospects, and staff without permission", async () => {
+  it("lets another representative order for an active customer, and still blocks prospects and staff without permission", async () => {
     const stamp = Date.now();
     const { user: rep } = await ensureRep(`soe-rep-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `SOE${stamp}`);
     const { user: other } = await ensureRep(`soe-out-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `OUT${stamp}`);
@@ -205,19 +207,26 @@ describe("sales order entry on behalf of a customer", () => {
     await assign(company.id, repRecord.id, true);
     await assign(prospect.company.id, repRecord.id, true);
 
-    await expect(openSalesOrderDraft(other.id, { companyId: company.id })).rejects.toMatchObject({
-      code: "COMPANY_FORBIDDEN",
-    });
-    await expect(
-      searchSalesOrderProducts(other.id, { companyId: company.id, q: "SOE" }),
-    ).rejects.toMatchObject({ code: "COMPANY_FORBIDDEN" });
-    expect(await prisma.salesOrderDraft.count({ where: { companyId: company.id, createdByUserId: other.id } })).toBe(0);
+    const opened = await openSalesOrderDraft(other.id, { companyId: company.id });
+    expect(opened.draft.companyId).toBe(company.id);
+    expect(opened.assignedSalesRep?.code).toBe(repRecord.code);
+    expect(opened.quotes).toEqual([]);
+    const hits = await searchSalesOrderProducts(other.id, { companyId: company.id, q: "SOE" });
+    expect(Array.isArray(hits)).toBe(true);
+    const found = await searchOrderEntryCustomers(other.id, { q: `SOE Assigned ${stamp}` });
+    expect(found.items.some((row) => row.id === company.id)).toBe(true);
+    expect(found.total).toBe(found.items.length);
+    const crm = await listCompaniesForActor(other.id, { q: `SOE Assigned ${stamp}`, status: "ACTIVE" });
+    expect(crm.items.some((row) => row.id === company.id)).toBe(false);
 
     await expect(openSalesOrderDraft(rep.id, { companyId: prospect.company.id })).rejects.toMatchObject({
       code: "COMPANY_NOT_ACTIVE",
     });
     const still = await prisma.company.findUniqueOrThrow({ where: { id: prospect.company.id } });
     expect(still.status).toBe("PROSPECT");
+    const prospectHits = await searchOrderEntryCustomers(rep.id, { q: `SOE Prospect ${stamp}` });
+    expect(prospectHits.items.some((row) => row.id === prospect.company.id)).toBe(false);
+    expect(prospectHits.total).toBe(0);
 
     await expect(openSalesOrderDraft(cs.id, { companyId: company.id })).rejects.toBeInstanceOf(AuthError);
     await expect(openSalesOrderDraft(cs.id, { companyId: company.id })).rejects.toMatchObject({
@@ -225,7 +234,68 @@ describe("sales order entry on behalf of a customer", () => {
     });
   });
 
-  it("limits a sales manager to team accounts", async () => {
+  it("keeps the assigned representative on the order and records who took the call", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-ANY-${stamp}`, 9, 1, 12);
+    const { user: owner } = await ensureRep(`soe-owner-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `OWN${stamp}`.slice(0, 12));
+    const { user: taker } = await ensureRep(`soe-taker-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `TAK${stamp}`.slice(0, 12));
+    const ownerRep = await prisma.salesRep.findUniqueOrThrow({ where: { userId: owner.id } });
+    const { company, address, contact } = await seedCompany(`SOE Phone ${stamp}`);
+    await assign(company.id, ownerRep.id, true);
+    const quote = await createQuote(owner.id, {
+      companyId: company.id,
+      contactId: contact.id,
+      validUntil: "2099-12-31",
+    });
+    await updateQuoteDraft(owner.id, {
+      id: quote.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      validUntil: "2099-12-31",
+    });
+    await sendQuote(owner.id, { id: quote.id });
+
+    const draft = await openSalesOrderDraft(taker.id, { companyId: company.id, fresh: true });
+    expect(draft.quotes).toEqual([]);
+    expect(draft.assignedSalesRep?.code).toBe(ownerRep.code);
+    await expect(
+      placeSalesOrder(taker.id, {
+        draftId: draft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: `quote-hidden-${stamp}`,
+        source: "TELEPHONE",
+        quoteId: quote.id,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const saved = await saveSalesOrderDraft(taker.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "TELEPHONE",
+      lines: [{ variantId: variant.id, qty: 1 }],
+    });
+    const placed = await placeSalesOrder(taker.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `taken-${stamp}`,
+      source: "TELEPHONE",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: placed.order.id } });
+    expect(order.placedByStaffUserId).toBe(taker.id);
+    expect(order.salesRepIdSnapshot).toBe(ownerRep.id);
+    expect(order.salesRepCodeSnapshot).toBe(ownerRep.code);
+    await expect(getSalesOrderDraft(owner.id, { draftId: draft.draft.id })).rejects.toMatchObject({
+      code: "DRAFT_NOT_FOUND",
+    });
+  });
+
+  it("lets a sales manager enter an order outside the team without widening CRM access", async () => {
     const stamp = Date.now();
     const { rep: managerRep, user: manager } = await ensureRep(
       `soe-mgr-${stamp}@example.invalid`,
@@ -250,9 +320,10 @@ describe("sales order entry on behalf of a customer", () => {
 
     const opened = await openSalesOrderDraft(manager.id, { companyId: teamCo.company.id });
     expect(opened.draft.companyId).toBe(teamCo.company.id);
-    await expect(openSalesOrderDraft(manager.id, { companyId: otherCo.company.id })).rejects.toMatchObject({
-      code: "COMPANY_FORBIDDEN",
-    });
+    const outside = await openSalesOrderDraft(manager.id, { companyId: otherCo.company.id, fresh: true });
+    expect(outside.draft.companyId).toBe(otherCo.company.id);
+    const crm = await listCompaniesForActor(manager.id, { q: otherCo.company.name, status: "ACTIVE" });
+    expect(crm.items.some((row) => row.id === otherCo.company.id)).toBe(false);
   });
 
   it("keeps salesperson drafts and the customer basket separate", async () => {
@@ -410,10 +481,9 @@ describe("sales order entry on behalf of a customer", () => {
     const hits = await searchSalesOrderProducts(rep.id, { companyId: company.id, q: priced.sku });
     expect(hits[0]?.customerUnitPrice).toBe("16.50");
     expect(hits[0]?.promotionCode).toBeNull();
-    const otherHits = await searchSalesOrderProducts(rep.id, { companyId: other.company.id, q: priced.sku }).catch(
-      (error: unknown) => error,
-    );
-    expect(otherHits).toMatchObject({ code: "COMPANY_FORBIDDEN" });
+    const otherHits = await searchSalesOrderProducts(rep.id, { companyId: other.company.id, q: priced.sku });
+    expect(otherHits[0]?.customerUnitPrice).toBe("18.00");
+    expect(otherHits[0]?.promotionCode).toBe(promo.code);
 
     const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
     const saved = await saveSalesOrderDraft(rep.id, {
@@ -1045,28 +1115,25 @@ describe("sales order entry on behalf of a customer", () => {
     });
 
     await prisma.companyAssignment.delete({ where: { id: assignment.id } });
-    await expect(getSalesOrderDraft(rep.id, { draftId: draft.draft.id })).rejects.toMatchObject({
-      code: "COMPANY_FORBIDDEN",
-    });
-    await expect(
-      saveSalesOrderDraft(rep.id, { draftId: draft.draft.id, poNumber: "NO" }),
-    ).rejects.toMatchObject({ code: "COMPANY_FORBIDDEN" });
-    await expect(abandonSalesOrderDraft(rep.id, { draftId: draft.draft.id })).rejects.toMatchObject({
-      code: "COMPANY_FORBIDDEN",
-    });
-    expect(await listSalesOrderDrafts(rep.id)).toEqual([]);
+    const stillMine = await getSalesOrderDraft(rep.id, { draftId: draft.draft.id });
+    expect(stillMine.draft.id).toBe(draft.draft.id);
+    expect(stillMine.assignedSalesRep).toBeNull();
+    await saveSalesOrderDraft(rep.id, { draftId: draft.draft.id, poNumber: "STILL-MINE" });
+    expect((await listSalesOrderDrafts(rep.id)).some((row) => row.id === draft.draft.id)).toBe(true);
     const stillOpen = await prisma.salesOrderDraft.findUniqueOrThrow({ where: { id: draft.draft.id } });
     expect(stillOpen.status).toBe("OPEN");
+    expect(stillOpen.poNumber).toBe("STILL-MINE");
 
     await prisma.companyAssignment.create({
       data: { companyId: company.id, salesRepId: otherRep.id, isPrimary: true },
     });
-    await expect(getSalesOrderDraft(rep.id, { draftId: draft.draft.id })).rejects.toMatchObject({
-      code: "COMPANY_FORBIDDEN",
-    });
+    const afterReassignment = await getSalesOrderDraft(rep.id, { draftId: draft.draft.id });
+    expect(afterReassignment.assignedSalesRep?.code).toBe(otherRep.code);
     await expect(getSalesOrderDraft(other.id, { draftId: draft.draft.id })).rejects.toMatchObject({
       code: "DRAFT_NOT_FOUND",
     });
+    const otherDraft = await openSalesOrderDraft(other.id, { companyId: company.id, fresh: true });
+    expect(otherDraft.draft.id).not.toBe(draft.draft.id);
 
     await prisma.companyAssignment.create({
       data: { companyId: company.id, salesRepId: salesRep.id, isPrimary: false },
@@ -1175,5 +1242,275 @@ describe("sales order entry on behalf of a customer", () => {
         where: { companyId: company.id, metadata: { path: ["salesOrderId"], equals: placed.order.id } },
       }),
     ).toBe(1);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: placed.order.id } })).toBe(1);
+  });
+
+  it("rejects an idempotency key reused for another draft, customer, or staff member", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-IDEM-${stamp}`, 6, 1, 40);
+    const { company, address, contact } = await seedCompany(`SOE Idem ${stamp}`);
+    const otherCustomer = await seedCompany(`SOE Idem Other ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-idem-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `ID${stamp}`);
+    const { user: otherRep } = await ensureRep(`soe-idem-b-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `IB${stamp}`);
+    const repRecord = await prisma.salesRep.findUniqueOrThrow({ where: { userId: rep.id } });
+    await assign(company.id, repRecord.id, true);
+
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "TELEPHONE",
+      lines: [{ variantId: variant.id, qty: 1 }],
+    });
+    const key = `idem-reuse-${stamp}`;
+    const placed = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: key,
+      source: "TELEPHONE",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(placed.ok && placed.alreadyPlaced).toBe(false);
+    if (!placed.ok) return;
+
+    const retry = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: key,
+      source: "TELEPHONE",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(retry.ok && retry.alreadyPlaced && retry.order.id).toBe(placed.order.id);
+
+    const secondDraft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const secondSaved = await saveSalesOrderDraft(rep.id, {
+      draftId: secondDraft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "EMAIL",
+      lines: [{ variantId: variant.id, qty: 1 }],
+    });
+    await expect(
+      placeSalesOrder(rep.id, {
+        draftId: secondDraft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: key,
+        source: "EMAIL",
+        contactId: contact.id,
+        addressId: address.id,
+        lines: [{ variantId: variant.id, qty: 1 }],
+        expectedReview: expectedFrom(secondSaved.review!),
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const otherDraft = await openSalesOrderDraft(rep.id, { companyId: otherCustomer.company.id, fresh: true });
+    const otherSaved = await saveSalesOrderDraft(rep.id, {
+      draftId: otherDraft.draft.id,
+      contactId: otherCustomer.contact.id,
+      addressId: otherCustomer.address.id,
+      source: "CUSTOMER_VISIT",
+      lines: [{ variantId: variant.id, qty: 1 }],
+    });
+    await expect(
+      placeSalesOrder(rep.id, {
+        draftId: otherDraft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: key,
+        source: "CUSTOMER_VISIT",
+        contactId: otherCustomer.contact.id,
+        addressId: otherCustomer.address.id,
+        lines: [{ variantId: variant.id, qty: 1 }],
+        expectedReview: expectedFrom(otherSaved.review!),
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const staffDraft = await openSalesOrderDraft(otherRep.id, { companyId: company.id, fresh: true });
+    const staffSaved = await saveSalesOrderDraft(otherRep.id, {
+      draftId: staffDraft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "TELEPHONE",
+      lines: [{ variantId: variant.id, qty: 1 }],
+    });
+    await expect(
+      placeSalesOrder(otherRep.id, {
+        draftId: staffDraft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: key,
+        source: "TELEPHONE",
+        contactId: contact.id,
+        addressId: address.id,
+        lines: [{ variantId: variant.id, qty: 1 }],
+        expectedReview: expectedFrom(staffSaved.review!),
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    expect(await prisma.order.count({ where: { OR: [{ idempotencyKey: key }, { companyId: company.id }] } })).toBe(1);
+    expect(await prisma.order.count({ where: { companyId: otherCustomer.company.id } })).toBe(0);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: placed.order.id } })).toBe(1);
+    expect(await prisma.transactionalEmail.count({ where: { entityId: placed.order.id, purpose: "ORDER_RECEIVED" } })).toBe(1);
+    expect((await prisma.salesOrderDraft.findUniqueOrThrow({ where: { id: secondDraft.draft.id } })).status).toBe("OPEN");
+    expect((await prisma.salesOrderDraft.findUniqueOrThrow({ where: { id: staffDraft.draft.id } })).status).toBe("OPEN");
+  });
+
+  it("keeps one order when the same draft is placed concurrently with one key", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-RACE-${stamp}`, 8, 1, 20);
+    const { company, address, contact } = await seedCompany(`SOE Race ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-race-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `RC${stamp}`);
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "TELEPHONE",
+      lines: [{ variantId: variant.id, qty: 2 }],
+    });
+    const body = {
+      draftId: draft.draft.id,
+      confirmAuthorised: true as const,
+      idempotencyKey: `race-same-${stamp}`,
+      source: "TELEPHONE" as const,
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 2 }],
+      expectedReview: expectedFrom(saved.review!),
+    };
+    const raced = await Promise.allSettled([placeSalesOrder(rep.id, body), placeSalesOrder(rep.id, body)]);
+    expect(raced.every((result) => result.status === "fulfilled" && result.value.ok)).toBe(true);
+    const orders = await prisma.order.findMany({ where: { salesOrderDraftId: draft.draft.id } });
+    expect(orders).toHaveLength(1);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: orders[0]!.id } })).toBe(1);
+    expect(await prisma.transactionalEmail.count({ where: { entityId: orders[0]!.id, purpose: "ORDER_RECEIVED" } })).toBe(1);
+    const reserved = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(reserved.qtyReserved).toBe(2);
+  });
+
+  it("replays a completed quotation conversion without a second order or email", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-QID-${stamp}`, 9, 1, 12);
+    const { company, contact } = await seedCompany(`SOE Qid ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-qid-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `QI${stamp}`);
+    await assign(company.id, (await prisma.salesRep.findUniqueOrThrow({ where: { userId: rep.id } })).id, true);
+    const quote = await createQuote(adminId, { companyId: company.id, contactId: contact.id, validUntil: "2099-12-31" });
+    await updateQuoteDraft(adminId, {
+      id: quote.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      validUntil: "2099-12-31",
+    });
+    await sendQuote(adminId, { id: quote.id });
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const key = `quote-idem-${stamp}`;
+    const placed = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: key,
+      source: "EMAIL",
+      quoteId: quote.id,
+      internalNote: "INTERNAL quote replay",
+    });
+    expect(placed.ok && placed.alreadyPlaced).toBe(false);
+    if (!placed.ok) return;
+    const replay = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: key,
+      source: "EMAIL",
+      quoteId: quote.id,
+    });
+    expect(replay.ok && replay.alreadyPlaced && replay.order.id).toBe(placed.order.id);
+    expect(await prisma.order.count({ where: { sourceQuoteId: quote.id } })).toBe(1);
+    expect(await prisma.transactionalEmail.count({ where: { entityId: placed.order.id, purpose: "ORDER_RECEIVED" } })).toBe(1);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: placed.order.id } })).toBe(1);
+
+    const other = await createQuote(adminId, { companyId: company.id, contactId: contact.id, validUntil: "2099-12-31" });
+    await updateQuoteDraft(adminId, {
+      id: other.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      validUntil: "2099-12-31",
+    });
+    await sendQuote(adminId, { id: other.id });
+    const otherDraft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    await expect(
+      placeSalesOrder(rep.id, {
+        draftId: otherDraft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: key,
+        source: "EMAIL",
+        quoteId: other.id,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: other.id } })).status).not.toBe("CONVERTED");
+  });
+
+  it("pages every matching active account and searches aliases and contact numbers", async () => {
+    const stamp = `${Date.now()}`;
+    const { user: rep } = await ensureRep(`soe-search-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `SE${stamp.slice(-6)}`);
+    const hidden = await prisma.company.create({
+      data: { name: `${stamp} Hidden`, status: "SUSPENDED", accountNumber: `HID-${stamp}` },
+    });
+    const alpha = await prisma.company.create({
+      data: {
+        name: `${stamp} Alpha`,
+        tradingName: `${stamp} Motors`,
+        accountNumber: `ACC-${stamp}`,
+        autopartCustomerCode: `AP${stamp.slice(-8)}`,
+        phone: `0114${stamp.slice(-7)}`,
+        primaryEmail: `desk-${stamp}@example.invalid`,
+        status: "ACTIVE",
+      },
+    });
+    await prisma.contact.create({
+      data: {
+        companyId: alpha.id,
+        firstName: `Nia${stamp.slice(-6)}`,
+        lastName: `Keane${stamp.slice(-6)}`,
+        email: `nia-${stamp}@example.invalid`,
+        phone: `0121${stamp.slice(-7)}`,
+        mobile: `07700${stamp.slice(-6)}`,
+        isPrimary: true,
+      },
+    });
+    await prisma.autopartCustomerAccountAlias.create({
+      data: { companyId: alpha.id, alias: `ALIAS${stamp.slice(-8)}`.toUpperCase(), verifiedById: adminId },
+    });
+    await prisma.company.create({ data: { name: `${stamp} Beta`, status: "ACTIVE" } });
+    await prisma.company.create({ data: { name: `${stamp} Gamma`, status: "ACTIVE" } });
+
+    const page1 = await searchOrderEntryCustomers(rep.id, { q: stamp, page: 1, pageSize: 2 });
+    const page2 = await searchOrderEntryCustomers(rep.id, { q: stamp, page: 2, pageSize: 2 });
+    expect(page1.total).toBe(3);
+    expect(page1.page).toBe(1);
+    expect(page1.items).toHaveLength(2);
+    expect(page2.items).toHaveLength(1);
+    const ids = [...page1.items, ...page2.items].map((row) => row.id);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids).not.toContain(hidden.id);
+
+    const queries = [
+      `${stamp} Motors`,
+      `ACC-${stamp}`,
+      `AP${stamp.slice(-8)}`,
+      `ALIAS${stamp.slice(-8)}`,
+      `0114${stamp.slice(-7)}`,
+      `desk-${stamp}@example.invalid`,
+      `Nia${stamp.slice(-6)}`,
+      `Keane${stamp.slice(-6)}`,
+      `nia-${stamp}@example.invalid`,
+      `0121${stamp.slice(-7)}`,
+      `07700${stamp.slice(-6)}`,
+    ];
+    for (const q of queries) {
+      const hit = await searchOrderEntryCustomers(rep.id, { q, pageSize: 20 });
+      expect(hit.items.some((row) => row.id === alpha.id), q).toBe(true);
+    }
+    expect((await searchOrderEntryCustomers(rep.id, { q: `${stamp} Hidden` })).total).toBe(0);
   });
 });
