@@ -17,6 +17,7 @@ import {
   resolveAccountManagerForCompany,
   resolveGeneralTradeContact,
 } from "@/server/sales/account-manager";
+import { loadCustomerPromotionViews } from "@/server/portal/promotions";
 
 const OPEN_ORDER_STATUSES = [
   "SUBMITTED",
@@ -194,9 +195,10 @@ export async function getPortalDashboard(userId: string) {
       }),
     ]);
 
-  const [accountManager, generalContact] = await Promise.all([
+  const [accountManager, generalContact, currentPromotionRows] = await Promise.all([
     resolveAccountManagerForCompany(company.id),
     resolveGeneralTradeContact(),
+    loadCustomerPromotionViews(now),
   ]);
 
   const autopartVerified = Boolean(
@@ -269,6 +271,15 @@ export async function getPortalDashboard(userId: string) {
     accountManager,
     /** Fallback when no SalesRep is assigned — configured reply-to/from only. */
     generalContact,
+    currentPromotions: {
+      count: currentPromotionRows.length,
+      items: currentPromotionRows.slice(0, 3).map((promotion) => ({
+        id: promotion.id,
+        name: promotion.name,
+        code: promotion.code,
+        offerLabel: promotion.offerLabel,
+      })),
+    },
     features: {
       quotes: true,
       invoices: false,
@@ -277,6 +288,7 @@ export async function getPortalDashboard(userId: string) {
       quickOrder: false,
       companyUsers: false,
       downloads: false,
+      promotions: true,
     },
   };
 }

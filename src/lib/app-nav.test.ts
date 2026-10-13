@@ -176,6 +176,8 @@ describe("canonical navigation contract", () => {
     expect(ids).toContain("customers");
     expect(ids).toContain("trade-applications");
     expect(ids).toContain("quotes");
+    expect(ids).toContain("promotions");
+    expect(items.find((i) => i.id === "promotions")?.to).toBe(ROUTES.salesPromotions);
     expect(ids).toContain("sales-enquiry");
     expect(ids).toContain("sales-daily-brief");
     expect(ids).toContain("sales-rep-portfolio");
@@ -207,6 +209,8 @@ describe("canonical navigation contract", () => {
     const ids = portal.map((i) => i.id);
     expect(ids).toContain("portal-dashboard");
     expect(ids).toContain("portal-shop");
+    expect(ids).toContain("portal-promotions");
+    expect(portal.find((item) => item.id === "portal-promotions")?.to).toBe(ROUTES.portalPromotions);
     expect(ids).toContain("portal-basket");
     expect(ids).toContain("portal-orders");
     expect(ids).toContain("portal-quotes");

@@ -4,7 +4,7 @@ import { AvailabilityBadge } from "@/components/ab/AvailabilityBadge";
 import { InternalStockDisplay } from "@/components/ab/InternalStockDisplay";
 import { TradePrice } from "@/components/ab/Price";
 import { ProductImage } from "@/components/public/ProductImage";
-import { ProductCard } from "@/components/public/ProductCard";
+import { ProductCard, PromotionOfferBadge } from "@/components/public/ProductCard";
 import { sanitizeProductDescriptionHtml } from "@/domain/product-content-html";
 import { publicUnitPriceQualifier } from "@/domain/public-price-unit";
 import {
@@ -151,6 +151,9 @@ export function ProductDetailHero({ data }: { data: PublicProductDetail }) {
           {product.name}
         </h1>
         <p className="num mt-2 text-[13px] text-steel">{data.sku}</p>
+        <div className="mt-2">
+          <PromotionOfferBadge offer={product.price.offer} />
+        </div>
         {product.availability || data.internalStock ? (
           <div
             className="mt-3"

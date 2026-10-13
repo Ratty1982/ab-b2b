@@ -153,6 +153,23 @@ describe("permission catalogue", () => {
     expect(TRADE_ROLE_PERMISSIONS.TRADE_ACCOUNTS).not.toContain("orders.create");
     expect(TRADE_ROLE_PERMISSIONS.TRADE_ACCOUNTS).toContain("invoices.view");
   });
+
+  it("lets sales staff submit promotions and only management approve them", () => {
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).toContain("promotions.submit");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).toContain("promotions.report");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_REPRESENTATIVE).not.toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).toContain("promotions.submit");
+    expect(SYSTEM_ROLE_PERMISSIONS.SALES_MANAGER).not.toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGEMENT).toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.SUPER_ADMIN).toContain("promotions.approve");
+    expect(SYSTEM_ROLE_PERMISSIONS.CUSTOMER_SERVICE).not.toContain("promotions.submit");
+    expect(SYSTEM_ROLE_PERMISSIONS.MARKETING).not.toContain("promotions.approve");
+    for (const perms of Object.values(TRADE_ROLE_PERMISSIONS)) {
+      expect(perms).not.toContain("promotions.submit");
+      expect(perms).not.toContain("promotions.approve");
+      expect(perms).not.toContain("promotions.report");
+    }
+  });
 });
 
 describe("safeReturnPath", () => {

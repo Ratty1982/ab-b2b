@@ -53,6 +53,9 @@ export const ROUTES = {
   salesQuotes: "/sales/quotes",
   salesQuotesNew: "/sales/quotes/new",
   salesQuote: (id: string) => `/sales/quotes/${id}` as const,
+  salesPromotions: "/sales/promotions",
+  salesPromotionsNew: "/sales/promotions/new",
+  salesPromotion: (id: string) => `/sales/promotions/${id}` as const,
 
   crm: "/crm",
   crmOverview: "/crm/overview",
@@ -72,6 +75,7 @@ export const ROUTES = {
   portalQuotes: "/portal/quotes",
   portalQuote: (id: string) => `/portal/quotes/${id}` as const,
   portalPurchases: "/portal/purchases",
+  portalPromotions: "/portal/promotions",
   portalInvoices: "/portal/invoices",
   portalFavourites: "/portal/favourites",
   portalUsers: "/portal/users",
@@ -257,6 +261,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "file-text",
         to: ROUTES.salesQuotes,
         permission: "quotes.view",
+        implemented: true,
+      },
+      {
+        id: "promotions",
+        label: "Promotions",
+        icon: "tags",
+        to: ROUTES.salesPromotions,
+        matchPrefixes: [ROUTES.salesPromotions],
+        permission: ["promotions.submit", "promotions.approve", "promotions.report"],
         implemented: true,
       },
       {
@@ -703,6 +716,13 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         label: "Shop",
         icon: "store",
         to: ROUTES.products,
+        implemented: true,
+      },
+      {
+        id: "portal-promotions",
+        label: "Promotions",
+        icon: "tags",
+        to: ROUTES.portalPromotions,
         implemented: true,
       },
       {

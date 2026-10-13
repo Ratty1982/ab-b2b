@@ -200,6 +200,7 @@ export async function loadTradePriceFactsForVariants(input: {
       isActive: p.isActive,
       variantIds: scope.variantIds,
       skus: scope.skus,
+      appliesToNegotiatedPrices: p.appliesToNegotiatedPrices,
     };
   });
 
