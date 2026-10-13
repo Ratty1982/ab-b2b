@@ -31,6 +31,7 @@ export const emailSettingsUpdateSchema = z.object({
   tradeApplicationRecipients: recipientListSchema.optional(),
   orderNotificationRecipients: recipientListSchema.optional(),
   motorsportEnquiryRecipients: recipientListSchema.optional(),
+  surveyNotificationRecipients: recipientListSchema.optional(),
 });
 
 export type EmailSettingsUpdateInput = z.infer<typeof emailSettingsUpdateSchema>;
@@ -109,6 +110,12 @@ export function validateEmailSettingsSave(
   if (input.motorsportEnquiryRecipients) {
     for (const addr of input.motorsportEnquiryRecipients) {
       const err = validateOptionalEmail(addr, "Motorsport enquiry recipient");
+      if (err) return err;
+    }
+  }
+  if (input.surveyNotificationRecipients) {
+    for (const addr of input.surveyNotificationRecipients) {
+      const err = validateOptionalEmail(addr, "Customer survey recipient");
       if (err) return err;
     }
   }

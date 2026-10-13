@@ -13,6 +13,8 @@ import {
 } from "@/server/email/application-templates";
 import {
   buildCallbackRequestInternalBodies,
+  buildCustomerSurveyAcknowledgementBodies,
+  buildCustomerSurveyInternalBodies,
   buildCompanyUserInviteBodies,
   buildMotorsportEnquiryInternalBodies,
   buildPasswordResetBodies,
@@ -352,6 +354,57 @@ const registry: RegistryEntry[] = [
           messagePreview: "We would like to discuss a club championship partnership for 2027.",
           adminLeadUrl: `${appBaseUrl()}/sales/crm`,
           submittedAtLabel: "03/10/2026 11:40",
+        },
+        previewFooter(),
+      ),
+  },
+  {
+    id: "customer-survey-acknowledgement",
+    name: "Customer survey acknowledgement",
+    purpose: "CUSTOMER_SURVEY_ACK",
+    audience: "customer",
+    group: "customer",
+    description: "Acknowledgement sent when a survey respondent provides an email address.",
+    scenarios: [
+      { id: "survey", label: "Survey only" },
+      { id: "prize", label: "Accepted prize draw entry" },
+    ],
+    render: (scenarioId) =>
+      buildCustomerSurveyAcknowledgementBodies(
+        {
+          customerName: PREVIEW_CUSTOMER.name,
+          reference: "CS-PREVIEW1",
+          prizeDrawAccepted: scenarioId === "prize",
+          surveyUrl: `${appBaseUrl()}/customer-survey`,
+        },
+        previewFooter(),
+      ),
+  },
+  {
+    id: "customer-survey-internal",
+    name: "Customer survey notification",
+    purpose: "CUSTOMER_SURVEY_INTERNAL",
+    audience: "internal",
+    group: "internal",
+    description: "Internal alert for a new customer satisfaction survey.",
+    scenarios: SCENARIO_DEFAULT,
+    render: () =>
+      buildCustomerSurveyInternalBodies(
+        {
+          reference: "CS-PREVIEW1",
+          submittedAtLabel: "13/10/2026, 21:00 BST",
+          overall: "4/5",
+          recommendation: "9/10",
+          doWell: "Reliable deliveries.",
+          couldImprove: "Clearer product photos.",
+          productRequests: "",
+          additionalComments: "",
+          contactPermission: "yes",
+          customerName: PREVIEW_CUSTOMER.name,
+          customerEmail: PREVIEW_CUSTOMER.email,
+          customerPhone: "01527 000000",
+          prizeDraw: "Not entered",
+          adminUrl: `${appBaseUrl()}/admin/customer-surveys`,
         },
         previewFooter(),
       ),

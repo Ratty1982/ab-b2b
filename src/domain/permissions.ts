@@ -93,6 +93,12 @@ export const PERMISSIONS = [
   "cms.media.read",
   "cms.media.manage",
 
+  /// Customer satisfaction survey administration. Not for trade portal users.
+  "surveys.view",
+  "surveys.export",
+  "surveys.delete",
+  "surveys.import",
+
   "users.view",
   "users.manage",
 

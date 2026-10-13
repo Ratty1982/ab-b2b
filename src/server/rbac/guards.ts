@@ -192,7 +192,8 @@ export async function requireAdminAccess(
     hasPermission(profile, "pricing.edit") ||
     hasPermission(profile, "users.manage") ||
     hasPermission(profile, "roles.manage") ||
-    hasPermission(profile, "settings.edit");
+    hasPermission(profile, "settings.edit") ||
+    hasPermission(profile, "surveys.view");
   if (!ok) {
     throw new AuthError("Admin access required", "ADMIN_FORBIDDEN", 403);
   }

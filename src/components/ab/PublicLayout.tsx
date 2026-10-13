@@ -33,6 +33,7 @@ const footerTrade = [
 
 const footerSupport = [
   { label: "Contact / Support", to: "/contact" as const },
+  { label: "Customer Survey", to: "/customer-survey" as const },
 ] as const;
 
 const footerCompany = [

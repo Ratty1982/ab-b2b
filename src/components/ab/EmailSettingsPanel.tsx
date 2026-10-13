@@ -31,6 +31,7 @@ type EmailSettingsDto = {
   tradeApplicationRecipients: string[];
   orderNotificationRecipients: string[];
   motorsportEnquiryRecipients: string[];
+  surveyNotificationRecipients: string[];
   status: {
     smtpConfigured: boolean;
     passwordConfigured: boolean;
@@ -208,6 +209,7 @@ export function EmailSettingsPanel() {
     tradeApplicationRecipients: [] as string[],
     orderNotificationRecipients: [] as string[],
     motorsportEnquiryRecipients: [] as string[],
+    surveyNotificationRecipients: [] as string[],
   });
 
   const loadHistory = useCallback(async (status: string, purpose: string) => {
@@ -244,6 +246,7 @@ export function EmailSettingsPanel() {
       tradeApplicationRecipients: data.tradeApplicationRecipients,
       orderNotificationRecipients: data.orderNotificationRecipients,
       motorsportEnquiryRecipients: data.motorsportEnquiryRecipients,
+      surveyNotificationRecipients: data.surveyNotificationRecipients,
     });
     setReplacePassword(false);
     setSmtpPassword("");
@@ -270,6 +273,7 @@ export function EmailSettingsPanel() {
       tradeApplicationRecipients: form.tradeApplicationRecipients,
       orderNotificationRecipients: form.orderNotificationRecipients,
       motorsportEnquiryRecipients: form.motorsportEnquiryRecipients,
+      surveyNotificationRecipients: form.surveyNotificationRecipients,
     };
     if (replacePassword || (!settings?.smtpPasswordConfigured && smtpPassword)) {
       payload["replacePassword"] = true;
@@ -545,6 +549,13 @@ export function EmailSettingsPanel() {
             recipients={form.motorsportEnquiryRecipients}
             onChange={(motorsportEnquiryRecipients) =>
               setForm((f) => ({ ...f, motorsportEnquiryRecipients }))
+            }
+          />
+          <RecipientEditor
+            label="Customer survey notifications"
+            recipients={form.surveyNotificationRecipients}
+            onChange={(surveyNotificationRecipients) =>
+              setForm((f) => ({ ...f, surveyNotificationRecipients }))
             }
           />
         </div>

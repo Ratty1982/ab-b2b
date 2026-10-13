@@ -340,6 +340,8 @@ enum TransactionalEmailPurpose {
   PASSWORD_RESET
   MOTORSPORT_PARTNERSHIP_INTERNAL
   CALLBACK_REQUEST_INTERNAL
+  CUSTOMER_SURVEY_ACK
+  CUSTOMER_SURVEY_INTERNAL
   EMAIL_TEST
 }
 
@@ -1763,6 +1765,8 @@ model EmailSettings {
   orderNotificationRecipients  Json         @default("[]")
   /// JSON string array for motorsport partnership enquiry alerts.
   motorsportEnquiryRecipients  Json         @default("[]")
+  /// JSON string array for customer satisfaction survey alerts.
+  surveyNotificationRecipients Json         @default("[]")
   lastConnectionTestAt         DateTime?
   lastConnectionTestOk         Boolean?
   lastConnectionTestError      String?
@@ -3631,4 +3635,107 @@ model AutopartBackorderLine {
   @@index([orderNumber])
   @@index([companyId])
   @@index([autopartProductId])
+}
+
+enum CustomerSurveySource {
+  PORTAL
+  WORDPRESS_IMPORT
+}
+
+enum SurveyEmailDeliveryStatus {
+  NOT_REQUIRED
+  PENDING
+  SENT
+  FAILED
+  SKIPPED_IMPORT
+  NO_RECIPIENT
+}
+
+/// Public customer satisfaction survey response. Rating 0 means N/A where the
+/// original survey offered it. Recommendation 0 is a real score, not N/A.
+model CustomerSurveyResponse {
+  id        String               @id @default(cuid())
+  reference String               @unique
+  submittedAt DateTime
+  source    CustomerSurveySource @default(PORTAL)
+  legacyWordpressId Int?         @unique
+  idempotencyKey String?         @unique
+  submissionTokenHash String?
+  ipHash    String?
+
+  overallSatisfaction     Int
+  recommendationScore     Int
+  productQuality          Int
+  productConsistency      Int
+  productRange            Int
+  productShelfAppearance  Int
+  customerService         Int
+  marketingSupport        Int
+  marketingChannelWebsite Int
+  marketingChannelSocial  Int
+  marketingChannelPos     Int
+  marketingChannelCampaigns Int
+  marketingChannelMedia   Int
+  salesHelpOptions        Json
+  communication           Int
+  responseTime            Int
+  complaintHandling       Int
+  orderingDelivery        Int
+  orderAccuracy           Int
+  packagingCondition      Int
+  speedDelivery           Int
+  documentation           Int
+  environmentalImportance Int
+  environmentalRating     Int
+
+  doWell             String @default("")
+  couldImprove       String @default("")
+  productRequests    String @default("")
+  additionalComments String @default("")
+
+  contactPermission       String
+  customerName            String @default("")
+  customerEmail           String @default("")
+  customerEmailNormalized String @default("")
+  customerPhone           String @default("")
+  businessName            String @default("")
+  businessNameNormalized  String @default("")
+
+  prizeDrawRequested          Boolean @default(false)
+  prizeDrawAccepted           Boolean @default(false)
+  prizeDrawRejectionReason    String?
+  ukResidentAdultConfirmed    Boolean @default(false)
+  notConnectedConfirmed       Boolean @default(false)
+  termsAccepted               Boolean @default(false)
+  eligibilityDeclarationsHeld Boolean @default(false)
+
+  ackEmailStatus      SurveyEmailDeliveryStatus @default(NOT_REQUIRED)
+  ackEmailSentAt      DateTime?
+  internalEmailStatus SurveyEmailDeliveryStatus @default(PENDING)
+  internalEmailSentAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  prizeClaims CustomerSurveyPrizeClaim[]
+
+  @@index([submittedAt])
+  @@index([recommendationScore])
+  @@index([contactPermission])
+  @@index([prizeDrawAccepted])
+  @@index([customerEmailNormalized])
+  @@index([businessNameNormalized])
+  @@index([submissionTokenHash])
+  @@index([ipHash, submittedAt])
+}
+
+/// One accepted prize-draw claim per email and per business name.
+model CustomerSurveyPrizeClaim {
+  id               String @id @default(cuid())
+  kind             String
+  normalizedValue  String
+  responseId       String
+  response         CustomerSurveyResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, normalizedValue])
+  @@index([responseId])
 }

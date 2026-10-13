@@ -59,6 +59,7 @@ export type EmailSettingsPublicDto = {
   tradeApplicationRecipients: string[];
   orderNotificationRecipients: string[];
   motorsportEnquiryRecipients: string[];
+  surveyNotificationRecipients: string[];
   status: {
     smtpConfigured: boolean;
     passwordConfigured: boolean;
@@ -67,6 +68,7 @@ export type EmailSettingsPublicDto = {
     applicationAlertsConfigured: boolean;
     orderAlertsConfigured: boolean;
     motorsportAlertsConfigured: boolean;
+    surveyAlertsConfigured: boolean;
   };
   lastConnectionTestAt: string | null;
   lastConnectionTestOk: boolean | null;
@@ -93,6 +95,7 @@ function toPublicDto(row: Awaited<ReturnType<typeof getOrCreateEmailSettings>>):
   const tradeApplicationRecipients = parseRecipients(row.tradeApplicationRecipients);
   const orderNotificationRecipients = parseRecipients(row.orderNotificationRecipients);
   const motorsportEnquiryRecipients = parseRecipients(row.motorsportEnquiryRecipients);
+  const surveyNotificationRecipients = parseRecipients(row.surveyNotificationRecipients);
   const smtpPasswordConfigured = Boolean(row.smtpPasswordEncrypted);
   const smtpConfigured = isSmtpConfigured({
     smtpHost: row.smtpHost,
@@ -115,6 +118,7 @@ function toPublicDto(row: Awaited<ReturnType<typeof getOrCreateEmailSettings>>):
     tradeApplicationRecipients,
     orderNotificationRecipients,
     motorsportEnquiryRecipients,
+    surveyNotificationRecipients,
     status: {
       smtpConfigured,
       passwordConfigured: smtpPasswordConfigured,
@@ -123,6 +127,7 @@ function toPublicDto(row: Awaited<ReturnType<typeof getOrCreateEmailSettings>>):
       applicationAlertsConfigured: tradeApplicationRecipients.length > 0,
       orderAlertsConfigured: orderNotificationRecipients.length > 0,
       motorsportAlertsConfigured: motorsportEnquiryRecipients.length > 0,
+      surveyAlertsConfigured: surveyNotificationRecipients.length > 0,
     },
     lastConnectionTestAt: row.lastConnectionTestAt?.toISOString() ?? null,
     lastConnectionTestOk: row.lastConnectionTestOk,
@@ -218,6 +223,9 @@ export async function updateEmailSettings(
       ...(input.motorsportEnquiryRecipients !== undefined
         ? { motorsportEnquiryRecipients: input.motorsportEnquiryRecipients }
         : {}),
+      ...(input.surveyNotificationRecipients !== undefined
+        ? { surveyNotificationRecipients: input.surveyNotificationRecipients }
+        : {}),
       updatedByUserId: actorUserId,
     },
   });
@@ -303,6 +311,11 @@ export async function getTradeApplicationNotificationRecipients(): Promise<strin
 export async function getMotorsportEnquiryRecipients(): Promise<string[]> {
   const row = await getOrCreateEmailSettings();
   return parseRecipients(row.motorsportEnquiryRecipients);
+}
+
+export async function getSurveyNotificationRecipients(): Promise<string[]> {
+  const row = await getOrCreateEmailSettings();
+  return parseRecipients(row.surveyNotificationRecipients);
 }
 
 /** Footer / reply meta for branded shells — never includes SMTP credentials. */

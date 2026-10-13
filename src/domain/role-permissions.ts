@@ -51,6 +51,10 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "reports.management",
   "cms.view",
   "cms.page.read",
+  "surveys.view",
+  "surveys.export",
+  "surveys.delete",
+  "surveys.import",
   "audit.view",
   "settings.view",
   "settings.edit",
@@ -154,6 +158,8 @@ const CUSTOMER_SERVICE_PERMS: PermissionKey[] = [
   "applications.view",
   "tasks.view",
   "tasks.manage",
+  "surveys.view",
+  "surveys.export",
   "autopart.customer.view",
 ];
 
@@ -193,6 +199,8 @@ const MARKETING_PERMS: PermissionKey[] = [
   "cms.page.publish",
   "cms.media.read",
   "cms.media.manage",
+  "surveys.view",
+  "surveys.export",
 ];
 
 /** Company-scoped trade permissions (still require CompanyUser membership). */
