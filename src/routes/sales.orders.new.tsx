@@ -1,16 +1,27 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
-import { Field, inputClass } from "@/components/ab/Drawer";
+import { Field } from "@/components/ab/Drawer";
 import { CreateSalesOrderDesk } from "@/components/orders/CreateSalesOrderDesk";
 import { SalesOrderProductResults } from "@/components/orders/SalesOrderProductResults";
 import {
+  SalesOrderLines,
+  SalesOrderMobileFooter,
+  SalesOrderPriceAlert,
+  SalesOrderReviewPanel,
+  SalesOrderSection,
+  openSalesOrderReview,
+  salesOrderControlClass,
+  salesOrderPageFrameClass,
+  useSalesOrderKeyboard,
+} from "@/components/orders/sales-order-mobile";
+import {
   applySalesOrderProductAdd,
   parseStaffOrderQuantity,
-  parseStaffOrderUnitPrice,
   SALES_ORDER_SOURCE_LABEL,
   type SalesOrderDraftLineInput,
 } from "@/domain/sales-order-entry";
+import { cn } from "@/lib/utils";
 import { ROUTES } from "@/lib/app-nav";
 import {
   openSalesOrderDraftFn,
@@ -148,6 +159,7 @@ function NewSalesOrder() {
   const [totalsChanged, setTotalsChanged] = useState(false);
   const [previousTotals, setPreviousTotals] = useState<{ grandTotal: string } | null>(null);
   const [acceptedPrices, setAcceptedPrices] = useState(true);
+  const typing = useSalesOrderKeyboard();
 
   const applyWorkspace = useCallback((data: Workspace) => {
     const nextSource = data.draft.source ?? "TELEPHONE";
@@ -481,8 +493,11 @@ function NewSalesOrder() {
   }
 
   const review = workspace?.review;
+  const priceWarning = priceChanges.length > 0 || totalsChanged;
+  const contactReady = workspace?.contacts.some((contact) => contact.id === contactId) ?? false;
+  const contactName = workspace?.contacts.find((contact) => contact.id === contactId)?.name;
   return (
-    <div>
+    <div className={cn(salesOrderPageFrameClass, typing && "pb-0")}>
       <PanelHeader
         title={workspace ? workspace.draft.companyName : "Create Sales Order"}
         sub={
@@ -491,85 +506,116 @@ function NewSalesOrder() {
             : "No representative is assigned to this account. Prices are resolved for this customer. You are recorded as the person who places the order."
         }
         actions={
-          <Link to={ROUTES.salesOrders} className="text-[13px] font-semibold text-primary">
+          <Link to={ROUTES.salesOrders} className="inline-flex min-h-11 items-center text-[13px] font-semibold text-primary">
             Open drafts
           </Link>
         }
       />
-      <div className="grid gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_320px] sm:p-6">
-        <div className="space-y-5">
-          {error ? <p className="text-sm text-bad">{error}</p> : null}
-          {!workspace && !error ? <p className="text-[13px] text-steel">Loading customer…</p> : null}
+      <div className="grid min-w-0 gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-5">
+          {error ? <p className="text-[14px] text-bad">{error}</p> : null}
+          <SalesOrderPriceAlert
+            changes={priceChanges}
+            totalsChanged={totalsChanged}
+            previousGrandTotal={previousTotals?.grandTotal ?? null}
+            grandTotal={review?.totals.grandTotal}
+            onReview={() => openSalesOrderReview()}
+          />
+          {!workspace && !error ? <p className="text-[14px] text-steel">Loading customer…</p> : null}
           {workspace ? (
             <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Order source">
-                  <select className={inputClass} value={source} onChange={(e) => { setSource(e.target.value); setAuthorised(false); }}>
-                    {Object.entries(SALES_ORDER_SOURCE_LABEL).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Customer contact">
-                  <select className={inputClass} value={contactId} onChange={(e) => { setContactId(e.target.value); setAuthorised(false); }}>
-                    <option value="">Select contact…</option>
-                    {workspace.contacts.map((contact) => (
-                      <option key={contact.id} value={contact.id}>
-                        {contact.name}
-                        {contact.email ? ` · ${contact.email}` : " · no email"}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Customer PO / reference">
-                  <input className={inputClass} value={poNumber} onChange={(e) => { setPoNumber(e.target.value); setAuthorised(false); }} />
-                </Field>
-                {workspace.quotes.length > 0 ? (
-                  <Field label="Use an existing quotation">
-                    <select className={inputClass} value={quoteId} onChange={(e) => { setQuoteId(e.target.value); setAuthorised(false); }}>
-                      <option value="">New order — price products below</option>
-                      {workspace.quotes.map((quote) => (
-                        <option key={quote.id} value={quote.id}>
-                          {quote.quoteNumber} · £{quote.grandTotal} · {quote.status}
+              <SalesOrderSection
+                title="Customer"
+                hint={
+                  contactReady ? (
+                    <span className="truncate text-steel">{contactName}</span>
+                  ) : (
+                    <span className="font-semibold text-bad">Contact required</span>
+                  )
+                }
+              >
+                <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                  <Field label="Order source">
+                    <select className={salesOrderControlClass} value={source} onChange={(e) => { setSource(e.target.value); setAuthorised(false); }}>
+                      {Object.entries(SALES_ORDER_SOURCE_LABEL).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
                         </option>
                       ))}
                     </select>
                   </Field>
-                ) : null}
-              </div>
-              <Field label="Delivery">
-                <label className="mb-2 flex items-center gap-2 text-[13px]">
-                  <input type="checkbox" checked={useOneOff} onChange={(e) => { setUseOneOff(e.target.checked); setAuthorised(false); }} />
-                  One-off delivery address
-                </label>
-                {useOneOff ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <input className={inputClass} placeholder="Address line 1" value={oneOff.line1} onChange={(e) => { setOneOff({ ...oneOff, line1: e.target.value }); setAuthorised(false); }} />
-                    <input className={inputClass} placeholder="Address line 2" value={oneOff.line2} onChange={(e) => { setOneOff({ ...oneOff, line2: e.target.value }); setAuthorised(false); }} />
-                    <input className={inputClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); setAuthorised(false); }} />
-                    <input className={inputClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); setAuthorised(false); }} />
-                    <input className={inputClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); setAuthorised(false); }} />
-                  </div>
-                ) : (
-                  <select className={inputClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); setAuthorised(false); }}>
-                    <option value="">Select address…</option>
-                    {workspace.addresses.map((address) => (
-                      <option key={address.id} value={address.id}>
-                        {address.label ? `${address.label} — ` : ""}
-                        {address.line1}, {address.town}, {address.postcode}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </Field>
-              <Field label="Delivery instructions">
-                <input className={inputClass} value={instructions} onChange={(e) => { setInstructions(e.target.value); setAuthorised(false); }} />
-              </Field>
-              <Field label="Internal note (not sent to the customer)">
-                <textarea className={inputClass} rows={2} value={internalNote} onChange={(e) => setInternalNote(e.target.value)} />
-              </Field>
+                  <Field label="Customer contact">
+                    <select className={salesOrderControlClass} value={contactId} onChange={(e) => { setContactId(e.target.value); setAuthorised(false); }}>
+                      <option value="">Select contact…</option>
+                      {workspace.contacts.map((contact) => (
+                        <option key={contact.id} value={contact.id}>
+                          {contact.name}
+                          {contact.email ? ` · ${contact.email}` : " · no email"}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Customer PO / reference">
+                    <input className={salesOrderControlClass} value={poNumber} onChange={(e) => { setPoNumber(e.target.value); setAuthorised(false); }} />
+                  </Field>
+                  {workspace.quotes.length > 0 ? (
+                    <Field label="Use an existing quotation">
+                      <select className={salesOrderControlClass} value={quoteId} onChange={(e) => { setQuoteId(e.target.value); setAuthorised(false); }}>
+                        <option value="">New order — price products below</option>
+                        {workspace.quotes.map((quote) => (
+                          <option key={quote.id} value={quote.id}>
+                            {quote.quoteNumber} · £{quote.grandTotal} · {quote.status}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : null}
+                </div>
+              </SalesOrderSection>
+              <SalesOrderSection
+                title="Delivery"
+                hint={
+                  useOneOff ? (
+                    <span className="text-steel">One-off address</span>
+                  ) : addressId ? (
+                    <span className="text-steel">Saved address</span>
+                  ) : (
+                    <span className="font-semibold text-bad">Address required</span>
+                  )
+                }
+              >
+                <Field label="Delivery">
+                  <label className="mb-2 flex min-h-11 items-center gap-3 text-[16px]">
+                    <input type="checkbox" className="size-5" checked={useOneOff} onChange={(e) => { setUseOneOff(e.target.checked); setAuthorised(false); }} />
+                    One-off delivery address
+                  </label>
+                  {useOneOff ? (
+                    <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                      <input className={salesOrderControlClass} placeholder="Address line 1" value={oneOff.line1} onChange={(e) => { setOneOff({ ...oneOff, line1: e.target.value }); setAuthorised(false); }} />
+                      <input className={salesOrderControlClass} placeholder="Address line 2" value={oneOff.line2} onChange={(e) => { setOneOff({ ...oneOff, line2: e.target.value }); setAuthorised(false); }} />
+                      <input className={salesOrderControlClass} placeholder="Town" value={oneOff.town} onChange={(e) => { setOneOff({ ...oneOff, town: e.target.value }); setAuthorised(false); }} />
+                      <input className={salesOrderControlClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); setAuthorised(false); }} />
+                      <input className={salesOrderControlClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); setAuthorised(false); }} />
+                    </div>
+                  ) : (
+                    <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); setAuthorised(false); }}>
+                      <option value="">Select address…</option>
+                      {workspace.addresses.map((address) => (
+                        <option key={address.id} value={address.id}>
+                          {address.label ? `${address.label} — ` : ""}
+                          {address.line1}, {address.town}, {address.postcode}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+                <Field label="Delivery instructions">
+                  <input className={salesOrderControlClass} value={instructions} onChange={(e) => { setInstructions(e.target.value); setAuthorised(false); }} />
+                </Field>
+                <Field label="Internal note (not sent to the customer)">
+                  <textarea className={cn(salesOrderControlClass, "h-auto min-h-24 py-2")} rows={3} value={internalNote} onChange={(e) => setInternalNote(e.target.value)} />
+                </Field>
+              </SalesOrderSection>
 
               {quoteId ? (
                 <p className="rounded-md border border-border bg-surface/50 p-3 text-[13px]">
@@ -577,10 +623,10 @@ function NewSalesOrder() {
                 </p>
               ) : (
                 <>
-                  <div className="flex gap-2">
+                  <div className="flex min-w-0 gap-2">
                     <input
                       ref={searchInputRef}
-                      className={inputClass}
+                      className={cn(salesOrderControlClass, "min-w-0 flex-1")}
                       value={productQuery}
                       onChange={(e) => setProductQuery(e.target.value)}
                       placeholder="Search SKU, name, or brand"
@@ -588,7 +634,7 @@ function NewSalesOrder() {
                         if (e.key === "Enter") void searchProducts();
                       }}
                     />
-                    <button type="button" onClick={() => void searchProducts()} className="h-10 shrink-0 rounded-md border border-border px-4 text-[12px] font-bold uppercase">
+                    <button type="button" onClick={() => void searchProducts()} className="inline-flex min-h-11 shrink-0 items-center rounded-md border border-border px-4 text-[13px] font-bold uppercase">
                       Search
                     </button>
                   </div>
@@ -597,224 +643,92 @@ function NewSalesOrder() {
                     disabled={addingProduct}
                     onSelect={(hit) => void addProduct(hit)}
                   />
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full min-w-[640px] text-[13px]">
-                      <thead>
-                        <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">
-                          <th className="px-3 py-2">Product</th>
-                          <th className="px-3 py-2">Qty</th>
-                          <th className="px-3 py-2">Price</th>
-                          <th className="px-3 py-2">Stock</th>
-                          <th className="px-3 py-2 text-right">Line</th>
-                          <th className="px-3 py-2" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((line) => {
-                          const priced = review?.lines.find((item) => item.variantId === line.variantId);
-                          return (
-                            <tr key={line.variantId} className="border-b border-border/60">
-                              <td className="px-3 py-2">
-                                <p className="font-medium">{line.sku}</p>
-                                <p className="text-steel">{line.name}</p>
-                                {priced?.promotionCode ? <p className="text-steel">Promo {priced.promotionCode}</p> : null}
-                                {priced?.issue !== "VALID" && priced?.issueMessage ? (
-                                  <p className="text-bad">{priced.issueMessage}</p>
-                                ) : null}
-                              </td>
-                              <td className="px-3 py-2">
-                                <input
-                                  className={`${inputClass} w-20`}
-                                  type="number"
-                                  inputMode="numeric"
-                                  min={1}
-                                  step={1}
-                                  value={line.qty}
-                                  onChange={(e) => {
-                                    const qty = parseStaffOrderQuantity(e.target.value);
-                                    if (qty == null) return;
-                                    updateLine(line.variantId, { qty }, false);
-                                  }}
-                                  onBlur={() => void persist()}
-                                />
-                                {priced?.caseQty ? <p className="text-[11px] text-steel">Case {priced.caseQty}</p> : null}
-                              </td>
-                              <td className="px-3 py-2">
-                                <label className="block text-[11px] text-steel">
-                                  {line.unitPriceOverride ? "Manual price ex VAT" : "Unit price ex VAT"}
-                                  <input
-                                    className={`${inputClass} mt-1 w-24 ${line.unitPriceOverride ? "border-primary" : ""}`}
-                                    inputMode="decimal"
-                                    aria-label={`Unit price for ${line.sku}`}
-                                    value={
-                                      priceDrafts[line.variantId] ??
-                                      line.unitPriceOverride ??
-                                      priced?.resolvedUnitPrice ??
-                                      priced?.customerUnitPrice ??
-                                      ""
-                                    }
-                                    onChange={(e) =>
-                                      setPriceDrafts((current) => ({
-                                        ...current,
-                                        [line.variantId]: e.target.value,
-                                      }))
-                                    }
-                                    onBlur={() => {
-                                      const raw = priceDrafts[line.variantId];
-                                      if (raw == null) return;
-                                      const parsed = parseStaffOrderUnitPrice(raw);
-                                      if (!parsed) {
-                                        toast.error("Enter a unit price in pounds and pence, excluding VAT");
-                                        setPriceDrafts((current) => {
-                                          const next = { ...current };
-                                          delete next[line.variantId];
-                                          return next;
-                                        });
-                                        return;
-                                      }
-                                      const resolved =
-                                        priced?.resolvedUnitPrice ?? priced?.customerUnitPrice ?? null;
-                                      const override = resolved != null && parsed === resolved ? null : parsed;
-                                      setPriceDrafts((current) => {
-                                        const next = { ...current };
-                                        delete next[line.variantId];
-                                        return next;
-                                      });
-                                      updateLine(line.variantId, { unitPriceOverride: override }, true);
-                                    }}
-                                  />
-                                </label>
-                                {line.unitPriceOverride ? (
-                                  <button
-                                    type="button"
-                                    className="mt-1 text-[11px] font-semibold text-primary"
-                                    onClick={() => {
-                                      setPriceDrafts((current) => {
-                                        const next = { ...current };
-                                        delete next[line.variantId];
-                                        return next;
-                                      });
-                                      updateLine(line.variantId, { unitPriceOverride: null }, true);
-                                    }}
-                                  >
-                                    Use customer price
-                                    {priced?.resolvedUnitPrice ? ` ${money(priced.resolvedUnitPrice)}` : ""}
-                                  </button>
-                                ) : priced?.priceSource ? (
-                                  <p className="text-[11px] text-steel">{priced.priceSource}</p>
-                                ) : null}
-                              </td>
-                              <td className="px-3 py-2 text-steel">
-                                {priced ? `${priced.availableQtyAtOrder} available` : "—"}
-                                {priced && priced.backorderQtyAtOrder > 0 ? (
-                                  <p>{priced.backorderQtyAtOrder} backorder{priced.backordersAllowed ? "" : " blocked"}</p>
-                                ) : null}
-                              </td>
-                              <td className="num px-3 py-2 text-right">{money(priced?.lineNet)}</td>
-                              <td className="px-3 py-2 text-right">
-                                <button
-                                  type="button"
-                                  className="text-[12px] font-semibold text-steel"
-                                  onClick={() => {
-                                    const next = linesRef.current.filter((item) => item.variantId !== line.variantId);
-                                    setAuthorised(false);
-                                    commitLines(next);
-                                    void persist(next);
-                                  }}
-                                >
-                                  Remove
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <SalesOrderLines
+                    lines={lines}
+                    reviewLines={review?.lines ?? []}
+                    priceDrafts={priceDrafts}
+                    onQuantityChange={(variantId, raw) => {
+                      const qty = parseStaffOrderQuantity(raw);
+                      if (qty == null) return;
+                      updateLine(variantId, { qty }, false);
+                    }}
+                    onQuantityBlur={() => void persist()}
+                    onPriceDraftChange={(variantId, raw) =>
+                      setPriceDrafts((current) => ({ ...current, [variantId]: raw }))
+                    }
+                    onClearPriceDraft={(variantId) =>
+                      setPriceDrafts((current) => {
+                        const next = { ...current };
+                        delete next[variantId];
+                        return next;
+                      })
+                    }
+                    onPriceOverride={(variantId, override) => updateLine(variantId, { unitPriceOverride: override }, true)}
+                    onRemove={(variantId) => {
+                      const next = linesRef.current.filter((item) => item.variantId !== variantId);
+                      setAuthorised(false);
+                      commitLines(next);
+                      void persist(next);
+                    }}
+                  />
                 </>
               )}
-              <button type="button" onClick={() => void persist()} className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase">
+              <button type="button" onClick={() => void persist()} className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-border px-4 text-[13px] font-bold uppercase sm:w-auto">
                 Save and refresh prices
               </button>
             </>
           ) : null}
         </div>
-        <aside className="h-fit space-y-3 rounded-lg border border-border p-4 text-[13px]">
-          <h2 className="font-display text-base uppercase">Order review</h2>
-          <p>{workspace?.draft.companyName}</p>
-          <p className="text-steel">Payment terms: {workspace?.draft.paymentTerms || "As agreed"}</p>
-          <p className="text-steel">PO: {poNumber || "—"}</p>
-          <p>Net {money(review?.totals.subtotal)}</p>
-          <p>Delivery {money(review?.totals.deliveryTotal)}</p>
-          <p>VAT {money(review?.totals.vatTotal)}</p>
-          <p className="text-base font-semibold">Total {money(review?.totals.grandTotal)}</p>
-          {review?.hasBlockingIssues ? (
-            <p className="text-bad">Resolve the line issues shown before placing the order.</p>
-          ) : null}
-          {priceChanges.length > 0 || totalsChanged ? (
-            <div className="space-y-2 rounded-md border border-bad/40 bg-bad/5 p-3">
-              <p className="font-semibold text-bad">Review these changes before placing the order.</p>
-              {priceChanges.map((change) => (
-                <p key={change.variantId}>
-                  {change.sku}: {money(change.previousUnitPrice)} becomes {money(change.newUnitPrice)}
-                  {change.previousLineNet !== change.newLineNet
-                    ? ` (line ${money(change.previousLineNet)} becomes ${money(change.newLineNet)})`
-                    : ""}
-                </p>
-              ))}
-              {totalsChanged && previousTotals ? (
-                <p>
-                  Order total {money(previousTotals.grandTotal)} becomes {money(review?.totals.grandTotal)}. This includes VAT and delivery.
-                </p>
-              ) : null}
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  checked={acceptedPrices}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setAcceptedPrices(checked);
-                    setAuthorised(false);
-                    if (checked && workspace?.review) {
-                      setReviewed({
-                        fingerprint: currentFingerprint(),
-                        expectedReview: {
-                          lines: workspace.review.lines.map((line) => ({
-                            variantId: line.variantId,
-                            qty: line.quantity,
-                            customerUnitPrice: line.customerUnitPrice ?? "0.00",
-                            lineNet: line.lineNet ?? "0.00",
-                          })),
-                          subtotal: workspace.review.totals.subtotal,
-                          vatTotal: workspace.review.totals.vatTotal,
-                          deliveryTotal: workspace.review.totals.deliveryTotal,
-                          grandTotal: workspace.review.totals.grandTotal,
-                        },
-                      });
-                    }
-                  }}
-                  className="mt-1"
-                />
-                <span>I have reviewed the updated prices and totals.</span>
-              </label>
-            </div>
-          ) : (
-            <p className="text-steel">Place order uses the prices shown here. A later price change stops the order for review.</p>
-          )}
-          <label className="flex items-start gap-2">
-            <input type="checkbox" checked={authorised} onChange={(e) => setAuthorised(e.target.checked)} className="mt-1" />
-            <span>I am authorised to submit this order on the customer’s behalf.</span>
-          </label>
-          <button
-            type="button"
-            disabled={placing || !workspace || !authorised || (priceChanges.length > 0 && !acceptedPrices)}
-            onClick={() => void place()}
-            className="h-11 w-full rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
-          >
-            {placing ? "Placing…" : quoteId ? "Accept quotation" : "Place order"}
-          </button>
-        </aside>
+        <SalesOrderReviewPanel
+          companyName={workspace?.draft.companyName}
+          paymentTerms={workspace?.draft.paymentTerms}
+          poNumber={poNumber}
+          subtotal={review?.totals.subtotal}
+          deliveryTotal={review?.totals.deliveryTotal}
+          vatTotal={review?.totals.vatTotal}
+          grandTotal={review?.totals.grandTotal}
+          blocking={Boolean(review?.hasBlockingIssues)}
+          changes={priceChanges}
+          totalsChanged={totalsChanged}
+          previousGrandTotal={previousTotals?.grandTotal ?? null}
+          acceptedPrices={acceptedPrices}
+          authorised={authorised}
+          placing={placing}
+          placeDisabled={placing || !workspace || !authorised || (priceChanges.length > 0 && !acceptedPrices)}
+          placeLabel={quoteId ? "Accept quotation" : "Place order"}
+          onAcceptPrices={(checked) => {
+            setAcceptedPrices(checked);
+            setAuthorised(false);
+            if (checked && workspace?.review) {
+              setReviewed({
+                fingerprint: currentFingerprint(),
+                expectedReview: {
+                  lines: workspace.review.lines.map((line) => ({
+                    variantId: line.variantId,
+                    qty: line.quantity,
+                    customerUnitPrice: line.customerUnitPrice ?? "0.00",
+                    lineNet: line.lineNet ?? "0.00",
+                  })),
+                  subtotal: workspace.review.totals.subtotal,
+                  vatTotal: workspace.review.totals.vatTotal,
+                  deliveryTotal: workspace.review.totals.deliveryTotal,
+                  grandTotal: workspace.review.totals.grandTotal,
+                },
+              });
+            }
+          }}
+          onAuthorised={setAuthorised}
+          onPlace={() => void place()}
+        />
       </div>
+      {workspace ? (
+        <SalesOrderMobileFooter
+          total={review?.totals.grandTotal}
+          priceWarning={priceWarning}
+          hidden={typing}
+          onReview={() => openSalesOrderReview()}
+        />
+      ) : null}
     </div>
   );
 }

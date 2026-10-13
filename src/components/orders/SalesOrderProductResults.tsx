@@ -29,14 +29,14 @@ export function SalesOrderProductResults({
 }) {
   if (products.length === 0) return null;
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border">
+    <ul className="min-w-0 divide-y divide-border rounded-lg border border-border">
       {products.map((hit) => (
         <li key={hit.variantId}>
           <button
             type="button"
             disabled={disabled}
             onClick={() => onSelect(hit)}
-            className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-[13px] hover:bg-surface/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary disabled:opacity-60"
+            className="flex min-h-11 w-full min-w-0 items-start justify-between gap-3 px-3 py-2 text-left text-[13px] break-words hover:bg-surface/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary disabled:opacity-60"
             aria-label={`Add ${hit.sku} to the order`}
           >
             <span>
