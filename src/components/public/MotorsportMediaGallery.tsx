@@ -1,9 +1,55 @@
+import { useEffect, useId, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cmsFocalStyle, cmsImageFitClass, cmsMediaDisplaySrc } from "@/lib/cms-media";
 import { cn } from "@/lib/utils";
+import {
+  galleryFrames,
+  galleryIndexAfterKey,
+  galleryKeyAction,
+  mosaicFrameClass,
+  type GalleryFrame,
+} from "@/components/public/motorsport-gallery-layout";
 
 function str(c: Record<string, unknown>, key: string, fallback = ""): string {
   const v = c[key];
   return typeof v === "string" ? v : fallback;
+}
+
+type GalleryPhoto = {
+  src: string;
+  alt: string;
+  caption: string;
+  fit: "contain" | "fill";
+  focal: { objectPosition: string };
+};
+
+function photosFromConfig(config: Record<string, unknown>): GalleryPhoto[] {
+  const itemsRaw = config["items"];
+  const items = Array.isArray(itemsRaw)
+    ? itemsRaw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    : [];
+  return items
+    .map((item) => ({
+      src: cmsMediaDisplaySrc(item) ?? "",
+      alt: typeof item["alt"] === "string" && item["alt"].trim() ? item["alt"] : "Power Maxed Racing photography",
+      caption: typeof item["caption"] === "string" ? item["caption"].trim() : "",
+      fit: item["fit"] === "contain" ? ("contain" as const) : ("fill" as const),
+      focal: cmsFocalStyle(item),
+    }))
+    .filter((photo) => Boolean(photo.src));
+}
+
+function tileSizes(frame: GalleryFrame): string {
+  if (frame.role === "feature" || frame.desktopSpan === 6) {
+    return "(max-width: 640px) 100vw, (max-width: 1024px) 100vw, 1320px";
+  }
+  if (frame.tabletSpan === 2) {
+    return "(max-width: 640px) 100vw, (max-width: 1024px) 100vw, 660px";
+  }
+  if (frame.desktopSpan === 3) {
+    return "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 660px";
+  }
+  return "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 440px";
 }
 
 /**
@@ -11,24 +57,14 @@ function str(c: Record<string, unknown>, key: string, fallback = ""): string {
  * Empty state explains media upload — never invents race photography.
  */
 export function MotorsportMediaGallery({ config }: { config: Record<string, unknown> }) {
-  const itemsRaw = config["items"];
-  const items = Array.isArray(itemsRaw)
-    ? itemsRaw.filter((i): i is Record<string, unknown> => !!i && typeof i === "object")
-    : [];
-
-  const withSrc = items
-    .map((item) => ({
-      item,
-      src: cmsMediaDisplaySrc(item),
-      alt: typeof item["alt"] === "string" ? item["alt"] : "Power Maxed Racing photography",
-      caption: typeof item["caption"] === "string" ? item["caption"] : "",
-      fit: (item["fit"] as string | undefined) ?? "fill",
-    }))
-    .filter((row) => Boolean(row.src));
+  const photos = photosFromConfig(config);
+  const frames = galleryFrames(photos.length);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   return (
     <section className="border-b border-border/50 bg-ink" data-motorsport-section="gallery">
-      <div className="mx-auto max-w-[1400px] px-4 py-14 sm:px-6 lg:px-10 lg:py-16">
+      <div className="mx-auto max-w-[1400px] px-4 py-10 sm:px-6 lg:px-10 lg:py-12">
         {str(config, "eyebrow") ? (
           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan">
             {str(config, "eyebrow")}
@@ -43,9 +79,9 @@ export function MotorsportMediaGallery({ config }: { config: Record<string, unkn
           </p>
         ) : null}
 
-        {withSrc.length === 0 ? (
+        {photos.length === 0 ? (
           <div
-            className="mt-8 rounded-lg border border-dashed border-border/70 bg-surface/30 px-5 py-10 text-center"
+            className="mt-6 rounded-lg border border-dashed border-border/70 bg-surface/30 px-5 py-10 text-center"
             role="status"
             data-gallery-empty="true"
           >
@@ -58,37 +94,201 @@ export function MotorsportMediaGallery({ config }: { config: Record<string, unkn
             </p>
           </div>
         ) : (
-          <ul className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {withSrc.map((row, index) => (
-              <li
-                key={`${row.src}-${index}`}
-                className={cn(
-                  "relative overflow-hidden rounded-md bg-[#0c1220]",
-                  index % 5 === 0 ? "sm:col-span-2 sm:row-span-2 aspect-[16/10] sm:aspect-auto sm:min-h-[22rem]" : "aspect-[4/3]",
-                )}
-              >
-                <img
-                  src={row.src!}
-                  alt={row.alt}
-                  className={cn(
-                    "size-full",
-                    cmsImageFitClass(row.fit === "contain" ? "contain" : "fill"),
-                  )}
-                  style={cmsFocalStyle(row.item)}
-                  loading="lazy"
-                  decoding="async"
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                />
-                {row.caption ? (
-                  <p className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-2 pt-8 text-[12px] text-white/90">
-                    {row.caption}
-                  </p>
-                ) : null}
-              </li>
-            ))}
+          <ul
+            className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6"
+            data-gallery-count={photos.length}
+          >
+            {photos.map((photo, index) => {
+              const frame = frames[index]!;
+              return (
+                <li
+                  key={`${photo.src}-${index}`}
+                  className={mosaicFrameClass(frame)}
+                  data-gallery-tile={frame.role}
+                  data-desktop-span={frame.desktopSpan}
+                  data-tablet-span={frame.tabletSpan}
+                >
+                  <button
+                    type="button"
+                    className="absolute inset-0 block h-full w-full cursor-zoom-in focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
+                    aria-label={`View photograph ${index + 1} of ${photos.length}: ${photo.alt}`}
+                    onClick={(event) => {
+                      triggerRef.current = event.currentTarget;
+                      setOpenIndex(index);
+                    }}
+                  >
+                    <img
+                      src={photo.src}
+                      alt={photo.alt}
+                      className={cn("size-full", cmsImageFitClass(photo.fit))}
+                      style={photo.focal}
+                      loading="lazy"
+                      decoding="async"
+                      sizes={tileSizes(frame)}
+                    />
+                  </button>
+                  {photo.caption ? (
+                    <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-3 pb-2.5 pt-8 text-left text-[12px] leading-snug text-white/90">
+                      {photo.caption}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
+      {openIndex !== null && photos[openIndex] ? (
+        <MotorsportGalleryDialog
+          photos={photos}
+          index={openIndex}
+          onIndexChange={setOpenIndex}
+          onClose={() => setOpenIndex(null)}
+          returnFocusRef={triggerRef}
+        />
+      ) : null}
     </section>
+  );
+}
+
+export function MotorsportGalleryDialog({
+  photos,
+  index,
+  onIndexChange,
+  onClose,
+  returnFocusRef,
+}: {
+  photos: GalleryPhoto[];
+  index: number;
+  onIndexChange: (index: number | null) => void;
+  onClose: () => void;
+  returnFocusRef?: { current: HTMLButtonElement | null };
+}) {
+  const titleId = useId();
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const indexRef = useRef(index);
+  const onCloseRef = useRef(onClose);
+  const onIndexChangeRef = useRef(onIndexChange);
+  const photo = photos[index];
+  const count = photos.length;
+  indexRef.current = index;
+  onCloseRef.current = onClose;
+  onIndexChangeRef.current = onIndexChange;
+
+  useEffect(() => {
+    const returnTo = returnFocusRef?.current ?? null;
+    closeRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function onKey(event: KeyboardEvent) {
+      const action = galleryKeyAction(event.key);
+      if (action === "close") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (action === "previous" || action === "next") {
+        event.preventDefault();
+        const next = galleryIndexAfterKey(indexRef.current, count, action);
+        if (next !== null) onIndexChangeRef.current(next);
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled])")];
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+      returnTo?.focus();
+    };
+  }, [count, returnFocusRef]);
+
+  if (!photo) return null;
+
+  return (
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      data-gallery-lightbox="true"
+      className="fixed inset-0 z-[80] bg-black"
+      onClick={(event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest("button, img")) return;
+        onClose();
+      }}
+    >
+      <button
+        ref={closeRef}
+        type="button"
+        className="fixed right-3 top-3 z-[81] inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-ink/80 text-white hover:bg-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
+        aria-label="Close photograph"
+        onClick={onClose}
+      >
+        <X className="h-5 w-5" aria-hidden="true" />
+      </button>
+      <div className="flex h-full items-center justify-center px-3 pb-28 pt-16 sm:px-20">
+        <img
+          src={photo.src}
+          alt={photo.alt}
+          className="max-h-[calc(100dvh-11rem)] w-auto max-w-[calc(100vw-2rem)] object-contain sm:max-w-[calc(100vw-8rem)]"
+          decoding="async"
+        />
+      </div>
+      <div className="fixed inset-x-0 bottom-0 z-[81] border-t border-white/10 bg-ink/90 px-3 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-3xl items-center gap-3">
+          {count > 1 ? (
+            <button
+              type="button"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/25 text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
+              aria-label="Previous photograph"
+              onClick={() => {
+                const next = galleryIndexAfterKey(index, count, "previous");
+                if (next !== null) onIndexChange(next);
+              }}
+            >
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+          ) : null}
+          <div className="min-w-0 flex-1 text-center">
+            <p id={titleId} className="text-[13px] text-white/90">
+              {photo.caption || photo.alt}
+            </p>
+            <p className="mt-0.5 text-[11px] uppercase tracking-[0.16em] text-white/55">
+              {index + 1} of {count}
+            </p>
+          </div>
+          {count > 1 ? (
+            <button
+              type="button"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/25 text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan"
+              aria-label="Next photograph"
+              onClick={() => {
+                const next = galleryIndexAfterKey(index, count, "next");
+                if (next !== null) onIndexChange(next);
+              }}
+            >
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
