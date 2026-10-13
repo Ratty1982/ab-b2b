@@ -11,13 +11,23 @@ import {
   type CustomerPriceFileIssue,
   type CustomerPriceImportLineDraft,
 } from "@/domain/customer-price-import";
-import { recordAuditEvent } from "@/server/audit/record";
+import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
+import type { AuditEventInput } from "@/server/audit/types";
 import { listCustomerPrices } from "@/server/pricing/service";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireAuthenticatedUser, requireSystemPermission } from "@/server/rbac/guards";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 
 const MAX_BASE64_CHARS = 2_800_000;
+
+// Decision audits are written with the approval/rejection transaction.
+// The injection point is used only by integration tests to verify rollback.
+type ImportDecisionAuditWriter = (tx: Prisma.TransactionClient, input: AuditEventInput) => Promise<void>;
+let importDecisionAuditWriter: ImportDecisionAuditWriter = recordAuditEventInTransaction;
+
+export function setCustomerPriceImportDecisionAuditWriterForTests(writer: ImportDecisionAuditWriter | null): void {
+  importDecisionAuditWriter = writer ?? recordAuditEventInTransaction;
+}
 
 type CompanyRow = {
   id: string;
@@ -487,25 +497,27 @@ export async function rejectCustomerPriceImport(
   if (!reason) throw new AuthError("A rejection reason is required", "INVALID", 400);
   if (reason.length > 500) throw new AuthError("Rejection reason is too long", "INVALID", 400);
   const decidedAt = new Date();
-  const claimed = await prisma.customerPriceImport.updateMany({
-    where: { id: input.importId, companyId: input.companyId, status: "PENDING_APPROVAL" },
-    data: {
-      status: "REJECTED",
-      rejectionReason: reason,
-      decidedByUserId: actorUserId,
-      decidedAt,
-    },
-  });
-  if (claimed.count !== 1) {
-    throw new AuthError("This upload is no longer pending approval", "CONFLICT", 409);
-  }
-  await recordAuditEvent({
-    action: "pricing.customer_price_import.rejected",
-    entityType: "CustomerPriceImport",
-    entityId: input.importId,
-    actorUserId,
-    companyId: input.companyId,
-    metadata: { reason },
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.customerPriceImport.updateMany({
+      where: { id: input.importId, companyId: input.companyId, status: "PENDING_APPROVAL" },
+      data: {
+        status: "REJECTED",
+        rejectionReason: reason,
+        decidedByUserId: actorUserId,
+        decidedAt,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new AuthError("This upload is no longer pending approval", "CONFLICT", 409);
+    }
+    await importDecisionAuditWriter(tx, {
+      action: "pricing.customer_price_import.rejected",
+      entityType: "CustomerPriceImport",
+      entityId: input.importId,
+      actorUserId,
+      companyId: input.companyId,
+      metadata: { reason },
+    });
   });
   return { id: input.importId, status: "REJECTED" as const, rejectionReason: reason };
 }
@@ -518,7 +530,9 @@ export async function approveCustomerPriceImport(actorUserId: string, companyId:
   const company = await assertCompanyAccess(profile, companyId);
   const decidedAt = new Date();
 
-  const applied = await prisma.$transaction(async (tx) => {
+  const applied = await (async () => {
+    try {
+      return await prisma.$transaction(async (tx) => {
     const claimed = await tx.customerPriceImport.updateMany({
       where: { id: importId, companyId, status: "PENDING_APPROVAL" },
       data: { status: "APPROVED", decidedByUserId: actorUserId, decidedAt },
@@ -544,6 +558,17 @@ export async function approveCustomerPriceImport(actorUserId: string, companyId:
       if (!variant || variant.sku.toUpperCase() !== line.sku.trim().toUpperCase()) {
         throw new AuthError(`Row ${line.rowNumber}: the product match changed since preview`, "STALE", 409);
       }
+      // Lock existing rows before validating the preview snapshot. Concurrent manual
+      // edits wait for the decision transaction or become visible to this check.
+      // For NEW rows, the unique constraint plus create (not upsert) prevents
+      // a concurrent insert from silently being overwritten.
+      if (line.action === "UPDATE") {
+        await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "CustomerPrice"
+          WHERE "companyId" = ${companyId} AND "variantId" = ${line.variantId}
+          FOR UPDATE
+        `;
+      }
       const current = await tx.customerPrice.findUnique({
         where: { companyId_variantId: { companyId, variantId: line.variantId } },
       });
@@ -560,21 +585,33 @@ export async function approveCustomerPriceImport(actorUserId: string, companyId:
       ) {
         throw new AuthError(`Row ${line.rowNumber}: the customer price changed since preview`, "STALE", 409);
       }
-      await tx.customerPrice.upsert({
-        where: { companyId_variantId: { companyId, variantId: line.variantId } },
-        create: {
-          companyId,
-          variantId: line.variantId,
-          unitPrice: line.proposedPrice,
-          startsAt: line.startsAt,
-          endsAt: line.endsAt,
-        },
-        update: {
-          unitPrice: line.proposedPrice,
-          startsAt: line.startsAt,
-          endsAt: line.endsAt,
-        },
-      });
+      if (line.action === "NEW") {
+        await tx.customerPrice.create({
+          data: {
+            companyId,
+            variantId: line.variantId,
+            unitPrice: line.proposedPrice,
+            startsAt: line.startsAt,
+            endsAt: line.endsAt,
+          },
+        });
+      } else {
+        const updated = await tx.customerPrice.updateMany({
+          where: {
+            companyId,
+            variantId: line.variantId,
+            updatedAt: line.existingUpdatedAt!,
+          },
+          data: {
+            unitPrice: line.proposedPrice,
+            startsAt: line.startsAt,
+            endsAt: line.endsAt,
+          },
+        });
+        if (updated.count !== 1) {
+          throw new AuthError(`Row ${line.rowNumber}: the customer price changed since preview`, "STALE", 409);
+        }
+      }
       changes.push({
         sku: variant.sku,
         action: line.action,
@@ -582,21 +619,32 @@ export async function approveCustomerPriceImport(actorUserId: string, companyId:
         to: moneyToString(moneyFromUnknown(line.proposedPrice) ?? { minor: 0n }),
       });
     }
+    await importDecisionAuditWriter(tx, {
+      action: "pricing.customer_price_import.approved",
+      entityType: "CustomerPriceImport",
+      entityId: importId,
+      actorUserId,
+      companyId: company.id,
+      metadata: {
+        filename: batch.filename,
+        newCount: batch.newCount,
+        updateCount: batch.updateCount,
+        changes,
+      },
+    });
     return { filename: batch.filename, newCount: batch.newCount, updateCount: batch.updateCount, changes };
-  }, { timeout: 30_000 });
+      }, { timeout: 30_000 });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new AuthError(
+          "A customer price was added since preview. Refresh the upload and try again.",
+          "STALE",
+          409,
+        );
+      }
+      throw error;
+    }
+  })();
 
-  await recordAuditEvent({
-    action: "pricing.customer_price_import.approved",
-    entityType: "CustomerPriceImport",
-    entityId: importId,
-    actorUserId,
-    companyId: company.id,
-    metadata: {
-      filename: applied.filename,
-      newCount: applied.newCount,
-      updateCount: applied.updateCount,
-      changes: applied.changes,
-    },
-  });
   return { id: importId, status: "APPROVED" as const, applied: applied.changes.length };
 }
