@@ -3,7 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { CreateSalesOrderDesk } from "@/components/orders/CreateSalesOrderDesk";
-import { SALES_ORDER_SOURCE_LABEL } from "@/domain/sales-order-entry";
+import { SalesOrderProductResults } from "@/components/orders/SalesOrderProductResults";
+import {
+  applySalesOrderProductAdd,
+  parseStaffOrderQuantity,
+  parseStaffOrderUnitPrice,
+  SALES_ORDER_SOURCE_LABEL,
+  type SalesOrderDraftLineInput,
+} from "@/domain/sales-order-entry";
 import { ROUTES } from "@/lib/app-nav";
 import {
   openSalesOrderDraftFn,
@@ -68,7 +75,7 @@ function orderFingerprint(input: {
   poNumber: string;
   instructions: string;
   quoteId: string;
-  lines: Array<{ variantId: string; qty: number }>;
+  lines: Array<{ variantId: string; qty: number; unitPriceOverride?: string | null }>;
 }) {
   return JSON.stringify({
     companyId: input.companyId,
@@ -79,7 +86,11 @@ function orderFingerprint(input: {
     poNumber: input.poNumber,
     instructions: input.instructions,
     quoteId: input.quoteId,
-    lines: input.lines.map((line) => ({ variantId: line.variantId, qty: line.qty })),
+    lines: input.lines.map((line) => ({
+      variantId: line.variantId,
+      qty: line.qty,
+      unitPriceOverride: line.unitPriceOverride ?? null,
+    })),
   });
 }
 
@@ -89,6 +100,10 @@ function NewSalesOrder() {
   const [error, setError] = useState<string | null>(null);
   const [productQuery, setProductQuery] = useState("");
   const [products, setProducts] = useState<ProductHit[]>([]);
+  const [addingProduct, setAddingProduct] = useState(false);
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const addingRef = useRef(false);
   const [source, setSource] = useState("TELEPHONE");
   const [contactId, setContactId] = useState("");
   const [addressId, setAddressId] = useState("");
@@ -98,7 +113,7 @@ function NewSalesOrder() {
   const [instructions, setInstructions] = useState("");
   const [internalNote, setInternalNote] = useState("");
   const [quoteId, setQuoteId] = useState("");
-  const [lines, setLines] = useState<Array<{ variantId: string; qty: number; sku: string; name: string }>>([]);
+  const [lines, setLines] = useState<SalesOrderDraftLineInput[]>([]);
   const linesRef = useRef(lines);
   const saveSeq = useRef(0);
   function commitLines(next: typeof lines) {
@@ -163,6 +178,7 @@ function NewSalesOrder() {
       qty: line.qty,
       sku: line.sku,
       name: line.name,
+      unitPriceOverride: line.unitPriceOverride,
     }));
     setWorkspace(data);
     setSource(nextSource);
@@ -265,7 +281,11 @@ function NewSalesOrder() {
       poNumber: poNumber || null,
       deliveryInstructions: instructions || null,
       internalNote: internalNote || null,
-      lines: nextLines.map((line) => ({ variantId: line.variantId, qty: line.qty })),
+      lines: nextLines.map((line) => ({
+        variantId: line.variantId,
+        qty: line.qty,
+        unitPriceOverride: line.unitPriceOverride,
+      })),
     };
   }
 
@@ -297,15 +317,36 @@ function NewSalesOrder() {
   }
 
   async function addProduct(hit: ProductHit) {
-    const current = linesRef.current;
-    const existing = current.find((line) => line.variantId === hit.variantId);
-    const qty = existing ? existing.qty + Math.max(1, hit.caseQty ?? 1) : Math.max(1, hit.minOrderQty, hit.caseQty ?? 1);
-    const next = existing
-      ? current.map((line) => (line.variantId === hit.variantId ? { ...line, qty } : line))
-      : [...current, { variantId: hit.variantId, qty, sku: hit.sku, name: hit.name }];
+    const decision = applySalesOrderProductAdd({
+      busy: addingRef.current,
+      lines: linesRef.current,
+      hit,
+    });
+    if (!decision.accepted) return;
+    addingRef.current = true;
+    setAddingProduct(true);
+    setAuthorised(false);
+    commitLines(decision.lines);
+    if (decision.clearSearch) {
+      setProducts([]);
+      setProductQuery("");
+      searchInputRef.current?.focus();
+    }
+    try {
+      await persist(decision.lines);
+    } finally {
+      addingRef.current = false;
+      setAddingProduct(false);
+    }
+  }
+
+  function updateLine(variantId: string, patch: Partial<SalesOrderDraftLineInput>, persistNow: boolean) {
+    const next = linesRef.current.map((item) =>
+      item.variantId === variantId ? { ...item, ...patch } : item,
+    );
     setAuthorised(false);
     commitLines(next);
-    await persist(next);
+    if (persistNow) void persist(next);
   }
 
   function currentFingerprint() {
@@ -366,7 +407,11 @@ function NewSalesOrder() {
         poNumber: poNumber || null,
         deliveryInstructions: instructions || null,
         internalNote: internalNote || null,
-        lines: linesRef.current.map((line) => ({ variantId: line.variantId, qty: line.qty })),
+        lines: linesRef.current.map((line) => ({
+          variantId: line.variantId,
+          qty: line.qty,
+          unitPriceOverride: line.unitPriceOverride,
+        })),
         expectedReview: quoteId ? null : reviewed?.expectedReview,
         quoteId: quoteId || null,
       },
@@ -534,6 +579,7 @@ function NewSalesOrder() {
                 <>
                   <div className="flex gap-2">
                     <input
+                      ref={searchInputRef}
                       className={inputClass}
                       value={productQuery}
                       onChange={(e) => setProductQuery(e.target.value)}
@@ -546,35 +592,11 @@ function NewSalesOrder() {
                       Search
                     </button>
                   </div>
-                  {products.length > 0 ? (
-                    <ul className="divide-y divide-border rounded-lg border border-border">
-                      {products.map((hit) => (
-                        <li key={hit.variantId} className="flex items-start justify-between gap-3 px-3 py-2 text-[13px]">
-                          <div>
-                            <p className="font-medium">
-                              {hit.sku} · {hit.name}
-                            </p>
-                            <p className="text-steel">
-                              {hit.brand}
-                              {hit.caseQty ? ` · Case ${hit.caseQty}` : ""}
-                              {hit.minOrderQty > 1 ? ` · Min ${hit.minOrderQty}` : ""}
-                              {` · Stock ${hit.sellableQty}`}
-                              {hit.backordersAllowed ? " · Backorder allowed" : " · No backorder"}
-                              {hit.customerUnitPrice ? ` · ${money(hit.customerUnitPrice)}` : ""}
-                              {hit.promotionCode ? ` · Promo ${hit.promotionCode}` : ""}
-                              {hit.priceSource ? ` · ${hit.priceSource}` : ""}
-                            </p>
-                            {hit.issue !== "VALID" && hit.issueMessage ? (
-                              <p className="text-bad">{hit.issueMessage}</p>
-                            ) : null}
-                          </div>
-                          <button type="button" onClick={() => void addProduct(hit)} className="text-[12px] font-bold uppercase text-primary">
-                            Add
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
+                  <SalesOrderProductResults
+                    products={products}
+                    disabled={addingProduct}
+                    onSelect={(hit) => void addProduct(hit)}
+                  />
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full min-w-[640px] text-[13px]">
                       <thead>
@@ -604,24 +626,83 @@ function NewSalesOrder() {
                                 <input
                                   className={`${inputClass} w-20`}
                                   type="number"
+                                  inputMode="numeric"
                                   min={1}
+                                  step={1}
                                   value={line.qty}
                                   onChange={(e) => {
-                                    const qty = Math.max(1, Number(e.target.value) || 1);
-                                    setAuthorised(false);
-                                    commitLines(
-                                      linesRef.current.map((item) =>
-                                        item.variantId === line.variantId ? { ...item, qty } : item,
-                                      ),
-                                    );
+                                    const qty = parseStaffOrderQuantity(e.target.value);
+                                    if (qty == null) return;
+                                    updateLine(line.variantId, { qty }, false);
                                   }}
                                   onBlur={() => void persist()}
                                 />
                                 {priced?.caseQty ? <p className="text-[11px] text-steel">Case {priced.caseQty}</p> : null}
                               </td>
                               <td className="px-3 py-2">
-                                {money(priced?.customerUnitPrice)}
-                                {priced?.priceSource ? <p className="text-[11px] text-steel">{priced.priceSource}</p> : null}
+                                <label className="block text-[11px] text-steel">
+                                  {line.unitPriceOverride ? "Manual price ex VAT" : "Unit price ex VAT"}
+                                  <input
+                                    className={`${inputClass} mt-1 w-24 ${line.unitPriceOverride ? "border-primary" : ""}`}
+                                    inputMode="decimal"
+                                    aria-label={`Unit price for ${line.sku}`}
+                                    value={
+                                      priceDrafts[line.variantId] ??
+                                      line.unitPriceOverride ??
+                                      priced?.resolvedUnitPrice ??
+                                      priced?.customerUnitPrice ??
+                                      ""
+                                    }
+                                    onChange={(e) =>
+                                      setPriceDrafts((current) => ({
+                                        ...current,
+                                        [line.variantId]: e.target.value,
+                                      }))
+                                    }
+                                    onBlur={() => {
+                                      const raw = priceDrafts[line.variantId];
+                                      if (raw == null) return;
+                                      const parsed = parseStaffOrderUnitPrice(raw);
+                                      if (!parsed) {
+                                        toast.error("Enter a unit price in pounds and pence, excluding VAT");
+                                        setPriceDrafts((current) => {
+                                          const next = { ...current };
+                                          delete next[line.variantId];
+                                          return next;
+                                        });
+                                        return;
+                                      }
+                                      const resolved =
+                                        priced?.resolvedUnitPrice ?? priced?.customerUnitPrice ?? null;
+                                      const override = resolved != null && parsed === resolved ? null : parsed;
+                                      setPriceDrafts((current) => {
+                                        const next = { ...current };
+                                        delete next[line.variantId];
+                                        return next;
+                                      });
+                                      updateLine(line.variantId, { unitPriceOverride: override }, true);
+                                    }}
+                                  />
+                                </label>
+                                {line.unitPriceOverride ? (
+                                  <button
+                                    type="button"
+                                    className="mt-1 text-[11px] font-semibold text-primary"
+                                    onClick={() => {
+                                      setPriceDrafts((current) => {
+                                        const next = { ...current };
+                                        delete next[line.variantId];
+                                        return next;
+                                      });
+                                      updateLine(line.variantId, { unitPriceOverride: null }, true);
+                                    }}
+                                  >
+                                    Use customer price
+                                    {priced?.resolvedUnitPrice ? ` ${money(priced.resolvedUnitPrice)}` : ""}
+                                  </button>
+                                ) : priced?.priceSource ? (
+                                  <p className="text-[11px] text-steel">{priced.priceSource}</p>
+                                ) : null}
                               </td>
                               <td className="px-3 py-2 text-steel">
                                 {priced ? `${priced.availableQtyAtOrder} available` : "—"}

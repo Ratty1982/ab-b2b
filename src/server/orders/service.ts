@@ -54,8 +54,10 @@ import {
   calculateTradeOrderTotals,
   tradeDeliveryTotalsDto,
 } from "@/domain/trade-delivery";
+import { parseStaffOrderUnitPrice } from "@/domain/sales-order-entry";
 import {
   assessBasketLineQuantity,
+  assessStaffUnitOrderQuantity,
   isOrderableByStockPolicy,
   resolveCustomerOrdering,
   type BasketLineIssue,
@@ -128,6 +130,10 @@ export type CheckoutReviewLine = {
   availableQtyAtOrder: number;
   backorderQtyAtOrder: number;
   backordersAllowed: boolean;
+  /** True when this staff order line uses a price other than the customer trade price. */
+  priceOverridden: boolean;
+  /** Customer trade price before a staff override. */
+  resolvedUnitPrice: string | null;
 };
 
 export type CheckoutReview = {
@@ -355,6 +361,8 @@ type ResolvedLine = {
   availableQtyAtOrder: number;
   backorderQtyAtOrder: number;
   backordersAllowed: boolean;
+  priceOverridden: boolean;
+  resolvedCustomerUnit2dp: string;
 };
 
 function mapBasketIssueToCheckout(issue: BasketLineIssue): CheckoutLineIssue {
@@ -559,6 +567,16 @@ function buildContactSnapshot(
   });
 }
 
+export type ResolveOrderLinesOptions = {
+  /**
+   * Staff sales order entry only. Customer checkout must leave this unset so
+   * case multiples and minimum order quantities still apply.
+   */
+  staffUnitOrdering?: boolean;
+  /** Order-only selling prices. Never written back to the customer price list. */
+  unitPriceOverrides?: ReadonlyMap<string, string | null>;
+};
+
 /**
  * Re-resolve explicit order lines (prices, stock, ordering).
  * Does not mutate inventory — reservation happens only inside order commit.
@@ -568,6 +586,7 @@ export async function resolveOrderLinesFromItems(
   companyId: string,
   items: Array<{ variantId: string; qty: number }>,
   expectedPrices?: Array<{ variantId: string; customerUnitPrice: string }> | null,
+  options?: ResolveOrderLinesOptions,
 ): Promise<ResolvedLine[]> {
   if (items.length === 0) return [];
 
@@ -667,6 +686,22 @@ export async function resolveOrderLinesFromItems(
     });
 
     let issue = mapBasketIssueToCheckout(basketIssue);
+    const staffUnits =
+      options?.staffUnitOrdering === true &&
+      (basketIssue === "CASE_CONFIGURATION_CHANGED" || basketIssue === "INSUFFICIENT_FULL_CASE");
+    if (staffUnits) {
+      issue = mapBasketIssueToCheckout(
+        assessStaffUnitOrderQuantity({
+          quantity: item.qty,
+          sellableQty,
+          productActive: product.status === "ACTIVE" && product.isActive,
+          tradeVisible: product.isTradeVisible,
+          orderableByStockPolicy,
+          hasTradePrice: hasPrice,
+          backorderPolicy,
+        }),
+      );
+    }
     const ordering = resolveCustomerOrdering({
       caseQty: variant.caseQty,
       minimumOrderQty: variant.minOrderQty,
@@ -690,6 +725,8 @@ export async function resolveOrderLinesFromItems(
     let promotionId: string | null = null;
     let promotionBaselineUnit4dp: string | null = null;
     let promotionCode: string | null = null;
+    let priceOverridden = false;
+    let resolvedCustomerUnit2dp = "0.00";
 
     if (hasPrice && resolution) {
       const commercial = parseMoney(resolution.unitPriceExVat)!;
@@ -709,6 +746,27 @@ export async function resolveOrderLinesFromItems(
       promotionId = resolution.promotionApplied?.id ?? null;
       promotionBaselineUnit4dp = promotionId ? resolution.promotionBaselineUnitExVat : null;
       promotionCode = resolution.promotionApplied?.code ?? null;
+      resolvedCustomerUnit2dp = customerUnit2dp;
+
+      const overrideRaw = options?.unitPriceOverrides?.get(variant.id) ?? null;
+      const overridePrice = overrideRaw ? parseStaffOrderUnitPrice(overrideRaw) : null;
+      if (options?.staffUnitOrdering && overridePrice && overridePrice !== customerUnit2dp) {
+        const sellOverride = parseMoney(overridePrice)!;
+        const lineNet = customerLineNetExVat(sellOverride, item.qty);
+        const lineGross = applyVatInc(lineNet, vatRate);
+        const lineVat = roundGbpDisplay({ minor: lineGross.minor - lineNet.minor });
+        commercialUnit4dp = moneyToString(sellOverride, 4);
+        customerUnit2dp = moneyToString(sellOverride, 2);
+        lineNet2dp = moneyToString(lineNet, 2);
+        lineVat2dp = moneyToString(lineVat, 2);
+        lineGross2dp = moneyToString(lineGross, 2);
+        priceSource = "STAFF_OVERRIDE";
+        quantityBreakId = null;
+        promotionId = null;
+        promotionBaselineUnit4dp = null;
+        promotionCode = null;
+        priceOverridden = true;
+      }
 
       const expected = expectedMap.get(variant.id);
       if (expected != null && issue === "VALID") {
@@ -730,9 +788,12 @@ export async function resolveOrderLinesFromItems(
       sku: variant.sku,
       name: product.name,
       quantity: item.qty,
-      caseQty: ordering.caseQty,
-      orderingMode:
-        ordering.mode === "CASE" || ordering.mode === "FINAL_PART_CASE" ? ordering.mode : null,
+      caseQty: staffUnits ? variant.caseQty : ordering.caseQty,
+      orderingMode: staffUnits
+        ? null
+        : ordering.mode === "CASE" || ordering.mode === "FINAL_PART_CASE"
+          ? ordering.mode
+          : null,
       commercialUnit4dp,
       customerUnit2dp,
       lineNet2dp,
@@ -750,6 +811,8 @@ export async function resolveOrderLinesFromItems(
       availableQtyAtOrder: allocation.availableQtyAtOrder,
       backorderQtyAtOrder: allocation.backorderQtyAtOrder,
       backordersAllowed: isEffectiveBackorderAllowed(backorderPolicy),
+      priceOverridden,
+      resolvedCustomerUnit2dp,
     });
   }
 
@@ -782,6 +845,8 @@ function unavailableLine(variantId: string, quantity: number): ResolvedLine {
     availableQtyAtOrder: 0,
     backorderQtyAtOrder: 0,
     backordersAllowed: false,
+    priceOverridden: false,
+    resolvedCustomerUnit2dp: "0.00",
   };
 }
 
@@ -824,6 +889,8 @@ function linesToReviewLines(lines: ResolvedLine[]): CheckoutReviewLine[] {
     availableQtyAtOrder: line.availableQtyAtOrder,
     backorderQtyAtOrder: line.backorderQtyAtOrder,
     backordersAllowed: line.backordersAllowed,
+    priceOverridden: line.priceOverridden,
+    resolvedUnitPrice: line.issue === "PRICE_UNAVAILABLE" ? null : line.resolvedCustomerUnit2dp,
   }));
 }
 

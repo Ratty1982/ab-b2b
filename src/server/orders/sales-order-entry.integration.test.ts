@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { saveProduct } from "@/server/catalogue/service";
 import { addToBasket } from "@/server/basket/service";
-import { placeOrder } from "@/server/orders/service";
+import { placeOrder, resolveOrderLinesFromItems } from "@/server/orders/service";
 import {
   abandonSalesOrderDraft,
   ensureSalesOrderCrmActivity,
@@ -379,7 +379,7 @@ describe("sales order entry on behalf of a customer", () => {
     ).rejects.toMatchObject({ code: "DRAFT_CONFLICT" });
   });
 
-  it("prices the customer, applies an eligible promotion, VAT and delivery, and rejects case-qty and address errors", async () => {
+  it("prices the customer, applies an eligible promotion and VAT, and rejects another customer's address", async () => {
     const stamp = Date.now();
     const priced = await seedVariant(`SOE-PRICE-${stamp}`, 20, 1, 30);
     const cased = await seedVariant(`SOE-CASE-${stamp}`, 3.25, 12, 48);
@@ -422,12 +422,15 @@ describe("sales order entry on behalf of a customer", () => {
       expect(saved.review?.totals.vatTotal).not.toBe("0.00");
       expect(Number(saved.review?.totals.grandTotal)).toBeGreaterThan(14.85);
 
-      const blocked = await saveSalesOrderDraft(rep.id, {
+      const units = await saveSalesOrderDraft(rep.id, {
         draftId: draft.draft.id,
         lines: [{ variantId: cased.id, qty: 6 }],
       });
-      expect(blocked.review?.hasBlockingIssues).toBe(true);
-      expect(blocked.review?.lines[0]?.issue).not.toBe("VALID");
+      expect(units.review?.hasBlockingIssues).toBe(false);
+      expect(units.review?.lines[0]?.issue).toBe("VALID");
+      expect(units.review?.lines[0]?.issueMessage).toBeNull();
+      expect(units.review?.lines[0]?.quantity).toBe(6);
+      expect(units.review?.lines[0]?.caseQty).toBe(12);
 
       await expect(
         saveSalesOrderDraft(rep.id, { draftId: draft.draft.id, addressId: other.address.id }),
@@ -1512,5 +1515,192 @@ describe("sales order entry on behalf of a customer", () => {
       expect(hit.items.some((row) => row.id === alpha.id), q).toBe(true);
     }
     expect((await searchOrderEntryCustomers(rep.id, { q: `${stamp} Hidden` })).total).toBe(0);
+  });
+
+  it("accepts staff unit quantities and order-only prices without changing portal case rules", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-UNIT-${stamp}`, 3.25, 12, 48);
+    await prisma.productVariant.update({
+      where: { id: variant.id },
+      data: { minOrderQty: 12, backorderPolicy: "DENY" },
+    });
+    const { company, address, contact } = await seedCompany(`SOE Unit ${stamp}`);
+    const buyerId = await ensureTradeBuyer(`soe-unit-buyer-${stamp}@example.invalid`, company.id);
+    const { user: rep } = await ensureRep(
+      `soe-unit-${stamp}@example.invalid`,
+      "SALES_REPRESENTATIVE",
+      `UN${stamp}`,
+    );
+    await assign(
+      company.id,
+      (await prisma.salesRep.findUniqueOrThrow({ where: { userId: rep.id } })).id,
+      true,
+    );
+    const promo = await prisma.promotion.create({
+      data: {
+        code: `UNIT${stamp}`.slice(0, 20),
+        name: "Unit price promo",
+        type: "PERCENT",
+        value: "10",
+        isActive: true,
+        metadata: { variantIds: [variant.id] },
+      },
+    });
+
+    try {
+      await expect(addToBasket(buyerId, { variantId: variant.id, quantity: 1 })).rejects.toThrow();
+      const portalLines = await resolveOrderLinesFromItems(company.id, [
+        { variantId: variant.id, qty: 1 },
+      ]);
+      expect(portalLines[0]?.issue).toBe("CASE_CONFIGURATION_CHANGED");
+      expect(await prisma.basketItem.count({ where: { variantId: variant.id } })).toBe(0);
+
+      const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+      for (const qty of [1, 2, 15] as const) {
+        const saved = await saveSalesOrderDraft(rep.id, {
+          draftId: draft.draft.id,
+          contactId: contact.id,
+          addressId: address.id,
+          source: "TELEPHONE",
+          lines: [{ variantId: variant.id, qty }],
+        });
+        const line = saved.review?.lines[0];
+        expect(line?.issue, `qty ${qty}`).toBe("VALID");
+        expect(line?.issueMessage).toBeNull();
+        expect(line?.quantity).toBe(qty);
+        expect(line?.caseQty).toBe(12);
+        expect(line?.priceOverridden).toBe(false);
+        expect(line?.customerUnitPrice).toBe(line?.resolvedUnitPrice);
+      }
+
+      const oversold = await saveSalesOrderDraft(rep.id, {
+        draftId: draft.draft.id,
+        lines: [{ variantId: variant.id, qty: 50 }],
+      });
+      expect(oversold.review?.lines[0]?.issue).not.toBe("VALID");
+
+      const overridden = await saveSalesOrderDraft(rep.id, {
+        draftId: draft.draft.id,
+        lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "2.5" }],
+      });
+      const overrideLine = overridden.review?.lines[0];
+      expect(overrideLine?.issue).toBe("VALID");
+      expect(overrideLine?.customerUnitPrice).toBe("2.50");
+      expect(overrideLine?.lineNet).toBe("5.00");
+      expect(overrideLine?.lineVat).toBe("1.00");
+      expect(overrideLine?.priceSource).toBe("STAFF_OVERRIDE");
+      expect(overrideLine?.priceOverridden).toBe(true);
+      expect(overrideLine?.promotionCode).toBeNull();
+      expect(overrideLine?.resolvedUnitPrice).not.toBe("2.50");
+      expect(overridden.draft.lines[0]?.unitPriceOverride).toBe("2.50");
+      const net = Number(overrideLine?.lineNet);
+      const lineVat = Number(overrideLine?.lineVat);
+      const delivery = Number(overridden.review?.totals.deliveryTotal);
+      const orderVat = Number(overridden.review?.totals.vatTotal);
+      expect(overridden.review?.totals.subtotal).toBe("5.00");
+      expect(orderVat).toBeCloseTo(lineVat + delivery * 0.2, 2);
+      expect(Number(overridden.review?.totals.grandTotal)).toBeCloseTo(net + orderVat + delivery, 2);
+
+      const reopened = await getSalesOrderDraft(rep.id, { draftId: draft.draft.id });
+      expect(reopened.draft.lines[0]?.unitPriceOverride).toBe("2.50");
+      expect(reopened.review?.lines[0]?.customerUnitPrice).toBe("2.50");
+
+      const reset = await saveSalesOrderDraft(rep.id, {
+        draftId: draft.draft.id,
+        lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: null }],
+      });
+      expect(reset.draft.lines[0]?.unitPriceOverride).toBeNull();
+      expect(reset.review?.lines[0]?.priceOverridden).toBe(false);
+      expect(reset.review?.lines[0]?.priceSource).toBe("PROMOTION");
+      expect(reset.review?.lines[0]?.customerUnitPrice).toBe(reset.review?.lines[0]?.resolvedUnitPrice);
+
+      await expect(
+        saveSalesOrderDraft(rep.id, {
+          draftId: draft.draft.id,
+          lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "-1.00" }],
+        }),
+      ).rejects.toThrow();
+
+      const priced = await saveSalesOrderDraft(rep.id, {
+        draftId: draft.draft.id,
+        lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "2.50" }],
+      });
+      const key = `unit-${stamp}`;
+      const placed = await placeSalesOrder(rep.id, {
+        draftId: draft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: key,
+        source: "TELEPHONE",
+        contactId: contact.id,
+        addressId: address.id,
+        lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "2.50" }],
+        expectedReview: expectedFrom(priced.review!),
+      });
+      expect(placed.ok).toBe(true);
+      if (!placed.ok) return;
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: placed.order.id },
+        include: { items: true },
+      });
+      expect(order.items[0]?.qty).toBe(2);
+      expect(Number(order.items[0]?.customerUnitPrice.toString())).toBe(2.5);
+      expect(Number(order.items[0]?.lineTotal.toString())).toBe(5);
+      expect(Number(order.items[0]?.lineVat.toString())).toBe(1);
+      expect(order.items[0]?.priceSource).toBe("STAFF_OVERRIDE");
+      expect(order.items[0]?.promotionId).toBeNull();
+      expect(Number(order.subtotal.toString())).toBe(Number(priced.review?.totals.subtotal));
+      expect(Number(order.vatTotal.toString())).toBe(Number(priced.review?.totals.vatTotal));
+      expect(Number(order.grandTotal.toString())).toBe(Number(priced.review?.totals.grandTotal));
+      const inventory = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+      expect(inventory.qtyOnHand).toBe(48);
+      expect(inventory.qtyReserved).toBe(2);
+      const reservation = await prisma.orderStockReservation.findFirstOrThrow({
+        where: { orderId: order.id },
+      });
+      expect(reservation.quantity).toBe(2);
+
+      const audit = await prisma.auditEvent.findFirstOrThrow({
+        where: { entityId: order.id, action: "order.placed_for_customer" },
+      });
+      const after = audit.after as {
+        priceOverrides?: Array<{
+          orderId: string;
+          resolvedUnitPrice: string;
+          overriddenUnitPrice: string;
+          staffUserId: string;
+        }>;
+      };
+      expect(after.priceOverrides?.[0]).toMatchObject({
+        orderId: order.id,
+        overriddenUnitPrice: "2.50",
+        staffUserId: rep.id,
+      });
+      expect(after.priceOverrides?.[0]?.resolvedUnitPrice).not.toBe("2.50");
+
+      const storedTrade = await prisma.productVariant.findUniqueOrThrow({ where: { id: variant.id } });
+      expect(Number(storedTrade.tradePrice?.toString())).toBe(3.25);
+      expect(storedTrade.caseQty).toBe(12);
+      expect(storedTrade.minOrderQty).toBe(12);
+      expect(
+        await prisma.customerPrice.count({ where: { companyId: company.id, variantId: variant.id } }),
+      ).toBe(0);
+
+      const again = await placeSalesOrder(rep.id, {
+        draftId: draft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: key,
+        source: "TELEPHONE",
+        contactId: contact.id,
+        addressId: address.id,
+        lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "2.50" }],
+        expectedReview: expectedFrom(priced.review!),
+      });
+      expect(again.ok && again.alreadyPlaced && again.order.id).toBe(order.id);
+      expect(await prisma.order.count({ where: { idempotencyKey: key } })).toBe(1);
+      const inventoryAfter = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+      expect(inventoryAfter.qtyReserved).toBe(2);
+    } finally {
+      await prisma.promotion.update({ where: { id: promo.id }, data: { isActive: false } });
+    }
   });
 });

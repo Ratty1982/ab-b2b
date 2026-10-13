@@ -623,6 +623,30 @@ export function assessBasketLineQuantity(input: {
   return "CASE_CONFIGURATION_CHANGED";
 }
 
+/**
+ * Staff sales-order entry sells individual units. Case quantity and minimum
+ * order quantity stay on the product and still apply to customer ordering.
+ * Stock, product status, and price availability still apply.
+ */
+export function assessStaffUnitOrderQuantity(input: {
+  quantity: number;
+  sellableQty: number;
+  productActive: boolean;
+  tradeVisible: boolean;
+  orderableByStockPolicy?: boolean;
+  hasTradePrice: boolean;
+  backorderPolicy?: BackorderPolicyValue | null;
+}): BasketLineIssue {
+  if (!input.productActive || !input.tradeVisible) return "PRODUCT_UNAVAILABLE";
+  if (!input.hasTradePrice) return "PRICE_UNAVAILABLE";
+  if (!Number.isInteger(input.quantity) || input.quantity < 1) return "QUANTITY_UNAVAILABLE";
+  if (input.orderableByStockPolicy === false) return "QUANTITY_UNAVAILABLE";
+  const sellable = getSellableQuantity({ sellableQty: input.sellableQty });
+  const backordersAllowed = isEffectiveBackorderAllowed(input.backorderPolicy);
+  if (!backordersAllowed && input.quantity > sellable) return "QUANTITY_UNAVAILABLE";
+  return "VALID";
+}
+
 export function basketLineIssueMessage(issue: BasketLineIssue): string | null {
   switch (issue) {
     case "VALID":

@@ -75,7 +75,14 @@ export type SalesOrderDraftDto = {
   internalNote: string | null;
   placedOrderId: string | null;
   updatedAt: string;
-  lines: Array<{ id: string; variantId: string; qty: number; sku: string; name: string }>;
+  lines: Array<{
+    id: string;
+    variantId: string;
+    qty: number;
+    sku: string;
+    name: string;
+    unitPriceOverride: string | null;
+  }>;
 };
 
 export type SalesOrderWorkspace = {
@@ -247,6 +254,7 @@ function toDraftDto(row: DraftRow): SalesOrderDraftDto {
       qty: line.qty,
       sku: line.variant.sku,
       name: line.variant.product.name,
+      unitPriceOverride: money2(line.unitPriceOverride?.toString() ?? null),
     })),
   };
 }
@@ -309,11 +317,41 @@ async function lockOpenDraft(
   });
 }
 
-function lineKey(lines: Array<{ variantId: string; qty: number }>): string {
+function lineKey(
+  lines: Array<{
+    variantId: string;
+    qty: number;
+    unitPriceOverride?: { toString(): string } | string | null;
+  }>,
+): string {
   return [...lines]
-    .map((line) => `${line.variantId}:${line.qty}`)
+    .map((line) => {
+      const raw =
+        line.unitPriceOverride == null
+          ? null
+          : typeof line.unitPriceOverride === "string"
+            ? line.unitPriceOverride
+            : line.unitPriceOverride.toString();
+      return `${line.variantId}:${line.qty}:${money2(raw) ?? ""}`;
+    })
     .sort()
     .join("|");
+}
+
+function staffOverrides(
+  lines: Array<{ variantId: string; unitPriceOverride?: { toString(): string } | string | null }>,
+): Map<string, string | null> {
+  return new Map(
+    lines.map((line) => {
+      const raw =
+        line.unitPriceOverride == null
+          ? null
+          : typeof line.unitPriceOverride === "string"
+            ? line.unitPriceOverride
+            : line.unitPriceOverride.toString();
+      return [line.variantId, money2(raw)] as const;
+    }),
+  );
 }
 
 function money2(value: string | null | undefined): string | null {
@@ -453,6 +491,8 @@ async function reviewDraft(
   const lines = await resolveOrderLinesFromItems(
     company.id,
     draft.lines.map((line) => ({ variantId: line.variantId, qty: line.qty })),
+    null,
+    { staffUnitOrdering: true, unitPriceOverrides: staffOverrides(draft.lines) },
   );
   const review = buildCheckoutReview({
     company,
@@ -716,15 +756,18 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
   await prisma.$transaction(async (tx) => {
     const locked = await lockOpenDraft(tx, actorUserId, draft.id);
     if (input.lines) {
-      const unique = new Map<string, number>();
-      for (const line of input.lines) unique.set(line.variantId, line.qty);
+      const unique = new Map<string, { qty: number; unitPriceOverride: string | null }>();
+      for (const line of input.lines) {
+        unique.set(line.variantId, { qty: line.qty, unitPriceOverride: line.unitPriceOverride });
+      }
       await tx.salesOrderDraftLine.deleteMany({ where: { draftId: locked.id } });
       if (unique.size > 0) {
         await tx.salesOrderDraftLine.createMany({
-          data: [...unique.entries()].map(([variantId, qty], sortOrder) => ({
+          data: [...unique.entries()].map(([variantId, line], sortOrder) => ({
             draftId: locked.id,
             variantId,
-            qty,
+            qty: line.qty,
+            unitPriceOverride: line.unitPriceOverride,
             sortOrder,
           })),
         });
@@ -802,6 +845,8 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
     resolveOrderLinesFromItems(
       input.companyId,
       variants.map((variant) => ({ variantId: variant.id, qty: 1 })),
+      null,
+      { staffUnitOrdering: true },
     ),
     loadStockByVariantIds(variants.map((variant) => variant.id)),
   ]);
@@ -1103,7 +1148,13 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     return placeFromQuote(actorUserId, profile, draft, input);
   }
 
-  const requestedLines = input.lines ?? draft.lines.map((line) => ({ variantId: line.variantId, qty: line.qty }));
+  const requestedLines =
+    input.lines ??
+    draft.lines.map((line) => ({
+      variantId: line.variantId,
+      qty: line.qty,
+      unitPriceOverride: line.unitPriceOverride?.toString() ?? null,
+    }));
   if (requestedLines.length === 0) {
     throw new AuthError("Add at least one product", "DRAFT_EMPTY", 400);
   }
@@ -1142,6 +1193,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     company.id,
     requestedLines,
     expected.lines.map((line) => ({ variantId: line.variantId, customerUnitPrice: line.customerUnitPrice })),
+    { staffUnitOrdering: true, unitPriceOverrides: staffOverrides(draft.lines) },
   );
   const review = buildCheckoutReview({
     company,
@@ -1263,6 +1315,17 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       autopartSideEffects: false,
       abReservation: true,
       externalRef: null,
+      priceOverrides: lines
+        .filter((line) => line.priceOverridden)
+        .map((line) => ({
+          orderId: created.order.id,
+          variantId: line.variantId,
+          sku: line.sku,
+          quantity: line.quantity,
+          resolvedUnitPrice: line.resolvedCustomerUnit2dp,
+          overriddenUnitPrice: line.customerUnit2dp,
+          staffUserId: actorUserId,
+        })),
     },
   });
   await ensureSalesOrderCrmActivity({

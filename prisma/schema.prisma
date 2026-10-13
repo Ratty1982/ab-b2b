@@ -2139,6 +2139,8 @@ model SalesOrderDraftLine {
   draftId   String
   variantId String
   qty       Int
+  /// Staff selling price ex VAT for this draft line only. Null uses the customer trade price.
+  unitPriceOverride Decimal? @db.Decimal(12, 2)
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

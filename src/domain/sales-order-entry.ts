@@ -1,6 +1,7 @@
 /**
  * Sales order entry — staff draft input.
- * Prices, stock, VAT, and delivery are never accepted from the browser.
+ * Stock, VAT, delivery, and customer list prices are resolved on the server.
+ * A staff unit-price override is validated here and applies to this order only.
  */
 
 import { z } from "zod";
@@ -9,6 +10,7 @@ import {
   expectedLinePriceSchema,
   type ContactSnapshot,
 } from "@/domain/checkout";
+import { moneyToString, parseMoney } from "@/domain/money";
 
 export const SALES_ORDER_ENTRY_SOURCES = ["TELEPHONE", "EMAIL", "CUSTOMER_VISIT"] as const;
 export type SalesOrderEntrySource = (typeof SALES_ORDER_ENTRY_SOURCES)[number];
@@ -32,10 +34,111 @@ const optionalPlain = (max: number) =>
       return cleaned.length > 0 ? cleaned : null;
     });
 
-export const salesOrderLineInputSchema = z.object({
-  variantId: z.string().cuid(),
-  qty: z.number().int().min(1).max(99999),
-});
+/** GBP ex VAT, two decimal places. Rejects negative, blank, and non-finite text. */
+export function parseStaffOrderUnitPrice(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+  const money = parseMoney(trimmed);
+  const max = parseMoney("9999999999.99");
+  if (!money || !max || money.minor < 0n || money.minor > max.minor) return null;
+  return moneyToString(money, 2);
+}
+
+export function parseStaffOrderQuantity(raw: string): number | null {
+  if (!/^\d+$/.test(raw)) return null;
+  const qty = Number(raw);
+  if (!Number.isInteger(qty) || qty < 1 || qty > 99999) return null;
+  return qty;
+}
+
+export type SalesOrderDraftLineInput = {
+  variantId: string;
+  qty: number;
+  sku: string;
+  name: string;
+  unitPriceOverride: string | null;
+};
+
+export type SalesOrderProductSelection = {
+  variantId: string;
+  sku: string;
+  name: string;
+  caseQty: number | null;
+  minOrderQty: number;
+};
+
+/** First add uses the existing case/minimum quantity. A repeat add increases by one case. */
+export function selectSalesOrderProduct(
+  lines: SalesOrderDraftLineInput[],
+  hit: SalesOrderProductSelection,
+): SalesOrderDraftLineInput[] {
+  const existing = lines.find((line) => line.variantId === hit.variantId);
+  const pack = Math.max(1, hit.caseQty ?? 1);
+  const qty = existing ? existing.qty + pack : Math.max(1, hit.minOrderQty, hit.caseQty ?? 1);
+  if (!existing) {
+    return [
+      ...lines,
+      {
+        variantId: hit.variantId,
+        qty,
+        sku: hit.sku,
+        name: hit.name,
+        unitPriceOverride: null,
+      },
+    ];
+  }
+  return lines.map((line) => (line.variantId === hit.variantId ? { ...line, qty } : line));
+}
+
+/**
+ * One click adds one product. A second click while that add is in flight is ignored.
+ * A successful add closes the result list and clears the query.
+ */
+export function applySalesOrderProductAdd(input: {
+  busy: boolean;
+  lines: SalesOrderDraftLineInput[];
+  hit: SalesOrderProductSelection;
+}): {
+  accepted: boolean;
+  busy: boolean;
+  lines: SalesOrderDraftLineInput[];
+  clearSearch: boolean;
+} {
+  if (input.busy) {
+    return { accepted: false, busy: true, lines: input.lines, clearSearch: false };
+  }
+  return {
+    accepted: true,
+    busy: true,
+    lines: selectSalesOrderProduct(input.lines, input.hit),
+    clearSearch: true,
+  };
+}
+
+export const salesOrderLineInputSchema = z
+  .object({
+    variantId: z.string().cuid(),
+    qty: z.number().int().min(1).max(99999),
+    unitPriceOverride: z.union([z.string(), z.null()]).optional(),
+  })
+  .superRefine((line, ctx) => {
+    if (line.unitPriceOverride == null || line.unitPriceOverride.trim() === "") return;
+    if (!parseStaffOrderUnitPrice(line.unitPriceOverride)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter a unit price in pounds and pence, excluding VAT",
+        path: ["unitPriceOverride"],
+      });
+    }
+  })
+  .transform((line) => ({
+    variantId: line.variantId,
+    qty: line.qty,
+    unitPriceOverride:
+      line.unitPriceOverride == null || line.unitPriceOverride.trim() === ""
+        ? null
+        : parseStaffOrderUnitPrice(line.unitPriceOverride),
+  }));
 
 export const salesOrderDraftHeaderSchema = z
   .object({
@@ -81,7 +184,10 @@ export const salesOrderCustomerSearchSchema = z.object({
   pageSize: z.number().int().min(1).max(50).default(20),
 });
 
-const reviewedMoney = z.string().trim().regex(/^\d+(\.\d{1,2})?$/, "Expected a price in pounds");
+const reviewedMoney = z
+  .string()
+  .trim()
+  .regex(/^\d+(\.\d{1,2})?$/, "Expected a price in pounds");
 
 /** Prices and totals the salesperson has already seen. The server compares these to a fresh resolution. */
 export const salesOrderExpectedReviewSchema = z.object({
@@ -106,11 +212,9 @@ export type SalesOrderExpectedReview = z.infer<typeof salesOrderExpectedReviewSc
 export const placeSalesOrderSchema = z
   .object({
     draftId: z.string().cuid(),
-    confirmAuthorised: z
-      .boolean()
-      .refine((value) => value === true, {
-        message: "Confirm you are authorised to place this order for the customer",
-      }),
+    confirmAuthorised: z.boolean().refine((value) => value === true, {
+      message: "Confirm you are authorised to place this order for the customer",
+    }),
     idempotencyKey: z.string().trim().min(8).max(128),
     source: z.enum(SALES_ORDER_ENTRY_SOURCES),
     contactId: z.string().cuid().optional().nullable(),
