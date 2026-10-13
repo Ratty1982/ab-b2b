@@ -425,7 +425,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     canSeeOrders
       ? prisma.order.findMany({
           where: readyWhere,
-          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [{ placedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
           take: 5,
           select: {
             id: true,
@@ -441,7 +441,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     canSeeOrders
       ? prisma.order.findMany({
           where: processingWhere,
-          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [{ placedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
           take: 5,
           select: {
             id: true,
@@ -457,7 +457,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     canSeeOrders
       ? prisma.order.findMany({
           where: blockedWhere,
-          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [{ placedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
           take: 5,
           select: {
             id: true,
@@ -473,7 +473,7 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     canSeeOrders
       ? prisma.order.findMany({
           where: { ...orderScope, status: { not: "DRAFT" } },
-          orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [{ placedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
           take: 8,
           select: {
             id: true,
