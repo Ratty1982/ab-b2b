@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import ExcelJS from "exceljs";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
@@ -11,6 +11,7 @@ import {
   exportCustomerNegotiatedPricesCsv,
   previewCustomerPriceImport,
   rejectCustomerPriceImport,
+  setCustomerPriceImportDecisionAuditWriterForTests,
   submitCustomerPriceImport,
 } from "@/server/pricing/customer-price-import";
 import { AuthError } from "@/server/rbac/guards";
@@ -74,6 +75,10 @@ async function ownedCompany() {
 
 afterAll(async () => {
   await prisma.$disconnect();
+});
+
+afterEach(() => {
+  setCustomerPriceImportDecisionAuditWriterForTests(null);
 });
 
 async function product(label: string, trade = 20) {
@@ -324,6 +329,82 @@ describe("customer price import workflow", () => {
     expect(await priceOf(company.id, variant.id)).toBe("11.0000");
     const stored = await prisma.customerPriceImport.findUniqueOrThrow({ where: { id: preview.importId! } });
     expect(stored.status).toBe("PENDING_APPROVAL");
+  });
+
+  it("rolls back price approval and all live price writes if its audit record cannot be stored", async () => {
+    const company = await ownedCompany();
+    const variant = await product("approve-audit-failure", 20);
+    const preview = await upload(repId, company.id, csvFor([`${variant.sku},9.7500,,`]));
+    await submitCustomerPriceImport(repId, company.id, preview.importId!);
+
+    setCustomerPriceImportDecisionAuditWriterForTests(async () => {
+      throw new Error("Simulated audit persistence failure");
+    });
+    await expect(approveCustomerPriceImport(managerId, company.id, preview.importId!)).rejects.toThrow(
+      "Simulated audit persistence failure",
+    );
+    setCustomerPriceImportDecisionAuditWriterForTests(null);
+
+    expect(await priceOf(company.id, variant.id)).toBeNull();
+    const batch = await prisma.customerPriceImport.findUniqueOrThrow({ where: { id: preview.importId! } });
+    expect(batch.status).toBe("PENDING_APPROVAL");
+    expect(batch.decidedAt).toBeNull();
+    expect(
+      await prisma.auditEvent.count({
+        where: { entityId: preview.importId!, action: "pricing.customer_price_import.approved" },
+      }),
+    ).toBe(0);
+  });
+
+  it("rolls back price-upload rejection if its audit record cannot be stored", async () => {
+    const company = await ownedCompany();
+    const variant = await product("reject-audit-failure", 20);
+    const preview = await upload(repId, company.id, csvFor([`${variant.sku},11.0000,,`]));
+    await submitCustomerPriceImport(repId, company.id, preview.importId!);
+
+    setCustomerPriceImportDecisionAuditWriterForTests(async () => {
+      throw new Error("Simulated audit persistence failure");
+    });
+    await expect(
+      rejectCustomerPriceImport(managerId, {
+        companyId: company.id,
+        importId: preview.importId!,
+        reason: "Not approved",
+      }),
+    ).rejects.toThrow("Simulated audit persistence failure");
+    setCustomerPriceImportDecisionAuditWriterForTests(null);
+
+    const batch = await prisma.customerPriceImport.findUniqueOrThrow({ where: { id: preview.importId! } });
+    expect(batch.status).toBe("PENDING_APPROVAL");
+    expect(batch.decidedByUserId).toBeNull();
+    expect(batch.rejectionReason).toBeNull();
+    expect(
+      await prisma.auditEvent.count({
+        where: { entityId: preview.importId!, action: "pricing.customer_price_import.rejected" },
+      }),
+    ).toBe(0);
+  });
+
+  it("does not overwrite a new negotiated price added after the upload preview", async () => {
+    const company = await ownedCompany();
+    const variant = await product("new-price-race", 20);
+    const preview = await upload(repId, company.id, csvFor([`${variant.sku},9.0000,,`]));
+    expect(preview.newCount).toBe(1);
+    await submitCustomerPriceImport(repId, company.id, preview.importId!);
+    await upsertCustomerPrice(adminId, {
+      companyId: company.id,
+      variantId: variant.id,
+      unitPrice: 8,
+      startsAt: null,
+      endsAt: null,
+    });
+
+    await expect(approveCustomerPriceImport(managerId, company.id, preview.importId!)).rejects.toMatchObject({
+      code: "STALE",
+    });
+    expect(await priceOf(company.id, variant.id)).toBe("8.0000");
+    const batch = await prisma.customerPriceImport.findUniqueOrThrow({ where: { id: preview.importId! } });
+    expect(batch.status).toBe("PENDING_APPROVAL");
   });
 
   it("does not apply an approval twice", async () => {
