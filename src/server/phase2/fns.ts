@@ -2978,6 +2978,18 @@ export const abandonSalesOrderDraftFn = createServerFn({ method: "POST" })
     }
   });
 
+export const searchOrderEntryCustomersFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { q?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.searchOrderEntryCustomers(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const searchSalesOrderProductsFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { companyId: string; q: string })
   .handler(async ({ data }) => {

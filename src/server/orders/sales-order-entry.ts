@@ -18,6 +18,7 @@ import {
   openSalesOrderDraftSchema,
   placeSalesOrderSchema,
   salesOrderDraftHeaderSchema,
+  salesOrderCustomerSearchSchema,
   salesOrderDraftIdSchema,
   salesOrderProductSearchSchema,
   type PlaceSalesOrderInput,
@@ -38,7 +39,7 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { canAccessCompanyAsSales, getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
+import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { acceptQuoteOnBehalf } from "@/server/quotes/service";
 import { loadStockByVariantIds } from "@/server/stock/service";
 
@@ -107,6 +108,8 @@ export type SalesOrderWorkspace = {
     grandTotal: string;
     poNumber: string | null;
   }>;
+  /** Customer's assigned representative. Null when the account has none. */
+  assignedSalesRep: { name: string; code: string } | null;
 };
 
 export type SalesOrderPriceChange = {
@@ -153,14 +156,15 @@ async function requireSalesOrderStaff(userId: string): Promise<LoadedAccessProfi
   return profile;
 }
 
+/**
+ * Order entry is not CRM account ownership.
+ * Any internal user with orders.place_for_customer may order for any ACTIVE customer.
+ * The caller's profile is accepted only after requireSalesOrderStaff.
+ */
 async function requireOrderableCompany(
-  profile: LoadedAccessProfile,
+  _profile: LoadedAccessProfile,
   companyId: string,
 ): Promise<OrderableCompany> {
-  const allowed = await canAccessCompanyAsSales(profile, companyId);
-  if (!allowed) {
-    throw new AuthError("No access to this customer", "COMPANY_FORBIDDEN", 403);
-  }
   const company = await prisma.company.findUnique({
     where: { id: companyId },
     select: {
@@ -181,6 +185,31 @@ async function requireOrderableCompany(
     );
   }
   return company;
+}
+
+async function loadAssignedSalesRep(companyId: string): Promise<{ name: string; code: string } | null> {
+  const primary = await prisma.companyAssignment.findFirst({
+    where: { companyId, isPrimary: true, salesRep: { active: true } },
+    select: { salesRep: { select: { code: true, user: { select: { name: true } } } } },
+  });
+  const chosen =
+    primary ??
+    (await prisma.companyAssignment.findFirst({
+      where: { companyId, salesRep: { active: true } },
+      orderBy: { createdAt: "asc" },
+      select: { salesRep: { select: { code: true, user: { select: { name: true } } } } },
+    }));
+  if (!chosen) return null;
+  return {
+    name: chosen.salesRep.user.name?.trim() || "Assigned representative",
+    code: chosen.salesRep.code ?? "",
+  };
+}
+
+/** Quotations stay inside the existing sales-account scope. Order entry does not widen that. */
+async function canUseCustomerQuotations(profile: LoadedAccessProfile, companyId: string): Promise<boolean> {
+  if (!hasPermission(profile, "quotes.accept_on_behalf")) return false;
+  return canAccessCompanyAsSales(profile, companyId);
 }
 
 const draftInclude = {
@@ -293,7 +322,7 @@ function money2(value: string | null | undefined): string | null {
   return parsed ? moneyToString(parsed, 2) : null;
 }
 
-async function loadCustomerChoices(companyId: string) {
+async function loadCustomerChoices(companyId: string, includeQuotes: boolean) {
   const [contacts, addresses, quotes] = await Promise.all([
     prisma.contact.findMany({
       where: { companyId },
@@ -326,22 +355,24 @@ async function loadCustomerChoices(companyId: string) {
         isDefaultDelivery: true,
       },
     }),
-    prisma.quote.findMany({
-      where: {
-        companyId,
-        status: { in: ["SENT", "VIEWED", "ACCEPTED"] },
-        convertedOrderId: null,
-      },
-      orderBy: { updatedAt: "desc" },
-      take: 25,
-      select: {
-        id: true,
-        quoteNumber: true,
-        status: true,
-        grandTotal: true,
-        poNumber: true,
-      },
-    }),
+    includeQuotes
+      ? prisma.quote.findMany({
+          where: {
+            companyId,
+            status: { in: ["SENT", "VIEWED", "ACCEPTED"] },
+            convertedOrderId: null,
+          },
+          orderBy: { updatedAt: "desc" },
+          take: 25,
+          select: {
+            id: true,
+            quoteNumber: true,
+            status: true,
+            grandTotal: true,
+            poNumber: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
   return {
     contacts: contacts.map((contact) => ({
@@ -447,15 +478,18 @@ async function reviewDraft(
 
 async function workspaceFor(profile: LoadedAccessProfile, draft: DraftRow): Promise<SalesOrderWorkspace> {
   const company = await requireOrderableCompany(profile, draft.companyId);
-  const [choices, priced] = await Promise.all([
-    loadCustomerChoices(company.id),
+  const includeQuotes = await canUseCustomerQuotations(profile, company.id);
+  const [choices, priced, assignedSalesRep] = await Promise.all([
+    loadCustomerChoices(company.id, includeQuotes),
     reviewDraft(company, draft),
+    loadAssignedSalesRep(company.id),
   ]);
   return {
     draft: toDraftDto(draft),
     review: priced.review,
     contactReady: priced.contactReady,
     addressReady: priced.addressReady,
+    assignedSalesRep,
     ...choices,
   };
 }
@@ -497,21 +531,93 @@ function compareReviewedPrices(
 }
 
 export async function listSalesOrderDrafts(actorUserId: string) {
-  const profile = await requireSalesOrderStaff(actorUserId);
+  await requireSalesOrderStaff(actorUserId);
   const rows = await prisma.salesOrderDraft.findMany({
-    where: { createdByUserId: actorUserId, status: "OPEN" },
+    where: { createdByUserId: actorUserId, status: "OPEN", company: { status: "ACTIVE" } },
     include: draftInclude,
     orderBy: { updatedAt: "desc" },
     take: 50,
   });
-  const access = await getAccessibleCompanyIdsForSales(profile);
-  const allowed = new Set(access === "all" ? rows.map((row) => row.companyId) : access);
-  const active = await prisma.company.findMany({
-    where: { id: { in: [...allowed] }, status: "ACTIVE" },
-    select: { id: true },
+  return rows.map(toDraftDto);
+}
+
+export async function searchOrderEntryCustomers(actorUserId: string, raw: unknown) {
+  await requireSalesOrderStaff(actorUserId);
+  const input = salesOrderCustomerSearchSchema.parse(raw ?? {});
+  const q = input.q?.trim() ?? "";
+  const rows = await prisma.company.findMany({
+    where: {
+      status: "ACTIVE",
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { tradingName: { contains: q, mode: "insensitive" } },
+              { accountNumber: { contains: q, mode: "insensitive" } },
+              { primaryEmail: { contains: q, mode: "insensitive" } },
+              { phone: { contains: q, mode: "insensitive" } },
+              { autopartCustomerCode: { contains: q, mode: "insensitive" } },
+              {
+                contacts: {
+                  some: {
+                    OR: [
+                      { firstName: { contains: q, mode: "insensitive" } },
+                      { lastName: { contains: q, mode: "insensitive" } },
+                      { email: { contains: q, mode: "insensitive" } },
+                    ],
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    },
+    orderBy: { name: "asc" },
+    take: 25,
+    select: {
+      id: true,
+      name: true,
+      tradingName: true,
+      accountNumber: true,
+      phone: true,
+      primaryEmail: true,
+      autopartCustomerCode: true,
+      addresses: {
+        where: { OR: [{ isDefaultDelivery: true }, { type: "TRADING" }] },
+        orderBy: [{ isDefaultDelivery: "desc" }],
+        take: 1,
+        select: { town: true, postcode: true },
+      },
+      contacts: {
+        where: { isPrimary: true },
+        take: 1,
+        select: { firstName: true, lastName: true },
+      },
+      assignments: {
+        where: { isPrimary: true, salesRep: { active: true } },
+        take: 1,
+        select: { salesRep: { select: { code: true, user: { select: { name: true } } } } },
+      },
+    },
   });
-  const activeIds = new Set(active.map((company) => company.id));
-  return rows.filter((row) => activeIds.has(row.companyId)).map(toDraftDto);
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    tradingName: row.tradingName,
+    accountNumber: row.accountNumber,
+    phone: row.phone,
+    primaryEmail: row.primaryEmail,
+    autopartCustomerCode: row.autopartCustomerCode,
+    town: row.addresses[0]?.town ?? null,
+    postcode: row.addresses[0]?.postcode ?? null,
+    contactName: row.contacts[0] ? `${row.contacts[0].firstName} ${row.contacts[0].lastName}`.trim() : null,
+    assignedSalesRep: row.assignments[0]
+      ? {
+          name: row.assignments[0].salesRep.user.name?.trim() || "Assigned representative",
+          code: row.assignments[0].salesRep.code ?? "",
+        }
+      : null,
+  }));
 }
 
 export async function openSalesOrderDraft(actorUserId: string, raw: unknown) {
@@ -549,6 +655,7 @@ export async function getSalesOrderDraft(actorUserId: string, raw: unknown) {
       contacts: [],
       addresses: [],
       quotes: [],
+      assignedSalesRep: await loadAssignedSalesRep(draft.companyId),
     } satisfies SalesOrderWorkspace;
   }
   return workspaceFor(profile, draft);
@@ -921,9 +1028,8 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     include: { items: true, company: { select: { name: true } } },
   });
   if (existing) {
-    const allowed = await canAccessCompanyAsSales(profile, existing.companyId);
-    if (!allowed) {
-      throw new AuthError("No access to this customer", "COMPANY_FORBIDDEN", 403);
+    if (existing.placedByStaffUserId !== actorUserId) {
+      throw new AuthError("No access to this order", "FORBIDDEN", 403);
     }
     await repairCrmFromOrder(existing);
     return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
