@@ -2,10 +2,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
+import { CreateSalesOrderDesk } from "@/components/orders/CreateSalesOrderDesk";
 import { SALES_ORDER_SOURCE_LABEL } from "@/domain/sales-order-entry";
 import { ROUTES } from "@/lib/app-nav";
 import {
-  listCompaniesFn,
   openSalesOrderDraftFn,
   placeSalesOrderFn,
   saveSalesOrderDraftFn,
@@ -27,10 +27,10 @@ export const Route = createFileRoute("/sales/orders/new")({
   },
   head: () => ({
     meta: [
-      { title: "New customer order — Sales — Automotive Brands" },
+      { title: "Create Sales Order — Sales — Automotive Brands" },
       {
         name: "description",
-        content: "Enter a trade order on behalf of an authorised customer.",
+        content: "Search any active trade account and enter an order. The assigned representative stays on the order.",
       },
     ],
   }),
@@ -87,8 +87,6 @@ function NewSalesOrder() {
   const search = Route.useSearch();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [companyQuery, setCompanyQuery] = useState("");
-  const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [productQuery, setProductQuery] = useState("");
   const [products, setProducts] = useState<ProductHit[]>([]);
   const [source, setSource] = useState("TELEPHONE");
@@ -246,21 +244,6 @@ function NewSalesOrder() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (search.companyId || search.draftId) return;
-    void listCompaniesFn({ data: { q: companyQuery.trim() || undefined, status: "ACTIVE", page: 1, pageSize: 25 } }).then(
-      (result) => {
-        if (!result.ok) return;
-        setCompanies(
-          (result.data.items as Array<{ id: string; name: string }>).map((company) => ({
-            id: company.id,
-            name: company.name,
-          })),
-        );
-      },
-    );
-  }, [companyQuery, search.companyId, search.draftId]);
 
   function headerPayload(nextLines = lines) {
     if (!workspace) return null;
@@ -449,45 +432,19 @@ function NewSalesOrder() {
   }
 
   if (!search.companyId && !search.draftId) {
-    return (
-      <div>
-        <PanelHeader
-          title="New customer order"
-          sub="Choose an active account you are authorised to order for"
-          actions={
-            <Link to={ROUTES.salesOrders} className="text-[13px] font-semibold text-primary">
-              Open drafts
-            </Link>
-          }
-        />
-        <div className="mx-auto max-w-xl space-y-4 p-6">
-          <Field label="Search customers">
-            <input className={inputClass} value={companyQuery} onChange={(e) => setCompanyQuery(e.target.value)} placeholder="Customer name…" />
-          </Field>
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {companies.map((company) => (
-              <li key={company.id}>
-                <Link
-                  to="/sales/orders/new"
-                  search={{ companyId: company.id }}
-                  className="block px-4 py-3 text-[14px] font-medium hover:bg-surface"
-                >
-                  {company.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    );
+    return <CreateSalesOrderDesk />;
   }
 
   const review = workspace?.review;
   return (
     <div>
       <PanelHeader
-        title={workspace ? workspace.draft.companyName : "New customer order"}
-        sub="Prices are resolved for this customer. The customer basket is not used."
+        title={workspace ? workspace.draft.companyName : "Create Sales Order"}
+        sub={
+          workspace?.assignedSalesRep
+            ? `Assigned representative: ${workspace.assignedSalesRep.name}. Prices are resolved for this customer. You are recorded as the person who places the order.`
+            : "No representative is assigned to this account. Prices are resolved for this customer. You are recorded as the person who places the order."
+        }
         actions={
           <Link to={ROUTES.salesOrders} className="text-[13px] font-semibold text-primary">
             Open drafts
@@ -524,16 +481,18 @@ function NewSalesOrder() {
                 <Field label="Customer PO / reference">
                   <input className={inputClass} value={poNumber} onChange={(e) => { setPoNumber(e.target.value); setAuthorised(false); }} />
                 </Field>
-                <Field label="Use an existing quotation">
-                  <select className={inputClass} value={quoteId} onChange={(e) => { setQuoteId(e.target.value); setAuthorised(false); }}>
-                    <option value="">New order — price products below</option>
-                    {workspace.quotes.map((quote) => (
-                      <option key={quote.id} value={quote.id}>
-                        {quote.quoteNumber} · £{quote.grandTotal} · {quote.status}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                {workspace.quotes.length > 0 ? (
+                  <Field label="Use an existing quotation">
+                    <select className={inputClass} value={quoteId} onChange={(e) => { setQuoteId(e.target.value); setAuthorised(false); }}>
+                      <option value="">New order — price products below</option>
+                      {workspace.quotes.map((quote) => (
+                        <option key={quote.id} value={quote.id}>
+                          {quote.quoteNumber} · £{quote.grandTotal} · {quote.status}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : null}
               </div>
               <Field label="Delivery">
                 <label className="mb-2 flex items-center gap-2 text-[13px]">
