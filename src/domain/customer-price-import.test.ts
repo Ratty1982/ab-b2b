@@ -224,6 +224,67 @@ describe("customer price preview classification", () => {
   });
 });
 
+describe("customer price export round trip", () => {
+  const catalogue = [
+    { id: "v-ss", sku: "SS473", productName: "Screen Wash", tradePrice: "20.0000" },
+    { id: "v-pm", sku: "PM500", productName: "Polish", tradePrice: "10.0000" },
+  ];
+  const existing = [
+    {
+      variantId: "v-ss",
+      unitPrice: "16.5000",
+      startsAt: "2026-01-01T00:00:00.000Z",
+      endsAt: null,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  ];
+
+  it("accepts an exported file and matches by SKU when the product name is edited", () => {
+    const exported = exportNegotiatedPricesCsv([
+      {
+        sku: "SS473",
+        productName: "Screen Wash",
+        unitPrice: "16.5000",
+        startsAt: "2026-01-01T00:00:00.000Z",
+        endsAt: null,
+      },
+    ]);
+    expect(parseCustomerPriceCsv(exported).fileIssues).toEqual([]);
+    const unchanged = preview(exported, catalogue, existing);
+    expect(unchanged.unchangedCount).toBe(1);
+    expect(unchanged.lines[0]?.productName).toBe("Screen Wash");
+
+    const edited = exported.replace("Screen Wash", "Polish").replace("16.5000", "15.2500");
+    const parsed = parseCustomerPriceCsv(edited);
+    expect(parsed.fileIssues).toEqual([]);
+    const result = buildCustomerPriceImportPreview({
+      companyId: "company-1",
+      rows: parsed.rows,
+      variants: catalogue,
+      existingPrices: existing,
+      priceListPrices: [],
+    });
+    expect(result.updateCount).toBe(1);
+    expect(result.lines[0]).toMatchObject({
+      sku: "SS473",
+      variantId: "v-ss",
+      productName: "Screen Wash",
+      proposedPrice: "15.2500",
+      action: "UPDATE",
+    });
+    expect(result.lines.some((line) => line.variantId === "v-pm")).toBe(false);
+  });
+
+  it("does not execute a formula stored in the informational product column", () => {
+    const csv = `SKU,Product,Customer Price Ex VAT,Valid From,Valid Until
+SS473,=HYPERLINK("http://example.invalid"),16.50,,
+`;
+    const parsed = parseCustomerPriceCsv(csv);
+    expect(parsed.fileIssues).toEqual([]);
+    expect(parsed.rows[0]).toMatchObject({ sku: "SS473", proposedPrice: "16.5000", messages: [] });
+  });
+});
+
 describe("customer price csv export", () => {
   it("prefixes formula-like text so a spreadsheet will not execute it", () => {
     const csv = exportNegotiatedPricesCsv([

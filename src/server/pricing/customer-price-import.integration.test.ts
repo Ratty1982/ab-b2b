@@ -323,6 +323,90 @@ describe("customer price import workflow", () => {
     expect(exported.csv.startsWith("SKU,Product,Customer Price Ex VAT")).toBe(true);
   });
 
+  it("reimports an exported file and keeps matching on SKU when the product name changes", async () => {
+    const company = await ownedCompany();
+    const other = await prisma.company.create({ data: { name: `CPI Round Other ${stamp}`, status: "ACTIVE" } });
+    const variant = await product("round", 20);
+    await upsertCustomerPrice(adminId, {
+      companyId: other.id,
+      variantId: variant.id,
+      unitPrice: 3,
+      startsAt: null,
+      endsAt: null,
+    });
+    const first = await upload(repId, company.id, csvFor([`${variant.sku},10.0000,,`]));
+    await submitCustomerPriceImport(repId, company.id, first.importId!);
+    await approveCustomerPriceImport(managerId, company.id, first.importId!);
+
+    const exported = await exportCustomerNegotiatedPricesCsv(repId, company.id);
+    const source = exported.csv.split("\n").find((row) => row.startsWith(`${variant.sku},`));
+    expect(source).toBeTruthy();
+    const cells = source!.split(",");
+    cells[1] = "Not This Product";
+    cells[2] = "11.5000";
+    const reimport = await upload(
+      repId,
+      company.id,
+      `SKU,Product,Customer Price Ex VAT,Valid From,Valid Until\n${cells.join(",")}\n`,
+      "reimport.csv",
+    );
+    expect(reimport.fileIssues).toEqual([]);
+    expect(reimport.lines[0]).toMatchObject({
+      sku: variant.sku,
+      variantId: variant.id,
+      productName: "round cleaner",
+      proposedPrice: "11.5000",
+      action: "UPDATE",
+    });
+    expect(await priceOf(company.id, variant.id)).toBe("10.0000");
+    await submitCustomerPriceImport(repId, company.id, reimport.importId!);
+    expect(await priceOf(company.id, variant.id)).toBe("10.0000");
+    await approveCustomerPriceImport(managerId, company.id, reimport.importId!);
+    expect(await priceOf(company.id, variant.id)).toBe("11.5000");
+    expect(await priceOf(other.id, variant.id)).toBe("3.0000");
+  });
+
+  it("provisions pricing.approve through the production RBAC bootstrap", async () => {
+    await bootstrapRbac(prisma);
+    const keysFor = async (roleKey: string) => {
+      const role = await prisma.role.findUniqueOrThrow({
+        where: { key: roleKey },
+        include: { permissions: { include: { permission: true } } },
+      });
+      return role.permissions.map((row) => row.permission.key);
+    };
+    expect(await prisma.permission.findUnique({ where: { key: "pricing.approve" } })).toBeTruthy();
+    expect(await keysFor("MANAGEMENT")).toContain("pricing.approve");
+    expect(await keysFor("SUPER_ADMIN")).toContain("pricing.approve");
+    expect(await keysFor("SALES_REPRESENTATIVE")).not.toContain("pricing.approve");
+    expect(await keysFor("SALES_MANAGER")).not.toContain("pricing.approve");
+    expect(await keysFor("CUSTOMER_SERVICE")).not.toContain("pricing.approve");
+  });
+
+  it("still lets a pricing editor save a customer price immediately", async () => {
+    const company = await ownedCompany();
+    const variant = await product("manual", 20);
+    await expect(
+      upsertCustomerPrice(managerId, {
+        companyId: company.id,
+        variantId: variant.id,
+        unitPrice: 6.5,
+        startsAt: null,
+        endsAt: null,
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+    expect(await priceOf(company.id, variant.id)).toBeNull();
+    await upsertCustomerPrice(adminId, {
+      companyId: company.id,
+      variantId: variant.id,
+      unitPrice: 6.5,
+      startsAt: null,
+      endsAt: null,
+    });
+    expect(await priceOf(company.id, variant.id)).toBe("6.5000");
+    expect(await prisma.customerPriceImport.count({ where: { companyId: company.id, lines: { some: { variantId: variant.id } } } })).toBe(0);
+  });
+
   it("refuses an invalid batch and does not create live prices", async () => {
     const company = await ownedCompany();
     const preview = await upload(repId, company.id, csvFor(["UNKNOWN-SKU,16.50,,", ",1.00,,"]));

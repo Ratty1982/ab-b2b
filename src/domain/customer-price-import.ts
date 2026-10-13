@@ -10,7 +10,9 @@ const HEADER_SKU = "sku";
 const HEADER_PRICE = "customer price ex vat";
 const HEADER_FROM = "valid from";
 const HEADER_UNTIL = "valid until";
-const ALLOWED_HEADERS = new Set([HEADER_SKU, HEADER_PRICE, HEADER_FROM, HEADER_UNTIL]);
+/** Present on exports so staff can read the file. Never used to match a product or customer. */
+const HEADER_PRODUCT = "product";
+const ALLOWED_HEADERS = new Set([HEADER_SKU, HEADER_PRICE, HEADER_FROM, HEADER_UNTIL, HEADER_PRODUCT]);
 
 const FORMULA_START = /^[=+@\t\r]/;
 
