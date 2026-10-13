@@ -16,6 +16,8 @@ import {
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
+import { canOfferDispatchedTestOrderDelete } from "@/domain/delete-dispatched-test-order";
+import { DeleteDispatchedTestOrderDialog } from "@/components/orders/DeleteDispatchedTestOrderDialog";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -40,6 +42,7 @@ function AdminOrderDetailPage() {
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [testDeleteOpen, setTestDeleteOpen] = useState(false);
 
   const load = useCallback(async () => {
     const [orderResult, emailResult] = await Promise.all([
@@ -201,8 +204,37 @@ function AdminOrderDetailPage() {
                 {deleting ? "Deleting…" : "Delete order"}
               </button>
             ) : null}
+            {canOfferDispatchedTestOrderDelete({
+              systemRoles: session.signedIn ? session.user.systemRoles : [],
+              status: order.status,
+            }) ? (
+              <button
+                type="button"
+                onClick={() => setTestDeleteOpen(true)}
+                className="h-9 rounded-md bg-destructive px-3 text-[11px] font-bold uppercase tracking-wide text-white hover:bg-destructive/90"
+                data-admin-action="delete-test-order"
+              >
+                Delete Test Order
+              </button>
+            ) : null}
           </div>
         }
+      />
+      <DeleteDispatchedTestOrderDialog
+        open={testDeleteOpen}
+        onOpenChange={setTestDeleteOpen}
+        orderId={order.id}
+        orderNumber={order.orderNumber}
+        customerName={order.companyName}
+        status={order.status}
+        grandTotal={order.grandTotal}
+        currency={order.currency}
+        onDeleted={(orderNumber) => {
+          toast.success(
+            `Deleted test order ${orderNumber}. It has been removed from orders, search, and live reports.`,
+          );
+          void navigate({ to: ROUTES.adminOrders });
+        }}
       />
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border p-5">

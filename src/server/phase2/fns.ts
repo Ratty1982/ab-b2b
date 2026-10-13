@@ -3142,6 +3142,41 @@ export const deleteAdminOrderFn = createServerFn({ method: "POST" })
     }
   });
 
+export const previewDispatchedTestOrderDeletionFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const deletion = await import("@/server/orders/delete-dispatched-test-order");
+      return {
+        ok: true as const,
+        data: await deletion.previewDispatchedTestOrderDeletion(userId, data.orderId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const deleteDispatchedTestOrderFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        orderId: string;
+        reason: string;
+        confirmTestData: boolean;
+        confirmOrderNumber: string;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const deletion = await import("@/server/orders/delete-dispatched-test-order");
+      return { ok: true as const, data: await deletion.deleteDispatchedTestOrder(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const deleteAdminOrdersFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
