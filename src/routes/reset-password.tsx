@@ -72,7 +72,7 @@ function ResetPassword() {
               minLength={10}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-base"
             />
           </div>
           <div>
@@ -86,7 +86,7 @@ function ResetPassword() {
               minLength={10}
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-base"
             />
           </div>
           {error ? (

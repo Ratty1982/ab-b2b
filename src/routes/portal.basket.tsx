@@ -154,7 +154,7 @@ function BasketPage() {
                     <div className="mt-1 flex items-center gap-2">
                       <button
                         type="button"
-                        className="inline-grid size-9 place-items-center rounded-md border border-border disabled:opacity-40"
+                        className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
                         aria-label="Decrease quantity"
                         disabled={
                           busyId === line.id ||
@@ -171,7 +171,7 @@ function BasketPage() {
                       <span className="num min-w-10 text-center font-semibold">{line.quantity}</span>
                       <button
                         type="button"
-                        className="inline-grid size-9 place-items-center rounded-md border border-border disabled:opacity-40"
+                        className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
                         aria-label="Increase quantity"
                         disabled={
                           busyId === line.id ||
