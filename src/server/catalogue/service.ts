@@ -206,7 +206,7 @@ export async function bootstrapCatalogue(
 }
 
 export async function listCategories(actorUserId: string): Promise<CategoryRecord[]> {
-  await requireSystemPermission(actorUserId, "products.view");
+  await requireSystemPermission(actorUserId, "catalogue.categories.view");
   await bootstrapCatalogue();
 
   const rows = await prisma.category.findMany({
@@ -237,7 +237,7 @@ export async function listCategories(actorUserId: string): Promise<CategoryRecor
 }
 
 export async function listBrands(actorUserId: string): Promise<BrandRecord[]> {
-  await requireSystemPermission(actorUserId, "products.view");
+  await requireSystemPermission(actorUserId, "catalogue.brands.view");
   await bootstrapCatalogue();
   const rows = await prisma.brand.findMany({
     include: {
@@ -314,7 +314,7 @@ async function assertParentAllowed(parentId: string | null | undefined, selfId?:
 }
 
 export async function createCategory(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "products.edit");
+  await requireSystemPermission(actorUserId, "catalogue.categories.edit");
   const input = categoryCreateSchema.parse(raw);
   const parentId = input.parentId ? input.parentId : null;
   await assertParentAllowed(parentId);
@@ -344,7 +344,7 @@ export async function createCategory(actorUserId: string, raw: unknown) {
 }
 
 export async function updateCategory(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "products.edit");
+  await requireSystemPermission(actorUserId, "catalogue.categories.edit");
   const input = categoryUpdateSchema.parse(raw);
   const existing = await prisma.category.findUnique({ where: { id: input.id } });
   if (!existing) throw new AuthError("Category not found", "NOT_FOUND", 404);
@@ -383,7 +383,7 @@ export async function updateCategory(actorUserId: string, raw: unknown) {
 }
 
 export async function deleteCategory(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "products.edit");
+  await requireSystemPermission(actorUserId, "catalogue.categories.edit");
   const input = categoryDeleteSchema.parse(raw);
   const existing = await prisma.category.findUnique({
     where: { id: input.id },
@@ -417,7 +417,7 @@ export async function deleteCategory(actorUserId: string, raw: unknown) {
 }
 
 export async function createBrand(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "products.edit");
+  await requireSystemPermission(actorUserId, "catalogue.brands.edit");
   const input = brandCreateSchema.parse(raw);
   const slug = await uniqueSlug(prisma, "brand", input.slug || input.name);
   const created = await prisma.brand.create({
@@ -443,7 +443,7 @@ export async function createBrand(actorUserId: string, raw: unknown) {
 }
 
 export async function updateBrand(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "products.edit");
+  await requireSystemPermission(actorUserId, "catalogue.brands.edit");
   const input = brandUpdateSchema.parse(raw);
   const existing = await prisma.brand.findUnique({ where: { id: input.id } });
   if (!existing) throw new AuthError("Brand not found", "NOT_FOUND", 404);

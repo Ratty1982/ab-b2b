@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { useEffect, useMemo, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -87,6 +88,7 @@ function parsePlannerSearch(raw: Record<string, unknown>): PlannerSearch {
 }
 
 export const Route = createFileRoute("/purchasing/planner")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.planner.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>) => parsePlannerSearch(raw),
   head: () => ({
     meta: [

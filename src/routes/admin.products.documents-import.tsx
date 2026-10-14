@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
@@ -19,6 +20,7 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/admin/products/documents-import")({
+  beforeLoad: ({ location }) => guardStaffPage("catalogue.documents.view", location.href, "/admin"),
   head: () => ({ meta: [{ title: "Bulk SDS Upload — Automotive Brands Admin" }] }),
   component: BulkSdsImportPage,
 });

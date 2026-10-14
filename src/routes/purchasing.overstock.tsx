@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import {
@@ -38,6 +39,7 @@ function parseOverstockSearch(raw: Record<string, unknown>): OverstockSearch {
 }
 
 export const Route = createFileRoute("/purchasing/overstock")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.overstock.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>) => parseOverstockSearch(raw),
   head: () => ({
     meta: [

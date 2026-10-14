@@ -3,8 +3,9 @@
  */
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
+import type { PermissionKey } from "@/domain/permissions";
 import { hasPermission } from "@/server/rbac/access";
-import { AuthError, requirePurchasingAccess, requireSystemPermission } from "@/server/rbac/guards";
+import { AuthError, requirePurchasingAccess, requirePurchasingSection } from "@/server/rbac/guards";
 import { AUTOPART_WAREHOUSE_CODE, skuMatchKey } from "@/domain/stock";
 import {
   AUTOPART_PRODUCT_KIND_LABEL,
@@ -546,7 +547,7 @@ async function freshnessLabels() {
 
 export async function getPurchasingDashboard(actorUserId: string) {
   const [{ workspace, rows: plannerRows }, supplierOptions] = await Promise.all([
-    loadPlannerRows(actorUserId, 90),
+    loadPlannerRows(actorUserId, 90, "purchasing.dashboard.view"),
     listActiveSupplierOptions(),
   ]);
   const rows = workspace.rows;
@@ -615,7 +616,7 @@ export async function getPurchasingDashboard(actorUserId: string) {
 
 /** Counts only. Same planner rows and value rules as the purchasing dashboard. */
 export async function summarisePurchasingAttention(actorUserId: string) {
-  const { workspace, rows } = await loadPlannerRows(actorUserId, 90);
+  const { workspace, rows } = await loadPlannerRows(actorUserId, 90, "purchasing.dashboard.view");
   const plan = planSummary(rows, null);
   const allMissing = plan.productsToConsider > 0 && plan.missingCostLines === plan.productsToConsider;
   let incomingSkus = 0;
@@ -678,7 +679,7 @@ function withHistoryVerification<T extends { brandSlug: string }>(
 
 async function filteredForecastRows(actorUserId: string, raw: unknown) {
   const input = listInput.parse(raw ?? {});
-  const workspace = await loadWorkspace(actorUserId);
+  const workspace = await loadWorkspace(actorUserId, "purchasing.forecast.view");
   const [backorders, coverage] = await Promise.all([outstandingBackorderUnitsBySku(), loadCoverageIndex()]);
   const rows = applyFilters(workspace.rows, input).map((row) =>
     withHistoryVerification(
@@ -709,7 +710,11 @@ export async function listPurchasingForecast(actorUserId: string, raw: unknown) 
 }
 
 export async function getPurchasingSku(actorUserId: string, sku: string) {
-  const workspace = await loadWorkspace(actorUserId);
+  const workspace = await loadWorkspace(actorUserId, [
+    "purchasing.forecast.view",
+    "purchasing.planner.view",
+    "purchasing.planner.manage",
+  ]);
   const row = workspace.catalogue.find((r) => r.sku.toUpperCase() === sku.toUpperCase());
   if (!row) throw new AuthError("SKU not found", "NOT_FOUND", 404);
   const forecast = forecastSku(
@@ -763,8 +768,26 @@ function coverageSummary(maps: Awaited<ReturnType<typeof loadPurchasingDemandMap
   };
 }
 
-async function loadWorkspace(actorUserId: string) {
-  const profile = await requirePurchasingAccess(actorUserId);
+function purchasingManageKey(permission: PermissionKey): PermissionKey {
+  if (permission.includes("forecast")) return "purchasing.forecast.manage";
+  if (permission.includes("planner") || permission.includes("dashboard")) return "purchasing.planner.manage";
+  if (permission.includes("supplier")) return "purchasing.suppliers.manage";
+  if (permission.includes("stock")) return "purchasing.stock.manage";
+  if (permission.includes("backorder")) return "purchasing.backorders.manage";
+  return "purchasing.manage";
+}
+
+async function loadWorkspace(actorUserId: string, permission: PermissionKey | readonly PermissionKey[]) {
+  const keys = Array.isArray(permission) ? permission : [permission];
+  const profile = keys.length === 1
+    ? await requirePurchasingSection(actorUserId, keys[0]!)
+    : await requirePurchasingAccess(actorUserId).then((loaded) => {
+        if (!keys.some((key) => hasPermission(loaded, key))) {
+          throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+        }
+        return loaded;
+      });
+  const granted = keys.find((key) => hasPermission(profile, key)) ?? keys[0]!;
   const settings = await loadPurchasingSettings();
   const [maps, rawCatalogue, fresh, assignments, fbaQty, fbaFreshness] = await Promise.all([
     loadPurchasingDemandMaps(settings.verifiedSalesHistoryFrom),
@@ -779,7 +802,7 @@ async function loadWorkspace(actorUserId: string) {
     forecastSku(row, maps, settings, fresh.stockStale, fbaQty.get(skuMatchKey(row.sku)) ?? 0),
   );
   return {
-    canManage: hasPermission(profile, "purchasing.manage"),
+    canManage: hasPermission(profile, purchasingManageKey(granted)),
     settings,
     maps,
     catalogue,
@@ -877,8 +900,12 @@ function buildPlannerRow(row: PurchasingSkuRow, backorderUnits: number, stockSta
 
 export type PlannerRow = ReturnType<typeof buildPlannerRow>;
 
-async function loadPlannerRows(actorUserId: string, horizonDays: number) {
-  const workspace = await loadWorkspace(actorUserId);
+async function loadPlannerRows(
+  actorUserId: string,
+  horizonDays: number,
+  permission: PermissionKey | readonly PermissionKey[],
+) {
+  const workspace = await loadWorkspace(actorUserId, permission);
   const backorders = await outstandingBackorderUnitsBySku();
   const rows = workspace.rows.map((row) =>
     buildPlannerRow(row, backorders.get(skuMatchKey(row.sku)) ?? 0, workspace.freshness.stockStale, horizonDays),
@@ -1014,7 +1041,7 @@ export async function listPurchasePlanner(actorUserId: string, raw: unknown) {
   const input = plannerInput.parse(raw ?? {});
   const horizonDays = input.horizonDays ?? 90;
   const [{ workspace, rows }, supplierOptions] = await Promise.all([
-    loadPlannerRows(actorUserId, horizonDays),
+    loadPlannerRows(actorUserId, horizonDays, "purchasing.planner.view"),
     listActiveSupplierOptions(),
   ]);
   const filtered = applyPlannerFilters(rows, input);
@@ -1050,7 +1077,7 @@ export async function listPurchasePlanner(actorUserId: string, raw: unknown) {
 
 /** Planner view of one SKU (internal product detail). */
 export async function getPlannerRowForSku(actorUserId: string, sku: string) {
-  const { rows } = await loadPlannerRows(actorUserId, 90);
+  const { rows } = await loadPlannerRows(actorUserId, 90, "purchasing.planner.view");
   const key = skuMatchKey(sku);
   return rows.find((r) => skuMatchKey(r.sku) === key) ?? null;
 }
@@ -1094,7 +1121,7 @@ export async function getProductPurchasingPanel(actorUserId: string, raw: unknow
 /** Suppliers list with real planning figures (no figures invented when cost/demand is missing). */
 export async function listSuppliersWorkspace(actorUserId: string, raw: unknown) {
   const base = await listSuppliers(actorUserId, raw);
-  const { rows } = await loadPlannerRows(actorUserId, 90);
+  const { rows } = await loadPlannerRows(actorUserId, 90, "purchasing.suppliers.view");
   const bySupplier = new Map<string, PlannerRow[]>();
   for (const row of rows) {
     if (!row.supplier.supplierId) continue;
@@ -1120,7 +1147,7 @@ export async function listSuppliersWorkspace(actorUserId: string, raw: unknown) 
 /** Supplier detail with each product's current planner recommendation. */
 export async function getSupplierWorkspace(actorUserId: string, raw: unknown) {
   const detail = await getSupplierDetail(actorUserId, raw);
-  const { rows } = await loadPlannerRows(actorUserId, 90);
+  const { rows } = await loadPlannerRows(actorUserId, 90, "purchasing.suppliers.view");
   const byKey = new Map(rows.map((r) => [skuMatchKey(r.sku), r]));
   const planningRows = rows.filter((r) => r.supplier.supplierId === detail.supplier.id);
   return {
@@ -1151,7 +1178,7 @@ function daysSinceSale(lastSale: string | null, today: string): number | null {
 
 export async function listOverstock(actorUserId: string, raw: unknown) {
   const input = overstockInput.parse(raw ?? {});
-  const workspace = await loadWorkspace(actorUserId);
+  const workspace = await loadWorkspace(actorUserId, "purchasing.overstock.view");
   const today = workspace.maps.windows.today;
   const quiet = input.quiet ?? "all";
   const filtered = applyFilters(workspace.rows, { ...input, sort: input.sort ?? "overstock" })
@@ -1197,7 +1224,7 @@ const settingsInput = z.object({
 });
 
 export async function updatePurchasingSettings(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "purchasing.manage");
+  await requirePurchasingSection(actorUserId, "purchasing.planner.manage");
   const input = settingsInput.parse(raw);
   const before = await loadPurchasingSettings();
   let nextVerifiedFrom = before.verifiedSalesHistoryFrom;
@@ -1265,7 +1292,7 @@ const skuSettingsInput = z.object({
 });
 
 export async function updateSkuPurchasingSettings(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "purchasing.manage");
+  await requirePurchasingSection(actorUserId, "purchasing.planner.manage");
   const input = skuSettingsInput.parse(raw);
   const variant = await prisma.productVariant.findFirst({ where: { sku: { equals: input.sku, mode: "insensitive" } } });
   const data = {
@@ -1327,7 +1354,7 @@ const planInput = z.object({
 });
 
 export async function updatePurchasingPlan(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "purchasing.manage");
+  await requirePurchasingSection(actorUserId, "purchasing.planner.manage");
   const input = planInput.parse(raw);
   const variant = await prisma.productVariant.findFirst({ where: { sku: { equals: input.sku, mode: "insensitive" } } });
   if (variant) {
@@ -1484,7 +1511,7 @@ export async function exportStockForecastCsv(actorUserId: string, raw: unknown) 
 
 export async function exportPurchasePlannerCsv(actorUserId: string, raw: unknown) {
   const input = plannerInput.parse(raw ?? {});
-  const { rows: plannerRows } = await loadPlannerRows(actorUserId, input.horizonDays ?? 90);
+  const { rows: plannerRows } = await loadPlannerRows(actorUserId, input.horizonDays ?? 90, "purchasing.planner.view");
   const rows = applyPlannerFilters(plannerRows, input);
   const header = [
     "Supplier",

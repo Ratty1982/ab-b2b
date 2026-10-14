@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState, type ReactNode } from "react";
 import { Mail, Phone, Smartphone } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -22,6 +23,7 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/crm/manager")({
+  beforeLoad: ({ location }) => guardStaffPage("sales.team.view", location.href, "/crm"),
   head: () => ({
     meta: [
       { title: "Sales Team — Automotive Brands" },

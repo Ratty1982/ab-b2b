@@ -16,7 +16,7 @@ const viewSchema = z.object({
 });
 
 export async function getCrmOverview(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.overview.view");
   const input = viewSchema.parse(raw ?? {});
   const today = todayLondonDateOnly();
   const { start: todayStart, end: todayEnd } = londonDayBounds(today);

@@ -36,7 +36,7 @@ import { loadStockByVariantIds } from "@/server/stock/service";
 import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 
 async function requireSi(actorUserId: string): Promise<LoadedAccessProfile> {
-  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
+  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.gaps.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Sales Intelligence is internal only", "FORBIDDEN", 403);
   }

@@ -34,6 +34,7 @@ import {
   searchSalesOrderProductsFn,
   getSalesOrderDraftFn,
 } from "@/server/phase2/fns";
+import { orderAmendmentConfirmationMessage } from "@/domain/order-updated-email";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/sales/orders/new")({
@@ -144,7 +145,13 @@ function NewSalesOrder() {
   }
   const [authorised, setAuthorised] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [placed, setPlaced] = useState<{ orderNumber: string; id: string; grandTotal: string } | null>(null);
+  const [placed, setPlaced] = useState<{
+    orderNumber: string;
+    id: string;
+    grandTotal: string;
+    editing: boolean;
+    emailStatus: "sent" | "pending" | "failed" | "skipped" | null;
+  } | null>(null);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [reviewed, setReviewed] = useState<{
     fingerprint: string;
@@ -537,14 +544,18 @@ function NewSalesOrder() {
       return;
     }
     toast.dismiss();
+    const editing = Boolean(workspace.draft.editingOrderId);
+    const emailStatus = result.data.email?.status ?? null;
     setPlaced({
       id: result.data.order.id,
       orderNumber: result.data.order.orderNumber,
       grandTotal: result.data.order.grandTotal,
+      editing,
+      emailStatus,
     });
     toast.success(
-      workspace.draft.editingOrderId
-        ? `Order ${result.data.order.orderNumber} updated`
+      editing
+        ? orderAmendmentConfirmationMessage(emailStatus)
         : `Order ${result.data.order.orderNumber} placed`,
     );
   }
@@ -553,7 +564,7 @@ function NewSalesOrder() {
     return (
       <div>
         <PanelHeader
-          title={workspace?.draft.editingOrderId ? "Order updated" : "Order placed"}
+          title={placed.editing ? "Order updated" : "Order placed"}
           sub={workspace?.draft.companyName ?? "Customer order"}
         />
         <div className="mx-auto max-w-xl space-y-4 p-6">
@@ -563,8 +574,18 @@ function NewSalesOrder() {
             <p className="text-[14px] font-semibold">Customer Collection</p>
           ) : null}
           <p className="text-[13px] text-steel">
-            The order is in the customer’s order history. Confirmation email goes to the customer contact.
+            {placed.editing
+              ? orderAmendmentConfirmationMessage(placed.emailStatus)
+              : "The order is in the customer’s order history. Confirmation email goes to the customer contact."}
           </p>
+          {placed.emailStatus === "failed" ? (
+            <p className="text-[13px] text-steel">Open the order to retry the confirmation email.</p>
+          ) : null}
+          {placed.emailStatus === "skipped" ? (
+            <p className="text-[13px] text-steel">
+              No customer email was sent because the customer-facing details did not change.
+            </p>
+          ) : null}
           <div className="flex gap-3">
             <Link
               to="/admin/orders/$orderId"

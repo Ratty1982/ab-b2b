@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "@/components/ab/Badges";
 import {
@@ -40,6 +41,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/sales/sales-intelligence/portfolio")({
+  beforeLoad: ({ location }) => guardStaffPage("sales_intelligence.portfolio.view", location.href, "/sales"),
   validateSearch: (search: Record<string, unknown>): PortfolioUrlSearch =>
     parsePortfolioUrlSearch(search),
   head: () => ({

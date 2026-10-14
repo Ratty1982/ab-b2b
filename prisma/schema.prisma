@@ -325,6 +325,7 @@ enum AutopartImportDiagnosticStatus {
 enum TransactionalEmailPurpose {
   ORDER_RECEIVED
   ORDER_RECEIVED_INTERNAL
+  ORDER_UPDATED
   ORDER_PART_DESPATCHED
   ORDER_DESPATCHED
   QUOTE_SENT
@@ -2295,7 +2296,7 @@ model TransactionalEmail {
   htmlBody       String?
   entityType     String
   entityId       String
-  /// Unique per purpose+entity for initial send idempotency (e.g. "ORDER_RECEIVED:orderId")
+  /// Unique per send. ORDER_RECEIVED uses purpose:orderId. ORDER_UPDATED uses ORDER_UPDATED:orderId:editIdempotencyKey.
   idempotencyKey String                    @unique
   attemptCount   Int                       @default(0)
   lastError      String?
@@ -3045,7 +3046,8 @@ model AutopartInvoiceLine {
   batch   AutopartImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
 
   /// Expression indexes UPPER(btrim(accountCode)) and UPPER(btrim(partNumber)) are created only by
-  /// migration 20261010120000_unified_sales_reporting_indexes. Prisma cannot model them, and
+  /// migration 20261010120000_unified_sales_reporting_indexes. The NET_EX_VAT partial account index
+  /// is migration 20261014150000_sales_enquiry_account_measure_index. Prisma cannot model them, and
   /// migrate diff does not emit DROP INDEX for them. Do not add a migration that drops them.
   @@index([accountCode])
   @@index([accountId])

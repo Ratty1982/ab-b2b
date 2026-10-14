@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState } from "react";
 import { Metric, PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
@@ -27,6 +28,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.dashboard.view", location.href, "/purchasing"),
   head: () => ({
     meta: [
       { title: "Purchasing — Automotive Brands" },

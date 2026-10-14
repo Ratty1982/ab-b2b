@@ -48,7 +48,7 @@ import { siFollowupReasonLabel } from "@/domain/sales-followup";
 import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 
 async function requireBriefActor(actorUserId: string): Promise<LoadedAccessProfile> {
-  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
+  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.daily_brief.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Sales Intelligence is internal only", "FORBIDDEN", 403);
   }

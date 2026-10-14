@@ -6,8 +6,13 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { loadAccessProfile } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { listVersionUpdatesAdmin } from "@/server/system/version-updates";
+import { getStockOverview } from "@/server/purchasing/stock-overview";
+import { listPurchasingForecast } from "@/server/purchasing/service";
+import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import {
+  applyBulkStaffPermissions,
   getStaffUserPermissions,
+  previewBulkStaffPermissions,
   saveStaffUserPermissions,
 } from "@/server/users/permissions";
 
@@ -87,7 +92,7 @@ describe("per-user permission overrides", () => {
         { permissionKey: "orders.view", effect: "DENY" },
       ],
     });
-    const orders = saved.categories.find((category) => category.id === "orders");
+    const orders = saved.categories.flatMap((category) => category.sections).find((section) => section.id === "orders");
     expect(orders?.permissions.find((row) => row.key === "orders.edit")).toMatchObject({
       effect: "ALLOW",
       effective: true,
@@ -234,5 +239,109 @@ describe("per-user permission overrides", () => {
         overrides: [{ permissionKey: "users.manage", effect: "ALLOW" }],
       }),
     ).rejects.toMatchObject({ code: "CONFIRM_SENSITIVE" });
+  });
+
+  it("enforces a denied purchasing section without closing its siblings", async () => {
+    const accountsId = await ensureUser(`perm.accounts.${suffix}@example.invalid`, ["ACCOUNTS"]);
+    await expect(getStockOverview(accountsId, {})).resolves.toBeTruthy();
+    await saveStaffUserPermissions(adminId, {
+      userId: accountsId,
+      overrides: [{ permissionKey: "purchasing.stock.view", effect: "DENY" }],
+    });
+    await expect(getStockOverview(accountsId, {})).rejects.toBeInstanceOf(AuthError);
+    await expect(listPurchasingForecast(accountsId, {})).resolves.toBeTruthy();
+
+    const limitedId = await ensureUser(`perm.limited.${suffix}@example.invalid`, ["CUSTOMER_SERVICE"]);
+    await saveStaffUserPermissions(adminId, {
+      userId: limitedId,
+      overrides: [{ permissionKey: "purchasing.stock.view", effect: "ALLOW" }],
+    });
+    await expect(getStockOverview(limitedId, {})).resolves.toBeTruthy();
+    await expect(listPurchasingForecast(limitedId, {})).rejects.toBeInstanceOf(AuthError);
+    const profile = await loadAccessProfile(limitedId);
+    expect(await resolveSalesIntelligenceCompanyScope(profile!)).toEqual([]);
+
+    await prisma.userPermissionOverride.deleteMany({ where: { userId: { in: [accountsId, limitedId] } } });
+    await prisma.user.deleteMany({ where: { id: { in: [accountsId, limitedId] } } });
+  });
+
+  it("applies bulk allow, deny, and reset without touching unrelated overrides", async () => {
+    const firstId = await ensureUser(`perm.bulk1.${suffix}@example.invalid`, ["SALES_REPRESENTATIVE"]);
+    const secondId = await ensureUser(`perm.bulk2.${suffix}@example.invalid`, ["SALES_REPRESENTATIVE"]);
+    await saveStaffUserPermissions(adminId, {
+      userId: firstId,
+      overrides: [
+        { permissionKey: "orders.edit", effect: "ALLOW" },
+        { permissionKey: "companies.create", effect: "ALLOW" },
+      ],
+    });
+    await saveStaffUserPermissions(adminId, {
+      userId: secondId,
+      overrides: [{ permissionKey: "orders.view", effect: "DENY" }],
+    });
+
+    await expect(
+      applyBulkStaffPermissions(salesId, {
+        userIds: [firstId],
+        changes: [{ permissionKey: "orders.edit", effect: "ALLOW" }],
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+
+    await expect(
+      applyBulkStaffPermissions(adminId, {
+        userIds: [firstId],
+        changes: [{ permissionKey: "users.manage", effect: "ALLOW" }],
+      }),
+    ).rejects.toMatchObject({ code: "CONFIRM_SENSITIVE" });
+
+    const preview = await previewBulkStaffPermissions(adminId, {
+      userIds: [firstId, secondId],
+      changes: [{ permissionKey: "pricing.view", effect: "DENY" }],
+    });
+    expect(preview.users).toHaveLength(2);
+    expect(preview.changes[0]?.rows.every((row) => row.beforeEffective && !row.afterEffective)).toBe(true);
+
+    await applyBulkStaffPermissions(adminId, {
+      userIds: [firstId, secondId],
+      changes: [{ permissionKey: "pricing.view", effect: "DENY" }],
+    });
+    const first = await loadAccessProfile(firstId);
+    const second = await loadAccessProfile(secondId);
+    expect(first?.permissions.has("pricing.view")).toBe(false);
+    expect(first?.permissions.has("orders.edit")).toBe(true);
+    expect(first?.permissions.has("companies.create")).toBe(true);
+    expect(second?.permissions.has("orders.view")).toBe(false);
+    expect(second?.permissions.has("orders.edit")).toBe(false);
+
+    await applyBulkStaffPermissions(adminId, {
+      userIds: [firstId],
+      changes: [{ permissionKey: "orders.edit", effect: "INHERIT" }],
+    });
+    const reset = await loadAccessProfile(firstId);
+    expect(reset?.permissions.has("orders.edit")).toBe(false);
+    expect(reset?.permissions.has("companies.create")).toBe(true);
+    expect(reset?.permissions.has("pricing.view")).toBe(false);
+
+    const audit = await prisma.auditEvent.findFirst({
+      where: { action: "USER_PERMISSIONS_UPDATED", targetUserId: firstId, actorUserId: adminId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit?.before).toMatchObject({
+      overrides: expect.arrayContaining([
+        expect.objectContaining({ permissionKey: "orders.edit", effect: "ALLOW" }),
+        expect.objectContaining({ permissionKey: "companies.create", effect: "ALLOW" }),
+      ]),
+    });
+    expect(audit?.after).toMatchObject({
+      overrides: expect.arrayContaining([
+        expect.objectContaining({ permissionKey: "companies.create", effect: "ALLOW" }),
+        expect.objectContaining({ permissionKey: "pricing.view", effect: "DENY" }),
+      ]),
+    });
+    const afterOverrides = (audit?.after as { overrides?: Array<{ permissionKey: string }> } | null)?.overrides ?? [];
+    expect(afterOverrides.some((row) => row.permissionKey === "orders.edit")).toBe(false);
+
+    await prisma.userPermissionOverride.deleteMany({ where: { userId: { in: [firstId, secondId] } } });
+    await prisma.user.deleteMany({ where: { id: { in: [firstId, secondId] } } });
   });
 });

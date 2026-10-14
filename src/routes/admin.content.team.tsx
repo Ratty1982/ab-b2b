@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { publicTeamJobTitle } from "@/domain/team";
 
 export const Route = createFileRoute("/admin/content/team")({
+  beforeLoad: ({ location }) => guardStaffPage("cms.team.view", location.href, "/admin"),
   head: () => ({ meta: [{ title: "Team — Automotive Brands Admin" }] }),
   component: AdminTeam,
 });

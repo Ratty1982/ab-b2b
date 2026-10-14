@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
@@ -21,6 +22,7 @@ type StatusFilter = (typeof STATUSES)[number];
 type Population = "active" | "inactive" | "all";
 
 export const Route = createFileRoute("/admin/products/documents")({
+  beforeLoad: ({ location }) => guardStaffPage("catalogue.documents.view", location.href, "/admin"),
   head: () => ({
     meta: [
       { title: "SDS Coverage — Automotive Brands Admin" },

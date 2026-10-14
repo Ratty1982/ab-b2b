@@ -4,7 +4,11 @@ import { prisma } from "@/infra/database/client";
 import { isPermissionKey, type PermissionKey, type SystemRoleKey } from "@/domain/permissions";
 import { SYSTEM_ROLE_META } from "@/domain/role-permissions";
 import {
-  PERMISSION_CATEGORIES,
+  STAFF_PERMISSION_TREE,
+  implySectionPermissions,
+  mergePermissionOverrides,
+} from "@/domain/permission-sections";
+import {
   PERMISSION_LABELS,
   SENSITIVE_PERMISSIONS,
   accessSummary,
@@ -31,7 +35,7 @@ const saveSchema = z.object({
         effect: z.enum(["INHERIT", "ALLOW", "DENY"]),
       }),
     )
-    .max(200),
+    .max(400),
 });
 
 export type StaffPermissionEditor = {
@@ -42,17 +46,28 @@ export type StaffPermissionEditor = {
   categories: Array<{
     id: string;
     label: string;
-    columns: {
-      view: PermissionKey[];
-      edit: PermissionKey[];
-      manage: PermissionKey[];
-    };
     permissions: Array<{
       key: PermissionKey;
       label: string;
       roleGranted: boolean;
       effect: OverrideEffect;
       effective: boolean;
+      sensitive: boolean;
+      directRole: boolean;
+    }>;
+    sections: Array<{
+      id: string;
+      label: string;
+      fixedNote: string | null;
+      permissions: Array<{
+        key: PermissionKey;
+        label: string;
+        roleGranted: boolean;
+        effect: OverrideEffect;
+        effective: boolean;
+        sensitive: boolean;
+        directRole: boolean;
+      }>;
     }>;
   }>;
   customisedCount: number;
@@ -113,11 +128,33 @@ function storedOverrides(
   );
 }
 
+const SENSITIVE = new Set<PermissionKey>(SENSITIVE_PERMISSIONS);
+
+function permissionRow(
+  key: PermissionKey,
+  roleGranted: ReadonlySet<PermissionKey>,
+  directRole: ReadonlySet<PermissionKey>,
+  overrides: OverrideMap,
+  effective: ReadonlySet<PermissionKey>,
+) {
+  const effect = overrides[key] ?? "INHERIT";
+  return {
+    key,
+    label: PERMISSION_LABELS[key],
+    roleGranted: roleGranted.has(key),
+    directRole: directRole.has(key),
+    effect,
+    effective: effective.has(key),
+    sensitive: SENSITIVE.has(key),
+  };
+}
+
 function editorFromUser(user: Awaited<ReturnType<typeof loadStaffPermissionTarget>>): StaffPermissionEditor {
   const granted = roleGrantedSet(user);
   const stored = storedOverrides(user.permissionOverrides);
   const overrides = overrideMapFromStored(stored);
   const applied = applyUserPermissionOverrides(granted, stored);
+  const roleGranted = implySectionPermissions(granted, new Set());
   return {
     userId: user.id,
     name: user.name ?? user.email,
@@ -126,28 +163,22 @@ function editorFromUser(user: Awaited<ReturnType<typeof loadStaffPermissionTarge
       key: assignment.role.key,
       label: roleLabel(assignment.role.key),
     })),
-    categories: PERMISSION_CATEGORIES.map((category) => ({
-      id: category.id,
-      label: category.label,
-      columns: {
-        view: [...(category.columns.view ?? [])],
-        edit: [...(category.columns.edit ?? [])],
-        manage: [...(category.columns.manage ?? [])],
-      },
-      permissions: category.permissions.map((key) => {
-        const effect = overrides[key] ?? "INHERIT";
-        const roleHas = granted.has(key);
-        const effective =
-          effect === "ALLOW" ? true : effect === "DENY" ? false : roleHas;
-        return {
-          key,
-          label: PERMISSION_LABELS[key],
-          roleGranted: roleHas,
-          effect,
-          effective,
-        };
-      }),
-    })),
+    categories: STAFF_PERMISSION_TREE.map((category) => {
+      const sections = category.sections.map((section) => ({
+        id: section.id,
+        label: section.label,
+        fixedNote: section.fixedNote ?? null,
+        permissions: section.actions.map((key) =>
+          permissionRow(key, roleGranted, granted, overrides, applied.effective),
+        ),
+      }));
+      return {
+        id: category.id,
+        label: category.label,
+        sections,
+        permissions: sections.flatMap((section) => section.permissions),
+      };
+    }),
     customisedCount: stored.length,
     summary: accessSummary(applied.effective),
     navigation: previewBackOfficeNavigation({
@@ -167,10 +198,10 @@ export async function getStaffUserPermissions(
   return editorFromUser(user);
 }
 
-async function otherEffectiveSuperAdmins(excludeUserId: string): Promise<number> {
+async function otherEffectiveSuperAdmins(excludeUserIds: string[]): Promise<number> {
   const rows = await prisma.user.findMany({
     where: {
-      id: { not: excludeUserId },
+      id: { notIn: excludeUserIds },
       status: "ACTIVE",
       actorType: "INTERNAL",
       userRoles: { some: { role: { key: "SUPER_ADMIN" } } },
@@ -236,7 +267,7 @@ export async function saveStaffUserPermissions(actorUserId: string, raw: unknown
     removesLastEffectiveSuperAdmin({
       targetHasSuperAdminRole: targetIsSuperAdmin,
       targetKeepsUsersManage: applied.effective.has("users.manage"),
-      otherEffectiveSuperAdmins: await otherEffectiveSuperAdmins(user.id),
+      otherEffectiveSuperAdmins: await otherEffectiveSuperAdmins([user.id]),
     })
   ) {
     throw new AuthError(
@@ -273,4 +304,222 @@ export async function saveStaffUserPermissions(actorUserId: string, raw: unknown
 
   const refreshed = await loadStaffPermissionTarget(user.id);
   return editorFromUser(refreshed);
+}
+
+const bulkSchema = z.object({
+  userIds: z.array(z.string().cuid()).min(1).max(50),
+  confirmSensitive: z.boolean().optional(),
+  changes: z
+    .array(
+      z.object({
+        permissionKey: z.string(),
+        effect: z.enum(["INHERIT", "ALLOW", "DENY"]),
+      }),
+    )
+    .min(1)
+    .max(400),
+});
+
+export type BulkPermissionPreview = {
+  users: Array<{ id: string; name: string; email: string; roles: string }>;
+  changes: Array<{
+    key: PermissionKey;
+    label: string;
+    effect: OverrideEffect;
+    sensitive: boolean;
+    rows: Array<{
+      userId: string;
+      name: string;
+      beforeEffect: OverrideEffect;
+      afterEffect: OverrideEffect;
+      beforeEffective: boolean;
+      afterEffective: boolean;
+    }>;
+  }>;
+  sensitive: boolean;
+};
+
+function parseBulkChanges(raw: Array<{ permissionKey: string; effect: OverrideEffect }>) {
+  const seen = new Set<string>();
+  const changes: Array<{ permissionKey: PermissionKey; effect: OverrideEffect }> = [];
+  for (const row of raw) {
+    if (!isPermissionKey(row.permissionKey)) {
+      throw new AuthError("Unknown permission", "VALIDATION", 400);
+    }
+    if (seen.has(row.permissionKey)) {
+      throw new AuthError("Duplicate permission", "VALIDATION", 400);
+    }
+    seen.add(row.permissionKey);
+    changes.push({ permissionKey: row.permissionKey, effect: row.effect });
+  }
+  return changes;
+}
+
+async function loadBulkTargets(userIds: string[]) {
+  const unique = [...new Set(userIds)];
+  if (unique.length !== userIds.length) {
+    throw new AuthError("Duplicate user", "VALIDATION", 400);
+  }
+  const users = [];
+  const missing: string[] = [];
+  for (const userId of unique) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        userRoles: {
+          include: { role: { include: { permissions: { include: { permission: true } } } } },
+        },
+        permissionOverrides: {
+          select: { permissionKey: true, effect: true },
+          orderBy: { permissionKey: "asc" },
+        },
+      },
+    });
+    if (!user || user.actorType !== "INTERNAL") missing.push(userId);
+    else users.push(user);
+  }
+  if (missing.length) {
+    throw new AuthError(`Staff user not found: ${missing.join(", ")}`, "NOT_FOUND", 404);
+  }
+  return users;
+}
+
+function planBulk(
+  users: Awaited<ReturnType<typeof loadBulkTargets>>,
+  changes: Array<{ permissionKey: PermissionKey; effect: OverrideEffect }>,
+) {
+  return users.map((user) => {
+    const granted = roleGrantedSet(user);
+    const beforeStored = storedOverrides(user.permissionOverrides);
+    const beforeMap = overrideMapFromStored(beforeStored);
+    const afterMap = mergePermissionOverrides(beforeMap, changes);
+    const beforeApplied = applyUserPermissionOverrides(granted, beforeStored);
+    const afterStored = storedFromOverrideMap(afterMap);
+    const afterApplied = applyUserPermissionOverrides(granted, afterStored);
+    return { user, granted, beforeMap, afterMap, beforeStored, afterStored, beforeApplied, afterApplied };
+  });
+}
+
+function bulkPreviewFromPlans(
+  plans: ReturnType<typeof planBulk>,
+  changes: Array<{ permissionKey: PermissionKey; effect: OverrideEffect }>,
+): BulkPermissionPreview {
+  const sensitiveKeys = changes.filter((change) => SENSITIVE.has(change.permissionKey));
+  const targetIsSuperAdmin = plans.some((plan) =>
+    plan.user.userRoles.some((assignment) => assignment.role.key === "SUPER_ADMIN"),
+  );
+  return {
+    users: plans.map((plan) => ({
+      id: plan.user.id,
+      name: plan.user.name ?? plan.user.email,
+      email: plan.user.email,
+      roles: plan.user.userRoles.map((assignment) => roleLabel(assignment.role.key)).join(", ") || "No role",
+    })),
+    changes: changes.map((change) => ({
+      key: change.permissionKey,
+      label: PERMISSION_LABELS[change.permissionKey],
+      effect: change.effect,
+      sensitive: SENSITIVE.has(change.permissionKey),
+      rows: plans.map((plan) => ({
+        userId: plan.user.id,
+        name: plan.user.name ?? plan.user.email,
+        beforeEffect: plan.beforeMap[change.permissionKey] ?? "INHERIT",
+        afterEffect: plan.afterMap[change.permissionKey] ?? "INHERIT",
+        beforeEffective: plan.beforeApplied.effective.has(change.permissionKey),
+        afterEffective: plan.afterApplied.effective.has(change.permissionKey),
+      })),
+    })),
+    sensitive: sensitiveKeys.length > 0 || targetIsSuperAdmin,
+  };
+}
+
+async function assertBulkKeepsSuperAdmin(plans: ReturnType<typeof planBulk>) {
+  const ids = plans.map((plan) => plan.user.id);
+  const outside = await otherEffectiveSuperAdmins(ids);
+  const keepers = plans.filter(
+    (plan) =>
+      plan.user.status === "ACTIVE" &&
+      plan.user.userRoles.some((assignment) => assignment.role.key === "SUPER_ADMIN") &&
+      plan.afterApplied.effective.has("users.manage"),
+  ).length;
+  for (const plan of plans) {
+    const keeps = plan.afterApplied.effective.has("users.manage");
+    const others = outside + keepers - (keeps && plan.user.userRoles.some((a) => a.role.key === "SUPER_ADMIN") && plan.user.status === "ACTIVE" ? 1 : 0);
+    if (
+      removesLastEffectiveSuperAdmin({
+        targetHasSuperAdminRole: plan.user.userRoles.some((assignment) => assignment.role.key === "SUPER_ADMIN"),
+        targetKeepsUsersManage: keeps,
+        otherEffectiveSuperAdmins: others,
+      })
+    ) {
+      throw new AuthError(
+        "This change would remove the last Super Admin who can manage users",
+        "VALIDATION",
+        400,
+      );
+    }
+  }
+}
+
+export async function previewBulkStaffPermissions(actorUserId: string, raw: unknown) {
+  await requireSuperAdminActor(actorUserId);
+  const input = bulkSchema.parse(raw);
+  const changes = parseBulkChanges(input.changes);
+  const users = await loadBulkTargets(input.userIds);
+  const plans = planBulk(users, changes);
+  await assertBulkKeepsSuperAdmin(plans);
+  return bulkPreviewFromPlans(plans, changes);
+}
+
+export async function applyBulkStaffPermissions(actorUserId: string, raw: unknown) {
+  await requireSuperAdminActor(actorUserId);
+  const input = bulkSchema.parse(raw);
+  const changes = parseBulkChanges(input.changes);
+  const users = await loadBulkTargets(input.userIds);
+  const plans = planBulk(users, changes);
+  const preview = bulkPreviewFromPlans(plans, changes);
+  if (preview.sensitive && input.confirmSensitive !== true) {
+    throw new AuthError("Confirm sensitive permission changes before applying them", "CONFIRM_SENSITIVE", 400);
+  }
+  await assertBulkKeepsSuperAdmin(plans);
+
+  await prisma.$transaction(async (tx) => {
+    for (const plan of plans) {
+      for (const change of changes) {
+        if (change.effect === "INHERIT") {
+          await tx.userPermissionOverride.deleteMany({
+            where: { userId: plan.user.id, permissionKey: change.permissionKey },
+          });
+          continue;
+        }
+        await tx.userPermissionOverride.upsert({
+          where: {
+            userId_permissionKey: { userId: plan.user.id, permissionKey: change.permissionKey },
+          },
+          create: {
+            userId: plan.user.id,
+            permissionKey: change.permissionKey,
+            effect: change.effect,
+            updatedByUserId: actorUserId,
+          },
+          update: { effect: change.effect, updatedByUserId: actorUserId },
+        });
+      }
+      await tx.user.update({ where: { id: plan.user.id }, data: { updatedAt: new Date() } });
+    }
+  });
+
+  for (const plan of plans) {
+    await recordAuditEvent({
+      action: "USER_PERMISSIONS_UPDATED",
+      entityType: "User",
+      entityId: plan.user.id,
+      actorUserId,
+      targetUserId: plan.user.id,
+      before: { overrides: plan.beforeStored },
+      after: { overrides: plan.afterStored },
+    });
+  }
+
+  return preview;
 }

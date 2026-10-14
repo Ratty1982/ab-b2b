@@ -128,7 +128,7 @@ export async function confirmAutopart216vImport(
 ): Promise<Autopart216vImportOutcome> {
   if (actorUserId) {
     const profile = await requirePurchasingAccess(actorUserId);
-    if (raw.source === "MANUAL" && !hasPermission(profile, "purchasing.manage")) {
+    if (raw.source === "MANUAL" && !hasPermission(profile, "purchasing.backorders.manage")) {
       throw new AuthError("Purchasing manage permission required", "FORBIDDEN", 403);
     }
   }
@@ -401,7 +401,10 @@ export async function previewAutopart216vImport(
   actorUserId: string,
   raw: { text: string; filename?: string },
 ) {
-  await requirePurchasingAccess(actorUserId);
+  const profile = await requirePurchasingAccess(actorUserId);
+  if (!hasPermission(profile, "purchasing.backorders.view")) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
   if (!isAutopart216vReport(raw.text)) {
     throw new AuthError("File does not look like an Autopart 216V report", "VALIDATION", 400);
   }
@@ -428,5 +431,5 @@ export async function previewAutopart216vImport(
 }
 
 export async function requireBackorderManage(actorUserId: string) {
-  await requireSystemPermission(actorUserId, "purchasing.manage");
+  await requireSystemPermission(actorUserId, "purchasing.backorders.manage");
 }

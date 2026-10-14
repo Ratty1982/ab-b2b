@@ -2,11 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
 import { auth } from "@/infra/auth";
+import { isPermissionKey } from "@/domain/permissions";
 import {
   requireAdminAccess,
   requireCrmAccess,
   requireInternalSalesAccess,
   requirePurchasingAccess,
+  requireSystemPermission,
   requireTradePortalAccess,
   AuthError,
 } from "@/server/rbac/guards";
@@ -67,6 +69,17 @@ export const ensureCrmAccess = createServerFn({ method: "GET" }).handler(async (
 export const ensurePurchasingAccess = createServerFn({ method: "GET" }).handler(async () =>
   runGuard((id) => requirePurchasingAccess(id)),
 );
+
+export const ensureStaffPermission = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => {
+    const permission =
+      data && typeof data === "object" && "permission" in data
+        ? String((data as { permission: unknown }).permission)
+        : "";
+    if (!isPermissionKey(permission)) throw new Error("Unknown permission");
+    return { permission };
+  })
+  .handler(async ({ data }) => runGuard((id) => requireSystemPermission(id, data.permission)));
 
 export const ensureAdminAccess = createServerFn({ method: "GET" }).handler(async () => {
   const result = await runGuard((id) => requireAdminAccess(id));

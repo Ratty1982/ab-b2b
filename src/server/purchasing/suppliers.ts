@@ -27,8 +27,8 @@ import { autopartGroupsBySupplier, listSupplierAutopartGroups } from "@/server/p
 
 export async function requirePurchasingManage(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
-  if (!hasPermission(profile, "purchasing.manage")) {
-    throw new AuthError("purchasing.manage is required", "FORBIDDEN", 403);
+  if (!hasPermission(profile, "purchasing.suppliers.manage")) {
+    throw new AuthError("purchasing.suppliers.manage is required", "FORBIDDEN", 403);
   }
   return profile;
 }
@@ -176,6 +176,9 @@ const listInput = z.object({
 
 export async function listSuppliers(actorUserId: string, raw: unknown = {}) {
   const profile = await requirePurchasingAccess(actorUserId);
+  if (!hasPermission(profile, "purchasing.suppliers.view")) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
   const input = listInput.parse(raw ?? {});
   const q = input.q?.trim();
   const status = input.status ?? (input.includeInactive ? "all" : "active");
@@ -207,7 +210,7 @@ export async function listSuppliers(actorUserId: string, raw: unknown = {}) {
   }
   const groups = await autopartGroupsBySupplier(suppliers.map((s) => s.id));
   return {
-    canManage: hasPermission(profile, "purchasing.manage"),
+    canManage: hasPermission(profile, "purchasing.suppliers.manage"),
     suppliers: suppliers.map((s) => ({
       ...supplierView(s),
       productCount: productCount.get(s.id) ?? 0,
@@ -432,7 +435,10 @@ export async function searchPurchasingProducts(actorUserId: string, raw: unknown
 // ---------------------------------------------------------------------------
 
 export async function getSupplierDetail(actorUserId: string, raw: unknown) {
-  const profile = await requirePurchasingAccess(actorUserId);
+  const viewer = await requirePurchasingAccess(actorUserId);
+  if (!hasPermission(viewer, "purchasing.suppliers.view")) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
   const input = z.object({ id: z.string().min(1) }).parse(raw);
   const supplier = await prisma.supplier.findUnique({
     where: { id: input.id },
@@ -450,7 +456,7 @@ export async function getSupplierDetail(actorUserId: string, raw: unknown) {
     listSupplierAutopartGroups(supplier.id),
   ]);
   return {
-    canManage: hasPermission(profile, "purchasing.manage"),
+    canManage: hasPermission(viewer, "purchasing.suppliers.manage"),
     supplier: supplierView(supplier),
     autopartGroups,
     products: supplier.products.map((p) => {
@@ -712,7 +718,7 @@ export async function getProductSuppliersForSku(actorUserId: string, raw: unknow
   }));
   const planning = resolvePlanningSupplier(relations);
   return {
-    canManage: hasPermission(profile, "purchasing.manage"),
+    canManage: hasPermission(profile, "purchasing.suppliers.manage"),
     sku: product?.sku ?? input.sku,
     latestCost: product?.latestCost ?? null,
     planningState: planning.state,

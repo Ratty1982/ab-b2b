@@ -1,4 +1,6 @@
 import type { PermissionKey } from "@/domain/permissions";
+import { dedicatedAdminSectionUnlock } from "@/domain/permission-sections";
+import { ADMIN_SHELL_PERMISSIONS } from "@/lib/app-nav";
 import { grants, hasPermission, loadAccessProfile, type LoadedAccessProfile } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 
@@ -119,6 +121,13 @@ export async function requireTradePortalAccess(
   throw new AuthError("Trade portal access required", "PORTAL_FORBIDDEN", 403);
 }
 
+function hasPermissionPrefix(profile: LoadedAccessProfile, prefixes: readonly string[]): boolean {
+  for (const key of profile.permissions) {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) return true;
+  }
+  return false;
+}
+
 /** Sales / CRM shells — internal users with sales/CRM permissions */
 export async function requireInternalSalesAccess(
   userId: string | undefined | null,
@@ -127,15 +136,26 @@ export async function requireInternalSalesAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("Internal sales access required", "SALES_FORBIDDEN", 403);
   }
-  const ok = grants(
-    profile,
-    "sales.view_own_accounts",
-    "sales.view_team_accounts",
-    "sales.view_all_accounts",
-    "sales_intelligence.view",
-    "crm.view",
-    "admin.access",
-  );
+  const ok =
+    grants(
+      profile,
+      "sales.view_own_accounts",
+      "sales.view_team_accounts",
+      "sales.view_all_accounts",
+      "sales_intelligence.view",
+      "crm.view",
+      "admin.access",
+    ) ||
+    hasPermissionPrefix(profile, [
+      "sales_intelligence.",
+      "quotes.",
+      "orders.",
+      "promotions.",
+      "applications.",
+      "companies.",
+      "contacts.",
+      "customer_groups.",
+    ]);
   if (!ok) {
     throw new AuthError("Internal sales access required", "SALES_FORBIDDEN", 403);
   }
@@ -149,7 +169,13 @@ export async function requireCrmAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("CRM access required", "CRM_FORBIDDEN", 403);
   }
-  if (!grants(profile, "crm.view", "sales.view_own_accounts", "admin.access")) {
+  const ok =
+    grants(profile, "crm.view", "sales.view_own_accounts", "admin.access") ||
+    hasPermissionPrefix(profile, ["crm.", "autopart."]) ||
+    hasPermission(profile, "tasks.view") ||
+    hasPermission(profile, "tasks.manage") ||
+    hasPermission(profile, "sales.team.view");
+  if (!ok) {
     throw new AuthError("CRM access required", "CRM_FORBIDDEN", 403);
   }
   return profile;
@@ -162,7 +188,18 @@ export async function requirePurchasingAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("Purchasing Intelligence is internal only", "PURCHASING_FORBIDDEN", 403);
   }
-  if (!hasPermission(profile, "purchasing.view") && !hasPermission(profile, "purchasing.manage")) {
+  if (!hasPermissionPrefix(profile, ["purchasing."])) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
+  return profile;
+}
+
+export async function requirePurchasingSection(
+  userId: string | undefined | null,
+  permission: PermissionKey,
+): Promise<LoadedAccessProfile> {
+  const profile = await requirePurchasingAccess(userId);
+  if (!hasPermission(profile, permission)) {
     throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
   }
   return profile;
@@ -175,25 +212,9 @@ export async function requireAdminAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("Admin access required", "ADMIN_FORBIDDEN", 403);
   }
-  const ok = grants(
-    profile,
-    "admin.access",
-    "cms.view",
-    "cms.edit",
-    "cms.publish",
-    "cms.page.read",
-    "cms.page.edit",
-    "cms.page.publish",
-    "cms.media.read",
-    "cms.media.manage",
-    "products.create",
-    "products.edit",
-    "pricing.edit",
-    "users.manage",
-    "roles.manage",
-    "settings.edit",
-    "surveys.view",
-  );
+  const ok =
+    ADMIN_SHELL_PERMISSIONS.some((key) => hasPermission(profile, key)) ||
+    dedicatedAdminSectionUnlock(profile.permissions);
   if (!ok) {
     throw new AuthError("Admin access required", "ADMIN_FORBIDDEN", 403);
   }

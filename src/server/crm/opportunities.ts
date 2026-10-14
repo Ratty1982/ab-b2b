@@ -39,7 +39,7 @@ const listSchema = z.object({
 });
 
 export async function listCrmOpportunities(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.opportunities.view");
   const input = listSchema.parse(raw ?? {});
   const scope = await resolveCrmCompanyScope(profile);
   const where: Prisma.OpportunityWhereInput = {
@@ -151,7 +151,7 @@ function mapOpp(o: {
 }
 
 export async function getCrmOpportunity(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.opportunities.view");
   const { opportunityId } = z.object({ opportunityId: z.string().min(1) }).parse(raw ?? {});
   await assertOpportunityAccess(profile, opportunityId);
   const opp = await prisma.opportunity.findUniqueOrThrow({
@@ -256,7 +256,7 @@ const createSchema = z.object({
 });
 
 export async function createCrmOpportunity(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.opportunities.view");
   requireCrmMutator(profile);
   const input = createSchema.parse(raw ?? {});
   await assertCrmCompanyAccess(profile, input.companyId);
@@ -342,7 +342,7 @@ const stageSchema = z.object({
 });
 
 export async function updateCrmOpportunityStage(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.opportunities.view");
   requireCrmMutator(profile);
   const input = stageSchema.parse(raw ?? {});
   const existing = await assertOpportunityAccess(profile, input.opportunityId);
@@ -416,7 +416,7 @@ export async function updateCrmOpportunityStage(actorUserId: string, raw: unknow
 }
 
 export async function updateCrmOpportunity(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.opportunities.view");
   requireCrmMutator(profile);
   const input = z
     .object({
@@ -458,7 +458,7 @@ export async function updateCrmOpportunity(actorUserId: string, raw: unknown) {
 }
 
 export async function linkQuoteToOpportunity(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.opportunities.view");
   requireCrmMutator(profile);
   const input = z
     .object({

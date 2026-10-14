@@ -132,6 +132,46 @@ export const PERMISSIONS = [
   "autopart.ledger.view",
   "autopart.mapping.manage",
   "autopart.portal-access.manage",
+
+  "sales_intelligence.enquiry.view",
+  "sales_intelligence.daily_brief.view",
+  "sales_intelligence.portfolio.view",
+  "sales_intelligence.gaps.view",
+  "sales_intelligence.opportunities.view",
+  "sales_intelligence.rebates.view",
+
+  "purchasing.dashboard.view",
+  "purchasing.stock.view",
+  "purchasing.forecast.view",
+  "purchasing.planner.view",
+  "purchasing.backorders.view",
+  "purchasing.overstock.view",
+  "purchasing.suppliers.view",
+  "purchasing.stock.manage",
+  "purchasing.forecast.manage",
+  "purchasing.planner.manage",
+  "purchasing.backorders.manage",
+  "purchasing.suppliers.manage",
+
+  "crm.overview.view",
+  "crm.leads.view",
+  "crm.opportunities.view",
+  "crm.activities.view",
+
+  "catalogue.brands.view",
+  "catalogue.brands.edit",
+  "catalogue.categories.view",
+  "catalogue.categories.edit",
+  "catalogue.documents.view",
+  "catalogue.documents.edit",
+
+  "cms.homepage.view",
+  "cms.homepage.edit",
+  "cms.team.view",
+  "cms.team.edit",
+
+  "sales.team.view",
+  "sales.team.manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number];

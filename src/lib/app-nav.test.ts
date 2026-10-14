@@ -141,7 +141,7 @@ describe("canonical navigation contract", () => {
     const cost = purchasing?.items.find((i) => i.id === "cost-intelligence");
     expect(cost?.label).toBe("Cost Intelligence");
     expect(cost?.to).toBe(ROUTES.adminCostIntelligence);
-    expect(cost?.permission).toEqual(["products.cost.view", "admin.access"]);
+    expect(cost?.permission).toBe("products.cost.view");
   });
 
   it("keeps Website nav as Pages, Homepage, Team, Media in that order", () => {

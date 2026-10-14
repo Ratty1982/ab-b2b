@@ -17,8 +17,10 @@ import {
   buildOrderReceivedCustomerBodies,
   buildOrderReceivedInternalBodies,
   buildOrderRemainingDespatchedCustomerBodies,
+  buildOrderUpdatedCustomerBodies,
   type OrderEmailSnapshot,
 } from "@/server/orders/email";
+import type { OrderAmendmentEmailFeedback } from "@/domain/order-updated-email";
 import {
   buildTradeAccountActivatedBodies,
   buildTradeApplicationApprovedBodies,
@@ -404,6 +406,58 @@ export async function sendOrderEmailsAfterCommit(orderId: string): Promise<{
   }
 
   return { customerOk, internalOk, ...(detail ? { detail } : {}) };
+}
+
+export function orderUpdatedEmailIdempotencyKey(orderId: string, editIdempotencyKey: string): string {
+  return `ORDER_UPDATED:${orderId}:${editIdempotencyKey}`;
+}
+
+function orderUpdatedOutcome(status: TransactionalEmailStatus | "NONE", emailId: string | null): OrderAmendmentEmailFeedback {
+  if (status === "SENT") return { status: "sent", emailId };
+  if (status === "DEFERRED" || status === "PENDING") return { status: "pending", emailId };
+  if (status === "NONE" && !emailId) return { status: "skipped", emailId: null };
+  return { status: "failed", emailId };
+}
+
+/**
+ * After an amendment commits: store one immutable ORDER_UPDATED snapshot and attempt send.
+ * The idempotency key includes the edit key, so a repeated save cannot create a second email
+ * and a later amendment cannot overwrite this row.
+ */
+export async function sendOrderUpdatedEmailAfterCommit(input: {
+  orderId: string;
+  editIdempotencyKey: string;
+}): Promise<OrderAmendmentEmailFeedback> {
+  const snapshot = await loadOrderEmailSnapshot(input.orderId);
+  if (!snapshot?.contact.email) {
+    return { status: "failed", emailId: null };
+  }
+  const footer = await getEmailFooterMeta();
+  const bodies = buildOrderUpdatedCustomerBodies(snapshot, footer);
+  const upsert = await upsertPendingEmail({
+    purpose: "ORDER_UPDATED",
+    toEmail: snapshot.contact.email,
+    subject: bodies.subject,
+    textBody: bodies.text,
+    htmlBody: bodies.html,
+    entityType: "Order",
+    entityId: input.orderId,
+    idempotencyKey: orderUpdatedEmailIdempotencyKey(input.orderId, input.editIdempotencyKey),
+  });
+  const dispatch = await safeAttemptDetailed(upsert.id);
+  return orderUpdatedOutcome(dispatch.emailStatus, dispatch.emailId);
+}
+
+export async function loadOrderUpdatedEmailOutcome(
+  orderId: string,
+  editIdempotencyKey: string,
+): Promise<OrderAmendmentEmailFeedback> {
+  const row = await prisma.transactionalEmail.findUnique({
+    where: { idempotencyKey: orderUpdatedEmailIdempotencyKey(orderId, editIdempotencyKey) },
+    select: { id: true, status: true },
+  });
+  if (!row) return { status: "skipped", emailId: null };
+  return orderUpdatedOutcome(row.status, row.id);
 }
 
 export async function sendTradeApplicationEmailsAfterSubmit(applicationId: string): Promise<void> {
@@ -1059,7 +1113,7 @@ export async function retryTransactionalEmail(
   let toEmail = row.toEmail;
   const footer = await getEmailFooterMeta();
 
-  if (row.entityType === "Order") {
+  if (row.entityType === "Order" && row.purpose !== "ORDER_UPDATED") {
     const snapshot = await loadOrderEmailSnapshot(row.entityId);
     if (!snapshot) {
       throw new AuthError("Order not found for email", "ORDER_NOT_FOUND", 404);

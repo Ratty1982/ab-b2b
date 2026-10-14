@@ -72,8 +72,16 @@ export async function listCmsPages(actorUserId: string) {
   }));
 }
 
+function cmsViewKey(slug: string): "cms.homepage.view" | "cms.page.read" {
+  return slug === "home" ? "cms.homepage.view" : "cms.page.read";
+}
+
+function cmsEditKey(slug: string): "cms.homepage.edit" | "cms.page.edit" {
+  return slug === "home" ? "cms.homepage.edit" : "cms.page.edit";
+}
+
 export async function getCmsPageDraft(actorUserId: string, slug: string) {
-  await requireSystemPermission(actorUserId, "cms.page.read");
+  await requireSystemPermission(actorUserId, cmsViewKey(slug));
   if (slug === "brands") await ensureBrandsShowcaseSection();
   if (slug === "trade-solutions") await ensureTradeSolutionsSection();
   if (slug === "why-automotive-brands") await ensureWhyUsSection();
@@ -335,8 +343,8 @@ async function forkDraftFrom(
 }
 
 export async function updateCmsPageMeta(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "cms.page.edit");
   const input = cmsPageUpdateSchema.parse(raw);
+  await requireSystemPermission(actorUserId, cmsEditKey(input.slug));
   const page = await prisma.cmsPage.update({
     where: { slug: input.slug },
     data: {
@@ -358,7 +366,7 @@ export async function saveCmsDraftSections(
   slug: string,
   sections: unknown[],
 ) {
-  await requireSystemPermission(actorUserId, "cms.page.edit");
+  await requireSystemPermission(actorUserId, cmsEditKey(slug));
   const page = await prisma.cmsPage.findUnique({ where: { slug } });
   if (!page) throw new AuthError("Page not found", "NOT_FOUND", 404);
 
@@ -423,6 +431,12 @@ export async function publishCmsPage(actorUserId: string, slug: string, note?: s
   ) {
     throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
   }
+  if (slug === "home" && !hasPermission(profile, "cms.homepage.edit")) {
+    throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
+  }
+  if (slug !== "home" && !hasPermission(profile, "cms.page.edit") && !hasPermission(profile, "cms.edit")) {
+    throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
+  }
 
   const page = await prisma.cmsPage.findUnique({ where: { slug } });
   if (!page) throw new AuthError("Page not found", "NOT_FOUND", 404);
@@ -466,7 +480,7 @@ export async function publishCmsPage(actorUserId: string, slug: string, note?: s
 }
 
 export async function restoreCmsVersion(actorUserId: string, slug: string, versionId: string) {
-  await requireSystemPermission(actorUserId, "cms.page.edit");
+  await requireSystemPermission(actorUserId, cmsEditKey(slug));
   const page = await prisma.cmsPage.findUnique({ where: { slug } });
   if (!page) throw new AuthError("Page not found", "NOT_FOUND", 404);
 

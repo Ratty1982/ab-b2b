@@ -20,8 +20,8 @@ import {
 } from "@/domain/autopart-supplier-group";
 async function requirePurchasingManage(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
-  if (!hasPermission(profile, "purchasing.manage")) {
-    throw new AuthError("purchasing.manage is required", "FORBIDDEN", 403);
+  if (!hasPermission(profile, "purchasing.suppliers.manage")) {
+    throw new AuthError("purchasing.suppliers.manage is required", "FORBIDDEN", 403);
   }
   return profile;
 }

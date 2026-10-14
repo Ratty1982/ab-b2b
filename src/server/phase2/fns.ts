@@ -36,6 +36,16 @@ async function optionalUserId(): Promise<string | null> {
   return resolveOptionalRequestUserId();
 }
 
+function isDatabaseClientError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = error.constructor?.name ?? "";
+  if (name.startsWith("PrismaClient")) return true;
+  const message = error instanceof Error ? error.message : "";
+  return /Timed out fetching a new connection|statement timeout|canceling statement due to statement timeout|remaining connection slots|could not resize shared memory/i.test(
+    message,
+  );
+}
+
 function toError(error: unknown): { ok: false; error: string; code?: string } {
   if (error instanceof AuthError) {
     return { ok: false, error: error.message, code: error.code };
@@ -43,6 +53,14 @@ function toError(error: unknown): { ok: false; error: string; code?: string } {
   const validation = formatZodError(error);
   if (validation) {
     return { ok: false, error: validation, code: "VALIDATION" };
+  }
+  if (isDatabaseClientError(error)) {
+    console.error("[ab:fn]", error);
+    return {
+      ok: false,
+      error: "The request could not be completed. Try again.",
+      code: "UNAVAILABLE",
+    };
   }
   if (error instanceof Error && error.message) {
     return { ok: false, error: error.message, code: "INTERNAL" };
@@ -1557,6 +1575,32 @@ export const saveStaffUserPermissionsFn = createServerFn({ method: "POST" })
       const userId = await requireUserId();
       const { saveStaffUserPermissions } = await import("@/server/users/permissions");
       const result = await saveStaffUserPermissions(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewBulkStaffPermissionsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { previewBulkStaffPermissions } = await import("@/server/users/permissions");
+      const result = await previewBulkStaffPermissions(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const applyBulkStaffPermissionsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { applyBulkStaffPermissions } = await import("@/server/users/permissions");
+      const result = await applyBulkStaffPermissions(userId, data);
       return { ok: true as const, data: result };
     } catch (e) {
       return toError(e);

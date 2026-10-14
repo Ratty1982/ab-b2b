@@ -26,7 +26,7 @@ const listSchema = z.object({
 });
 
 export async function listCrmLeads(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   const input = listSchema.parse(raw ?? {});
   const where: Prisma.LeadWhereInput = {};
 
@@ -128,7 +128,7 @@ function mapLeadList(l: {
 }
 
 export async function getCrmLead(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   const { leadId } = z.object({ leadId: z.string().min(1) }).parse(raw ?? {});
   await assertLeadAccess(profile, leadId);
   const lead = await prisma.lead.findUniqueOrThrow({
@@ -194,7 +194,7 @@ const createSchema = z.object({
 });
 
 export async function createCrmLead(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   requireCrmMutator(profile);
   const input = createSchema.parse(raw ?? {});
   const ownerId = input.ownerId || actorUserId;
@@ -237,7 +237,7 @@ const updateSchema = z.object({
 });
 
 export async function updateCrmLead(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   requireCrmMutator(profile);
   const input = updateSchema.parse(raw ?? {});
   const existing = await assertLeadAccess(profile, input.leadId);
@@ -274,7 +274,7 @@ export async function updateCrmLead(actorUserId: string, raw: unknown) {
 }
 
 export async function markCrmLeadLost(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   requireCrmMutator(profile);
   const input = z
     .object({
@@ -313,7 +313,7 @@ export async function markCrmLeadLost(actorUserId: string, raw: unknown) {
 }
 
 export async function searchCompaniesForLeadConvert(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   requireCrmMutator(profile);
   const { q } = z.object({ q: z.string().min(1).max(200) }).parse(raw ?? {});
   const scope = await resolveCrmCompanyScope(profile);
@@ -348,7 +348,7 @@ export async function searchCompaniesForLeadConvert(actorUserId: string, raw: un
 }
 
 export async function convertCrmLead(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.leads.view");
   requireCrmMutator(profile);
   const input = z
     .object({

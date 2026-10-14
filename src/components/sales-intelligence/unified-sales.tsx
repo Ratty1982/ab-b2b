@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react";
+import {
+  isRetryCoolingDown,
+  retryAvailableAt,
+  salesEnquiryErrorText,
+} from "@/domain/sales-enquiry-report";
 import { Link } from "@tanstack/react-router";
 import { StatusBadge } from "@/components/ab/Badges";
 import {
@@ -212,6 +217,66 @@ function txRequest(companyId: string, filters: TxFilters) {
   };
 }
 
+function isOpeningTransactionView(filters: TxFilters, page: number): boolean {
+  return (
+    page === 1 &&
+    filters.type === "ALL" &&
+    filters.dating === "ALL" &&
+    filters.status === "COUNTED" &&
+    filters.from === "" &&
+    filters.to === "" &&
+    filters.q === "" &&
+    filters.brandId === "" &&
+    filters.accountCode === ""
+  );
+}
+
+function ReportNotice({
+  loadingLabel,
+  loading,
+  error,
+  onRetry,
+}: {
+  loadingLabel: string;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const [availableAt, setAvailableAt] = useState(0);
+  useEffect(() => {
+    if (!isRetryCoolingDown(Date.now(), availableAt)) return;
+    const handle = window.setInterval(() => setNow(Date.now()), 200);
+    return () => window.clearInterval(handle);
+  }, [availableAt]);
+  if (loading && !error) {
+    return (
+      <p className="text-[13px] text-steel" role="status" aria-busy="true">
+        {loadingLabel}
+      </p>
+    );
+  }
+  if (!error) return null;
+  const cooling = isRetryCoolingDown(now, availableAt);
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="alert">
+      <p className="text-[12px] text-bad">{error}</p>
+      <button
+        type="button"
+        className="rounded-md border border-border px-2 py-1 text-[11px] font-bold uppercase disabled:opacity-50"
+        disabled={cooling}
+        onClick={() => {
+          if (isRetryCoolingDown(Date.now(), availableAt)) return;
+          setAvailableAt(retryAvailableAt(Date.now()));
+          onRetry();
+        }}
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
 function statusTone(status: string) {
   if (status === "UNRECONCILED") return "warn" as const;
   if (status === "DUPLICATE") return "neutral" as const;
@@ -242,6 +307,10 @@ export function UnifiedCustomerSalesPanel({
   const [products, setProducts] = useState<Products | null>(null);
   const [createdOpportunities, setCreatedOpportunities] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [loadingCustomer, setLoadingCustomer] = useState(true);
+  const [loadingTx, setLoadingTx] = useState(false);
+  const [loadingProducts, setLoadingProducts] = useState(false);
 
   useEffect(() => {
     setFilters(EMPTY_TX_FILTERS);
@@ -251,21 +320,27 @@ export function UnifiedCustomerSalesPanel({
     setProductQ("");
     setNote(null);
     setCreatedOpportunities(new Set());
+    setLoadingCustomer(true);
+    setError(null);
+    setData(null);
+    setTx(null);
     let cancelled = false;
     void getUnifiedCustomerSalesFn({ data: { companyId } }).then((result) => {
       if (cancelled) return;
+      setLoadingCustomer(false);
       if (!result.ok) {
-        setError(result.error);
+        setError(salesEnquiryErrorText(result.error, result.code));
         setData(null);
         return;
       }
       setError(null);
       setData(result.data);
+      setTx(result.data.initialTransactions);
     });
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, attempt]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -279,22 +354,35 @@ export function UnifiedCustomerSalesPanel({
 
   useEffect(() => {
     if (tab !== "transactions") return;
+    if (isOpeningTransactionView(filters, txPage)) {
+      if (data?.initialTransactions) setTx(data.initialTransactions);
+      return;
+    }
     let cancelled = false;
-    void listUnifiedCustomerTransactionsFn({
-      data: { ...txRequest(companyId, filters), page: txPage, pageSize: 50 },
-    }).then((result) => {
-      if (cancelled) return;
-      if (!result.ok) setError(result.error);
-      else setTx(result.data);
-    });
+    setLoadingTx(true);
+    const handle = window.setTimeout(() => {
+      void listUnifiedCustomerTransactionsFn({
+        data: { ...txRequest(companyId, filters), page: txPage, pageSize: 50 },
+      }).then((result) => {
+        if (cancelled) return;
+        setLoadingTx(false);
+        if (!result.ok) setError(salesEnquiryErrorText(result.error, result.code));
+        else {
+          setError(null);
+          setTx(result.data);
+        }
+      });
+    }, 200);
     return () => {
       cancelled = true;
+      window.clearTimeout(handle);
     };
-  }, [companyId, filters, txPage, tab]);
+  }, [companyId, filters, txPage, tab, data, attempt]);
 
   useEffect(() => {
     if (tab !== "products") return;
     let cancelled = false;
+    setLoadingProducts(true);
     const handle = window.setTimeout(() => {
       void listUnifiedCustomerProductsFn({
         data: {
@@ -307,15 +395,19 @@ export function UnifiedCustomerSalesPanel({
         },
       }).then((result) => {
         if (cancelled) return;
-        if (!result.ok) setError(result.error);
-        else setProducts(result.data);
+        setLoadingProducts(false);
+        if (!result.ok) setError(salesEnquiryErrorText(result.error, result.code));
+        else {
+          setError(null);
+          setProducts(result.data);
+        }
       });
     }, 200);
     return () => {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [companyId, productQ, productSort, productPage, filters.brandId, tab]);
+  }, [companyId, productQ, productSort, productPage, filters.brandId, tab, attempt]);
 
   function patchFilters(next: Partial<TxFilters>) {
     setFilters((current) => ({ ...current, ...next }));
@@ -365,8 +457,16 @@ export function UnifiedCustomerSalesPanel({
     );
   }
 
-  if (error && !data) return <p className="text-[12px] text-bad">{error}</p>;
-  if (!data) return <p className="text-[13px] text-steel">Loading customer sales…</p>;
+  if (!data) {
+    return (
+      <ReportNotice
+        loading={loadingCustomer}
+        loadingLabel="Loading customer sales…"
+        error={error}
+        onRetry={() => setAttempt((current) => current + 1)}
+      />
+    );
+  }
 
   const company = data.company;
   const summary = data.summary;
@@ -379,6 +479,12 @@ export function UnifiedCustomerSalesPanel({
       className="space-y-4 rounded-md border border-border p-3 sm:p-4"
       aria-label="Customer sales"
     >
+      <ReportNotice
+        loading={tab === "transactions" ? loadingTx : loadingProducts}
+        loadingLabel={tab === "transactions" ? "Loading transactions…" : "Loading products…"}
+        error={error}
+        onRetry={() => setAttempt((current) => current + 1)}
+      />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wide text-steel">
@@ -450,7 +556,6 @@ export function UnifiedCustomerSalesPanel({
 
       <UnifiedSalesFigures figures={data} />
       {note ? <p className="text-[12px] text-steel">{note}</p> : null}
-      {error ? <p className="text-[12px] text-bad">{error}</p> : null}
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Customer sales view">
         {(
@@ -837,6 +942,8 @@ export function UnifiedProductSalesPanel({
 }) {
   const [data, setData] = useState<ProductSales | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<"NET_SALES" | "QTY" | "RECENT" | "NAME_AZ">("NET_SALES");
   const [q, setQ] = useState("");
@@ -847,13 +954,15 @@ export function UnifiedProductSalesPanel({
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     const handle = window.setTimeout(() => {
       void getUnifiedProductSalesFn({
         data: { sku, salesRepId, q: q.trim() || null, sort, page, pageSize: 25 },
       }).then((result) => {
         if (cancelled) return;
+        setLoading(false);
         if (!result.ok) {
-          setError(result.error);
+          setError(salesEnquiryErrorText(result.error, result.code));
           setData(null);
         } else {
           setError(null);
@@ -865,10 +974,18 @@ export function UnifiedProductSalesPanel({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [sku, salesRepId, q, sort, page]);
+  }, [sku, salesRepId, q, sort, page, attempt]);
 
-  if (error) return <p className="text-[12px] text-bad">{error}</p>;
-  if (!data) return <p className="text-[13px] text-steel">Loading product customers…</p>;
+  if (!data) {
+    return (
+      <ReportNotice
+        loading={loading}
+        loadingLabel="Loading product customers…"
+        error={error}
+        onRetry={() => setAttempt((current) => current + 1)}
+      />
+    );
+  }
   const pages = Math.max(1, Math.ceil(data.customers.total / data.customers.pageSize));
   const complete = data.summary.certification === "COMPLETE";
 
@@ -1020,19 +1137,28 @@ export function UnifiedReconciliationQueue() {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Queue | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    setLoading(true);
     void getUnifiedReconciliationQueueFn({ data: { page, pageSize: 25 } }).then((result) => {
       if (cancelled) return;
-      if (!result.ok) setError(result.error);
-      else setData(result.data);
+      setLoading(false);
+      if (!result.ok) {
+        setError(salesEnquiryErrorText(result.error, result.code));
+        setData(null);
+      } else {
+        setError(null);
+        setData(result.data);
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [open, page]);
+  }, [open, page, attempt]);
 
   return (
     <section className="rounded-md border border-border p-3 text-[13px]">
@@ -1045,10 +1171,15 @@ export function UnifiedReconciliationQueue() {
         {open ? "Hide" : "Show"} account reconciliation queue
       </button>
       {open ? (
-        error ? (
-          <p className="mt-2 text-[12px] text-bad">{error}</p>
-        ) : !data ? (
-          <p className="mt-2 text-steel">Loading…</p>
+        !data ? (
+          <div className="mt-2">
+            <ReportNotice
+              loading={loading}
+              loadingLabel="Loading reconciliation queue…"
+              error={error}
+              onRetry={() => setAttempt((current) => current + 1)}
+            />
+          </div>
         ) : !data.permitted ? (
           <p className="mt-2 text-steel">
             The reconciliation queue is available to management scope only.

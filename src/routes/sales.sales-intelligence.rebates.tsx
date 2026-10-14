@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "@/components/ab/Badges";
 import {
@@ -43,6 +44,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/sales/sales-intelligence/rebates")({
+  beforeLoad: ({ location }) => guardStaffPage("sales_intelligence.rebates.view", location.href, "/sales"),
   validateSearch: (search: Record<string, unknown>): RebateUrlSearch =>
     parseRebateUrlSearch(search),
   head: () => ({

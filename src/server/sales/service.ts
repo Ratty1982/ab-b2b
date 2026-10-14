@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAuthenticatedUser, requireSystemPermission } from "@/server/rbac/guards";
-import { grants, hasPermission } from "@/server/rbac/access";
+import { hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   defaultSalesRepJobTitle,
@@ -22,9 +22,7 @@ import {
 } from "@/server/sales/account-manager";
 
 function canViewSalesTeam(profile: Awaited<ReturnType<typeof requireAuthenticatedUser>>) {
-  return (
-    grants(profile, "sales.view_team_accounts", "sales.view_all_accounts", "reports.management", "users.manage", "admin.access")
-  );
+  return hasPermission(profile, "sales.team.view");
 }
 
 async function requireSalesTeamView(actorUserId: string) {
@@ -36,7 +34,7 @@ async function requireSalesTeamView(actorUserId: string) {
 }
 
 async function requireSalesTeamEdit(actorUserId: string) {
-  return requireSystemPermission(actorUserId, "users.manage");
+  return requireSystemPermission(actorUserId, "sales.team.manage");
 }
 
 function parseOrThrow<T>(schema: { parse: (raw: unknown) => T }, raw: unknown): T {

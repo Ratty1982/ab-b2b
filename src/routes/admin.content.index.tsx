@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState } from "react";
 import { ExternalLink, Pencil } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -9,6 +10,7 @@ import { listCmsPagesFn } from "@/server/phase2/fns";
 import { InstantText } from "@/components/ab/InstantText";
 
 export const Route = createFileRoute("/admin/content/")({
+  beforeLoad: ({ location }) => guardStaffPage("cms.page.read", location.href, "/admin"),
   head: () => ({
     meta: [{ title: "Website — Automotive Brands Admin" }],
   }),

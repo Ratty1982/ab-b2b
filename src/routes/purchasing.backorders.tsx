@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useId, useState } from "react";
 import {
   AlertTriangle,
@@ -62,6 +63,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/backorders")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.backorders.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>) => parseBackorderSearch(raw),
   head: () => ({
     meta: [

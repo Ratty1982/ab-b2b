@@ -1,13 +1,17 @@
 /**
  * CRM company / ownership scope — reuses sales assignment access.
  */
+import type { PermissionKey } from "@/domain/permissions";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 
-export async function requireCrmViewer(actorUserId: string): Promise<LoadedAccessProfile> {
-  const profile = await requireSystemPermission(actorUserId, "crm.view");
+export async function requireCrmViewer(
+  actorUserId: string,
+  permission: PermissionKey = "crm.view",
+): Promise<LoadedAccessProfile> {
+  const profile = await requireSystemPermission(actorUserId, permission);
   if (profile.actorType === "TRADE") {
     throw new AuthError("CRM is internal only", "FORBIDDEN", 403);
   }

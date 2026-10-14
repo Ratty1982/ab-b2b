@@ -37,7 +37,7 @@ function decodeBase64Body(raw: string): Buffer {
 }
 
 export async function requireDocumentsManage(userId: string) {
-  const profile = await requireSystemPermission(userId, "products.edit");
+  const profile = await requireSystemPermission(userId, "catalogue.documents.edit");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade users cannot manage product documents", "FORBIDDEN", 403);
   }
@@ -45,7 +45,7 @@ export async function requireDocumentsManage(userId: string) {
 }
 
 export async function requireDocumentsView(userId: string) {
-  const profile = await requireSystemPermission(userId, "products.view");
+  const profile = await requireSystemPermission(userId, "catalogue.documents.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade users cannot access product document admin", "FORBIDDEN", 403);
   }

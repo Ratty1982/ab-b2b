@@ -35,7 +35,7 @@ import { getCustomerRebateAnalysis } from "@/server/sales-intelligence/rebate";
 import { ROUTES } from "@/lib/app-nav";
 
 async function requireFollowupActor(actorUserId: string): Promise<LoadedAccessProfile> {
-  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
+  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.enquiry.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Sales Intelligence follow-ups are internal only", "FORBIDDEN", 403);
   }
