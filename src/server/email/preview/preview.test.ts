@@ -30,6 +30,7 @@ describe("email template preview registry", () => {
         "company-user-invited",
         "password-reset",
         "order-received",
+        "order-updated",
         "order-part-despatched",
         "order-despatched",
         "order-remaining-despatched",
@@ -44,7 +45,7 @@ describe("email template preview registry", () => {
         "user-invitation",
       ]),
     );
-    expect(ids).toHaveLength(20);
+    expect(ids).toHaveLength(21);
   });
 
   it("every registered preview template renders subject + HTML + text", () => {
@@ -146,6 +147,22 @@ describe("email template preview registry", () => {
       expect(preview.html).not.toContain(TEST_EMAIL_CALLOUT_TITLE);
       expect(preview.text).not.toContain(TEST_EMAIL_CALLOUT_TITLE);
     }
+  });
+
+  it("order updated preview confirms the amendment, collection and backorders", () => {
+    const normal = renderPreviewTemplate("order-updated", "normal");
+    expect(normal.subject).toBe("Your Automotive Brands Order AB-001234 Has Been Updated");
+    expect(normal.text).toContain("has been amended");
+    expect(normal.text).toContain("Original order number: AB-001234");
+    expect(normal.text).toContain("BM-45821");
+    expect(normal.html).toContain("View your order");
+    const collection = renderPreviewTemplate("order-updated", "collection");
+    expect(collection.text).toContain("CUSTOMER COLLECTION");
+    expect(collection.text).toContain("Customer Collection");
+    expect(collection.html).toContain("£0.00");
+    const backorder = renderPreviewTemplate("order-updated", "backorder");
+    expect(backorder.text).toMatch(/SOME ITEMS ARE ON BACKORDER/);
+    expect(backorder.html).toContain("currently on backorder");
   });
 
   it("order received copy is preparing, not a defensive despatch disclaimer", () => {

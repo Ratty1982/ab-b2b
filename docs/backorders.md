@@ -216,6 +216,7 @@ Preserved from commit `0315019`:
 | Purpose | When |
 | --- | --- |
 | `ORDER_RECEIVED` | Placement — includes backorder quantities + “do not reorder” copy |
+| `ORDER_UPDATED` | Customer-facing amendment — includes the revised backorder quantities |
 | `ORDER_PART_DESPATCHED` | Authoritative partial despatch (idempotent per invoice) |
 | `ORDER_DESPATCHED` | Full / remaining despatch (idempotent per order) |
 

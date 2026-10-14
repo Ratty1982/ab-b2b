@@ -253,6 +253,93 @@ ${emailAccountManagerCard(am)}`;
   return { subject, text, html };
 }
 
+export function buildOrderUpdatedCustomerBodies(
+  order: OrderEmailSnapshot,
+  footer?: EmailFooterMeta,
+): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const first = firstNameFrom(order.contact.name);
+  const delivery = formatDelivery(order);
+  const subject = `Your Automotive Brands Order ${order.orderNumber} Has Been Updated`;
+  const am = snapshotAccountManager(order);
+  const reference = order.poNumber?.trim() ? order.poNumber : "—";
+  const amended =
+    `Your order ${order.orderNumber} has been amended. This email confirms the current products, quantities and prices. The original order number is unchanged.`;
+
+  const text = [
+    "ORDER UPDATED",
+    "",
+    `Hello ${first},`,
+    amended,
+    "",
+    `Original order number: ${order.orderNumber}`,
+    `Your reference: ${reference}`,
+    "",
+    "CURRENT ORDER ITEMS",
+    itemsPlain(order, "customer"),
+    "",
+    `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
+    `Delivery: ${deliveryChargeLabel(order)}`,
+    `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
+    `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
+    "",
+    order.fulfilmentChoice === "COLLECTION" ? "CUSTOMER COLLECTION" : "DELIVERY TO",
+    delivery,
+    "",
+    ...(hasBackorder(order)
+      ? [
+          "SOME ITEMS ARE ON BACKORDER",
+          "You don't need to place another order for these items. They will remain on your order and we'll update you when they are despatched.",
+          "",
+        ]
+      : []),
+    `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
+    ...(am ? ["", "YOUR ACCOUNT MANAGER", am.name] : []),
+    "",
+    "Automotive Brands",
+    "https://automotivebrands.co.uk",
+  ].join("\n");
+
+  const refRows = [
+    { label: "Original order number", value: order.orderNumber },
+    { label: "Your reference", value: reference },
+  ];
+
+  const bodyHtml = `
+${emailHero("Order updated", amended)}
+${emailReferencePanel(refRows)}
+${emailProductTable(toProductLines(order))}
+${emailTotalsBlock(
+  order.fulfilmentChoice === "COLLECTION"
+    ? { ...totalsFrom(order), deliveryLabel: "£0.00" }
+    : totalsFrom(order),
+)}
+${emailInfoPanel(order.fulfilmentChoice === "COLLECTION" ? "Customer Collection" : "Delivery to", formatDeliveryLines(order))}
+${
+  hasBackorder(order)
+    ? emailStatusCallout(
+        "Some items are on backorder",
+        "You don't need to place another order for these items. They will remain on your order and we'll update you when they are despatched.",
+        "warning",
+      )
+    : ""
+}
+${emailParagraph("The details above replace the previous confirmation for this order number.")}
+${emailAccountManagerCard(am)}`;
+
+  const html = renderTransactionalEmailShell({
+    preheader: `Order ${order.orderNumber} has been updated`,
+    bodyHtml,
+    cta: { label: "View your order", href: order.portalOrderUrl },
+    footer: footer ?? { fromName: "Automotive Brands" },
+  });
+
+  return { subject, text, html };
+}
+
 export function buildOrderReceivedInternalBodies(
   order: OrderEmailSnapshot,
   footer?: EmailFooterMeta,

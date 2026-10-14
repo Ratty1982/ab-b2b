@@ -12,6 +12,11 @@ import type { PlaceSalesOrderInput } from "@/domain/sales-order-entry";
 import { addMoney, moneyToString, moneyZero, parseMoney } from "@/domain/money";
 import { calculateTradeOrderTotals, tradeDeliveryTotalsDto } from "@/domain/trade-delivery";
 import { recordAuditEvent } from "@/server/audit/record";
+import type { OrderAmendmentEmailFeedback } from "@/domain/order-updated-email";
+import {
+  loadOrderUpdatedEmailOutcome,
+  sendOrderUpdatedEmailAfterCommit,
+} from "@/server/email/transactional";
 import { reconcileActiveReservations } from "@/server/orders/reservations";
 import { toConfirmation, type ResolvedLine } from "@/server/orders/service";
 import type { SalesPlaceResult } from "@/server/orders/sales-order-entry";
@@ -219,23 +224,84 @@ export async function amendSubmittedSalesOrder(args: {
   });
 
   const confirmation = await loadConfirmation(result.orderId);
-  if (result.kind === "updated") {
-    await recordAuditEvent({
-      action: "order.edited_for_customer",
-      entityType: "Order",
-      entityId: result.orderId,
-      actorUserId: args.actorUserId,
-      companyId: args.company.id,
-      before: result.before,
-      after: {
-        ...result.after,
-        staffUserId: args.actorUserId,
-        staffName: args.staffName,
-        orderNumber: confirmation.orderNumber,
-      },
-    });
+  if (result.kind === "existing") {
+    return {
+      ok: true,
+      alreadyPlaced: true,
+      order: confirmation,
+      email: await loadOrderUpdatedEmailOutcome(result.orderId, args.input.idempotencyKey),
+    };
   }
-  return { ok: true, alreadyPlaced: result.kind === "existing", order: confirmation };
+
+  await recordAuditEvent({
+    action: "order.edited_for_customer",
+    entityType: "Order",
+    entityId: result.orderId,
+    actorUserId: args.actorUserId,
+    companyId: args.company.id,
+    before: result.before,
+    after: {
+      ...result.after,
+      staffUserId: args.actorUserId,
+      staffName: args.staffName,
+      orderNumber: confirmation.orderNumber,
+    },
+  });
+
+  const email = customerFacingChanged(result.before, result.after)
+    ? await sendAmendmentEmail({
+        actorUserId: args.actorUserId,
+        companyId: args.company.id,
+        orderId: result.orderId,
+        editIdempotencyKey: args.input.idempotencyKey,
+      })
+    : { status: "skipped" as const, emailId: null };
+
+  return { ok: true, alreadyPlaced: false, order: confirmation, email };
+}
+
+async function sendAmendmentEmail(input: {
+  actorUserId: string;
+  companyId: string;
+  orderId: string;
+  editIdempotencyKey: string;
+}): Promise<OrderAmendmentEmailFeedback> {
+  try {
+    const email = await sendOrderUpdatedEmailAfterCommit({
+      orderId: input.orderId,
+      editIdempotencyKey: input.editIdempotencyKey,
+    });
+    if (email.status !== "sent") {
+      await recordAuditEvent({
+        action: "order.email_failed",
+        entityType: "Order",
+        entityId: input.orderId,
+        actorUserId: input.actorUserId,
+        companyId: input.companyId,
+        metadata: {
+          channel: "customer",
+          purpose: "ORDER_UPDATED",
+          status: email.status,
+          emailId: email.emailId,
+        },
+      }).catch(() => undefined);
+    }
+    return email;
+  } catch (error) {
+    await recordAuditEvent({
+      action: "order.email_failed",
+      entityType: "Order",
+      entityId: input.orderId,
+      actorUserId: input.actorUserId,
+      companyId: input.companyId,
+      metadata: {
+        channel: "customer",
+        purpose: "ORDER_UPDATED",
+        detail: error instanceof Error ? error.message : "unknown",
+      },
+    }).catch(() => undefined);
+    return { status: "failed", emailId: null };
+  }
 }
 
 function totalsFor(
@@ -273,6 +339,63 @@ function money2(value: string | null): string | null {
   if (!value) return null;
   const parsed = parseMoney(value);
   return parsed ? moneyToString(parsed, 2) : null;
+}
+
+function customerFacingChanged(
+  before: ReturnType<typeof commercialSnapshot>,
+  after: ReturnType<typeof commercialSnapshot>,
+): boolean {
+  return JSON.stringify(customerFacingView(before)) !== JSON.stringify(customerFacingView(after));
+}
+
+function customerFacingView(snapshot: ReturnType<typeof commercialSnapshot>) {
+  return {
+    poNumber: snapshot.poNumber ?? null,
+    fulfilmentChoice: snapshot.fulfilmentChoice,
+    deliveryMethodLabel: snapshot.deliveryMethodLabel,
+    deliveryAddress: addressView(snapshot.deliveryAddress),
+    contact: contactView(snapshot.contact),
+    deliveryInstructions: snapshot.deliveryInstructions ?? null,
+    subtotal: money2(snapshot.subtotal),
+    vatTotal: money2(snapshot.vatTotal),
+    deliveryTotal: money2(snapshot.deliveryTotal),
+    grandTotal: money2(snapshot.grandTotal),
+    lines: snapshot.lines.map((line) => ({
+      sku: line.sku,
+      name: line.name,
+      qty: line.qty,
+      unitPrice: money2(line.unitPrice),
+      lineTotal: money2(line.lineTotal),
+      availableQty: line.availableQty,
+      backorderQty: line.backorderQty,
+    })),
+  };
+}
+
+function contactView(raw: unknown) {
+  const contact = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const email = typeof contact["email"] === "string" ? contact["email"].trim().toLowerCase() : "";
+  const phone = typeof contact["phone"] === "string" && contact["phone"].trim() ? contact["phone"].trim() : null;
+  return {
+    name: typeof contact["name"] === "string" ? contact["name"].trim() : "",
+    email,
+    phone,
+  };
+}
+
+function addressView(raw: unknown) {
+  if (!raw || typeof raw !== "object") return null;
+  const address = raw as Record<string, unknown>;
+  const line1 = typeof address["line1"] === "string" ? address["line1"].trim() : "";
+  if (!line1) return null;
+  return {
+    line1,
+    line2: typeof address["line2"] === "string" && address["line2"].trim() ? address["line2"].trim() : null,
+    town: typeof address["town"] === "string" ? address["town"].trim() : "",
+    county: typeof address["county"] === "string" && address["county"].trim() ? address["county"].trim() : null,
+    postcode: typeof address["postcode"] === "string" ? address["postcode"].trim() : "",
+    country: typeof address["country"] === "string" && address["country"].trim() ? address["country"].trim() : "GB",
+  };
 }
 
 function commercialSnapshot(order: {

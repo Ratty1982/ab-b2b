@@ -69,6 +69,7 @@ When **Transactional email** is disabled:
 | `USER_INVITATION` | Admin invites staff |
 | `PASSWORD_RESET` | Forgot-password / admin reset |
 | `ORDER_RECEIVED` | B2B order placed (customer contact) |
+| `ORDER_UPDATED` | Staff amend a submitted order (customer contact, one immutable snapshot per amendment) |
 | `ORDER_RECEIVED_INTERNAL` | B2B order placed (staff recipients) |
 | `ORDER_PART_DESPATCHED` | Partial despatch (504C / fulfilment) |
 | `ORDER_DESPATCHED` | Full or remaining despatch |
@@ -85,12 +86,14 @@ SMTP failure **never** rolls back:
 - trade application create / approve / reject
 - account activation
 - order creation
+- submitted-order amendments
 - stock reservation
 - basket conversion
 
 Failed rows remain retryable from Admin → Settings → Email (or order detail).
-Retry rebuilds content from the authoritative Order / Application snapshot and
-**never** creates another order, reservation, approval, or company.
+Retry rebuilds `ORDER_RECEIVED` and despatch mail from the current order snapshot.
+`ORDER_UPDATED` retries the amendment snapshot stored on that email row, so a later revision cannot replace an earlier send.
+Retry **never** creates another order, reservation, approval, or company.
 
 ## Security
 

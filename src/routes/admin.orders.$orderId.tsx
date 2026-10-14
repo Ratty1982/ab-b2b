@@ -176,6 +176,7 @@ function AdminOrderDetailPage() {
   const addr = order.deliveryAddress;
   const customerEmail = emails.find((e) => e.purpose === "ORDER_RECEIVED");
   const internalEmail = emails.find((e) => e.purpose === "ORDER_RECEIVED_INTERNAL");
+  const updatedEmails = emails.filter((e) => e.purpose === "ORDER_UPDATED");
   const despatchEmail = emails.find((e) => e.purpose === "ORDER_DESPATCHED");
   const partDespatchEmail = emails.find((e) => e.purpose === "ORDER_PART_DESPATCHED");
 
@@ -534,6 +535,19 @@ function AdminOrderDetailPage() {
                 ? { onRetry: () => void onRetry(internalEmail.id) }
                 : {})}
             />
+            {updatedEmails.map((row, index) => (
+              <EmailStatusCard
+                key={row.id}
+                label={
+                  updatedEmails.length > 1
+                    ? `Order updated ${index + 1} (ORDER_UPDATED)`
+                    : "Order updated (ORDER_UPDATED)"
+                }
+                row={row}
+                retrying={retryingId === row.id}
+                onRetry={() => void onRetry(row.id)}
+              />
+            ))}
             <EmailStatusCard
               label="Part despatch (ORDER_PART_DESPATCHED)"
               row={partDespatchEmail}
