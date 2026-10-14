@@ -25,7 +25,7 @@ import {
 import { stockFreshness } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { resolveBackorderPolicy, type VariantBackorderPolicy, type EffectiveBackorderPolicy, effectiveBackorderPolicyLabel } from "@/domain/backorder";
-import { hasPermission, loadAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, loadAccessProfile } from "@/server/rbac/access";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   moneyNumber,
@@ -109,7 +109,7 @@ async function actorCanSeeInternalStockQty(userId: string | null | undefined): P
   if (!userId) return false;
   const profile = await loadAccessProfile(userId);
   if (!profile || profile.actorType === "TRADE") return false;
-  return hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access");
+  return grants(profile, "inventory.view", "admin.access");
 }
 
 export type InternalProductStockView = {
@@ -121,7 +121,7 @@ export async function listCataloguePage(actorUserId: string, raw: CatalogueListQ
   const profile = await requireSystemPermission(actorUserId, "products.view");
   const canSeeQty =
     profile.actorType !== "TRADE" &&
-    (hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access"));
+    (grants(profile, "inventory.view", "admin.access"));
   const { bootstrapCatalogue } = await import("@/server/catalogue/service");
   await bootstrapCatalogue();
   const page = Math.max(1, Number(raw.page) || 1);
@@ -338,7 +338,7 @@ export async function getProductWorkspace(actorUserId: string, id: string) {
   const profile = await requireSystemPermission(actorUserId, "products.view");
   const canSeeQty =
     profile.actorType !== "TRADE" &&
-    (hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access"));
+    (grants(profile, "inventory.view", "admin.access"));
   const product = await prisma.product.findUnique({
     where: { id },
     include: {

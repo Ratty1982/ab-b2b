@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAuthenticatedUser, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
   defaultSalesRepJobTitle,
@@ -23,11 +23,7 @@ import {
 
 function canViewSalesTeam(profile: Awaited<ReturnType<typeof requireAuthenticatedUser>>) {
   return (
-    hasPermission(profile, "sales.view_team_accounts") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "reports.management") ||
-    hasPermission(profile, "users.manage") ||
-    hasPermission(profile, "admin.access")
+    grants(profile, "sales.view_team_accounts", "sales.view_all_accounts", "reports.management", "users.manage", "admin.access")
   );
 }
 

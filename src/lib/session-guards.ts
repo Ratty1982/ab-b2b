@@ -1,3 +1,4 @@
+import { grantsFromSession } from "@/domain/user-permissions";
 import type { ClientSession } from "@/server/auth/session";
 
 type SignedInSession = Extract<ClientSession, { signedIn: true }>;
@@ -37,11 +38,7 @@ export function canMutateBasketSession(session: ClientSession): boolean {
     return session.user.navPermissions.includes("orders.create");
   }
   if (adminTradeTestOrderingEnabled(session)) {
-    return (
-      session.user.navPermissions.includes("admin.access") ||
-      session.user.navPermissions.includes("pricing.view") ||
-      session.user.navPermissions.includes("orders.create")
-    );
+    return grantsFromSession(session.user, ["admin.access", "pricing.view", "orders.create"]);
   }
   return false;
 }

@@ -33,6 +33,8 @@ export interface SafeSessionUser {
   tradeRole: TradeAccessKey | null;
   /** Permission keys needed for navigation gating (not a security boundary) */
   navPermissions: PermissionKey[];
+  /** Explicit per-user DENY keys. Navigation must not treat admin.access as a bypass. */
+  navDenies?: PermissionKey[];
   actingFor: {
     companyId: string;
     companyName: string;
@@ -122,6 +124,7 @@ export async function buildSafeSession(userId: string): Promise<SafeSession | nu
       accountNumber: membership?.accountNumber ?? null,
       tradeRole: membership?.role ?? null,
       navPermissions: [...profile.permissions],
+      navDenies: [...profile.deniedPermissions],
       twoFactorEnabled,
       mfaRequired: profileRequiresMfa(profile.systemRoles),
       actingFor: acting

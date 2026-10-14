@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { dueAtFromDateOnly } from "@/domain/sales-followup";
 import {
   assertLeadAccess,
@@ -31,9 +31,7 @@ export async function listCrmLeads(actorUserId: string, raw: unknown) {
   const where: Prisma.LeadWhereInput = {};
 
   if (
-    !hasPermission(profile, "crm.manage") &&
-    !hasPermission(profile, "sales.view_all_accounts") &&
-    !hasPermission(profile, "admin.access")
+    !grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     const scope = await resolveCrmCompanyScope(profile);
     where.OR = [

@@ -16,6 +16,7 @@ import {
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
+import { grantsFromSession } from "@/domain/user-permissions";
 import { canOfferDispatchedTestOrderDelete } from "@/domain/delete-dispatched-test-order";
 import { canOfferArchiveTestOrder, canOfferRestoreTestOrder } from "@/domain/archive-test-order";
 import { DeleteDispatchedTestOrderDialog } from "@/components/orders/DeleteDispatchedTestOrderDialog";
@@ -34,9 +35,7 @@ function AdminOrderDetailPage() {
   const navigate = useNavigate();
   const session = useSession();
   const canDeleteOrders =
-    session.signedIn &&
-    (session.user.navPermissions.includes("orders.edit") ||
-      session.user.navPermissions.includes("admin.access"));
+    session.signedIn && grantsFromSession(session.user, ["orders.edit", "admin.access"]);
   const [order, setOrder] = useState<Detail | null>(null);
   const [emails, setEmails] = useState<EmailRow[]>([]);
   const [error, setError] = useState<string | null>(null);

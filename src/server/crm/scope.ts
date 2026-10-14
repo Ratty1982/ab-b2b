@@ -3,7 +3,7 @@
  */
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 
 export async function requireCrmViewer(actorUserId: string): Promise<LoadedAccessProfile> {
@@ -15,7 +15,7 @@ export async function requireCrmViewer(actorUserId: string): Promise<LoadedAcces
 }
 
 export function canMutateCrmRecords(profile: LoadedAccessProfile): boolean {
-  if (hasPermission(profile, "crm.manage") || hasPermission(profile, "admin.access")) {
+  if (grants(profile, "crm.manage", "admin.access")) {
     return true;
   }
   // Sales staff with crm.view + any sales account scope may work their book.
@@ -35,9 +35,7 @@ export function requireCrmMutator(profile: LoadedAccessProfile) {
 
 export function canLogCrmActivity(profile: LoadedAccessProfile): boolean {
   return (
-    hasPermission(profile, "crm.activities.create") ||
-    hasPermission(profile, "crm.manage") ||
-    hasPermission(profile, "admin.access")
+    grants(profile, "crm.activities.create", "crm.manage", "admin.access")
   );
 }
 
@@ -46,9 +44,7 @@ export async function resolveCrmCompanyScope(
   profile: LoadedAccessProfile,
 ): Promise<string[] | "all"> {
   if (
-    hasPermission(profile, "crm.manage") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "admin.access")
+    grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     return "all";
   }
@@ -71,9 +67,7 @@ export async function assertCrmCompanyAccess(
 /** Lead visibility: owned by actor, or linked company in scope, or manage-all. */
 export async function leadVisibleWhere(profile: LoadedAccessProfile) {
   if (
-    hasPermission(profile, "crm.manage") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "admin.access")
+    grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     return {};
   }
@@ -103,9 +97,7 @@ export async function assertLeadAccess(profile: LoadedAccessProfile, leadId: str
   });
   if (!lead) throw new AuthError("Lead not found", "NOT_FOUND", 404);
   if (
-    hasPermission(profile, "crm.manage") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "admin.access")
+    grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     return lead;
   }
@@ -128,10 +120,7 @@ export async function assertOpportunityAccess(
   if (!opp) throw new AuthError("Opportunity not found", "NOT_FOUND", 404);
   await assertCrmCompanyAccess(profile, opp.companyId);
   if (
-    !hasPermission(profile, "crm.manage") &&
-    !hasPermission(profile, "sales.view_all_accounts") &&
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "sales.view_team_accounts")
+    !grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access", "sales.view_team_accounts")
   ) {
     // Own-account sales: also allow if they own the opportunity
     if (opp.ownerId && opp.ownerId !== profile.userId) {

@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/session";
+import { grantsFromSession } from "@/domain/user-permissions";
 import { summariseStockQtyChanges } from "@/domain/stock";
 import { InstantText } from "@/components/ab/InstantText";
 import { STOCK_SCHEDULE_LABEL } from "@/domain/stock-schedule";
@@ -145,9 +146,7 @@ function AutopartStockOps() {
   const session = useSession();
   const canSync =
     session.signedIn &&
-    (session.user.navPermissions.includes("products.import") ||
-      session.user.navPermissions.includes("products.edit") ||
-      session.user.navPermissions.includes("admin.access"));
+    grantsFromSession(session.user, ["products.import", "products.edit", "admin.access"]);
   const fileRef = useRef<HTMLInputElement>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);

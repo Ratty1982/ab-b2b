@@ -6,6 +6,7 @@
  * unrelated feature work. Do not duplicate these lists in AppShell or layouts.
  */
 import type { PermissionKey } from "@/domain/permissions";
+import { allowsListedPermissions } from "@/domain/user-permissions";
 import type { SafeSessionUser } from "@/server/auth/session";
 
 /** Canonical paths used across admin / sales / CRM / portal. */
@@ -165,12 +166,16 @@ export type NavSurface = "backoffice" | "portal";
 export type NavCtx = {
   actorType: "INTERNAL" | "TRADE";
   permissions: ReadonlySet<string>;
+  denied: ReadonlySet<string>;
 };
 
-export function navCtxFromUser(user: Pick<SafeSessionUser, "actorType" | "navPermissions">): NavCtx {
+export function navCtxFromUser(
+  user: Pick<SafeSessionUser, "actorType" | "navPermissions" | "navDenies">,
+): NavCtx {
   return {
     actorType: user.actorType,
     permissions: new Set(user.navPermissions),
+    denied: new Set(user.navDenies ?? []),
   };
 }
 
@@ -860,7 +865,23 @@ export function areaHomeLabel(ctx: NavCtx): string {
 function permissionOk(item: NavItemDef, ctx: NavCtx): boolean {
   if (!item.permission) return true;
   const required = Array.isArray(item.permission) ? item.permission : [item.permission];
-  return required.some((p) => ctx.permissions.has(p));
+  return allowsListedPermissions(ctx.permissions, ctx.denied, required);
+}
+
+/** Staff navigation that the effective permission set would show. Does not sign in as the user. */
+export function previewBackOfficeNavigation(input: {
+  permissions: Iterable<string>;
+  denied?: Iterable<string>;
+}): Array<{ section: string; items: string[] }> {
+  const ctx: NavCtx = {
+    actorType: "INTERNAL",
+    permissions: new Set(input.permissions),
+    denied: new Set(input.denied ?? []),
+  };
+  return visibleNav(BACK_OFFICE_NAV, ctx).map((section) => ({
+    section: section.label,
+    items: section.items.flatMap((item) => [item.label, ...item.children.map((child) => child.label)]),
+  }));
 }
 
 export function itemPath(item: NavItemDef, ctx: NavCtx): string {

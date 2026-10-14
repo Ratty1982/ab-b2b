@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { MediaPicker } from "@/components/cms/MediaPicker";
 import { ROUTES } from "@/lib/app-nav";
 import { useSession } from "@/lib/session";
+import { grantsFromSession } from "@/domain/user-permissions";
 import { cn } from "@/lib/utils";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
 import {
@@ -115,9 +116,7 @@ type CompanyOption = {
 function SalesTeamAdmin() {
   const session = useSession();
   const canEdit =
-    session.signedIn &&
-    (session.user.navPermissions.includes("users.manage") ||
-      session.user.navPermissions.includes("admin.access"));
+    session.signedIn && grantsFromSession(session.user, ["users.manage", "admin.access"]);
 
   const [rows, setRows] = useState<ListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);

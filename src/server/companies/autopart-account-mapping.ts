@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { normaliseAccountToken } from "@/domain/autopart-report-money";
 import { confirmAutopart504Import, confirmAutopartTrm21qcImport } from "@/server/companies/autopart-ongoing-sales";
 import { isAutopart504Report } from "@/domain/autopart-504";
@@ -28,9 +28,7 @@ async function requireMappingEdit(userId: string) {
     throw new AuthError("Trade customers cannot map Autopart accounts", "FORBIDDEN", 403);
   }
   if (
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "companies.edit") &&
-    !hasPermission(profile, "companies.manage_users")
+    !grants(profile, "admin.access", "companies.edit", "companies.manage_users")
   ) {
     throw new AuthError("Not permitted to map Autopart accounts", "FORBIDDEN", 403);
   }

@@ -8,7 +8,7 @@ import {
   requireCrmViewer,
   resolveCrmCompanyScope,
 } from "@/server/crm/scope";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 
 const viewSchema = z.object({
   view: z.enum(["MY", "TEAM"]).optional(),
@@ -23,10 +23,7 @@ export async function getCrmOverview(actorUserId: string, raw: unknown) {
   const upcomingEnd = new Date(`${addDaysIso(today, 7)}T23:59:59.999Z`);
 
   const canTeam =
-    hasPermission(profile, "crm.manage") ||
-    hasPermission(profile, "sales.view_team_accounts") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "admin.access");
+    grants(profile, "crm.manage", "sales.view_team_accounts", "sales.view_all_accounts", "admin.access");
 
   const view = input.view === "TEAM" && canTeam ? "TEAM" : "MY";
   const scope = await resolveCrmCompanyScope(profile);

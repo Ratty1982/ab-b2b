@@ -9,7 +9,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { chunkArray, SAFE_IN_LIST_CHUNK } from "@/server/db/prisma-in-chunks";
 import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { formatGbp, moneyMinorToDto, parseSalesNetMinor } from "@/domain/sales-intelligence";
@@ -313,9 +313,7 @@ async function followUpCountsForDay(
 
   const base: Prisma.TaskWhereInput = { ...companyFilter };
   if (
-    !hasPermission(profile, "crm.manage") &&
-    !hasPermission(profile, "sales.view_all_accounts") &&
-    !hasPermission(profile, "admin.access")
+    !grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     base.AND = [{ OR: [{ assigneeId: actorUserId }, { createdById: actorUserId }] }];
   }

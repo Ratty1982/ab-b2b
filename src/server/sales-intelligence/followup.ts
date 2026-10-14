@@ -6,7 +6,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import { resolveSalesRepAssignmentRoute } from "@/server/sales/account-manager";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -938,9 +938,7 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
 
   // Sales reps without manage-all see assigned-to-them or created-by-them within scope.
   if (
-    !hasPermission(profile, "crm.manage") &&
-    !hasPermission(profile, "sales.view_all_accounts") &&
-    !hasPermission(profile, "admin.access")
+    !grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     where.AND = [
       {
@@ -1019,9 +1017,7 @@ export async function getCrmTask(actorUserId: string, raw: unknown) {
     await assertCompanyInScope(profile, task.companyId);
   }
   if (
-    !hasPermission(profile, "crm.manage") &&
-    !hasPermission(profile, "sales.view_all_accounts") &&
-    !hasPermission(profile, "admin.access")
+    !grants(profile, "crm.manage", "sales.view_all_accounts", "admin.access")
   ) {
     if (task.assigneeId !== actorUserId && task.createdById !== actorUserId) {
       throw new AuthError("No access to this task", "FORBIDDEN", 403);

@@ -564,6 +564,8 @@ model User {
   customerPriceImportsDecided   CustomerPriceImport[] @relation("CustomerPriceImportDecider")
   promotionsCreated  Promotion[]       @relation("PromotionCreator")
   salesOrderDrafts   SalesOrderDraft[] @relation("SalesOrderDraftCreator")
+  permissionOverrides UserPermissionOverride[] @relation("UserPermissionOverrides")
+  permissionOverridesEdited UserPermissionOverride[] @relation("UserPermissionOverrideEditor")
 
   @@index([actorType, status])
   @@index([tradeTestPriceListId])
@@ -701,6 +703,29 @@ model UserRole {
   role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@id([userId, roleId])
+}
+
+/// Internal staff only. Absence of a row means INHERIT from the user's roles.
+enum UserPermissionEffect {
+  ALLOW
+  DENY
+}
+
+model UserPermissionOverride {
+  id              String               @id @default(cuid())
+  userId          String
+  permissionKey   String
+  effect          UserPermissionEffect
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  updatedByUserId String?
+
+  user      User  @relation("UserPermissionOverrides", fields: [userId], references: [id], onDelete: Cascade)
+  updatedBy User? @relation("UserPermissionOverrideEditor", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, permissionKey])
+  @@index([userId])
+  @@index([updatedByUserId])
 }
 
 // ─── Companies & people ──────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import {
   AuthError,
   requireSystemPermission,
 } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath, cmsFocalStyle } from "@/lib/cms-media";
 import {
   DEFAULT_TEAM_DEPARTMENTS,
@@ -495,6 +495,6 @@ export async function deleteTeamDepartment(actorUserId: string, id: string) {
 export async function assertCanManageTeam(actorUserId: string) {
   const profile = await requireSystemPermission(actorUserId, "cms.page.read");
   return {
-    canEdit: hasPermission(profile, "cms.page.edit") || hasPermission(profile, "admin.access"),
+    canEdit: grants(profile, "cms.page.edit", "admin.access"),
   };
 }

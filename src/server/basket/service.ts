@@ -5,7 +5,7 @@ import {
   requireAuthenticatedUser,
   requireCompanyPermission,
 } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { loadPricingActor, resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
 import { cmsMediaPublicPath } from "@/lib/cms-media";
@@ -268,10 +268,7 @@ async function resolveBasketContext(userId: string): Promise<BasketContext> {
 
   if (profile.actorType === "INTERNAL") {
     const canMutate =
-      hasPermission(profile, "admin.access") ||
-      hasPermission(profile, "orders.create") ||
-      hasPermission(profile, "orders.place_for_customer") ||
-      hasPermission(profile, "pricing.view");
+      grants(profile, "admin.access", "orders.create", "orders.place_for_customer", "pricing.view");
     if (!canMutate) {
       throw new AuthError(
         "You do not have permission to use the admin test basket",

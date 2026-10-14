@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 
 /**
@@ -32,7 +32,7 @@ async function assertCanEditCompanyCommercial(actorUserId: string, companyId: st
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade customers cannot edit Autopart account codes", "FORBIDDEN", 403);
   }
-  if (hasPermission(profile, "admin.access") || hasPermission(profile, "sales.view_all_accounts")) {
+  if (grants(profile, "admin.access", "sales.view_all_accounts")) {
     return profile;
   }
   const hasSalesScope =

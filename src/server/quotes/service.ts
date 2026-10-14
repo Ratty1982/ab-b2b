@@ -77,7 +77,6 @@ async function requireQuoteStaff(userId: string, permission: string) {
 async function assertCompanyInSalesScope(userId: string, companyId: string) {
   const profile = await loadAccessProfile(userId);
   if (!profile) throw new AuthError("Not authenticated", "UNAUTHORIZED", 401);
-  if (hasPermission(profile, "admin.access")) return profile;
   const ok = await canAccessCompanyAsSales(profile, companyId);
   if (!ok) throw new AuthError("Company is outside your sales scope", "FORBIDDEN", 403);
   return profile;

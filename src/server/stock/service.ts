@@ -2,7 +2,7 @@ import type { StockIssueKind, StockStatus, StockSyncStatus } from "@prisma/clien
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import {
   AUTOPART_FEED_SOURCE,
   AUTOPART_WAREHOUSE_CODE,
@@ -1231,7 +1231,7 @@ export function publicAvailabilityFromInventoryRows(
 export async function getInternalVariantStock(actorUserId: string, variantId: string) {
   const profile = await requireInternalStockView(actorUserId);
   const stock = await getVariantStock(variantId);
-  const canSeeQty = hasPermission(profile, "inventory.view") || hasPermission(profile, "admin.access");
+  const canSeeQty = grants(profile, "inventory.view", "admin.access");
   return {
     availability: stock?.availability ?? null,
     sellableQty: canSeeQty ? stock?.sellableQty ?? null : null,

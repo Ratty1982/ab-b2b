@@ -5,6 +5,7 @@
  */
 
 import { moneyFromUnknown, moneyToNumber, parseMoney, toCustomerSellUnitPrice } from "@/domain/money";
+import { allowsListedPermissions } from "@/domain/user-permissions";
 import {
   PUBLIC_PRICE_SOURCE,
   type TradePriceResolution,
@@ -86,6 +87,7 @@ export function viewerFromAccess(input: {
   signedIn: boolean;
   actorType?: "INTERNAL" | "TRADE" | null;
   permissions?: ReadonlySet<string> | readonly string[];
+  denied?: ReadonlySet<string> | readonly string[];
 }): PriceViewer {
   if (!input.signedIn) return { kind: "anonymous" };
   const perms = Array.isArray(input.permissions)
@@ -93,7 +95,16 @@ export function viewerFromAccess(input: {
     : input.permissions instanceof Set
       ? input.permissions
       : new Set<string>();
-  const canViewPricing = perms.has("pricing.view") || perms.has("products.view") || perms.has("admin.access");
+  const denied = Array.isArray(input.denied)
+    ? new Set(input.denied)
+    : input.denied instanceof Set
+      ? input.denied
+      : new Set<string>();
+  const canViewPricing = allowsListedPermissions(perms, denied, [
+    "pricing.view",
+    "products.view",
+    "admin.access",
+  ]);
   if (input.actorType === "INTERNAL") {
     return { kind: "internal", canViewPricing };
   }

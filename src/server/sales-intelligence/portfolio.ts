@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import { chunkArray, SAFE_IN_LIST_CHUNK } from "@/server/db/prisma-in-chunks";
 import {
@@ -57,9 +57,7 @@ async function requirePortfolioActor(actorUserId: string): Promise<LoadedAccessP
 
 function canSelectSalesRep(profile: LoadedAccessProfile): boolean {
   return (
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "admin.access") ||
-    hasPermission(profile, "sales.view_team_accounts")
+    grants(profile, "sales.view_all_accounts", "admin.access", "sales.view_team_accounts")
   );
 }
 

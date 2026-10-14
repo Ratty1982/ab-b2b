@@ -5,7 +5,7 @@ import type { Prisma, ProductDocumentType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { deleteMediaObject, getMediaObjectBytes, putMediaObject } from "@/server/cms/storage";
 import {
@@ -878,7 +878,7 @@ export async function getProductDocumentBytes(
       const profile = await requireSystemPermission(actorUserId, "products.view");
       isStaff =
         profile.actorType !== "TRADE" &&
-        (hasPermission(profile, "products.view") || hasPermission(profile, "admin.access"));
+        (grants(profile, "products.view", "admin.access"));
     } catch {
       isStaff = false;
     }

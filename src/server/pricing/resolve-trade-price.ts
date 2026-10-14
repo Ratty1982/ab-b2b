@@ -47,6 +47,7 @@ export async function loadPricingActor(userId: string | null): Promise<PricingAc
     signedIn: true,
     actorType: profile.actorType,
     permissions: profile.permissions,
+    denied: profile.deniedPermissions,
   });
 
   if (profile.actorType === "INTERNAL") {

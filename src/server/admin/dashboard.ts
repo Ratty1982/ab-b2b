@@ -5,7 +5,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireAuthenticatedUser } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { isSharePointSdsWorkflowEnabled } from "@/domain/sharepoint-sds-enabled";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { moneyToString, moneyZero, parseMoney } from "@/domain/money";
@@ -263,35 +263,32 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     throw new AuthError("Admin dashboard requires internal access", "FORBIDDEN", 403);
   }
 
-  const canSeeOrders = hasPermission(profile, "orders.view") || hasPermission(profile, "admin.access");
+  const canSeeOrders = grants(profile, "orders.view", "admin.access");
   const canSeeCompanies =
-    hasPermission(profile, "companies.view") || hasPermission(profile, "admin.access");
+    grants(profile, "companies.view", "admin.access");
   const canCreateCompanies =
-    hasPermission(profile, "companies.create") || hasPermission(profile, "admin.access");
+    grants(profile, "companies.create", "admin.access");
   const canSeeApplications =
-    hasPermission(profile, "applications.view") || hasPermission(profile, "admin.access");
-  const canSeeQuotes = hasPermission(profile, "quotes.view") || hasPermission(profile, "admin.access");
+    grants(profile, "applications.view", "admin.access");
+  const canSeeQuotes = grants(profile, "quotes.view", "admin.access");
   const canCreateQuotes =
-    hasPermission(profile, "quotes.create") || hasPermission(profile, "admin.access");
+    grants(profile, "quotes.create", "admin.access");
   const canSeeProducts =
-    hasPermission(profile, "products.view") || hasPermission(profile, "admin.access");
-  const canSeeStock =
-    hasPermission(profile, "inventory.view") ||
-    canSeeProducts ||
-    hasPermission(profile, "admin.access");
-  const canSeeEmail = hasPermission(profile, "settings.view") || hasPermission(profile, "admin.access");
-  const canSeeAudit = hasPermission(profile, "audit.view") || hasPermission(profile, "admin.access");
-  const canSeeTasks = hasPermission(profile, "tasks.view") || hasPermission(profile, "admin.access");
+    grants(profile, "products.view", "admin.access");
+  const canSeeStock = grants(profile, "inventory.view", "products.view", "admin.access");
+  const canSeeEmail = grants(profile, "settings.view", "admin.access");
+  const canSeeAudit = grants(profile, "audit.view", "admin.access");
+  const canSeeTasks = grants(profile, "tasks.view", "admin.access");
   const canSeePurchasing =
-    hasPermission(profile, "purchasing.view") || hasPermission(profile, "admin.access");
-  const canSeeCrm = hasPermission(profile, "crm.view") || hasPermission(profile, "admin.access");
-  const canSeeSettings = hasPermission(profile, "settings.view") || hasPermission(profile, "admin.access");
+    grants(profile, "purchasing.view", "admin.access");
+  const canSeeCrm = grants(profile, "crm.view", "admin.access");
+  const canSeeSettings = grants(profile, "settings.view", "admin.access");
   /** Ongoing sales settings row — readable for staff who can view orders (no edit required for health). */
   const canSeeOngoingSales = canSeeOrders;
   /** SharePoint SDS public settings — products.view staff (same gate as document admin view). */
   const canSeeSharePointSds = canSeeProducts;
 
-  if (!canSeeOrders && !canSeeCompanies && !canSeeApplications && !hasPermission(profile, "admin.access")) {
+  if (!grants(profile, "orders.view", "companies.view", "applications.view", "admin.access")) {
     throw new AuthError("Insufficient permissions for dashboard", "FORBIDDEN", 403);
   }
 

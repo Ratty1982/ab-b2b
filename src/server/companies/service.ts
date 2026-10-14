@@ -13,7 +13,7 @@ import {
   requireAnySystemPermission,
   AuthError,
 } from "@/server/rbac/guards";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import {
   companyCreateSchema,
   companyDeleteSchema,
@@ -82,7 +82,7 @@ function companySelect() {
 }
 
 async function assertCompanyReadable(profile: LoadedAccessProfile, companyId: string) {
-  if (hasPermission(profile, "sales.view_all_accounts") || hasPermission(profile, "admin.access")) {
+  if (grants(profile, "sales.view_all_accounts", "admin.access")) {
     return;
   }
   if (
@@ -276,7 +276,7 @@ function serializeCompany(row: {
 
 export async function getCompanyWorkspace(actorUserId: string, companyId: string) {
   const profile = await requireAuthenticatedUser(actorUserId);
-  if (!hasPermission(profile, "companies.view") && !hasPermission(profile, "admin.access")) {
+  if (!grants(profile, "companies.view", "admin.access")) {
     throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
   }
   await assertCompanyReadable(profile, companyId);
@@ -326,7 +326,7 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
   });
 
   const canEditPricing =
-    hasPermission(profile, "pricing.edit") || hasPermission(profile, "admin.access");
+    grants(profile, "pricing.edit", "admin.access");
 
   const serialized = serializeCompany(company);
 
@@ -347,11 +347,11 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
         }
       : null,
     permissions: {
-      canEdit: hasPermission(profile, "companies.edit") || hasPermission(profile, "admin.access"),
+      canEdit: grants(profile, "companies.edit", "admin.access"),
       canDelete:
-        hasPermission(profile, "companies.delete") || hasPermission(profile, "admin.access"),
+        grants(profile, "companies.delete", "admin.access"),
       canManageUsers:
-        hasPermission(profile, "companies.manage_users") || hasPermission(profile, "admin.access"),
+        grants(profile, "companies.manage_users", "admin.access"),
       canEditPricing,
     },
     contacts: company.contacts.map((c) => ({
@@ -1195,7 +1195,7 @@ export async function listCompanyActivity(actorUserId: string, companyId: string
       take: limit,
       include: { user: { select: { id: true, name: true, email: true } } },
     }),
-    hasPermission(profile, "audit.view") || hasPermission(profile, "admin.access")
+    grants(profile, "audit.view", "admin.access")
       ? prisma.auditEvent.findMany({
           where: { companyId },
           orderBy: { createdAt: "desc" },

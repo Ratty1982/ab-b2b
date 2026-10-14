@@ -15,6 +15,7 @@ import {
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
+import { grantsFromSession } from "@/domain/user-permissions";
 import { ArchiveTestOrderDialog } from "@/components/orders/ArchiveTestOrderDialog";
 
 type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
@@ -63,9 +64,7 @@ function downloadCsv(filename: string, csv: string) {
 function AdminOrdersPage() {
   const session = useSession();
   const canDeleteOrders =
-    session.signedIn &&
-    (session.user.navPermissions.includes("orders.edit") ||
-      session.user.navPermissions.includes("admin.access"));
+    session.signedIn && grantsFromSession(session.user, ["orders.edit", "admin.access"]);
   const isSuperAdmin = session.signedIn && session.user.systemRoles.includes("SUPER_ADMIN");
   const search = Route.useSearch();
   const [rows, setRows] = useState<Row[]>([]);

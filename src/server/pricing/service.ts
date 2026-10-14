@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireAnySystemPermission, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission, loadAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, loadAccessProfile } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { updateCompany } from "@/server/companies/service";
 import {
@@ -373,7 +373,7 @@ export async function searchCompaniesForPricing(actorUserId: string, q: string) 
 export async function assignCompanyToPriceList(actorUserId: string, raw: unknown) {
   const profile = await requireInternalPricing(actorUserId, "pricing.edit");
   const input = assignCompanyPriceListSchema.parse(raw);
-  if (hasPermission(profile, "companies.edit") || hasPermission(profile, "admin.access")) {
+  if (grants(profile, "companies.edit", "admin.access")) {
     return updateCompany(actorUserId, { id: input.companyId, priceListId: input.priceListId });
   }
   const before = await prisma.company.findUnique({ where: { id: input.companyId } });
@@ -489,8 +489,7 @@ export async function listCustomerPrices(actorUserId: string, companyId: string)
     hasPermission(profile, "sales.view_team_accounts");
   if (
     hasSalesScope &&
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "sales.view_all_accounts")
+    !grants(profile, "admin.access", "sales.view_all_accounts")
   ) {
     const ok = await canAccessCompanyAsSales(profile, companyId);
     if (!ok) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
@@ -561,8 +560,7 @@ export async function upsertCustomerPrice(actorUserId: string, raw: unknown) {
     hasPermission(profile, "sales.view_team_accounts");
   if (
     hasSalesScope &&
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "sales.view_all_accounts")
+    !grants(profile, "admin.access", "sales.view_all_accounts")
   ) {
     const ok = await canAccessCompanyAsSales(profile, input.companyId);
     if (!ok) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
@@ -614,8 +612,7 @@ export async function deleteCustomerPrice(actorUserId: string, id: string) {
     hasPermission(profile, "sales.view_team_accounts");
   if (
     hasSalesScope &&
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "sales.view_all_accounts")
+    !grants(profile, "admin.access", "sales.view_all_accounts")
   ) {
     const ok = await canAccessCompanyAsSales(profile, before.companyId);
     if (!ok) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
@@ -870,7 +867,7 @@ export async function searchVariantsForPricing(actorUserId: string, q: string) {
 export async function previewTradePriceAsCustomer(actorUserId: string, raw: unknown) {
   const profile = await loadAccessProfile(actorUserId);
   if (!profile) throw new AuthError("Authentication required", "UNAUTHENTICATED", 401);
-  if (!hasPermission(profile, "pricing.view") && !hasPermission(profile, "admin.access")) {
+  if (!grants(profile, "pricing.view", "admin.access")) {
     throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
   }
   const input = priceAsCustomerSchema.parse(raw);
@@ -879,8 +876,7 @@ export async function previewTradePriceAsCustomer(actorUserId: string, raw: unkn
     if (!member) throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);
   } else {
     const companyOk =
-      hasPermission(profile, "admin.access") ||
-      hasPermission(profile, "pricing.edit") ||
+      grants(profile, "admin.access", "pricing.edit") ||
       (await canAccessCompanyAsSales(profile, input.companyId));
     if (!companyOk) {
       throw new AuthError("No access to this company", "COMPANY_FORBIDDEN", 403);

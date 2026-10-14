@@ -11,7 +11,7 @@ import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
 import { parseAutopart561l } from "@/domain/autopart-561l";
@@ -216,7 +216,7 @@ async function assertStaffCompanyAccess(actorUserId: string, companyId: string, 
   if (profile.actorType === "TRADE") {
     throw new AuthError("Trade customers cannot manage Autopart history imports", "FORBIDDEN", 403);
   }
-  if (hasPermission(profile, "admin.access") || hasPermission(profile, "sales.view_all_accounts")) {
+  if (grants(profile, "admin.access", "sales.view_all_accounts")) {
     return profile;
   }
   const ok = await canAccessCompanyAsSales(profile, companyId);

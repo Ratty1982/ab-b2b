@@ -171,6 +171,20 @@ describe("canonical navigation contract", () => {
     expect(new Set(tos).size).toBe(tos.length);
   });
 
+  it("hides a denied item when admin access would otherwise show it", () => {
+    const visible = flattenVisible(
+      backOfficeNavForUser(
+        user({
+          actorType: "INTERNAL",
+          systemRoles: ["SUPER_ADMIN"],
+          navPermissions: ALL_PERMISSIONS.filter((key) => key !== "products.cost.view"),
+          navDenies: ["products.cost.view"],
+        }),
+      ),
+    );
+    expect(visible.map((item) => item.id)).not.toContain("cost-intelligence");
+  });
+
   it("hides admin-only navigation from sales representatives", () => {
     const items = flattenVisible(backOfficeNavForUser(salesRep));
     const ids = items.map((i) => i.id);

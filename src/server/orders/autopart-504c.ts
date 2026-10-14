@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { parseAutopart504cReport, type Autopart504cRow } from "@/domain/autopart-504c";
 import {
@@ -96,7 +96,7 @@ function moneyOrZero(raw: string | null): string {
 
 async function require504cAdmin(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "orders.edit")) {
+  if (!grants(profile, "admin.access", "orders.edit")) {
     throw new AuthError("You do not have permission to manage the 504C feed", "FORBIDDEN", 403);
   }
   return profile;

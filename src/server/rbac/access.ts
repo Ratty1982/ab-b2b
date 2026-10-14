@@ -2,7 +2,12 @@ import type { CompanyUserRole } from "@prisma/client";
 
 import { prisma } from "@/infra/database/client";
 import { TRADE_ROLE_PERMISSIONS } from "@/domain/role-permissions";
-import type { PermissionKey, TradeAccessKey } from "@/domain/permissions";
+import { isPermissionKey, type PermissionKey, type TradeAccessKey } from "@/domain/permissions";
+import {
+  allowsListedPermissions,
+  applyUserPermissionOverrides,
+  type StoredOverride,
+} from "@/domain/user-permissions";
 import type { RequestActor } from "@/server/context/actor";
 
 /** Map Prisma CompanyUserRole → product trade access key */
@@ -58,6 +63,8 @@ export interface LoadedAccessProfile {
   }>;
   salesRepId: string | null;
   managerSalesRepId: string | null;
+  /** Explicit DENY overrides. admin.access must not bypass these. */
+  deniedPermissions: Set<PermissionKey>;
 }
 
 export async function loadAccessProfile(userId: string): Promise<LoadedAccessProfile | null> {
@@ -67,6 +74,7 @@ export async function loadAccessProfile(userId: string): Promise<LoadedAccessPro
       userRoles: {
         include: { role: { include: { permissions: { include: { permission: true } } } } },
       },
+      permissionOverrides: { select: { permissionKey: true, effect: true } },
       companyUsers: {
         where: { status: "ACTIVE" },
         include: { company: { select: { id: true, name: true, accountNumber: true } } },
@@ -77,21 +85,34 @@ export async function loadAccessProfile(userId: string): Promise<LoadedAccessPro
 
   if (!user || user.status === "DISABLED") return null;
 
-  const permissions = new Set<PermissionKey>();
+  const rolePermissions = new Set<PermissionKey>();
   const systemRoles: string[] = [];
 
   for (const ur of user.userRoles) {
     systemRoles.push(ur.role.key);
     for (const rp of ur.role.permissions) {
-      permissions.add(rp.permission.key as PermissionKey);
+      if (isPermissionKey(rp.permission.key)) rolePermissions.add(rp.permission.key);
     }
   }
+
+  const storedOverrides: StoredOverride[] =
+    user.actorType === "INTERNAL"
+      ? user.permissionOverrides.flatMap((row) =>
+          isPermissionKey(row.permissionKey) && (row.effect === "ALLOW" || row.effect === "DENY")
+            ? [{ permissionKey: row.permissionKey, effect: row.effect }]
+            : [],
+        )
+      : [];
+  const applied = applyUserPermissionOverrides(rolePermissions, storedOverrides);
+  const permissions = applied.effective;
+  const deniedPermissions = applied.denied;
 
   const companyMemberships = user.companyUsers.map((cu) => {
     const tradeRole = companyRoleToTradeAccess(cu.role);
     for (const key of TRADE_ROLE_PERMISSIONS[tradeRole]) {
-      // Trade permissions are company-scoped at enforcement time;
-      // we still collect the union for navigation hints.
+      // Trade permissions stay company-scoped at enforcement time.
+      // A staff DENY still suppresses the navigation hint for that key.
+      if (deniedPermissions.has(key)) continue;
       permissions.add(key);
     }
     return {
@@ -115,7 +136,13 @@ export async function loadAccessProfile(userId: string): Promise<LoadedAccessPro
     companyMemberships,
     salesRepId: user.salesRep?.active ? user.salesRep.id : null,
     managerSalesRepId: user.salesRep?.active ? (user.salesRep.managerId ?? null) : null,
+    deniedPermissions,
   };
+}
+
+/** Specific permissions win. admin.access does not override an explicit DENY. */
+export function grants(profile: LoadedAccessProfile, ...keys: PermissionKey[]): boolean {
+  return allowsListedPermissions(profile.permissions, profile.deniedPermissions, keys);
 }
 
 export function profileToActor(

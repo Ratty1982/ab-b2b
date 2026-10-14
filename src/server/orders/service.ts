@@ -19,7 +19,7 @@ import {
   requireCompanyPermission,
   requireSystemPermission,
 } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -1926,7 +1926,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
   }
 
-  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "sales.view_all_accounts")) {
+  if (!grants(profile, "admin.access", "sales.view_all_accounts")) {
     const accessible = await getAccessibleCompanyIdsForSales(profile);
     if (accessible !== "all" && !accessible.includes(order.companyId)) {
       throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
@@ -2180,7 +2180,7 @@ type DeleteAdminOrderResult = {
 
 async function assertCanDeleteOrders(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
+  if (!grants(profile, "orders.edit", "admin.access")) {
     throw new AuthError("You do not have permission to delete orders", "FORBIDDEN", 403);
   }
   return profile;
@@ -2214,7 +2214,7 @@ export async function deleteAdminOrder(
     throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
   }
 
-  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "sales.view_all_accounts")) {
+  if (!grants(profile, "admin.access", "sales.view_all_accounts")) {
     const accessible = await getAccessibleCompanyIdsForSales(profile);
     if (accessible !== "all" && !accessible.includes(order.companyId)) {
       throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
@@ -2354,7 +2354,7 @@ export async function repairOrderAutopartCustomerCodeSnapshot(
   autopartCustomerCodeSnapshot: string;
 }> {
   const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
+  if (!grants(profile, "orders.edit", "admin.access")) {
     throw new AuthError("You do not have permission to repair order Autopart snapshots", "FORBIDDEN", 403);
   }
 
@@ -2378,7 +2378,7 @@ export async function repairOrderAutopartCustomerCodeSnapshot(
   });
   if (!order) throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
 
-  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "sales.view_all_accounts")) {
+  if (!grants(profile, "admin.access", "sales.view_all_accounts")) {
     const accessible = await getAccessibleCompanyIdsForSales(profile);
     if (accessible !== "all" && !accessible.includes(order.companyId)) {
       throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);

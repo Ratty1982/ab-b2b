@@ -1,5 +1,5 @@
 import { prisma } from "@/infra/database/client";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 
 /**
  * Sales account access via CompanyAssignment.
@@ -11,7 +11,7 @@ export async function canAccessCompanyAsSales(
   profile: LoadedAccessProfile,
   companyId: string,
 ): Promise<boolean> {
-  if (hasPermission(profile, "sales.view_all_accounts") || hasPermission(profile, "admin.access")) {
+  if (grants(profile, "sales.view_all_accounts", "admin.access")) {
     return true;
   }
 
@@ -40,7 +40,7 @@ export async function canAccessCompanyAsSales(
 export async function getAccessibleCompanyIdsForSales(
   profile: LoadedAccessProfile,
 ): Promise<string[] | "all"> {
-  if (hasPermission(profile, "sales.view_all_accounts") || hasPermission(profile, "admin.access")) {
+  if (grants(profile, "sales.view_all_accounts", "admin.access")) {
     return "all";
   }
 

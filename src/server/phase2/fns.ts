@@ -1537,6 +1537,32 @@ export const getPublicBrandFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getStaffUserPermissionsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { userId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { getStaffUserPermissions } = await import("@/server/users/permissions");
+      const result = await getStaffUserPermissions(userId, data.userId);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveStaffUserPermissionsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { saveStaffUserPermissions } = await import("@/server/users/permissions");
+      const result = await saveStaffUserPermissions(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listStaffUsersFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

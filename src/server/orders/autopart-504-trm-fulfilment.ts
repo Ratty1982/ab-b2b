@@ -12,7 +12,7 @@
 import type { Autopart504TrmFulfilmentMode, Autopart504cRuntimeMode, Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import { parseExactAbOrderReference } from "@/domain/autopart-504-trm-fulfilment";
 import {
@@ -77,7 +77,7 @@ export type Autopart504TrmFulfilmentRunResult = {
 
 async function requireFulfilmentAdmin(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "orders.edit")) {
+  if (!grants(profile, "admin.access", "orders.edit")) {
     throw new AuthError("Not permitted to manage Autopart fulfilment", "FORBIDDEN", 403);
   }
   return profile;

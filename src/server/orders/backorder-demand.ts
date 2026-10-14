@@ -8,7 +8,7 @@ import { OUTSTANDING_BACKORDER_ORDER_STATUSES, resolveBackorderPolicy } from "@/
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
 import { AUTOPART_WAREHOUSE_CODE, getEffectiveSellableQuantity } from "@/domain/stock";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 
 export type OutstandingBackorderDemandRow = {
   variantId: string;
@@ -101,9 +101,7 @@ export async function getOutstandingBackorderDemandForVariant(
 ): Promise<OutstandingBackorderDemandRow | null> {
   const profile = await requireSystemPermission(actorUserId, "products.view");
   if (
-    !hasPermission(profile, "inventory.view") &&
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "products.view")
+    !grants(profile, "inventory.view", "admin.access", "products.view")
   ) {
     throw new AuthError("Forbidden", "FORBIDDEN", 403);
   }

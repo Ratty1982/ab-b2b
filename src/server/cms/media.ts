@@ -1,7 +1,7 @@
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission, loadAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, loadAccessProfile } from "@/server/rbac/access";
 import {
   CMS_MEDIA_MAX_BYTES,
   cmsMediaDeleteSchema,
@@ -392,15 +392,7 @@ async function actorMayPreviewCmsMedia(actorUserId: string | null | undefined): 
   const profile = await loadAccessProfile(actorUserId);
   if (!profile || profile.actorType !== "INTERNAL") return false;
   return (
-    hasPermission(profile, "admin.access") ||
-    hasPermission(profile, "cms.media.read") ||
-    hasPermission(profile, "cms.media.manage") ||
-    hasPermission(profile, "cms.page.read") ||
-    hasPermission(profile, "cms.page.edit") ||
-    hasPermission(profile, "cms.view") ||
-    hasPermission(profile, "cms.edit") ||
-    hasPermission(profile, "products.edit") ||
-    hasPermission(profile, "products.create")
+    grants(profile, "admin.access", "cms.media.read", "cms.media.manage", "cms.page.read", "cms.page.edit", "cms.view", "cms.edit", "products.edit", "products.create")
   );
 }
 

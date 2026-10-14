@@ -6,7 +6,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireAnySystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { moneyFromUnknown, moneyToString } from "@/domain/money";
 import { campaignDisplayStatus } from "@/domain/promotion-campaigns";
@@ -240,8 +240,7 @@ export async function getCampaignPerformance(
   });
   const organisation =
     companyIds === "all" ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "admin.access");
+    grants(profile, "sales.view_all_accounts", "admin.access");
 
   return {
     campaign: {

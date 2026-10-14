@@ -1,7 +1,7 @@
 /**
  * Shared Sales Intelligence company scope — used by Sales Enquiry and Gap Analysis.
  */
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 
 /**
@@ -12,7 +12,7 @@ import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 export async function resolveSalesIntelligenceCompanyScope(
   profile: LoadedAccessProfile,
 ): Promise<string[] | "all"> {
-  if (hasPermission(profile, "sales.view_all_accounts") || hasPermission(profile, "admin.access")) {
+  if (grants(profile, "sales.view_all_accounts", "admin.access")) {
     return "all";
   }
   const scoped = await getAccessibleCompanyIdsForSales(profile);

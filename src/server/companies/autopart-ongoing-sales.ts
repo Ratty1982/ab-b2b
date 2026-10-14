@@ -9,7 +9,7 @@
 import type { AutopartHistoricDocumentType, Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
   describeAutopart504Malformed,
@@ -52,7 +52,7 @@ export {
 
 async function requireOngoingSalesAdmin(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "admin.access") && !hasPermission(profile, "orders.edit")) {
+  if (!grants(profile, "admin.access", "orders.edit")) {
     throw new AuthError("Not permitted to manage Autopart sales feeds", "FORBIDDEN", 403);
   }
   return profile;

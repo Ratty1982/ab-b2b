@@ -25,6 +25,7 @@ import {
 } from "@/components/admin/StaffActivityPanel";
 import { InstantText } from "@/components/ab/InstantText";
 import { cn } from "@/lib/utils";
+import { UserPermissionsPanel } from "@/components/admin/UserPermissionsPanel";
 
 export const Route = createFileRoute("/admin/roles")({
   head: () => ({
@@ -609,7 +610,7 @@ function ManageUserDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [transferToUserId, setTransferToUserId] = useState("");
   const [busy, setBusy] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"details" | "activity">("details");
+  const [drawerTab, setDrawerTab] = useState<"details" | "permissions" | "activity">("details");
 
   useEffect(() => {
     if (user) {
@@ -641,12 +642,19 @@ function ManageUserDrawer({
   const canDeleteNow = !isSelf && (user.canHardDelete || (needsTransfer && transferToUserId));
 
   return (
-    <Drawer open title="Manage user" sub={user.email} onClose={onClose}>
+    <Drawer
+      open
+      title="Manage user"
+      sub={user.email}
+      onClose={onClose}
+      width={drawerTab === "permissions" ? "xl" : "md"}
+    >
       {showActivity ? (
         <div className="mb-4 flex gap-1 border-b border-border">
           {(
             [
               ["details", "Details"],
+              ["permissions", "Permissions"],
               ["activity", "Activity"],
             ] as const
           ).map(([key, label]) => (
@@ -670,6 +678,8 @@ function ManageUserDrawer({
       {showActivity && drawerTab === "activity" ? (
         <StaffActivityPanel userId={user.id} enabled />
       ) : null}
+
+      {showActivity && drawerTab === "permissions" ? <UserPermissionsPanel userId={user.id} /> : null}
 
       {!showActivity || drawerTab === "details" ? (
       <>

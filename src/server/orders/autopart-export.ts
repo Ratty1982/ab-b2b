@@ -7,7 +7,7 @@
 import type { Prisma } from "@prisma/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { prisma } from "@/infra/database/client";
-import { hasPermission } from "@/server/rbac/access";
+import { grants, hasPermission } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
@@ -215,7 +215,7 @@ function toExportInput(order: OrderForExport): AutopartExportOrderInput {
 
 async function requireExportActor(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
-  if (!hasPermission(profile, "orders.edit") && !hasPermission(profile, "admin.access")) {
+  if (!grants(profile, "orders.edit", "admin.access")) {
     throw new AuthError("You do not have permission to export Autopart CSV", "FORBIDDEN", 403);
   }
   return profile;

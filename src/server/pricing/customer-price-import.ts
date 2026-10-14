@@ -14,7 +14,7 @@ import {
 import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
 import type { AuditEventInput } from "@/server/audit/types";
 import { listCustomerPrices } from "@/server/pricing/service";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireAuthenticatedUser, requireSystemPermission } from "@/server/rbac/guards";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 
@@ -99,9 +99,7 @@ async function assertCompanyAccess(profile: LoadedAccessProfile, companyId: stri
     throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
   }
   const privileged =
-    hasPermission(profile, "admin.access") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "pricing.approve");
+    grants(profile, "admin.access", "sales.view_all_accounts", "pricing.approve");
   const salesScoped =
     hasPermission(profile, "sales.view_own_accounts") || hasPermission(profile, "sales.view_team_accounts");
   if (!privileged) {

@@ -1,5 +1,5 @@
 import type { PermissionKey } from "@/domain/permissions";
-import { hasPermission, loadAccessProfile, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, loadAccessProfile, type LoadedAccessProfile } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 
 export class AuthError extends Error {
@@ -43,7 +43,7 @@ export async function requireAnySystemPermission(
   permissions: PermissionKey[],
 ): Promise<LoadedAccessProfile> {
   const profile = await requireAuthenticatedUser(userId);
-  if (!permissions.some((permission) => hasPermission(profile, permission))) {
+  if (!grants(profile, ...permissions)) {
     throw new AuthError("Insufficient permissions", "FORBIDDEN", 403);
   }
   return profile;
@@ -127,13 +127,15 @@ export async function requireInternalSalesAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("Internal sales access required", "SALES_FORBIDDEN", 403);
   }
-  const ok =
-    hasPermission(profile, "sales.view_own_accounts") ||
-    hasPermission(profile, "sales.view_team_accounts") ||
-    hasPermission(profile, "sales.view_all_accounts") ||
-    hasPermission(profile, "sales_intelligence.view") ||
-    hasPermission(profile, "crm.view") ||
-    hasPermission(profile, "admin.access");
+  const ok = grants(
+    profile,
+    "sales.view_own_accounts",
+    "sales.view_team_accounts",
+    "sales.view_all_accounts",
+    "sales_intelligence.view",
+    "crm.view",
+    "admin.access",
+  );
   if (!ok) {
     throw new AuthError("Internal sales access required", "SALES_FORBIDDEN", 403);
   }
@@ -147,11 +149,7 @@ export async function requireCrmAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("CRM access required", "CRM_FORBIDDEN", 403);
   }
-  if (
-    !hasPermission(profile, "crm.view") &&
-    !hasPermission(profile, "admin.access") &&
-    !hasPermission(profile, "sales.view_own_accounts")
-  ) {
+  if (!grants(profile, "crm.view", "sales.view_own_accounts", "admin.access")) {
     throw new AuthError("CRM access required", "CRM_FORBIDDEN", 403);
   }
   return profile;
@@ -177,23 +175,25 @@ export async function requireAdminAccess(
   if (profile.actorType !== "INTERNAL") {
     throw new AuthError("Admin access required", "ADMIN_FORBIDDEN", 403);
   }
-  const ok =
-    hasPermission(profile, "admin.access") ||
-    hasPermission(profile, "cms.view") ||
-    hasPermission(profile, "cms.edit") ||
-    hasPermission(profile, "cms.publish") ||
-    hasPermission(profile, "cms.page.read") ||
-    hasPermission(profile, "cms.page.edit") ||
-    hasPermission(profile, "cms.page.publish") ||
-    hasPermission(profile, "cms.media.read") ||
-    hasPermission(profile, "cms.media.manage") ||
-    hasPermission(profile, "products.create") ||
-    hasPermission(profile, "products.edit") ||
-    hasPermission(profile, "pricing.edit") ||
-    hasPermission(profile, "users.manage") ||
-    hasPermission(profile, "roles.manage") ||
-    hasPermission(profile, "settings.edit") ||
-    hasPermission(profile, "surveys.view");
+  const ok = grants(
+    profile,
+    "admin.access",
+    "cms.view",
+    "cms.edit",
+    "cms.publish",
+    "cms.page.read",
+    "cms.page.edit",
+    "cms.page.publish",
+    "cms.media.read",
+    "cms.media.manage",
+    "products.create",
+    "products.edit",
+    "pricing.edit",
+    "users.manage",
+    "roles.manage",
+    "settings.edit",
+    "surveys.view",
+  );
   if (!ok) {
     throw new AuthError("Admin access required", "ADMIN_FORBIDDEN", 403);
   }
