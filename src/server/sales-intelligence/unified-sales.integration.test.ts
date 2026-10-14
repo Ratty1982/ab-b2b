@@ -629,6 +629,8 @@ describe("unified customer sales", () => {
     expect(s.creditNoteCount).toBe(2);
     expect(s.lastDatedInvoice).toBe("2026-09-20");
     expect(result.company.salesperson?.id).toBe(repId);
+    expect(result.initialTransactions.filteredCountedNet).toBe(s.certifiedNet);
+    expect(result.initialTransactions.total).toBeGreaterThan(0);
   });
 
   it("lists every verified code and holds back a code linked to two companies", async () => {

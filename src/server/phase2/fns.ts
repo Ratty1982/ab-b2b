@@ -36,6 +36,16 @@ async function optionalUserId(): Promise<string | null> {
   return resolveOptionalRequestUserId();
 }
 
+function isDatabaseClientError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = error.constructor?.name ?? "";
+  if (name.startsWith("PrismaClient")) return true;
+  const message = error instanceof Error ? error.message : "";
+  return /Timed out fetching a new connection|statement timeout|canceling statement due to statement timeout|remaining connection slots|could not resize shared memory/i.test(
+    message,
+  );
+}
+
 function toError(error: unknown): { ok: false; error: string; code?: string } {
   if (error instanceof AuthError) {
     return { ok: false, error: error.message, code: error.code };
@@ -43,6 +53,14 @@ function toError(error: unknown): { ok: false; error: string; code?: string } {
   const validation = formatZodError(error);
   if (validation) {
     return { ok: false, error: validation, code: "VALIDATION" };
+  }
+  if (isDatabaseClientError(error)) {
+    console.error("[ab:fn]", error);
+    return {
+      ok: false,
+      error: "The request could not be completed. Try again.",
+      code: "UNAVAILABLE",
+    };
   }
   if (error instanceof Error && error.message) {
     return { ok: false, error: error.message, code: "INTERNAL" };
