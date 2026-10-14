@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { inputClass } from "@/components/ab/Drawer";
 import type { OrderFulfilmentChoice, SalesOrderBackorderRow, SalesOrderDraftLineInput } from "@/domain/sales-order-entry";
 import { parseStaffOrderUnitPrice } from "@/domain/sales-order-entry";
+import { staffOrderAvailableLabel } from "@/domain/staff-order-stock";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -232,6 +233,9 @@ export type SalesOrderLinePricing = {
   caseQty?: number | null;
   availableQtyAtOrder?: number;
   backorderQtyAtOrder?: number;
+  /** Trusted sellable stock. Not the quantity allocated to this line. */
+  sellableQty?: number;
+  stockConfirmed?: boolean;
   backordersAllowed?: boolean;
   lineNet?: string | null;
   resolvedUnitPrice?: string | null;
@@ -346,24 +350,30 @@ function LineStock({
 }) {
   if (qty == null) return <p className="text-[13px] font-semibold text-bad">Enter a quantity</p>;
   if (!priced) return <p className="text-[13px] text-steel">Stock —</p>;
-  const available = priced.availableQtyAtOrder ?? 0;
+  const allocated = priced.availableQtyAtOrder ?? 0;
   const backorder = priced.backorderQtyAtOrder ?? 0;
-  if (backorder > 0) {
-    return (
-      <div className="space-y-1">
-        <p className="inline-flex rounded-sm border border-amber-400/50 bg-amber-400/15 px-2 py-1 text-[11px] font-bold tracking-wide text-amber-200">
-          BACKORDER
-        </p>
-        <p className="text-[13px] font-semibold text-amber-200">
-          {available > 0 ? "Part backorder" : "Fully backordered"}
-        </p>
-        <p className="text-[13px] text-steel">Ordered {qty}</p>
-        <p className="text-[13px] text-steel">Available {available}</p>
-        <p className="text-[13px] text-steel">Backordered {backorder}</p>
-      </div>
-    );
-  }
-  return <p className="text-[13px] text-steel">Stock {available} available</p>;
+  const availableLabel = staffOrderAvailableLabel({
+    sellableQty: priced.sellableQty ?? 0,
+    stockConfirmed: priced.stockConfirmed === true,
+  });
+  return (
+    <div className="space-y-1">
+      {backorder > 0 ? (
+        <>
+          <p className="inline-flex rounded-sm border border-amber-400/50 bg-amber-400/15 px-2 py-1 text-[11px] font-bold tracking-wide text-amber-200">
+            BACKORDER
+          </p>
+          <p className="text-[13px] font-semibold text-amber-200">
+            {allocated > 0 ? "Part backorder" : "Fully backordered"}
+          </p>
+        </>
+      ) : null}
+      <p className="text-[13px] text-steel">{availableLabel}</p>
+      <p className="text-[13px] text-steel">Ordered {qty}</p>
+      <p className="text-[13px] text-steel">Allocated to order: {allocated}</p>
+      {backorder > 0 ? <p className="text-[13px] text-steel">Backordered {backorder}</p> : null}
+    </div>
+  );
 }
 
 export function SalesOrderLines({
@@ -700,8 +710,11 @@ export function SalesOrderReviewPanel({
           <p className="font-semibold text-amber-200">Backorder</p>
           {backorders.map((line) => (
             <p key={line.variantId}>
-              {line.sku} · {line.extent === "FULL" ? "Fully backordered" : "Part backorder"} · ordered {line.orderedQty}
-              , available {line.availableQty}, backordered {line.backorderQty}
+              {line.sku} · {line.extent === "FULL" ? "Fully backordered" : "Part backorder"} ·{" "}
+              {line.stockConfirmed && line.sellableQty != null
+                ? `${line.sellableQty} available`
+                : "Stock not confirmed"}
+              {" · "}ordered {line.orderedQty}, allocated {line.availableQty}, backordered {line.backorderQty}
             </p>
           ))}
           <label className="flex min-h-11 items-start gap-3">

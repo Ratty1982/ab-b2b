@@ -70,6 +70,7 @@ type ProductHit = {
   caseQty: number | null;
   minOrderQty: number;
   sellableQty: number;
+  stockConfirmed: boolean;
   backordersAllowed: boolean;
   customerUnitPrice: string | null;
   priceSource: string | null;
@@ -353,7 +354,7 @@ function NewSalesOrder() {
   async function searchProducts() {
     if (!workspace || productQuery.trim().length < 1) return;
     const result = await searchSalesOrderProductsFn({
-      data: { companyId: workspace.draft.companyId, q: productQuery.trim() },
+      data: { companyId: workspace.draft.companyId, draftId: workspace.draft.id, q: productQuery.trim() },
     });
     if (!result.ok) {
       toast.error(result.error);
@@ -441,6 +442,8 @@ function NewSalesOrder() {
         quantity: line.quantity,
         availableQtyAtOrder: line.availableQtyAtOrder,
         backorderQtyAtOrder: line.backorderQtyAtOrder,
+        ...(line.sellableQty !== undefined ? { sellableQty: line.sellableQty } : {}),
+        ...(line.stockConfirmed !== undefined ? { stockConfirmed: line.stockConfirmed } : {}),
       })),
     );
     if (!quoteId && backorders.length > 0 && !backorderAcknowledged) {

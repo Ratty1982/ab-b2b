@@ -1,3 +1,5 @@
+import { staffOrderAvailableLabel } from "@/domain/staff-order-stock";
+
 export type SalesOrderProductResult = {
   variantId: string;
   sku: string;
@@ -6,6 +8,7 @@ export type SalesOrderProductResult = {
   caseQty: number | null;
   minOrderQty: number;
   sellableQty: number;
+  stockConfirmed: boolean;
   backordersAllowed: boolean;
   customerUnitPrice: string | null;
   priceSource: string | null;
@@ -47,7 +50,7 @@ export function SalesOrderProductResults({
                 {hit.brand}
                 {hit.caseQty ? ` · Case ${hit.caseQty}` : ""}
                 {hit.minOrderQty > 1 ? ` · Min ${hit.minOrderQty}` : ""}
-                {` · Stock ${hit.sellableQty}`}
+                {` · ${staffOrderAvailableLabel(hit)}`}
                 {hit.backordersAllowed ? " · Backorder allowed" : " · No backorder"}
                 {hit.customerUnitPrice ? ` · ${money(hit.customerUnitPrice)}` : ""}
                 {hit.promotionCode ? ` · Promo ${hit.promotionCode}` : ""}

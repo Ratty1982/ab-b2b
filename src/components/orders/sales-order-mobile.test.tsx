@@ -112,8 +112,10 @@ describe("sales order mobile layout", () => {
             issue: "CASE_CONFIGURATION_CHANGED",
             issueMessage: "Case size changed. Please update the quantity.",
             caseQty: 12,
-            availableQtyAtOrder: 48,
+            availableQtyAtOrder: 2,
             backorderQtyAtOrder: 0,
+            sellableQty: 48,
+            stockConfirmed: true,
             backordersAllowed: false,
             lineNet: "5.00",
             resolvedUnitPrice: "2.93",
@@ -138,7 +140,13 @@ describe("sales order mobile layout", () => {
     expect(mobile).toContain('aria-label="Quantity for CASE12"');
     expect(mobile).toContain('aria-label="Unit price for CASE12"');
     expect(mobile).toContain("Manual price ex VAT");
-    expect(mobile).toContain("Stock 48 available");
+    expect(mobile).toContain("48 available");
+    expect(mobile).toContain("Ordered 2");
+    expect(mobile).toContain("Allocated to order: 2");
+    expect(mobile).not.toContain("Stock 2 available");
+    const desktop = html.split('data-layout="desktop-table"')[1] ?? "";
+    expect(desktop).toContain("48 available");
+    expect(desktop).toContain("Allocated to order: 2");
     expect(mobile).toContain("Line total £5.00");
     expect(mobile).toContain("Remove");
     expect(mobile).toContain("Case size changed. Please update the quantity.");
@@ -160,6 +168,7 @@ describe("sales order mobile layout", () => {
             caseQty: 12,
             minOrderQty: 12,
             sellableQty: 48,
+            stockConfirmed: true,
             backordersAllowed: false,
             customerUnitPrice: "2.93",
             priceSource: "PROMOTION",
@@ -219,6 +228,170 @@ describe("sales order mobile layout", () => {
   });
 });
 
+const lineHandlers = {
+  onQuantityChange: () => undefined,
+  onQuantityBlur: () => undefined,
+  onPriceDraftChange: () => undefined,
+  onPriceOverride: () => undefined,
+  onClearPriceDraft: () => undefined,
+  onRemove: () => undefined,
+};
+
+function renderStockLine(input: {
+  qty: number;
+  sellableQty: number;
+  stockConfirmed: boolean;
+  availableQtyAtOrder: number;
+  backorderQtyAtOrder: number;
+}) {
+  return renderToStaticMarkup(
+    createElement(SalesOrderLines, {
+      lines: [
+        {
+          variantId: "var_1",
+          qty: input.qty,
+          sku: "CASE12",
+          name: "Brake fluid",
+          unitPriceOverride: null,
+        },
+      ],
+      reviewLines: [
+        {
+          variantId: "var_1",
+          issue: "VALID",
+          issueMessage: null,
+          sellableQty: input.sellableQty,
+          stockConfirmed: input.stockConfirmed,
+          availableQtyAtOrder: input.availableQtyAtOrder,
+          backorderQtyAtOrder: input.backorderQtyAtOrder,
+          backordersAllowed: true,
+          lineNet: "12.00",
+          resolvedUnitPrice: "1.00",
+          customerUnitPrice: "1.00",
+          priceSource: "BASE",
+        },
+      ],
+      priceDrafts: {},
+      ...lineHandlers,
+    }),
+  );
+}
+
+function stockLayouts(html: string) {
+  return {
+    mobile: html.split('data-layout="mobile-cards"')[1]?.split('data-layout="desktop-table"')[0] ?? "",
+    desktop: html.split('data-layout="desktop-table"')[1] ?? "",
+  };
+}
+
+describe("staff sales order stock display", () => {
+  it("shows sellable stock of 200 when the order quantity is 2, on desktop and mobile", () => {
+    const { mobile, desktop } = stockLayouts(
+      renderStockLine({
+        qty: 2,
+        sellableQty: 200,
+        stockConfirmed: true,
+        availableQtyAtOrder: 2,
+        backorderQtyAtOrder: 0,
+      }),
+    );
+    for (const layout of [mobile, desktop]) {
+      expect(layout).toContain("200 available");
+      expect(layout).toContain("Ordered 2");
+      expect(layout).toContain("Allocated to order: 2");
+      expect(layout).not.toContain("Stock 2 available");
+      expect(layout).not.toContain(">2 available<");
+    }
+  });
+
+  it("shows 6 available, 6 allocated and 6 backordered when 12 are ordered", () => {
+    const { mobile, desktop } = stockLayouts(
+      renderStockLine({
+        qty: 12,
+        sellableQty: 6,
+        stockConfirmed: true,
+        availableQtyAtOrder: 6,
+        backorderQtyAtOrder: 6,
+      }),
+    );
+    for (const layout of [mobile, desktop]) {
+      expect(layout).toContain("BACKORDER");
+      expect(layout).toContain("Part backorder");
+      expect(layout).toContain("6 available");
+      expect(layout).toContain("Ordered 12");
+      expect(layout).toContain("Allocated to order: 6");
+      expect(layout).toContain("Backordered 6");
+      expect(layout).toContain("border-amber-400/50");
+    }
+  });
+
+  it("does not advertise stale stock as available", () => {
+    const { mobile, desktop } = stockLayouts(
+      renderStockLine({
+        qty: 2,
+        sellableQty: 200,
+        stockConfirmed: false,
+        availableQtyAtOrder: 0,
+        backorderQtyAtOrder: 2,
+      }),
+    );
+    for (const layout of [mobile, desktop]) {
+      expect(layout).toContain("Stock not confirmed");
+      expect(layout).not.toContain("200 available");
+      expect(layout).toContain("Ordered 2");
+      expect(layout).toContain("Allocated to order: 0");
+      expect(layout).toContain("Backordered 2");
+    }
+  });
+
+  it("keeps the amber backorder acknowledgement with sellable, ordered, allocated and backordered quantities", () => {
+    const html = renderToStaticMarkup(
+      createElement(SalesOrderReviewPanel, {
+        companyName: "North Motors",
+        paymentTerms: "30 days",
+        poNumber: "PO-1",
+        subtotal: "12.00",
+        deliveryTotal: "5.95",
+        vatTotal: "3.59",
+        grandTotal: "21.54",
+        blocking: false,
+        changes: [],
+        totalsChanged: false,
+        previousGrandTotal: null,
+        acceptedPrices: true,
+        authorised: false,
+        placing: false,
+        placeDisabled: true,
+        placeLabel: "Place order",
+        fulfilmentChoice: "DELIVERY",
+        backorders: [
+          {
+            variantId: "var_1",
+            sku: "CASE12",
+            name: "Brake fluid",
+            orderedQty: 12,
+            availableQty: 6,
+            backorderQty: 6,
+            extent: "PARTIAL",
+            sellableQty: 6,
+            stockConfirmed: true,
+          },
+        ],
+        backorderAcknowledged: false,
+        onAcceptPrices: () => undefined,
+        onAuthorised: () => undefined,
+        onBackorderAcknowledged: () => undefined,
+        onPlace: () => undefined,
+      }),
+    );
+    expect(html).toContain("border-amber-400/50");
+    expect(html).toContain("Part backorder");
+    expect(html).toContain("6 available");
+    expect(html).toContain("ordered 12, allocated 6, backordered 6");
+    expect(html).toContain("The customer has been informed of this backorder.");
+  });
+});
+
 function OrderHarness() {
   const typing = useSalesOrderKeyboard();
   const [po, setPo] = useState("PO-UNSAVED");
@@ -244,7 +417,9 @@ function OrderHarness() {
           issue: "VALID",
           issueMessage: null,
           caseQty: 12,
-          availableQtyAtOrder: 48,
+          availableQtyAtOrder: 5,
+          sellableQty: 48,
+          stockConfirmed: true,
           lineNet: "16.25",
           resolvedUnitPrice: "3.25",
           customerUnitPrice: "3.25",

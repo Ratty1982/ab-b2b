@@ -30,7 +30,7 @@ import {
   type SalesOrderEntrySource,
   type SalesOrderExpectedReview,
 } from "@/domain/sales-order-entry";
-import { trustedSellableForOrdering } from "@/server/ordering/policy";
+import { staffOrderStockAvailability } from "@/domain/staff-order-stock";
 import {
   buildCheckoutReview,
   commitSubmittedOrder,
@@ -466,6 +466,19 @@ async function contactSnapshotForCompany(
   });
 }
 
+async function loadOwnActiveReservedByVariant(orderId: string | null): Promise<Map<string, number> | undefined> {
+  if (!orderId) return undefined;
+  const rows = await prisma.orderStockReservation.findMany({
+    where: { orderId, status: "ACTIVE" },
+    select: { variantId: true, quantity: true },
+  });
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    totals.set(row.variantId, (totals.get(row.variantId) ?? 0) + row.quantity);
+  }
+  return totals;
+}
+
 async function reviewDraft(
   company: OrderableCompany,
   draft: DraftRow,
@@ -507,11 +520,16 @@ async function reviewDraft(
     return { review: null, contactReady, addressReady };
   }
 
+  const ownActiveReservedByVariant = await loadOwnActiveReservedByVariant(draft.editingOrderId);
   const lines = await resolveOrderLinesFromItems(
     company.id,
     billable.map((line) => ({ variantId: line.variantId, qty: line.qty })),
     null,
-    { staffUnitOrdering: true, unitPriceOverrides: staffOverrides(billable) },
+    {
+      staffUnitOrdering: true,
+      unitPriceOverrides: staffOverrides(billable),
+      ...(ownActiveReservedByVariant ? { ownActiveReservedByVariant } : {}),
+    },
   );
   const review = buildCheckoutReview({
     company,
@@ -525,6 +543,7 @@ async function reviewDraft(
     poNumber: draft.poNumber,
     deliveryInstructions: draft.deliveryInstructions,
     fulfilmentChoice,
+    includeStaffStock: true,
   });
   if (!contactReady) {
     review.contact = {
@@ -985,6 +1004,14 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
   const profile = await requireSalesOrderStaff(actorUserId);
   const input = salesOrderProductSearchSchema.parse(raw);
   await requireOrderableCompany(profile, input.companyId);
+  let ownActiveReservedByVariant: Map<string, number> | undefined;
+  if (input.draftId) {
+    const draft = await loadOwnedDraft(actorUserId, input.draftId, false);
+    if (draft.companyId !== input.companyId) {
+      throw new AuthError("Order draft not found", "DRAFT_NOT_FOUND", 404);
+    }
+    ownActiveReservedByVariant = await loadOwnActiveReservedByVariant(draft.editingOrderId);
+  }
 
   const variants = await prisma.productVariant.findMany({
     where: {
@@ -1013,7 +1040,10 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
       input.companyId,
       variants.map((variant) => ({ variantId: variant.id, qty: 1 })),
       null,
-      { staffUnitOrdering: true },
+      {
+        staffUnitOrdering: true,
+        ...(ownActiveReservedByVariant ? { ownActiveReservedByVariant } : {}),
+      },
     ),
     loadStockByVariantIds(variants.map((variant) => variant.id)),
   ]);
@@ -1022,9 +1052,11 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
   return variants.map((variant) => {
     const line = lineById.get(variant.id);
     const stockRow = stock.get(variant.id);
-    const sellableQty = trustedSellableForOrdering({
-      sellableQty: stockRow?.sellableQty ?? 0,
+    const availability = staffOrderStockAvailability({
+      freeSellableQty: stockRow?.sellableQty ?? 0,
       stale: stockRow?.stale ?? true,
+      stockKnown: stockRow != null,
+      ownActiveReservedQty: ownActiveReservedByVariant?.get(variant.id) ?? 0,
     });
     return {
       variantId: variant.id,
@@ -1033,7 +1065,8 @@ export async function searchSalesOrderProducts(actorUserId: string, raw: unknown
       brand: variant.product.brand.name,
       caseQty: variant.caseQty,
       minOrderQty: variant.minOrderQty,
-      sellableQty,
+      sellableQty: availability.sellableQty,
+      stockConfirmed: availability.stockConfirmed,
       backordersAllowed: line?.backordersAllowed ?? false,
       customerUnitPrice: line && line.issue !== "PRICE_UNAVAILABLE" ? line.customerUnit2dp : null,
       priceSource: line && line.priceSource !== "NONE" ? line.priceSource : null,
@@ -1380,11 +1413,16 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     );
   }
 
+  const ownActiveReservedByVariant = await loadOwnActiveReservedByVariant(draft.editingOrderId);
   const lines = await resolveOrderLinesFromItems(
     company.id,
     requestedLines,
     expected.lines.map((line) => ({ variantId: line.variantId, customerUnitPrice: line.customerUnitPrice })),
-    { staffUnitOrdering: true, unitPriceOverrides: staffOverrides(draft.lines) },
+    {
+      staffUnitOrdering: true,
+      unitPriceOverrides: staffOverrides(draft.lines),
+      ...(ownActiveReservedByVariant ? { ownActiveReservedByVariant } : {}),
+    },
   );
   const review = buildCheckoutReview({
     company,
@@ -1394,6 +1432,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     poNumber: input.poNumber ?? null,
     deliveryInstructions: input.deliveryInstructions ?? null,
     fulfilmentChoice,
+    includeStaffStock: true,
   });
   const comparison = compareReviewedPrices(expected, lines, review);
   const acknowledgementRequired =
