@@ -25,12 +25,23 @@ RUN --mount=type=cache,id=ab-bun-cache,target=/root/.bun/install/cache \
 
 FROM oven/bun:1.2.23-alpine AS build
 WORKDIR /app
+# oven/bun:1.2.23-alpine does not ship Node. `node` on PATH is a symlink to Bun
+# (`/usr/local/bun-node-fallback-bin/node`). Prisma's schema WASM panics under
+# that Bun (Coolify: blank `Error:` after "Prisma schema loaded", previously
+# psl/parser-database inline.rs OOB). Alpine's nodejs package is a real Node
+# binary at /usr/bin/node, which is ahead of the Bun fallback.
+# OpenSSL must exist before generate. Without libssl, Prisma selects the legacy
+# `linux-musl` engine (OpenSSL 1.1). That binary exits immediately with empty
+# stdout/stderr. The runner is Alpine + OpenSSL 3, so generate must select
+# `linux-musl-openssl-3.0.x` (or the arm64 equivalent on that host).
+RUN apk add --no-cache nodejs openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NODE_ENV=production
-# Use the lockfile Prisma CLI — `bunx prisma` can fetch a different version and
-# WASM-panic on generate (Coolify: psl/parser-database inline.rs OOB).
-RUN node ./node_modules/prisma/build/index.js generate
+# Lockfile Prisma CLI, via real Node — not `bunx prisma` and not Bun-as-node.
+# Dummy DATABASE_URL is only for schema loading; the client does not embed it.
+RUN DATABASE_URL="postgresql://prisma:prisma@127.0.0.1:5432/prisma?schema=public" \
+    /usr/bin/node ./node_modules/prisma/build/index.js generate
 RUN bun run build
 # Bundle production bootstrap (Prisma client stays external — provided at runtime)
 RUN bun build ./prisma/bootstrap/run-production.ts \

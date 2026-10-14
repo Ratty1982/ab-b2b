@@ -136,6 +136,8 @@ Keep `--frozen-lockfile` in the Dockerfile. Do not delete lockfiles to “make d
 
 The Docker **deps** stage runs `bun install --frozen-lockfile --production --ignore-scripts` so Playwright/eslint/vitest are not downloaded. `vite`, `nitro`, and `@vitejs/plugin-react` are production dependencies so the image can still compile. Runtime packages come from locked `docker/runtime-package.json` + `docker/runtime-bun.lock` (Prisma + sharp + `imapflow` + `mailparser`). Bun install cache is mounted via BuildKit (`id=ab-bun-cache`) to keep redeploys under the helper wall clock.
 
+The **build** stage installs Alpine `nodejs` and `openssl` before `prisma generate`. `oven/bun:1.2.23-alpine` exposes `node` as a symlink to Bun, and Prisma's schema WASM panics under that runtime (Coolify shows a blank `Error:` after "Prisma schema loaded"). Generate calls `/usr/bin/node` so it uses the real Node binary. OpenSSL is required in that stage so Prisma selects `linux-musl-openssl-3.0.x` (OpenSSL 3, same as the runner) instead of the legacy `linux-musl` engine, which does not start.
+
 **Coolify setting (required on the host):** Application → Advanced / Build → **Docker build timeout** ≥ **15 minutes** (900s). A ~4-minute cap will keep killing first-pull / cold-cache builds even when the Dockerfile and app build are healthy.
 
 If export/unpack still fails after the timeout is raised: on the Coolify server run `docker system df` / `docker builder prune` to free disk, then redeploy.
