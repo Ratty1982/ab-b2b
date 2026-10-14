@@ -3045,7 +3045,8 @@ model AutopartInvoiceLine {
   batch   AutopartImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
 
   /// Expression indexes UPPER(btrim(accountCode)) and UPPER(btrim(partNumber)) are created only by
-  /// migration 20261010120000_unified_sales_reporting_indexes. Prisma cannot model them, and
+  /// migration 20261010120000_unified_sales_reporting_indexes. The NET_EX_VAT partial account index
+  /// is migration 20261014150000_sales_enquiry_account_measure_index. Prisma cannot model them, and
   /// migrate diff does not emit DROP INDEX for them. Do not add a migration that drops them.
   @@index([accountCode])
   @@index([accountId])

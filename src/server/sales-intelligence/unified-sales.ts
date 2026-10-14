@@ -58,6 +58,7 @@ import {
   productWorkspaceHref,
   requireSalesIntelligence,
 } from "@/server/sales-intelligence/global-history";
+import { hasReportDb, reportDb, withReportSql } from "@/server/sales-intelligence/report-guard";
 
 const AUTOPART_SOURCE = "AUTOPART";
 const EXPORT_PAGE_SIZE = 500;
@@ -71,21 +72,106 @@ function companyIn(universe: CompanyUniverse, column: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`${column} IN (${Prisma.join(universe)})`;
 }
 
-/** Keeps the shared-code exclusion (counted across every company) and then limits the map. */
-function idmapCompanyHaving(universe: CompanyUniverse): Prisma.Sql {
-  if (universe === "all") return Prisma.sql`TRUE`;
-  if (universe.length === 0) return Prisma.sql`FALSE`;
-  return Prisma.sql`MIN(company_id) IN (${Prisma.join(universe)})`;
-}
-
 function normalisedSku(sku: string): string {
   return sku.trim().toUpperCase();
+}
+
+/**
+ * Account-code identity for the reconciled line set.
+ * A single company only contributes its own codes, then those codes are dropped when any other
+ * company also owns them. An all-company report still builds the map once.
+ * `idmap` is materialised so later joins do not rebuild it.
+ */
+function identityMapSql(universe: CompanyUniverse): Prisma.Sql {
+  if (universe !== "all" && universe.length === 0) {
+    return Prisma.sql`
+    idmap AS (
+      SELECT NULL::text AS code, NULL::text AS company_id WHERE FALSE
+    )`;
+  }
+  if (universe === "all") {
+    return Prisma.sql`
+    idmap_raw AS (
+      SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
+      FROM "Company" c
+      WHERE c."autopartCustomerCode" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+      UNION ALL
+      SELECT UPPER(btrim(al."alias")), al."companyId"
+      FROM "AutopartCustomerAccountAlias" al
+      UNION ALL
+      SELECT UPPER(btrim(a."accountCode")), a."companyId"
+      FROM "AutopartAccount" a
+      WHERE a."sourceSystem" = ${AUTOPART_SOURCE}
+        AND a."companyId" IS NOT NULL
+    ),
+    idmap AS MATERIALIZED (
+      SELECT code, MIN(company_id) AS company_id
+      FROM idmap_raw
+      WHERE code <> ''
+      GROUP BY code
+      HAVING COUNT(DISTINCT company_id) = 1
+    )`;
+  }
+  const ids = Prisma.join(universe);
+  return Prisma.sql`
+    idmap_candidates AS MATERIALIZED (
+      SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
+      FROM "Company" c
+      WHERE c.id IN (${ids})
+        AND c."autopartCustomerCode" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+      UNION ALL
+      SELECT UPPER(btrim(al."alias")), al."companyId"
+      FROM "AutopartCustomerAccountAlias" al
+      WHERE al."companyId" IN (${ids})
+      UNION ALL
+      SELECT UPPER(btrim(a."accountCode")), a."companyId"
+      FROM "AutopartAccount" a
+      WHERE a."sourceSystem" = ${AUTOPART_SOURCE}
+        AND a."companyId" IN (${ids})
+    ),
+    idmap_owner_counts AS (
+      SELECT owners.code, COUNT(DISTINCT owners.company_id)::int AS companies
+      FROM (
+        SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
+        FROM "Company" c
+        WHERE c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+          AND UPPER(btrim(c."autopartCustomerCode")) IN (
+            SELECT code FROM idmap_candidates WHERE code <> ''
+          )
+        UNION ALL
+        SELECT UPPER(btrim(al."alias")), al."companyId"
+        FROM "AutopartCustomerAccountAlias" al
+        WHERE UPPER(btrim(al."alias")) IN (
+          SELECT code FROM idmap_candidates WHERE code <> ''
+        )
+        UNION ALL
+        SELECT UPPER(btrim(a."accountCode")), a."companyId"
+        FROM "AutopartAccount" a
+        WHERE a."sourceSystem" = ${AUTOPART_SOURCE}
+          AND a."companyId" IS NOT NULL
+          AND UPPER(btrim(a."accountCode")) IN (
+            SELECT code FROM idmap_candidates WHERE code <> ''
+          )
+      ) owners
+      WHERE owners.code <> ''
+      GROUP BY owners.code
+    ),
+    idmap AS MATERIALIZED (
+      SELECT c.code, MIN(c.company_id) AS company_id
+      FROM idmap_candidates c
+      INNER JOIN idmap_owner_counts o ON o.code = c.code AND o.companies = 1
+      WHERE c.code <> ''
+      GROUP BY c.code
+    )`;
 }
 
 /**
  * Builds the reconciled line set `u` as a WITH clause.
  * `sku` restricts the work to documents that contain that SKU on either side, so whole documents
  * are still compared and product enquiries do not scan every invoice.
+ * Heavy steps are MATERIALIZED so PostgreSQL computes them once per statement.
  */
 function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.Sql {
   const skuKey = sku ? normalisedSku(sku) : null;
@@ -121,7 +207,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
       FROM idmap im
       INNER JOIN "AutopartInvoiceLine" l
         ON UPPER(btrim(l."accountCode")) = im.code
-      WHERE l."salesMeasure" = 'NET_EX_VAT'`;
+       AND l."salesMeasure" = 'NET_EX_VAT'`;
   const dRestrict = skuKey
     ? Prisma.sql`l."documentReference" IN (SELECT ref FROM sku_refs)`
     : Prisma.sql`TRUE`;
@@ -138,28 +224,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
       doc."documentDate" AS doc_date`;
   return Prisma.sql`
     WITH
-    idmap_raw AS (
-      SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
-      FROM "Company" c
-      WHERE c."autopartCustomerCode" IS NOT NULL
-        AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
-      UNION ALL
-      SELECT UPPER(btrim(al."alias")), al."companyId"
-      FROM "AutopartCustomerAccountAlias" al
-      UNION ALL
-      SELECT UPPER(btrim(a."accountCode")), a."companyId"
-      FROM "AutopartAccount" a
-      WHERE a."sourceSystem" = ${AUTOPART_SOURCE}
-        AND a."companyId" IS NOT NULL
-    ),
-    idmap AS (
-      SELECT code, MIN(company_id) AS company_id
-      FROM idmap_raw
-      WHERE code <> ''
-      GROUP BY code
-      HAVING COUNT(DISTINCT company_id) = 1
-        AND ${idmapCompanyHaving(universe)}
-    ),
+    ${identityMapSql(universe)},
     ${skuRefs}
     h_raw AS (
       SELECT
@@ -198,7 +263,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
         AND ${companyIn(universe, Prisma.sql`im.company_id`)}
         AND ${dRestrict}
     ),
-    all_raw AS (
+    all_raw AS MATERIALIZED (
       SELECT company_id, line_id, source, account_code, doc_type, doc_ref, sku, description,
         qty, net, doc_date, repeat_no
       FROM h_raw
@@ -261,7 +326,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
       WHERE h.doc_ref IS NOT NULL
       GROUP BY h.company_id, h.doc_ref
     ),
-    u AS (
+    u AS MATERIALIZED (
       SELECT
         r.company_id, r.line_id, r.source, r.account_code, r.doc_type, r.doc_ref, r.sku, r.description,
         r.qty, r.net, r.doc_date,
@@ -408,10 +473,35 @@ const SUMMARY_SELECT = Prisma.sql`
 `;
 
 async function querySummary(companyId: string): Promise<UnifiedSalesSummary> {
-  const rows = await prisma.$queryRaw<SummaryRow[]>`
+  if (!hasReportDb()) {
+    return withReportSql(`summary:${companyId}`, () => querySummary(companyId));
+  }
+  const rows = await reportDb().$queryRaw<SummaryRow[]>`
     ${unifiedLinesCte([companyId], null)}
     SELECT ${SUMMARY_SELECT}
     FROM u
+    WHERE u.company_id = ${companyId}
+  `;
+  return toSummary(rows[0]);
+}
+
+/** One scan of a customer's reconciled lines, reused for the opening summary and first page. */
+async function materializeCompanyLines(companyId: string): Promise<void> {
+  await reportDb().$executeRaw`
+    CREATE TEMP TABLE unified_report_lines ON COMMIT DROP AS
+    ${unifiedLinesCte([companyId], null)}
+    SELECT
+      company_id, line_id, source, account_code, doc_type, doc_ref, sku, description,
+      qty, net, doc_date, status, reason
+    FROM u
+    WHERE company_id = ${companyId}
+  `;
+}
+
+async function querySummaryFromReportLines(companyId: string): Promise<UnifiedSalesSummary> {
+  const rows = await reportDb().$queryRaw<SummaryRow[]>`
+    SELECT ${SUMMARY_SELECT}
+    FROM unified_report_lines u
     WHERE u.company_id = ${companyId}
   `;
   return toSummary(rows[0]);
@@ -470,7 +560,7 @@ async function queryCertification(
   const companyFilter = companyId
     ? Prisma.sql`WHERE u.company_id = ${companyId}`
     : Prisma.empty;
-  const rows = await prisma.$queryRaw<CertificationRow[]>`
+  const rows = await reportDb().$queryRaw<CertificationRow[]>`
     ${unifiedLinesCte(universe, null)}
     SELECT
       COUNT(*) FILTER (WHERE u.source <> 'ONGOING_504')::int AS "linesExamined",
@@ -530,12 +620,12 @@ async function queryCertification(
 export async function loadUnifiedFinancialCertification(
   companyId: string,
 ): Promise<UnifiedFinancialCertification> {
-  return queryCertification([companyId], companyId);
+  return withReportSql(`cert:${companyId}`, () => queryCertification([companyId], companyId));
 }
 
 /** Read-only certification of every uniquely linked account. Does not write. */
 export async function loadUnifiedDatabaseCertification(): Promise<UnifiedFinancialCertification> {
-  return queryCertification("all", null);
+  return withReportSql("cert:all", () => queryCertification("all", null));
 }
 
 export type UnifiedIdentityCode = {
@@ -727,18 +817,34 @@ export async function getUnifiedCustomerSales(actorUserId: string, raw: unknown)
   const profile = await requireSalesIntelligence(actorUserId);
   const input = customerSchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
-  const [company, unified, brands] = await Promise.all([
+  const [company, identity, refresh, brands] = await Promise.all([
     loadCompanyHeader(input.companyId),
-    loadUnifiedCustomerSummary(input.companyId),
+    loadUnifiedIdentity(input.companyId),
+    loadUnifiedRefreshStatus(input.companyId),
     prisma.brand.findMany({
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 500,
     }),
   ]);
+  const { summary, initialTransactions } = await withReportSql(
+    `customer-open:${input.companyId}`,
+    async () => {
+      await materializeCompanyLines(input.companyId);
+      const summary = await querySummaryFromReportLines(input.companyId);
+      const initialTransactions = await queryTransactions(
+        { companyId: input.companyId, page: 1, pageSize: 50, status: "COUNTED" },
+        "temp",
+      );
+      return { summary, initialTransactions };
+    },
+  );
   return {
     company: { ...company, customer360Href: customer360Href(profile, company.id) },
-    ...unified,
+    identity,
+    summary,
+    refresh,
+    initialTransactions,
     brands,
     pricingPermitted: hasPermission(profile, "pricing.view"),
     studleyStockPermitted: hasPermission(profile, "inventory.view"),
@@ -828,33 +934,125 @@ type TxRow = {
   reason: string | null;
 };
 
-async function queryTransactions(input: TxInput) {
+function transactionReportKey(input: TxInput): string {
+  return [
+    "tx",
+    input.companyId,
+    input.page ?? 1,
+    input.pageSize ?? 50,
+    input.type ?? "",
+    input.dating ?? "",
+    input.status ?? "",
+    input.from ?? "",
+    input.to ?? "",
+    input.q ?? "",
+    input.sku ?? "",
+    input.brandId ?? "",
+    input.accountCode ?? "",
+  ].join("|");
+}
+
+async function queryTransactions(
+  input: TxInput,
+  source: "cte" | "temp" = "cte",
+): Promise<{
+  items: Array<{
+    lineId: string;
+    date: string | null;
+    dateLabel: string;
+    reference: string | null;
+    documentType: string;
+    accountCode: string;
+    sku: string;
+    description: string | null;
+    qty: string;
+    net: string;
+    source: string;
+    sourceLabel: string;
+    status: string;
+    statusLabel: string;
+    reason: string | null;
+    reasonLabel: string | null;
+    counted: boolean;
+  }>;
+  page: number;
+  pageSize: number;
+  total: number;
+  filteredCountedNet: string;
+  filteredCountedUnits: string;
+  dateFilterNote: string | null;
+}> {
+  if (!hasReportDb()) {
+    return withReportSql(transactionReportKey(input), () => queryTransactions(input, "cte"));
+  }
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 50;
   const { where, contradiction } = txWhere(input);
-  const cte = unifiedLinesCte([input.companyId], null);
-  const [rows, totals] = await Promise.all([
-    prisma.$queryRaw<TxRow[]>`
-      ${cte}
-      SELECT
-        u.line_id AS "lineId", u.doc_date AS "docDate", u.doc_ref AS "docRef", u.doc_type AS "docType",
-        u.account_code AS "accountCode", u.sku, u.description, u.qty, u.net, u.source, u.status, u.reason
-      FROM u
-      WHERE ${where}
-      ORDER BY u.doc_date DESC NULLS LAST, u.doc_ref ASC NULLS LAST, u.sku ASC, u.line_id ASC
-      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
-    `,
-    prisma.$queryRaw<
-      Array<{ total: number; net: Prisma.Decimal | null; qty: Prisma.Decimal | null }>
-    >`
-      ${cte}
+  const filtered =
+    source === "temp"
+      ? Prisma.sql`
+          WITH filtered AS MATERIALIZED (
+            SELECT * FROM unified_report_lines u WHERE ${where}
+          )`
+      : Prisma.sql`
+          ${unifiedLinesCte([input.companyId], null)}
+          , filtered AS MATERIALIZED (
+            SELECT * FROM u WHERE ${where}
+          )`;
+  const raw = await reportDb().$queryRaw<
+    Array<
+      TxRow & {
+        lineId: string | null;
+        total: number;
+        countedNet: Prisma.Decimal | null;
+        countedQty: Prisma.Decimal | null;
+      }
+    >
+  >`
+    ${filtered}
+    SELECT
+      totals.total,
+      totals."countedNet",
+      totals."countedQty",
+      page."lineId",
+      page."docDate",
+      page."docRef",
+      page."docType",
+      page."accountCode",
+      page.sku,
+      page.description,
+      page.qty,
+      page.net,
+      page.source,
+      page.status,
+      page.reason
+    FROM (
       SELECT COUNT(*)::int AS total,
-        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS net,
-        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS qty
-      FROM u
-      WHERE ${where}
-    `,
-  ]);
+        COALESCE(SUM(filtered.net) FILTER (WHERE filtered.status IN ('HISTORICAL', 'DATED', 'MATCHED')), 0) AS "countedNet",
+        COALESCE(SUM(filtered.qty) FILTER (WHERE filtered.status IN ('HISTORICAL', 'DATED', 'MATCHED')), 0) AS "countedQty"
+      FROM filtered
+    ) totals
+    LEFT JOIN LATERAL (
+      SELECT
+        filtered.line_id AS "lineId",
+        filtered.doc_date AS "docDate",
+        filtered.doc_ref AS "docRef",
+        filtered.doc_type AS "docType",
+        filtered.account_code AS "accountCode",
+        filtered.sku,
+        filtered.description,
+        filtered.qty,
+        filtered.net,
+        filtered.source,
+        filtered.status,
+        filtered.reason
+      FROM filtered
+      ORDER BY filtered.doc_date DESC NULLS LAST, filtered.doc_ref ASC NULLS LAST, filtered.sku ASC, filtered.line_id ASC
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    ) page ON TRUE
+  `;
+  const rows = raw.filter((row): row is typeof row & { lineId: string } => row.lineId != null);
+  const totals = raw[0];
   return {
     items: rows.map((row) => ({
       lineId: row.lineId,
@@ -877,9 +1075,9 @@ async function queryTransactions(input: TxInput) {
     })),
     page,
     pageSize,
-    total: Number(totals[0]?.total ?? 0),
-    filteredCountedNet: decimalString(totals[0]?.net, 2),
-    filteredCountedUnits: decimalString(totals[0]?.qty, 3),
+    total: Number(totals?.total ?? 0),
+    filteredCountedNet: decimalString(totals?.countedNet, 2),
+    filteredCountedUnits: decimalString(totals?.countedQty, 3),
     dateFilterNote: contradiction
       ? "A date range only includes dated transactions, so undated rows are not shown."
       : input.from || input.to
@@ -931,7 +1129,15 @@ function productHistoryOrder(sort: string | undefined): Prisma.Sql {
   }
 }
 
-async function queryProductHistory(input: z.infer<typeof productHistorySchema>) {
+async function queryProductHistory(
+  input: z.infer<typeof productHistorySchema>,
+): Promise<{ rows: ProductHistoryRow[]; page: number; pageSize: number; total: number }> {
+  if (!hasReportDb()) {
+    return withReportSql(
+      ["products", input.companyId, input.page ?? 1, input.pageSize ?? 25, input.sort ?? "", input.q ?? "", input.brandId ?? ""].join("|"),
+      () => queryProductHistory(input),
+    );
+  }
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 25;
   const parts: Prisma.Sql[] = [
@@ -952,36 +1158,47 @@ async function queryProductHistory(input: z.infer<typeof productHistorySchema>) 
     )`);
   }
   const where = Prisma.join(parts, " AND ");
-  const cte = unifiedLinesCte([input.companyId], null);
-  const [rows, totals] = await Promise.all([
-    prisma.$queryRaw<ProductHistoryRow[]>`
-      ${cte}
-      SELECT * FROM (
-        SELECT
-          u.sku AS sku,
-          MAX(u.description) AS description,
-          COUNT(*) FILTER (WHERE ${COUNTED})::int AS lines,
-          COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS qty,
-          COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND NOT ${ADJUSTMENT}), 0) AS "grossSales",
-          COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT}), 0) AS credits,
-          COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "netSales",
-          COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE' AND u.doc_date IS NOT NULL)::int AS "datedInvoices",
-          MIN(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "firstDated",
-          MAX(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "lastDated",
-          COUNT(*) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledLines"
-        FROM u
-        WHERE ${where}
-        GROUP BY u.sku
-      ) products
+  const raw = await reportDb().$queryRaw<Array<ProductHistoryRow & { sku: string | null; total: number }>>`
+    ${unifiedLinesCte([input.companyId], null)}
+    , grouped AS MATERIALIZED (
+      SELECT
+        u.sku AS sku,
+        MAX(u.description) AS description,
+        COUNT(*) FILTER (WHERE ${COUNTED})::int AS lines,
+        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS qty,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND NOT ${ADJUSTMENT}), 0) AS "grossSales",
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT}), 0) AS credits,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "netSales",
+        COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE' AND u.doc_date IS NOT NULL)::int AS "datedInvoices",
+        MIN(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "firstDated",
+        MAX(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "lastDated",
+        COUNT(*) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledLines"
+      FROM u
+      WHERE ${where}
+      GROUP BY u.sku
+    )
+    SELECT
+      totals.total,
+      page.sku,
+      page.description,
+      page.lines,
+      page.qty,
+      page."grossSales",
+      page.credits,
+      page."netSales",
+      page."datedInvoices",
+      page."firstDated",
+      page."lastDated",
+      page."unreconciledLines"
+    FROM (SELECT COUNT(*)::int AS total FROM grouped) totals
+    LEFT JOIN LATERAL (
+      SELECT * FROM grouped
       ORDER BY ${productHistoryOrder(input.sort)}
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
-    `,
-    prisma.$queryRaw<Array<{ total: number }>>`
-      ${cte}
-      SELECT COUNT(DISTINCT u.sku)::int AS total FROM u WHERE ${where}
-    `,
-  ]);
-  return { rows, page, pageSize, total: Number(totals[0]?.total ?? 0) };
+    ) page ON TRUE
+  `;
+  const rows: ProductHistoryRow[] = raw.filter((row) => row.sku != null);
+  return { rows, page, pageSize, total: Number(raw[0]?.total ?? 0) };
 }
 
 export async function listUnifiedCustomerProducts(actorUserId: string, raw: unknown) {
@@ -1085,7 +1302,7 @@ export async function getUnifiedProductSales(actorUserId: string, raw: unknown) 
   const companyWhere = Prisma.join(companyParts, " AND ");
   const cte = unifiedLinesCte(scope, sku);
   const aggregate = Prisma.sql`
-    agg AS (
+    agg AS MATERIALIZED (
       SELECT
         u.company_id,
         string_agg(DISTINCT u.account_code, ', ') AS "accountCodes",
@@ -1099,47 +1316,73 @@ export async function getUnifiedProductSales(actorUserId: string, raw: unknown) 
       WHERE u.sku = ${sku} AND u.status <> 'DUPLICATE'
       GROUP BY u.company_id
     )`;
-  const [rows, totals, variant] = await Promise.all([
-    prisma.$queryRaw<ProductCustomerRow[]>`
-      ${cte}, ${aggregate}
-      SELECT
-        c.id AS "companyId", c.name AS "companyName", c.status::text AS status,
-        agg."accountCodes", rep.code AS "repCode", rep."salespersonName",
-        agg.lines, agg.qty, agg."netSales", agg.credits, agg."lastDated", agg."unreconciledLines"
-      FROM agg
-      INNER JOIN "Company" c ON c.id = agg.company_id
-      LEFT JOIN LATERAL (
-        SELECT sr.code AS code, COALESCE(NULLIF(sr."displayName", ''), us.name, us.email) AS "salespersonName"
-        FROM "CompanyAssignment" ca
-        INNER JOIN "SalesRep" sr ON sr.id = ca."salesRepId"
-        INNER JOIN "User" us ON us.id = sr."userId"
-        WHERE ca."companyId" = c.id
-        ORDER BY ca."isPrimary" DESC, ca."createdAt" ASC
-        LIMIT 1
-      ) rep ON TRUE
-      WHERE ${companyWhere}
-      ORDER BY ${productCustomerOrder(input.sort)}
-      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
-    `,
-    prisma.$queryRaw<
-      Array<{
-        total: number;
-        netSales: Prisma.Decimal | null;
-        qty: Prisma.Decimal | null;
-        credits: Prisma.Decimal | null;
-        unreconciledLines: number;
-      }>
-    >`
-      ${cte}, ${aggregate}
-      SELECT COUNT(*)::int AS total,
-        COALESCE(SUM(agg."netSales"), 0) AS "netSales",
-        COALESCE(SUM(agg.qty), 0) AS qty,
-        COALESCE(SUM(agg.credits), 0) AS credits,
-        COALESCE(SUM(agg."unreconciledLines"), 0)::int AS "unreconciledLines"
-      FROM agg
-      INNER JOIN "Company" c ON c.id = agg.company_id
-      WHERE ${companyWhere}
-    `,
+  const scopeKey = scope === "all" ? "all" : [...scope].sort().join(",");
+  const [reportRows, variant] = await Promise.all([
+    withReportSql(
+      ["product", sku, page, pageSize, input.sort ?? "", input.q ?? "", input.salesRepId ?? "", scopeKey].join("|"),
+      () => reportDb().$queryRaw<
+        Array<
+          ProductCustomerRow & {
+            companyId: string | null;
+            total: number;
+            summaryNet: Prisma.Decimal | null;
+            summaryQty: Prisma.Decimal | null;
+            summaryCredits: Prisma.Decimal | null;
+            summaryUnreconciled: number;
+          }
+        >
+      >`
+        ${cte}, ${aggregate}
+        SELECT
+          totals.total,
+          totals."summaryNet",
+          totals."summaryQty",
+          totals."summaryCredits",
+          totals."summaryUnreconciled",
+          page."companyId",
+          page."companyName",
+          page.status,
+          page."accountCodes",
+          page."repCode",
+          page."salespersonName",
+          page.lines,
+          page.qty,
+          page."netSales",
+          page.credits,
+          page."lastDated",
+          page."unreconciledLines"
+        FROM (
+          SELECT COUNT(*)::int AS total,
+            COALESCE(SUM(agg."netSales"), 0) AS "summaryNet",
+            COALESCE(SUM(agg.qty), 0) AS "summaryQty",
+            COALESCE(SUM(agg.credits), 0) AS "summaryCredits",
+            COALESCE(SUM(agg."unreconciledLines"), 0)::int AS "summaryUnreconciled"
+          FROM agg
+          INNER JOIN "Company" c ON c.id = agg.company_id
+          WHERE ${companyWhere}
+        ) totals
+        LEFT JOIN LATERAL (
+          SELECT
+            c.id AS "companyId", c.name AS "companyName", c.status::text AS status,
+            agg."accountCodes", rep.code AS "repCode", rep."salespersonName",
+            agg.lines, agg.qty, agg."netSales", agg.credits, agg."lastDated", agg."unreconciledLines"
+          FROM agg
+          INNER JOIN "Company" c ON c.id = agg.company_id
+          LEFT JOIN LATERAL (
+            SELECT sr.code AS code, COALESCE(NULLIF(sr."displayName", ''), us.name, us.email) AS "salespersonName"
+            FROM "CompanyAssignment" ca
+            INNER JOIN "SalesRep" sr ON sr.id = ca."salesRepId"
+            INNER JOIN "User" us ON us.id = sr."userId"
+            WHERE ca."companyId" = c.id
+            ORDER BY ca."isPrimary" DESC, ca."createdAt" ASC
+            LIMIT 1
+          ) rep ON TRUE
+          WHERE ${companyWhere}
+          ORDER BY ${productCustomerOrder(input.sort)}
+          LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+        ) page ON TRUE
+      `,
+    ),
     prisma.productVariant.findFirst({
       where: { sku: { equals: input.sku.trim(), mode: "insensitive" } },
       select: {
@@ -1154,9 +1397,17 @@ export async function getUnifiedProductSales(actorUserId: string, raw: unknown) 
   const inCatalogue = Boolean(
     variant?.product && variant.product.status === "ACTIVE" && variant.product.isActive,
   );
-  const total = totals[0];
-  const unreconciledLines = Number(total?.unreconciledLines ?? 0);
-  const certifiedNet = decimalString(total?.netSales, 2);
+  const head = reportRows[0];
+  const rows = reportRows.filter((row) => row.companyId != null);
+  const total = {
+    total: head?.total ?? 0,
+    netSales: head?.summaryNet,
+    qty: head?.summaryQty,
+    credits: head?.summaryCredits,
+    unreconciledLines: head?.summaryUnreconciled ?? 0,
+  };
+  const unreconciledLines = Number(total.unreconciledLines ?? 0);
+  const certifiedNet = decimalString(total.netSales, 2);
   const certification = certifyUnifiedTotals({ certifiedNet, unreconciledLines });
   return {
     product: {
@@ -1271,7 +1522,7 @@ export async function getUnifiedReconciliationQueue(actorUserId: string, raw: un
         )
       GROUP BY 1
     ),
-    queue AS (
+    queue AS MATERIALIZED (
       SELECT p.code,
         string_agg(DISTINCT p.source, ', ') AS sources,
         SUM(p.lines)::int AS lines,
@@ -1282,33 +1533,52 @@ export async function getUnifiedReconciliationQueue(actorUserId: string, raw: un
       GROUP BY p.code
     )
   `;
-  const [rows, totals] = await Promise.all([
-    prisma.$queryRaw<
+  const reportRows = await withReportSql(`reconcile:${page}:${pageSize}`, () =>
+    reportDb().$queryRaw<
       Array<{
-        code: string;
-        sources: string;
-        lines: number;
-        net: Prisma.Decimal;
-        companies: number;
+        total: number;
+        totalLines: number;
+        totalNet: Prisma.Decimal | null;
+        code: string | null;
+        sources: string | null;
+        lines: number | null;
+        net: Prisma.Decimal | null;
+        companies: number | null;
         accountName: string | null;
         classification: string | null;
       }>
     >`
       ${cte}
-      SELECT q.code, q.sources, q.lines, q.net, q.companies,
-        a."originalName" AS "accountName", a."classification"::text AS classification
-      FROM queue q
-      LEFT JOIN "AutopartAccount" a
-        ON a."sourceSystem" = ${AUTOPART_SOURCE} AND UPPER(btrim(a."accountCode")) = q.code
-      ORDER BY ABS(q.net) DESC, q.code ASC
-      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+      SELECT
+        totals.total,
+        totals."totalLines",
+        totals."totalNet",
+        page.code,
+        page.sources,
+        page.lines,
+        page.net,
+        page.companies,
+        page."accountName",
+        page.classification
+      FROM (
+        SELECT COUNT(*)::int AS total,
+          COALESCE(SUM(q.lines), 0)::int AS "totalLines",
+          COALESCE(SUM(q.net), 0) AS "totalNet"
+        FROM queue q
+      ) totals
+      LEFT JOIN LATERAL (
+        SELECT q.code, q.sources, q.lines, q.net, q.companies,
+          a."originalName" AS "accountName", a."classification"::text AS classification
+        FROM queue q
+        LEFT JOIN "AutopartAccount" a
+          ON a."sourceSystem" = ${AUTOPART_SOURCE} AND UPPER(btrim(a."accountCode")) = q.code
+        ORDER BY ABS(q.net) DESC, q.code ASC
+        LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+      ) page ON TRUE
     `,
-    prisma.$queryRaw<Array<{ total: number; lines: number; net: Prisma.Decimal | null }>>`
-      ${cte}
-      SELECT COUNT(*)::int AS total, COALESCE(SUM(q.lines), 0)::int AS lines, COALESCE(SUM(q.net), 0) AS net
-      FROM queue q
-    `,
-  ]);
+  );
+  const head = reportRows[0];
+  const rows = reportRows.filter((row) => row.code != null);
   return {
     permitted: true as const,
     items: rows.map((row) => ({
@@ -1328,9 +1598,9 @@ export async function getUnifiedReconciliationQueue(actorUserId: string, raw: un
     })),
     page,
     pageSize,
-    total: Number(totals[0]?.total ?? 0),
-    totalLines: Number(totals[0]?.lines ?? 0),
-    totalNet: decimalString(totals[0]?.net, 2),
+    total: Number(head?.total ?? 0),
+    totalLines: Number(head?.totalLines ?? 0),
+    totalNet: decimalString(head?.totalNet, 2),
     note: "These rows are not in any customer total. Link the exact account code to one CRM company to include them. Names are never used to match.",
   };
 }
