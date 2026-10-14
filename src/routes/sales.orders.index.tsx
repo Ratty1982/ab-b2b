@@ -82,7 +82,7 @@ function SalesOrderDrafts() {
           <p className="text-[13px] text-steel">No open drafts. Start an order for a customer.</p>
         ) : null}
         {rows.length > 0 ? (
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <div className="min-w-0 overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[720px] text-[13px]">
               <thead>
                 <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase text-steel">

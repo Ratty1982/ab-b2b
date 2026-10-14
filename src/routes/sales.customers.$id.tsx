@@ -112,7 +112,7 @@ function SalesCustomer() {
             <Link
               to="/sales/orders/new"
               search={{ companyId: company.id }}
-              className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-[12px] font-bold uppercase tracking-wide text-primary-foreground"
+              className="inline-flex min-h-11 items-center rounded-md bg-primary px-3 text-[12px] font-bold uppercase tracking-wide text-primary-foreground"
             >
               Create order
             </Link>
@@ -120,14 +120,14 @@ function SalesCustomer() {
           </div>
         }
       />
-      <div className="flex gap-1 overflow-x-auto border-b border-border/70 px-4 sm:px-6">
+      <div className="flex min-w-0 gap-1 overflow-x-auto border-b border-border/70 px-4 sm:px-6">
         {tabs.map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
             className={cn(
-              "shrink-0 border-b-2 px-3 py-3 text-[13px] font-semibold",
+              "inline-flex min-h-11 shrink-0 items-center border-b-2 px-3 text-[13px] font-semibold",
               tab === t ? "border-primary text-foreground" : "border-transparent text-steel",
             )}
           >

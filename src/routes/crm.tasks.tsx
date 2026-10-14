@@ -129,7 +129,7 @@ function CrmTasksPage() {
         ) : null}
         <div className="flex flex-wrap gap-3">
           <input
-            className="h-9 min-w-[200px] rounded-md border border-border px-3 text-sm"
+            className="h-11 min-h-11 w-full min-w-0 rounded-md border border-border px-3 text-base sm:w-auto sm:min-w-[12rem] lg:h-10 lg:min-h-10 lg:text-sm"
             placeholder="Search title, customer, SKU"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -169,7 +169,7 @@ function CrmTasksPage() {
               : "No tasks match these filters."}
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="min-w-0 overflow-x-auto">
             <table className="w-full min-w-[800px] text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-[10px] font-bold uppercase tracking-wide text-steel">

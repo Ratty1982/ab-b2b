@@ -53,7 +53,7 @@ function CrmActivitiesPage() {
           <button
             type="button"
             onClick={() => setLogOpen(true)}
-            className="h-10 rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground"
+            className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground"
           >
             Log activity
           </button>
@@ -62,13 +62,13 @@ function CrmActivitiesPage() {
 
       <div className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
         <input
-          className="h-10 min-w-[180px] flex-1 rounded-md border border-border bg-background px-3 text-sm"
+          className="h-11 min-h-11 w-full min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-base sm:w-auto sm:min-w-[12rem] lg:h-10 lg:min-h-10 lg:text-sm"
           placeholder="Search summary or customer"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         <select
-          className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+          className="h-11 min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:w-auto lg:h-10 lg:min-h-10 lg:text-sm"
           value={type}
           onChange={(e) => setType(e.target.value)}
         >
