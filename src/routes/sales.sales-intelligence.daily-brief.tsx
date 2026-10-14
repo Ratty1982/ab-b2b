@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "@/components/ab/Badges";
 import {
@@ -53,6 +54,7 @@ function parseBriefSearch(search: Record<string, unknown>): BriefSearch {
 }
 
 export const Route = createFileRoute("/sales/sales-intelligence/daily-brief")({
+  beforeLoad: ({ location }) => guardStaffPage("sales_intelligence.daily_brief.view", location.href, "/sales"),
   validateSearch: (search: Record<string, unknown>): BriefSearch => parseBriefSearch(search),
   head: () => ({
     meta: [

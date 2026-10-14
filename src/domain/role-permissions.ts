@@ -1,3 +1,4 @@
+import { expandImpliedRolePermissions } from "./permission-sections";
 import {
   ALL_PERMISSIONS,
   type PermissionKey,
@@ -243,12 +244,12 @@ export const TRADE_ROLE_PERMISSIONS: Record<TradeAccessKey, PermissionKey[]> = {
 
 export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRoleKey, PermissionKey[]> = {
   SUPER_ADMIN: ALL_PERMISSIONS,
-  MANAGEMENT: MANAGEMENT_PERMS,
-  SALES_MANAGER: SALES_MANAGER_PERMS,
-  SALES_REPRESENTATIVE: SALES_REP_PERMS,
-  CUSTOMER_SERVICE: CUSTOMER_SERVICE_PERMS,
-  ACCOUNTS: ACCOUNTS_PERMS,
-  MARKETING: MARKETING_PERMS,
+  MANAGEMENT: expandImpliedRolePermissions(MANAGEMENT_PERMS),
+  SALES_MANAGER: expandImpliedRolePermissions(SALES_MANAGER_PERMS),
+  SALES_REPRESENTATIVE: expandImpliedRolePermissions(SALES_REP_PERMS),
+  CUSTOMER_SERVICE: expandImpliedRolePermissions(CUSTOMER_SERVICE_PERMS),
+  ACCOUNTS: expandImpliedRolePermissions(ACCOUNTS_PERMS),
+  MARKETING: expandImpliedRolePermissions(MARKETING_PERMS),
 };
 
 export const SYSTEM_ROLE_META: Record<SystemRoleKey, { name: string; description: string }> = {

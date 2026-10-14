@@ -5,7 +5,7 @@ import {
   AuthError,
   requireSystemPermission,
 } from "@/server/rbac/guards";
-import { grants, hasPermission } from "@/server/rbac/access";
+import { hasPermission } from "@/server/rbac/access";
 import { cmsMediaPublicPath, cmsFocalStyle } from "@/lib/cms-media";
 import {
   DEFAULT_TEAM_DEPARTMENTS,
@@ -238,7 +238,7 @@ export async function getPublicTeamMemberForSalesRep(salesRepId: string) {
 }
 
 export async function listTeamDepartmentsAdmin(actorUserId: string) {
-  await requireSystemPermission(actorUserId, "cms.page.read");
+  await requireSystemPermission(actorUserId, "cms.team.view");
   await bootstrapTeamDepartments();
   const rows = await prisma.teamDepartment.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -258,7 +258,7 @@ export async function listTeamDepartmentsAdmin(actorUserId: string) {
 }
 
 export async function upsertTeamDepartment(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "cms.page.edit");
+  await requireSystemPermission(actorUserId, "cms.team.edit");
   const input = normalizeTeamDepartmentInput(teamDepartmentUpsertSchema.parse(raw));
 
   if (input.id) {
@@ -311,7 +311,7 @@ export async function upsertTeamDepartment(actorUserId: string, raw: unknown) {
 }
 
 export async function listTeamMembersAdmin(actorUserId: string, rawQuery: unknown) {
-  await requireSystemPermission(actorUserId, "cms.page.read");
+  await requireSystemPermission(actorUserId, "cms.team.view");
   await bootstrapTeamDepartments();
   const query = teamMemberListQuerySchema.parse(rawQuery ?? {});
   const where: Prisma.TeamMemberWhereInput = {};
@@ -335,7 +335,7 @@ export async function listTeamMembersAdmin(actorUserId: string, rawQuery: unknow
 }
 
 export async function getTeamMemberAdmin(actorUserId: string, id: string) {
-  await requireSystemPermission(actorUserId, "cms.page.read");
+  await requireSystemPermission(actorUserId, "cms.team.view");
   const row = await prisma.teamMember.findUnique({
     where: { id },
     include: memberAdminInclude(),
@@ -345,7 +345,7 @@ export async function getTeamMemberAdmin(actorUserId: string, id: string) {
 }
 
 export async function upsertTeamMember(actorUserId: string, raw: unknown) {
-  const profile = await requireSystemPermission(actorUserId, "cms.page.edit");
+  const profile = await requireSystemPermission(actorUserId, "cms.team.edit");
   const input = normalizeTeamMemberInput(teamMemberUpsertSchema.parse(raw));
 
   if (input.departmentId) {
@@ -451,7 +451,7 @@ export async function upsertTeamMember(actorUserId: string, raw: unknown) {
 }
 
 export async function deleteTeamMember(actorUserId: string, id: string) {
-  await requireSystemPermission(actorUserId, "cms.page.edit");
+  await requireSystemPermission(actorUserId, "cms.team.edit");
   const before = await prisma.teamMember.findUnique({ where: { id } });
   if (!before) throw new AuthError("Team member not found", "NOT_FOUND", 404);
   await prisma.teamMember.delete({ where: { id } });
@@ -469,7 +469,7 @@ export async function deleteTeamMember(actorUserId: string, id: string) {
 }
 
 export async function deleteTeamDepartment(actorUserId: string, id: string) {
-  await requireSystemPermission(actorUserId, "cms.page.edit");
+  await requireSystemPermission(actorUserId, "cms.team.edit");
   const before = await prisma.teamDepartment.findUnique({
     where: { id },
     include: { _count: { select: { members: true } } },
@@ -493,8 +493,8 @@ export async function deleteTeamDepartment(actorUserId: string, id: string) {
 }
 
 export async function assertCanManageTeam(actorUserId: string) {
-  const profile = await requireSystemPermission(actorUserId, "cms.page.read");
+  const profile = await requireSystemPermission(actorUserId, "cms.team.view");
   return {
-    canEdit: grants(profile, "cms.page.edit", "admin.access"),
+    canEdit: hasPermission(profile, "cms.team.edit"),
   };
 }

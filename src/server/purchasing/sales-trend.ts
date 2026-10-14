@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
+import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
 import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { buildSalesTrend, SALES_TREND_DIRECTION_LABEL, type SalesTrendRange } from "@/domain/sales-trend";
@@ -67,8 +68,20 @@ function observed(rows: MonthRow[]) {
 
 const rangeInput = z.enum(["12", "24", "all"]);
 
+async function requireTrendAccess(actorUserId: string) {
+  const profile = await requirePurchasingAccess(actorUserId);
+  if (
+    !hasPermission(profile, "purchasing.stock.view") &&
+    !hasPermission(profile, "purchasing.forecast.view") &&
+    !hasPermission(profile, "purchasing.planner.view")
+  ) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
+  return profile;
+}
+
 export async function getSkuSalesTrend(actorUserId: string, raw: unknown) {
-  await requirePurchasingAccess(actorUserId);
+  await requireTrendAccess(actorUserId);
   const input = z.object({ sku: z.string().trim().min(1), range: rangeInput.optional() }).parse(raw);
   const range = (input.range ?? "12") as SalesTrendRange;
   const today = todayLondonDateOnly();
@@ -91,7 +104,7 @@ export async function getSkuSalesTrend(actorUserId: string, raw: unknown) {
 }
 
 export async function getBrandSalesTrend(actorUserId: string, raw: unknown) {
-  await requirePurchasingAccess(actorUserId);
+  await requireTrendAccess(actorUserId);
   const input = z.object({ brandSlug: z.string().trim().min(1), range: rangeInput.optional() }).parse(raw);
   const brand = await prisma.brand.findUnique({
     where: { slug: input.brandSlug },

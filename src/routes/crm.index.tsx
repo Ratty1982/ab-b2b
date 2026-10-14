@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useId, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -23,6 +24,7 @@ import {
 type Search = { opportunityId?: string; view?: string };
 
 export const Route = createFileRoute("/crm/")({
+  beforeLoad: ({ location }) => guardStaffPage("crm.opportunities.view", location.href, "/crm"),
   validateSearch: (s: Record<string, unknown>): Search => {
     const out: Search = {};
     if (typeof s["opportunityId"] === "string" && s["opportunityId"]) {

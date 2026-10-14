@@ -32,8 +32,8 @@ const FILE_NAME_MAX = 200;
 
 function requirePurchasingManage(actorUserId: string) {
   return requirePurchasingAccess(actorUserId).then((profile) => {
-    if (!hasPermission(profile, "purchasing.manage")) {
-      throw new AuthError("purchasing.manage is required", "FORBIDDEN", 403);
+    if (!hasPermission(profile, "purchasing.stock.manage")) {
+      throw new AuthError("purchasing.stock.manage is required", "FORBIDDEN", 403);
     }
     return profile;
   });
@@ -344,7 +344,10 @@ export async function importFbaStock(actorUserId: string, raw: unknown) {
 }
 
 export async function listFbaStockImports(actorUserId: string) {
-  await requirePurchasingAccess(actorUserId);
+  const profile = await requirePurchasingAccess(actorUserId);
+  if (!hasPermission(profile, "purchasing.stock.view")) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
   const rows = await prisma.autopartFbaStockImport.findMany({
     orderBy: { importedAt: "desc" },
     take: 12,

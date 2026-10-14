@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
@@ -58,6 +59,12 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/admin/content/$slug")({
+  beforeLoad: ({ location, params }) =>
+    guardStaffPage(
+      params.slug === "home" ? "cms.homepage.view" : "cms.page.read",
+      location.href,
+      "/admin/content",
+    ),
   head: ({ params }) => ({
     meta: [{ title: `Edit ${params.slug} — CMS` }],
   }),

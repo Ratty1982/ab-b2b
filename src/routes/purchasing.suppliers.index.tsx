@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
@@ -19,6 +20,7 @@ import { createPurchasingSupplierFn, listPurchasingSuppliersFn } from "@/server/
 type Search = { q?: string | undefined; status?: "active" | "inactive" | "all" | undefined };
 
 export const Route = createFileRoute("/purchasing/suppliers/")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.suppliers.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>): Search => {
     const out: Search = {};
     const q = raw["q"];

@@ -266,7 +266,7 @@ export function productWorkspaceHref(
 }
 
 export async function requireSalesIntelligence(actorUserId: string): Promise<LoadedAccessProfile> {
-  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
+  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.enquiry.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Sales Intelligence is internal only", "FORBIDDEN", 403);
   }

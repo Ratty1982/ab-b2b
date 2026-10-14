@@ -39,7 +39,7 @@ const listSchema = z.object({
 });
 
 export async function listCrmActivities(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.activities.view");
   const input = listSchema.parse(raw ?? {});
   const scope = await resolveCrmCompanyScope(profile);
   const where: Prisma.ActivityWhereInput = {
@@ -131,7 +131,7 @@ const logSchema = z.object({
 });
 
 export async function logCrmActivity(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.activities.view");
   if (!canLogCrmActivity(profile)) {
     throw new AuthError("Not permitted to log CRM activity", "FORBIDDEN", 403);
   }
@@ -254,7 +254,7 @@ export async function logCrmActivity(actorUserId: string, raw: unknown) {
 }
 
 export async function createCrmTask(actorUserId: string, raw: unknown) {
-  const profile = await requireCrmViewer(actorUserId);
+  const profile = await requireCrmViewer(actorUserId, "crm.activities.view");
   const { hasPermission } = await import("@/server/rbac/access");
   if (!hasPermission(profile, "tasks.manage") && !canLogCrmActivity(profile)) {
     throw new AuthError("Not permitted to create tasks", "FORBIDDEN", 403);

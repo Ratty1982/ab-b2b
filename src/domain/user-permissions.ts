@@ -5,6 +5,7 @@
  * Trade company access is not edited here.
  */
 import { PERMISSIONS, isPermissionKey, type PermissionKey } from "@/domain/permissions";
+import { STAFF_PERMISSION_TREE, implySectionPermissions } from "@/domain/permission-sections";
 
 export const OVERRIDE_EFFECTS = ["INHERIT", "ALLOW", "DENY"] as const;
 export type OverrideEffect = (typeof OVERRIDE_EFFECTS)[number];
@@ -110,272 +111,50 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   "autopart.ledger.view": "View Autopart ledger",
   "autopart.mapping.manage": "Manage Autopart mapping",
   "autopart.portal-access.manage": "Manage Autopart portal access",
+  "sales_intelligence.enquiry.view": "View sales enquiry",
+  "sales_intelligence.daily_brief.view": "View daily brief",
+  "sales_intelligence.portfolio.view": "View sales rep portfolio",
+  "sales_intelligence.gaps.view": "View gap analysis",
+  "sales_intelligence.opportunities.view": "View range opportunities",
+  "sales_intelligence.rebates.view": "View rebate analysis",
+  "purchasing.dashboard.view": "View purchasing dashboard",
+  "purchasing.stock.view": "View stock overview",
+  "purchasing.forecast.view": "View stock forecast",
+  "purchasing.planner.view": "View purchase planner",
+  "purchasing.backorders.view": "View backorders",
+  "purchasing.overstock.view": "View overstock",
+  "purchasing.suppliers.view": "View suppliers",
+  "purchasing.stock.manage": "Manage stock imports",
+  "purchasing.forecast.manage": "Manage forecast coverage",
+  "purchasing.planner.manage": "Manage purchase planner",
+  "purchasing.backorders.manage": "Manage backorder imports",
+  "purchasing.suppliers.manage": "Manage suppliers",
+  "crm.overview.view": "View CRM overview",
+  "crm.leads.view": "View CRM leads",
+  "crm.opportunities.view": "View CRM opportunities",
+  "crm.activities.view": "View CRM activities",
+  "catalogue.brands.view": "View brands",
+  "catalogue.brands.edit": "Edit brands",
+  "catalogue.categories.view": "View categories",
+  "catalogue.categories.edit": "Edit categories",
+  "catalogue.documents.view": "View documents",
+  "catalogue.documents.edit": "Edit documents",
+  "cms.homepage.view": "View homepage",
+  "cms.homepage.edit": "Edit homepage",
+  "cms.team.view": "View team page",
+  "cms.team.edit": "Edit team page",
+  "sales.team.view": "View sales team",
+  "sales.team.manage": "Manage sales team",
 };
 
-const CUSTOMERS: readonly PermissionKey[] = [
-  "companies.view",
-  "companies.create",
-  "companies.edit",
-  "companies.delete",
-  "companies.manage_users",
-  "customer_groups.view",
-  "customer_groups.manage",
-  "contacts.view",
-  "contacts.create",
-  "contacts.edit",
-  "crm.view",
-  "crm.manage",
-  "crm.activities.create",
-  "tasks.view",
-  "tasks.manage",
-  "sales.view_own_accounts",
-  "sales.view_team_accounts",
-  "sales.view_all_accounts",
-];
-
-const ORDERS: readonly PermissionKey[] = [
-  "orders.view",
-  "orders.create",
-  "orders.edit",
-  "orders.place_for_customer",
-  "impersonation.order_for_customer",
-];
-
-const QUOTES: readonly PermissionKey[] = [
-  "quotes.view",
-  "quotes.create",
-  "quotes.edit",
-  "quotes.send",
-  "quotes.accept",
-  "quotes.override_price",
-  "quotes.accept_on_behalf",
-  "quotes.convert",
-];
-
-const PRODUCTS: readonly PermissionKey[] = [
-  "products.view",
-  "products.create",
-  "products.edit",
-  "products.import",
-  "products.export",
-  "products.cost.view",
-];
-
-const PRICING: readonly PermissionKey[] = [
-  "pricing.view",
-  "pricing.edit",
-  "pricing.approve",
-  "promotions.submit",
-  "promotions.approve",
-  "promotions.report",
-];
-
-const SURVEYS: readonly PermissionKey[] = [
-  "surveys.view",
-  "surveys.export",
-  "surveys.delete",
-  "surveys.import",
-  "surveys.manage",
-];
-
-const CMS: readonly PermissionKey[] = [
-  "cms.view",
-  "cms.edit",
-  "cms.publish",
-  "cms.page.read",
-  "cms.page.edit",
-  "cms.page.publish",
-  "cms.media.read",
-  "cms.media.manage",
-];
-
-const APPLICATIONS: readonly PermissionKey[] = [
-  "applications.view",
-  "applications.review",
-  "applications.approve",
-];
-
-const AUTOPART: readonly PermissionKey[] = [
-  "autopart.import.view",
-  "autopart.import.manage",
-  "autopart.customer.view",
-  "autopart.history.view",
-  "autopart.ledger.view",
-  "autopart.mapping.manage",
-  "autopart.portal-access.manage",
-  "integrations.sharepoint.manage",
-];
-
-const USERS_ADMIN: readonly PermissionKey[] = [
-  "admin.access",
-  "users.view",
-  "users.manage",
-  "roles.view",
-  "roles.manage",
-  "version_updates.manage",
-];
-
-export const PERMISSION_CATEGORIES: readonly PermissionCategory[] = [
-  {
-    id: "reporting",
-    label: "Dashboard and Reporting",
-    columns: {
-      view: ["reports.view"],
-      manage: ["reports.management"],
-    },
-    permissions: ["reports.view", "reports.management"],
-  },
-  {
-    id: "customers",
-    label: "Customers and CRM",
-    columns: {
-      view: ["companies.view", "customer_groups.view", "contacts.view", "crm.view", "tasks.view"],
-      edit: ["companies.create", "companies.edit", "contacts.create", "contacts.edit", "crm.activities.create"],
-      manage: [
-        "companies.delete",
-        "companies.manage_users",
-        "customer_groups.manage",
-        "crm.manage",
-        "tasks.manage",
-      ],
-    },
-    permissions: CUSTOMERS,
-  },
-  {
-    id: "orders",
-    label: "Sales Orders and Order Entry",
-    columns: {
-      view: ["orders.view"],
-      edit: ["orders.create", "orders.edit"],
-      manage: ["orders.place_for_customer", "impersonation.order_for_customer"],
-    },
-    permissions: ORDERS,
-  },
-  {
-    id: "quotes",
-    label: "Quotations",
-    columns: {
-      view: ["quotes.view"],
-      edit: ["quotes.create", "quotes.edit", "quotes.send"],
-      manage: ["quotes.accept", "quotes.override_price", "quotes.accept_on_behalf", "quotes.convert"],
-    },
-    permissions: QUOTES,
-  },
-  {
-    id: "products",
-    label: "Products and Catalogue",
-    columns: {
-      view: ["products.view", "products.cost.view"],
-      edit: ["products.create", "products.edit"],
-      manage: ["products.import", "products.export"],
-    },
-    permissions: PRODUCTS,
-  },
-  {
-    id: "pricing",
-    label: "Pricing and Promotions",
-    columns: {
-      view: ["pricing.view", "promotions.report"],
-      edit: ["pricing.edit", "promotions.submit"],
-      manage: ["pricing.approve", "promotions.approve"],
-    },
-    permissions: PRICING,
-  },
-  {
-    id: "inventory",
-    label: "Inventory",
-    columns: { view: ["inventory.view"] },
-    permissions: ["inventory.view"],
-  },
-  {
-    id: "purchasing",
-    label: "Purchasing",
-    columns: {
-      view: ["purchasing.view"],
-      manage: ["purchasing.manage"],
-    },
-    permissions: ["purchasing.view", "purchasing.manage"],
-  },
-  {
-    id: "invoices",
-    label: "Invoices and Accounts",
-    columns: { view: ["invoices.view"] },
-    permissions: ["invoices.view"],
-  },
-  {
-    id: "sales-intelligence",
-    label: "Sales Intelligence",
-    columns: { view: ["sales_intelligence.view"] },
-    permissions: ["sales_intelligence.view"],
-  },
-  {
-    id: "surveys",
-    label: "Customer Surveys",
-    columns: {
-      view: ["surveys.view"],
-      edit: ["surveys.export", "surveys.import"],
-      manage: ["surveys.delete", "surveys.manage"],
-    },
-    permissions: SURVEYS,
-  },
-  {
-    id: "cms",
-    label: "Content and CMS",
-    columns: {
-      view: ["cms.view", "cms.page.read", "cms.media.read"],
-      edit: ["cms.edit", "cms.page.edit"],
-      manage: ["cms.publish", "cms.page.publish", "cms.media.manage"],
-    },
-    permissions: CMS,
-  },
-  {
-    id: "applications",
-    label: "Applications",
-    columns: {
-      view: ["applications.view"],
-      edit: ["applications.review"],
-      manage: ["applications.approve"],
-    },
-    permissions: APPLICATIONS,
-  },
-  {
-    id: "autopart",
-    label: "Autopart Imports and Integration",
-    columns: {
-      view: [
-        "autopart.import.view",
-        "autopart.customer.view",
-        "autopart.history.view",
-        "autopart.ledger.view",
-      ],
-      manage: [
-        "autopart.import.manage",
-        "autopart.mapping.manage",
-        "autopart.portal-access.manage",
-        "integrations.sharepoint.manage",
-      ],
-    },
-    permissions: AUTOPART,
-  },
-  {
-    id: "users",
-    label: "Users and Administration",
-    columns: {
-      view: ["users.view", "roles.view"],
-      manage: ["users.manage", "roles.manage", "admin.access", "version_updates.manage"],
-    },
-    permissions: USERS_ADMIN,
-  },
-  {
-    id: "settings",
-    label: "Settings and Audit",
-    columns: {
-      view: ["settings.view", "audit.view"],
-      edit: ["settings.edit"],
-    },
-    permissions: ["settings.view", "settings.edit", "audit.view"],
-  },
-];
+export const PERMISSION_CATEGORIES: readonly PermissionCategory[] = STAFF_PERMISSION_TREE.map(
+  (category) => ({
+    id: category.id,
+    label: category.label,
+    columns: {},
+    permissions: category.sections.flatMap((section) => section.actions),
+  }),
+);
 
 /** Changes to these keys need an explicit confirmation. */
 export const SENSITIVE_PERMISSIONS: readonly PermissionKey[] = [
@@ -439,7 +218,7 @@ export function applyUserPermissionOverrides(
       effective.add(override.permissionKey);
     }
   }
-  return { effective, denied };
+  return { effective: implySectionPermissions(effective, denied), denied };
 }
 
 /**

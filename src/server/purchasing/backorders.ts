@@ -697,8 +697,16 @@ export async function outstandingBackorderUnitsBySku(): Promise<Map<string, numb
   return out;
 }
 
-export async function getBackorderWorkspace(actorUserId: string, raw: unknown = {}) {
+async function requireBackorderView(actorUserId: string) {
   const profile = await requirePurchasingAccess(actorUserId);
+  if (!hasPermission(profile, "purchasing.backorders.view")) {
+    throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
+  return profile;
+}
+
+export async function getBackorderWorkspace(actorUserId: string, raw: unknown = {}) {
+  const profile = await requireBackorderView(actorUserId);
   const input = listInput.parse(raw ?? {});
   const [snapshot, settings, headers] = await Promise.all([
     loadLatestSnapshot(),
@@ -781,7 +789,7 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return {
-    canManage: hasPermission(profile, "purchasing.manage"),
+    canManage: hasPermission(profile, "purchasing.backorders.manage"),
     freshness: {
       ...freshness,
       headline: headline216vFeedHealth({
@@ -856,7 +864,7 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
 }
 
 export async function getBackorderLineDetail(actorUserId: string, lineId: string) {
-  await requirePurchasingAccess(actorUserId);
+  await requireBackorderView(actorUserId);
   const current = await prisma.autopartBackorderLine.findUnique({
     where: { id: lineId },
     include: { ...lineInclude, snapshot: true },
@@ -960,7 +968,7 @@ function movementCsv(movement: Autopart216vMovement, rows: BackorderMovementRowV
 }
 
 export async function exportBackordersCsv(actorUserId: string, raw: unknown = {}) {
-  await requirePurchasingAccess(actorUserId);
+  await requireBackorderView(actorUserId);
   const input = listInput.parse(raw ?? {});
   const snapshot = await loadLatestSnapshot();
   if (input.movement) {

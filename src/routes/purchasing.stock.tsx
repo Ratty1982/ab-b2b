@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState } from "react";
 import { Metric, PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge, type Tone } from "@/components/ab/Badges";
@@ -67,6 +68,7 @@ function parseSearch(raw: Record<string, unknown>): Search {
 }
 
 export const Route = createFileRoute("/purchasing/stock")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.stock.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>) => parseSearch(raw),
   head: () => ({
     meta: [

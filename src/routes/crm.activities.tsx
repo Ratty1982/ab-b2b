@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { LogActivityDrawer } from "@/components/crm/LogActivityDrawer";
@@ -6,6 +7,7 @@ import { activityTypeLabel } from "@/domain/crm";
 import { listCrmActivitiesFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/crm/activities")({
+  beforeLoad: ({ location }) => guardStaffPage("crm.activities.view", location.href, "/crm"),
   head: () => ({
     meta: [{ title: "Activities — CRM — Automotive Brands" }],
   }),

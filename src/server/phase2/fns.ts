@@ -1563,6 +1563,32 @@ export const saveStaffUserPermissionsFn = createServerFn({ method: "POST" })
     }
   });
 
+export const previewBulkStaffPermissionsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { previewBulkStaffPermissions } = await import("@/server/users/permissions");
+      const result = await previewBulkStaffPermissions(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const applyBulkStaffPermissionsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const { applyBulkStaffPermissions } = await import("@/server/users/permissions");
+      const result = await applyBulkStaffPermissions(userId, data);
+      return { ok: true as const, data: result };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listStaffUsersFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await requireUserId();

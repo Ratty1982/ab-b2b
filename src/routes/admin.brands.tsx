@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -10,6 +11,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/brands")({
+  beforeLoad: ({ location }) => guardStaffPage("catalogue.brands.view", location.href, "/admin"),
   head: () => ({ meta: [{ title: "Brands — Automotive Brands Admin" }] }),
   component: AdminBrands,
 });

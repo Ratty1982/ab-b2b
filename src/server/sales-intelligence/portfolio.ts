@@ -48,7 +48,7 @@ import {
 } from "@/domain/sales-portfolio";
 
 async function requirePortfolioActor(actorUserId: string): Promise<LoadedAccessProfile> {
-  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.view");
+  const profile = await requireSystemPermission(actorUserId, "sales_intelligence.portfolio.view");
   if (profile.actorType === "TRADE") {
     throw new AuthError("Sales Intelligence is internal only", "FORBIDDEN", 403);
   }

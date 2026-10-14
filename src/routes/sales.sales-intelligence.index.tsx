@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "@/components/ab/Badges";
 import { SiInternalStockLines, SiSkuMeta } from "@/components/sales-intelligence/product-kind";
@@ -56,6 +57,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/sales/sales-intelligence/")({
+  beforeLoad: ({ location }) => guardStaffPage("sales_intelligence.enquiry.view", location.href, "/sales"),
   validateSearch: (search: Record<string, unknown>): SalesEnquiryUrlSearch =>
     parseSalesEnquiryUrlSearch(search),
   head: () => ({

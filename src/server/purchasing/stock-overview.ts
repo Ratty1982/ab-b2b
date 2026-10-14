@@ -34,7 +34,7 @@ import {
 } from "@/domain/stock-overview";
 import { loadFbaFreshness } from "@/server/purchasing/fba-stock";
 import { stockFreshness } from "@/server/stock/service";
-import { requirePurchasingAccess } from "@/server/rbac/guards";
+import { requirePurchasingSection } from "@/server/rbac/guards";
 
 const UK_FBA_CODE = fbaLocationForImport("UK")?.locationCode ?? FBA_LOCATION_CODE;
 const PAGE_SIZE = 50;
@@ -604,7 +604,7 @@ async function filteredValuation(
 }
 
 export async function getStockOverview(actorUserId: string, raw: unknown) {
-  await requirePurchasingAccess(actorUserId);
+  await requirePurchasingSection(actorUserId, "purchasing.stock.view");
   const input = querySchema.parse(raw ?? {});
   const position = input.position ?? "all";
   const lowIds = position === "low" || position === "in" ? await lowStockProductIds() : [];
@@ -655,7 +655,7 @@ function csvCell(value: string | number | null | undefined): string {
 }
 
 export async function exportStockOverviewCsv(actorUserId: string, raw: unknown) {
-  await requirePurchasingAccess(actorUserId);
+  await requirePurchasingSection(actorUserId, "purchasing.stock.view");
   const input = querySchema.parse(raw ?? {});
   const position = input.position ?? "all";
   const lowIds = position === "low" || position === "in" ? await lowStockProductIds() : [];
@@ -738,7 +738,7 @@ function decimalQty(value: { toString(): string } | number | null | undefined): 
 }
 
 export async function getStockPartDetail(actorUserId: string, raw: unknown) {
-  await requirePurchasingAccess(actorUserId);
+  await requirePurchasingSection(actorUserId, "purchasing.stock.view");
   const { sku } = detailSchema.parse(raw ?? {});
   const row = await prisma.autopartProduct.findUnique({
     where: { matchKey: skuMatchKey(sku) },

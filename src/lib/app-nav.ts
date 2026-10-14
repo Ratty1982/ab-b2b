@@ -6,6 +6,7 @@
  * unrelated feature work. Do not duplicate these lists in AppShell or layouts.
  */
 import type { PermissionKey } from "@/domain/permissions";
+import { dedicatedAdminSectionUnlock } from "@/domain/permission-sections";
 import { allowsListedPermissions } from "@/domain/user-permissions";
 import type { SafeSessionUser } from "@/server/auth/session";
 
@@ -185,7 +186,10 @@ export function hasNavPermission(ctx: NavCtx, key: PermissionKey): boolean {
 
 export function canUseAdminShell(ctx: NavCtx): boolean {
   if (ctx.actorType !== "INTERNAL") return false;
-  return ADMIN_SHELL_PERMISSIONS.some((p) => ctx.permissions.has(p));
+  return (
+    ADMIN_SHELL_PERMISSIONS.some((p) => ctx.permissions.has(p)) ||
+    dedicatedAdminSectionUnlock(ctx.permissions)
+  );
 }
 
 export type NavItemDef = {
@@ -319,7 +323,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "kanban",
         to: ROUTES.crmOverview,
         matchPrefixes: [ROUTES.crmOverview],
-        permission: "crm.view",
+        permission: "crm.overview.view",
         implemented: true,
       },
       {
@@ -328,7 +332,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "user-plus",
         to: ROUTES.crmLeads,
         matchPrefixes: [ROUTES.crmLeads],
-        permission: "crm.view",
+        permission: "crm.leads.view",
         implemented: true,
       },
       {
@@ -337,7 +341,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "briefcase",
         to: ROUTES.crm,
         exact: true,
-        permission: "crm.view",
+        permission: "crm.opportunities.view",
         implemented: true,
       },
       {
@@ -346,7 +350,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "activity",
         to: ROUTES.crmActivities,
         matchPrefixes: [ROUTES.crmActivities],
-        permission: ["crm.view", "crm.activities.create"],
+        permission: ["crm.activities.view", "crm.activities.create"],
         implemented: true,
       },
       {
@@ -387,7 +391,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
           ROUTES.salesIntelligenceOpportunities,
           ROUTES.salesIntelligenceRebates,
         ],
-        permission: "sales_intelligence.view",
+        permission: "sales_intelligence.enquiry.view",
         implemented: true,
       },
       {
@@ -396,7 +400,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligenceDailyBrief,
         matchPrefixes: [ROUTES.salesIntelligenceDailyBrief],
-        permission: "sales_intelligence.view",
+        permission: "sales_intelligence.daily_brief.view",
         implemented: true,
       },
       {
@@ -405,7 +409,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligencePortfolio,
         matchPrefixes: [ROUTES.salesIntelligencePortfolio],
-        permission: "sales_intelligence.view",
+        permission: "sales_intelligence.portfolio.view",
         implemented: true,
       },
       {
@@ -414,7 +418,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligenceGaps,
         matchPrefixes: [ROUTES.salesIntelligenceGaps],
-        permission: "sales_intelligence.view",
+        permission: "sales_intelligence.gaps.view",
         implemented: true,
       },
       {
@@ -423,7 +427,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligenceOpportunities,
         matchPrefixes: [ROUTES.salesIntelligenceOpportunities],
-        permission: "sales_intelligence.view",
+        permission: "sales_intelligence.opportunities.view",
         implemented: true,
       },
       {
@@ -432,7 +436,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.salesIntelligenceRebates,
         matchPrefixes: [ROUTES.salesIntelligenceRebates],
-        permission: "sales_intelligence.view",
+        permission: "sales_intelligence.rebates.view",
         implemented: true,
       },
     ],
@@ -448,7 +452,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "layout-dashboard",
         to: ROUTES.purchasing,
         exact: true,
-        permission: "purchasing.view",
+        permission: "purchasing.dashboard.view",
         implemented: true,
       },
       {
@@ -457,7 +461,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "package",
         to: ROUTES.purchasingStock,
         matchPrefixes: [ROUTES.purchasingStock],
-        permission: "purchasing.view",
+        permission: ["purchasing.stock.view", "purchasing.stock.manage"],
         implemented: true,
       },
       {
@@ -466,7 +470,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "bar-chart-3",
         to: ROUTES.purchasingForecast,
         matchPrefixes: [ROUTES.purchasingForecast],
-        permission: "purchasing.view",
+        permission: ["purchasing.forecast.view", "purchasing.forecast.manage"],
         implemented: true,
       },
       {
@@ -475,7 +479,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "clipboard-list",
         to: ROUTES.purchasingPlanner,
         matchPrefixes: [ROUTES.purchasingPlanner],
-        permission: "purchasing.view",
+        permission: ["purchasing.planner.view", "purchasing.planner.manage"],
         implemented: true,
       },
       {
@@ -484,7 +488,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "list-todo",
         to: ROUTES.purchasingBackorders,
         matchPrefixes: [ROUTES.purchasingBackorders],
-        permission: "purchasing.view",
+        permission: ["purchasing.backorders.view", "purchasing.backorders.manage"],
         implemented: true,
       },
       {
@@ -493,7 +497,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "package",
         to: ROUTES.purchasingOverstock,
         matchPrefixes: [ROUTES.purchasingOverstock],
-        permission: "purchasing.view",
+        permission: "purchasing.overstock.view",
         implemented: true,
       },
       {
@@ -502,7 +506,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "building-2",
         to: ROUTES.purchasingSuppliers,
         matchPrefixes: [ROUTES.purchasingSuppliers],
-        permission: "purchasing.view",
+        permission: ["purchasing.suppliers.view", "purchasing.suppliers.manage"],
         implemented: true,
       },
       {
@@ -511,7 +515,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "activity",
         to: ROUTES.adminCostIntelligence,
         matchPrefixes: [ROUTES.adminCostIntelligence],
-        permission: ["products.cost.view", "admin.access"],
+        permission: "products.cost.view",
         adminShellOnly: true,
         implemented: true,
       },
@@ -542,7 +546,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         label: "Brands",
         icon: "award",
         to: ROUTES.adminBrands,
-        permission: ["products.view", "products.edit"],
+        permission: ["catalogue.brands.view", "catalogue.brands.edit"],
         adminShellOnly: true,
         implemented: true,
       },
@@ -551,7 +555,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         label: "Categories",
         icon: "folders",
         to: ROUTES.adminCategories,
-        permission: ["products.view", "products.edit"],
+        permission: ["catalogue.categories.view", "catalogue.categories.edit"],
         adminShellOnly: true,
         implemented: true,
       },
@@ -618,7 +622,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "file-pen",
         to: ROUTES.adminHomepage,
         matchPrefixes: [ROUTES.adminHomepage],
-        permission: ["cms.view", "cms.page.read", "cms.page.edit"],
+        permission: ["cms.homepage.view", "cms.homepage.edit"],
         adminShellOnly: true,
         implemented: true,
       },
@@ -628,7 +632,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "users",
         to: ROUTES.adminTeam,
         matchPrefixes: [ROUTES.adminTeam],
-        permission: ["cms.view", "cms.page.read", "cms.page.edit"],
+        permission: ["cms.team.view", "cms.team.edit"],
         adminShellOnly: true,
         implemented: true,
       },
@@ -654,12 +658,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         label: "Sales Team",
         icon: "users",
         to: ROUTES.crmManager,
-        permission: [
-          "sales.view_team_accounts",
-          "sales.view_all_accounts",
-          "reports.management",
-          "users.manage",
-        ],
+        permission: "sales.team.view",
         implemented: true,
       },
       {
@@ -677,7 +676,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "files",
         to: ROUTES.adminProductDocuments,
         matchPrefixes: [ROUTES.adminProductDocuments, ROUTES.adminProductDocumentsImport],
-        permission: "products.view",
+        permission: ["catalogue.documents.view", "catalogue.documents.edit"],
         adminShellOnly: true,
         implemented: true,
       },

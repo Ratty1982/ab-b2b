@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { useEffect, useState } from "react";
 import {
@@ -43,6 +44,7 @@ import {
 } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/forecast/$sku")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.forecast.view", location.href, "/purchasing"),
   head: ({ params }) => ({
     meta: [
       { title: `${params.sku} — Stock Forecast — Automotive Brands` },

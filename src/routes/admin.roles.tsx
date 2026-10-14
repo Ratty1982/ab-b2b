@@ -26,6 +26,7 @@ import {
 import { InstantText } from "@/components/ab/InstantText";
 import { cn } from "@/lib/utils";
 import { UserPermissionsPanel } from "@/components/admin/UserPermissionsPanel";
+import { BulkUserPermissions } from "@/components/admin/BulkUserPermissions";
 
 export const Route = createFileRoute("/admin/roles")({
   head: () => ({
@@ -210,6 +211,7 @@ function AdminRoles() {
             loading={loading}
             error={error}
             showActivity={canGrantSuperAdmin}
+            canBulk={canGrantSuperAdmin}
             activityOverview={activityOverview}
             onRetry={() => void load()}
             onAdd={() => setAddOpen(true)}
@@ -288,6 +290,7 @@ function UsersPanel({
   loading,
   error,
   showActivity,
+  canBulk,
   activityOverview,
   onRetry,
   onAdd,
@@ -297,12 +300,15 @@ function UsersPanel({
   loading: boolean;
   error: string | null;
   showActivity: boolean;
+  canBulk: boolean;
   activityOverview: ActivityOverview | null;
   onRetry: () => void;
   onAdd: () => void;
   onManage: (user: StaffUserRow) => void;
 }) {
   const [sortBy, setSortBy] = useState<"name" | "lastLogin" | "lastActive">("name");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const sorted = useMemo(() => {
     const rows = [...users];
@@ -355,6 +361,30 @@ function UsersPanel({
 
   return (
     <div>
+      {canBulk && bulkOpen ? (
+        <div className="mb-4 rounded-lg border border-border p-4">
+          <BulkUserPermissions
+            users={sorted.filter((user) => selectedIds.has(user.id))}
+            onClose={() => setBulkOpen(false)}
+            onApplied={() => {
+              setSelectedIds(new Set());
+              setBulkOpen(false);
+              onRetry();
+            }}
+          />
+        </div>
+      ) : null}
+      {canBulk && selectedIds.size > 0 && !bulkOpen ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-primary/40 px-3 py-2" role="toolbar" aria-label="Selected staff">
+          <span className="text-[12px] font-semibold">{selectedIds.size} staff selected</span>
+          <button type="button" onClick={() => setBulkOpen(true)} className="h-8 rounded-md bg-primary px-3 text-[12px] font-semibold text-primary-foreground">
+            Bulk permissions
+          </button>
+          <button type="button" onClick={() => setSelectedIds(new Set())} className="h-8 rounded-md border border-border px-3 text-[12px] font-semibold">
+            Clear
+          </button>
+        </div>
+      ) : null}
       {showActivity ? <StaffActivityOverviewBar overview={activityOverview} /> : null}
       {showActivity ? (
         <div className="mb-3 flex flex-wrap items-center gap-2 text-[12px]">
@@ -384,6 +414,19 @@ function UsersPanel({
         <table className={cn("w-full text-[13px]", showActivity ? "min-w-[980px]" : "min-w-[720px]")}>
           <thead>
             <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
+              {canBulk ? (
+                <th className="px-3 py-2 font-semibold">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all staff"
+                    checked={sorted.length > 0 && sorted.every((user) => selectedIds.has(user.id))}
+                    onChange={(event) => {
+                      setSelectedIds(event.target.checked ? new Set(sorted.map((user) => user.id)) : new Set());
+                    }}
+                    className="size-4 accent-primary"
+                  />
+                </th>
+              ) : null}
               <th className="px-3 py-2 font-semibold">User</th>
               {!showActivity ? <th className="px-3 py-2 font-semibold">Email</th> : null}
               <th className="px-3 py-2 font-semibold">Role</th>
@@ -403,6 +446,24 @@ function UsersPanel({
           <tbody>
             {sorted.map((u, i) => (
               <tr key={u.id} className={cn("border-b border-border/60 last:border-0", i % 2 && "bg-surface/30")}>
+                {canBulk ? (
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${u.name}`}
+                      checked={selectedIds.has(u.id)}
+                      onChange={(event) => {
+                        setSelectedIds((current) => {
+                          const next = new Set(current);
+                          if (event.target.checked) next.add(u.id);
+                          else next.delete(u.id);
+                          return next;
+                        });
+                      }}
+                      className="size-4 accent-primary"
+                    />
+                  </td>
+                ) : null}
                 <td className="px-3 py-2">
                   <div className="font-medium">{u.name}</div>
                   {showActivity ? <div className="text-[12px] text-steel">{u.email}</div> : null}

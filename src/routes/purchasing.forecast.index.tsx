@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardStaffPage } from "@/lib/guard-staff-page";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
@@ -35,6 +36,7 @@ import { SalesHistoryVerifyDialog } from "@/components/purchasing/sales-history-
 import { exportStockForecastCsvFn, listPurchasingForecastFn } from "@/server/phase2/fns";
 
 export const Route = createFileRoute("/purchasing/forecast/")({
+  beforeLoad: ({ location }) => guardStaffPage("purchasing.forecast.view", location.href, "/purchasing"),
   validateSearch: (raw: Record<string, unknown>) => parseForecastSearch(raw),
   head: () => ({
     meta: [
