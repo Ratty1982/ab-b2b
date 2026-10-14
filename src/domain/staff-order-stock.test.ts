@@ -9,7 +9,7 @@ describe("staff order sellable stock", () => {
       stockKnown: true,
     });
     expect(stock).toEqual({ sellableQty: 200, stockConfirmed: true });
-    expect(staffOrderAvailableLabel(stock)).toBe("200 available");
+    expect(staffOrderAvailableLabel(stock)).toBe("Available to order: 200 units");
   });
 
   it("deducts other reservations and gives an edited order its own holds back", () => {
@@ -27,6 +27,12 @@ describe("staff order sellable stock", () => {
       ownActiveReservedQty: 2,
     });
     expect(editing.sellableQty).toBe(200);
+  });
+
+  it("labels one sellable unit in the singular", () => {
+    expect(staffOrderAvailableLabel({ sellableQty: 1, stockConfirmed: true })).toBe(
+      "Available to order: 1 unit",
+    );
   });
 
   it("does not advertise stale or missing stock as available", () => {

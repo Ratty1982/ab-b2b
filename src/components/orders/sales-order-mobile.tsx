@@ -348,17 +348,16 @@ function LineStock({
   priced: SalesOrderLinePricing | undefined;
   qty: number | null;
 }) {
-  if (qty == null) return <p className="text-[13px] font-semibold text-bad">Enter a quantity</p>;
   if (!priced) return <p className="text-[13px] text-steel">Stock —</p>;
-  const allocated = priced.availableQtyAtOrder ?? 0;
-  const backorder = priced.backorderQtyAtOrder ?? 0;
   const availableLabel = staffOrderAvailableLabel({
     sellableQty: priced.sellableQty ?? 0,
     stockConfirmed: priced.stockConfirmed === true,
   });
+  const allocated = priced.availableQtyAtOrder ?? 0;
+  const backorder = priced.backorderQtyAtOrder ?? 0;
   return (
-    <div className="space-y-1">
-      {backorder > 0 ? (
+    <div className="space-y-1" data-stock-display="line">
+      {qty != null && backorder > 0 ? (
         <>
           <p className="inline-flex rounded-sm border border-amber-400/50 bg-amber-400/15 px-2 py-1 text-[11px] font-bold tracking-wide text-amber-200">
             BACKORDER
@@ -369,9 +368,13 @@ function LineStock({
         </>
       ) : null}
       <p className="text-[13px] text-steel">{availableLabel}</p>
-      <p className="text-[13px] text-steel">Ordered {qty}</p>
-      <p className="text-[13px] text-steel">Allocated to order: {allocated}</p>
-      {backorder > 0 ? <p className="text-[13px] text-steel">Backordered {backorder}</p> : null}
+      {qty != null ? (
+        <>
+          <p className="text-[13px] text-steel">Ordered {qty}</p>
+          <p className="text-[13px] text-steel">Allocated to order: {allocated}</p>
+          <p className="text-[13px] text-steel">Backordered {backorder}</p>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -711,9 +714,10 @@ export function SalesOrderReviewPanel({
           {backorders.map((line) => (
             <p key={line.variantId}>
               {line.sku} · {line.extent === "FULL" ? "Fully backordered" : "Part backorder"} ·{" "}
-              {line.stockConfirmed && line.sellableQty != null
-                ? `${line.sellableQty} available`
-                : "Stock not confirmed"}
+              {staffOrderAvailableLabel({
+                sellableQty: line.sellableQty ?? 0,
+                stockConfirmed: line.stockConfirmed === true && line.sellableQty != null,
+              })}
               {" · "}ordered {line.orderedQty}, allocated {line.availableQty}, backordered {line.backorderQty}
             </p>
           ))}

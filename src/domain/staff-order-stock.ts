@@ -30,5 +30,7 @@ export function staffOrderAvailableLabel(input: {
   stockConfirmed: boolean;
 }): string {
   if (!input.stockConfirmed) return "Stock not confirmed";
-  return `${input.sellableQty} available`;
+  const qty = Math.max(0, Math.trunc(input.sellableQty));
+  const unit = qty === 1 ? "unit" : "units";
+  return `Available to order: ${qty} ${unit}`;
 }

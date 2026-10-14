@@ -39,7 +39,7 @@ describe("sales order product results", () => {
     expect(html).not.toMatch(/>Add</);
     expect(html).toContain("hover:bg-surface/80");
     expect(html).toContain("focus-visible:outline");
-    expect(html).toContain("48 available");
+    expect(html).toContain("Available to order: 48 units");
   });
 
   it("does not advertise unconfirmed stock as available", () => {
@@ -51,6 +51,6 @@ describe("sales order product results", () => {
       }),
     );
     expect(html).toContain("Stock not confirmed");
-    expect(html).not.toContain("200 available");
+    expect(html).not.toContain("Available to order: 200 units");
   });
 });

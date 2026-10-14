@@ -140,12 +140,12 @@ describe("sales order mobile layout", () => {
     expect(mobile).toContain('aria-label="Quantity for CASE12"');
     expect(mobile).toContain('aria-label="Unit price for CASE12"');
     expect(mobile).toContain("Manual price ex VAT");
-    expect(mobile).toContain("48 available");
+    expect(mobile).toContain("Available to order: 48 units");
     expect(mobile).toContain("Ordered 2");
     expect(mobile).toContain("Allocated to order: 2");
     expect(mobile).not.toContain("Stock 2 available");
     const desktop = html.split('data-layout="desktop-table"')[1] ?? "";
-    expect(desktop).toContain("48 available");
+    expect(desktop).toContain("Available to order: 48 units");
     expect(desktop).toContain("Allocated to order: 2");
     expect(mobile).toContain("Line total £5.00");
     expect(mobile).toContain("Remove");
@@ -238,7 +238,7 @@ const lineHandlers = {
 };
 
 function renderStockLine(input: {
-  qty: number;
+  qty: number | null;
   sellableQty: number;
   stockConfirmed: boolean;
   availableQtyAtOrder: number;
@@ -284,7 +284,59 @@ function stockLayouts(html: string) {
   };
 }
 
+function stockCell(layout: string) {
+  return layout.split('data-stock-display="line"')[1]?.split("</div>")[0] ?? "";
+}
+
+const UNCHANGED_STOCK = {
+  sellableQty: 200,
+  stockConfirmed: true,
+} as const;
+
 describe("staff sales order stock display", () => {
+  it("shows known stock immediately when the order quantity is still blank", () => {
+    const { mobile, desktop } = stockLayouts(
+      renderStockLine({
+        qty: null,
+        ...UNCHANGED_STOCK,
+        availableQtyAtOrder: 0,
+        backorderQtyAtOrder: 0,
+      }),
+    );
+    for (const layout of [mobile, desktop]) {
+      const stock = stockCell(layout);
+      expect(layout).toContain("Enter a quantity");
+      expect(stock).toContain("Available to order: 200 units");
+      expect(stock).not.toContain("Enter a quantity");
+      expect(stock).not.toContain("Ordered");
+      expect(stock).not.toContain("Allocated to order");
+      expect(stock).not.toContain("Backordered");
+    }
+  });
+
+  it.each([1, 12, 50])(
+    "keeps available stock at 200 units when the entered quantity is %s",
+    (qty) => {
+      const { mobile, desktop } = stockLayouts(
+        renderStockLine({
+          qty,
+          ...UNCHANGED_STOCK,
+          availableQtyAtOrder: qty,
+          backorderQtyAtOrder: 0,
+        }),
+      );
+      for (const layout of [mobile, desktop]) {
+        const stock = stockCell(layout);
+        expect(stock).toContain("Available to order: 200 units");
+        expect(stock).not.toContain(`Available to order: ${qty} unit`);
+        expect(stock).toContain(`Ordered ${qty}`);
+        expect(stock).toContain(`Allocated to order: ${qty}`);
+        expect(stock).toContain("Backordered 0");
+        expect(layout).not.toContain("Enter a quantity");
+      }
+    },
+  );
+
   it("shows sellable stock of 200 when the order quantity is 2, on desktop and mobile", () => {
     const { mobile, desktop } = stockLayouts(
       renderStockLine({
@@ -296,10 +348,11 @@ describe("staff sales order stock display", () => {
       }),
     );
     for (const layout of [mobile, desktop]) {
-      expect(layout).toContain("200 available");
-      expect(layout).toContain("Ordered 2");
-      expect(layout).toContain("Allocated to order: 2");
-      expect(layout).not.toContain("Stock 2 available");
+      const stock = stockCell(layout);
+      expect(stock).toContain("Available to order: 200 units");
+      expect(stock).toContain("Ordered 2");
+      expect(stock).toContain("Allocated to order: 2");
+      expect(stock).not.toContain("Stock 2 available");
       expect(layout).not.toContain(">2 available<");
     }
   });
@@ -315,13 +368,14 @@ describe("staff sales order stock display", () => {
       }),
     );
     for (const layout of [mobile, desktop]) {
-      expect(layout).toContain("BACKORDER");
-      expect(layout).toContain("Part backorder");
-      expect(layout).toContain("6 available");
-      expect(layout).toContain("Ordered 12");
-      expect(layout).toContain("Allocated to order: 6");
-      expect(layout).toContain("Backordered 6");
-      expect(layout).toContain("border-amber-400/50");
+      const stock = stockCell(layout);
+      expect(stock).toContain("BACKORDER");
+      expect(stock).toContain("Part backorder");
+      expect(stock).toContain("Available to order: 6 units");
+      expect(stock).toContain("Ordered 12");
+      expect(stock).toContain("Allocated to order: 6");
+      expect(stock).toContain("Backordered 6");
+      expect(stock).toContain("border-amber-400/50");
     }
   });
 
@@ -336,11 +390,31 @@ describe("staff sales order stock display", () => {
       }),
     );
     for (const layout of [mobile, desktop]) {
-      expect(layout).toContain("Stock not confirmed");
-      expect(layout).not.toContain("200 available");
-      expect(layout).toContain("Ordered 2");
-      expect(layout).toContain("Allocated to order: 0");
-      expect(layout).toContain("Backordered 2");
+      const stock = stockCell(layout);
+      expect(stock).toContain("Stock not confirmed");
+      expect(stock).not.toContain("Available to order");
+      expect(stock).toContain("Ordered 2");
+      expect(stock).toContain("Allocated to order: 0");
+      expect(stock).toContain("Backordered 2");
+    }
+  });
+
+  it("does not confirm stock that is still unknown when the quantity is blank", () => {
+    const { mobile, desktop } = stockLayouts(
+      renderStockLine({
+        qty: null,
+        sellableQty: 0,
+        stockConfirmed: false,
+        availableQtyAtOrder: 0,
+        backorderQtyAtOrder: 0,
+      }),
+    );
+    for (const layout of [mobile, desktop]) {
+      const stock = stockCell(layout);
+      expect(layout).toContain("Enter a quantity");
+      expect(stock).toContain("Stock not confirmed");
+      expect(stock).not.toContain("Available to order");
+      expect(stock).not.toContain("Allocated to order");
     }
   });
 
@@ -386,7 +460,7 @@ describe("staff sales order stock display", () => {
     );
     expect(html).toContain("border-amber-400/50");
     expect(html).toContain("Part backorder");
-    expect(html).toContain("6 available");
+    expect(html).toContain("Available to order: 6 units");
     expect(html).toContain("ordered 12, allocated 6, backordered 6");
     expect(html).toContain("The customer has been informed of this backorder.");
   });
