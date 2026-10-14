@@ -89,7 +89,7 @@ export function PublicHeaderSearch() {
         aria-controls={panelId}
         onClick={() => setExpanded((value) => !value)}
         className={cn(
-          "grid size-9 place-items-center rounded-md border border-border text-steel transition-colors hover:border-steel hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 2xl:hidden",
+          "grid size-11 place-items-center rounded-md border border-border text-steel transition-colors hover:border-steel hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 2xl:hidden",
           expanded && "border-steel text-foreground",
         )}
       >

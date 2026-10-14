@@ -80,11 +80,13 @@ function NavLink({
   item,
   pathname,
   collapsed,
+  touch,
   onNavigate,
 }: {
   item: VisibleNavItem;
   pathname: string;
   collapsed: boolean;
+  touch: boolean;
   onNavigate: () => void;
 }) {
   const Icon = ICONS[item.icon] ?? LayoutDashboard;
@@ -97,6 +99,7 @@ function NavLink({
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-steel transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground",
+        touch && "min-h-11",
         collapsed && "justify-center px-0",
         active &&
           "bg-sidebar-accent text-sidebar-foreground border-l-2 border-primary rounded-l-none font-semibold",
@@ -112,11 +115,13 @@ function NavTree({
   sections,
   pathname,
   collapsed,
+  touch,
   onNavigate,
 }: {
   sections: VisibleNavSection[];
   pathname: string;
   collapsed: boolean;
+  touch: boolean;
   onNavigate: () => void;
 }) {
   return (
@@ -137,6 +142,7 @@ function NavTree({
                 item={item}
                 pathname={pathname}
                 collapsed={collapsed}
+                touch={touch}
                 onNavigate={onNavigate}
               />
             ))}
@@ -175,6 +181,24 @@ export function AppShell({
     }
   }, []);
 
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setMobileOpen(false);
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileOpen]);
+
   function toggleCollapsed() {
     setCollapsed((current) => {
       const next = !current;
@@ -192,7 +216,7 @@ export function AppShell({
     window.location.assign("/login");
   }
 
-  const sidebarBody = (iconMode: boolean) => (
+  const sidebarBody = (iconMode: boolean, touch: boolean) => (
     <>
       <div className={cn("flex items-center gap-2 border-b border-sidebar-border px-3 py-3", iconMode && "justify-center px-2")}>
         <Logo
@@ -207,6 +231,7 @@ export function AppShell({
           sections={sections}
           pathname={pathname}
           collapsed={iconMode}
+          touch={touch}
           onNavigate={() => setMobileOpen(false)}
         />
       </div>
@@ -237,6 +262,7 @@ export function AppShell({
           type="button"
           className={cn(
             "mt-2 w-full rounded-md border border-sidebar-border px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-steel hover:border-steel hover:text-foreground",
+            touch && "min-h-11",
             iconMode && "px-0",
           )}
           onClick={() => void signOut()}
@@ -273,21 +299,21 @@ export function AppShell({
           collapsed ? "w-[72px]" : "w-60",
         )}
       >
-        {sidebarBody(collapsed)}
+        {sidebarBody(collapsed, false)}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-border/70 bg-ink/90 px-3 backdrop-blur lg:hidden">
+        <header className="sticky top-0 z-40 flex min-h-14 min-w-0 items-center gap-3 overflow-hidden border-b border-border/70 bg-ink/90 px-3 pt-[env(safe-area-inset-top)] backdrop-blur lg:hidden">
           <button
             type="button"
             onClick={() => setMobileOpen((v) => !v)}
             aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={mobileOpen}
-            className="grid size-9 shrink-0 place-items-center rounded-md border border-border"
+            className="grid size-11 shrink-0 place-items-center rounded-md border border-border"
           >
             {mobileOpen ? <X className="size-4" /> : <Menu className="size-4" />}
           </button>
-          <Logo to={homeTo} subtitle={areaLabel} />
+          <Logo to={homeTo} subtitle={areaLabel} className="min-w-0 flex-1" />
         </header>
 
         {mobileOpen ? (
@@ -298,23 +324,23 @@ export function AppShell({
               className="absolute inset-0 bg-ink/70"
               onClick={() => setMobileOpen(false)}
             />
-            <div className="relative flex h-full w-[min(100%,18rem)] flex-col bg-sidebar shadow-2xl">
-              <div className="flex items-center justify-end border-b border-sidebar-border p-2">
+            <div className="relative flex h-full w-[min(100%,18rem)] flex-col bg-sidebar pb-[env(safe-area-inset-bottom)] shadow-2xl">
+              <div className="flex items-center justify-end border-b border-sidebar-border p-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
                 <button
                   type="button"
                   aria-label="Close navigation"
-                  className="grid size-9 place-items-center rounded-md border border-sidebar-border"
+                  className="grid size-11 place-items-center rounded-md border border-sidebar-border"
                   onClick={() => setMobileOpen(false)}
                 >
                   <X className="size-4" />
                 </button>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{sidebarBody(false)}</div>
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{sidebarBody(false, true)}</div>
             </div>
           </div>
         ) : null}
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-auto">{children}</main>
+        <main className="min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto">{children}</main>
       </div>
     </div>
   );
@@ -355,15 +381,15 @@ export function PanelHeader({
   crumbs?: Array<{ label: string; to?: string }>;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-4 py-4 sm:px-6">
+    <div className="flex flex-col gap-3 border-b border-border/70 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
       <div className="min-w-0">
         {crumbs ? <div className="mb-1"><AppBreadcrumb crumbs={crumbs} /></div> : null}
-        <h1 className="truncate font-display text-xl font-semibold uppercase tracking-tight sm:text-2xl">
+        <h1 className="break-words font-display text-xl font-semibold uppercase tracking-tight sm:text-2xl">
           {title}
         </h1>
-        {sub ? <p className="mt-0.5 truncate text-[12px] text-steel">{sub}</p> : null}
+        {sub ? <p className="mt-0.5 break-words text-[12px] text-steel">{sub}</p> : null}
       </div>
-      {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
     </div>
   );
 }
@@ -384,7 +410,7 @@ export function Metric({
       <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">{label}</div>
       <div
         className={cn(
-          "num mt-1.5 font-display text-2xl font-semibold",
+          "num mt-1.5 break-words font-display text-xl font-semibold sm:text-2xl",
           tone === "brand" && "text-primary",
           tone === "good" && "text-good",
           tone === "warn" && "text-warn",

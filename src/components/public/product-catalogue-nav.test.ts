@@ -47,6 +47,10 @@ vi.mock("@tanstack/react-router", () => ({
       children,
     ),
   useRouter: () => ({ invalidate: async () => undefined }),
+  useRouterState: (options?: { select?: (state: { location: { pathname: string } }) => unknown }) => {
+    const state = { location: { pathname: "/" } };
+    return options?.select ? options.select(state) : state;
+  },
   useNavigate: () => async () => undefined,
 }));
 
