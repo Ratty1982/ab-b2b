@@ -31,9 +31,10 @@ WORKDIR /app
 # psl/parser-database inline.rs OOB). Alpine's nodejs package is a real Node
 # binary at /usr/bin/node, which is ahead of the Bun fallback.
 # OpenSSL must exist before generate. Without libssl, Prisma selects the legacy
-# `linux-musl` engine (OpenSSL 1.1). That binary exits immediately with empty
-# stdout/stderr. The runner is Alpine + OpenSSL 3, so generate must select
-# `linux-musl-openssl-3.0.x` (or the arm64 equivalent on that host).
+# `linux-musl` target. The runner is Alpine with OpenSSL 3, and the matching
+# engine (`linux-musl-openssl-3.0.x`, or the arm64 equivalent) is linked to
+# libssl.so.3. Detecting that target here keeps the generated client aligned
+# with the runner.
 RUN apk add --no-cache nodejs openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
