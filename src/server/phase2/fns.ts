@@ -5211,6 +5211,18 @@ export const exportGlobalAutopartSalesCsvFn = createServerFn({ method: "GET" })
     }
   });
 
+export const getUnifiedCustomerHistoryFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const unified = await import("@/server/sales-intelligence/unified-sales");
+      return { ok: true as const, data: await unified.getUnifiedCustomerHistory(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const getUnifiedCustomerSalesFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

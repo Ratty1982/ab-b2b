@@ -48,6 +48,15 @@ import {
   type UnifiedCertification,
 } from "@/domain/unified-sales";
 import {
+  dashboardScanBounds,
+  monthLabel,
+  periodMovement,
+  resolveSalesEnquiryDashboardPeriod,
+  salesEnquiryDashboardKey,
+  SALES_ENQUIRY_DASHBOARD_PERIODS,
+  type ResolvedSalesEnquiryDashboard,
+} from "@/domain/sales-enquiry-dashboard";
+import {
   assertCompanyInScope,
   csvSafe,
   customer360Href,
@@ -173,7 +182,19 @@ function identityMapSql(universe: CompanyUniverse): Prisma.Sql {
  * are still compared and product enquiries do not scan every invoice.
  * Heavy steps are MATERIALIZED so PostgreSQL computes them once per statement.
  */
-function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.Sql {
+type DatedWindow = { from: Date; toExclusive: Date };
+
+/**
+ * Optional dated window. When set, dated lines and 504 headers are limited to that
+ * document-date range at source. Undated 561L history is included only when its
+ * document reference also appears on a dated line for the same company in the window,
+ * so overlap rules still hold and undated nets are not given a month.
+ */
+function unifiedLinesCte(
+  universe: CompanyUniverse,
+  sku: string | null,
+  window?: DatedWindow,
+): Prisma.Sql {
   const skuKey = sku ? normalisedSku(sku) : null;
   const skuRefs = skuKey
     ? Prisma.sql`
@@ -211,6 +232,29 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
   const dRestrict = skuKey
     ? Prisma.sql`l."documentReference" IN (SELECT ref FROM sku_refs)`
     : Prisma.sql`TRUE`;
+  const lineDocDates = window
+    ? Prisma.sql`AND doc."documentDate" >= ${window.from} AND doc."documentDate" < ${window.toExclusive}`
+    : Prisma.empty;
+  const headerDocDates = window
+    ? Prisma.sql`AND d."documentDate" >= ${window.from} AND d."documentDate" < ${window.toExclusive}`
+    : Prisma.empty;
+  const historicalOverlap = window
+    ? Prisma.sql`AND EXISTS (
+        SELECT 1
+        FROM "AutopartSalesLine" sl
+        INNER JOIN "AutopartSalesDocument" sdoc ON sdoc.id = sl."documentId"
+        WHERE NULLIF(UPPER(btrim(sl."documentReference")), '') = NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), '')
+          AND sdoc."documentDate" >= ${window.from}
+          AND sdoc."documentDate" < ${window.toExclusive}
+          AND (
+            sl."companyId" = im.company_id
+            OR (
+              sl."companyId" IS NULL
+              AND UPPER(btrim(sl."autopartCustomerCode")) = im.code
+            )
+          )
+      )`
+    : Prisma.empty;
   const dColumns = Prisma.sql`
       l.id AS line_id,
       CASE WHEN l."source" = 'ONGOING_TRM21QC' THEN 'TRM21QC_FEED' ELSE 'COMPANY_561L_SLRB' END AS source,
@@ -244,6 +288,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
           ORDER BY l.id
         ) AS repeat_no
       ${hFrom}
+      ${historicalOverlap}
     ),
     d_raw AS (
       SELECT l."companyId" AS company_id, ${dColumns}
@@ -253,6 +298,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         AND ${companyIn(universe, Prisma.sql`l."companyId"`)}
         AND ${dRestrict}
+        ${lineDocDates}
       UNION ALL
       SELECT im.company_id AS company_id, ${dColumns}
       FROM "AutopartSalesLine" l
@@ -262,6 +308,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         AND ${companyIn(universe, Prisma.sql`im.company_id`)}
         AND ${dRestrict}
+        ${lineDocDates}
     ),
     all_raw AS MATERIALIZED (
       SELECT company_id, line_id, source, account_code, doc_type, doc_ref, sku, description,
@@ -312,6 +359,7 @@ function unifiedLinesCte(universe: CompanyUniverse, sku: string | null): Prisma.
       WHERE d."has504" = TRUE
         AND COALESCE(d."companyId", im.company_id) IS NOT NULL
         AND ${companyIn(universe, Prisma.sql`COALESCE(d."companyId", im.company_id)`)}
+        ${headerDocDates}
     ),
     goods_flag AS (
       SELECT h.company_id, h.doc_ref,
@@ -485,11 +533,11 @@ async function querySummary(companyId: string): Promise<UnifiedSalesSummary> {
   return toSummary(rows[0]);
 }
 
-/** One scan of a customer's reconciled lines, reused for the opening summary and first page. */
-async function materializeCompanyLines(companyId: string): Promise<void> {
+/** One scan of a customer's reconciled lines, reused inside the same report transaction. */
+async function materializeCompanyLines(companyId: string, window?: DatedWindow): Promise<void> {
   await reportDb().$executeRaw`
     CREATE TEMP TABLE unified_report_lines ON COMMIT DROP AS
-    ${unifiedLinesCte([companyId], null)}
+    ${unifiedLinesCte([companyId], null, window)}
     SELECT
       company_id, line_id, source, account_code, doc_type, doc_ref, sku, description,
       qty, net, doc_date, status, reason
@@ -590,6 +638,18 @@ async function queryCertification(
   const headerOnly = new Prisma.Decimal(row?.headerOnlyNet ?? 0);
   const unexplained = raw.minus(certified).minus(duplicates).minus(unreconciled.minus(headerOnly));
   const unexplainedDiscrepancy = unexplained.toFixed(2);
+  return certificationFromParts(row, unexplainedDiscrepancy);
+}
+
+function certificationFromParts(
+  row: CertificationRow | undefined,
+  unexplainedDiscrepancy: string,
+): UnifiedFinancialCertification {
+  const raw = new Prisma.Decimal(row?.rawAttachedNet ?? 0);
+  const certified = new Prisma.Decimal(row?.certifiedNet ?? 0);
+  const duplicates = new Prisma.Decimal(row?.duplicateNet ?? 0);
+  const unreconciled = new Prisma.Decimal(row?.unreconciledNet ?? 0);
+  const headerOnly = new Prisma.Decimal(row?.headerOnlyNet ?? 0);
   return {
     linesExamined: Number(row?.linesExamined ?? 0),
     distinctCountedDocuments: Number(row?.distinctCountedDocuments ?? 0),
@@ -811,11 +871,229 @@ async function loadCompanyHeader(companyId: string) {
   };
 }
 
-const customerSchema = z.object({ companyId: z.string().min(1) });
+const dashboardSchema = z.object({
+  companyId: z.string().min(1),
+  period: z.enum(SALES_ENQUIRY_DASHBOARD_PERIODS).optional(),
+  from: z.string().max(10).optional().nullable(),
+  to: z.string().max(10).optional().nullable(),
+});
+
+const CERT_METRICS = Prisma.sql`
+  COUNT(*) FILTER (WHERE u.source <> 'ONGOING_504')::int AS "linesExamined",
+  COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_ref IS NOT NULL)::int AS "distinctCountedDocuments",
+  COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "certifiedNet",
+  COALESCE(SUM(u.net) FILTER (WHERE u.source <> 'ONGOING_504'), 0) AS "rawAttachedNet",
+  COUNT(DISTINCT u.doc_ref) FILTER (WHERE u.status = 'DUPLICATE' AND u.doc_ref IS NOT NULL)::int AS "duplicateDocuments",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'DUPLICATE'), 0) AS "duplicateNet",
+  COUNT(DISTINCT COALESCE(u.doc_ref, u.line_id)) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledDocuments",
+  COALESCE(SUM(u.net) FILTER (WHERE u.status = 'UNRECONCILED'), 0) AS "unreconciledNet",
+  COUNT(*) FILTER (WHERE u.reason = 'REPEATED_SOURCE_ROW')::int AS "repeatedRowsExcluded",
+  COALESCE(SUM(u.net) FILTER (WHERE u.reason = 'REPEATED_SOURCE_ROW'), 0) AS "repeatedNetExcluded",
+  COUNT(*) FILTER (WHERE u.reason = 'UNKNOWN_DOCUMENT_TYPE')::int AS "unknownTypeLines",
+  COALESCE(SUM(u.net) FILTER (WHERE u.reason = 'UNKNOWN_DOCUMENT_TYPE'), 0) AS "unknownTypeNet",
+  COUNT(*) FILTER (WHERE u.reason = 'NO_DOCUMENT_REFERENCE')::int AS "missingReferenceLines",
+  COALESCE(SUM(u.net) FILTER (WHERE u.reason = 'NO_DOCUMENT_REFERENCE'), 0) AS "missingReferenceNet",
+  COUNT(*) FILTER (WHERE u.source = 'ONGOING_504')::int AS "headerOnlyDocuments",
+  COALESCE(SUM(u.net) FILTER (WHERE u.source = 'ONGOING_504'), 0) AS "headerOnlyNet"
+`;
+
+async function queryCertificationFromReportLines(): Promise<UnifiedFinancialCertification> {
+  const rows = await reportDb().$queryRaw<CertificationRow[]>`
+    SELECT ${CERT_METRICS}
+    FROM unified_report_lines u
+  `;
+  const row = rows[0];
+  const raw = new Prisma.Decimal(row?.rawAttachedNet ?? 0);
+  const certified = new Prisma.Decimal(row?.certifiedNet ?? 0);
+  const duplicates = new Prisma.Decimal(row?.duplicateNet ?? 0);
+  const unreconciled = new Prisma.Decimal(row?.unreconciledNet ?? 0);
+  const headerOnly = new Prisma.Decimal(row?.headerOnlyNet ?? 0);
+  const unexplained = raw.minus(certified).minus(duplicates).minus(unreconciled.minus(headerOnly));
+  return certificationFromParts(row, unexplained.toFixed(2));
+}
+
+function datedPredicate(from: string | null, to: string | null): Prisma.Sql {
+  if (!from || !to) return Prisma.sql`TRUE`;
+  const bounds = dashboardScanBounds({ from, to });
+  return Prisma.sql`u.doc_date >= ${bounds.from} AND u.doc_date < ${bounds.toExclusive}`;
+}
+
+type DashboardFigures = {
+  netSales: string;
+  credits: string;
+  units: string;
+  invoiceCount: number;
+  creditNoteCount: number;
+};
+
+function figuresFromRow(row: {
+  netSales?: Prisma.Decimal | null;
+  credits?: Prisma.Decimal | null;
+  units?: Prisma.Decimal | null;
+  invoiceCount?: number | null;
+  creditNoteCount?: number | null;
+}, prefix: "" | "previous" = ""): DashboardFigures {
+  if (prefix === "previous") {
+    const previous = row as {
+      previousNet?: Prisma.Decimal | null;
+      previousCredits?: Prisma.Decimal | null;
+      previousUnits?: Prisma.Decimal | null;
+      previousInvoiceCount?: number | null;
+      previousCreditNoteCount?: number | null;
+    };
+    return {
+      netSales: decimalString(previous.previousNet, 2),
+      credits: decimalString(previous.previousCredits, 2),
+      units: decimalString(previous.previousUnits, 3),
+      invoiceCount: Number(previous.previousInvoiceCount ?? 0),
+      creditNoteCount: Number(previous.previousCreditNoteCount ?? 0),
+    };
+  }
+  return {
+    netSales: decimalString(row.netSales, 2),
+    credits: decimalString(row.credits, 2),
+    units: decimalString(row.units, 3),
+    invoiceCount: Number(row.invoiceCount ?? 0),
+    creditNoteCount: Number(row.creditNoteCount ?? 0),
+  };
+}
+
+async function queryDashboardFromLines(period: ResolvedSalesEnquiryDashboard) {
+  const current = datedPredicate(period.from, period.to);
+  const previous = period.comparison
+    ? datedPredicate(period.comparison.from, period.comparison.to)
+    : Prisma.sql`FALSE`;
+  const chartBounds = dashboardScanBounds(period.chart);
+  const metrics = await reportDb().$queryRaw<
+      Array<{
+        netSales: Prisma.Decimal | null;
+        credits: Prisma.Decimal | null;
+        units: Prisma.Decimal | null;
+        invoiceCount: number;
+        creditNoteCount: number;
+        previousNet: Prisma.Decimal | null;
+        previousCredits: Prisma.Decimal | null;
+        previousUnits: Prisma.Decimal | null;
+        previousInvoiceCount: number;
+        previousCreditNoteCount: number;
+      }>
+    >`
+      SELECT
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${current}), 0) AS "netSales",
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT} AND ${current}), 0) AS credits,
+        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED} AND ${current}), 0) AS units,
+        COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE' AND ${current})::int AS "invoiceCount",
+        COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'CREDIT' AND ${current})::int AS "creditNoteCount",
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${previous}), 0) AS "previousNet",
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT} AND ${previous}), 0) AS "previousCredits",
+        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED} AND ${previous}), 0) AS "previousUnits",
+        COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE' AND ${previous})::int AS "previousInvoiceCount",
+        COUNT(DISTINCT u.doc_ref) FILTER (WHERE ${COUNTED} AND u.doc_type = 'CREDIT' AND ${previous})::int AS "previousCreditNoteCount"
+      FROM unified_report_lines u
+    `;
+  const trendRows = await reportDb().$queryRaw<Array<{ month: string | null; net: Prisma.Decimal | null }>>`
+      SELECT to_char(date_trunc('month', u.doc_date), 'YYYY-MM') AS month,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS net
+      FROM unified_report_lines u
+      WHERE u.doc_date IS NOT NULL
+        AND u.doc_date >= ${chartBounds.from}
+        AND u.doc_date < ${chartBounds.toExclusive}
+      GROUP BY 1
+    `;
+  const topRows = await reportDb().$queryRaw<
+      Array<{
+        sku: string;
+        description: string | null;
+        netSales: Prisma.Decimal | null;
+        units: Prisma.Decimal | null;
+        credits: Prisma.Decimal | null;
+      }>
+    >`
+      SELECT u.sku AS sku,
+        MAX(u.description) AS description,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) AS "netSales",
+        COALESCE(SUM(u.qty) FILTER (WHERE ${COUNTED}), 0) AS units,
+        COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED} AND ${ADJUSTMENT}), 0) AS credits
+      FROM unified_report_lines u
+      WHERE ${current}
+        AND u.sku <> ''
+      GROUP BY u.sku
+      ORDER BY COALESCE(SUM(u.net) FILTER (WHERE ${COUNTED}), 0) DESC, u.sku ASC
+      LIMIT 10
+    `;
+  const recentRows = await reportDb().$queryRaw<
+      Array<{
+        lineId: string;
+        docDate: Date | null;
+        docRef: string | null;
+        docType: string;
+        sku: string;
+        description: string | null;
+        qty: Prisma.Decimal;
+        net: Prisma.Decimal;
+      }>
+    >`
+      SELECT u.line_id AS "lineId", u.doc_date AS "docDate", u.doc_ref AS "docRef",
+        u.doc_type AS "docType", u.sku, u.description, u.qty, u.net
+      FROM unified_report_lines u
+      WHERE ${COUNTED} AND ${current}
+      ORDER BY u.doc_date DESC NULLS LAST, u.doc_ref ASC NULLS LAST, u.sku ASC
+      LIMIT 8
+    `;
+  const metric = metrics[0];
+  const kpis = figuresFromRow(metric ?? {});
+  const previousFigures = period.comparison ? figuresFromRow(metric ?? {}, "previous") : null;
+  const trendByMonth = new Map(
+    trendRows.filter((row) => row.month).map((row) => [row.month as string, decimalString(row.net, 2)]),
+  );
+  return {
+    kpis,
+    comparison: previousFigures
+      ? {
+          ...previousFigures,
+          label: period.comparison?.label ?? "",
+          movement: periodMovement(kpis.netSales, previousFigures.netSales),
+        }
+      : null,
+    trend: period.chart.months.map((month) => ({
+      month,
+      label: monthLabel(month),
+      netSales: trendByMonth.get(month) ?? "0.00",
+    })),
+    topProducts: topRows.map((row) => ({
+      sku: row.sku,
+      description: row.description,
+      netSales: decimalString(row.netSales, 2),
+      units: decimalString(row.units, 3),
+      credits: decimalString(row.credits, 2),
+    })),
+    recentTransactions: recentRows.map((row) => ({
+      lineId: row.lineId,
+      date: isoDay(row.docDate),
+      dateLabel: row.docDate ? isoDay(row.docDate)! : DATE_UNAVAILABLE,
+      reference: row.docRef,
+      documentType: row.docType,
+      sku: row.sku,
+      description: row.description,
+      qty: decimalString(row.qty, 3),
+      net: decimalString(row.net, 2),
+    })),
+  };
+}
 
 export async function getUnifiedCustomerSales(actorUserId: string, raw: unknown) {
   const profile = await requireSalesIntelligence(actorUserId);
-  const input = customerSchema.parse(raw ?? {});
+  const input = dashboardSchema.parse(raw ?? {});
+  let period: ResolvedSalesEnquiryDashboard;
+  try {
+    period = resolveSalesEnquiryDashboardPeriod({
+      period: input.period ?? "THIS_MONTH",
+      from: input.from,
+      to: input.to,
+    });
+  } catch (error) {
+    throw new AuthError(error instanceof Error ? error.message : "Choose a valid reporting period.", "VALIDATION", 400);
+  }
   await assertCompanyInScope(profile, input.companyId);
   const [company, identity, refresh, brands] = await Promise.all([
     loadCompanyHeader(input.companyId),
@@ -827,28 +1105,49 @@ export async function getUnifiedCustomerSales(actorUserId: string, raw: unknown)
       take: 500,
     }),
   ]);
-  const { summary, initialTransactions } = await withReportSql(
-    `customer-open:${input.companyId}`,
+  const dashboard = await withReportSql(
+    salesEnquiryDashboardKey(input.companyId, period.preset, period.from, period.to),
     async () => {
-      await materializeCompanyLines(input.companyId);
-      const summary = await querySummaryFromReportLines(input.companyId);
-      const initialTransactions = await queryTransactions(
-        { companyId: input.companyId, page: 1, pageSize: 50, status: "COUNTED" },
-        "temp",
-      );
-      return { summary, initialTransactions };
+      if (period.scan) await materializeCompanyLines(input.companyId, dashboardScanBounds(period.scan));
+      else await materializeCompanyLines(input.companyId);
+      return queryDashboardFromLines(period);
     },
   );
   return {
     company: { ...company, customer360Href: customer360Href(profile, company.id) },
     identity,
-    summary,
     refresh,
-    initialTransactions,
     brands,
+    period: {
+      preset: period.preset,
+      label: period.label,
+      from: period.from,
+      to: period.to,
+      rangeLabel: period.rangeLabel,
+      includesUndatedHistory: period.includesUndatedHistory,
+    },
+    ...dashboard,
     pricingPermitted: hasPermission(profile, "pricing.view"),
     studleyStockPermitted: hasPermission(profile, "inventory.view"),
   };
+}
+
+/** Full certified history. Loaded only when Historical Reporting is opened. */
+export async function getUnifiedCustomerHistory(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesIntelligence(actorUserId);
+  const input = z.object({ companyId: z.string().min(1) }).parse(raw ?? {});
+  await assertCompanyInScope(profile, input.companyId);
+  const [identity, refresh] = await Promise.all([
+    loadUnifiedIdentity(input.companyId),
+    loadUnifiedRefreshStatus(input.companyId),
+  ]);
+  const report = await withReportSql(`customer-history:${input.companyId}`, async () => {
+    await materializeCompanyLines(input.companyId);
+    const summary = await querySummaryFromReportLines(input.companyId);
+    const certification = await queryCertificationFromReportLines();
+    return { summary, certification };
+  });
+  return { identity, refresh, ...report };
 }
 
 const txSchema = z.object({
@@ -862,6 +1161,7 @@ const txSchema = z.object({
   sku: z.string().max(120).optional().nullable(),
   brandId: z.string().min(1).optional().nullable(),
   accountCode: z.string().max(40).optional().nullable(),
+  scope: z.enum(["PERIOD", "LIFETIME"]).optional(),
   page: z.number().int().min(1).max(100_000).optional(),
   pageSize: z.number().int().min(1).max(EXPORT_PAGE_SIZE).optional(),
 });
@@ -949,6 +1249,7 @@ function transactionReportKey(input: TxInput): string {
     input.sku ?? "",
     input.brandId ?? "",
     input.accountCode ?? "",
+    input.scope ?? "",
   ].join("|");
 }
 
@@ -1086,10 +1387,32 @@ async function queryTransactions(
   };
 }
 
+function periodWindow(input: {
+  scope?: "PERIOD" | "LIFETIME" | null | undefined;
+  from?: string | null | undefined;
+  to?: string | null | undefined;
+}): DatedWindow | null {
+  if (input.scope !== "PERIOD") return null;
+  const from = parseIsoDay(input.from);
+  const to = parseIsoDay(input.to);
+  if (!from || !to) return null;
+  return { from, toExclusive: dayAfter(to) };
+}
+
 export async function listUnifiedCustomerTransactions(actorUserId: string, raw: unknown) {
   const profile = await requireSalesIntelligence(actorUserId);
   const input = txSchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
+  const window = periodWindow(input);
+  if (input.scope === "PERIOD") {
+    if (!window) {
+      throw new AuthError("Choose a reporting period with a start and end date.", "VALIDATION", 400);
+    }
+    return withReportSql(transactionReportKey(input), async () => {
+      await materializeCompanyLines(input.companyId, window);
+      return queryTransactions(input, "temp");
+    });
+  }
   return queryTransactions(input);
 }
 
@@ -1098,6 +1421,9 @@ const productHistorySchema = z.object({
   q: z.string().max(200).optional().nullable(),
   brandId: z.string().min(1).optional().nullable(),
   sort: z.enum(["NET_SALES", "QTY", "RECENT", "NAME_AZ"]).optional(),
+  from: z.string().max(10).optional().nullable(),
+  to: z.string().max(10).optional().nullable(),
+  scope: z.enum(["PERIOD", "LIFETIME"]).optional(),
   page: z.number().int().min(1).max(10_000).optional(),
   pageSize: z.number().int().min(1).max(EXPORT_PAGE_SIZE).optional(),
 });
@@ -1129,14 +1455,27 @@ function productHistoryOrder(sort: string | undefined): Prisma.Sql {
   }
 }
 
+function productReportKey(input: z.infer<typeof productHistorySchema>): string {
+  return [
+    "products",
+    input.companyId,
+    input.page ?? 1,
+    input.pageSize ?? 25,
+    input.sort ?? "",
+    input.q ?? "",
+    input.brandId ?? "",
+    input.scope ?? "",
+    input.from ?? "",
+    input.to ?? "",
+  ].join("|");
+}
+
 async function queryProductHistory(
   input: z.infer<typeof productHistorySchema>,
+  source: "cte" | "temp" = "cte",
 ): Promise<{ rows: ProductHistoryRow[]; page: number; pageSize: number; total: number }> {
   if (!hasReportDb()) {
-    return withReportSql(
-      ["products", input.companyId, input.page ?? 1, input.pageSize ?? 25, input.sort ?? "", input.q ?? "", input.brandId ?? ""].join("|"),
-      () => queryProductHistory(input),
-    );
+    return withReportSql(productReportKey(input), () => queryProductHistory(input, "cte"));
   }
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 25;
@@ -1144,6 +1483,10 @@ async function queryProductHistory(
     Prisma.sql`u.company_id = ${input.companyId}`,
     Prisma.sql`u.status <> 'DUPLICATE'`,
   ];
+  const window = periodWindow(input);
+  if (window) {
+    parts.push(Prisma.sql`u.doc_date >= ${window.from} AND u.doc_date < ${window.toExclusive}`);
+  }
   if (input.q?.trim()) {
     const pattern = likeContains(input.q.trim());
     parts.push(
@@ -1158,9 +1501,12 @@ async function queryProductHistory(
     )`);
   }
   const where = Prisma.join(parts, " AND ");
+  const groupedPrefix =
+    source === "temp"
+      ? Prisma.sql`WITH grouped AS MATERIALIZED (`
+      : Prisma.sql`${unifiedLinesCte([input.companyId], null)}, grouped AS MATERIALIZED (`;
   const raw = await reportDb().$queryRaw<Array<ProductHistoryRow & { sku: string | null; total: number }>>`
-    ${unifiedLinesCte([input.companyId], null)}
-    , grouped AS MATERIALIZED (
+    ${groupedPrefix}
       SELECT
         u.sku AS sku,
         MAX(u.description) AS description,
@@ -1173,7 +1519,7 @@ async function queryProductHistory(
         MIN(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "firstDated",
         MAX(u.doc_date) FILTER (WHERE ${COUNTED} AND u.doc_type = 'INVOICE') AS "lastDated",
         COUNT(*) FILTER (WHERE u.status = 'UNRECONCILED')::int AS "unreconciledLines"
-      FROM u
+      FROM ${source === "temp" ? Prisma.sql`unified_report_lines u` : Prisma.sql`u`}
       WHERE ${where}
       GROUP BY u.sku
     )
@@ -1205,7 +1551,17 @@ export async function listUnifiedCustomerProducts(actorUserId: string, raw: unkn
   const profile = await requireSalesIntelligence(actorUserId);
   const input = productHistorySchema.parse(raw ?? {});
   await assertCompanyInScope(profile, input.companyId);
-  const result = await queryProductHistory(input);
+  const window = periodWindow(input);
+  const result =
+    input.scope === "PERIOD"
+      ? await withReportSql(productReportKey(input), async () => {
+          if (!window) {
+            throw new AuthError("Choose a reporting period with a start and end date.", "VALIDATION", 400);
+          }
+          await materializeCompanyLines(input.companyId, window);
+          return queryProductHistory(input, "temp");
+        })
+      : await queryProductHistory(input);
   const enriched = await enrichProducts(
     profile,
     result.rows.map((row) => ({
@@ -1617,14 +1973,29 @@ export async function exportUnifiedCustomerSalesCsv(actorUserId: string, raw: un
   const safeName = company.name.replace(/[^\w.-]+/g, "_").slice(0, 60) || company.id;
   if (input.kind === "transactions") {
     const filters = txSchema.parse({ ...input, page: 1, pageSize: EXPORT_PAGE_SIZE });
-    const items: Awaited<ReturnType<typeof queryTransactions>>["items"] = [];
-    let total = 0;
-    for (let page = 1; items.length < EXPORT_MAX_ROWS; page += 1) {
-      const next = await queryTransactions({ ...filters, page, pageSize: EXPORT_PAGE_SIZE });
-      total = next.total;
-      items.push(...next.items);
-      if (next.items.length < EXPORT_PAGE_SIZE) break;
-    }
+    const collect = async (source: "cte" | "temp") => {
+      const items: Awaited<ReturnType<typeof queryTransactions>>["items"] = [];
+      let total = 0;
+      for (let page = 1; items.length < EXPORT_MAX_ROWS; page += 1) {
+        const next = await queryTransactions({ ...filters, page, pageSize: EXPORT_PAGE_SIZE }, source);
+        total = next.total;
+        items.push(...next.items);
+        if (next.items.length < EXPORT_PAGE_SIZE) break;
+      }
+      return { items, total };
+    };
+    const window = periodWindow(filters);
+    const collected =
+      filters.scope === "PERIOD"
+        ? await withReportSql(`export:${transactionReportKey(filters)}`, async () => {
+            if (!window) {
+              throw new AuthError("Choose a reporting period with a start and end date.", "VALIDATION", 400);
+            }
+            await materializeCompanyLines(filters.companyId, window);
+            return collect("temp");
+          })
+        : await collect("cte");
+    const { items, total } = collected;
     const headers = [
       "Customer",
       "Status",
