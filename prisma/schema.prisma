@@ -2304,6 +2304,21 @@ model OrderNumberSequence {
   nextValue Int    @default(1)
 }
 
+/// Tombstone for a permanently deleted order number. No foreign key to Order —
+/// the row must remain after the order is removed so the number is never reused.
+model RetiredOrderNumber {
+  orderNumber     String   @id
+  orderId         String
+  companyId       String?
+  previousStatus  String
+  reason          String
+  retiredByUserId String?
+  retiredAt       DateTime @default(now())
+
+  @@index([orderId])
+  @@index([retiredByUserId])
+}
+
 /// Race-safe quote number allocator (QT-000001…).
 model QuoteNumberSequence {
   id        String @id @default("default")

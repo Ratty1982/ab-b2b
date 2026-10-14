@@ -2116,6 +2116,8 @@ async function assertCanDeleteOrders(userId: string) {
 /**
  * Admin delete order: release ACTIVE stock holds (sellable returns), then remove the order.
  * qtyOnHand is never incremented — Autopart Avail remains physical stock authority.
+ * DISPATCHED and DELIVERED stay blocked. Super Admin removal of dispatched test
+ * orders is deleteDispatchedTestOrder, which does not unlink financial records.
  */
 export async function deleteAdminOrder(
   userId: string,
