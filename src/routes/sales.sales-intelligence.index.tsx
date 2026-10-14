@@ -458,17 +458,7 @@ function SalesEnquiryPage() {
               onChange={() => setChangingEntity(true)}
               changeLabel="Change customer / group"
             />
-          ) : surface === "unified-customer" && !changingEntity ? (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                className="inline-flex h-8 items-center rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide"
-                onClick={() => setChangingEntity(true)}
-              >
-                Change customer
-              </button>
-            </div>
-          ) : (
+          ) : surface === "unified-customer" && !changingEntity ? null : (
             <SiField label="Customer" className="max-w-xl">
               <input
                 className={siControlClassName()}
@@ -562,7 +552,11 @@ function SalesEnquiryPage() {
         )}
 
         {mode === "customers" && search.companyId && !search.customerGroupId ? (
-          <UnifiedCustomerSalesPanel companyId={search.companyId} onFollowUp={setFollowUp} />
+          <UnifiedCustomerSalesPanel
+            companyId={search.companyId}
+            onFollowUp={setFollowUp}
+            onChangeCustomer={() => setChangingEntity(true)}
+          />
         ) : null}
         {mode === "products" && search.sku ? (
           <UnifiedProductSalesPanel
