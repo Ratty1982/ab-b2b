@@ -1,5 +1,5 @@
-import { Link, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { Link, useRouter, useRouterState } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { Logo } from "./Logo";
 import { BasketNavBadge } from "./BasketNavBadge";
@@ -53,11 +53,25 @@ export function PublicHeader() {
   const [signingOut, setSigningOut] = useState(false);
   const session = useSession();
   const router = useRouter();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   // Authentication and orderability are separate. Any signed-in user must not
   // see Trade Login — even if they cannot order yet.
   const signedIn = session.signedIn;
   const showBasket = canViewBasketSession(session);
   const accountLinks = publicHeaderAccountLinks(session);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
 
   async function onSignOut() {
     if (signingOut) return;
@@ -74,7 +88,7 @@ export function PublicHeader() {
 
   return (
     <header
-      className="sticky top-0 z-40 border-b border-border/70 bg-ink/95 backdrop-blur"
+      className="sticky top-0 z-40 border-b border-border/70 bg-ink/95 pt-[env(safe-area-inset-top)] backdrop-blur"
       data-public-header="shell"
     >
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-10">
@@ -135,7 +149,7 @@ export function PublicHeader() {
               aria-label={open ? "Close menu" : "Open menu"}
               aria-expanded={open}
               data-public-header="mobile-menu-toggle"
-              className="grid size-9 shrink-0 place-items-center rounded-md border border-border xl:hidden"
+              className="grid size-11 shrink-0 place-items-center rounded-md border border-border xl:hidden"
             >
               {open ? <X className="size-4" /> : <Menu className="size-4" />}
             </button>
@@ -150,7 +164,7 @@ export function PublicHeader() {
                 key={item.to}
                 to={item.to}
                 onClick={() => setOpen(false)}
-                className="rounded-md px-3 py-2 text-sm whitespace-nowrap text-steel transition-colors hover:bg-secondary hover:text-foreground"
+                className="flex min-h-11 items-center rounded-md px-3 text-sm text-steel transition-colors hover:bg-secondary hover:text-foreground"
                 activeProps={{ className: "text-foreground bg-secondary" }}
                 activeOptions={{ exact: false }}
               >
@@ -165,7 +179,7 @@ export function PublicHeader() {
                     to={link.to}
                     onClick={() => setOpen(false)}
                     data-public-header={`mobile-${link.key}`}
-                    className="rounded-md px-3 py-2 text-sm font-semibold"
+                    className="flex min-h-11 items-center rounded-md px-3 text-sm font-semibold"
                   >
                     {link.label}
                   </Link>
@@ -175,7 +189,7 @@ export function PublicHeader() {
                   data-public-header="mobile-logout"
                   disabled={signingOut}
                   onClick={() => void onSignOut()}
-                  className="rounded-md px-3 py-2 text-left text-sm font-semibold text-steel"
+                  className="flex min-h-11 items-center rounded-md px-3 text-left text-sm font-semibold text-steel"
                 >
                   Log out
                 </button>
@@ -186,7 +200,7 @@ export function PublicHeader() {
                   to="/login"
                   onClick={() => setOpen(false)}
                   data-public-header="mobile-trade-login"
-                  className="rounded-md px-3 py-2 text-sm font-semibold"
+                  className="flex min-h-11 items-center rounded-md px-3 text-sm font-semibold"
                 >
                   Trade Login
                 </Link>
@@ -194,7 +208,7 @@ export function PublicHeader() {
                   to="/register"
                   onClick={() => setOpen(false)}
                   data-public-header="mobile-open-account"
-                  className="rounded-md px-3 py-2 text-sm font-semibold text-primary"
+                  className="flex min-h-11 items-center rounded-md px-3 text-sm font-semibold text-primary"
                 >
                   Open Trade Account
                 </Link>
@@ -271,9 +285,9 @@ export function PublicLayout({
   requestSession?: ClientSession;
 }) {
   const body = (
-    <div className="flex min-h-screen flex-col bg-ink text-foreground">
+    <div className="flex min-h-screen min-w-0 flex-col bg-ink text-foreground">
       <PublicHeader />
-      <main className={cn("flex-1", kinetic && "kinetic")}>{children}</main>
+      <main className={cn("min-w-0 flex-1 overflow-x-clip", kinetic && "kinetic")}>{children}</main>
       <PublicFooter />
     </div>
   );

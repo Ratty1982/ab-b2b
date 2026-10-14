@@ -40,11 +40,11 @@ export function Logo({
       />
       {markOnly ? null : (
         <span className="min-w-0 leading-none">
-          <span className="block font-display text-[15px] font-semibold tracking-[0.06em]">
+          <span className="block truncate font-display text-[15px] font-semibold tracking-[0.06em]">
             AUTOMOTIVE BRANDS
           </span>
           {subtitle ? (
-            <span className="mt-1 block text-[9px] uppercase tracking-[0.32em] text-steel">
+            <span className="mt-1 block truncate text-[9px] uppercase tracking-[0.32em] text-steel">
               {subtitle}
             </span>
           ) : null}

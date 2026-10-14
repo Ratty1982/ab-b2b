@@ -142,6 +142,18 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  /*
+   * Phones zoom focused fields that are under 16px. Keep the compact desktop
+   * type size; only the smaller breakpoints use a readable control size.
+   */
+  @media (max-width: 1023px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="hidden"]),
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+
   h1,
   h2,
   h3 {
