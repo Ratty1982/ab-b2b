@@ -69,6 +69,8 @@ function purposeLabel(purpose: string): string {
   switch (purpose) {
     case "ORDER_RECEIVED":
       return "Order Received";
+    case "ORDER_UPDATED":
+      return "Order Updated";
     case "ORDER_RECEIVED_INTERNAL":
       return "New B2B Order (internal)";
     case "ORDER_DESPATCHED":
@@ -686,6 +688,7 @@ export function EmailSettingsPanel() {
             >
               <option value="ALL">All purposes</option>
               <option value="ORDER_RECEIVED">Order Received</option>
+              <option value="ORDER_UPDATED">Order Updated</option>
               <option value="ORDER_RECEIVED_INTERNAL">Order Internal</option>
               <option value="ORDER_DESPATCHED">Order Despatched</option>
               <option value="ORDER_PART_DESPATCHED">Part Despatched</option>

@@ -26,6 +26,7 @@ import {
   buildOrderReceivedCustomerBodies,
   buildOrderReceivedInternalBodies,
   buildOrderRemainingDespatchedCustomerBodies,
+  buildOrderUpdatedCustomerBodies,
 } from "@/server/orders/email";
 import {
   buildQuoteDeclinedInternalBodies,
@@ -214,6 +215,28 @@ const registry: RegistryEntry[] = [
         previewOrderSnapshot({
           withBackorder: scenarioId === "backorder",
           withAccountManager: true,
+        }),
+        previewFooter(),
+      ),
+  },
+  {
+    id: "order-updated",
+    name: "Order updated",
+    purpose: "ORDER_UPDATED",
+    audience: "customer",
+    group: "customer",
+    description: "Customer confirmation after staff amend a submitted order. Uses the saved amendment snapshot.",
+    scenarios: [
+      { id: "normal", label: "Amended order" },
+      { id: "backorder", label: "Amended order with backorder" },
+      { id: "collection", label: "Customer collection" },
+    ],
+    render: (scenarioId) =>
+      buildOrderUpdatedCustomerBodies(
+        previewOrderSnapshot({
+          withBackorder: scenarioId === "backorder",
+          withAccountManager: true,
+          fulfilmentChoice: scenarioId === "collection" ? "COLLECTION" : "DELIVERY",
         }),
         previewFooter(),
       ),

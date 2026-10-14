@@ -40,8 +40,9 @@ import {
   type CheckoutReview,
   type PublicOrderConfirmation,
 } from "@/server/orders/service";
+import type { OrderAmendmentEmailFeedback } from "@/domain/order-updated-email";
 import { recordAuditEvent } from "@/server/audit/record";
-import { sendOrderEmailsAfterCommit } from "@/server/email/transactional";
+import { loadOrderUpdatedEmailOutcome, sendOrderEmailsAfterCommit } from "@/server/email/transactional";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
@@ -147,7 +148,12 @@ export type SalesOrderReviewedTotals = {
 };
 
 export type SalesPlaceResult =
-  | { ok: true; order: PublicOrderConfirmation; alreadyPlaced: boolean }
+  | {
+      ok: true;
+      order: PublicOrderConfirmation;
+      alreadyPlaced: boolean;
+      email?: OrderAmendmentEmailFeedback;
+    }
   | {
       ok: false;
       code: "REVIEW_REQUIRED";
@@ -1292,7 +1298,12 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       existing.id === draft.editingOrderId &&
       existing.editIdempotencyKey === input.idempotencyKey
     ) {
-      return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
+      return {
+        ok: true,
+        alreadyPlaced: true,
+        order: toConfirmation(existing, existing.company.name),
+        email: await loadOrderUpdatedEmailOutcome(existing.id, input.idempotencyKey),
+      };
     }
     if (!sameSalesOrderSubmission(existing, draft, actorUserId)) salesOrderIdempotencyConflict();
     await repairCrmFromOrder(existing);

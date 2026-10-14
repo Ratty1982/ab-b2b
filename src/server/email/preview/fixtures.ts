@@ -87,9 +87,11 @@ function previewOrderItems(withBackorder: boolean): OrderEmailSnapshot["items"] 
 export function previewOrderSnapshot(opts?: {
   withBackorder?: boolean;
   withAccountManager?: boolean;
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
 }): OrderEmailSnapshot {
   const withBackorder = opts?.withBackorder ?? false;
   const withAm = opts?.withAccountManager !== false;
+  const fulfilmentChoice = opts?.fulfilmentChoice ?? "DELIVERY";
   const items = previewOrderItems(withBackorder);
   const subtotal = "196.50";
   return {
@@ -106,14 +108,18 @@ export function previewOrderSnapshot(opts?: {
     placedAt: new Date("2026-10-03T09:30:00.000Z"),
     paymentTerms: "30 Days Net",
     deliveryInstructions: null,
-    deliveryAddress: {
-      line1: "14 Birmingham Road",
-      line2: null,
-      town: "Bromsgrove",
-      county: "Worcestershire",
-      postcode: "B61 0DD",
-      country: "GB",
-    },
+    fulfilmentChoice,
+    deliveryAddress:
+      fulfilmentChoice === "COLLECTION"
+        ? null
+        : {
+            line1: "14 Birmingham Road",
+            line2: null,
+            town: "Bromsgrove",
+            county: "Worcestershire",
+            postcode: "B61 0DD",
+            country: "GB",
+          },
     contact: {
       name: PREVIEW_CUSTOMER.name,
       email: PREVIEW_CUSTOMER.email,

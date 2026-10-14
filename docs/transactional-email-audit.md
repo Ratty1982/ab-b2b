@@ -28,6 +28,7 @@ shell variant. Super Admin preview/test centre lives under Admin → Settings �
 | Admin send password reset | `PASSWORD_RESET` | Active user | Admin Users → Send password reset email | YES | Same Better Auth flow; blocked for INVITED |
 | Admin force-set password | — | — | Admin emergency set password | N/A | Shows password once; not emailed (intentional) |
 | Order placed | `ORDER_RECEIVED` | Order contact snapshot | After order commit | YES | Historical snapshots only |
+| Order amended | `ORDER_UPDATED` | Latest saved order contact | After a customer-facing amendment commits | YES | Immutable snapshot per edit idempotency key; retry does not reload a later revision |
 | Order placed | `ORDER_RECEIVED_INTERNAL` | Order notification recipients | After order commit | YES | Env fallback transitional |
 | Motorsport partnership enquiry | `MOTORSPORT_PARTNERSHIP_INTERNAL` | Motorsport enquiry recipients | Form submit → Lead | YES | Skipped if no recipients |
 | SMTP diagnostic | `EMAIL_TEST` | Admin-chosen | Settings → Send test email | YES | May bypass delivery toggle; excluded from email health |
