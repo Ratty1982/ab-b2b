@@ -9,17 +9,20 @@ import { Prisma } from "@prisma/client";
 import { buildCsv } from "@/domain/sales-intelligence";
 import {
   AMBIGUOUS_ACCOUNT_REASON,
+  compareDocumentLines,
   goodsAgainstLinesDifference,
+  LINE_COMPARISON_VIEWS,
+  lineMatchesComparisonView,
   sourceSpread,
   RECONCILIATION_DOCUMENT_TYPES,
   RECONCILIATION_READ_ONLY_NOTE,
   RECONCILIATION_REASONS,
   RECONCILIATION_SOURCES,
-  reconciliationActionForReason,
   reconciliationActions,
   reconciliationReasonLabel,
   RECONCILIATION_ACTION_GUIDANCE,
   RECONCILIATION_ACTION_LABELS,
+  type LineComparisonView,
   type ReconciliationAction,
   type ReconciliationDocumentType,
   type ReconciliationReason,
@@ -37,8 +40,10 @@ import { withReportSql, reportDb } from "@/server/sales-intelligence/report-guar
 import { unifiedLinesCte } from "@/server/sales-intelligence/unified-sales";
 
 const AUTOPART_SOURCE = "AUTOPART";
-const LINE_CAP = 40;
+const LINE_CAP = 8_000;
+const DISPLAY_CAP = 100;
 const EXPORT_MAX_ROWS = 20_000;
+const VIEW_VALUES = LINE_COMPARISON_VIEWS as unknown as [LineComparisonView, ...LineComparisonView[]];
 const REASON_VALUES = RECONCILIATION_REASONS as unknown as [ReconciliationReason, ...ReconciliationReason[]];
 const SOURCE_VALUES = RECONCILIATION_SOURCES as unknown as [UnifiedSource, ...UnifiedSource[]];
 const DOC_VALUES = RECONCILIATION_DOCUMENT_TYPES as unknown as [
@@ -52,6 +57,7 @@ const filterSchema = z.object({
   accountCode: z.string().max(40).optional().nullable(),
   source: z.enum(SOURCE_VALUES).optional().nullable(),
   documentType: z.enum(DOC_VALUES).optional().nullable(),
+  comparison: z.enum(VIEW_VALUES).optional().nullable(),
   page: z.number().int().min(1).max(100_000).optional(),
   pageSize: z.number().int().min(1).max(50).optional(),
 });
@@ -62,6 +68,7 @@ type FilterInput = {
   accountCode?: string;
   source?: UnifiedSource;
   documentType?: ReconciliationDocumentType;
+  comparison: LineComparisonView;
 };
 
 function blankToUndefined(value: string | null | undefined): string | undefined {
@@ -71,7 +78,7 @@ function blankToUndefined(value: string | null | undefined): string | undefined 
 
 function normaliseFilters(raw: z.infer<typeof filterSchema>): FilterInput {
   const accountCode = blankToUndefined(raw.accountCode)?.toUpperCase();
-  const filters: FilterInput = { companyId: raw.companyId };
+  const filters: FilterInput = { companyId: raw.companyId, comparison: raw.comparison ?? "DIFFERENCES" };
   if (raw.reason) filters.reason = raw.reason;
   if (accountCode) filters.accountCode = accountCode;
   if (raw.source) filters.source = raw.source;
@@ -91,6 +98,7 @@ function reportKey(kind: string, filters: FilterInput, page: number, pageSize: n
     filters.accountCode ?? "",
     filters.source ?? "",
     filters.documentType ?? "",
+    filters.comparison,
     page,
     pageSize,
   ].join("|");
@@ -298,7 +306,7 @@ type RawInvestigationRow = {
   difference: Prisma.Decimal | null;
 };
 
-type SourceTotal = { source: string; sourceLabel: string; qty: string; net: string };
+type SourceTotal = { source: string; sourceLabel: string; qty: string; net: string; lineCount: number };
 
 function asStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -310,7 +318,7 @@ function asSourceTotals(value: unknown): SourceTotal[] {
   if (!Array.isArray(parsed)) return [];
   return parsed.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
-    const row = item as { source?: unknown; net?: unknown; qty?: unknown };
+    const row = item as { source?: unknown; net?: unknown; qty?: unknown; lines?: unknown };
     if (typeof row.source !== "string") return [];
     return [
       {
@@ -318,6 +326,7 @@ function asSourceTotals(value: unknown): SourceTotal[] {
         sourceLabel: unifiedSourceLabel(row.source),
         net: String(row.net ?? "0.00"),
         qty: String(row.qty ?? "0"),
+        lineCount: Number(row.lines ?? 0),
       },
     ];
   });
@@ -331,7 +340,7 @@ function safeJson(value: string): unknown {
   }
 }
 
-function foldDocuments(rows: RawInvestigationRow[]) {
+function foldDocuments(rows: RawInvestigationRow[], view: LineComparisonView) {
   const total = Number(rows[0]?.total ?? 0);
   const documents = new Map<
     string,
@@ -409,24 +418,60 @@ function foldDocuments(rows: RawInvestigationRow[]) {
     total,
     documents: [...documents.values()]
       .sort((left, right) => left.order - right.order)
-      .map((document) => ({
-        id: document.id,
-        reference: document.reference,
-        documentType: document.documentType,
-        accountCode: document.accountCode,
-        reasons: document.reasons,
-        reasonLabels: document.reasons.map((reason) => reconciliationReasonLabel(reason)),
-        actions: document.actions,
-        actionLabels: document.actions.map((action) => RECONCILIATION_ACTION_LABELS[action]),
-        guidance: document.actions.map((action) => RECONCILIATION_ACTION_GUIDANCE[action]),
-        sources: document.sources,
-        goodsNet: document.goodsNet,
-        productLineNet: document.productLineNet,
-        difference: document.difference,
-        lineCount: document.lineCount,
-        linesTruncated: document.lineCount > document.lines.length,
-        lines: document.lines,
-      })),
+      .map((document) => {
+        const compared = compareDocumentLines({
+          lines: document.lines.map((line) => ({
+            lineId: line.lineId,
+            source: line.source,
+            sku: line.sku,
+            qty: line.qty,
+            net: line.net,
+            reason: line.reason,
+          })),
+          sources: document.sources.map((source) => ({
+            source: source.source,
+            sourceLabel: source.sourceLabel,
+            lineCount: source.lineCount,
+            net: source.net,
+          })),
+        });
+        const visibleRows = compared.rows.filter((row) => lineMatchesComparisonView(row.kind, view));
+        const loadedLines = document.sources.reduce((sum, source) => sum + source.lineCount, 0);
+        return {
+          id: document.id,
+          reference: document.reference,
+          documentType: document.documentType,
+          accountCode: document.accountCode,
+          reasons: document.reasons,
+          reasonLabels: document.reasons.map((reason) => reconciliationReasonLabel(reason)),
+          actions: document.actions,
+          actionLabels: document.actions.map((action) => RECONCILIATION_ACTION_LABELS[action]),
+          guidance: document.actions.map((action) => RECONCILIATION_ACTION_GUIDANCE[action]),
+          sources: document.sources,
+          goodsNet: document.goodsNet,
+          productLineNet: document.productLineNet,
+          difference: document.difference,
+          lineCount: document.lineCount,
+          comparison: {
+            view,
+            matching: compared.matching,
+            missing: compared.missing,
+            quantityChanged: compared.quantityChanged,
+            netChanged: compared.netChanged,
+            repeated: compared.repeated,
+            held: compared.held,
+            summary: compared.summary,
+            totalDifference: compared.totalDifference ?? document.difference,
+            totalDifferenceSummary:
+              compared.totalDifferenceSummary ??
+              (document.goodsNet != null
+                ? `504 goods total ${document.goodsNet} differs from product lines ${document.productLineNet} by ${document.difference ?? "0.00"}. This is not certified sales.`
+                : null),
+            rows: visibleRows.slice(0, DISPLAY_CAP),
+            rowsTruncated: visibleRows.length > DISPLAY_CAP || loadedLines > document.lines.length,
+          },
+        };
+      }),
   };
 }
 
@@ -470,10 +515,14 @@ async function queryInvestigationPage(filters: FilterInput, page: number, pageSi
           SELECT COALESCE(json_agg(json_build_object(
             'source', s.source,
             'net', s.net::text,
-            'qty', s.qty::text
+            'qty', s.qty::text,
+            'lines', s.lines
           ) ORDER BY s.source), '[]'::json)
           FROM (
-            SELECT b.source, SUM(b.net)::numeric(18, 2) AS net, SUM(b.qty)::numeric(18, 3) AS qty
+            SELECT b.source,
+              SUM(b.net)::numeric(18, 2) AS net,
+              SUM(b.qty)::numeric(18, 3) AS qty,
+              COUNT(*)::int AS lines
             FROM base b
             WHERE b.group_ref = g.group_ref AND b.doc_type = g.doc_type
             GROUP BY b.source
@@ -492,34 +541,21 @@ async function queryInvestigationPage(filters: FilterInput, page: number, pageSi
         numbered.reason, numbered.difference
       FROM (
         SELECT
-          v.line_id,
-          v.sku,
-          v.qty,
-          v.net,
-          v.source,
-          v.reason,
-          CASE
-            WHEN v.reason = 'DOCUMENT_GOODS_MISMATCH' AND page.goods_net IS NOT NULL
-              THEN (page.goods_net - page.product_net)::numeric(18, 2)
-            WHEN other.other_net IS NOT NULL THEN (v.net - other.other_net)::numeric(18, 2)
-            ELSE v.net
-          END AS difference,
-          ROW_NUMBER() OVER (ORDER BY v.sku ASC, v.source ASC, v.line_id ASC) AS n
-        FROM visible v
-        LEFT JOIN LATERAL (
-          SELECT MIN(b.net)::numeric(18, 2) AS other_net
-          FROM base b
-          WHERE b.group_ref = v.group_ref
-            AND b.doc_type = v.doc_type
-            AND b.sku = v.sku
-            AND b.source <> v.source
-        ) other ON TRUE
-        WHERE v.group_ref = page.group_ref AND v.doc_type = page.doc_type
+          b.line_id,
+          b.sku,
+          b.qty,
+          b.net,
+          b.source,
+          b.reason,
+          b.net AS difference,
+          ROW_NUMBER() OVER (ORDER BY b.sku ASC, b.source ASC, b.line_id ASC) AS n
+        FROM base b
+        WHERE b.group_ref = page.group_ref AND b.doc_type = page.doc_type
       ) numbered
       WHERE numbered.n <= ${LINE_CAP}
     ) line ON page.group_ref IS NOT NULL
   `;
-  const folded = foldDocuments(rows);
+  const folded = foldDocuments(rows, filters.comparison);
   return {
     permitted: true as const,
     readOnlyNote: RECONCILIATION_READ_ONLY_NOTE,
@@ -547,15 +583,110 @@ type ExportRow = {
   docRef: string | null;
   docType: string;
   accountCode: string;
+  lineId: string;
   sku: string;
   qty: Prisma.Decimal;
   net: Prisma.Decimal;
   source: string;
   reason: string;
-  productNet: Prisma.Decimal | null;
   goodsNet: Prisma.Decimal | null;
-  difference: Prisma.Decimal | null;
 };
+
+function discrepancyCsvRows(rows: ExportRow[], view: LineComparisonView, customerName: string): string[][] {
+  const groups = new Map<string, ExportRow[]>();
+  for (const row of rows) {
+    const key = `${row.docRef ?? ""}|${row.docType}|${row.accountCode}`;
+    const list = groups.get(key) ?? [];
+    list.push(row);
+    groups.set(key, list);
+  }
+  const csvRows: string[][] = [];
+  for (const group of groups.values()) {
+    const head = group[0];
+    if (!head) continue;
+    const sourceMap = new Map<string, { net: Prisma.Decimal; lines: number }>();
+    for (const row of group) {
+      if (row.source === "ONGOING_504") continue;
+      const current = sourceMap.get(row.source) ?? { net: new Prisma.Decimal(0), lines: 0 };
+      current.net = current.net.plus(row.net);
+      current.lines += 1;
+      sourceMap.set(row.source, current);
+    }
+    const sources = [...sourceMap.entries()].map(([source, total]) => ({
+      source,
+      sourceLabel: unifiedSourceLabel(source),
+      lineCount: total.lines,
+      net: total.net.toFixed(2),
+    }));
+    const compared = compareDocumentLines({
+      lines: group.map((row) => ({
+        lineId: row.lineId,
+        source: row.source,
+        sku: row.sku,
+        qty: decimalString(row.qty, 3),
+        net: decimalString(row.net, 2),
+        reason: row.reason,
+      })),
+      sources,
+    });
+    const goodsNet = head.goodsNet == null ? null : decimalString(head.goodsNet, 2);
+    const productNet = sources
+      .reduce((sum, source) => sum.plus(new Prisma.Decimal(source.net)), new Prisma.Decimal(0))
+      .toFixed(2);
+    const goodsDifference = goodsAgainstLinesDifference(goodsNet, productNet);
+    const sourceTotals = sources.map((source) => `${source.sourceLabel} ${source.lineCount} lines ${source.net}`).join("; ");
+    const totalDifference = compared.totalDifference ?? goodsDifference ?? "";
+    const actionLabel = reconciliationActions([...new Set(group.map((row) => row.reason))])
+      .map((item) => RECONCILIATION_ACTION_LABELS[item])
+      .join("; ");
+    if (view === "DIFFERENCES" && (compared.totalDifference || goodsDifference)) {
+      csvRows.push(
+        [
+          customerName,
+          head.docRef ?? "",
+          head.docType,
+          head.accountCode,
+          "Document total",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          sourceTotals,
+          totalDifference ?? "",
+          goodsNet ?? "",
+          actionLabel,
+        ].map(csvSafe),
+      );
+    }
+    for (const occurrence of compared.rows.filter((row) => lineMatchesComparisonView(row.kind, view))) {
+      const present = occurrence.sources.filter((source) => !source.missing);
+      csvRows.push(
+        [
+          customerName,
+          head.docRef ?? "",
+          head.docType,
+          head.accountCode,
+          occurrence.label,
+          occurrence.sku,
+          String(occurrence.occurrence),
+          present.map((source) => source.sourceLabel).join("; ") || occurrence.sources.map((source) => source.sourceLabel).join("; "),
+          present.map((source) => `${source.sourceLabel} ${source.qty ?? "missing"}`).join("; "),
+          present.map((source) => `${source.sourceLabel} ${source.net ?? "missing"}`).join("; "),
+          occurrence.qtyDifference ?? "",
+          occurrence.netDifference ?? "",
+          sourceTotals,
+          totalDifference ?? "",
+          goodsNet ?? "",
+          actionLabel,
+        ].map(csvSafe),
+      );
+    }
+  }
+  return csvRows;
+}
 
 export async function exportSalesReconciliationCsv(actorUserId: string, raw: unknown) {
   const profile = await requireSalesIntelligence(actorUserId);
@@ -569,34 +700,20 @@ export async function exportSalesReconciliationCsv(actorUserId: string, raw: unk
     reportDb().$queryRaw<ExportRow[]>`
       ${investigationCte(filters)}
       SELECT
-        v.doc_ref AS "docRef",
-        v.doc_type AS "docType",
-        v.account_code AS "accountCode",
-        v.sku,
-        v.qty,
-        v.net,
-        v.source,
-        v.reason,
-        g.product_net AS "productNet",
-        h.goods_net AS "goodsNet",
-        CASE
-          WHEN v.reason = 'DOCUMENT_GOODS_MISMATCH' AND h.goods_net IS NOT NULL
-            THEN (h.goods_net - g.product_net)::numeric(18, 2)
-          WHEN other.other_net IS NOT NULL THEN (v.net - other.other_net)::numeric(18, 2)
-          ELSE v.net
-        END AS difference
-      FROM visible v
-      INNER JOIN grouped g ON g.group_ref = v.group_ref AND g.doc_type = v.doc_type
-      LEFT JOIN headers_504 h ON h.doc_ref = v.group_ref AND h.doc_type = v.doc_type
-      LEFT JOIN LATERAL (
-        SELECT MIN(b.net)::numeric(18, 2) AS other_net
-        FROM base b
-        WHERE b.group_ref = v.group_ref
-          AND b.doc_type = v.doc_type
-          AND b.sku = v.sku
-          AND b.source <> v.source
-      ) other ON TRUE
-      ORDER BY v.doc_ref ASC NULLS LAST, v.sku ASC, v.source ASC, v.line_id ASC
+        b.doc_ref AS "docRef",
+        b.doc_type AS "docType",
+        b.account_code AS "accountCode",
+        b.line_id AS "lineId",
+        b.sku,
+        b.qty,
+        b.net,
+        b.source,
+        b.reason,
+        h.goods_net AS "goodsNet"
+      FROM base b
+      INNER JOIN doc_keys k ON k.group_ref = b.group_ref AND k.doc_type = b.doc_type
+      LEFT JOIN headers_504 h ON h.doc_ref = b.group_ref AND h.doc_type = b.doc_type
+      ORDER BY b.doc_ref ASC NULLS LAST, b.sku ASC, b.source ASC, b.line_id ASC
       LIMIT ${EXPORT_MAX_ROWS + 1}
     `,
   );
@@ -607,40 +724,30 @@ export async function exportSalesReconciliationCsv(actorUserId: string, raw: unk
     "Invoice reference",
     "Document type",
     "Account",
+    "Finding",
     "SKU",
-    "Quantity",
-    "Net ex VAT",
+    "Occurrence",
     "Source",
-    "Difference",
-    "Discrepancy",
-    "Action required",
+    "Quantity",
+    "Signed net",
+    "Quantity difference",
+    "Net difference",
+    "Source totals",
+    "Total difference",
     "504 goods total",
-    "Product line total",
+    "Action required",
   ];
-  const csvRows = limited.map((row) => {
-    const action = reconciliationActionForReason(row.reason);
-    return [
-      company.name,
-      row.docRef ?? "",
-      row.docType,
-      row.accountCode,
-      row.sku,
-      decimalString(row.qty, 3),
-      decimalString(row.net, 2),
-      unifiedSourceLabel(row.source),
-      decimalString(row.difference, 2),
-      reconciliationReasonLabel(row.reason),
-      RECONCILIATION_ACTION_LABELS[action],
-      row.goodsNet == null ? "" : decimalString(row.goodsNet, 2),
-      decimalString(row.productNet, 2),
-    ].map(csvSafe);
-  });
+  const csvRows = discrepancyCsvRows(limited, filters.comparison, company.name);
   const safeName = company.name.replace(/[^\w.-]+/g, "_").slice(0, 60) || company.id;
+  const filename =
+    filters.comparison === "DIFFERENCES"
+      ? `reconciliation-discrepancies-${safeName}.csv`
+      : `reconciliation-lines-${safeName}.csv`;
   return {
-    filename: `unreconciled-sales-${safeName}.csv`,
+    filename,
     csv: buildCsv(headers, csvRows),
     truncated,
-    rowCount: limited.length,
+    rowCount: csvRows.length,
     readOnlyNote: RECONCILIATION_READ_ONLY_NOTE,
   };
 }
