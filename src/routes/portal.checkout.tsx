@@ -242,8 +242,8 @@ function CheckoutPage() {
     <div>
       <PanelHeader title="Checkout" sub={`${ctx.companyName} · Trade Account`} />
       <form id={formId} onSubmit={(e) => void onPlace(e)} className="p-4 sm:p-6">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-8">
+        <div className="grid min-w-0 gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,360px)]">
+          <div className="min-w-0 space-y-8">
             <section className="rounded-lg border border-border bg-surface/30 p-5">
               <h2 className="font-display text-lg font-semibold uppercase">Delivery details</h2>
               {!useOneOff ? (
@@ -446,7 +446,7 @@ function CheckoutPage() {
             </section>
           </div>
 
-          <aside className="h-fit rounded-lg border border-border bg-surface/40 p-5 lg:sticky lg:top-24">
+          <aside className="h-fit min-w-0 rounded-lg border border-border bg-surface/40 p-5 lg:sticky lg:top-24">
             <h2 className="font-display text-lg font-semibold uppercase">Order summary</h2>
             <FreeDeliveryProgress
               className="mt-4"

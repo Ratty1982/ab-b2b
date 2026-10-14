@@ -50,7 +50,7 @@ function ForgotPassword() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm"
+              className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-base"
             />
           </div>
           {message ? <p className="text-[13px] text-steel">{message}</p> : null}

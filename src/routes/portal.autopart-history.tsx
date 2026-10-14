@@ -46,7 +46,8 @@ function PortalAutopartHistoryPage() {
         </p>
       ) : null}
       {data?.enabled && data.items.length > 0 ? (
-        <table className="mt-6 w-full text-left text-sm">
+        <div className="mt-6 min-w-0 overflow-x-auto">
+        <table className="w-full min-w-[36rem] text-left text-sm">
           <thead className="text-[11px] uppercase tracking-[0.12em] text-steel">
             <tr>
               <th className="py-2">Reference</th>
@@ -68,6 +69,7 @@ function PortalAutopartHistoryPage() {
             ))}
           </tbody>
         </table>
+        </div>
       ) : null}
     </section>
   );

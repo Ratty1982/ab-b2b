@@ -742,7 +742,7 @@ function InsightPanel({
             <div className="flex gap-1">
               <button
                 type="button"
-                className={`h-7 rounded border px-2 text-[10px] font-bold uppercase ${
+                className={`inline-flex min-h-11 items-center rounded border px-3 text-[11px] font-bold uppercase ${
                   chartMetric === "units" ? "border-primary text-primary" : "border-border"
                 }`}
                 onClick={() => setChartMetric("units")}
@@ -751,7 +751,7 @@ function InsightPanel({
               </button>
               <button
                 type="button"
-                className={`h-7 rounded border px-2 text-[10px] font-bold uppercase ${
+                className={`inline-flex min-h-11 items-center rounded border px-3 text-[11px] font-bold uppercase ${
                   chartMetric === "spend" ? "border-primary text-primary" : "border-border"
                 }`}
                 onClick={() => setChartMetric("spend")}
@@ -760,7 +760,7 @@ function InsightPanel({
               </button>
             </div>
           </div>
-          <div className="h-56 w-full">
+          <div className="h-56 w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />

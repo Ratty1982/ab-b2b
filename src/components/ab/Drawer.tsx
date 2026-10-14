@@ -110,4 +110,4 @@ export function Field({
 }
 
 export const inputClass =
-  "h-10 w-full rounded-md border border-border bg-ink px-3 text-[14px] outline-none focus-visible:border-primary";
+  "min-h-11 w-full rounded-md border border-border bg-ink px-3 text-base outline-none focus-visible:border-primary lg:h-10 lg:min-h-10 lg:text-sm";

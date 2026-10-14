@@ -69,7 +69,7 @@ function OrdersPage() {
               to="/portal/orders"
               search={value === "ALL" ? {} : { filter: value }}
               className={cn(
-                "inline-flex h-9 items-center rounded-md border px-3 text-[11px] font-bold uppercase tracking-wide",
+                "inline-flex min-h-11 items-center rounded-md border px-3 text-[11px] font-bold uppercase tracking-wide",
                 filter === value
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border hover:border-steel",
@@ -100,7 +100,51 @@ function OrdersPage() {
           </div>
         ) : null}
         {rows.length > 0 ? (
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <>
+          <ul className="space-y-3 md:hidden" data-layout="order-cards">
+            {rows.map((o) => (
+              <li key={o.id} className="rounded-lg border border-border p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="num font-medium text-primary">{o.orderNumber}</div>
+                    <div className="mt-1 text-[12px] text-steel">
+                      {o.placedAt ? formatDate(o.placedAt) : "—"}
+                      {o.poNumber ? ` · ${o.poNumber}` : ""}
+                    </div>
+                  </div>
+                  <StatusBadge
+                    tone={
+                      o.statusBadge === "BACKORDERED" ||
+                      o.statusBadge === "PART_BACKORDERED" ||
+                      o.statusBadge === "PART_DESPATCHED"
+                        ? "warn"
+                        : o.statusBadge === "DESPATCHED"
+                          ? "info"
+                          : o.statusBadge === "PROCESSING"
+                            ? "brand"
+                            : o.statusBadge === "RECEIVED"
+                              ? "good"
+                              : "neutral"
+                    }
+                  >
+                    {o.statusLabel}
+                  </StatusBadge>
+                </div>
+                {o.backorderHint ? <p className="mt-2 text-[12px] text-cyan">{o.backorderHint}</p> : null}
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="num text-base font-semibold">£{o.grandTotal}</span>
+                  <Link
+                    to="/portal/orders/$orderId"
+                    params={{ orderId: o.id }}
+                    className="inline-flex min-h-11 items-center text-[13px] font-semibold text-primary"
+                  >
+                    View order
+                  </Link>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto rounded-lg border border-border md:block" data-layout="order-table">
             <table className="w-full min-w-[720px] text-[13px]">
               <thead>
                 <tr className="border-b border-border bg-surface/60 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
@@ -162,6 +206,7 @@ function OrdersPage() {
               </tbody>
             </table>
           </div>
+          </>
         ) : null}
       </div>
     </div>

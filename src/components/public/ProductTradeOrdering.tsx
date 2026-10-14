@@ -319,7 +319,7 @@ function ProductTradeOrderingCard({
               <div className="mt-1.5 flex items-center gap-2">
                 <button
                   type="button"
-                  className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
+                  className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
                   aria-label="Decrease quantity"
                   disabled={busy || !panel.canDecrement || activeQty == null || step == null}
                   onClick={() => {
@@ -334,7 +334,7 @@ function ProductTradeOrderingCard({
                 </span>
                 <button
                   type="button"
-                  className="inline-grid size-10 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
+                  className="inline-grid size-11 place-items-center rounded-md border border-border disabled:opacity-40 sm:size-9"
                   aria-label="Increase quantity"
                   disabled={busy || !panel.canIncrement || activeQty == null || step == null}
                   onClick={() => {

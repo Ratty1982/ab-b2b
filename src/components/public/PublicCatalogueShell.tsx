@@ -42,7 +42,7 @@ export function CatalogueMobileNav({
       <SheetTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-10 items-center gap-2 rounded-md border border-border px-3 text-[12px] font-semibold uppercase lg:hidden"
+          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-border px-3 text-[12px] font-semibold uppercase sm:w-auto lg:hidden"
           aria-label="Filters and categories"
           data-catalogue-mobile-nav="trigger"
         >
@@ -50,7 +50,7 @@ export function CatalogueMobileNav({
           Filters / Categories
         </button>
       </SheetTrigger>
-      <SheetContent side="left" className="overflow-y-auto bg-ink text-foreground">
+      <SheetContent side="left" className="overflow-y-auto bg-ink text-foreground [&_a]:flex [&_a]:min-h-11 [&_a]:items-center">
         <SheetHeader>
           <SheetTitle className="font-display uppercase">Filters / Categories</SheetTitle>
         </SheetHeader>
