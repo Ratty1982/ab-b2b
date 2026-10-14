@@ -7,6 +7,7 @@ import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import {
   exportUnifiedCustomerSalesCsv,
+  getUnifiedCustomerHistory,
   getUnifiedCustomerSales,
   getUnifiedProductSales,
   getUnifiedReconciliationQueue,
@@ -609,9 +610,11 @@ afterAll(async () => {
 
 describe("unified customer sales", () => {
   it("shows a prospect's full history with separate subtotals and an incomplete status", async () => {
-    const result = await getUnifiedCustomerSales(adminId, { companyId: prospectId });
-    const s = result.summary;
+    const result = await getUnifiedCustomerSales(adminId, { companyId: prospectId, period: "ALL" });
+    const lifetime = await loadUnifiedCustomerSummary(prospectId);
+    const s = lifetime.summary;
     expect(result.company.status).toBe("PROSPECT");
+    expect(result.kpis.netSales).toBe(s.certifiedNet);
     expect(s.historicalSales).toBe("42.00");
     expect(s.historicalNet).toBe("38.00");
     expect(s.datedInvoicedSales).toBe("40.00");
@@ -629,8 +632,13 @@ describe("unified customer sales", () => {
     expect(s.creditNoteCount).toBe(2);
     expect(s.lastDatedInvoice).toBe("2026-09-20");
     expect(result.company.salesperson?.id).toBe(repId);
-    expect(result.initialTransactions.filteredCountedNet).toBe(s.certifiedNet);
-    expect(result.initialTransactions.total).toBeGreaterThan(0);
+    const transactions = await listUnifiedCustomerTransactions(adminId, {
+      companyId: prospectId,
+      status: "COUNTED",
+      pageSize: 50,
+    });
+    expect(transactions.filteredCountedNet).toBe(s.certifiedNet);
+    expect(transactions.total).toBeGreaterThan(0);
   });
 
   it("lists every verified code and holds back a code linked to two companies", async () => {
@@ -639,7 +647,7 @@ describe("unified customer sales", () => {
     expect(byCode.get(codeP1)?.attached).toBe(true);
     expect(byCode.get(codeP2)?.attached).toBe(true);
     expect(byCode.get(codeShared)?.attached).toBe(false);
-    const other = await getUnifiedCustomerSales(adminId, { companyId: otherId });
+    const other = await loadUnifiedCustomerSummary(otherId);
     expect(other.summary.lineCount).toBe(0);
     const queue = await getUnifiedReconciliationQueue(adminId, { page: 1, pageSize: 100 });
     expect(queue.permitted).toBe(true);
@@ -691,7 +699,7 @@ describe("unified customer sales", () => {
   });
 
   it("states a combined total when every overlap reconciles", async () => {
-    const result = await getUnifiedCustomerSales(adminId, { companyId: cleanId });
+    const result = await loadUnifiedCustomerSummary(cleanId);
     expect(result.summary.certification).toBe("COMPLETE");
     expect(result.summary.combinedNet).toBe("46.00");
     expect(result.summary.suppressedDuplicateLines).toBe(1);
@@ -770,12 +778,15 @@ describe("unified customer sales", () => {
   });
 
   it("gives Customer 360 the same figures as Sales Enquiry", async () => {
-    const enquiry = await getUnifiedCustomerSales(adminId, { companyId: prospectId });
+    const lifetime = await loadUnifiedCustomerSummary(prospectId);
     const crm = await getCompanyCrmWorkspace(adminId, { companyId: prospectId });
-    expect(crm.unifiedSales.summary).toEqual(enquiry.summary);
-    expect(crm.snapshot.historicNetSales).toBe(enquiry.summary.certifiedNet);
+    expect(crm.unifiedSales.summary).toEqual(lifetime.summary);
+    expect(crm.snapshot.historicNetSales).toBe(lifetime.summary.certifiedNet);
     const admin = await getCompanyAutopartHistoryWorkspace(adminId, prospectId);
-    expect(admin.unifiedSales?.summary).toEqual(enquiry.summary);
+    expect(admin.unifiedSales?.summary).toEqual(lifetime.summary);
+    const dashboard = await getUnifiedCustomerSales(adminId, { companyId: prospectId });
+    expect(dashboard.period.preset).toBe("THIS_MONTH");
+    expect(dashboard.period.includesUndatedHistory).toBe(false);
     const followUp = await previewSalesIntelligenceFollowUp(adminId, {
       sourceModule: "SALES_ENQUIRY",
       sourceReason: "CUSTOMER",
@@ -849,8 +860,10 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
   });
 
   it("keeps a GSF-style history intact across undated lines, a new invoice, a credit and 504 headers", async () => {
-    const result = await getUnifiedCustomerSales(adminId, { companyId: gsfId });
-    const s = result.summary;
+    const result = await getUnifiedCustomerSales(adminId, { companyId: gsfId, period: "ALL" });
+    const lifetime = await loadUnifiedCustomerSummary(gsfId);
+    const s = lifetime.summary;
+    expect(result.kpis.netSales).toBe("71.00");
     expect(result.company.name).toContain("GSF CARPARTS");
     expect(result.company.status).toBe("ACTIVE");
     expect(s.historicalSales).toBe("48.00");
@@ -943,7 +956,7 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
   });
 
   it("treats a 1p 504 difference as agreement and does not add the header", async () => {
-    const result = await getUnifiedCustomerSales(adminId, { companyId: pennyId });
+    const result = await loadUnifiedCustomerSummary(pennyId);
     expect(result.summary.certification).toBe("COMPLETE");
     expect(result.summary.combinedNet).toBe("12.00");
     expect(result.summary.suppressedDuplicateNet).toBe("12.00");
@@ -951,12 +964,14 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
   });
 
   it("does not combine the same invoice reference across two customers", async () => {
-    const a = await getUnifiedCustomerSales(adminId, { companyId: twinAId });
-    const b = await getUnifiedCustomerSales(adminId, { companyId: twinBId });
+    const a = await loadUnifiedCustomerSummary(twinAId);
+    const b = await getUnifiedCustomerSales(adminId, { companyId: twinBId, period: "ALL" });
+    const bLifetime = await loadUnifiedCustomerSummary(twinBId);
     expect(a.summary.certifiedNet).toBe("10.00");
     expect(a.summary.certification).toBe("COMPLETE");
-    expect(b.summary.certifiedNet).toBe("40.00");
-    expect(b.summary.certification).toBe("COMPLETE");
+    expect(bLifetime.summary.certifiedNet).toBe("40.00");
+    expect(b.kpis.netSales).toBe("40.00");
+    expect(bLifetime.summary.certification).toBe("COMPLETE");
     expect(b.company.status).toBe("PROSPECT");
   });
 
@@ -967,7 +982,36 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
     const orphan = queue.items.find((item) => item.code === codeOrphan);
     expect(orphan?.net).toBe("123.45");
     expect(orphan?.linkedCompanies).toBe(0);
-    const gsf = await getUnifiedCustomerSales(adminId, { companyId: gsfId });
+    const gsf = await loadUnifiedCustomerSummary(gsfId);
     expect(gsf.summary.certifiedNet).toBe("71.00");
+  });
+
+  it("keeps undated history out of a dated period and leaves certified totals unchanged", async () => {
+    const lifetime = await loadUnifiedCustomerSummary(prospectId);
+    expect(lifetime.summary.certifiedNet).toBe("67.00");
+    expect(lifetime.summary.historicalNet).toBe("38.00");
+    const september = await getUnifiedCustomerSales(adminId, {
+      companyId: prospectId,
+      period: "CUSTOM",
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    const ranged = await listUnifiedCustomerTransactions(adminId, {
+      companyId: prospectId,
+      from: "2026-09-01",
+      to: "2026-09-30",
+      status: "COUNTED",
+      scope: "PERIOD",
+      pageSize: 100,
+    });
+    expect(september.period.includesUndatedHistory).toBe(false);
+    expect(september.kpis.netSales).toBe(ranged.filteredCountedNet);
+    expect(ranged.items.every((item) => item.date != null && item.date.startsWith("2026-09"))).toBe(true);
+    expect(september.kpis.netSales).not.toBe(lifetime.summary.certifiedNet);
+    const history = await getUnifiedCustomerHistory(adminId, { companyId: prospectId });
+    expect(history.summary).toEqual(lifetime.summary);
+    expect(history.certification.certifiedNet).toBe("67.00");
+    const dashboard = await getUnifiedCustomerSales(adminId, { companyId: prospectId });
+    expect(dashboard.period.preset).toBe("THIS_MONTH");
   });
 });
