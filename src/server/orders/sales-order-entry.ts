@@ -7,12 +7,15 @@
  */
 
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import {
   contactSnapshotSchema,
+  deliveryAddressSnapshotSchema,
   type ContactSnapshot,
   type DeliveryAddressSnapshot,
 } from "@/domain/checkout";
+import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { moneyToString, parseMoney } from "@/domain/money";
 import {
   openSalesOrderDraftSchema,
@@ -21,6 +24,8 @@ import {
   salesOrderCustomerSearchSchema,
   salesOrderDraftIdSchema,
   salesOrderProductSearchSchema,
+  salesOrderAllocationChanged,
+  type OrderFulfilmentChoice,
   type PlaceSalesOrderInput,
   type SalesOrderEntrySource,
   type SalesOrderExpectedReview,
@@ -42,6 +47,8 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { acceptQuoteOnBehalf } from "@/server/quotes/service";
 import { loadStockByVariantIds } from "@/server/stock/service";
+
+const editOrderSchema = z.object({ orderId: z.string().cuid() });
 
 const SOURCE_LABEL: Record<SalesOrderEntrySource, string> = {
   TELEPHONE: "Telephone",
@@ -74,11 +81,14 @@ export type SalesOrderDraftDto = {
   deliveryInstructions: string | null;
   internalNote: string | null;
   placedOrderId: string | null;
+  fulfilmentChoice: OrderFulfilmentChoice;
+  editingOrderId: string | null;
+  editingOrderNumber: string | null;
   updatedAt: string;
   lines: Array<{
     id: string;
     variantId: string;
-    qty: number;
+    qty: number | null;
     sku: string;
     name: string;
     unitPriceOverride: string | null;
@@ -145,6 +155,7 @@ export type SalesPlaceResult =
       changes: SalesOrderPriceChange[];
       totalsChanged: boolean;
       previousTotals: SalesOrderReviewedTotals | null;
+      acknowledgementRequired: boolean;
     };
 
 export type SalesOrderAttribution = {
@@ -221,6 +232,7 @@ async function canUseCustomerQuotations(profile: LoadedAccessProfile, companyId:
 
 const draftInclude = {
   company: { select: { id: true, name: true, status: true, paymentTerms: true } },
+  editingOrder: { select: { id: true, orderNumber: true } },
   lines: {
     orderBy: { sortOrder: "asc" as const },
     include: {
@@ -247,6 +259,9 @@ function toDraftDto(row: DraftRow): SalesOrderDraftDto {
     deliveryInstructions: row.deliveryInstructions,
     internalNote: row.internalNote,
     placedOrderId: row.placedOrderId,
+    fulfilmentChoice: row.fulfilmentChoice,
+    editingOrderId: row.editingOrderId,
+    editingOrderNumber: row.editingOrder?.orderNumber ?? null,
     updatedAt: row.updatedAt.toISOString(),
     lines: row.lines.map((line) => ({
       id: line.id,
@@ -320,7 +335,7 @@ async function lockOpenDraft(
 function lineKey(
   lines: Array<{
     variantId: string;
-    qty: number;
+    qty: number | null;
     unitPriceOverride?: { toString(): string } | string | null;
   }>,
 ): string {
@@ -332,7 +347,7 @@ function lineKey(
           : typeof line.unitPriceOverride === "string"
             ? line.unitPriceOverride
             : line.unitPriceOverride.toString();
-      return `${line.variantId}:${line.qty}:${money2(raw) ?? ""}`;
+      return `${line.variantId}:${line.qty ?? "blank"}:${money2(raw) ?? ""}`;
     })
     .sort()
     .join("|");
@@ -466,13 +481,14 @@ async function reviewDraft(
     }
   }
 
+  const fulfilmentChoice = draft.fulfilmentChoice;
   let deliveryAddress = null;
-  let addressReady = false;
+  let addressReady = fulfilmentChoice === "COLLECTION";
   const oneOff =
     draft.oneOffAddress && typeof draft.oneOffAddress === "object"
       ? (draft.oneOffAddress as Record<string, unknown>)
       : null;
-  if (draft.addressId || oneOff) {
+  if (fulfilmentChoice === "DELIVERY" && (draft.addressId || oneOff)) {
     try {
       deliveryAddress = await resolveDeliverySnapshot(company.id, {
         addressId: oneOff ? null : draft.addressId,
@@ -484,15 +500,18 @@ async function reviewDraft(
     }
   }
 
-  if (draft.lines.length === 0) {
+  const billable = draft.lines.filter(
+    (line): line is typeof line & { qty: number } => line.qty != null && line.qty >= 1,
+  );
+  if (billable.length === 0) {
     return { review: null, contactReady, addressReady };
   }
 
   const lines = await resolveOrderLinesFromItems(
     company.id,
-    draft.lines.map((line) => ({ variantId: line.variantId, qty: line.qty })),
+    billable.map((line) => ({ variantId: line.variantId, qty: line.qty })),
     null,
-    { staffUnitOrdering: true, unitPriceOverrides: staffOverrides(draft.lines) },
+    { staffUnitOrdering: true, unitPriceOverrides: staffOverrides(billable) },
   );
   const review = buildCheckoutReview({
     company,
@@ -505,6 +524,7 @@ async function reviewDraft(
     },
     poNumber: draft.poNumber,
     deliveryInstructions: draft.deliveryInstructions,
+    fulfilmentChoice,
   });
   if (!contactReady) {
     review.contact = {
@@ -538,9 +558,10 @@ function compareReviewedPrices(
   expected: SalesOrderExpectedReview,
   lines: Awaited<ReturnType<typeof resolveOrderLinesFromItems>>,
   review: CheckoutReview,
-): { requiresReview: boolean; totalsChanged: boolean; changes: SalesOrderPriceChange[] } {
+): { requiresReview: boolean; totalsChanged: boolean; allocationChanged: boolean; changes: SalesOrderPriceChange[] } {
   const changes: SalesOrderPriceChange[] = [];
   const expectedById = new Map(expected.lines.map((line) => [line.variantId, line]));
+  let allocationChanged = false;
   for (const line of lines) {
     const reviewed = expectedById.get(line.variantId);
     const previousUnitPrice = money2(reviewed?.customerUnitPrice);
@@ -550,6 +571,7 @@ function compareReviewedPrices(
     const qtyChanged = reviewed != null && reviewed.qty !== line.quantity;
     const unitChanged = previousUnitPrice !== newUnitPrice;
     const netChanged = previousLineNet !== newLineNet;
+    if (salesOrderAllocationChanged(reviewed, line)) allocationChanged = true;
     if (!reviewed || qtyChanged || unitChanged || netChanged) {
       changes.push({
         variantId: line.variantId,
@@ -567,7 +589,12 @@ function compareReviewedPrices(
     money2(expected.vatTotal) !== review.totals.vatTotal ||
     money2(expected.deliveryTotal) !== review.totals.deliveryTotal ||
     money2(expected.grandTotal) !== review.totals.grandTotal;
-  return { requiresReview: changes.length > 0 || totalsChanged, totalsChanged, changes };
+  return {
+    requiresReview: changes.length > 0 || totalsChanged || allocationChanged,
+    totalsChanged,
+    allocationChanged,
+    changes,
+  };
 }
 
 export async function listSalesOrderDrafts(actorUserId: string) {
@@ -686,7 +713,12 @@ export async function openSalesOrderDraft(actorUserId: string, raw: unknown) {
 
   if (!input.fresh) {
     const existing = await prisma.salesOrderDraft.findFirst({
-      where: { createdByUserId: actorUserId, companyId: company.id, status: "OPEN" },
+      where: {
+        createdByUserId: actorUserId,
+        companyId: company.id,
+        status: "OPEN",
+        editingOrderId: null,
+      },
       include: draftInclude,
       orderBy: { updatedAt: "desc" },
     });
@@ -698,6 +730,140 @@ export async function openSalesOrderDraft(actorUserId: string, raw: unknown) {
     include: draftInclude,
   });
   return workspaceFor(profile, created);
+}
+
+export async function startSalesOrderEdit(actorUserId: string, raw: unknown) {
+  const profile = await requireSalesOrderStaff(actorUserId);
+  const orderId = editOrderSchema.parse(raw).orderId;
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: { orderBy: { id: "asc" } },
+      fulfilmentEvents: { select: { kind: true } },
+      invoices: { select: { id: true }, take: 1 },
+      reservations: { where: { status: "CONSUMED" }, select: { id: true }, take: 1 },
+      company: { select: { id: true, status: true } },
+    },
+  });
+  if (!order) throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
+  await requireOrderableCompany(profile, order.companyId);
+  const eligibility = assessSalesOrderEditEligibility({
+    status: order.status,
+    archivedAt: order.archivedAt,
+    autopartExportStatus: order.autopartExportStatus,
+    autopartExportCount: order.autopartExportCount,
+    autopartExportedAt: order.autopartExportedAt,
+    externalRef: order.externalRef,
+    invoiceCount: order.invoices.length,
+    fulfilmentKinds: order.fulfilmentEvents.map((event) => event.kind),
+    consumedReservationCount: order.reservations.length,
+  });
+  if (!eligibility.allowed) {
+    throw new AuthError(eligibility.reason ?? "This order can no longer be edited.", "ORDER_LOCKED", 409);
+  }
+  if (order.items.length === 0 || order.items.some((item) => !item.variantId)) {
+    throw new AuthError(
+      "This order cannot be edited because a product line is missing.",
+      "ORDER_NOT_EDITABLE",
+      409,
+    );
+  }
+
+  const contactEmail =
+    order.contactSnapshot && typeof order.contactSnapshot === "object" && "email" in order.contactSnapshot
+      ? String((order.contactSnapshot as { email?: unknown }).email ?? "")
+      : "";
+  const contact = contactEmail
+    ? await prisma.contact.findFirst({
+        where: { companyId: order.companyId, email: { equals: contactEmail, mode: "insensitive" } },
+        select: { id: true },
+      })
+    : null;
+  const parsedAddress = deliveryAddressSnapshotSchema.safeParse(order.deliveryAddress);
+  const matchedAddress = parsedAddress.success
+    ? await prisma.address.findFirst({
+        where: {
+          companyId: order.companyId,
+          line1: parsedAddress.data.line1,
+          postcode: parsedAddress.data.postcode,
+        },
+        select: { id: true },
+      })
+    : null;
+
+  const draftId = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${order.id} FOR UPDATE`;
+    const fresh = await tx.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: {
+        fulfilmentEvents: { select: { kind: true } },
+        invoices: { select: { id: true }, take: 1 },
+        reservations: { where: { status: "CONSUMED" }, select: { id: true }, take: 1 },
+      },
+    });
+    const again = assessSalesOrderEditEligibility({
+      status: fresh.status,
+      archivedAt: fresh.archivedAt,
+      autopartExportStatus: fresh.autopartExportStatus,
+      autopartExportCount: fresh.autopartExportCount,
+      autopartExportedAt: fresh.autopartExportedAt,
+      externalRef: fresh.externalRef,
+      invoiceCount: fresh.invoices.length,
+      fulfilmentKinds: fresh.fulfilmentEvents.map((event) => event.kind),
+      consumedReservationCount: fresh.reservations.length,
+    });
+    if (!again.allowed) {
+      throw new AuthError(again.reason ?? "This order can no longer be edited.", "ORDER_LOCKED", 409);
+    }
+    const open = await tx.salesOrderDraft.findFirst({
+      where: { editingOrderId: order.id, status: "OPEN" },
+      select: { id: true, createdByUserId: true },
+    });
+    if (open?.createdByUserId === actorUserId) return open.id;
+    if (open) {
+      throw new AuthError(
+        "Another member of staff is already editing this order.",
+        "ORDER_EDIT_IN_PROGRESS",
+        409,
+      );
+    }
+    const created = await tx.salesOrderDraft.create({
+      data: {
+        companyId: order.companyId,
+        createdByUserId: actorUserId,
+        status: "OPEN",
+        source: order.entrySource ?? "TELEPHONE",
+        contactId: contact?.id ?? null,
+        addressId: order.fulfilmentChoice === "DELIVERY" ? (matchedAddress?.id ?? null) : null,
+        oneOffAddress:
+          order.fulfilmentChoice === "DELIVERY" && parsedAddress.success && !matchedAddress
+            ? (parsedAddress.data as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        poNumber: order.poNumber,
+        deliveryInstructions: order.deliveryInstructions,
+        internalNote: order.notes,
+        fulfilmentChoice: order.fulfilmentChoice,
+        editingOrderId: order.id,
+        lines: {
+          create: order.items.flatMap((item, sortOrder) =>
+            item.variantId
+              ? [{
+                  variantId: item.variantId,
+                  qty: item.qty,
+                  unitPriceOverride: item.priceSource === "STAFF_OVERRIDE" ? item.customerUnitPrice : null,
+                  sortOrder,
+                }]
+              : [],
+          ),
+        },
+      },
+      select: { id: true },
+    });
+    return created.id;
+  });
+
+  const draft = await loadOwnedDraft(actorUserId, draftId, true);
+  return workspaceFor(profile, draft);
 }
 
 export async function getSalesOrderDraft(actorUserId: string, raw: unknown) {
@@ -756,7 +922,7 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
   await prisma.$transaction(async (tx) => {
     const locked = await lockOpenDraft(tx, actorUserId, draft.id);
     if (input.lines) {
-      const unique = new Map<string, { qty: number; unitPriceOverride: string | null }>();
+      const unique = new Map<string, { qty: number | null; unitPriceOverride: string | null }>();
       for (const line of input.lines) {
         unique.set(line.variantId, { qty: line.qty, unitPriceOverride: line.unitPriceOverride });
       }
@@ -788,6 +954,7 @@ export async function saveSalesOrderDraft(actorUserId: string, raw: unknown) {
           ? { deliveryInstructions: input.deliveryInstructions }
           : {}),
         ...(input.internalNote !== undefined ? { internalNote: input.internalNote } : {}),
+        ...(input.fulfilmentChoice !== undefined ? { fulfilmentChoice: input.fulfilmentChoice } : {}),
       },
     });
     if (updated.count !== 1) throw draftConflict("UNKNOWN");
@@ -1114,11 +1281,19 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
       OR: [
         { idempotencyKey: input.idempotencyKey },
         { idempotencyKey: `quote-accept:${input.idempotencyKey}` },
+        { editIdempotencyKey: input.idempotencyKey },
       ],
     },
     include: { items: true, company: { select: { name: true } } },
   });
   if (existing) {
+    if (
+      draft.editingOrderId &&
+      existing.id === draft.editingOrderId &&
+      existing.editIdempotencyKey === input.idempotencyKey
+    ) {
+      return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
+    }
     if (!sameSalesOrderSubmission(existing, draft, actorUserId)) salesOrderIdempotencyConflict();
     await repairCrmFromOrder(existing);
     return { ok: true, alreadyPlaced: true, order: toConfirmation(existing, existing.company.name) };
@@ -1148,13 +1323,25 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     return placeFromQuote(actorUserId, profile, draft, input);
   }
 
+  if (draft.lines.some((line) => line.qty == null || line.qty < 1)) {
+    throw new AuthError(
+      "Enter a quantity for every product before placing this order.",
+      "QUANTITY_REQUIRED",
+      400,
+    );
+  }
   const requestedLines =
     input.lines ??
-    draft.lines.map((line) => ({
-      variantId: line.variantId,
-      qty: line.qty,
-      unitPriceOverride: line.unitPriceOverride?.toString() ?? null,
-    }));
+    draft.lines.flatMap((line) => {
+      if (line.qty == null) return [];
+      return [
+        {
+          variantId: line.variantId,
+          qty: line.qty,
+          unitPriceOverride: line.unitPriceOverride?.toString() ?? null,
+        },
+      ];
+    });
   if (requestedLines.length === 0) {
     throw new AuthError("Add at least one product", "DRAFT_EMPTY", 400);
   }
@@ -1167,10 +1354,14 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
   }
 
   const contact = await contactSnapshotForCompany(company.id, input.contactId!);
-  const deliveryAddress = await resolveDeliverySnapshot(company.id, {
-    addressId: input.oneOffAddress ? null : (input.addressId ?? null),
-    oneOffAddress: input.oneOffAddress ?? null,
-  });
+  const fulfilmentChoice = input.fulfilmentChoice;
+  const deliveryAddress =
+    fulfilmentChoice === "COLLECTION"
+      ? null
+      : await resolveDeliverySnapshot(company.id, {
+          addressId: input.oneOffAddress ? null : (input.addressId ?? null),
+          oneOffAddress: input.oneOffAddress ?? null,
+        });
 
   const expected = input.expectedReview;
   if (!expected || expected.lines.length === 0) {
@@ -1202,15 +1393,20 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     contact,
     poNumber: input.poNumber ?? null,
     deliveryInstructions: input.deliveryInstructions ?? null,
+    fulfilmentChoice,
   });
   const comparison = compareReviewedPrices(expected, lines, review);
-  if (review.hasBlockingIssues || comparison.requiresReview) {
+  const acknowledgementRequired =
+    lines.some((line) => line.issue === "VALID" && line.backorderQtyAtOrder > 0) &&
+    input.backorderAcknowledged !== true;
+  if (review.hasBlockingIssues || comparison.requiresReview || acknowledgementRequired) {
     return {
       ok: false,
       code: "REVIEW_REQUIRED",
       review,
       changes: comparison.changes,
       totalsChanged: comparison.totalsChanged,
+      acknowledgementRequired,
       previousTotals: {
         subtotal: money2(expected.subtotal) ?? expected.subtotal,
         vatTotal: money2(expected.vatTotal) ?? expected.vatTotal,
@@ -1221,6 +1417,22 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
   }
 
   const staffName = profile.name?.trim() || profile.email;
+  const hasBackorder = lines.some((line) => line.issue === "VALID" && line.backorderQtyAtOrder > 0);
+  if (draft.editingOrderId) {
+    const { amendSubmittedSalesOrder } = await import("@/server/orders/sales-order-edit");
+    return amendSubmittedSalesOrder({
+      actorUserId,
+      staffName,
+      draft,
+      company,
+      input,
+      lines,
+      deliveryAddress,
+      contact,
+      requestedLines,
+      hasBackorder,
+    });
+  }
   let created;
   try {
     created = await commitSubmittedOrder({
@@ -1228,6 +1440,8 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
     lines,
     deliveryAddress,
     contact,
+    fulfilmentChoice,
+    backorderAcknowledgedByUserId: hasBackorder ? actorUserId : null,
     poNumber: input.poNumber ?? null,
     deliveryInstructions: input.deliveryInstructions ?? null,
     idempotencyKey: input.idempotencyKey,
@@ -1263,6 +1477,7 @@ export async function placeSalesOrder(actorUserId: string, raw: unknown): Promis
           poNumber: input.poNumber ?? null,
           deliveryInstructions: input.deliveryInstructions ?? null,
           internalNote: input.internalNote ?? null,
+          fulfilmentChoice,
         },
       });
       if (marked.count !== 1) throw draftConflict("UNKNOWN");

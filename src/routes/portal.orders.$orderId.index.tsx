@@ -97,8 +97,12 @@ function PortalOrderDetailPage() {
       ) : null}
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border p-5">
-          <h2 className="font-display text-base font-semibold uppercase">Delivery</h2>
-          {addr ? (
+          <h2 className="font-display text-base font-semibold uppercase">
+            {order.fulfilmentChoice === "COLLECTION" ? "Customer Collection" : "Delivery"}
+          </h2>
+          {order.fulfilmentChoice === "COLLECTION" ? (
+            <p className="mt-3 text-[13px] font-semibold">Customer Collection</p>
+          ) : addr ? (
             <p className="mt-3 text-[13px] leading-relaxed text-steel">
               {addr.contactName ? (
                 <>

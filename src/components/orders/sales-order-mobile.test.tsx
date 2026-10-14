@@ -280,8 +280,12 @@ function OrderHarness() {
       placing: false,
       placeDisabled: true,
       placeLabel: "Place order",
+      fulfilmentChoice: "DELIVERY",
+      backorders: [],
+      backorderAcknowledged: false,
       onAcceptPrices: () => undefined,
       onAuthorised: () => undefined,
+      onBackorderAcknowledged: () => undefined,
       onPlace: () => undefined,
     }),
     createElement(SalesOrderMobileFooter, {

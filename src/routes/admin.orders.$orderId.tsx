@@ -195,6 +195,15 @@ function AdminOrderDetailPage() {
             >
               {order.statusLabel}
             </StatusBadge>
+            {order.salesOrderEdit.allowed ? (
+              <Link
+                to="/sales/orders/new"
+                search={{ orderId: order.id }}
+                className="inline-flex h-9 items-center rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide"
+              >
+                Edit order
+              </Link>
+            ) : null}
             {canDeleteOrders &&
             order.status !== "DISPATCHED" &&
             order.status !== "DELIVERED" ? (
@@ -292,6 +301,11 @@ function AdminOrderDetailPage() {
           Invoices, credits, Autopart documents, and fulfilment history are unchanged.
         </p>
       ) : null}
+      {order.salesOrderEdit.reason ? (
+        <p className="mx-4 mt-4 rounded-md border border-border bg-surface px-4 py-3 text-[13px] sm:mx-6">
+          {order.salesOrderEdit.reason}
+        </p>
+      ) : null}
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border p-5">
           <h2 className="font-display text-base font-semibold uppercase">Order summary</h2>
@@ -333,7 +347,11 @@ function AdminOrderDetailPage() {
             <div className="flex justify-between gap-3">
               <dt className="text-steel">Delivery</dt>
               <dd className="num">
-                {order.deliveryTotal === "0.00" ? "FREE" : `£${order.deliveryTotal}`}
+                {order.fulfilmentChoice === "COLLECTION"
+                  ? "£0.00"
+                  : order.deliveryTotal === "0.00"
+                    ? "FREE"
+                    : `£${order.deliveryTotal}`}
               </dd>
             </div>
             <div className="flex justify-between gap-3">
@@ -349,7 +367,9 @@ function AdminOrderDetailPage() {
         <section className="rounded-lg border border-border p-5">
           <h2 className="font-display text-base font-semibold uppercase">Customer & delivery</h2>
           <p className="mt-3 text-[13px] font-medium">{order.companyName}</p>
-          {addr ? (
+          {order.fulfilmentChoice === "COLLECTION" ? (
+            <p className="mt-2 text-[13px] font-semibold">Customer Collection</p>
+          ) : addr ? (
             <p className="mt-2 text-[13px] leading-relaxed text-steel">
               {addr.line1}
               <br />

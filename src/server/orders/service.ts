@@ -21,6 +21,7 @@ import {
 } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
 import { getAccessibleCompanyIdsForSales } from "@/server/rbac/sales-access";
+import { assessSalesOrderEditEligibility } from "@/domain/order-edit";
 import { recordAuditEvent } from "@/server/audit/record";
 import { getBasket } from "@/server/basket/service";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
@@ -160,6 +161,7 @@ export type CheckoutReview = {
   paymentTerms: string | null;
   poNumber: string | null;
   deliveryInstructions: string | null;
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
 };
 
 export type PublicOrderConfirmation = {
@@ -195,6 +197,8 @@ export type PublicOrderConfirmation = {
   sourceQuoteNumber: string | null;
   entrySource: "TELEPHONE" | "EMAIL" | "CUSTOMER_VISIT" | null;
   placedByStaffName: string | null;
+  fulfilmentChoice: "DELIVERY" | "COLLECTION";
+  deliveryMethodLabel: string | null;
 };
 
 export type PlaceOrderResult =
@@ -314,6 +318,7 @@ export type AdminOrderDetail = PortalOrderDetail & {
   archiveReason: string | null;
   archivedByName: string | null;
   autopartFulfilment: AutopartOrderFulfilmentView | null;
+  salesOrderEdit: { allowed: boolean; reason: string | null };
   items: Array<
     PortalOrderDetail["items"][number] & {
       unitPrice: string;
@@ -342,7 +347,7 @@ export type AdminBackorderLineRow = {
   stockNowAvailable: boolean;
 };
 
-type ResolvedLine = {
+export type ResolvedLine = {
   variantId: string;
   productId: string;
   sku: string;
@@ -918,6 +923,7 @@ function backorderNoticeFromLines(lines: ResolvedLine[]): {
 function sumValidTotals(
   lines: ResolvedLine[],
   companyTaxStatus?: string | null,
+  options?: { fulfilmentChoice?: "DELIVERY" | "COLLECTION" },
 ) {
   let goodsNet = moneyZero();
   let goodsVat = moneyZero();
@@ -931,6 +937,7 @@ function sumValidTotals(
     goodsNet,
     goodsVat,
     companyTaxStatus: companyTaxStatus ?? "STANDARD",
+    fulfilmentChoice: options?.fulfilmentChoice ?? "DELIVERY",
   });
   return tradeDeliveryTotalsDto(breakdown);
 }
@@ -947,17 +954,20 @@ export function buildCheckoutReview(input: {
   contact: ContactSnapshot;
   poNumber: string | null;
   deliveryInstructions: string | null;
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
 }): CheckoutReview {
+  const fulfilmentChoice = input.fulfilmentChoice ?? "DELIVERY";
   const backorderMeta = backorderNoticeFromLines(input.lines);
   return {
     companyId: input.company.id,
     companyName: input.company.name,
     lines: linesToReviewLines(input.lines),
-    totals: sumValidTotals(input.lines, input.company.taxStatus),
+    totals: sumValidTotals(input.lines, input.company.taxStatus, { fulfilmentChoice }),
     hasBlockingIssues: hasBlocking(input.lines),
     hasBackorderItems: backorderMeta.hasBackorderItems,
     backorderNotice: backorderMeta.backorderNotice,
-    deliveryAddress: input.deliveryAddress,
+    deliveryAddress: fulfilmentChoice === "COLLECTION" ? null : input.deliveryAddress,
+    fulfilmentChoice,
     contact: input.contact,
     paymentTerms: input.company.paymentTerms,
     poNumber: input.poNumber,
@@ -1151,6 +1161,14 @@ export function toConfirmation(
       "placedByStaffName" in order && typeof order.placedByStaffName === "string"
         ? order.placedByStaffName
         : null,
+    fulfilmentChoice:
+      "fulfilmentChoice" in order && order.fulfilmentChoice === "COLLECTION" ? "COLLECTION" : "DELIVERY",
+    deliveryMethodLabel:
+      "fulfilmentChoice" in order && order.fulfilmentChoice === "COLLECTION"
+        ? "Customer Collection"
+        : "deliveryMethodLabel" in order && typeof order.deliveryMethodLabel === "string"
+          ? order.deliveryMethodLabel
+          : null,
   };
 }
 
@@ -1164,8 +1182,10 @@ export type SubmittedOrderCommit = {
     autopartCustomerCodeVerifiedAt: Date | null;
   };
   lines: ResolvedLine[];
-  deliveryAddress: DeliveryAddressSnapshot;
+  deliveryAddress: DeliveryAddressSnapshot | null;
   contact: ContactSnapshot;
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
+  backorderAcknowledgedByUserId?: string | null;
   poNumber: string | null;
   deliveryInstructions: string | null;
   idempotencyKey: string;
@@ -1192,7 +1212,11 @@ export type SubmittedOrderCommit = {
  * A reservation failure throws and rolls the whole transaction back.
  */
 export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
-  const totals = sumValidTotals(input.lines, input.company.taxStatus);
+  const fulfilmentChoice = input.fulfilmentChoice ?? "DELIVERY";
+  if (fulfilmentChoice === "DELIVERY" && !input.deliveryAddress) {
+    throw new AuthError("A delivery address is required", "ADDRESS_REQUIRED", 400);
+  }
+  const totals = sumValidTotals(input.lines, input.company.taxStatus, { fulfilmentChoice });
   const salesRep = await loadPrimarySalesRepSnapshot(input.company.id);
   const verifiedCode =
     input.company.autopartCustomerCodeVerifiedAt && input.company.autopartCustomerCode
@@ -1239,7 +1263,10 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
         vatTotal: totals.vatTotal,
         deliveryTotal: totals.deliveryTotal,
         grandTotal: totals.grandTotal,
-        deliveryAddress: input.deliveryAddress as unknown as Prisma.InputJsonValue,
+        deliveryAddress:
+          fulfilmentChoice === "COLLECTION" || !input.deliveryAddress
+            ? Prisma.JsonNull
+            : (input.deliveryAddress as unknown as Prisma.InputJsonValue),
         contactSnapshot: input.contact as unknown as Prisma.InputJsonValue,
         deliveryInstructions: input.deliveryInstructions,
         paymentTermsSnapshot: input.company.paymentTerms,
@@ -1248,7 +1275,14 @@ export async function commitSubmittedOrder(input: SubmittedOrderCommit) {
         salesRepIdSnapshot: salesRep.salesRepIdSnapshot,
         salesRepCodeSnapshot: salesRep.salesRepCodeSnapshot,
         salesRepNameSnapshot: salesRep.salesRepNameSnapshot,
-        deliveryMethodLabel: "Standard delivery",
+        deliveryMethodLabel: fulfilmentChoice === "COLLECTION" ? "Customer Collection" : "Standard delivery",
+        fulfilmentChoice,
+        ...(input.backorderAcknowledgedByUserId
+          ? {
+              backorderAcknowledgedAt: placedAt,
+              backorderAcknowledgedByUserId: input.backorderAcknowledgedByUserId,
+            }
+          : {}),
         basketId: input.convertBasketId ?? null,
         idempotencyKey: input.idempotencyKey,
         externalRef: null,
@@ -1881,6 +1915,8 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       items: true,
       fulfilmentEvents: { orderBy: { occurredAt: "asc" } },
       company: { select: { id: true, name: true } },
+      invoices: { select: { id: true }, take: 1 },
+      reservations: { where: { status: "CONSUMED" }, select: { id: true }, take: 1 },
       autopartExportedBy: { select: { name: true, email: true } },
       autopartExportBatch: { select: { id: true, reference: true, filename: true, createdAt: true } },
       archivedBy: { select: { name: true, email: true } },
@@ -1930,6 +1966,20 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     archivedAt: order.archivedAt?.toISOString() ?? null,
     archiveReason: order.archiveReason,
     archivedByName: order.archivedBy?.name ?? order.archivedBy?.email ?? null,
+    salesOrderEdit:
+      profile.actorType === "INTERNAL" && hasPermission(profile, "orders.place_for_customer")
+        ? assessSalesOrderEditEligibility({
+            status: order.status,
+            archivedAt: order.archivedAt,
+            autopartExportStatus: order.autopartExportStatus,
+            autopartExportCount: order.autopartExportCount,
+            autopartExportedAt: order.autopartExportedAt,
+            externalRef: order.externalRef,
+            invoiceCount: order.invoices.length,
+            fulfilmentKinds: order.fulfilmentEvents.map((event) => event.kind),
+            consumedReservationCount: order.reservations.length,
+          })
+        : { allowed: false, reason: null },
     hasBackorderItems: orderContainsBackorder(order.items),
     hasOutstandingBackorder: summary.hasOutstandingBackorder,
     outstandingBackorderUnits: summary.outstandingBackorderUnits,

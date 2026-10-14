@@ -221,8 +221,11 @@ export function emailTotalsBlock(input: {
   vat: string;
   orderTotal: string;
   currency?: string;
+  deliveryLabel?: string;
 }): string {
-  const deliveryDisplay = input.delivery === "0.00" || input.delivery === "FREE" ? "FREE" : `£${input.delivery}`;
+  const deliveryDisplay =
+    input.deliveryLabel ??
+    (input.delivery === "0.00" || input.delivery === "FREE" ? "FREE" : `£${input.delivery}`);
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin:8px 0 20px;">
   <tr>
     <td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${MUTED};">Goods ex VAT</td>

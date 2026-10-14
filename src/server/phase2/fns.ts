@@ -3002,6 +3002,18 @@ export const searchSalesOrderProductsFn = createServerFn({ method: "GET" })
     }
   });
 
+export const startSalesOrderEditFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const salesOrders = await import("@/server/orders/sales-order-entry");
+      return { ok: true as const, data: await salesOrders.startSalesOrderEdit(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const placeSalesOrderFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

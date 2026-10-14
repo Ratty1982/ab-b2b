@@ -17,8 +17,11 @@ import {
 } from "@/components/orders/sales-order-mobile";
 import {
   applySalesOrderProductAdd,
+  ORDER_FULFILMENT_LABEL,
   parseStaffOrderQuantity,
+  salesOrderBackorderSummary,
   SALES_ORDER_SOURCE_LABEL,
+  type OrderFulfilmentChoice,
   type SalesOrderDraftLineInput,
 } from "@/domain/sales-order-entry";
 import { cn } from "@/lib/utils";
@@ -26,6 +29,7 @@ import { ROUTES } from "@/lib/app-nav";
 import {
   openSalesOrderDraftFn,
   placeSalesOrderFn,
+  startSalesOrderEditFn,
   saveSalesOrderDraftFn,
   searchSalesOrderProductsFn,
   getSalesOrderDraftFn,
@@ -33,13 +37,15 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/sales/orders/new")({
-  validateSearch: (search: Record<string, unknown>): { companyId?: string; draftId?: string; fresh?: boolean } => {
+  validateSearch: (search: Record<string, unknown>): { companyId?: string; draftId?: string; orderId?: string; fresh?: boolean } => {
     const companyId = typeof search["companyId"] === "string" ? search["companyId"] : "";
     const draftId = typeof search["draftId"] === "string" ? search["draftId"] : "";
+    const orderId = typeof search["orderId"] === "string" ? search["orderId"] : "";
     const fresh = search["fresh"] === true || search["fresh"] === "1" || search["fresh"] === "true";
     return {
       ...(companyId ? { companyId } : {}),
       ...(draftId ? { draftId } : {}),
+      ...(orderId ? { orderId } : {}),
       ...(fresh ? { fresh: true } : {}),
     };
   },
@@ -83,10 +89,11 @@ function orderFingerprint(input: {
   addressId: string;
   useOneOff: boolean;
   oneOff: { line1: string; line2: string; town: string; county: string; postcode: string };
+  fulfilmentChoice: OrderFulfilmentChoice;
   poNumber: string;
   instructions: string;
   quoteId: string;
-  lines: Array<{ variantId: string; qty: number; unitPriceOverride?: string | null }>;
+  lines: Array<{ variantId: string; qty: number | null; unitPriceOverride?: string | null }>;
 }) {
   return JSON.stringify({
     companyId: input.companyId,
@@ -94,6 +101,7 @@ function orderFingerprint(input: {
     contactId: input.contactId,
     addressId: input.useOneOff ? "" : input.addressId,
     oneOff: input.useOneOff ? input.oneOff : null,
+    fulfilmentChoice: input.fulfilmentChoice,
     poNumber: input.poNumber,
     instructions: input.instructions,
     quoteId: input.quoteId,
@@ -119,6 +127,8 @@ function NewSalesOrder() {
   const [contactId, setContactId] = useState("");
   const [addressId, setAddressId] = useState("");
   const [useOneOff, setUseOneOff] = useState(false);
+  const [fulfilmentChoice, setFulfilmentChoice] = useState<OrderFulfilmentChoice>("DELIVERY");
+  const [backorderAcknowledged, setBackorderAcknowledged] = useState(false);
   const [oneOff, setOneOff] = useState({ line1: "", line2: "", town: "", county: "", postcode: "" });
   const [poNumber, setPoNumber] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -138,7 +148,14 @@ function NewSalesOrder() {
   const [reviewed, setReviewed] = useState<{
     fingerprint: string;
     expectedReview: {
-      lines: Array<{ variantId: string; qty: number; customerUnitPrice: string; lineNet: string }>;
+      lines: Array<{
+        variantId: string;
+        qty: number;
+        customerUnitPrice: string;
+        lineNet: string;
+        availableQty?: number;
+        backorderQty?: number;
+      }>;
       subtotal: string;
       vatTotal: string;
       deliveryTotal: string;
@@ -165,6 +182,7 @@ function NewSalesOrder() {
     const nextSource = data.draft.source ?? "TELEPHONE";
     const nextContact = data.draft.contactId ?? "";
     const nextAddress = data.draft.addressId ?? "";
+    const nextFulfilment = data.draft.fulfilmentChoice ?? "DELIVERY";
     const nextOneOffFlag = Boolean(data.draft.oneOffAddress);
     const saved = data.draft.oneOffAddress as {
       line1?: string;
@@ -196,7 +214,9 @@ function NewSalesOrder() {
     setSource(nextSource);
     setContactId(nextContact);
     setAddressId(nextAddress);
+    setFulfilmentChoice(nextFulfilment);
     setUseOneOff(nextOneOffFlag);
+    setBackorderAcknowledged(false);
     if (saved && typeof saved === "object") setOneOff(nextOneOff);
     setPoNumber(nextPo);
     setInstructions(nextInstructions);
@@ -224,6 +244,7 @@ function NewSalesOrder() {
               addressId: nextAddress,
               useOneOff: nextOneOffFlag,
               oneOff: nextOneOff,
+              fulfilmentChoice: nextFulfilment,
               poNumber: nextPo,
               instructions: nextInstructions,
               quoteId,
@@ -235,6 +256,8 @@ function NewSalesOrder() {
                 qty: line.quantity,
                 customerUnitPrice: line.customerUnitPrice!,
                 lineNet: line.lineNet!,
+                availableQty: line.availableQtyAtOrder,
+                backorderQty: line.backorderQtyAtOrder,
               })),
               subtotal: review.totals.subtotal,
               vatTotal: review.totals.vatTotal,
@@ -247,6 +270,16 @@ function NewSalesOrder() {
   }, [quoteId]);
 
   const load = useCallback(async () => {
+    if (search.orderId) {
+      const result = await startSalesOrderEditFn({ data: { orderId: search.orderId } });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setError(null);
+      applyWorkspace(result.data);
+      return;
+    }
     if (search.draftId) {
       const result = await getSalesOrderDraftFn({ data: { draftId: search.draftId } });
       if (!result.ok) {
@@ -267,18 +300,19 @@ function NewSalesOrder() {
     }
     setError(null);
     applyWorkspace(result.data);
-  }, [applyWorkspace, search.companyId, search.draftId, search.fresh]);
+  }, [applyWorkspace, search.companyId, search.draftId, search.fresh, search.orderId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  function headerPayload(nextLines = lines) {
+  function headerPayload(nextLines = lines, nextFulfilment = fulfilmentChoice) {
     if (!workspace) return null;
     return {
       draftId: workspace.draft.id,
       source,
       contactId: contactId || null,
+      fulfilmentChoice: nextFulfilment,
       addressId: useOneOff ? null : addressId || null,
       oneOffAddress: useOneOff
         ? {
@@ -301,9 +335,9 @@ function NewSalesOrder() {
     };
   }
 
-  async function persist(nextLines?: typeof lines) {
+  async function persist(nextLines?: typeof lines, nextFulfilment?: OrderFulfilmentChoice) {
     const saving = nextLines ?? linesRef.current;
-    const payload = headerPayload(saving);
+    const payload = headerPayload(saving, nextFulfilment ?? fulfilmentChoice);
     if (!payload) return null;
     const seq = ++saveSeq.current;
     const result = await saveSalesOrderDraftFn({ data: payload });
@@ -344,8 +378,14 @@ function NewSalesOrder() {
       setProductQuery("");
       searchInputRef.current?.focus();
     }
+    const focusVariant = decision.lines[0]?.qty == null ? decision.lines[0]?.variantId : null;
     try {
       await persist(decision.lines);
+      if (focusVariant) {
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLInputElement>(`[data-qty-variant="${focusVariant}"]`)?.focus();
+        });
+      }
     } finally {
       addingRef.current = false;
       setAddingProduct(false);
@@ -370,6 +410,7 @@ function NewSalesOrder() {
       addressId,
       useOneOff,
       oneOff,
+      fulfilmentChoice,
       poNumber,
       instructions,
       quoteId,
@@ -388,6 +429,24 @@ function NewSalesOrder() {
       toast.error("Save and review the prices before placing this order.");
       return;
     }
+    if (!quoteId && linesRef.current.some((line) => line.qty == null)) {
+      toast.error("Enter a quantity for every product before placing this order.");
+      return;
+    }
+    const backorders = salesOrderBackorderSummary(
+      (workspace.review?.lines ?? []).map((line) => ({
+        variantId: line.variantId,
+        sku: line.sku,
+        name: line.name,
+        quantity: line.quantity,
+        availableQtyAtOrder: line.availableQtyAtOrder,
+        backorderQtyAtOrder: line.backorderQtyAtOrder,
+      })),
+    );
+    if (!quoteId && backorders.length > 0 && !backorderAcknowledged) {
+      toast.error("Confirm the customer has been informed of the backorder.");
+      return;
+    }
     if (!quoteId && priceChanges.length > 0 && !acceptedPrices) {
       toast.error("Accept the updated prices before placing this order.");
       return;
@@ -404,18 +463,20 @@ function NewSalesOrder() {
         confirmAuthorised: true,
         idempotencyKey,
         source,
+        fulfilmentChoice,
         contactId: contactId || null,
-        addressId: useOneOff ? null : addressId || null,
-        oneOffAddress: useOneOff
-          ? {
+        addressId: fulfilmentChoice === "COLLECTION" || useOneOff ? null : addressId || null,
+        backorderAcknowledged,
+        oneOffAddress: fulfilmentChoice === "COLLECTION" || !useOneOff
+          ? null
+          : {
               line1: oneOff.line1,
               line2: oneOff.line2 || null,
               town: oneOff.town,
               county: oneOff.county || null,
               postcode: oneOff.postcode,
               country: "GB",
-            }
-          : null,
+            },
         poNumber: poNumber || null,
         deliveryInstructions: instructions || null,
         internalNote: internalNote || null,
@@ -437,14 +498,34 @@ function NewSalesOrder() {
     if (!result.data.ok) {
       const rejected = result.data;
       setWorkspace((current) => (current ? { ...current, review: rejected.review } : current));
+      setReviewed({
+        fingerprint: currentFingerprint(),
+        expectedReview: {
+          lines: rejected.review.lines.map((line) => ({
+            variantId: line.variantId,
+            qty: line.quantity,
+            customerUnitPrice: line.customerUnitPrice ?? "0.00",
+            lineNet: line.lineNet ?? "0.00",
+            availableQty: line.availableQtyAtOrder,
+            backorderQty: line.backorderQtyAtOrder,
+          })),
+          subtotal: rejected.review.totals.subtotal,
+          vatTotal: rejected.review.totals.vatTotal,
+          deliveryTotal: rejected.review.totals.deliveryTotal,
+          grandTotal: rejected.review.totals.grandTotal,
+        },
+      });
       setPriceChanges(rejected.changes);
       setTotalsChanged(rejected.totalsChanged);
       setPreviousTotals(rejected.previousTotals ? { grandTotal: rejected.previousTotals.grandTotal } : null);
       setAcceptedPrices(false);
       setAuthorised(false);
+      setBackorderAcknowledged(false);
       const first = result.data.changes[0];
       toast.error(
-        first
+        result.data.acknowledgementRequired && result.data.changes.length === 0 && !result.data.totalsChanged
+          ? "Confirm the customer has been informed of the backorder."
+          : first
           ? `${first.sku} changed from ${money(first.previousUnitPrice)} to ${money(first.newUnitPrice)}. Review it before placing the order.`
           : result.data.totalsChanged
             ? "VAT, delivery, or the order total changed. Review the totals before placing the order."
@@ -458,16 +539,26 @@ function NewSalesOrder() {
       orderNumber: result.data.order.orderNumber,
       grandTotal: result.data.order.grandTotal,
     });
-    toast.success(`Order ${result.data.order.orderNumber} placed`);
+    toast.success(
+      workspace.draft.editingOrderId
+        ? `Order ${result.data.order.orderNumber} updated`
+        : `Order ${result.data.order.orderNumber} placed`,
+    );
   }
 
   if (placed) {
     return (
       <div>
-        <PanelHeader title="Order placed" sub={workspace?.draft.companyName ?? "Customer order"} />
+        <PanelHeader
+          title={workspace?.draft.editingOrderId ? "Order updated" : "Order placed"}
+          sub={workspace?.draft.companyName ?? "Customer order"}
+        />
         <div className="mx-auto max-w-xl space-y-4 p-6">
           <p className="font-display text-3xl">{placed.orderNumber}</p>
           <p className="text-[14px]">Grand total £{placed.grandTotal}</p>
+          {fulfilmentChoice === "COLLECTION" ? (
+            <p className="text-[14px] font-semibold">Customer Collection</p>
+          ) : null}
           <p className="text-[13px] text-steel">
             The order is in the customer’s order history. Confirmation email goes to the customer contact.
           </p>
@@ -488,7 +579,7 @@ function NewSalesOrder() {
     );
   }
 
-  if (!search.companyId && !search.draftId) {
+  if (!search.companyId && !search.draftId && !search.orderId) {
     return <CreateSalesOrderDesk />;
   }
 
@@ -499,7 +590,13 @@ function NewSalesOrder() {
   return (
     <div className={cn(salesOrderPageFrameClass, typing && "pb-0")}>
       <PanelHeader
-        title={workspace ? workspace.draft.companyName : "Create Sales Order"}
+        title={
+          workspace?.draft.editingOrderNumber
+            ? `Edit ${workspace.draft.editingOrderNumber}`
+            : workspace
+              ? workspace.draft.companyName
+              : "Create Sales Order"
+        }
         sub={
           workspace?.assignedSalesRep
             ? `Assigned representative: ${workspace.assignedSalesRep.name}. Prices are resolved for this customer. You are recorded as the person who places the order.`
@@ -573,10 +670,12 @@ function NewSalesOrder() {
                 </div>
               </SalesOrderSection>
               <SalesOrderSection
-                title="Delivery"
+                title="Fulfilment"
                 hint={
-                  useOneOff ? (
-                    <span className="text-steel">One-off address</span>
+                  fulfilmentChoice === "COLLECTION" ? (
+                    <span className="font-semibold">Customer Collection</span>
+                  ) : useOneOff ? (
+                    <span className="text-steel">One off address</span>
                   ) : addressId ? (
                     <span className="text-steel">Saved address</span>
                   ) : (
@@ -584,12 +683,36 @@ function NewSalesOrder() {
                   )
                 }
               >
-                <Field label="Delivery">
+                <Field label="Delivery or collection">
+                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                    {(["DELIVERY", "COLLECTION"] as const).map((choice) => (
+                      <label key={choice} className="flex min-h-11 items-center gap-3 text-[16px]">
+                        <input
+                          type="radio"
+                          name="fulfilmentChoice"
+                          className="size-5"
+                          checked={fulfilmentChoice === choice}
+                          onChange={() => {
+                            setFulfilmentChoice(choice);
+                            setAuthorised(false);
+                            setBackorderAcknowledged(false);
+                            void persist(undefined, choice);
+                          }}
+                        />
+                        {ORDER_FULFILMENT_LABEL[choice]}
+                      </label>
+                    ))}
+                  </div>
+                  {fulfilmentChoice === "COLLECTION" ? (
+                    <p className="text-[14px] text-steel">Customer Collection. No delivery address and no delivery charge.</p>
+                  ) : null}
+                  {fulfilmentChoice === "DELIVERY" ? (
                   <label className="mb-2 flex min-h-11 items-center gap-3 text-[16px]">
                     <input type="checkbox" className="size-5" checked={useOneOff} onChange={(e) => { setUseOneOff(e.target.checked); setAuthorised(false); }} />
-                    One-off delivery address
+                    One off delivery address
                   </label>
-                  {useOneOff ? (
+                  ) : null}
+                  {fulfilmentChoice === "DELIVERY" && useOneOff ? (
                     <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                       <input className={salesOrderControlClass} placeholder="Address line 1" value={oneOff.line1} onChange={(e) => { setOneOff({ ...oneOff, line1: e.target.value }); setAuthorised(false); }} />
                       <input className={salesOrderControlClass} placeholder="Address line 2" value={oneOff.line2} onChange={(e) => { setOneOff({ ...oneOff, line2: e.target.value }); setAuthorised(false); }} />
@@ -597,7 +720,7 @@ function NewSalesOrder() {
                       <input className={salesOrderControlClass} placeholder="County" value={oneOff.county} onChange={(e) => { setOneOff({ ...oneOff, county: e.target.value }); setAuthorised(false); }} />
                       <input className={salesOrderControlClass} placeholder="Postcode" value={oneOff.postcode} onChange={(e) => { setOneOff({ ...oneOff, postcode: e.target.value }); setAuthorised(false); }} />
                     </div>
-                  ) : (
+                  ) : fulfilmentChoice === "DELIVERY" ? (
                     <select className={salesOrderControlClass} value={addressId} onChange={(e) => { setAddressId(e.target.value); setAuthorised(false); }}>
                       <option value="">Select address…</option>
                       {workspace.addresses.map((address) => (
@@ -607,7 +730,7 @@ function NewSalesOrder() {
                         </option>
                       ))}
                     </select>
-                  )}
+                  ) : null}
                 </Field>
                 <Field label="Delivery instructions">
                   <input className={salesOrderControlClass} value={instructions} onChange={(e) => { setInstructions(e.target.value); setAuthorised(false); }} />
@@ -648,6 +771,10 @@ function NewSalesOrder() {
                     reviewLines={review?.lines ?? []}
                     priceDrafts={priceDrafts}
                     onQuantityChange={(variantId, raw) => {
+                      if (raw.trim() === "") {
+                        updateLine(variantId, { qty: null }, false);
+                        return;
+                      }
                       const qty = parseStaffOrderQuantity(raw);
                       if (qty == null) return;
                       updateLine(variantId, { qty }, false);
@@ -694,8 +821,24 @@ function NewSalesOrder() {
           acceptedPrices={acceptedPrices}
           authorised={authorised}
           placing={placing}
-          placeDisabled={placing || !workspace || !authorised || (priceChanges.length > 0 && !acceptedPrices)}
-          placeLabel={quoteId ? "Accept quotation" : "Place order"}
+          placeDisabled={
+            placing ||
+            !workspace ||
+            !authorised ||
+            (priceChanges.length > 0 && !acceptedPrices) ||
+            (!quoteId && lines.some((line) => line.qty == null)) ||
+            (!quoteId &&
+              salesOrderBackorderSummary(review?.lines ?? []).length > 0 &&
+              !backorderAcknowledged)
+          }
+          placeLabel={
+            quoteId ? "Accept quotation" : workspace?.draft.editingOrderId ? "Confirm order changes" : "Place order"
+          }
+          placingLabel={workspace?.draft.editingOrderId ? "Saving…" : "Placing…"}
+          fulfilmentChoice={fulfilmentChoice}
+          backorders={salesOrderBackorderSummary(review?.lines ?? [])}
+          backorderAcknowledged={backorderAcknowledged}
+          onBackorderAcknowledged={setBackorderAcknowledged}
           onAcceptPrices={(checked) => {
             setAcceptedPrices(checked);
             setAuthorised(false);
@@ -708,6 +851,8 @@ function NewSalesOrder() {
                     qty: line.quantity,
                     customerUnitPrice: line.customerUnitPrice ?? "0.00",
                     lineNet: line.lineNet ?? "0.00",
+                    availableQty: line.availableQtyAtOrder,
+                    backorderQty: line.backorderQtyAtOrder,
                   })),
                   subtotal: workspace.review.totals.subtotal,
                   vatTotal: workspace.review.totals.vatTotal,

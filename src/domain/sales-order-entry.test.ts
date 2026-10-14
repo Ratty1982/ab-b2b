@@ -4,6 +4,10 @@ import {
   applySalesOrderProductAdd,
   parseStaffOrderQuantity,
   parseStaffOrderUnitPrice,
+  placeSalesOrderSchema,
+  salesOrderAllocationChanged,
+  salesOrderBackorderSummary,
+  salesOrderDraftHeaderSchema,
   selectSalesOrderProduct,
 } from "@/domain/sales-order-entry";
 
@@ -36,12 +40,22 @@ describe("sales order product selection", () => {
     expect(second.lines).toHaveLength(1);
   });
 
-  it("keeps the existing case increment when the same product is added again", () => {
-    const once = selectSalesOrderProduct([], hit);
-    const twice = selectSalesOrderProduct(once, hit);
-    expect(once[0]?.qty).toBe(12);
-    expect(twice).toHaveLength(1);
-    expect(twice[0]?.qty).toBe(24);
+  it("adds a new product at the top with a blank quantity", () => {
+    const older = selectSalesOrderProduct([], { ...hit, variantId: "cmv782z930000jsixwrk8kwf0", sku: "OLDER" });
+    const newer = selectSalesOrderProduct(older, hit);
+    expect(newer.map((line) => line.sku)).toEqual(["CASE12", "OLDER"]);
+    expect(newer[0]?.qty).toBeNull();
+    expect(newer[1]?.qty).toBeNull();
+  });
+
+  it("moves an existing product to the top without changing its quantity", () => {
+    const first = selectSalesOrderProduct([], hit);
+    const withQty = [{ ...first[0]!, qty: 4 }];
+    const second = selectSalesOrderProduct(withQty, { ...hit, variantId: "cmv782z930000jsixwrk8kwf0", sku: "OTHER" });
+    const again = selectSalesOrderProduct(second, hit);
+    expect(again).toHaveLength(2);
+    expect(again[0]?.sku).toBe("CASE12");
+    expect(again[0]?.qty).toBe(4);
   });
 });
 
@@ -86,5 +100,78 @@ describe("staff unit quantity and price", () => {
     expect(parseStaffOrderQuantity("15")).toBe(15);
     expect(parseStaffOrderQuantity("1.5")).toBeNull();
     expect(parseStaffOrderQuantity("0")).toBeNull();
+    expect(parseStaffOrderQuantity("")).toBeNull();
+  });
+});
+
+const cuid = "cmv782z930000jsixwrk8kwfz";
+
+describe("sales order collection and blank quantities", () => {
+  const base = {
+    draftId: cuid,
+    confirmAuthorised: true as const,
+    idempotencyKey: "idem-key-1",
+    source: "TELEPHONE" as const,
+    contactId: cuid,
+    lines: [{ variantId: cuid, qty: 2 }],
+    expectedReview: {
+      lines: [{ variantId: cuid, qty: 2, customerUnitPrice: "1.00", lineNet: "2.00" }],
+      subtotal: "2.00",
+      vatTotal: "0.40",
+      deliveryTotal: "5.95",
+      grandTotal: "8.35",
+    },
+  };
+
+  it("requires a delivery address for delivery and not for collection", () => {
+    expect(placeSalesOrderSchema.safeParse({ ...base, fulfilmentChoice: "DELIVERY" }).success).toBe(false);
+    const collection = placeSalesOrderSchema.safeParse({
+      ...base,
+      fulfilmentChoice: "COLLECTION",
+      expectedReview: { ...base.expectedReview, deliveryTotal: "0.00", grandTotal: "2.40" },
+    });
+    expect(collection.success).toBe(true);
+    if (collection.success) expect(collection.data.fulfilmentChoice).toBe("COLLECTION");
+  });
+
+  it("keeps a blank draft quantity null and rejects it at placement", () => {
+    const draft = salesOrderDraftHeaderSchema.safeParse({
+      draftId: cuid,
+      lines: [{ variantId: cuid, qty: null }],
+    });
+    expect(draft.success).toBe(true);
+    if (draft.success) expect(draft.data.lines?.[0]?.qty).toBeNull();
+    expect(placeSalesOrderSchema.safeParse({ ...base, lines: [{ variantId: cuid, qty: null }] }).success).toBe(false);
+    expect(salesOrderDraftHeaderSchema.safeParse({ draftId: cuid, lines: [{ variantId: cuid, qty: 0 }] }).success).toBe(false);
+  });
+
+  it("describes partial and full backorders and detects an allocation change", () => {
+    const rows = salesOrderBackorderSummary([
+      {
+        variantId: cuid,
+        sku: "PART",
+        name: "Partial",
+        quantity: 5,
+        availableQtyAtOrder: 3,
+        backorderQtyAtOrder: 2,
+      },
+      {
+        variantId: "cmv782z930000jsixwrk8kwf0",
+        sku: "FULL",
+        name: "Full",
+        quantity: 2,
+        availableQtyAtOrder: 0,
+        backorderQtyAtOrder: 2,
+      },
+    ]);
+    expect(rows.map((row) => row.extent)).toEqual(["PARTIAL", "FULL"]);
+    expect(salesOrderAllocationChanged(undefined, { availableQtyAtOrder: 3, backorderQtyAtOrder: 2 })).toBe(true);
+    expect(salesOrderAllocationChanged(undefined, { availableQtyAtOrder: 3, backorderQtyAtOrder: 0 })).toBe(false);
+    expect(
+      salesOrderAllocationChanged(
+        { availableQty: 3, backorderQty: 2 },
+        { availableQtyAtOrder: 1, backorderQtyAtOrder: 4 },
+      ),
+    ).toBe(true);
   });
 });

@@ -38,6 +38,8 @@ export type TradeDeliveryBreakdown = {
   /** 0–100 display progress toward free delivery (capped). Not used for charging. */
   progressPercent: number;
   deliveryVatPercent: number;
+  /** Customer collection waives carriage. Distinct from the free-delivery threshold. */
+  collection: boolean;
 };
 
 /**
@@ -77,9 +79,12 @@ export function calculateTradeOrderTotals(input: {
   goodsNet: Money;
   goodsVat: Money;
   companyTaxStatus?: string | null;
+  /** COLLECTION forces carriage to £0.00. Omitted means the trade delivery threshold. */
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
 }): TradeDeliveryBreakdown {
-  const deliveryNet = calculateTradeDeliveryNet(input.goodsNet);
-  const freeDelivery = deliveryNet.minor === 0n;
+  const collection = input.fulfilmentChoice === "COLLECTION";
+  const deliveryNet = collection ? moneyZero() : calculateTradeDeliveryNet(input.goodsNet);
+  const freeDelivery = !collection && deliveryNet.minor === 0n;
   const vat = vatRateForCodes({
     vatCode: "STANDARD",
     companyTaxStatus: input.companyTaxStatus ?? "STANDARD",
@@ -89,9 +94,8 @@ export function calculateTradeOrderTotals(input: {
   const vatTotal = addMoney(input.goodsVat, deliveryVat);
   const grandTotal = addMoney(addMoney(input.goodsNet, deliveryNet), vatTotal);
 
-  const amountToFreeDelivery = freeDelivery
-    ? null
-    : clampToThresholdRemaining(input.goodsNet);
+  const amountToFreeDelivery =
+    freeDelivery || collection ? null : clampToThresholdRemaining(input.goodsNet);
 
   return {
     goodsNet: input.goodsNet,
@@ -104,6 +108,7 @@ export function calculateTradeOrderTotals(input: {
     amountToFreeDelivery,
     progressPercent: freeDeliveryProgressPercent(input.goodsNet),
     deliveryVatPercent: vat.percent,
+    collection,
   };
 }
 
@@ -125,9 +130,11 @@ export function tradeDeliveryTotalsDto(breakdown: TradeDeliveryBreakdown) {
       : null,
     thresholdExVat: moneyToString(TRADE_FREE_DELIVERY_THRESHOLD_EX_VAT, 2),
     progressPercent: breakdown.progressPercent,
-    deliveryLabel: breakdown.freeDelivery
-      ? "FREE"
-      : `£${moneyToString(breakdown.deliveryNet, 2)}`,
+    deliveryLabel: breakdown.collection
+      ? "£0.00"
+      : breakdown.freeDelivery
+        ? "FREE"
+        : `£${moneyToString(breakdown.deliveryNet, 2)}`,
     currency: "GBP" as const,
   };
 }

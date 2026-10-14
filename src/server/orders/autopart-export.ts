@@ -141,11 +141,13 @@ function assessOrder(
   }
 
   const delivery = parseDelivery(order.deliveryAddress);
+  const collection = order.fulfilmentChoice === "COLLECTION";
   if (
-    !delivery ||
-    !delivery.line1?.trim() ||
-    !(delivery.town?.trim() || delivery.city?.trim()) ||
-    !delivery.postcode?.trim()
+    !collection &&
+    (!delivery ||
+      !delivery.line1?.trim() ||
+      !(delivery.town?.trim() || delivery.city?.trim()) ||
+      !delivery.postcode?.trim())
   ) {
     return block("MISSING_DELIVERY", "Order is missing a required delivery address snapshot.");
   }
@@ -196,6 +198,7 @@ function toExportInput(order: OrderForExport): AutopartExportOrderInput {
     companyName: order.company.name,
     deliveryAddress: delivery,
     contact,
+    fulfilmentChoice: order.fulfilmentChoice,
     autopartCustomerCodeSnapshot: order.autopartCustomerCodeSnapshot!.trim(),
     subtotal: money2(order.subtotal),
     deliveryTotal: money2(order.deliveryTotal),
@@ -363,12 +366,45 @@ export async function exportAutopartOrdersCsv(
     );
   }
 
-  const inputs = uniqueOrders.map(toExportInput);
-  const csv = buildAutopartOrdersCsv(inputs);
-  const lineCount = inputs.reduce((n, o) => n + countAutopartCsvLinesForOrder(o), 0);
   const now = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
+    const lockIds = [...uniqueOrders.map((order) => order.id)].sort();
+    for (const id of lockIds) {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE
+      `;
+      if (locked.length !== 1) {
+        throw new AuthError("Order not found", "NOT_FOUND", 404);
+      }
+    }
+    const freshRows = await tx.order.findMany({
+      where: { id: { in: lockIds }, archivedAt: null },
+      include: {
+        items: { orderBy: { id: "asc" } },
+        company: { select: { id: true, name: true } },
+        autopartExportedBy: { select: { id: true, name: true, email: true } },
+      },
+    });
+    const freshById = new Map(freshRows.map((order) => [order.id, order]));
+    const freshOrders: OrderForExport[] = [];
+    for (const order of uniqueOrders) {
+      const fresh = freshById.get(order.id);
+      if (!fresh) throw new AuthError("Order not found", "NOT_FOUND", 404);
+      const eligibility = assessOrder(fresh, { allowAlreadyExported: confirmReexport });
+      if (!eligibility.eligible) {
+        throw new AuthError(
+          eligibility.message ?? "This order can no longer be exported.",
+          "EXPORT_BLOCKED",
+          409,
+        );
+      }
+      freshOrders.push(fresh);
+    }
+
+    const inputs = freshOrders.map(toExportInput);
+    const csv = buildAutopartOrdersCsv(inputs);
+    const lineCount = inputs.reduce((n, order) => n + countAutopartCsvLinesForOrder(order), 0);
     const reference = await allocateBatchReference(tx);
     const filename =
       uniqueOrders.length === 1
@@ -387,15 +423,15 @@ export async function exportAutopartOrdersCsv(
       data: {
         reference,
         createdByUserId: userId,
-        orderCount: uniqueOrders.length,
+        orderCount: freshOrders.length,
         lineCount,
         filename,
-        orderIds: uniqueOrders.map((o) => o.id),
+        orderIds: freshOrders.map((o) => o.id),
         isReexport,
       },
     });
 
-    for (const order of uniqueOrders) {
+    for (const order of freshOrders) {
       // Successful Autopart CSV handoff → customer-facing PROCESSING (CONFIRMED).
       // Do not overwrite later fulfilment states; do not touch reservations; no APC.
       // Export is NOT proof of picking or despatch.
@@ -423,10 +459,10 @@ export async function exportAutopartOrdersCsv(
       }
     }
 
-    return { batch, filename, reference };
+    return { batch, filename, reference, csv, lineCount, orders: freshOrders };
   });
 
-  const orderNumbers = uniqueOrders.map((o) => o.orderNumber);
+  const orderNumbers = result.orders.map((o) => o.orderNumber);
   const action = isReexport ? "order.autopart_reexport" : "order.autopart_export";
   const batchAction = "order.autopart_batch_export";
 
@@ -437,8 +473,8 @@ export async function exportAutopartOrdersCsv(
     actorUserId: userId,
     metadata: {
       batchReference: result.reference,
-      orderCount: uniqueOrders.length,
-      lineCount,
+      orderCount: result.orders.length,
+      lineCount: result.lineCount,
       filename: result.filename,
       isReexport,
       // Avoid dumping full customer PII — order numbers only.
@@ -446,7 +482,7 @@ export async function exportAutopartOrdersCsv(
     },
   });
 
-  for (const order of uniqueOrders) {
+  for (const order of result.orders) {
     await recordAuditEvent({
       action,
       entityType: "Order",
@@ -469,12 +505,12 @@ export async function exportAutopartOrdersCsv(
   }
 
   return {
-    csv,
+    csv: result.csv,
     filename: result.filename,
     batchId: result.batch.id,
     batchReference: result.reference,
-    orderCount: uniqueOrders.length,
-    lineCount,
+    orderCount: result.orders.length,
+    lineCount: result.lineCount,
     orderNumbers,
     isReexport,
     headers: AUTOPART_ORDER_CSV_HEADERS,

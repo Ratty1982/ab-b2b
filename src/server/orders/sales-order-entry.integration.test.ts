@@ -11,6 +11,7 @@ import {
   listSalesOrderDrafts,
   openSalesOrderDraft,
   placeSalesOrder,
+  startSalesOrderEdit,
   salesOrderCrmDependencies,
   saveSalesOrderDraft,
   searchOrderEntryCustomers,
@@ -163,7 +164,14 @@ async function seedVariant(sku: string, trade: number, caseQty: number, avail: n
 }
 
 function expectedFrom(review: {
-  lines: Array<{ variantId: string; quantity: number; customerUnitPrice: string | null; lineNet: string | null }>;
+  lines: Array<{
+    variantId: string;
+    quantity: number;
+    customerUnitPrice: string | null;
+    lineNet: string | null;
+    availableQtyAtOrder?: number;
+    backorderQtyAtOrder?: number;
+  }>;
   totals: { subtotal: string; vatTotal: string; deliveryTotal: string; grandTotal: string };
 }) {
   return {
@@ -172,6 +180,8 @@ function expectedFrom(review: {
       qty: line.quantity,
       customerUnitPrice: line.customerUnitPrice ?? "0.00",
       lineNet: line.lineNet ?? "0.00",
+      availableQty: line.availableQtyAtOrder,
+      backorderQty: line.backorderQtyAtOrder,
     })),
     subtotal: review.totals.subtotal,
     vatTotal: review.totals.vatTotal,
@@ -970,6 +980,7 @@ describe("sales order entry on behalf of a customer", () => {
       addressId: address.id,
       lines: [{ variantId: variant.id, qty: 5 }],
       expectedReview: expectedFrom(ready.review!),
+      backorderAcknowledged: true,
     });
     expect(placed.ok).toBe(true);
     if (!placed.ok) return;
@@ -978,6 +989,10 @@ describe("sales order entry on behalf of a customer", () => {
     expect(item.backorderQtyAtOrder).toBe(2);
     const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
     expect(inv.qtyReserved).toBe(3);
+    expect(inv.qtyOnHand).toBe(3);
+    const stored = await prisma.order.findUniqueOrThrow({ where: { id: placed.order.id } });
+    expect(stored.backorderAcknowledgedByUserId).toBe(management.id);
+    expect(stored.backorderAcknowledgedAt).toBeTruthy();
   });
 
   it("keeps one order when placement races abandon or a second submit", async () => {
@@ -1702,5 +1717,235 @@ describe("sales order entry on behalf of a customer", () => {
     } finally {
       await prisma.promotion.update({ where: { id: promo.id }, data: { isActive: false } });
     }
+  });
+
+  it("places a customer collection without an address and with no delivery charge", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-COL-${stamp}`, 9, 12, 20);
+    const { company, contact } = await seedCompany(`SOE Collection ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-col-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `CL${stamp}`.slice(0, 12));
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      source: "TELEPHONE",
+      fulfilmentChoice: "COLLECTION",
+      lines: [{ variantId: variant.id, qty: 1 }],
+    });
+    expect(saved.draft.fulfilmentChoice).toBe("COLLECTION");
+    expect(saved.addressReady).toBe(true);
+    expect(saved.review?.totals.deliveryTotal).toBe("0.00");
+    const placed = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `col-${stamp}`,
+      source: "TELEPHONE",
+      fulfilmentChoice: "COLLECTION",
+      contactId: contact.id,
+      lines: [{ variantId: variant.id, qty: 1 }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    expect(placed.order.deliveryTotal).toBe("0.00");
+    expect(placed.order.fulfilmentChoice).toBe("COLLECTION");
+    expect(placed.order.deliveryMethodLabel).toBe("Customer Collection");
+    expect(placed.order.deliveryAddress).toBeNull();
+    const row = await prisma.order.findUniqueOrThrow({ where: { id: placed.order.id } });
+    expect(row.orderNumber).toMatch(/^AB-/);
+    expect(row.deliveryAddress).toBeNull();
+  });
+
+  it("keeps a blank quantity blank and blocks placement until it is entered", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-QTY-${stamp}`, 9, 12, 20);
+    const { company, address, contact } = await seedCompany(`SOE Qty ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-qty-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `QY${stamp}`.slice(0, 12));
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const blank = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "EMAIL",
+      lines: [{ variantId: variant.id, qty: null }],
+    });
+    expect(blank.draft.lines[0]?.qty).toBeNull();
+    expect(blank.review).toBeNull();
+    const reopened = await getSalesOrderDraft(rep.id, { draftId: draft.draft.id });
+    expect(reopened.draft.lines[0]?.qty).toBeNull();
+    await expect(
+      placeSalesOrder(rep.id, {
+        draftId: draft.draft.id,
+        confirmAuthorised: true,
+        idempotencyKey: `qty-blank-${stamp}`,
+        source: "EMAIL",
+        contactId: contact.id,
+        addressId: address.id,
+        lines: [{ variantId: variant.id, qty: 3 }],
+        expectedReview: {
+          lines: [{ variantId: variant.id, qty: 3, customerUnitPrice: "9.00", lineNet: "9.00", availableQty: 20, backorderQty: 0 }],
+          subtotal: "9.00",
+          vatTotal: "1.80",
+          deliveryTotal: "5.95",
+          grandTotal: "16.75",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "QUANTITY_REQUIRED" });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      lines: [{ variantId: variant.id, qty: 3 }],
+    });
+    expect(saved.draft.lines[0]?.qty).toBe(3);
+    expect(saved.review?.lines[0]?.quantity).toBe(3);
+    const placed = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `qty-${stamp}`,
+      source: "EMAIL",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 3 }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    expect(placed.order.items[0]?.qty).toBe(3);
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv.qtyReserved).toBe(3);
+    expect(inv.qtyOnHand).toBe(20);
+  });
+
+  it("keeps the newest product first after a draft is reopened", async () => {
+    const stamp = Date.now();
+    const first = await seedVariant(`SOE-OLD-${stamp}`, 4, 1, 10);
+    const second = await seedVariant(`SOE-NEW-${stamp}`, 4, 1, 10);
+    const { company } = await seedCompany(`SOE Order ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-ord-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `OR${stamp}`.slice(0, 12));
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      lines: [
+        { variantId: second.id, qty: 2 },
+        { variantId: first.id, qty: 1 },
+      ],
+    });
+    const reopened = await getSalesOrderDraft(rep.id, { draftId: draft.draft.id });
+    expect(reopened.draft.lines.map((line) => line.variantId)).toEqual([second.id, first.id]);
+  });
+
+  it("edits a submitted order in place and adjusts only the active reservation", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-EDIT-${stamp}`, 8, 1, 12);
+    const { company, address, contact } = await seedCompany(`SOE Edit ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-edit-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `ED${stamp}`.slice(0, 12));
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "CUSTOMER_VISIT",
+      lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "6.50" }],
+    });
+    const placed = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `edit-place-${stamp}`,
+      source: "CUSTOMER_VISIT",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 2, unitPriceOverride: "6.50" }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    const orderId = placed.order.id;
+    const orderNumber = placed.order.orderNumber;
+
+    const editing = await startSalesOrderEdit(rep.id, { orderId });
+    expect(editing.draft.editingOrderId).toBe(orderId);
+    expect(editing.draft.lines[0]?.qty).toBe(2);
+    expect(editing.draft.lines[0]?.unitPriceOverride).toBe("6.50");
+    const changed = await saveSalesOrderDraft(rep.id, {
+      draftId: editing.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      fulfilmentChoice: "DELIVERY",
+      poNumber: "PO-EDIT",
+      lines: [{ variantId: variant.id, qty: 5, unitPriceOverride: "6.50" }],
+    });
+    const updated = await placeSalesOrder(rep.id, {
+      draftId: editing.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `edit-save-${stamp}`,
+      source: "CUSTOMER_VISIT",
+      contactId: contact.id,
+      addressId: address.id,
+      poNumber: "PO-EDIT",
+      lines: [{ variantId: variant.id, qty: 5, unitPriceOverride: "6.50" }],
+      expectedReview: expectedFrom(changed.review!),
+    });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    expect(updated.order.id).toBe(orderId);
+    expect(updated.order.orderNumber).toBe(orderNumber);
+    expect(updated.order.items).toHaveLength(1);
+    expect(updated.order.items[0]?.qty).toBe(5);
+    expect(updated.order.items[0]?.customerUnitPrice).toBe("6.50");
+    const row = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    expect(row.idempotencyKey).toBe(`edit-place-${stamp}`);
+    expect(row.editIdempotencyKey).toBe(`edit-save-${stamp}`);
+    expect(row.poNumber).toBe("PO-EDIT");
+    expect(await prisma.order.count({ where: { companyId: company.id } })).toBe(1);
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv.qtyOnHand).toBe(12);
+    expect(inv.qtyReserved).toBe(5);
+    const active = await prisma.orderStockReservation.findMany({ where: { orderId, status: "ACTIVE" } });
+    expect(active.reduce((sum, hold) => sum + hold.quantity, 0)).toBe(5);
+    const audit = await prisma.auditEvent.findFirstOrThrow({
+      where: { entityId: orderId, action: "order.edited_for_customer" },
+    });
+    expect(audit.actorUserId).toBe(rep.id);
+    expect(audit.before).toBeTruthy();
+    expect(audit.after).toBeTruthy();
+
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { autopartExportStatus: "EXPORTED", autopartExportCount: 1, autopartExportedAt: new Date() },
+    });
+    await expect(startSalesOrderEdit(rep.id, { orderId })).rejects.toMatchObject({ code: "ORDER_LOCKED" });
+  });
+
+  it("requires a fresh backorder acknowledgement when the allocation changes", async () => {
+    const stamp = Date.now();
+    const variant = await seedVariant(`SOE-ACK-${stamp}`, 4, 1, 4);
+    await prisma.productVariant.update({ where: { id: variant.id }, data: { backorderPolicy: "ALLOW" } });
+    const { company, address, contact } = await seedCompany(`SOE Ack ${stamp}`);
+    const { user: rep } = await ensureRep(`soe-ack-${stamp}@example.invalid`, "SALES_REPRESENTATIVE", `AK${stamp}`.slice(0, 12));
+    const draft = await openSalesOrderDraft(rep.id, { companyId: company.id, fresh: true });
+    const saved = await saveSalesOrderDraft(rep.id, {
+      draftId: draft.draft.id,
+      contactId: contact.id,
+      addressId: address.id,
+      source: "TELEPHONE",
+      lines: [{ variantId: variant.id, qty: 6 }],
+    });
+    expect(saved.review?.lines[0]?.backorderQtyAtOrder).toBe(2);
+    const missing = await placeSalesOrder(rep.id, {
+      draftId: draft.draft.id,
+      confirmAuthorised: true,
+      idempotencyKey: `ack-missing-${stamp}`,
+      source: "TELEPHONE",
+      contactId: contact.id,
+      addressId: address.id,
+      lines: [{ variantId: variant.id, qty: 6 }],
+      expectedReview: expectedFrom(saved.review!),
+    });
+    expect(missing.ok).toBe(false);
+    if (missing.ok) return;
+    expect(missing.acknowledgementRequired).toBe(true);
+    expect(await prisma.order.count({ where: { companyId: company.id } })).toBe(0);
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variantId: variant.id } });
+    expect(inv.qtyReserved).toBe(0);
+    expect(inv.qtyOnHand).toBe(4);
   });
 });

@@ -13,6 +13,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
+import { planReservationReconcile } from "@/domain/order-reservation-plan";
 import { AUTOPART_WAREHOUSE_CODE, getEffectiveSellableQuantity } from "@/domain/stock";
 import { AuthError } from "@/server/rbac/guards";
 
@@ -165,4 +166,106 @@ export async function releaseStockForOrder(
   }
 
   return { releasedQuantity, reservationCount: active.length };
+}
+
+/**
+ * Move ACTIVE holds to the updated available allocations.
+ * Releases happen before extra reserves. CONSUMED rows block the edit.
+ * qtyOnHand is never updated.
+ */
+export async function reconcileActiveReservations(
+  tx: Prisma.TransactionClient,
+  input: {
+    orderId: string;
+    lines: ReserveStockLine[];
+  },
+): Promise<void> {
+  const consumedCount = await tx.orderStockReservation.count({
+    where: { orderId: input.orderId, status: "CONSUMED" },
+  });
+  const active = await tx.orderStockReservation.findMany({
+    where: { orderId: input.orderId, status: "ACTIVE" },
+    orderBy: { id: "asc" },
+  });
+  const plan = planReservationReconcile({
+    consumedCount,
+    active: active.map((row) => ({
+      id: row.id,
+      variantId: row.variantId,
+      quantity: row.quantity,
+      orderItemId: row.orderItemId,
+    })),
+    targets: input.lines.map((line) => ({
+      variantId: line.variantId,
+      orderItemId: line.orderItemId,
+      quantity: line.quantity,
+    })),
+  });
+  if (!plan.ok) {
+    throw new AuthError(
+      "Stock for this order has been consumed and can no longer be changed.",
+      "ORDER_LOCKED",
+      409,
+    );
+  }
+
+  const warehouse = await tx.warehouse.findUnique({
+    where: { code: AUTOPART_WAREHOUSE_CODE },
+    select: { id: true },
+  });
+  if (!warehouse && (plan.releases.length > 0 || plan.reserves.length > 0)) {
+    throw new AuthError("Autopart warehouse is not configured", "WAREHOUSE_MISSING", 500);
+  }
+
+  const variantIds = [
+    ...new Set([
+      ...active.map((row) => row.variantId),
+      ...plan.reserves.map((line) => line.variantId),
+    ]),
+  ].sort();
+  for (const variantId of variantIds) {
+    if (!warehouse) continue;
+    const inventory = await tx.inventory.findUnique({
+      where: { variantId_warehouseId: { variantId, warehouseId: warehouse.id } },
+      select: { id: true },
+    });
+    if (!inventory) continue;
+    await tx.$queryRaw`SELECT id FROM "Inventory" WHERE id = ${inventory.id} FOR UPDATE`;
+  }
+
+  const byId = new Map(active.map((row) => [row.id, row]));
+  const now = new Date();
+  for (const release of plan.releases) {
+    const row = byId.get(release.reservationId);
+    if (!row) continue;
+    if (release.close) {
+      await tx.orderStockReservation.update({
+        where: { id: row.id },
+        data: { status: "RELEASED", releasedAt: now },
+      });
+    } else {
+      await tx.orderStockReservation.update({
+        where: { id: row.id },
+        data: { quantity: row.quantity - release.releaseQty },
+      });
+    }
+    await tx.inventory.update({
+      where: { id: row.inventoryId },
+      data: { qtyReserved: { decrement: release.releaseQty } },
+    });
+  }
+
+  for (const retarget of plan.retargets) {
+    await tx.orderStockReservation.update({
+      where: { id: retarget.reservationId },
+      data: { orderItemId: retarget.orderItemId },
+    });
+  }
+
+  if (plan.reserves.length > 0) {
+    await reserveStockForOrder(tx, {
+      orderId: input.orderId,
+      lines: plan.reserves,
+    });
+  }
 }

@@ -67,6 +67,7 @@ export type OrderEmailSnapshot = {
   salesRepCodeSnapshot: string | null;
   /** Present when the order was created from an accepted quotation. */
   sourceQuoteNumber: string | null;
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
   portalOrderUrl: string;
   adminOrderUrl: string;
 };
@@ -83,9 +84,15 @@ function formatGbp(raw: string): string {
 }
 
 function formatDeliveryLines(order: OrderEmailSnapshot): string[] {
+  if (order.fulfilmentChoice === "COLLECTION") return ["Customer Collection"];
   const a = order.deliveryAddress;
   if (!a) return ["as provided"];
   return [a.line1, a.line2, a.town, a.county, a.postcode].filter((v): v is string => Boolean(v));
+}
+
+function deliveryChargeLabel(order: OrderEmailSnapshot): string {
+  if (order.fulfilmentChoice === "COLLECTION") return "£0.00";
+  return formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`;
 }
 
 function formatDelivery(order: OrderEmailSnapshot): string {
@@ -183,11 +190,11 @@ export function buildOrderReceivedCustomerBodies(
     itemsPlain(order, "customer"),
     "",
     `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
-    `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
+    `Delivery: ${deliveryChargeLabel(order)}`,
     `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
     `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
-    "DELIVERY TO",
+    order.fulfilmentChoice === "COLLECTION" ? "CUSTOMER COLLECTION" : "DELIVERY TO",
     delivery,
     "",
     ...(hasBackorder(order)
@@ -218,8 +225,12 @@ ${emailHero("Order received", `Thanks ${first} — we've got your order`)}
 ${emailReferencePanel(refRows)}
 ${emailProgressSteps("Order received", ["Order received", "Processing", "Despatched"])}
 ${emailProductTable(toProductLines(order))}
-${emailTotalsBlock(totalsFrom(order))}
-${emailInfoPanel("Delivery to", formatDeliveryLines(order))}
+${emailTotalsBlock(
+  order.fulfilmentChoice === "COLLECTION"
+    ? { ...totalsFrom(order), deliveryLabel: "£0.00" }
+    : totalsFrom(order),
+)}
+${emailInfoPanel(order.fulfilmentChoice === "COLLECTION" ? "Customer Collection" : "Delivery to", formatDeliveryLines(order))}
 ${
   hasBackorder(order)
     ? emailStatusCallout(
@@ -278,7 +289,7 @@ export function buildOrderReceivedInternalBodies(
     itemsPlain(order, "internal"),
     "",
     `Goods ex VAT: £${formatGbp(order.subtotal)}`,
-    `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)}`}`,
+    `Delivery: ${deliveryChargeLabel(order)}`,
     `VAT: £${formatGbp(order.vatTotal)}`,
     `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",
@@ -481,7 +492,7 @@ export function buildOrderDespatchedCustomerBodies(
     itemsPlain(order),
     "",
     `Goods ex VAT: £${formatGbp(order.subtotal)} ${order.currency}`,
-    `Delivery: ${formatGbp(order.deliveryTotal) === "0.00" ? "FREE" : `£${formatGbp(order.deliveryTotal)} ${order.currency}`}`,
+    `Delivery: ${deliveryChargeLabel(order)}`,
     `VAT: £${formatGbp(order.vatTotal)} ${order.currency}`,
     `ORDER TOTAL: £${formatGbp(order.grandTotal)} ${order.currency}`,
     "",

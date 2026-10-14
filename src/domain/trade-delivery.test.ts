@@ -112,6 +112,21 @@ describe("trade delivery charge", () => {
     expect(freeDeliveryProgressPercent(parseMoney("0.00")!)).toBe(0);
   });
 
+  it("charges nothing for customer collection, including a small order", () => {
+    const totals = calculateTradeOrderTotals({
+      goodsNet: parseMoney("25.72")!,
+      goodsVat: goodsVatAt20("25.72"),
+      companyTaxStatus: "STANDARD",
+      fulfilmentChoice: "COLLECTION",
+    });
+    expect(moneyToString(totals.deliveryNet, 2)).toBe("0.00");
+    expect(moneyToString(totals.deliveryVat, 2)).toBe("0.00");
+    expect(totals.collection).toBe(true);
+    expect(totals.freeDelivery).toBe(false);
+    expect(tradeDeliveryTotalsDto(totals).deliveryLabel).toBe("£0.00");
+    expect(tradeDeliveryTotalsDto(totals).deliveryTotal).toBe("0.00");
+  });
+
   it("zeroes delivery VAT for VAT-exempt companies", () => {
     const totals = calculateTradeOrderTotals({
       goodsNet: parseMoney("25.72")!,

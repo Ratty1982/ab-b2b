@@ -95,6 +95,8 @@ export type AutopartExportOrderInput = {
   vatTotal: string;
   grandTotal: string;
   items: AutopartExportOrderItem[];
+  /** Customer collection has no shipping address. The CSV shows Customer Collection instead. */
+  fulfilmentChoice?: "DELIVERY" | "COLLECTION";
 };
 
 export type AutopartCsvLineFinancials = {
@@ -320,16 +322,17 @@ export function buildAutopartCsvRowsForOrder(order: AutopartExportOrderInput): A
   const orderTotal = formatAutopartExportMoney(order.grandTotal);
   const paymentAmount1 = orderTotal;
 
+  const collection = order.fulfilmentChoice === "COLLECTION";
   const common = {
     "External Reference": order.orderNumber,
     "Order Date": orderDate,
     "Shipping Name": shippingName,
-    "Shipping Address 1": delivery?.line1?.trim() ?? "",
-    "Shipping Address 2": delivery?.line2?.trim() ?? "",
-    "Shipping City": (delivery?.town ?? delivery?.city)?.trim() ?? "",
-    "Shipping County": delivery?.county?.trim() ?? "",
-    "Shipping Postcode": delivery?.postcode?.trim() ?? "",
-    "Shipping Country": delivery?.country?.trim() || "GB",
+    "Shipping Address 1": collection ? "Customer Collection" : (delivery?.line1?.trim() ?? ""),
+    "Shipping Address 2": collection ? "" : (delivery?.line2?.trim() ?? ""),
+    "Shipping City": collection ? "" : ((delivery?.town ?? delivery?.city)?.trim() ?? ""),
+    "Shipping County": collection ? "" : (delivery?.county?.trim() ?? ""),
+    "Shipping Postcode": collection ? "" : (delivery?.postcode?.trim() ?? ""),
+    "Shipping Country": collection ? "GB" : (delivery?.country?.trim() || "GB"),
     Email: email,
     Phone: phone,
     Source: source,

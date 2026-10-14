@@ -24,6 +24,7 @@ type DraftRow = {
   companyName: string;
   poNumber: string | null;
   source: string | null;
+  editingOrderNumber: string | null;
   updatedAt: string;
   lines: Array<{ id: string }>;
 };
@@ -97,7 +98,9 @@ function SalesOrderDrafts() {
                 {rows.map((row) => (
                   <tr key={row.id} className="border-b border-border/60">
                     <td className="px-3 py-2 font-medium">{row.companyName}</td>
-                    <td className="px-3 py-2 text-steel">{row.poNumber || "—"}</td>
+                    <td className="px-3 py-2 text-steel">
+                      {row.editingOrderNumber ? `Editing ${row.editingOrderNumber}` : row.poNumber || "—"}
+                    </td>
                     <td className="px-3 py-2 text-steel">{row.source || "—"}</td>
                     <td className="num px-3 py-2 text-right">{row.lines.length}</td>
                     <td className="px-3 py-2 text-steel">

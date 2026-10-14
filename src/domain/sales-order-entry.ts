@@ -51,9 +51,18 @@ export function parseStaffOrderQuantity(raw: string): number | null {
   return qty;
 }
 
+export const ORDER_FULFILMENT_CHOICES = ["DELIVERY", "COLLECTION"] as const;
+export type OrderFulfilmentChoice = (typeof ORDER_FULFILMENT_CHOICES)[number];
+
+export const ORDER_FULFILMENT_LABEL: Record<OrderFulfilmentChoice, string> = {
+  DELIVERY: "Delivery",
+  COLLECTION: "Customer Collection",
+};
+
 export type SalesOrderDraftLineInput = {
   variantId: string;
-  qty: number;
+  /** Null until staff type a quantity. Never defaulted to a case or minimum. */
+  qty: number | null;
   sku: string;
   name: string;
   unitPriceOverride: string | null;
@@ -67,27 +76,81 @@ export type SalesOrderProductSelection = {
   minOrderQty: number;
 };
 
-/** First add uses the existing case/minimum quantity. A repeat add increases by one case. */
+/**
+ * Staff add the newest product at the top with a blank quantity.
+ * Selecting a product already on the order moves that line to the top and leaves its quantity unchanged.
+ */
 export function selectSalesOrderProduct(
   lines: SalesOrderDraftLineInput[],
   hit: SalesOrderProductSelection,
 ): SalesOrderDraftLineInput[] {
   const existing = lines.find((line) => line.variantId === hit.variantId);
-  const pack = Math.max(1, hit.caseQty ?? 1);
-  const qty = existing ? existing.qty + pack : Math.max(1, hit.minOrderQty, hit.caseQty ?? 1);
   if (!existing) {
     return [
-      ...lines,
       {
         variantId: hit.variantId,
-        qty,
+        qty: null,
         sku: hit.sku,
         name: hit.name,
         unitPriceOverride: null,
       },
+      ...lines,
     ];
   }
-  return lines.map((line) => (line.variantId === hit.variantId ? { ...line, qty } : line));
+  return [existing, ...lines.filter((line) => line.variantId !== hit.variantId)];
+}
+
+export type SalesOrderBackorderExtent = "PARTIAL" | "FULL";
+
+export type SalesOrderBackorderRow = {
+  variantId: string;
+  sku: string;
+  name: string;
+  orderedQty: number;
+  availableQty: number;
+  backorderQty: number;
+  extent: SalesOrderBackorderExtent;
+};
+
+/** Lines with a backorder remainder. Backordered units are not reserved stock. */
+export function salesOrderBackorderSummary(
+  lines: Array<{
+    variantId: string;
+    sku: string;
+    name: string;
+    quantity: number;
+    availableQtyAtOrder: number;
+    backorderQtyAtOrder: number;
+  }>,
+): SalesOrderBackorderRow[] {
+  return lines
+    .filter((line) => line.backorderQtyAtOrder > 0)
+    .map((line) => ({
+      variantId: line.variantId,
+      sku: line.sku,
+      name: line.name,
+      orderedQty: line.quantity,
+      availableQty: line.availableQtyAtOrder,
+      backorderQty: line.backorderQtyAtOrder,
+      extent: line.availableQtyAtOrder > 0 ? "PARTIAL" : "FULL",
+    }));
+}
+
+/**
+ * A review that omitted the allocation snapshot must be repeated when any units are backordered.
+ * A supplied snapshot must match the fresh available and backordered quantities.
+ */
+export function salesOrderAllocationChanged(
+  expected: { availableQty?: number | undefined; backorderQty?: number | undefined } | undefined,
+  actual: { availableQtyAtOrder: number; backorderQtyAtOrder: number },
+): boolean {
+  if (!expected || expected.availableQty == null || expected.backorderQty == null) {
+    return actual.backorderQtyAtOrder > 0;
+  }
+  return (
+    expected.availableQty !== actual.availableQtyAtOrder ||
+    expected.backorderQty !== actual.backorderQtyAtOrder
+  );
 }
 
 /**
@@ -115,30 +178,42 @@ export function applySalesOrderProductAdd(input: {
   };
 }
 
-export const salesOrderLineInputSchema = z
-  .object({
-    variantId: z.string().cuid(),
-    qty: z.number().int().min(1).max(99999),
-    unitPriceOverride: z.union([z.string(), z.null()]).optional(),
-  })
-  .superRefine((line, ctx) => {
-    if (line.unitPriceOverride == null || line.unitPriceOverride.trim() === "") return;
-    if (!parseStaffOrderUnitPrice(line.unitPriceOverride)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Enter a unit price in pounds and pence, excluding VAT",
-        path: ["unitPriceOverride"],
-      });
-    }
-  })
-  .transform((line) => ({
-    variantId: line.variantId,
-    qty: line.qty,
-    unitPriceOverride:
-      line.unitPriceOverride == null || line.unitPriceOverride.trim() === ""
-        ? null
-        : parseStaffOrderUnitPrice(line.unitPriceOverride),
-  }));
+function salesOrderLineObject<TQty extends number | null>(qty: z.ZodType<TQty>) {
+  return z
+    .object({
+      variantId: z.string().cuid(),
+      qty,
+      unitPriceOverride: z.union([z.string(), z.null()]).optional(),
+    })
+    .superRefine((line, ctx) => {
+      if (line.unitPriceOverride == null || line.unitPriceOverride.trim() === "") return;
+      if (!parseStaffOrderUnitPrice(line.unitPriceOverride)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Enter a unit price in pounds and pence, excluding VAT",
+          path: ["unitPriceOverride"],
+        });
+      }
+    })
+    .transform((line) => ({
+      variantId: line.variantId,
+      qty: line.qty,
+      unitPriceOverride:
+        line.unitPriceOverride == null || line.unitPriceOverride.trim() === ""
+          ? null
+          : parseStaffOrderUnitPrice(line.unitPriceOverride),
+    }));
+}
+
+const positiveQty = z.number().int().min(1).max(99999);
+
+/** Draft lines may stay blank. Blank is null, never 0, 1, or a case quantity. */
+export const salesOrderDraftLineSchema = salesOrderLineObject(positiveQty.nullable());
+
+/** Placement requires a positive whole number of individual units on every remaining line. */
+export const salesOrderLineInputSchema = salesOrderLineObject(
+  z.number({ error: "Enter a quantity for every product" }).int().min(1).max(99999),
+);
 
 export const salesOrderDraftHeaderSchema = z
   .object({
@@ -147,16 +222,17 @@ export const salesOrderDraftHeaderSchema = z
     contactId: z.string().cuid().optional().nullable(),
     addressId: z.string().cuid().optional().nullable(),
     oneOffAddress: deliveryAddressSnapshotSchema.optional().nullable(),
+    fulfilmentChoice: z.enum(ORDER_FULFILMENT_CHOICES).optional(),
     poNumber: optionalPlain(80),
     deliveryInstructions: optionalPlain(500),
     internalNote: optionalPlain(2000),
-    lines: z.array(salesOrderLineInputSchema).max(100).optional(),
+    lines: z.array(salesOrderDraftLineSchema).max(100).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.addressId && value.oneOffAddress) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide either a saved address or a one-off address",
+        message: "Provide either a saved address or a one off address",
         path: ["addressId"],
       });
     }
@@ -198,6 +274,8 @@ export const salesOrderExpectedReviewSchema = z.object({
         qty: z.number().int().min(1).max(99999),
         customerUnitPrice: reviewedMoney,
         lineNet: reviewedMoney,
+        availableQty: z.number().int().min(0).max(99999).optional(),
+        backorderQty: z.number().int().min(0).max(99999).optional(),
       }),
     )
     .max(100),
@@ -220,10 +298,13 @@ export const placeSalesOrderSchema = z
     contactId: z.string().cuid().optional().nullable(),
     addressId: z.string().cuid().optional().nullable(),
     oneOffAddress: deliveryAddressSnapshotSchema.optional().nullable(),
+    fulfilmentChoice: z.enum(ORDER_FULFILMENT_CHOICES).default("DELIVERY"),
     poNumber: optionalPlain(80),
     deliveryInstructions: optionalPlain(500),
     internalNote: optionalPlain(2000),
     lines: z.array(salesOrderLineInputSchema).max(100).optional(),
+    /** Required when any line is backordered. The server checks the fresh allocation. */
+    backorderAcknowledged: z.boolean().optional(),
     expectedLinePrices: z.array(expectedLinePriceSchema).max(100).optional().nullable(),
     /** Complete reviewed snapshot. Required for a new order. Ignored when accepting a quotation. */
     expectedReview: salesOrderExpectedReviewSchema.optional().nullable(),
@@ -242,11 +323,11 @@ export const placeSalesOrderSchema = z
     if (value.addressId && value.oneOffAddress) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide either a saved address or a one-off address",
+        message: "Provide either a saved address or a one off address",
         path: ["addressId"],
       });
     }
-    if (!value.addressId && !value.oneOffAddress) {
+    if (value.fulfilmentChoice !== "COLLECTION" && !value.addressId && !value.oneOffAddress) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "A delivery address is required",

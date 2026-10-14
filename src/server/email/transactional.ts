@@ -139,6 +139,7 @@ export async function loadOrderEmailSnapshot(orderId: string): Promise<OrderEmai
     salesRepNameSnapshot: order.salesRepNameSnapshot,
     salesRepCodeSnapshot: order.salesRepCodeSnapshot,
     sourceQuoteNumber: order.sourceQuoteNumber ?? null,
+    fulfilmentChoice: order.fulfilmentChoice === "COLLECTION" ? "COLLECTION" : "DELIVERY",
     portalOrderUrl: portalOrderUrl(order.id),
     adminOrderUrl: adminOrderUrl(order.id),
   };

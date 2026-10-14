@@ -541,6 +541,7 @@ model User {
   autopartCodesVerified Company[]       @relation("AutopartCodeVerifier")
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
   ordersArchived         Order[]        @relation("OrderArchivedBy")
+  ordersBackorderAcknowledged Order[]   @relation("OrderBackorderAcknowledgedBy")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
@@ -2083,11 +2084,20 @@ model Order {
   archivedAt       DateTime?
   archivedByUserId String?
   archiveReason    String?
+  /// Delivery or customer collection. Collection stores no delivery address and £0.00 carriage.
+  fulfilmentChoice OrderFulfilmentChoice @default(DELIVERY)
+  /// Staff confirmed the customer was told about backordered units. Null when the order had none.
+  backorderAcknowledgedAt DateTime?
+  backorderAcknowledgedByUserId String?
+  /// Idempotency key for the latest commercial edit. The original place key stays on idempotencyKey.
+  editIdempotencyKey String? @unique
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
   company      Company                 @relation(fields: [companyId], references: [id])
   archivedBy   User?                   @relation("OrderArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
+  backorderAcknowledgedBy User?        @relation("OrderBackorderAcknowledgedBy", fields: [backorderAcknowledgedByUserId], references: [id], onDelete: SetNull)
+  salesEditDrafts SalesOrderDraft[]    @relation("OrderSalesEdit")
   items        OrderItem[]
   invoices     Invoice[]
   reservations OrderStockReservation[]
@@ -2105,6 +2115,8 @@ model Order {
   @@index([placedByStaffUserId])
   @@index([entrySource])
   @@index([archivedAt])
+  @@index([backorderAcknowledgedByUserId])
+  @@index([fulfilmentChoice])
 }
 
 enum SalesOrderDraftStatus {
@@ -2117,6 +2129,11 @@ enum SalesOrderEntrySource {
   TELEPHONE
   EMAIL
   CUSTOMER_VISIT
+}
+
+enum OrderFulfilmentChoice {
+  DELIVERY
+  COLLECTION
 }
 
 /// Staff-owned order draft. Never the customer's basket and never an admin trade-test basket.
@@ -2133,23 +2150,29 @@ model SalesOrderDraft {
   deliveryInstructions String?
   internalNote         String?
   placedOrderId        String?                @unique
+  fulfilmentChoice     OrderFulfilmentChoice  @default(DELIVERY)
+  /// Set when this draft amends an existing order instead of creating one.
+  editingOrderId       String?
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
-  company   Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdBy User                  @relation("SalesOrderDraftCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
-  lines     SalesOrderDraftLine[]
+  company       Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy     User                  @relation("SalesOrderDraftCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  editingOrder  Order?                @relation("OrderSalesEdit", fields: [editingOrderId], references: [id], onDelete: Restrict)
+  lines         SalesOrderDraftLine[]
 
   @@index([createdByUserId, status])
   @@index([companyId, status])
   @@index([createdByUserId, companyId, status])
+  @@index([editingOrderId])
 }
 
 model SalesOrderDraftLine {
   id        String   @id @default(cuid())
   draftId   String
   variantId String
-  qty       Int
+  /// Null while staff have not entered a quantity. Never stored as 0, 1, or a case quantity.
+  qty       Int?
   /// Staff selling price ex VAT for this draft line only. Null uses the customer trade price.
   unitPriceOverride Decimal? @db.Decimal(12, 2)
   sortOrder Int      @default(0)

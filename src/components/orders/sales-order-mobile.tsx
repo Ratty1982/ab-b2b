@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import { inputClass } from "@/components/ab/Drawer";
-import type { SalesOrderDraftLineInput } from "@/domain/sales-order-entry";
+import type { OrderFulfilmentChoice, SalesOrderBackorderRow, SalesOrderDraftLineInput } from "@/domain/sales-order-entry";
 import { parseStaffOrderUnitPrice } from "@/domain/sales-order-entry";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -258,16 +258,18 @@ function LineQuantity({
     <label className="block text-[13px] text-steel">
       <span className="lg:sr-only">Quantity</span>
       <input
-        className={cn(salesOrderControlClass, "mt-1 w-full")}
+        className={cn(salesOrderControlClass, "mt-1 w-full", line.qty == null && "border-bad")}
         type="number"
         inputMode="numeric"
         min={1}
         step={1}
         aria-label={`Quantity for ${line.sku}`}
-        value={line.qty}
+        data-qty-variant={line.variantId}
+        value={line.qty ?? ""}
         onChange={(event) => onQuantityChange(line.variantId, event.target.value)}
         onBlur={onQuantityBlur}
       />
+      {line.qty == null ? <span className="mt-1 block font-semibold text-bad">Enter a quantity</span> : null}
       {caseQty ? <span className="mt-1 block text-[12px]">Case {caseQty}</span> : null}
     </label>
   );
@@ -293,7 +295,7 @@ function LinePrice({
       <label className="block text-[13px] text-steel">
         {line.unitPriceOverride ? "Manual price ex VAT" : "Unit price ex VAT"}
         <input
-          className={cn(salesOrderControlClass, "mt-1 w-full", line.unitPriceOverride && "border-primary")}
+          className={cn(salesOrderControlClass, "mt-1 w-full")}
           inputMode="decimal"
           aria-label={`Unit price for ${line.sku}`}
           value={draft ?? line.unitPriceOverride ?? priced?.resolvedUnitPrice ?? priced?.customerUnitPrice ?? ""}
@@ -314,17 +316,20 @@ function LinePrice({
         />
       </label>
       {line.unitPriceOverride ? (
-        <button
-          type="button"
-          className="mt-1 inline-flex min-h-11 items-center text-[13px] font-semibold text-primary"
-          onClick={() => {
-            onClearPriceDraft(line.variantId);
-            onPriceOverride(line.variantId, null);
-          }}
-        >
-          Use customer price
-          {priced?.resolvedUnitPrice ? ` ${formatSalesOrderMoney(priced.resolvedUnitPrice)}` : ""}
-        </button>
+        <div className="mt-1">
+          <p className="text-[12px] text-steel">Manual price applied</p>
+          <button
+            type="button"
+            className="inline-flex min-h-11 items-center text-[13px] font-semibold text-foreground underline"
+            onClick={() => {
+              onClearPriceDraft(line.variantId);
+              onPriceOverride(line.variantId, null);
+            }}
+          >
+            Reset to customer price
+            {priced?.resolvedUnitPrice ? ` ${formatSalesOrderMoney(priced.resolvedUnitPrice)}` : ""}
+          </button>
+        </div>
       ) : priced?.priceSource ? (
         <p className="text-[12px] text-steel">{priced.priceSource}</p>
       ) : null}
@@ -332,16 +337,33 @@ function LinePrice({
   );
 }
 
-function LineStock({ priced }: { priced: SalesOrderLinePricing | undefined }) {
+function LineStock({
+  priced,
+  qty,
+}: {
+  priced: SalesOrderLinePricing | undefined;
+  qty: number | null;
+}) {
+  if (qty == null) return <p className="text-[13px] font-semibold text-bad">Enter a quantity</p>;
   if (!priced) return <p className="text-[13px] text-steel">Stock —</p>;
-  return (
-    <p className="text-[13px] text-steel">
-      Stock {priced.availableQtyAtOrder ?? 0} available
-      {(priced.backorderQtyAtOrder ?? 0) > 0
-        ? ` · ${priced.backorderQtyAtOrder} backorder${priced.backordersAllowed ? "" : " blocked"}`
-        : ""}
-    </p>
-  );
+  const available = priced.availableQtyAtOrder ?? 0;
+  const backorder = priced.backorderQtyAtOrder ?? 0;
+  if (backorder > 0) {
+    return (
+      <div className="space-y-1">
+        <p className="inline-flex rounded-sm border border-amber-400/50 bg-amber-400/15 px-2 py-1 text-[11px] font-bold tracking-wide text-amber-200">
+          BACKORDER
+        </p>
+        <p className="text-[13px] font-semibold text-amber-200">
+          {available > 0 ? "Part backorder" : "Fully backordered"}
+        </p>
+        <p className="text-[13px] text-steel">Ordered {qty}</p>
+        <p className="text-[13px] text-steel">Available {available}</p>
+        <p className="text-[13px] text-steel">Backordered {backorder}</p>
+      </div>
+    );
+  }
+  return <p className="text-[13px] text-steel">Stock {available} available</p>;
 }
 
 export function SalesOrderLines({
@@ -394,7 +416,7 @@ export function SalesOrderLines({
                   onPriceOverride={onPriceOverride}
                   onClearPriceDraft={onClearPriceDraft}
                 />
-                <LineStock priced={priced} />
+                <LineStock priced={priced} qty={line.qty} />
                 <p className="text-[15px] font-semibold">Line total {formatSalesOrderMoney(priced?.lineNet)}</p>
                 <button
                   type="button"
@@ -452,7 +474,7 @@ export function SalesOrderLines({
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <LineStock priced={priced} />
+                    <LineStock priced={priced} qty={line.qty} />
                   </td>
                   <td className="num px-3 py-2 text-right">{formatSalesOrderMoney(priced?.lineNet)}</td>
                   <td className="px-3 py-2 text-right">
@@ -599,8 +621,13 @@ export function SalesOrderReviewPanel({
   placing,
   placeDisabled,
   placeLabel,
+  placingLabel,
+  fulfilmentChoice,
+  backorders,
+  backorderAcknowledged,
   onAcceptPrices,
   onAuthorised,
+  onBackorderAcknowledged,
   onPlace,
 }: {
   companyName: string | undefined;
@@ -619,8 +646,13 @@ export function SalesOrderReviewPanel({
   placing: boolean;
   placeDisabled: boolean;
   placeLabel: string;
+  placingLabel?: string;
+  fulfilmentChoice: OrderFulfilmentChoice;
+  backorders: SalesOrderBackorderRow[];
+  backorderAcknowledged: boolean;
   onAcceptPrices: (checked: boolean) => void;
   onAuthorised: (checked: boolean) => void;
+  onBackorderAcknowledged: (checked: boolean) => void;
   onPlace: () => void;
 }) {
   return (
@@ -634,7 +666,11 @@ export function SalesOrderReviewPanel({
       <p className="text-steel">Payment terms: {paymentTerms || "As agreed"}</p>
       <p className="break-words text-steel">PO: {poNumber || "—"}</p>
       <p>Net {formatSalesOrderMoney(subtotal)}</p>
-      <p>Delivery {formatSalesOrderMoney(deliveryTotal)}</p>
+      {fulfilmentChoice === "COLLECTION" ? (
+        <p className="font-semibold">Customer Collection · £0.00</p>
+      ) : (
+        <p>Delivery {formatSalesOrderMoney(deliveryTotal)}</p>
+      )}
       <p>VAT {formatSalesOrderMoney(vatTotal)}</p>
       <p className="text-[16px] font-semibold">Total {formatSalesOrderMoney(grandTotal)}</p>
       {blocking ? <p className="text-bad">Resolve the line issues shown before placing the order.</p> : null}
@@ -659,6 +695,26 @@ export function SalesOrderReviewPanel({
       ) : (
         <p className="text-steel">Place order uses the prices shown here. A later price change stops the order for review.</p>
       )}
+      {backorders.length > 0 ? (
+        <div className="space-y-2 rounded-md border border-amber-400/50 bg-amber-400/10 p-3">
+          <p className="font-semibold text-amber-200">Backorder</p>
+          {backorders.map((line) => (
+            <p key={line.variantId}>
+              {line.sku} · {line.extent === "FULL" ? "Fully backordered" : "Part backorder"} · ordered {line.orderedQty}
+              , available {line.availableQty}, backordered {line.backorderQty}
+            </p>
+          ))}
+          <label className="flex min-h-11 items-start gap-3">
+            <input
+              type="checkbox"
+              checked={backorderAcknowledged}
+              onChange={(event) => onBackorderAcknowledged(event.target.checked)}
+              className="mt-1 size-5"
+            />
+            <span>The customer has been informed of this backorder.</span>
+          </label>
+        </div>
+      ) : null}
       <label className="flex min-h-11 items-center gap-3">
         <input
           type="checkbox"
@@ -674,7 +730,7 @@ export function SalesOrderReviewPanel({
         onClick={onPlace}
         className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-50"
       >
-        {placing ? "Placing…" : placeLabel}
+        {placing ? (placingLabel ?? "Placing…") : placeLabel}
       </button>
     </aside>
   );
