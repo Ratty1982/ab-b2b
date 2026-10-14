@@ -28,7 +28,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError } from "@/server/rbac/guards";
-import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { buildCsv } from "@/domain/sales-intelligence";
 import {
   DATE_UNAVAILABLE,
@@ -190,7 +190,7 @@ type DatedWindow = { from: Date; toExclusive: Date };
  * document reference also appears on a dated line for the same company in the window,
  * so overlap rules still hold and undated nets are not given a month.
  */
-function unifiedLinesCte(
+export function unifiedLinesCte(
   universe: CompanyUniverse,
   sku: string | null,
   window?: DatedWindow,
@@ -1147,7 +1147,12 @@ export async function getUnifiedCustomerHistory(actorUserId: string, raw: unknow
     const certification = await queryCertificationFromReportLines();
     return { summary, certification };
   });
-  return { identity, refresh, ...report };
+  return {
+    identity,
+    refresh,
+    ...report,
+    investigationPermitted: grants(profile, "sales.view_all_accounts", "admin.access"),
+  };
 }
 
 const txSchema = z.object({

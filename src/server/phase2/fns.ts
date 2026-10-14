@@ -5297,3 +5297,30 @@ export const exportUnifiedCustomerSalesCsvFn = createServerFn({ method: "GET" })
       return toError(e);
     }
   });
+
+export const getSalesReconciliationInvestigationFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const investigation = await import("@/server/sales-intelligence/reconciliation-investigation");
+      return {
+        ok: true as const,
+        data: await investigation.getSalesReconciliationInvestigation(userId, data),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportSalesReconciliationCsvFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const investigation = await import("@/server/sales-intelligence/reconciliation-investigation");
+      return { ok: true as const, data: await investigation.exportSalesReconciliationCsv(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });

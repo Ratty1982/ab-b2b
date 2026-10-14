@@ -208,17 +208,27 @@ export function periodMovement(
   return { change: fromPence(change), percent };
 }
 
-/** Overview always loads. Detailed reports load only for their own section. */
+/**
+ * Overview always loads. Detailed reports load only for their own section.
+ * The reconciliation investigation stays closed until management opens it.
+ */
 export function salesEnquirySectionLoads(section: SalesEnquirySection): {
   transactions: boolean;
   products: boolean;
   history: boolean;
+  investigation: boolean;
 } {
   return {
     transactions: section === "transactions",
     products: section === "products",
     history: section === "history",
+    investigation: false,
   };
+}
+
+/** True only after an authorised user opens the investigation inside Historical Reporting. */
+export function salesEnquiryInvestigationRequested(open: boolean): boolean {
+  return open;
 }
 
 export function salesEnquiryDashboardKey(

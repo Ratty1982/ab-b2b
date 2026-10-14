@@ -6,6 +6,7 @@ import {
   periodMovement,
   resolveSalesEnquiryDashboardPeriod,
   salesEnquiryDashboardKey,
+  salesEnquiryInvestigationRequested,
   salesEnquirySectionLoads,
 } from "@/domain/sales-enquiry-dashboard";
 
@@ -115,10 +116,14 @@ describe("sales enquiry dashboard periods", () => {
       transactions: false,
       products: false,
       history: false,
+      investigation: false,
     });
     expect(salesEnquirySectionLoads("transactions").transactions).toBe(true);
     expect(salesEnquirySectionLoads("products").products).toBe(true);
     expect(salesEnquirySectionLoads("history").history).toBe(true);
+    expect(salesEnquirySectionLoads("history").investigation).toBe(false);
+    expect(salesEnquiryInvestigationRequested(false)).toBe(false);
+    expect(salesEnquiryInvestigationRequested(true)).toBe(true);
     expect(salesEnquiryDashboardKey("co_1", "THIS_MONTH", "2026-10-01", "2026-10-14")).not.toBe(
       salesEnquiryDashboardKey("co_1", "ALL", null, null),
     );

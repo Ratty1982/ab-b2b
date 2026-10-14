@@ -38,6 +38,7 @@ import {
 } from "@/domain/sales-enquiry-dashboard";
 import { formatQuantity } from "@/lib/format-quantity";
 import { cn } from "@/lib/utils";
+import { SalesReconciliationInvestigation } from "@/components/sales-intelligence/sales-reconciliation-investigation";
 import {
   createCrmOpportunityFn,
   exportUnifiedCustomerSalesCsvFn,
@@ -973,6 +974,7 @@ export function UnifiedCustomerSalesPanel({
           ) : null}
           {history ? (
             <HistoricalReport
+              companyId={companyId}
               history={history}
               onViewUndated={() => {
                 setPeriod("ALL");
@@ -987,9 +989,11 @@ export function UnifiedCustomerSalesPanel({
 }
 
 function HistoricalReport({
+  companyId,
   history,
   onViewUndated,
 }: {
+  companyId: string;
   history: History;
   onViewUndated: () => void;
 }) {
@@ -1060,6 +1064,7 @@ function HistoricalReport({
           View all transactions, including undated history
         </button>
       </details>
+      {history.investigationPermitted ? <SalesReconciliationInvestigation companyId={companyId} /> : null}
     </div>
   );
 }
