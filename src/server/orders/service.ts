@@ -287,6 +287,9 @@ export type AdminOrderListItem = OrderListItemBase & {
   autopartExportFilter: "READY" | "EXPORTED" | "BLOCKED";
   containsBackorder: boolean;
   fullyBackordered: boolean;
+  archivedAt: string | null;
+  archiveReason: string | null;
+  archivedByName: string | null;
 };
 
 export type AdminOrderDetail = PortalOrderDetail & {
@@ -307,6 +310,9 @@ export type AdminOrderDetail = PortalOrderDetail & {
   salesRepNameSnapshot: string | null;
   deliveryMethodLabel: string | null;
   basketId: string | null;
+  archivedAt: string | null;
+  archiveReason: string | null;
+  archivedByName: string | null;
   autopartFulfilment: AutopartOrderFulfilmentView | null;
   items: Array<
     PortalOrderDetail["items"][number] & {
@@ -1563,6 +1569,7 @@ export async function listPortalOrders(
 
   const baseWhere: Prisma.OrderWhereInput = {
     companyId: company.id,
+    archivedAt: null,
     ...(filter === "OPEN" || filter === "BACKORDERS"
       ? {
           status: {
@@ -1627,7 +1634,7 @@ export async function getPortalOrder(userId: string, orderId: string): Promise<P
   await requireCompanyPermission(userId, company.id, "orders.view");
 
   const order = await prisma.order.findFirst({
-    where: { id: orderId, companyId: company.id },
+    where: { id: orderId, companyId: company.id, archivedAt: null },
     include: {
       items: true,
       fulfilmentEvents: { orderBy: { occurredAt: "asc" } },
@@ -1711,6 +1718,8 @@ export async function listAdminOrders(
     autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
     /** Backorder list filter. */
     backorders?: "ALL" | "CONTAINS" | "FULL";
+    /** Super Admin archived-test-order view. Omitted orders are live operational orders. */
+    archive?: "ACTIVE" | "ARCHIVED";
   },
 ): Promise<{ items: AdminOrderListItem[]; total: number; page: number; pageSize: number }> {
   const profile = await requireSystemPermission(userId, "orders.view");
@@ -1736,9 +1745,14 @@ export async function listAdminOrders(
   const q = raw?.q?.trim();
   const exportFilter = raw?.autopartExport ?? "ALL";
   const backorderFilter = raw?.backorders ?? "ALL";
+  const archive = raw?.archive === "ARCHIVED" ? "ARCHIVED" : "ACTIVE";
+  if (archive === "ARCHIVED" && !profile.systemRoles.includes("SUPER_ADMIN")) {
+    throw new AuthError("Only Super Admin can view archived test orders.", "FORBIDDEN", 403);
+  }
 
   const where: Prisma.OrderWhereInput = {
     ...companyFilter,
+    archivedAt: archive === "ARCHIVED" ? { not: null } : null,
     status: { not: "DRAFT" },
     ...(q
       ? {
@@ -1806,6 +1820,7 @@ export async function listAdminOrders(
       include: {
         _count: { select: { items: true } },
         company: { select: { name: true } },
+        archivedBy: { select: { name: true, email: true } },
         items: { select: { qty: true, availableQtyAtOrder: true, backorderQtyAtOrder: true } },
       },
     }),
@@ -1849,6 +1864,9 @@ export async function listAdminOrders(
         autopartExportFilter,
         containsBackorder: orderContainsBackorder(row.items),
         fullyBackordered: orderIsFullyBackordered(row.items),
+        archivedAt: row.archivedAt?.toISOString() ?? null,
+        archiveReason: row.archiveReason,
+        archivedByName: row.archivedBy?.name ?? row.archivedBy?.email ?? null,
       };
     }),
   };
@@ -1865,9 +1883,10 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       company: { select: { id: true, name: true } },
       autopartExportedBy: { select: { name: true, email: true } },
       autopartExportBatch: { select: { id: true, reference: true, filename: true, createdAt: true } },
+      archivedBy: { select: { name: true, email: true } },
     },
   });
-  if (!order) {
+  if (!order || (order.archivedAt && !profile.systemRoles.includes("SUPER_ADMIN"))) {
     throw new AuthError("Order not found", "ORDER_NOT_FOUND", 404);
   }
 
@@ -1908,6 +1927,9 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
     salesRepNameSnapshot: order.salesRepNameSnapshot,
     deliveryMethodLabel: order.deliveryMethodLabel,
     basketId: order.basketId,
+    archivedAt: order.archivedAt?.toISOString() ?? null,
+    archiveReason: order.archiveReason,
+    archivedByName: order.archivedBy?.name ?? order.archivedBy?.email ?? null,
     hasBackorderItems: orderContainsBackorder(order.items),
     hasOutstandingBackorder: summary.hasOutstandingBackorder,
     outstandingBackorderUnits: summary.outstandingBackorderUnits,
@@ -1989,6 +2011,7 @@ export async function listAdminBackorderLines(
       backorderQtyAtOrder: { gt: 0 },
       order: {
         ...companyFilter,
+        archivedAt: null,
         status: {
           in: ["SUBMITTED", "CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "ON_HOLD"],
         },

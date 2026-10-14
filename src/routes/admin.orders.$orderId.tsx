@@ -17,7 +17,9 @@ import {
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
 import { canOfferDispatchedTestOrderDelete } from "@/domain/delete-dispatched-test-order";
+import { canOfferArchiveTestOrder, canOfferRestoreTestOrder } from "@/domain/archive-test-order";
 import { DeleteDispatchedTestOrderDialog } from "@/components/orders/DeleteDispatchedTestOrderDialog";
+import { ArchiveTestOrderDialog, RestoreTestOrderDialog } from "@/components/orders/ArchiveTestOrderDialog";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -43,6 +45,8 @@ function AdminOrderDetailPage() {
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [testDeleteOpen, setTestDeleteOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
 
   const load = useCallback(async () => {
     const [orderResult, emailResult] = await Promise.all([
@@ -217,8 +221,53 @@ function AdminOrderDetailPage() {
                 Delete Test Order
               </button>
             ) : null}
+            {canOfferArchiveTestOrder({
+              systemRoles: session.signedIn ? session.user.systemRoles : [],
+              archivedAt: order.archivedAt,
+            }) ? (
+              <button
+                type="button"
+                onClick={() => setArchiveOpen(true)}
+                className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase tracking-wide"
+                data-admin-action="archive-test-order"
+              >
+                Archive Test Order
+              </button>
+            ) : null}
+            {canOfferRestoreTestOrder({
+              systemRoles: session.signedIn ? session.user.systemRoles : [],
+              archivedAt: order.archivedAt,
+            }) ? (
+              <button
+                type="button"
+                onClick={() => setRestoreOpen(true)}
+                className="h-9 rounded-md bg-primary px-3 text-[11px] font-bold uppercase tracking-wide text-primary-foreground"
+                data-admin-action="restore-test-order"
+              >
+                Restore Order
+              </button>
+            ) : null}
           </div>
         }
+      />
+      <ArchiveTestOrderDialog
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        orders={[{ id: order.id, orderNumber: order.orderNumber }]}
+        onArchived={() => {
+          toast.success(`Archived test order ${order.orderNumber}. Financial and fulfilment history is unchanged.`);
+          void load();
+        }}
+      />
+      <RestoreTestOrderDialog
+        open={restoreOpen}
+        onOpenChange={setRestoreOpen}
+        orderId={order.id}
+        orderNumber={order.orderNumber}
+        onRestored={() => {
+          toast.success(`Restored ${order.orderNumber} to the normal order list.`);
+          void load();
+        }}
       />
       <DeleteDispatchedTestOrderDialog
         open={testDeleteOpen}
@@ -236,6 +285,13 @@ function AdminOrderDetailPage() {
           void navigate({ to: ROUTES.adminOrders });
         }}
       />
+      {order.archivedAt ? (
+        <p className="mx-4 mt-4 rounded-md border border-border bg-surface px-4 py-3 text-[13px] sm:mx-6">
+          Archived test order on {formatDateTime(order.archivedAt)} by {order.archivedByName || "—"}.
+          {order.archiveReason ? ` Reason: ${order.archiveReason}.` : ""} Status remains {order.status}.
+          Invoices, credits, Autopart documents, and fulfilment history are unchanged.
+        </p>
+      ) : null}
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border p-5">
           <h2 className="font-display text-base font-semibold uppercase">Order summary</h2>

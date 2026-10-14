@@ -45,9 +45,10 @@ import { ROUTES } from "@/lib/app-nav";
 import { loadOperationalOverview, type OperationalOverview } from "@/server/admin/operational-overview";
 
 function orderCompanyScope(accessible: string[] | "all"): Prisma.OrderWhereInput {
-  if (accessible === "all") return {};
-  if (accessible.length === 0) return { companyId: { in: ["__none__"] } };
-  return { companyId: { in: accessible } };
+  const live = { archivedAt: null };
+  if (accessible === "all") return live;
+  if (accessible.length === 0) return { ...live, companyId: { in: ["__none__"] } };
+  return { ...live, companyId: { in: accessible } };
 }
 
 function decimalSumToMoneyString(value: unknown): string {

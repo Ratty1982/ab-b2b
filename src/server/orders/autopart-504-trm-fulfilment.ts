@@ -260,6 +260,7 @@ async function loadCandidateOrders(orderIds?: string[]) {
   const orders = await prisma.order.findMany({
     where: {
       AND: [
+        { archivedAt: null },
         where,
         {
           OR: [
@@ -416,6 +417,18 @@ async function applyEvaluation(
   evaluation: OrderFulfilmentEvaluation,
   actorUserId: string | null,
 ): Promise<{ mutated: boolean; emailsQueued: number }> {
+  const order = await prisma.order.findUnique({
+    where: { id: evaluation.orderId },
+    select: {
+      id: true,
+      companyId: true,
+      status: true,
+      orderNumber: true,
+      archivedAt: true,
+    },
+  });
+  if (!order || order.archivedAt) return { mutated: false, emailsQueued: 0 };
+
   if (!evaluation.canApply && !evaluation.overFulfilment && !evaluation.lineMatchReview) {
     for (const doc of evaluation.documents) {
       await prisma.autopartSalesDocument.update({
@@ -428,17 +441,6 @@ async function applyEvaluation(
     }
     return { mutated: false, emailsQueued: 0 };
   }
-
-  const order = await prisma.order.findUnique({
-    where: { id: evaluation.orderId },
-    select: {
-      id: true,
-      companyId: true,
-      status: true,
-      orderNumber: true,
-    },
-  });
-  if (!order) return { mutated: false, emailsQueued: 0 };
 
   const fingerprint = fulfilmentFingerprint(evaluation);
   const alreadySame = await prisma.autopartSalesDocument.findFirst({

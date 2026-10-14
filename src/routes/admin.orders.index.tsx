@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
 import { inputClass } from "@/components/ab/Drawer";
-import { formatDate } from "@/lib/datetime";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { customerOrderStatusLabel, customerOrderStatusTone } from "@/domain/order-status";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/server/phase2/fns";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
+import { ArchiveTestOrderDialog } from "@/components/orders/ArchiveTestOrderDialog";
 
 type ExportFilter = "ALL" | "READY" | "EXPORTED" | "BLOCKED";
 type BackorderFilter = "ALL" | "CONTAINS" | "FULL";
@@ -65,6 +66,7 @@ function AdminOrdersPage() {
     session.signedIn &&
     (session.user.navPermissions.includes("orders.edit") ||
       session.user.navPermissions.includes("admin.access"));
+  const isSuperAdmin = session.signedIn && session.user.systemRoles.includes("SUPER_ADMIN");
   const search = Route.useSearch();
   const [rows, setRows] = useState<Row[]>([]);
   const [backorderLines, setBackorderLines] = useState<BackorderLine[]>([]);
@@ -77,6 +79,8 @@ function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [archiveFilter, setArchiveFilter] = useState<"ACTIVE" | "ARCHIVED">("ACTIVE");
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
   const showBackorderOps = backorderFilter === "CONTAINS" || backorderFilter === "FULL";
 
@@ -94,6 +98,7 @@ function AdminOrdersPage() {
         q: q || undefined,
         autopartExport: exportFilter,
         backorders: backorderFilter,
+        ...(isSuperAdmin && archiveFilter === "ARCHIVED" ? { archive: "ARCHIVED" as const } : {}),
       },
     });
     if (!result.ok) {
@@ -121,7 +126,7 @@ function AdminOrdersPage() {
       setBackorderLines([]);
     }
     setLoading(false);
-  }, [q, exportFilter, backorderFilter, stockNowOnly]);
+  }, [q, exportFilter, backorderFilter, stockNowOnly, archiveFilter, isSuperAdmin]);
 
   useEffect(() => {
     void load();
@@ -319,6 +324,30 @@ function AdminOrdersPage() {
           >
             Re-export CSV
           </button>
+          {isSuperAdmin ? (
+            <label className="grid gap-1 text-[11px] font-semibold uppercase text-steel">
+              Orders
+              <select
+                value={archiveFilter}
+                onChange={(event) => setArchiveFilter(event.target.value as "ACTIVE" | "ARCHIVED")}
+                className={cn(inputClass, "min-w-[12rem]")}
+              >
+                <option value="ACTIVE">Active orders</option>
+                <option value="ARCHIVED">Archived Test Orders</option>
+              </select>
+            </label>
+          ) : null}
+          {isSuperAdmin && archiveFilter === "ACTIVE" ? (
+            <button
+              type="button"
+              disabled={selectedIds.length === 0}
+              onClick={() => setArchiveOpen(true)}
+              className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase disabled:opacity-50"
+              data-admin-action="archive-test-orders"
+            >
+              Archive selected ({selectedIds.length})
+            </button>
+          ) : null}
           {canDeleteOrders ? (
             <button
               type="button"
@@ -332,6 +361,19 @@ function AdminOrdersPage() {
           ) : null}
         </div>
         {previewNote ? <p className="mb-3 text-[12px] text-steel">{previewNote}</p> : null}
+        <ArchiveTestOrderDialog
+          open={archiveOpen}
+          onOpenChange={setArchiveOpen}
+          orders={rows
+            .filter((row) => selectedIds.includes(row.id))
+            .map((row) => ({ id: row.id, orderNumber: row.orderNumber }))}
+          onArchived={(orderNumbers) => {
+            toast.success(
+              `Archived ${orderNumbers.length} test order(s). They stay out of normal lists and sales statistics.`,
+            );
+            void load();
+          }}
+        />
         {loading ? <p className="text-[13px] text-steel">Loading…</p> : null}
         {showBackorderOps && !loading && backorderLines.length > 0 ? (
           <div className="mb-6">
@@ -463,6 +505,12 @@ function AdminOrdersPage() {
                         </StatusBadge>
                         {o.containsBackorder ? (
                           <StatusBadge tone="warn">{o.fullyBackordered ? "Full backorder" : "Backorder"}</StatusBadge>
+                        ) : null}
+                        {o.archivedAt ? (
+                          <p className="mt-1 max-w-xs text-[11px] text-steel">
+                            Archived {formatDateTime(o.archivedAt)} by {o.archivedByName || "—"}
+                            {o.archiveReason ? `. ${o.archiveReason}` : ""}
+                          </p>
                         ) : null}
                       </div>
                     </td>

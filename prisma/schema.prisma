@@ -540,6 +540,7 @@ model User {
   tradeAppsReviewed  TradeApplication[] @relation("ApplicationReviewer")
   autopartCodesVerified Company[]       @relation("AutopartCodeVerifier")
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
+  ordersArchived         Order[]        @relation("OrderArchivedBy")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
@@ -2078,10 +2079,15 @@ model Order {
   sourceQuoteId       String?
   sourceQuoteNumber   String?
   placedAt        DateTime?
+  /// Set when a Super Admin archives the order as test data. Status and financial history stay.
+  archivedAt       DateTime?
+  archivedByUserId String?
+  archiveReason    String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
   company      Company                 @relation(fields: [companyId], references: [id])
+  archivedBy   User?                   @relation("OrderArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
   items        OrderItem[]
   invoices     Invoice[]
   reservations OrderStockReservation[]
@@ -2098,6 +2104,7 @@ model Order {
   @@index([sourceQuoteId])
   @@index([placedByStaffUserId])
   @@index([entrySource])
+  @@index([archivedAt])
 }
 
 enum SalesOrderDraftStatus {

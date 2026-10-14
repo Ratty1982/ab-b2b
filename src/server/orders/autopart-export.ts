@@ -230,7 +230,7 @@ async function loadAccessibleOrders(userId: string, orderIds: string[]): Promise
       : { companyId: { in: accessible } };
 
   return prisma.order.findMany({
-    where: { id: { in: uniqueIds }, ...companyFilter },
+    where: { id: { in: uniqueIds }, archivedAt: null, ...companyFilter },
     include: {
       items: { orderBy: { id: "asc" } },
       company: { select: { id: true, name: true } },

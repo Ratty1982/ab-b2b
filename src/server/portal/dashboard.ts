@@ -115,9 +115,10 @@ function mapOrderRow(row: {
 export async function getPortalDashboard(userId: string) {
   const { membership, company } = await requireTradePortalCompany(userId);
 
-  const orderWhere = { companyId: company.id, status: { not: "DRAFT" as const } };
+  const orderWhere = { companyId: company.id, status: { not: "DRAFT" as const }, archivedAt: null };
   const openWhere = {
     companyId: company.id,
+    archivedAt: null,
     status: { in: [...OPEN_ORDER_STATUSES] },
   };
   const orderInclude = {
@@ -153,6 +154,7 @@ export async function getPortalDashboard(userId: string) {
       prisma.order.findMany({
         where: {
           companyId: company.id,
+          archivedAt: null,
           status: {
             in: ["SUBMITTED", "CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "ON_HOLD"],
           },

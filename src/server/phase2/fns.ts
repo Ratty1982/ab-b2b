@@ -3105,6 +3105,7 @@ export const listAdminOrdersFn = createServerFn({ method: "GET" })
             q?: string;
             autopartExport?: "READY" | "EXPORTED" | "BLOCKED" | "ALL";
             backorders?: "ALL" | "CONTAINS" | "FULL";
+            archive?: "ACTIVE" | "ARCHIVED";
           }
         | undefined,
   )
@@ -3172,6 +3173,52 @@ export const deleteDispatchedTestOrderFn = createServerFn({ method: "POST" })
       const userId = await requireUserId();
       const deletion = await import("@/server/orders/delete-dispatched-test-order");
       return { ok: true as const, data: await deletion.deleteDispatchedTestOrder(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewArchiveTestOrderFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { orderId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const archive = await import("@/server/orders/archive-test-order");
+      return { ok: true as const, data: await archive.previewArchiveTestOrder(userId, data.orderId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const archiveTestOrdersFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        orderIds: string[];
+        reason: string;
+        confirmTestData: boolean;
+        confirmOrderNumbers: string;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const archive = await import("@/server/orders/archive-test-order");
+      return { ok: true as const, data: await archive.archiveTestOrders(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const restoreTestOrderFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { orderId: string; confirmOrderNumber: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const archive = await import("@/server/orders/archive-test-order");
+      return { ok: true as const, data: await archive.restoreTestOrder(userId, data) };
     } catch (e) {
       return toError(e);
     }

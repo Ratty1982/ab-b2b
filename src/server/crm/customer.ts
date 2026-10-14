@@ -77,7 +77,7 @@ export async function getCompanyCrmWorkspace(actorUserId: string, raw: unknown) 
         },
       }),
       prisma.order.findMany({
-        where: { companyId },
+        where: { companyId, archivedAt: null },
         orderBy: { createdAt: "desc" },
         take: 5,
         select: {
