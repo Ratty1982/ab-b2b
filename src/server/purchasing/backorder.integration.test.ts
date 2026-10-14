@@ -1226,8 +1226,22 @@ describe("216V report chronology", () => {
       expect(workspace.freshness.filename).toBe(fridayName);
       expect(workspace.freshness.latestReportDate).toBe("2026-10-16");
       expect(workspace.current?.snapshotId).toBe(friday.id);
-      expect(workspace.freshness.warning).toContain("Saturday 2026-10-17");
-      expect(workspace.freshness.warning).toContain(saturdayName);
+      expect(workspace.freshness.warning).toMatch(
+        /^Review the report date(\s\([A-Za-z]+ \d{4}-\d{2}-\d{2}\))?\./,
+      );
+      expect(workspace.freshness.warning).not.toContain(saturdayName);
+      expect(workspace.freshness.warning).not.toContain("Scheduled reports arrive");
+      expect((workspace.freshness.warning ?? "").match(/Review the report date/g)).toHaveLength(1);
+      expect(workspace.freshness.warningDetails).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            filename: saturdayName,
+            observedDate: "2026-10-17",
+            weekday: "Saturday",
+            becameCurrent: false,
+          }),
+        ]),
+      );
 
       const saturdayAfternoon = new Date("2026-10-17T15:00:00.000Z");
       const weekend = resolveAutopart216vFreshness({

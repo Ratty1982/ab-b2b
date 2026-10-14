@@ -7,6 +7,7 @@ import {
   previous216vSnapshot,
   reportDateFrom216vFilename,
   resolveAutopart216vReportDate,
+  weekend216vImportDetail,
   weekend216vImportNotice,
 } from "@/domain/autopart-216v-report-date";
 
@@ -50,8 +51,17 @@ describe("216V report date", () => {
     expect(describe216vWeekendReportReview({ filename: "216V_20261010.csv", observedDate: resolved.iso })).toContain(
       "Saturday 2026-10-10",
     );
+    const notice = weekend216vImportNotice({
+      filename: "216V_20261010.csv",
+      observedDate: resolved.iso,
+      becameCurrent: false,
+    });
+    expect(notice).toBe(
+      "Review the report date (Saturday 2026-10-10). A weekend-dated file is on file. The weekday snapshot stays current.",
+    );
+    expect(notice).not.toContain("216V_20261010.csv");
     expect(
-      weekend216vImportNotice({ filename: "216V_20261010.csv", observedDate: resolved.iso, becameCurrent: false }),
+      weekend216vImportDetail({ filename: "216V_20261010.csv", observedDate: resolved.iso, becameCurrent: false }),
     ).toContain("Monday–Friday snapshot stays in place");
   });
 
