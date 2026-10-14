@@ -14,6 +14,7 @@ const hit: SalesOrderProductResult = {
   caseQty: 12,
   minOrderQty: 12,
   sellableQty: 48,
+  stockConfirmed: true,
   backordersAllowed: false,
   customerUnitPrice: "3.25",
   priceSource: "BASE",
@@ -38,5 +39,18 @@ describe("sales order product results", () => {
     expect(html).not.toMatch(/>Add</);
     expect(html).toContain("hover:bg-surface/80");
     expect(html).toContain("focus-visible:outline");
+    expect(html).toContain("Available to order: 48 units");
+  });
+
+  it("does not advertise unconfirmed stock as available", () => {
+    const html = renderToStaticMarkup(
+      createElement(SalesOrderProductResults, {
+        products: [{ ...hit, sellableQty: 200, stockConfirmed: false }],
+        disabled: false,
+        onSelect: () => undefined,
+      }),
+    );
+    expect(html).toContain("Stock not confirmed");
+    expect(html).not.toContain("Available to order: 200 units");
   });
 });

@@ -165,6 +165,7 @@ describe("sales order collection and blank quantities", () => {
       },
     ]);
     expect(rows.map((row) => row.extent)).toEqual(["PARTIAL", "FULL"]);
+    expect(rows[0]).toMatchObject({ sellableQty: null, stockConfirmed: false });
     expect(salesOrderAllocationChanged(undefined, { availableQtyAtOrder: 3, backorderQtyAtOrder: 2 })).toBe(true);
     expect(salesOrderAllocationChanged(undefined, { availableQtyAtOrder: 3, backorderQtyAtOrder: 0 })).toBe(false);
     expect(
@@ -173,5 +174,42 @@ describe("sales order collection and blank quantities", () => {
         { availableQtyAtOrder: 1, backorderQtyAtOrder: 4 },
       ),
     ).toBe(true);
+  });
+
+  it("keeps confirmed sellable stock separate from the allocated and backordered quantities", () => {
+    const [row] = salesOrderBackorderSummary([
+      {
+        variantId: cuid,
+        sku: "PART",
+        name: "Partial",
+        quantity: 12,
+        availableQtyAtOrder: 6,
+        backorderQtyAtOrder: 6,
+        sellableQty: 6,
+        stockConfirmed: true,
+      },
+    ]);
+    expect(row).toMatchObject({
+      orderedQty: 12,
+      availableQty: 6,
+      backorderQty: 6,
+      sellableQty: 6,
+      stockConfirmed: true,
+      extent: "PARTIAL",
+    });
+    const [stale] = salesOrderBackorderSummary([
+      {
+        variantId: cuid,
+        sku: "STALE",
+        name: "Stale",
+        quantity: 2,
+        availableQtyAtOrder: 0,
+        backorderQtyAtOrder: 2,
+        sellableQty: 200,
+        stockConfirmed: false,
+      },
+    ]);
+    expect(stale?.sellableQty).toBeNull();
+    expect(stale?.stockConfirmed).toBe(false);
   });
 });

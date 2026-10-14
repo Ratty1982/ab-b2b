@@ -27,7 +27,7 @@ import { getBasket } from "@/server/basket/service";
 import { resolveVariantTradePrices } from "@/server/pricing/resolve-trade-price";
 import { loadStockByVariantIds } from "@/server/stock/service";
 import { getGlobalBackorderPolicy } from "@/server/ordering/settings";
-import { trustedSellableForOrdering } from "@/server/ordering/policy";
+import { staffOrderStockAvailability } from "@/domain/staff-order-stock";
 import {
   allocateOrderLineQuantities,
   isEffectiveBackorderAllowed,
@@ -131,6 +131,13 @@ export type CheckoutReviewLine = {
   availableQtyAtOrder: number;
   backorderQtyAtOrder: number;
   backordersAllowed: boolean;
+  /**
+   * Trusted sellable stock for staff order entry. Absent on customer checkout.
+   * This is not the quantity allocated to the line.
+   */
+  sellableQty?: number;
+  /** False when Autopart stock is missing or stale. Absent on customer checkout. */
+  stockConfirmed?: boolean;
   /** True when this staff order line uses a price other than the customer trade price. */
   priceOverridden: boolean;
   /** Customer trade price before a staff override. */
@@ -372,6 +379,9 @@ export type ResolvedLine = {
   availableQtyAtOrder: number;
   backorderQtyAtOrder: number;
   backordersAllowed: boolean;
+  /** Trusted sellable for this line's ordering context. Independent of ordered quantity. */
+  sellableQty: number;
+  stockConfirmed: boolean;
   priceOverridden: boolean;
   resolvedCustomerUnit2dp: string;
 };
@@ -586,6 +596,12 @@ export type ResolveOrderLinesOptions = {
   staffUnitOrdering?: boolean;
   /** Order-only selling prices. Never written back to the customer price list. */
   unitPriceOverrides?: ReadonlyMap<string, string | null>;
+  /**
+   * ACTIVE units already reserved by the submitted order being edited.
+   * Added back so that order is not blocked by its own holds.
+   * Customer checkout must leave this unset.
+   */
+  ownActiveReservedByVariant?: ReadonlyMap<string, number>;
 };
 
 /**
@@ -672,10 +688,16 @@ export async function resolveOrderLinesFromItems(
       variantPolicy: variant.backorderPolicy,
     });
     const rawSellable = stock?.sellableQty ?? 0;
-    const sellableQty = trustedSellableForOrdering({ sellableQty: rawSellable, stale });
+    const staffStock = staffOrderStockAvailability({
+      freeSellableQty: rawSellable,
+      stale,
+      stockKnown: stock != null,
+      ownActiveReservedQty: options?.ownActiveReservedByVariant?.get(variant.id) ?? 0,
+    });
+    const sellableQty = staffStock.sellableQty;
     const orderableByStockPolicy = stock
       ? isOrderableByStockPolicy(
-          { sellableQty: rawSellable, stale, availability: stock.availability },
+          { sellableQty, stale, availability: stock.availability },
           backorderPolicy,
         )
       : isEffectiveBackorderAllowed(backorderPolicy);
@@ -822,6 +844,8 @@ export async function resolveOrderLinesFromItems(
       availableQtyAtOrder: allocation.availableQtyAtOrder,
       backorderQtyAtOrder: allocation.backorderQtyAtOrder,
       backordersAllowed: isEffectiveBackorderAllowed(backorderPolicy),
+      sellableQty,
+      stockConfirmed: staffStock.stockConfirmed,
       priceOverridden,
       resolvedCustomerUnit2dp,
     });
@@ -856,6 +880,8 @@ function unavailableLine(variantId: string, quantity: number): ResolvedLine {
     availableQtyAtOrder: 0,
     backorderQtyAtOrder: 0,
     backordersAllowed: false,
+    sellableQty: 0,
+    stockConfirmed: false,
     priceOverridden: false,
     resolvedCustomerUnit2dp: "0.00",
   };
@@ -880,29 +906,39 @@ async function resolveCheckoutLines(
   return { lines, basketId: basket.id, empty: false };
 }
 
-function linesToReviewLines(lines: ResolvedLine[]): CheckoutReviewLine[] {
-  return lines.map((line) => ({
-    variantId: line.variantId,
-    sku: line.sku,
-    name: line.name,
-    quantity: line.quantity,
-    caseQty: line.caseQty,
-    orderingMode: line.orderingMode,
-    customerUnitPrice: line.issue === "PRICE_UNAVAILABLE" ? null : line.customerUnit2dp,
-    customerUnitPriceDisplay: line.issue === "PRICE_UNAVAILABLE" ? null : line.customerUnit2dp,
-    lineNet: line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineNet2dp : null,
-    lineVat: line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineVat2dp : null,
-    lineGross: line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineGross2dp : null,
-    issue: line.issue,
-    issueMessage: line.issueMessage,
-    priceSource: line.priceSource === "NONE" ? null : line.priceSource,
-    promotionCode: line.promotionCode,
-    availableQtyAtOrder: line.availableQtyAtOrder,
-    backorderQtyAtOrder: line.backorderQtyAtOrder,
-    backordersAllowed: line.backordersAllowed,
-    priceOverridden: line.priceOverridden,
-    resolvedUnitPrice: line.issue === "PRICE_UNAVAILABLE" ? null : line.resolvedCustomerUnit2dp,
-  }));
+function linesToReviewLines(
+  lines: ResolvedLine[],
+  options?: { includeStaffStock?: boolean },
+): CheckoutReviewLine[] {
+  return lines.map((line) => {
+    const review: CheckoutReviewLine = {
+      variantId: line.variantId,
+      sku: line.sku,
+      name: line.name,
+      quantity: line.quantity,
+      caseQty: line.caseQty,
+      orderingMode: line.orderingMode,
+      customerUnitPrice: line.issue === "PRICE_UNAVAILABLE" ? null : line.customerUnit2dp,
+      customerUnitPriceDisplay: line.issue === "PRICE_UNAVAILABLE" ? null : line.customerUnit2dp,
+      lineNet: line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineNet2dp : null,
+      lineVat: line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineVat2dp : null,
+      lineGross: line.issue === "VALID" || line.issue === "PRICE_UPDATED" ? line.lineGross2dp : null,
+      issue: line.issue,
+      issueMessage: line.issueMessage,
+      priceSource: line.priceSource === "NONE" ? null : line.priceSource,
+      promotionCode: line.promotionCode,
+      availableQtyAtOrder: line.availableQtyAtOrder,
+      backorderQtyAtOrder: line.backorderQtyAtOrder,
+      backordersAllowed: line.backordersAllowed,
+      priceOverridden: line.priceOverridden,
+      resolvedUnitPrice: line.issue === "PRICE_UNAVAILABLE" ? null : line.resolvedCustomerUnit2dp,
+    };
+    if (options?.includeStaffStock) {
+      review.sellableQty = line.sellableQty;
+      review.stockConfirmed = line.stockConfirmed;
+    }
+    return review;
+  });
 }
 
 function backorderNoticeFromLines(lines: ResolvedLine[]): {
@@ -955,13 +991,15 @@ export function buildCheckoutReview(input: {
   poNumber: string | null;
   deliveryInstructions: string | null;
   fulfilmentChoice?: "DELIVERY" | "COLLECTION";
+  /** Include trusted sellable stock. Staff order entry only — never customer checkout. */
+  includeStaffStock?: boolean;
 }): CheckoutReview {
   const fulfilmentChoice = input.fulfilmentChoice ?? "DELIVERY";
   const backorderMeta = backorderNoticeFromLines(input.lines);
   return {
     companyId: input.company.id,
     companyName: input.company.name,
-    lines: linesToReviewLines(input.lines),
+    lines: linesToReviewLines(input.lines, { includeStaffStock: input.includeStaffStock === true }),
     totals: sumValidTotals(input.lines, input.company.taxStatus, { fulfilmentChoice }),
     hasBlockingIssues: hasBlocking(input.lines),
     hasBackorderItems: backorderMeta.hasBackorderItems,

@@ -107,9 +107,12 @@ export type SalesOrderBackorderRow = {
   sku: string;
   name: string;
   orderedQty: number;
+  /** Units allocated to this order line. */
   availableQty: number;
   backorderQty: number;
   extent: SalesOrderBackorderExtent;
+  sellableQty: number | null;
+  stockConfirmed: boolean;
 };
 
 /** Lines with a backorder remainder. Backordered units are not reserved stock. */
@@ -121,6 +124,8 @@ export function salesOrderBackorderSummary(
     quantity: number;
     availableQtyAtOrder: number;
     backorderQtyAtOrder: number;
+    sellableQty?: number;
+    stockConfirmed?: boolean;
   }>,
 ): SalesOrderBackorderRow[] {
   return lines
@@ -133,6 +138,8 @@ export function salesOrderBackorderSummary(
       availableQty: line.availableQtyAtOrder,
       backorderQty: line.backorderQtyAtOrder,
       extent: line.availableQtyAtOrder > 0 ? "PARTIAL" : "FULL",
+      sellableQty: line.stockConfirmed ? (line.sellableQty ?? null) : null,
+      stockConfirmed: line.stockConfirmed === true,
     }));
 }
 
@@ -251,6 +258,8 @@ export const salesOrderDraftIdSchema = z.object({
 export const salesOrderProductSearchSchema = z.object({
   companyId: z.string().cuid(),
   q: z.string().trim().min(1).max(80),
+  /** When set, stock includes ACTIVE reservations already held by the order this draft is editing. */
+  draftId: z.string().cuid().optional(),
 });
 
 /** Active-customer search for order entry. This is not the CRM customer list. */
