@@ -393,7 +393,7 @@ function StockOverviewPage() {
             />
           ) : (
             <>
-              <div className="max-w-full overflow-x-auto">
+              <div className="min-w-0 max-w-full overflow-x-auto">
                 <table className="w-full min-w-[980px] text-left text-[13px]">
                   <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
                     <tr>

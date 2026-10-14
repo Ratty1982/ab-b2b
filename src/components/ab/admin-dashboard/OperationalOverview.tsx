@@ -200,7 +200,7 @@ export function SalesTrendPanel({ sales }: { sales: NonNullable<Overview["sales"
                 type="button"
                 onClick={() => setRange(days)}
                 className={cn(
-                  "rounded-md px-2.5 py-1 text-[12px] font-semibold",
+                  "inline-flex min-h-11 items-center rounded-md px-2.5 text-[12px] font-semibold",
                   range === days ? "bg-primary text-primary-foreground" : "bg-surface-2 text-steel",
                 )}
               >
@@ -208,7 +208,7 @@ export function SalesTrendPanel({ sales }: { sales: NonNullable<Overview["sales"
               </button>
             ))}
           </div>
-          <div className="h-44 w-full text-primary">
+          <div className="h-44 w-full min-w-0 text-primary">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.15} />

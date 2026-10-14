@@ -162,7 +162,7 @@ export function StaffActivityPanel({
         <h4 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-steel">
           Security / login
         </h4>
-        <div className="mt-2 overflow-hidden rounded-md border border-border">
+        <div className="mt-2 min-w-0 overflow-x-auto rounded-md border border-border">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="border-b border-border bg-surface/50 text-left text-[10px] uppercase tracking-[0.12em] text-steel">
@@ -262,7 +262,7 @@ export function StaffActivityPanel({
           ) : null}
         </h4>
 
-        <div className="mt-2 overflow-hidden rounded-md border border-border">
+        <div className="mt-2 min-w-0 overflow-x-auto rounded-md border border-border">
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
               <tr className="border-b border-border bg-surface/50 text-left text-[10px] uppercase tracking-[0.12em] text-steel">

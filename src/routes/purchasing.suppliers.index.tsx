@@ -188,7 +188,7 @@ function SuppliersPage() {
         </p>
       ) : null}
       {data && data.suppliers.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-auto">
           <table className="w-full min-w-[960px] text-left text-[13px]">
             <thead className="border-b border-border text-[10px] uppercase tracking-wide text-steel">
               <tr>

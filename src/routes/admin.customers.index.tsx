@@ -124,7 +124,7 @@ function AdminCustomers() {
       />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
-        <div className="flex h-9 min-w-52 flex-1 items-center gap-2 rounded-md border border-border bg-surface px-3">
+        <div className="flex h-11 min-h-11 min-w-0 basis-full items-center gap-2 rounded-md border border-border bg-surface px-3 sm:basis-auto sm:min-w-52 sm:flex-1 lg:h-10 lg:min-h-10">
           <Search className="size-4 text-steel" aria-hidden />
           <input
             value={q}
@@ -136,7 +136,7 @@ function AdminCustomers() {
               }
             }}
             placeholder="Search name, account, email, VAT…"
-            className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-base outline-none lg:text-[13px]"
           />
         </div>
         <select
