@@ -2,7 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Metric, PanelHeader } from "@/components/ab/AppShell";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
+import { SurveyEditor } from "@/components/survey/SurveyEditor";
 import { formatStoredRating, type RatingField } from "@/domain/customer-survey";
+import { useSession } from "@/lib/session";
 import {
   deleteCustomerSurveyFn,
   exportCustomerSurveysFn,
@@ -12,6 +14,10 @@ import {
   importWordpressSurveysFn,
 } from "@/server/surveys/fns";
 import { toast } from "sonner";
+
+function shownRating(field: RatingField, value: number | null): string {
+  return value == null ? "—" : formatStoredRating(field, value);
+}
 
 export const Route = createFileRoute("/admin/customer-surveys")({
   head: () => ({ meta: [{ title: "Customer Surveys — Automotive Brands Admin" }] }),
@@ -34,6 +40,9 @@ async function loadDashboard(from: string, to: string) {
 }
 
 function CustomerSurveyAdminPage() {
+  const session = useSession();
+  const canManage = session.signedIn && session.user.navPermissions.includes("surveys.manage");
+  const [tab, setTab] = useState<"responses" | "questions" | "settings">("responses");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [data, setData] = useState<Dashboard | null>(null);
@@ -100,6 +109,39 @@ function CustomerSurveyAdminPage() {
           </div>
         }
       />
+      {canManage ? (
+        <div className="flex flex-wrap gap-2 border-b border-border px-4 sm:px-6">
+          {(
+            [
+              ["responses", "Responses"],
+              ["questions", "Edit Survey"],
+              ["settings", "Settings"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={`h-11 border-b-2 px-3 text-[11px] font-bold uppercase ${
+                tab === id ? "border-primary text-foreground" : "border-transparent text-muted-foreground"
+              }`}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {canManage && tab === "questions" ? (
+        <div className="px-4 py-5 sm:px-6">
+          <SurveyEditor mode="questions" />
+        </div>
+      ) : null}
+      {canManage && tab === "settings" ? (
+        <div className="px-4 py-5 sm:px-6">
+          <SurveyEditor mode="settings" />
+        </div>
+      ) : null}
+      {tab === "responses" || !canManage ? (
       <div className="space-y-6 px-4 py-5 sm:px-6">
         <form
           className="flex flex-wrap items-end gap-3"
@@ -157,6 +199,25 @@ function CustomerSurveyAdminPage() {
             </div>
             <p className="text-xs text-muted-foreground">{data.netPromoterScoreLabel}</p>
             <div className="grid gap-3 sm:grid-cols-2">
+              {data.dynamicRatings.length > 0 ? (
+                <div className="sm:col-span-2">
+                  <h2 className="font-display text-sm font-semibold uppercase">Additional ratings</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    These averages use the scale stored with each response.
+                  </p>
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    {data.dynamicRatings.map((rating) => (
+                      <div key={`${rating.questionId}-${rating.prompt}-${rating.scale}`} className="border border-border p-3 text-sm">
+                        <div className="font-semibold">{rating.prompt}</div>
+                        <div className="mt-1">
+                          {rating.average == null ? "—" : `${rating.average} (${rating.scale})`}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{rating.responses} scored answers</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {data.categories.map((category) => (
                 <div key={category.id} className="border border-border p-3 text-sm">
                   <div className="font-semibold">{category.label}</div>
@@ -269,13 +330,8 @@ function CustomerSurveyAdminPage() {
                   {data.items.map((row) => (
                     <tr key={row.id} className="border-b border-border/70">
                       <td className="py-2">{row.submittedAt.slice(0, 16).replace("T", " ")}</td>
-                      <td>{formatStoredRating("overallSatisfaction", row.overallSatisfaction)}</td>
-                      <td>
-                        {formatStoredRating(
-                          "recommendationScore" as RatingField,
-                          row.recommendationScore,
-                        )}
-                      </td>
+                      <td>{shownRating("overallSatisfaction", row.overallSatisfaction)}</td>
+                      <td>{shownRating("recommendationScore", row.recommendationScore)}</td>
                       <td>{row.contactPermission}</td>
                       <td>
                         {row.prizeDrawAccepted
@@ -312,6 +368,9 @@ function CustomerSurveyAdminPage() {
             {detail ? (
               <article className="border border-border p-4 text-sm">
                 <h2 className="font-semibold">{detail.reference}</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Survey version {detail.surveyVersionNumber ?? "—"}
+                </p>
                 <ul className="mt-3 space-y-2">
                   {detail.answers.map((answer) => (
                     <li key={`${answer.number}-${answer.prompt}`}>
@@ -372,6 +431,7 @@ function CustomerSurveyAdminPage() {
           </>
         ) : null}
       </div>
+      ) : null}
       <ConfirmAction
         open={deleteId != null}
         title="Delete survey submission"

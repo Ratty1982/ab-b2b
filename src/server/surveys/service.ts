@@ -5,7 +5,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { CustomerSurveyResponse, Prisma as PrismaTypes } from "@prisma/client";
-import { ZodError } from "zod";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import type { EmailAdapter } from "@/infra/email/types";
@@ -24,7 +23,6 @@ import {
   averageExcludingNa,
   averageRecommendation,
   buildSurveyCsv,
-  customerSurveySubmissionSchema,
   decidePrizeDrawEntry,
   formatStoredRating,
   londonDateTime,
@@ -37,10 +35,16 @@ import {
   prizeDrawCustomerMessage,
   salesHelpLabel,
   wordpressRating,
-  type CustomerSurveySubmission,
   type PrizeDrawDecision,
   type RatingField,
 } from "@/domain/customer-survey";
+import {
+  displayStoredAnswer,
+  dynamicRatingReports,
+  interpretSurveySubmission,
+  type SurveyAnswerSnapshot,
+} from "@/domain/survey-definition";
+import { ensureSurveyConfig } from "@/server/surveys/definition";
 
 const CLAIM_EMAIL = "EMAIL";
 const CLAIM_BUSINESS = "BUSINESS";
@@ -72,15 +76,6 @@ const listSchema = z.object({
 
 function digest(value: string): string {
   return createHash("sha256").update(`ab-customer-survey:v1:${value}`).digest("hex");
-}
-
-function fieldErrors(error: ZodError): Record<string, string> {
-  const errors: Record<string, string> = {};
-  for (const issue of error.issues) {
-    const key = issue.path[0];
-    if (typeof key === "string" && !errors[key]) errors[key] = issue.message;
-  }
-  return errors;
 }
 
 function submittedAtFilter(from?: string, to?: string): PrismaTypes.DateTimeFilter | undefined {
@@ -128,32 +123,8 @@ async function createReference(): Promise<string> {
   return `CS-${randomBytes(8).toString("hex").toUpperCase()}`;
 }
 
-function ratingData(input: CustomerSurveySubmission): Record<RatingField, number> {
-  return {
-    overallSatisfaction: input.overallSatisfaction,
-    recommendationScore: input.recommendationScore,
-    productQuality: input.productQuality,
-    productConsistency: input.productConsistency,
-    productRange: input.productRange,
-    productShelfAppearance: input.productShelfAppearance,
-    customerService: input.customerService,
-    marketingSupport: input.marketingSupport,
-    marketingChannelWebsite: input.marketingChannelWebsite,
-    marketingChannelSocial: input.marketingChannelSocial,
-    marketingChannelPos: input.marketingChannelPos,
-    marketingChannelCampaigns: input.marketingChannelCampaigns,
-    marketingChannelMedia: input.marketingChannelMedia,
-    communication: input.communication,
-    responseTime: input.responseTime,
-    complaintHandling: input.complaintHandling,
-    orderingDelivery: input.orderingDelivery,
-    orderAccuracy: input.orderAccuracy,
-    packagingCondition: input.packagingCondition,
-    speedDelivery: input.speedDelivery,
-    documentation: input.documentation,
-    environmentalImportance: input.environmentalImportance,
-    environmentalRating: input.environmentalRating,
-  };
+function isAnswerSnapshot(value: unknown): value is SurveyAnswerSnapshot[] {
+  return Array.isArray(value) && value.every((item) => item && typeof item === "object" && "questionId" in item);
 }
 
 export async function submitCustomerSurvey(
@@ -161,16 +132,17 @@ export async function submitCustomerSurvey(
   ctx: { ip: string | null; now?: Date },
   adapter?: EmailAdapter,
 ): Promise<SurveySubmitResult> {
-  const parsed = customerSurveySubmissionSchema.safeParse(raw);
-  if (!parsed.success) {
+  const published = await ensureSurveyConfig();
+  const interpreted = interpretSurveySubmission(published.published.document, raw);
+  if (!interpreted.ok) {
     return {
       ok: false,
-      error: "Please complete all required questions before submitting the survey.",
-      code: "VALIDATION",
-      fieldErrors: fieldErrors(parsed.error),
+      error: interpreted.error,
+      code: interpreted.code,
+      ...(interpreted.fieldErrors ? { fieldErrors: interpreted.fieldErrors } : {}),
     };
   }
-  const input = parsed.data;
+  const input = interpreted.submission;
   if (input.website.trim()) {
     return {
       ok: true,
@@ -258,7 +230,7 @@ export async function submitCustomerSurvey(
           idempotencyKey: input.idempotencyKey,
           submissionTokenHash: tokenHash,
           ipHash,
-          ...ratingData(input),
+          ...input.ratings,
           salesHelpOptions: normaliseSalesHelp(input.salesHelpOptions),
           doWell: input.doWell,
           couldImprove: input.couldImprove,
@@ -280,6 +252,8 @@ export async function submitCustomerSurvey(
           eligibilityDeclarationsHeld: decision.accepted,
           ackEmailStatus: email ? "PENDING" : "NOT_REQUIRED",
           internalEmailStatus: "PENDING",
+          surveyVersionId: published.published.id,
+          answerSnapshot: input.snapshots as unknown as Prisma.InputJsonValue,
         },
       });
 
@@ -389,6 +363,7 @@ export async function getCustomerSurveyDashboard(actorUserId: string, raw: unkno
         prizeDrawRequested: true,
         prizeDrawAccepted: true,
         contactPermission: true,
+        answerSnapshot: true,
         ...Object.fromEntries(RATING_FIELDS.map((field) => [field, true])),
       },
     }),
@@ -448,7 +423,9 @@ export async function getCustomerSurveyDashboard(actorUserId: string, raw: unkno
     };
   });
 
-  const recommendation = rows.map((row) => row.recommendationScore);
+  const recommendation = rows
+    .map((row) => row.recommendationScore)
+    .filter((score): score is number => typeof score === "number");
   const trends = new Map<string, number>();
   for (const row of rows) {
     const stamp = londonTimestamp(row.submittedAt).slice(0, 8);
@@ -492,6 +469,9 @@ export async function getCustomerSurveyDashboard(actorUserId: string, raw: unkno
     netPromoterScore: netPromoterScore(recommendation),
     netPromoterScoreLabel:
       "Promoters (9–10) minus detractors (0–6), as a percentage of scored responses. This is separate from the average recommendation score.",
+    dynamicRatings: dynamicRatingReports(
+      rows.map((row) => (isAnswerSnapshot(row.answerSnapshot) ? row.answerSnapshot : [])),
+    ),
     categories,
     trends: [...trends.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -516,13 +496,23 @@ export async function getCustomerSurveyResponse(actorUserId: string, id: string)
   await requireSystemPermission(actorUserId, "surveys.view");
   const row = await prisma.customerSurveyResponse.findUnique({ where: { id } });
   if (!row) throw new AuthError("Survey response not found", "NOT_FOUND", 404);
-  const answers = SURVEY_QUESTIONS.filter((question) => question.kind === "rating").map(
-    (question) => ({
-      number: question.number,
-      prompt: question.prompt,
-      value: formatStoredRating(question.field, row[question.field]),
-    }),
-  );
+  const version = row.surveyVersionId
+    ? await prisma.customerSurveyVersion.findUnique({
+        where: { id: row.surveyVersionId },
+        select: { versionNumber: true },
+      })
+    : null;
+  const answers = isAnswerSnapshot(row.answerSnapshot)
+    ? row.answerSnapshot.map((answer) => ({
+        number: answer.number,
+        prompt: answer.prompt,
+        value: displayStoredAnswer(answer),
+      }))
+    : SURVEY_QUESTIONS.filter((question) => question.kind === "rating").map((question) => ({
+        number: question.number,
+        prompt: question.prompt,
+        value: formatStoredRating(question.field, row[question.field] ?? 0),
+      }));
   const help = Array.isArray(row.salesHelpOptions)
     ? row.salesHelpOptions.filter((value): value is string => typeof value === "string")
     : [];
@@ -531,6 +521,7 @@ export async function getCustomerSurveyResponse(actorUserId: string, id: string)
     reference: row.reference,
     submittedAt: row.submittedAt.toISOString(),
     source: row.source,
+    surveyVersionNumber: version?.versionNumber ?? null,
     legacyWordpressId: row.legacyWordpressId,
     answers,
     salesHelp: help.map(salesHelpLabel),
@@ -581,7 +572,7 @@ function exportRows(rows: CustomerSurveyResponse[]) {
     return [
       row.legacyWordpressId ?? "",
       row.submittedAt.toISOString(),
-      ...Object.values(WP_RATING_COLUMNS).map((field) => row[field]),
+      ...Object.values(WP_RATING_COLUMNS).map((field) => row[field] ?? ""),
       JSON.stringify(help),
       row.doWell,
       row.couldImprove,
@@ -674,6 +665,11 @@ export async function importWordpressSurveyCsv(actorUserId: string, csv: string)
   let imported = 0;
   let skipped = 0;
   let invalid = 0;
+  const versionOne = await prisma.customerSurveyVersion.findFirst({
+    where: { versionNumber: 1, status: "PUBLISHED" },
+    select: { id: true },
+  });
+  const versionOneId = versionOne?.id ?? (await ensureSurveyConfig()).published.id;
 
   for (const record of parsed.rows) {
     const cell = (key: string) => record[key] ?? "";
@@ -736,6 +732,7 @@ export async function importWordpressSurveyCsv(actorUserId: string, csv: string)
         submittedAt,
         source: "WORDPRESS_IMPORT",
         legacyWordpressId: legacyId,
+        surveyVersionId: versionOneId,
         ...(ratings as Record<RatingField, number>),
         salesHelpOptions: normaliseSalesHelp(help),
         doWell: cell("do_well").slice(0, 4000),

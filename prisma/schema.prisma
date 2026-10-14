@@ -3663,30 +3663,37 @@ model CustomerSurveyResponse {
   submissionTokenHash String?
   ipHash    String?
 
-  overallSatisfaction     Int
-  recommendationScore     Int
-  productQuality          Int
-  productConsistency      Int
-  productRange            Int
-  productShelfAppearance  Int
-  customerService         Int
-  marketingSupport        Int
-  marketingChannelWebsite Int
-  marketingChannelSocial  Int
-  marketingChannelPos     Int
-  marketingChannelCampaigns Int
-  marketingChannelMedia   Int
+  /// Null when this response's survey version does not use the original scale.
+  overallSatisfaction     Int?
+  recommendationScore     Int?
+  productQuality          Int?
+  productConsistency      Int?
+  productRange            Int?
+  productShelfAppearance  Int?
+  customerService         Int?
+  marketingSupport        Int?
+  marketingChannelWebsite Int?
+  marketingChannelSocial  Int?
+  marketingChannelPos     Int?
+  marketingChannelCampaigns Int?
+  marketingChannelMedia   Int?
   salesHelpOptions        Json
-  communication           Int
-  responseTime            Int
-  complaintHandling       Int
-  orderingDelivery        Int
-  orderAccuracy           Int
-  packagingCondition      Int
-  speedDelivery           Int
-  documentation           Int
-  environmentalImportance Int
-  environmentalRating     Int
+  communication           Int?
+  responseTime            Int?
+  complaintHandling       Int?
+  orderingDelivery        Int?
+  orderAccuracy           Int?
+  packagingCondition      Int?
+  speedDelivery           Int?
+  documentation           Int?
+  environmentalImportance Int?
+  environmentalRating     Int?
+
+  /// Published survey version this response belongs to. Wording comes from that version.
+  surveyVersionId String?
+  /// Question wording, scale and answer frozen at submission. Reports must use this, not a later draft.
+  answerSnapshot  Json?
+  surveyVersion   CustomerSurveyVersion? @relation(fields: [surveyVersionId], references: [id])
 
   doWell             String @default("")
   couldImprove       String @default("")
@@ -3726,6 +3733,30 @@ model CustomerSurveyResponse {
   @@index([businessNameNormalized])
   @@index([submissionTokenHash])
   @@index([ipHash, submittedAt])
+  @@index([surveyVersionId])
+}
+
+enum CustomerSurveyVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// Immutable published survey versions, plus one editable draft.
+/// The single DRAFT row is enforced by partial unique index CustomerSurveyVersion_one_draft
+/// (migration 20261014020000). Do not drop that index to match this schema.
+model CustomerSurveyVersion {
+  id                String                       @id @default(cuid())
+  versionNumber     Int?                         @unique
+  status            CustomerSurveyVersionStatus
+  document          Json
+  publishedAt       DateTime?
+  publishedByUserId String?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  responses CustomerSurveyResponse[]
+
+  @@index([status])
 }
 
 /// One accepted prize-draw claim per email and per business name.

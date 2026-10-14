@@ -13,6 +13,7 @@ import {
   type SalesHelpValue,
   type SurveyQuestion,
 } from "@/domain/customer-survey";
+import { SURVEY_PRIVACY_PARAGRAPHS } from "@/domain/survey-definition";
 import { submitCustomerSurveyFn } from "@/server/surveys/fns";
 import { cn } from "@/lib/utils";
 
@@ -47,7 +48,20 @@ function questionAnswered(
   return true;
 }
 
-export function CustomerSurveyForm({ prizeDrawOpen }: { prizeDrawOpen: boolean }) {
+export function CustomerSurveyForm({
+  prizeDrawOpen,
+  thankYouTitle = "Thank you for your feedback",
+  thankYouParagraphs = [
+    "We really appreciate you taking the time to share your experience with Automotive Brands.",
+    "Your feedback helps us understand what we are doing well and where we can continue to improve.",
+  ],
+  preview = false,
+}: {
+  prizeDrawOpen: boolean;
+  thankYouTitle?: string;
+  thankYouParagraphs?: string[];
+  preview?: boolean;
+}) {
   const [answers, setAnswers] = useState<AnswerState>({});
   const [salesHelp, setSalesHelp] = useState<SalesHelpValue[]>([]);
   const [name, setName] = useState("");
@@ -94,6 +108,10 @@ export function CustomerSurveyForm({ prizeDrawOpen }: { prizeDrawOpen: boolean }
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (preview) {
+      setError("This is a preview. Responses are not saved.");
+      return;
+    }
     if (submitting || done) return;
     setError(null);
     setFieldErrors({});
@@ -169,14 +187,12 @@ export function CustomerSurveyForm({ prizeDrawOpen }: { prizeDrawOpen: boolean }
         <p className="text-3xl text-primary" aria-hidden="true">
           ✓
         </p>
-        <h2 className="mt-3 font-display text-2xl font-semibold">Thank you for your feedback</h2>
-        <p className="mt-3 text-sm text-muted-foreground">
-          We really appreciate you taking the time to share your experience with Automotive Brands.
-        </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Your feedback helps us understand what we are doing well and where we can continue to
-          improve.
-        </p>
+        <h2 className="mt-3 font-display text-2xl font-semibold">{thankYouTitle}</h2>
+        {thankYouParagraphs.map((paragraph) => (
+          <p key={paragraph} className="mt-3 text-sm text-muted-foreground">
+            {paragraph}
+          </p>
+        ))}
         {done.reference ? (
           <p className="mt-4 text-sm">
             Survey reference <strong>{done.reference}</strong>
@@ -357,14 +373,11 @@ export function CustomerSurveyForm({ prizeDrawOpen }: { prizeDrawOpen: boolean }
       ) : null}
 
       <div className="text-sm text-muted-foreground">
-        <p>
-          Your feedback will be used by Automotive Brands Ltd for customer satisfaction monitoring,
-          business improvement and our quality and environmental management systems.
-        </p>
-        <p className="mt-2">
-          You do not need to provide your contact details unless you would like us to contact you
-          about your feedback.
-        </p>
+        {SURVEY_PRIVACY_PARAGRAPHS.map((paragraph) => (
+          <p key={paragraph} className="mt-2 first:mt-0">
+            {paragraph}
+          </p>
+        ))}
       </div>
 
       {error ? (
@@ -383,7 +396,7 @@ export function CustomerSurveyForm({ prizeDrawOpen }: { prizeDrawOpen: boolean }
         disabled={submitting}
         className="inline-flex min-h-11 items-center rounded-md bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
       >
-        {submitting ? "Submitting..." : "Submit My Feedback"}
+        {submitting ? "Submitting..." : preview ? "Preview only" : "Submit My Feedback"}
       </button>
     </form>
   );

@@ -98,6 +98,8 @@ export const PERMISSIONS = [
   "surveys.export",
   "surveys.delete",
   "surveys.import",
+  /// Edit and publish the customer survey. Management and Super Admin only.
+  "surveys.manage",
 
   "users.view",
   "users.manage",

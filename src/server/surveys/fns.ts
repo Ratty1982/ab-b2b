@@ -4,6 +4,13 @@ import { ZodError } from "zod";
 import { auth } from "@/infra/auth";
 import { AuthError } from "@/server/rbac/guards";
 import {
+  getPublicSurvey,
+  getSurveyEditor,
+  previewSurveyDocument,
+  publishSurveyDraft,
+  saveSurveyDraft,
+} from "@/server/surveys/definition";
+import {
   deleteCustomerSurveyResponse,
   exportCustomerSurveysCsv,
   exportPrizeDrawEntriesCsv,
@@ -116,3 +123,51 @@ export const importWordpressSurveysFn = createServerFn({ method: "POST" })
       return toError(error);
     }
   });
+
+export const getPublicCustomerSurveyFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    return { ok: true as const, data: await getPublicSurvey() };
+  } catch (error) {
+    return toError(error);
+  }
+});
+
+export const getSurveyEditorFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await getSurveyEditor(userId) };
+  } catch (error) {
+    return toError(error);
+  }
+});
+
+export const previewSurveyDocumentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await previewSurveyDocument(userId, data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const saveSurveyDraftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await saveSurveyDraft(userId, data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const publishSurveyDraftFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await publishSurveyDraft(userId) };
+  } catch (error) {
+    return toError(error);
+  }
+});

@@ -80,7 +80,19 @@ export async function deliverSurveyEmails(
 
   let internalStatus: SurveyEmailDeliveryStatus = row.internalEmailStatus;
   let internalSentAt = row.internalEmailSentAt;
-  if (row.internalEmailStatus !== "SENT") {
+  const version = row.surveyVersionId
+    ? await prisma.customerSurveyVersion.findUnique({
+        where: { id: row.surveyVersionId },
+        select: { document: true },
+      })
+    : null;
+  const notify =
+    !version ||
+    !version.document ||
+    typeof version.document !== "object" ||
+    Array.isArray(version.document) ||
+    (version.document as { notifyOnSubmission?: boolean }).notifyOnSubmission !== false;
+  if (row.internalEmailStatus !== "SENT" && notify) {
     const recipients = await surveyRecipients();
     if (recipients.length === 0) {
       internalStatus = "NO_RECIPIENT";
@@ -89,8 +101,11 @@ export async function deliverSurveyEmails(
         {
           reference: row.reference,
           submittedAtLabel,
-          overall: formatStoredRating("overallSatisfaction", row.overallSatisfaction),
-          recommendation: formatStoredRating("recommendationScore", row.recommendationScore),
+          overall: row.overallSatisfaction == null ? "—" : formatStoredRating("overallSatisfaction", row.overallSatisfaction),
+          recommendation:
+            row.recommendationScore == null
+              ? "—"
+              : formatStoredRating("recommendationScore", row.recommendationScore),
           doWell: row.doWell,
           couldImprove: row.couldImprove,
           productRequests: row.productRequests,
@@ -133,6 +148,8 @@ export async function deliverSurveyEmails(
           : "PENDING";
       internalSentAt = internalStatus === "SENT" ? sentAt : null;
     }
+  } else if (row.internalEmailStatus !== "SENT") {
+    internalStatus = "NOT_REQUIRED";
   }
 
   await prisma.customerSurveyResponse.update({

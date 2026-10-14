@@ -55,6 +55,7 @@ const MANAGEMENT_PERMS: PermissionKey[] = [
   "surveys.export",
   "surveys.delete",
   "surveys.import",
+  "surveys.manage",
   "audit.view",
   "settings.view",
   "settings.edit",
