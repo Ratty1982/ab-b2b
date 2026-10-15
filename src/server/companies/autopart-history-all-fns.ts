@@ -3,7 +3,13 @@ import { getRequestHeaders } from "@tanstack/react-start/server";
 import { formatZodError } from "@/domain/cms";
 import { auth } from "@/infra/auth";
 import { AuthError } from "@/server/rbac/guards";
-import { getHistoricAllImport, listOpenHistoricReviews } from "@/server/companies/autopart-history-all";
+import {
+  getHistoricAllImport,
+  historicMatchingReadiness,
+  listHistoricReviews,
+  searchCompaniesForHistoricVerify,
+  verifyHistoricReviewAccount,
+} from "@/server/companies/autopart-history-all";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -30,11 +36,41 @@ export const getHistoricAllImportFn = createServerFn({ method: "GET" })
     }
   });
 
-export const listOpenHistoricReviewsFn = createServerFn({ method: "GET" })
+export const listHistoricReviewsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data ?? {})
+  .handler(async ({ data }) => {
+    try {
+      return { ok: true as const, data: await listHistoricReviews(await requireUserId(), data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const historicMatchingReadinessFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data ?? {})
   .handler(async () => {
     try {
-      return { ok: true as const, data: await listOpenHistoricReviews(await requireUserId()) };
+      return { ok: true as const, data: await historicMatchingReadiness(await requireUserId()) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const searchCompaniesForHistoricVerifyFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { query: string })
+  .handler(async ({ data }) => {
+    try {
+      return { ok: true as const, data: await searchCompaniesForHistoricVerify(await requireUserId(), data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const verifyHistoricReviewAccountFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      return { ok: true as const, data: await verifyHistoricReviewAccount(await requireUserId(), data) };
     } catch (error) {
       return toError(error);
     }

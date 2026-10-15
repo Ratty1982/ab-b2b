@@ -158,7 +158,19 @@ Stock **imports** at **09:15, 12:15, 15:15, 18:15 Europe/London**. See [docs/aut
 
 Migration `20261008202311_autopart_customer_master` is additive. The entrypoint `prisma migrate deploy` applies it. Bootstrap upserts the `autopart.*` permissions. Deploy does **not** import 407EXP, 561L, or SLRB, and it does **not** enable historical access or create portal users.
 
-Leave `AUTOPART_PORTAL_HISTORY_ENABLED` unset or `false`. Optional `AUTOPART_IMPORT_MAX_BYTES` defaults to 262144000 (250 MB). Optional `AUTOPART_IMPORT_DIR` overrides the private upload directory.
+Leave `AUTOPART_PORTAL_HISTORY_ENABLED` unset or `false`. Optional `AUTOPART_IMPORT_MAX_BYTES` defaults to 262144000 (250 MB).
+
+## Historical ALL-file storage
+
+`561L-ALL` and `SLRB-ALL` uploads are hashed before they are decoded. The database stores the SHA-256, encoding, and private path. The original bytes are not committed to Git and are not stored in the database body.
+
+Set `AUTOPART_IMPORT_DIR` to a directory that exists only on a Coolify persistent volume, for example `/data/autopart-imports`. Mount that path on the application service so a redeploy or container replacement keeps the files. Without `AUTOPART_IMPORT_DIR`, files are written under the container working directory and disappear on the next deploy. Do not point it at `public/`.
+
+Run one application replica for this import. A second replica must not start another historical import while the first is running. The import row holds `lockOwner` and `heartbeatAt`. A container restart leaves that row `PROCESSING` until the heartbeat is older than three minutes or the owning process is gone; the next import request marks it `FAILED` and recoverable. Replay the stored files. Do not mark that interrupted import successful.
+
+Do not run the historical sales reset during deploy. A Coolify backup still needs an independent restore onto a different database, and a dry-run against the database that will actually be reset, before anyone types `RESET HISTORICAL SALES`.
+
+The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/history-all`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. Preview and commit return after the request is accepted; the multi-minute write continues in the application process.
 
 The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/upload`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. A confirmed import continues in the Node process after the confirm request returns, so the proxy timeout applies to the upload and the confirm call, not to the whole multi-minute write.
 

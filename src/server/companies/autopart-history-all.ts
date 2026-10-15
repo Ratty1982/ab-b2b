@@ -8,6 +8,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import { finished } from "node:stream/promises";
@@ -26,6 +27,13 @@ import {
   type HistoricAccountDirectory,
   type HistoricAccountTarget,
 } from "@/domain/historic-all-file";
+import { describeDatabaseUrl } from "@/domain/customer-data-reset";
+import {
+  describeHistoricEnvironment,
+  describeHistoricStorage,
+  HISTORIC_IMPORT_STALE_MS,
+  importLockIsAbandoned,
+} from "@/domain/historic-runtime";
 import { mapSlrbDocumentType } from "@/domain/autopart-slrb";
 import { parseAutopartDateOnly } from "@/domain/autopart-report-money";
 import { prisma } from "@/infra/database/client";
@@ -35,6 +43,7 @@ import {
   autopartImportRoot,
 } from "@/server/companies/autopart-master-import";
 import {
+  clearMatchedHistoricComparisons,
   closeHistoricAccountWrite,
   openHistoricAccountWrite,
   stampHistoricDocumentComparison,
@@ -43,6 +52,10 @@ import {
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 
 export const HISTORIC_SNAPSHOT_RETIRE_PHRASE = "RETIRE ABSENT HISTORICAL DOCUMENTS";
+export const HISTORIC_VERIFY_PHRASE = "VERIFY HISTORIC ACCOUNT";
+
+const PROCESS_LOCK_OWNER = `${os.hostname()}:${process.pid}:${randomUUID()}`;
+let activeImportId: string | null = null;
 
 const ONGOING_SOURCES = ["ONGOING_504", "ONGOING_TRM21QC", "ONGOING_504_BRIDGE"] as const;
 const BATCH = 500;
@@ -55,6 +68,97 @@ async function failSupersededAccountRuns(importId: string) {
       diagnostics: { path: ["allImportId"], equals: importId },
     },
     data: { status: "FAILED", completedAt: new Date() },
+  });
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function holdProcessLock(importId: string) {
+  if (activeImportId && activeImportId !== importId) {
+    throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
+  }
+  activeImportId = importId;
+}
+
+function releaseProcessLock(importId: string) {
+  if (activeImportId === importId) activeImportId = null;
+}
+
+export async function recoverAbandonedHistoricImports() {
+  const rows = await prisma.autopartHistoryAllImport.findMany({
+    where: { status: "PROCESSING" },
+    select: { id: true, lockOwner: true, heartbeatAt: true },
+  });
+  const now = Date.now();
+  const staleIds = rows
+    .filter((row) =>
+      importLockIsAbandoned(row.lockOwner, row.heartbeatAt, now, { hostname: os.hostname(), pidAlive }),
+    )
+    .map((row) => row.id);
+  if (!staleIds.length) return 0;
+  await prisma.autopartHistoryAllImport.updateMany({
+    where: { id: { in: staleIds }, status: "PROCESSING" },
+    data: {
+      status: "FAILED",
+      completedAt: new Date(),
+      lockOwner: null,
+      summary: {
+        recoverable: true,
+        interrupted: true,
+        message: "The import stopped before it finished. Replay the stored files. Incomplete history was not marked successful.",
+      },
+    },
+  });
+  for (const importId of staleIds) await failSupersededAccountRuns(importId);
+  return staleIds.length;
+}
+
+export async function claimHistoricImport(importId: string): Promise<"claimed" | "busy" | "missing" | "committed"> {
+  await recoverAbandonedHistoricImports();
+  const freshAfter = new Date(Date.now() - HISTORIC_IMPORT_STALE_MS);
+  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+    UPDATE "AutopartHistoryAllImport" AS target
+    SET status = 'PROCESSING'::"AutopartCustomerImportStatus",
+        "lockOwner" = ${PROCESS_LOCK_OWNER},
+        "heartbeatAt" = NOW(),
+        "completedAt" = NULL
+    WHERE target.id = ${importId}
+      AND (
+        target.status IN ('PREVIEWED'::"AutopartCustomerImportStatus", 'FAILED'::"AutopartCustomerImportStatus")
+        OR (
+          target.status = 'PROCESSING'::"AutopartCustomerImportStatus"
+          AND (target."lockOwner" IS NULL OR target."lockOwner" = ${PROCESS_LOCK_OWNER})
+        )
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "AutopartHistoryAllImport" other
+        WHERE other.status = 'PROCESSING'::"AutopartCustomerImportStatus"
+          AND other.id <> target.id
+          AND other."heartbeatAt" > ${freshAfter}
+      )
+    RETURNING target.id
+  `;
+  if (claimed.length) return "claimed";
+  const existing = await prisma.autopartHistoryAllImport.findUnique({
+    where: { id: importId },
+    select: { status: true },
+  });
+  if (!existing) return "missing";
+  if (existing.status === "COMMITTED") return "committed";
+  return "busy";
+}
+
+async function touchHistoricHeartbeat(importId: string) {
+  await prisma.autopartHistoryAllImport.update({
+    where: { id: importId },
+    data: { heartbeatAt: new Date(), lockOwner: PROCESS_LOCK_OWNER },
   });
 }
 
@@ -167,10 +271,28 @@ export async function previewStoredHistoricImport(actorUserId: string, importId:
   if (!row?.storagePath561l || !row.storagePathSlrb || !row.encoding561l || !row.encodingSlrb) {
     throw new AuthError("Upload both the 561L-ALL and SLRB-ALL files before preview", "VALIDATION", 400);
   }
-  const summary = await scanPair(
+  const summary = await summariseHistoricFiles(
     { path: row.storagePath561l, encoding: row.encoding561l as "utf-8" | "windows-1252" },
     { path: row.storagePathSlrb, encoding: row.encodingSlrb as "utf-8" | "windows-1252" },
   );
+  if (row.status !== "COMMITTED" && row.status !== "PROCESSING") {
+    await prisma.autopartHistoryAllImport.update({
+      where: { id: importId },
+      data: {
+        status: "PREVIEWED",
+        parsed561l: summary.parsed561,
+        parsedSlrb: summary.parsedSlrb,
+        malformed561l: summary.malformed561,
+        malformedSlrb: summary.malformedSlrb,
+        excludedLedger: summary.excludedLedger,
+        accountsRead: summary.matchedAccounts + summary.unmatchedAccounts,
+        accountsCommitted: summary.matchedAccounts,
+        accountsReviewed: summary.unmatchedAccounts,
+        discrepancyCount: summary.discrepancyCount,
+        summary: summary as Prisma.InputJsonValue,
+      },
+    });
+  }
   return summary;
 }
 
@@ -190,7 +312,7 @@ export async function confirmAllHistoricImport(actorUserId: string, raw: unknown
   ]);
   const created = await prisma.autopartHistoryAllImport.create({
     data: {
-      status: "PROCESSING",
+      status: "PREVIEWED",
       filename561l: file561.filename,
       filenameSlrb: fileSlrb.filename,
       fileHash561l: file561.sha256,
@@ -214,11 +336,26 @@ export async function startStoredHistoricImport(actorUserId: string, importId: s
   if (row.status === "COMMITTED") {
     return { importId, status: "COMMITTED" as const, async: false as const };
   }
-  await prisma.autopartHistoryAllImport.update({
-    where: { id: importId },
-    data: { status: "PROCESSING", completedAt: null },
-  });
-  void runAllHistoricImport(importId, actorUserId, { wait: true }).catch((error) => {
+  holdProcessLock(importId);
+  try {
+    const claim = await claimHistoricImport(importId);
+    if (claim === "missing") {
+      releaseProcessLock(importId);
+      throw new AuthError("Import not found", "NOT_FOUND", 404);
+    }
+    if (claim === "busy") {
+      releaseProcessLock(importId);
+      throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
+    }
+    if (claim === "committed") {
+      releaseProcessLock(importId);
+      return { importId, status: "COMMITTED" as const, async: false as const };
+    }
+  } catch (error) {
+    releaseProcessLock(importId);
+    throw error;
+  }
+  void runAllHistoricImport(importId, actorUserId, { wait: true, claimed: true }).catch((error) => {
     console.error("[ab:history-all] background import failed", error);
   });
   return { importId, status: "PROCESSING" as const, async: true as const };
@@ -227,8 +364,39 @@ export async function startStoredHistoricImport(actorUserId: string, importId: s
 export async function runAllHistoricImport(
   importId: string,
   actorUserId: string,
-  options?: { wait?: boolean; stopAfterLines?: number },
+  options?: { wait?: boolean; stopAfterLines?: number; claimed?: boolean },
 ) {
+  holdProcessLock(importId);
+  try {
+    return await runClaimedHistoricImport(importId, actorUserId, options);
+  } finally {
+    releaseProcessLock(importId);
+  }
+}
+
+async function runClaimedHistoricImport(
+  importId: string,
+  actorUserId: string,
+  options?: { wait?: boolean; stopAfterLines?: number; claimed?: boolean },
+) {
+  if (!options?.claimed) {
+    const claim = await claimHistoricImport(importId);
+    if (claim === "missing") throw new AuthError("Import not found", "NOT_FOUND", 404);
+    if (claim === "busy") throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
+    if (claim === "committed") {
+      return {
+        importId,
+        status: "COMMITTED" as const,
+        accountsCommitted: 0,
+        accountsReviewed: 0,
+        documentsWritten: 0,
+        linesWritten: 0,
+        elapsedMs: 0,
+        peakRssBytes: process.memoryUsage().rss,
+        accounts: [],
+      };
+    }
+  }
   const row = await prisma.autopartHistoryAllImport.findUnique({ where: { id: importId } });
   if (!row?.storagePath561l || !row.storagePathSlrb || !row.encoding561l || !row.encodingSlrb) {
     throw new AuthError("The stored ALL files are incomplete", "VALIDATION", 400);
@@ -266,6 +434,7 @@ export async function runAllHistoricImport(
       data: {
         status: "COMMITTED",
         completedAt: new Date(),
+        lockOwner: null,
         elapsedMs,
         peakRssBytes: peak,
         ...result.counts,
@@ -298,6 +467,7 @@ export async function runAllHistoricImport(
       data: {
         status: "FAILED",
         completedAt: new Date(),
+        lockOwner: null,
         elapsedMs: Date.now() - started,
         peakRssBytes: peak,
         summary: {
@@ -356,6 +526,7 @@ async function executeImport(input: {
         ...counts,
         elapsedMs: now - progressStarted,
         peakRssBytes: process.memoryUsage().rss,
+        heartbeatAt: new Date(),
         summary: { phase, recoverable: true } as Prisma.InputJsonValue,
       },
     });
@@ -658,10 +829,18 @@ async function executeImport(input: {
         lines: [],
       });
       documentsWritten += slice.length;
+      const matched: Array<{ documentType: "INVOICE" | "CREDIT"; documentReference: string; linesNet: string }> = [];
       for (const doc of slice) {
         if (doc.goodsMinor == null) continue;
         const diff = doc.lineMinor - doc.goodsMinor;
-        if (diff === 0) continue;
+        if (diff === 0) {
+          matched.push({
+            documentType: doc.documentType,
+            documentReference: doc.documentReference,
+            linesNet: minorToMoney(doc.lineMinor),
+          });
+          continue;
+        }
         await stampHistoricDocumentComparison({
           companyId,
           documentType: doc.documentType,
@@ -670,6 +849,8 @@ async function executeImport(input: {
           mismatchMinor: diff,
         });
       }
+      await clearMatchedHistoricComparisons(companyId, matched);
+      await touchHistoricHeartbeat(input.importId);
     }
   }
 
@@ -997,8 +1178,16 @@ export async function getHistoricAllImport(actorUserId: string, importId: string
   };
 }
 
-export async function listOpenHistoricReviews(actorUserId: string) {
+const reviewListSchema = z.object({
+  query: z.string().max(80).optional(),
+  reason: z.enum(["UNKNOWN", "AMBIGUOUS", "UNLINKED", "NOT_VERIFIED"]).optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(50).default(25),
+});
+
+export async function listHistoricReviews(actorUserId: string, raw: unknown) {
   await requireSystemPermission(actorUserId, "autopart.import.view");
+  const input = reviewListSchema.parse(raw ?? {});
   const latest = await prisma.autopartHistoryAllImport.findFirst({
     where: { status: "COMMITTED" },
     orderBy: { createdAt: "desc" },
@@ -1011,12 +1200,23 @@ export async function listOpenHistoricReviews(actorUserId: string) {
       fileHashSlrb: true,
     },
   });
-  if (!latest) return { import: null, reviews: [] };
-  const reviews = await prisma.autopartHistoryReviewAccount.findMany({
-    where: { importId: latest.id, status: "OPEN" },
-    orderBy: { accountCode: "asc" },
-    take: 200,
-  });
+  if (!latest) return { import: null, total: 0, page: input.page, pageSize: input.pageSize, reviews: [] };
+  const query = input.query?.trim();
+  const where = {
+    importId: latest.id,
+    status: "OPEN" as const,
+    ...(input.reason ? { reason: input.reason } : {}),
+    ...(query ? { accountCode: { contains: query, mode: "insensitive" as const } } : {}),
+  };
+  const [total, reviews] = await Promise.all([
+    prisma.autopartHistoryReviewAccount.count({ where }),
+    prisma.autopartHistoryReviewAccount.findMany({
+      where,
+      orderBy: { accountCode: "asc" },
+      skip: (input.page - 1) * input.pageSize,
+      take: input.pageSize,
+    }),
+  ]);
   return {
     import: {
       id: latest.id,
@@ -1026,6 +1226,9 @@ export async function listOpenHistoricReviews(actorUserId: string) {
       fileHash561l: latest.fileHash561l,
       fileHashSlrb: latest.fileHashSlrb,
     },
+    total,
+    page: input.page,
+    pageSize: input.pageSize,
     reviews: reviews.map((review) => ({
       id: review.id,
       accountCode: review.accountCode,
@@ -1037,6 +1240,101 @@ export async function listOpenHistoricReviews(actorUserId: string) {
       goodsNet: review.goodsNet.toString(),
     })),
   };
+}
+
+export async function listOpenHistoricReviews(actorUserId: string) {
+  const page = await listHistoricReviews(actorUserId, { page: 1, pageSize: 25 });
+  return { import: page.import, reviews: page.reviews };
+}
+
+export async function searchCompaniesForHistoricVerify(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "autopart.import.view");
+  const query = z.object({ query: z.string().max(80) }).parse(raw).query.trim();
+  if (query.length < 2) return [];
+  const companies = await prisma.company.findMany({
+    where: {
+      OR: [
+        { name: { contains: query, mode: "insensitive" } },
+        { autopartCustomerCode: { contains: query, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true, name: true, autopartCustomerCode: true, autopartCustomerCodeVerifiedAt: true },
+    orderBy: { name: "asc" },
+    take: 8,
+  });
+  return companies.map((company) => ({
+    id: company.id,
+    name: company.name,
+    autopartCustomerCode: company.autopartCustomerCode,
+    verified: Boolean(company.autopartCustomerCodeVerifiedAt),
+  }));
+}
+
+export async function verifyHistoricReviewAccount(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "autopart.import.manage");
+  const input = z
+    .object({
+      reviewId: z.string().min(1),
+      companyId: z.string().min(1),
+      confirmation: z.string(),
+    })
+    .parse(raw);
+  if (input.confirmation !== HISTORIC_VERIFY_PHRASE) {
+    throw new AuthError("Type the verification confirmation before importing staged history", "CONFIRMATION_REQUIRED", 400);
+  }
+  const review = await prisma.autopartHistoryReviewAccount.findUnique({ where: { id: input.reviewId } });
+  if (!review || review.status !== "OPEN") {
+    throw new AuthError("That review row is not open", "NOT_FOUND", 404);
+  }
+  if (review.reason === "AMBIGUOUS" || review.reason === "UNKNOWN") {
+    throw new AuthError("Only an exact 407EXP account can be verified. Truncated or unknown codes stay staged.", "IMPORT_BLOCKED", 400);
+  }
+  const code = review.accountCode.trim().toUpperCase();
+  const directory = await loadDirectory();
+  if (directory.truncatedPrefixes?.has(code) || !directory.masterCompanyByCode.has(code)) {
+    throw new AuthError("That code is not an exact 407EXP account", "IMPORT_BLOCKED", 400);
+  }
+  const linkedCompanyId = directory.masterCompanyByCode.get(code);
+  if (linkedCompanyId && linkedCompanyId !== input.companyId) {
+    throw new AuthError("This 407EXP account is already linked to a different customer", "IMPORT_BLOCKED", 409);
+  }
+  const company = await prisma.company.findUnique({
+    where: { id: input.companyId },
+    select: { id: true, autopartCustomerCode: true, autopartCustomerCodeVerifiedAt: true },
+  });
+  if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
+  const currentCode = company.autopartCustomerCode?.trim().toUpperCase() ?? "";
+  if (currentCode && currentCode !== code) {
+    throw new AuthError("That customer already has a different Autopart account", "IMPORT_BLOCKED", 409);
+  }
+  const other = await prisma.company.findFirst({
+    where: { autopartCustomerCode: code, id: { not: company.id }, autopartCustomerCodeVerifiedAt: { not: null } },
+    select: { id: true },
+  });
+  if (other) throw new AuthError("Another customer is already verified with this account", "IMPORT_BLOCKED", 409);
+  await prisma.company.update({
+    where: { id: company.id },
+    data: {
+      autopartCustomerCode: code,
+      autopartCustomerCodeVerifiedAt: new Date(),
+      autopartCustomerCodeVerifiedById: actorUserId,
+    },
+  });
+  await prisma.autopartAccount.updateMany({
+    where: { accountCode: code, companyId: null },
+    data: { companyId: company.id },
+  });
+  const promoted = await promoteStagedAutopartHistory(actorUserId, company.id, code);
+  await recordAuditEvent({
+    action: "autopart.history_review.verified",
+    entityType: "AutopartHistoryReviewAccount",
+    entityId: review.id,
+    actorUserId,
+    companyId: company.id,
+    before: { accountCode: code, reason: review.reason, companyAutopartCode: company.autopartCustomerCode },
+    after: { accountCode: code, documents: promoted.documents, lines: promoted.lines },
+  });
+  return { accountCode: code, companyId: company.id, ...promoted };
 }
 
 export async function promoteStagedAutopartHistory(actorUserId: string, companyId: string, code: string) {
@@ -1131,24 +1429,290 @@ async function writeText(filename: string, text: string): Promise<StoredFile> {
   return { path: dest, filename, sha256: hash, bytes: bytes.length, encoding: "utf-8" };
 }
 
-async function scanPair(
+async function summariseHistoricFiles(
   file561: { path: string; encoding: "utf-8" | "windows-1252" },
   fileSlrb: { path: string; encoding: "utf-8" | "windows-1252" },
 ) {
+  const directory = await loadDirectory();
+  const docs = new Map<string, DocAccum>();
+  const accountLines = new Map<string, number>();
+  const accountMinor = new Map<string, number>();
   let parsed561 = 0;
   let malformed561 = 0;
   let parsedSlrb = 0;
   let malformedSlrb = 0;
   let excludedLedger = 0;
-  await forEachAutopartCsvRecord(file561.path, file561.encoding, (record) => {
-    parsed561 += 1;
-    if (record.malformed) malformed561 += 1;
-  });
+  let excludedMinor = 0;
+  let invoiceLines = 0;
+  let creditLines = 0;
+  let lineMinor = 0;
+  let goodsMinor = 0;
+  let slrbHeader: string[] = [];
+  let lineHeader: string[] = [];
+  const fileDocsByCompany = new Map<string, Set<string>>();
+
   await forEachAutopartCsvRecord(fileSlrb.path, fileSlrb.encoding, (record) => {
     parsedSlrb += 1;
-    if (record.malformed) malformedSlrb += 1;
-    const type = (record.fields[3] ?? "").toUpperCase();
-    if (type === "CSH" || type === "OPB" || type === "PAY" || type === "JNL") excludedLedger += 1;
+    const columns = headerIndex(slrbHeader);
+    if (record.malformed || columns.account < 0 || columns.type < 0 || columns.ref < 0) {
+      malformedSlrb += 1;
+      return;
+    }
+    const account = (record.fields[columns.account] ?? "").trim().toUpperCase();
+    const rawType = (record.fields[columns.type] ?? "").trim().toUpperCase();
+    const documentType = mapSlrbDocumentType(rawType);
+    if (documentType === "PAYMENT" || documentType === "JOURNAL" || rawType === "CSH" || rawType === "OPB") {
+      excludedLedger += 1;
+      excludedMinor += moneyToMinor(record.fields[columns.goods] ?? null) ?? 0;
+      return;
+    }
+    if (documentType !== "INVOICE" && documentType !== "CREDIT") {
+      malformedSlrb += 1;
+      return;
+    }
+    const reference = (record.fields[columns.ref] ?? "").trim().toUpperCase();
+    if (!account || !reference) {
+      malformedSlrb += 1;
+      return;
+    }
+    const key = docKey(account, documentType, reference);
+    const goods = moneyToMinor(record.fields[columns.goods] ?? null);
+    const current = docs.get(key) ?? {
+      account,
+      documentType,
+      documentReference: reference,
+      documentDate: null,
+      goodsMinor: null,
+      vatMinor: null,
+      grossMinor: null,
+      ledgerRows: 0,
+      lineMinor: 0,
+      lineCount: 0,
+    };
+    if (goods != null) current.goodsMinor = (current.goodsMinor ?? 0) + goods;
+    current.ledgerRows += 1;
+    docs.set(key, current);
+  }, (header) => {
+    slrbHeader = header;
   });
-  return { parsed561, malformed561, parsedSlrb, malformedSlrb, excludedLedger };
+
+  await forEachAutopartCsvRecord(file561.path, file561.encoding, (record) => {
+    parsed561 += 1;
+    const parsed = accept561(record, headerIndex(lineHeader));
+    if (!parsed) {
+      malformed561 += 1;
+      return;
+    }
+    if (parsed.documentType === "INVOICE") invoiceLines += 1;
+    else creditLines += 1;
+    lineMinor += parsed.minor;
+    accountLines.set(parsed.account, (accountLines.get(parsed.account) ?? 0) + 1);
+    accountMinor.set(parsed.account, (accountMinor.get(parsed.account) ?? 0) + parsed.minor);
+    const key = docKey(parsed.account, parsed.documentType, parsed.documentReference);
+    const current = docs.get(key) ?? {
+      account: parsed.account,
+      documentType: parsed.documentType,
+      documentReference: parsed.documentReference,
+      documentDate: null,
+      goodsMinor: null,
+      vatMinor: null,
+      grossMinor: null,
+      ledgerRows: 0,
+      lineMinor: 0,
+      lineCount: 0,
+    };
+    current.lineMinor += parsed.minor;
+    current.lineCount += 1;
+    docs.set(key, current);
+    const classified = classifyHistoricAccount(parsed.account, directory);
+    if (classified.outcome === "import") {
+      const keys = fileDocsByCompany.get(classified.companyId) ?? new Set<string>();
+      keys.add(`${parsed.documentType}::${parsed.documentReference}`);
+      fileDocsByCompany.set(classified.companyId, keys);
+    }
+  }, (header) => {
+    lineHeader = header;
+  });
+
+  let discrepancyCount = 0;
+  let discrepancyMinor = 0;
+  const reasons = { UNKNOWN: 0, AMBIGUOUS: 0, UNLINKED: 0, NOT_VERIFIED: 0 };
+  const accounts = new Set<string>(accountLines.keys());
+  for (const doc of docs.values()) accounts.add(doc.account);
+  let matchedAccounts = 0;
+  let unmatchedAccounts = 0;
+  let matchedLines = 0;
+  let unmatchedLines = 0;
+  for (const account of accounts) {
+    const classified = classifyHistoricAccount(account, directory);
+    const lines = accountLines.get(account) ?? 0;
+    if (classified.outcome === "import") {
+      matchedAccounts += 1;
+      matchedLines += lines;
+    } else {
+      unmatchedAccounts += 1;
+      unmatchedLines += lines;
+      reasons[classified.reason] += 1;
+    }
+  }
+  for (const doc of docs.values()) {
+    if (doc.goodsMinor == null) continue;
+    goodsMinor += doc.goodsMinor;
+    const diff = doc.lineMinor - doc.goodsMinor;
+    if (diff !== 0 && doc.lineCount > 0) {
+      discrepancyCount += 1;
+      discrepancyMinor += diff;
+    }
+  }
+
+  const examples: Array<{ account: string; documentReference: string; source: string }> = [];
+  let overlapDocuments = 0;
+  let overlapLines = 0;
+  for (const [companyId, keys] of fileDocsByCompany) {
+    const references = [...new Set([...keys].map((key) => key.split("::")[1] ?? "").filter(Boolean))];
+    for (let index = 0; index < references.length; index += 500) {
+      const chunk = references.slice(index, index + 500);
+      const [documents, lines] = await Promise.all([
+        prisma.autopartSalesDocument.findMany({
+          where: {
+            companyId,
+            documentReference: { in: chunk },
+            OR: [{ has504: true }, { hasTrm21qc: true }, { source: { in: [...ONGOING_SOURCES] } }],
+          },
+          select: { documentType: true, documentReference: true, source: true, autopartCustomerCode: true },
+        }),
+        prisma.autopartSalesLine.count({
+          where: { companyId, source: "ONGOING_TRM21QC", documentReference: { in: chunk } },
+        }),
+      ]);
+      for (const document of documents) {
+        if (!keys.has(`${document.documentType}::${document.documentReference}`)) continue;
+        overlapDocuments += 1;
+        if (examples.length < 20) {
+          examples.push({
+            account: document.autopartCustomerCode,
+            documentReference: document.documentReference,
+            source: document.source,
+          });
+        }
+      }
+      overlapLines += lines;
+    }
+  }
+
+  return {
+    parsed561,
+    malformed561,
+    parsedSlrb,
+    malformedSlrb,
+    excludedLedger,
+    invoiceLines,
+    creditLines,
+    lineNet: minorToMoney(lineMinor),
+    goodsNet: minorToMoney(goodsMinor),
+    excludedLedgerNet: minorToMoney(excludedMinor),
+    discrepancyCount,
+    discrepancyNet: minorToMoney(discrepancyMinor),
+    matchedAccounts,
+    unmatchedAccounts,
+    matchedLines,
+    unmatchedLines,
+    reasons,
+    ongoingOverlaps: { documents: overlapDocuments, lines: overlapLines, examples },
+    storage: describeHistoricStorage(process.env, process.cwd()),
+  };
+}
+
+export async function historicMatchingReadiness(actorUserId: string) {
+  await requireSystemPermission(actorUserId, "autopart.import.view");
+  return buildHistoricMatchingReadiness();
+}
+
+export async function buildHistoricMatchingReadiness() {
+  const directory = await loadDirectory();
+  const tableRows = await prisma.$queryRaw<Array<{ present: boolean }>>`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'AutopartHistoryAllImport'
+    ) AS present
+  `;
+  const allImportTablesPresent = Boolean(tableRows[0]?.present);
+  const [masters, historicLines, globalLines, latest] = await Promise.all([
+    prisma.autopartAccount.findMany({ select: { accountCode: true } }),
+    prisma.autopartSalesLine.groupBy({
+      by: ["autopartCustomerCode"],
+      where: { source: { not: "ONGOING_TRM21QC" } },
+      _count: { _all: true },
+      _sum: { salesNet: true },
+    }),
+    prisma.autopartInvoiceLine.groupBy({
+      by: ["accountCode"],
+      _count: { _all: true },
+      _sum: { salesAmount: true },
+    }),
+    allImportTablesPresent
+      ? prisma.autopartHistoryAllImport.findFirst({
+          where: { status: "COMMITTED" },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, importedLineCount: true, stagedLineCount: true, accountsCommitted: true, accountsReviewed: true, createdAt: true },
+        })
+      : Promise.resolve(null),
+  ]);
+  const masterSplit = { import: 0, UNKNOWN: 0, AMBIGUOUS: 0, UNLINKED: 0, NOT_VERIFIED: 0 };
+  for (const account of masters) {
+    const classified = classifyHistoricAccount(account.accountCode, directory);
+    if (classified.outcome === "import") masterSplit.import += 1;
+    else masterSplit[classified.reason] += 1;
+  }
+  const splitLines = (
+    rows: Array<{ code: string; count: number; net: { toString(): string } | null }>,
+  ) => {
+    let importLines = 0;
+    let stagedLines = 0;
+    let importNet = 0;
+    let stagedNet = 0;
+    for (const row of rows) {
+      const classified = classifyHistoricAccount(row.code, directory);
+      const net = moneyToMinor(row.net?.toString() ?? null) ?? 0;
+      if (classified.outcome === "import") {
+        importLines += row.count;
+        importNet += net;
+      } else {
+        stagedLines += row.count;
+        stagedNet += net;
+      }
+    }
+    return {
+      importLines,
+      stagedLines,
+      importNet: minorToMoney(importNet),
+      stagedNet: minorToMoney(stagedNet),
+    };
+  };
+  const environment = describeHistoricEnvironment(process.env, describeDatabaseUrl(process.env["DATABASE_URL"] ?? ""));
+  return {
+    environment,
+    storage: describeHistoricStorage(process.env, process.cwd()),
+    verifiedCompanyCodes: [...directory.verifiedByCode.values()].filter((target) => target != null).length,
+    masterAccounts: masters.length,
+    masterSplit,
+    customerHistoryLines: splitLines(
+      historicLines.map((row) => ({ code: row.autopartCustomerCode, count: row._count._all, net: row._sum.salesNet })),
+    ),
+    globalInvoiceLines: splitLines(
+      globalLines.map((row) => ({ code: row.accountCode, count: row._count._all, net: row._sum.salesAmount })),
+    ),
+    allImportTablesPresent,
+    latestCommittedImport: latest
+      ? {
+          id: latest.id,
+          createdAt: latest.createdAt.toISOString(),
+          importedLineCount: latest.importedLineCount,
+          stagedLineCount: latest.stagedLineCount,
+          accountsCommitted: latest.accountsCommitted,
+          accountsReviewed: latest.accountsReviewed,
+        }
+      : null,
+    note: "Verified exact accounts would import. Every other 407EXP or file account would stay staged. This does not read the ALL files and does not change any row. Preview an uploaded pair for that file's matched, unmatched, and discrepancy totals.",
+  };
 }

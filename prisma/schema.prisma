@@ -3149,6 +3149,9 @@ model AutopartHistoryAllImport {
   peakRssBytes      Int?
   elapsedMs         Int?
   summary           Json?
+  /// Process that currently owns a PROCESSING import. Cleared when it finishes or is recovered.
+  lockOwner         String?
+  heartbeatAt       DateTime?
   createdById       String?
   createdAt         DateTime                     @default(now())
   completedAt       DateTime?

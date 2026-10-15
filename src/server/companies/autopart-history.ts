@@ -2470,6 +2470,33 @@ export async function closeHistoricAccountWrite(runId: string, counts: { importe
   });
 }
 
+/** Clears a previous mismatch when this import's line total now equals SLRB goods. */
+export async function clearMatchedHistoricComparisons(
+  companyId: string,
+  documents: Array<{ documentType: "INVOICE" | "CREDIT"; documentReference: string; linesNet: string }>,
+): Promise<void> {
+  if (!documents.length) return;
+  const values = documents.map(
+    (document) => Prisma.sql`(${document.documentReference}, ${document.documentType}, ${document.linesNet})`,
+  );
+  await prisma.$executeRaw`
+    UPDATE "AutopartSalesDocument" AS d
+    SET "linesNetSum" = v.net::decimal,
+        "valueMismatchMinor" = NULL,
+        "updatedAt" = NOW()
+    FROM (VALUES ${Prisma.join(values)}) AS v(reference, dtype, net)
+    WHERE d."companyId" = ${companyId}
+      AND d."documentReference" = v.reference
+      AND d."documentType"::text = v.dtype
+      AND d."valueMismatchMinor" IS NOT NULL
+      AND NOT (
+        d."has504" = true
+        OR d."hasTrm21qc" = true
+        OR d."source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+      )
+  `;
+}
+
 export async function stampHistoricDocumentComparison(input: {
   companyId: string;
   documentType: "INVOICE" | "CREDIT";
