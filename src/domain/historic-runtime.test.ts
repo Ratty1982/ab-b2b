@@ -25,13 +25,20 @@ describe("historic runtime labels", () => {
     ).toBe("local-application");
   });
 
-  it("requires a persistent volume when the import directory is unset", () => {
+  it("treats a configured import directory as a path, not proof of a persistent volume", () => {
     const missing = describeHistoricStorage({}, "/app");
+    expect(missing.configured).toBe(false);
     expect(missing.persistent).toBe(false);
+    expect(missing.persistenceProven).toBe(false);
     expect(missing.directory).toBe("/app/data/autopart-imports");
     const set = describeHistoricStorage({ AUTOPART_IMPORT_DIR: "/data/autopart-imports" }, "/app");
-    expect(set.persistent).toBe(true);
+    expect(set.configured).toBe(true);
+    expect(set.persistent).toBe(false);
+    expect(set.persistenceProven).toBe(false);
     expect(set.directory).toBe("/data/autopart-imports");
+    expect(set.requirement).toContain("does not prove");
+    expect(set.checklist.join(" ")).toContain("replace the container");
+    expect(set.checklist.join(" ")).toContain("independently of PostgreSQL");
   });
 
   it("treats a dead local process or a stale heartbeat as an abandoned import", () => {

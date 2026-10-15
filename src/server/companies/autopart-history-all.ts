@@ -8,7 +8,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import { finished } from "node:stream/promises";
@@ -28,12 +27,19 @@ import {
   type HistoricAccountTarget,
 } from "@/domain/historic-all-file";
 import { describeDatabaseUrl } from "@/domain/customer-data-reset";
+import { describeHistoricEnvironment, describeHistoricStorage } from "@/domain/historic-runtime";
 import {
-  describeHistoricEnvironment,
-  describeHistoricStorage,
-  HISTORIC_IMPORT_STALE_MS,
-  importLockIsAbandoned,
-} from "@/domain/historic-runtime";
+  claimHistoricImport,
+  continueHistoricImportProcess,
+  recoverAbandonedHistoricImports,
+  finishHistoricImport,
+  HistoricImportFenced,
+  readOwnedFence,
+  releaseHistoricImportProcess,
+  reserveHistoricImportProcess,
+  updateOwnedHistoricImport,
+  withHistoricImportFence,
+} from "@/server/companies/historic-import-lock";
 import { mapSlrbDocumentType } from "@/domain/autopart-slrb";
 import { parseAutopartDateOnly } from "@/domain/autopart-report-money";
 import { prisma } from "@/infra/database/client";
@@ -54,11 +60,10 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 export const HISTORIC_SNAPSHOT_RETIRE_PHRASE = "RETIRE ABSENT HISTORICAL DOCUMENTS";
 export const HISTORIC_VERIFY_PHRASE = "VERIFY HISTORIC ACCOUNT";
 
-const PROCESS_LOCK_OWNER = `${os.hostname()}:${process.pid}:${randomUUID()}`;
-let activeImportId: string | null = null;
-
 const ONGOING_SOURCES = ["ONGOING_504", "ONGOING_TRM21QC", "ONGOING_504_BRIDGE"] as const;
 const BATCH = 500;
+
+export { claimHistoricImport, recoverAbandonedHistoricImports };
 
 async function failSupersededAccountRuns(importId: string) {
   await prisma.autopartCustomerImportRun.updateMany({
@@ -68,97 +73,6 @@ async function failSupersededAccountRuns(importId: string) {
       diagnostics: { path: ["allImportId"], equals: importId },
     },
     data: { status: "FAILED", completedAt: new Date() },
-  });
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function holdProcessLock(importId: string) {
-  if (activeImportId && activeImportId !== importId) {
-    throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
-  }
-  activeImportId = importId;
-}
-
-function releaseProcessLock(importId: string) {
-  if (activeImportId === importId) activeImportId = null;
-}
-
-export async function recoverAbandonedHistoricImports() {
-  const rows = await prisma.autopartHistoryAllImport.findMany({
-    where: { status: "PROCESSING" },
-    select: { id: true, lockOwner: true, heartbeatAt: true },
-  });
-  const now = Date.now();
-  const staleIds = rows
-    .filter((row) =>
-      importLockIsAbandoned(row.lockOwner, row.heartbeatAt, now, { hostname: os.hostname(), pidAlive }),
-    )
-    .map((row) => row.id);
-  if (!staleIds.length) return 0;
-  await prisma.autopartHistoryAllImport.updateMany({
-    where: { id: { in: staleIds }, status: "PROCESSING" },
-    data: {
-      status: "FAILED",
-      completedAt: new Date(),
-      lockOwner: null,
-      summary: {
-        recoverable: true,
-        interrupted: true,
-        message: "The import stopped before it finished. Replay the stored files. Incomplete history was not marked successful.",
-      },
-    },
-  });
-  for (const importId of staleIds) await failSupersededAccountRuns(importId);
-  return staleIds.length;
-}
-
-export async function claimHistoricImport(importId: string): Promise<"claimed" | "busy" | "missing" | "committed"> {
-  await recoverAbandonedHistoricImports();
-  const freshAfter = new Date(Date.now() - HISTORIC_IMPORT_STALE_MS);
-  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
-    UPDATE "AutopartHistoryAllImport" AS target
-    SET status = 'PROCESSING'::"AutopartCustomerImportStatus",
-        "lockOwner" = ${PROCESS_LOCK_OWNER},
-        "heartbeatAt" = NOW(),
-        "completedAt" = NULL
-    WHERE target.id = ${importId}
-      AND (
-        target.status IN ('PREVIEWED'::"AutopartCustomerImportStatus", 'FAILED'::"AutopartCustomerImportStatus")
-        OR (
-          target.status = 'PROCESSING'::"AutopartCustomerImportStatus"
-          AND (target."lockOwner" IS NULL OR target."lockOwner" = ${PROCESS_LOCK_OWNER})
-        )
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM "AutopartHistoryAllImport" other
-        WHERE other.status = 'PROCESSING'::"AutopartCustomerImportStatus"
-          AND other.id <> target.id
-          AND other."heartbeatAt" > ${freshAfter}
-      )
-    RETURNING target.id
-  `;
-  if (claimed.length) return "claimed";
-  const existing = await prisma.autopartHistoryAllImport.findUnique({
-    where: { id: importId },
-    select: { status: true },
-  });
-  if (!existing) return "missing";
-  if (existing.status === "COMMITTED") return "committed";
-  return "busy";
-}
-
-async function touchHistoricHeartbeat(importId: string) {
-  await prisma.autopartHistoryAllImport.update({
-    where: { id: importId },
-    data: { heartbeatAt: new Date(), lockOwner: PROCESS_LOCK_OWNER },
   });
 }
 
@@ -336,67 +250,55 @@ export async function startStoredHistoricImport(actorUserId: string, importId: s
   if (row.status === "COMMITTED") {
     return { importId, status: "COMMITTED" as const, async: false as const };
   }
-  holdProcessLock(importId);
+  reserveHistoricImportProcess(importId);
   try {
     const claim = await claimHistoricImport(importId);
-    if (claim === "missing") {
-      releaseProcessLock(importId);
+    if (claim.status === "missing") {
+      releaseHistoricImportProcess(importId);
       throw new AuthError("Import not found", "NOT_FOUND", 404);
     }
-    if (claim === "busy") {
-      releaseProcessLock(importId);
+    if (claim.status === "busy") {
+      releaseHistoricImportProcess(importId);
       throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
     }
-    if (claim === "committed") {
-      releaseProcessLock(importId);
+    if (claim.status === "committed") {
+      releaseHistoricImportProcess(importId);
       return { importId, status: "COMMITTED" as const, async: false as const };
     }
+    void runAllHistoricImport(importId, actorUserId, {
+      wait: true,
+      claimed: true,
+      processHeld: true,
+      fence: claim.fence,
+    }).catch((error) => {
+      console.error("[ab:history-all] background import failed", error);
+    });
+    return { importId, status: "PROCESSING" as const, async: true as const };
   } catch (error) {
-    releaseProcessLock(importId);
+    releaseHistoricImportProcess(importId);
     throw error;
   }
-  void runAllHistoricImport(importId, actorUserId, { wait: true, claimed: true }).catch((error) => {
-    console.error("[ab:history-all] background import failed", error);
-  });
-  return { importId, status: "PROCESSING" as const, async: true as const };
 }
 
 export async function runAllHistoricImport(
   importId: string,
   actorUserId: string,
-  options?: { wait?: boolean; stopAfterLines?: number; claimed?: boolean },
+  options?: { wait?: boolean; stopAfterLines?: number; claimed?: boolean; processHeld?: boolean; fence?: bigint },
 ) {
-  holdProcessLock(importId);
+  if (options?.processHeld) continueHistoricImportProcess(importId);
+  else reserveHistoricImportProcess(importId);
   try {
     return await runClaimedHistoricImport(importId, actorUserId, options);
   } finally {
-    releaseProcessLock(importId);
+    releaseHistoricImportProcess(importId);
   }
 }
 
 async function runClaimedHistoricImport(
   importId: string,
   actorUserId: string,
-  options?: { wait?: boolean; stopAfterLines?: number; claimed?: boolean },
+  options?: { wait?: boolean; stopAfterLines?: number; claimed?: boolean; processHeld?: boolean; fence?: bigint },
 ) {
-  if (!options?.claimed) {
-    const claim = await claimHistoricImport(importId);
-    if (claim === "missing") throw new AuthError("Import not found", "NOT_FOUND", 404);
-    if (claim === "busy") throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
-    if (claim === "committed") {
-      return {
-        importId,
-        status: "COMMITTED" as const,
-        accountsCommitted: 0,
-        accountsReviewed: 0,
-        documentsWritten: 0,
-        linesWritten: 0,
-        elapsedMs: 0,
-        peakRssBytes: process.memoryUsage().rss,
-        accounts: [],
-      };
-    }
-  }
   const row = await prisma.autopartHistoryAllImport.findUnique({ where: { id: importId } });
   if (!row?.storagePath561l || !row.storagePathSlrb || !row.encoding561l || !row.encodingSlrb) {
     throw new AuthError("The stored ALL files are incomplete", "VALIDATION", 400);
@@ -406,7 +308,29 @@ async function runClaimedHistoricImport(
   const sample = () => {
     peak = Math.max(peak, process.memoryUsage().rss);
   };
+  let fence: bigint | null = null;
   try {
+    if (options?.claimed) {
+      fence = options.fence ?? (await readOwnedFence(importId));
+    } else {
+      const claim = await claimHistoricImport(importId);
+      if (claim.status === "missing") throw new AuthError("Import not found", "NOT_FOUND", 404);
+      if (claim.status === "busy") throw new AuthError("Another historical import is already running", "IMPORT_IN_PROGRESS", 409);
+      if (claim.status === "committed") {
+        return {
+          importId,
+          status: "COMMITTED" as const,
+          accountsCommitted: 0,
+          accountsReviewed: 0,
+          documentsWritten: 0,
+          linesWritten: 0,
+          elapsedMs: 0,
+          peakRssBytes: process.memoryUsage().rss,
+          accounts: [],
+        };
+      }
+      fence = claim.fence;
+    }
     const result = await executeImport({
       importId,
       actorUserId,
@@ -425,22 +349,20 @@ async function runClaimedHistoricImport(
         encoding: row.encodingSlrb as "utf-8" | "windows-1252",
       },
       ...(options?.stopAfterLines != null ? { stopAfterLines: options.stopAfterLines } : {}),
+      fence,
       sample,
     });
     const elapsedMs = Date.now() - started;
     sample();
-    await prisma.autopartHistoryAllImport.update({
-      where: { id: importId },
-      data: {
-        status: "COMMITTED",
-        completedAt: new Date(),
-        lockOwner: null,
-        elapsedMs,
-        peakRssBytes: peak,
-        ...result.counts,
-        summary: result.summary as Prisma.InputJsonValue,
-      },
+    const committed = await finishOwnedImport(importId, fence, {
+      status: "COMMITTED",
+      completedAt: new Date(),
+      elapsedMs,
+      peakRssBytes: peak,
+      ...result.counts,
+      summary: result.summary as Prisma.InputJsonValue,
     });
+    if (!committed) return { importId, status: "FENCED" as const };
     await recordAuditEvent({
       action: "autopart.history_all_imported",
       entityType: "AutopartHistoryAllImport",
@@ -460,27 +382,46 @@ async function runClaimedHistoricImport(
       accounts: result.accountSample,
     };
   } catch (error) {
+    if (error instanceof HistoricImportFenced || fence == null) {
+      if (error instanceof HistoricImportFenced) return { importId, status: "FENCED" as const };
+      throw error;
+    }
     const interrupted = error instanceof ImportInterrupted;
-    await failSupersededAccountRuns(importId);
-    await prisma.autopartHistoryAllImport.update({
-      where: { id: importId },
-      data: {
-        status: "FAILED",
-        completedAt: new Date(),
-        lockOwner: null,
-        elapsedMs: Date.now() - started,
-        peakRssBytes: peak,
-        summary: {
-          recoverable: true,
-          interrupted: interrupted,
-          linesSeen: interrupted ? error.linesSeen : undefined,
-          message: error instanceof Error ? error.message : "Import failed",
-        } as Prisma.InputJsonValue,
-      },
+    try {
+      await withHistoricImportFence(importId, fence, () => failSupersededAccountRuns(importId));
+    } catch (fenceError) {
+      if (fenceError instanceof HistoricImportFenced) return { importId, status: "FENCED" as const };
+      throw fenceError;
+    }
+    const failed = await finishOwnedImport(importId, fence, {
+      status: "FAILED",
+      completedAt: new Date(),
+      elapsedMs: Date.now() - started,
+      peakRssBytes: peak,
+      summary: {
+        recoverable: true,
+        interrupted,
+        ...(interrupted ? { linesSeen: error.linesSeen } : {}),
+        message: error instanceof Error ? error.message : "Import failed",
+      } as Prisma.InputJsonValue,
     });
+    if (!failed) return { importId, status: "FENCED" as const };
     if (interrupted) {
       return { importId, status: "FAILED" as const, recoverable: true as const, linesSeen: error.linesSeen };
     }
+    throw error;
+  }
+}
+
+async function finishOwnedImport(
+  importId: string,
+  fence: bigint,
+  data: Prisma.AutopartHistoryAllImportUpdateManyMutationInput,
+): Promise<boolean> {
+  try {
+    return await finishHistoricImport(importId, fence, data);
+  } catch (error) {
+    if (error instanceof HistoricImportFenced) return false;
     throw error;
   }
 }
@@ -490,10 +431,11 @@ async function executeImport(input: {
   actorUserId: string;
   file561: StoredFile;
   fileSlrb: StoredFile;
+  fence: bigint;
   stopAfterLines?: number;
   sample: () => void;
 }) {
-  await failSupersededAccountRuns(input.importId);
+  await withHistoricImportFence(input.importId, input.fence, () => failSupersededAccountRuns(input.importId));
   const directory = await loadDirectory();
   const docs = new Map<string, DocAccum>();
   const ledgerByAccount = new Map<string, number>();
@@ -520,15 +462,11 @@ async function executeImport(input: {
     if (now - lastProgressAt < 2500) return;
     lastProgressAt = now;
     input.sample();
-    await prisma.autopartHistoryAllImport.update({
-      where: { id: input.importId },
-      data: {
-        ...counts,
-        elapsedMs: now - progressStarted,
-        peakRssBytes: process.memoryUsage().rss,
-        heartbeatAt: new Date(),
-        summary: { phase, recoverable: true } as Prisma.InputJsonValue,
-      },
+    await updateOwnedHistoricImport(input.importId, input.fence, {
+      ...counts,
+      elapsedMs: now - progressStarted,
+      peakRssBytes: process.memoryUsage().rss,
+      summary: { phase, recoverable: true } as Prisma.InputJsonValue,
     });
   };
   await forEachAutopartCsvRecord(
@@ -621,20 +559,26 @@ async function executeImport(input: {
 
   const flushStage = async () => {
     if (!stageBuffer.length) return;
-    await prisma.autopartHistoryStagedLine.createMany({ data: stageBuffer.splice(0, stageBuffer.length), skipDuplicates: true });
+    const batch = stageBuffer.splice(0, stageBuffer.length);
+    await withHistoricImportFence(input.importId, input.fence, () =>
+      prisma.autopartHistoryStagedLine.createMany({ data: batch, skipDuplicates: true }),
+    );
   };
   const flushSales = async (companyId: string) => {
     const lines = salesBuffer.get(companyId);
     if (!lines?.length) return;
     const run = companyRuns.get(companyId);
     if (!run) return;
-    await writeHistoricAccountBatch({
-      runId: run.runId,
-      companyId,
-      accountCode: run.code,
-      documents: [],
-      lines: lines.splice(0, lines.length),
-    });
+    const batch = lines.splice(0, lines.length);
+    await withHistoricImportFence(input.importId, input.fence, () =>
+      writeHistoricAccountBatch({
+        runId: run.runId,
+        companyId,
+        accountCode: run.code,
+        documents: [],
+        lines: batch,
+      }),
+    );
   };
 
   await forEachAutopartCsvRecord(
@@ -685,16 +629,18 @@ async function executeImport(input: {
       if (classified.outcome === "import") {
         let run = companyRuns.get(classified.companyId);
         if (!run) {
-          const runId = await openHistoricAccountWrite({
-            actorUserId: input.actorUserId,
-            companyId: classified.companyId,
-            accountCode: classified.canonicalCode,
-            filename561l: input.file561.filename,
-            filenameSlrb: input.fileSlrb.filename,
-            fileHash561l: input.file561.sha256,
-            fileHashSlrb: input.fileSlrb.sha256,
-            parentImportId: input.importId,
-          });
+          const runId = await withHistoricImportFence(input.importId, input.fence, () =>
+            openHistoricAccountWrite({
+              actorUserId: input.actorUserId,
+              companyId: classified.companyId,
+              accountCode: classified.canonicalCode,
+              filename561l: input.file561.filename,
+              filenameSlrb: input.fileSlrb.filename,
+              fileHash561l: input.file561.sha256,
+              fileHashSlrb: input.fileSlrb.sha256,
+              parentImportId: input.importId,
+            }),
+          );
           run = { runId, code: classified.canonicalCode, lines: 0 };
           companyRuns.set(classified.companyId, run);
         }
@@ -750,7 +696,11 @@ async function executeImport(input: {
   const discrepancies: Array<{ account: string; reference: string; lineNet: string; goodsNet: string; minor: number }> = [];
   let discrepancyCount = 0;
   const verifiedDocs = new Map<string, DocAccum[]>();
+  const accountGoods = new Map<string, number>();
   for (const doc of docs.values()) {
+    if (doc.goodsMinor != null) {
+      accountGoods.set(doc.account, (accountGoods.get(doc.account) ?? 0) + doc.goodsMinor);
+    }
     const classified = classifyHistoricAccount(doc.account, directory);
     const goods = doc.goodsMinor == null ? null : minorToMoney(doc.goodsMinor);
     const diff = doc.goodsMinor == null ? null : doc.lineMinor - doc.goodsMinor;
@@ -786,79 +736,92 @@ async function executeImport(input: {
         source: doc.ledgerRows > 0 ? "SLRB" : "561L",
       });
       if (stagedDocs.length >= BATCH) {
-        await prisma.autopartHistoryStagedDocument.createMany({ data: stagedDocs.splice(0, stagedDocs.length), skipDuplicates: true });
+        const batch = stagedDocs.splice(0, stagedDocs.length);
+        await withHistoricImportFence(input.importId, input.fence, () =>
+          prisma.autopartHistoryStagedDocument.createMany({ data: batch, skipDuplicates: true }),
+        );
       }
     }
   }
   if (stagedDocs.length) {
-    await prisma.autopartHistoryStagedDocument.createMany({ data: stagedDocs, skipDuplicates: true });
+    const batch = stagedDocs.splice(0, stagedDocs.length);
+    await withHistoricImportFence(input.importId, input.fence, () =>
+      prisma.autopartHistoryStagedDocument.createMany({ data: batch, skipDuplicates: true }),
+    );
   }
   for (const [companyId, list] of verifiedDocs) {
     let run = companyRuns.get(companyId);
     if (!run) {
       const classified = classifyHistoricAccount(list[0]?.account ?? "", directory);
       if (classified.outcome !== "import") continue;
-      const runId = await openHistoricAccountWrite({
-        actorUserId: input.actorUserId,
-        companyId,
-        accountCode: classified.canonicalCode,
-        filename561l: input.file561.filename,
-        filenameSlrb: input.fileSlrb.filename,
-        fileHash561l: input.file561.sha256,
-        fileHashSlrb: input.fileSlrb.sha256,
-        parentImportId: input.importId,
-      });
+      const runId = await withHistoricImportFence(input.importId, input.fence, () =>
+        openHistoricAccountWrite({
+          actorUserId: input.actorUserId,
+          companyId,
+          accountCode: classified.canonicalCode,
+          filename561l: input.file561.filename,
+          filenameSlrb: input.fileSlrb.filename,
+          fileHash561l: input.file561.sha256,
+          fileHashSlrb: input.fileSlrb.sha256,
+          parentImportId: input.importId,
+        }),
+      );
       run = { runId, code: classified.canonicalCode, lines: 0 };
       companyRuns.set(companyId, run);
     }
     for (let index = 0; index < list.length; index += 100) {
       const slice = list.slice(index, index + 100);
-      await writeHistoricAccountBatch({
-        runId: run.runId,
-        companyId,
-        accountCode: run.code,
-        documents: slice.map((doc) => ({
-          documentType: doc.documentType,
-          documentReference: doc.documentReference,
-          documentDate: doc.documentDate,
-          goodsNet: doc.goodsMinor == null ? null : minorToMoney(doc.goodsMinor),
-          vat: doc.vatMinor == null ? null : minorToMoney(doc.vatMinor),
-          grossTotal: doc.grossMinor == null ? null : minorToMoney(doc.grossMinor),
-          source: doc.ledgerRows > 0 ? "SLRB" : "561L",
-        })),
-        lines: [],
-      });
-      documentsWritten += slice.length;
-      const matched: Array<{ documentType: "INVOICE" | "CREDIT"; documentReference: string; linesNet: string }> = [];
-      for (const doc of slice) {
-        if (doc.goodsMinor == null) continue;
-        const diff = doc.lineMinor - doc.goodsMinor;
-        if (diff === 0) {
-          matched.push({
+      await withHistoricImportFence(input.importId, input.fence, async () => {
+        await writeHistoricAccountBatch({
+          runId: run.runId,
+          companyId,
+          accountCode: run.code,
+          documents: slice.map((doc) => ({
+            documentType: doc.documentType,
+            documentReference: doc.documentReference,
+            documentDate: doc.documentDate,
+            goodsNet: doc.goodsMinor == null ? null : minorToMoney(doc.goodsMinor),
+            vat: doc.vatMinor == null ? null : minorToMoney(doc.vatMinor),
+            grossTotal: doc.grossMinor == null ? null : minorToMoney(doc.grossMinor),
+            source: doc.ledgerRows > 0 ? "SLRB" : "561L",
+          })),
+          lines: [],
+        });
+        const matched: Array<{ documentType: "INVOICE" | "CREDIT"; documentReference: string; linesNet: string }> = [];
+        for (const doc of slice) {
+          if (doc.goodsMinor == null) continue;
+          const diff = doc.lineMinor - doc.goodsMinor;
+          if (diff === 0) {
+            matched.push({
+              documentType: doc.documentType,
+              documentReference: doc.documentReference,
+              linesNet: minorToMoney(doc.lineMinor),
+            });
+            continue;
+          }
+          await stampHistoricDocumentComparison({
+            companyId,
             documentType: doc.documentType,
             documentReference: doc.documentReference,
             linesNet: minorToMoney(doc.lineMinor),
+            mismatchMinor: diff,
           });
-          continue;
         }
-        await stampHistoricDocumentComparison({
-          companyId,
-          documentType: doc.documentType,
-          documentReference: doc.documentReference,
-          linesNet: minorToMoney(doc.lineMinor),
-          mismatchMinor: diff,
-        });
-      }
-      await clearMatchedHistoricComparisons(companyId, matched);
-      await touchHistoricHeartbeat(input.importId);
+        await clearMatchedHistoricComparisons(companyId, matched);
+      });
+      documentsWritten += slice.length;
     }
   }
 
   for (const run of companyRuns.values()) {
-    await closeHistoricAccountWrite(run.runId, { imported: run.lines, updated: 0 });
+    await withHistoricImportFence(input.importId, input.fence, () =>
+      closeHistoricAccountWrite(run.runId, { imported: run.lines, updated: 0 }),
+    );
   }
-  await recordSnapshotGaps(input.importId, fileDocsByCompany);
-  await replaceReviewRows(input.importId, directory, accountLines, accountMinor, ledgerByAccount);
+  await withHistoricImportFence(input.importId, input.fence, () => recordSnapshotGaps(input.importId, fileDocsByCompany));
+  await withHistoricImportFence(input.importId, input.fence, () =>
+    replaceReviewRows(input.importId, directory, accountLines, accountMinor, accountGoods, ledgerByAccount),
+  );
 
   const stagedLineCount = await prisma.autopartHistoryStagedLine.count({ where: { importId: input.importId } });
   const importedLineCount = [...companyRuns.values()].reduce((sum, run) => sum + run.lines, 0);
@@ -881,7 +844,7 @@ async function executeImport(input: {
         ledgerRows: ledgerByAccount.get(accountCode) ?? 0,
         lineCount,
         lineNet: minorToMoney(accountMinor.get(accountCode) ?? 0),
-        goodsNet: "0.00",
+        goodsNet: minorToMoney(accountGoods.get(accountCode) ?? 0),
         warnings: [] as string[],
       };
     });
@@ -1033,10 +996,11 @@ async function replaceReviewRows(
   directory: HistoricAccountDirectory,
   accountLines: Map<string, number>,
   accountMinor: Map<string, number>,
+  accountGoods: Map<string, number>,
   ledgerByAccount: Map<string, number>,
 ) {
   await prisma.autopartHistoryReviewAccount.deleteMany({ where: { importId } });
-  const codes = new Set<string>([...accountLines.keys(), ...ledgerByAccount.keys()]);
+  const codes = new Set<string>([...accountLines.keys(), ...ledgerByAccount.keys(), ...accountGoods.keys()]);
   const reviewCodes: string[] = [];
   const rows: Prisma.AutopartHistoryReviewAccountCreateManyInput[] = [];
   for (const accountCode of codes) {
@@ -1049,7 +1013,7 @@ async function replaceReviewRows(
       reason: classified.reason,
       lineCount: accountLines.get(accountCode) ?? 0,
       lineNet: minorToMoney(accountMinor.get(accountCode) ?? 0),
-      goodsNet: "0.00",
+      goodsNet: minorToMoney(accountGoods.get(accountCode) ?? 0),
       ledgerRows: ledgerByAccount.get(accountCode) ?? 0,
       warnings:
         classified.reason === "AMBIGUOUS"
@@ -1063,7 +1027,7 @@ async function replaceReviewRows(
   if (rows.length) await prisma.autopartHistoryReviewAccount.createMany({ data: rows });
   if (reviewCodes.length) {
     await prisma.autopartHistoryReviewAccount.updateMany({
-      where: { status: "OPEN", accountCode: { in: reviewCodes }, importId: { not: importId } },
+      where: { status: { in: ["OPEN", "VERIFYING"] }, accountCode: { in: reviewCodes }, importId: { not: importId } },
       data: { status: "SUPERSEDED" },
     });
   }
@@ -1202,11 +1166,11 @@ export async function listHistoricReviews(actorUserId: string, raw: unknown) {
   });
   if (!latest) return { import: null, total: 0, page: input.page, pageSize: input.pageSize, reviews: [] };
   const query = input.query?.trim();
-  const where = {
+  const where: Prisma.AutopartHistoryReviewAccountWhereInput = {
     importId: latest.id,
-    status: "OPEN" as const,
+    status: { in: ["OPEN", "VERIFYING"] },
     ...(input.reason ? { reason: input.reason } : {}),
-    ...(query ? { accountCode: { contains: query, mode: "insensitive" as const } } : {}),
+    ...(query ? { accountCode: { contains: query, mode: "insensitive" } } : {}),
   };
   const [total, reviews] = await Promise.all([
     prisma.autopartHistoryReviewAccount.count({ where }),
@@ -1233,6 +1197,7 @@ export async function listHistoricReviews(actorUserId: string, raw: unknown) {
       id: review.id,
       accountCode: review.accountCode,
       reason: review.reason,
+      status: review.status,
       invoiceDocuments: review.invoiceDocuments,
       creditDocuments: review.creditDocuments,
       lineCount: review.lineCount,
@@ -1283,7 +1248,7 @@ export async function verifyHistoricReviewAccount(actorUserId: string, raw: unkn
     throw new AuthError("Type the verification confirmation before importing staged history", "CONFIRMATION_REQUIRED", 400);
   }
   const review = await prisma.autopartHistoryReviewAccount.findUnique({ where: { id: input.reviewId } });
-  if (!review || review.status !== "OPEN") {
+  if (!review || (review.status !== "OPEN" && review.status !== "VERIFYING")) {
     throw new AuthError("That review row is not open", "NOT_FOUND", 404);
   }
   if (review.reason === "AMBIGUOUS" || review.reason === "UNKNOWN") {
@@ -1312,6 +1277,10 @@ export async function verifyHistoricReviewAccount(actorUserId: string, raw: unkn
     select: { id: true },
   });
   if (other) throw new AuthError("Another customer is already verified with this account", "IMPORT_BLOCKED", 409);
+  await prisma.autopartHistoryReviewAccount.update({
+    where: { id: review.id },
+    data: { status: "VERIFYING", companyId: company.id },
+  });
   await prisma.company.update({
     where: { id: company.id },
     data: {
@@ -1324,7 +1293,27 @@ export async function verifyHistoricReviewAccount(actorUserId: string, raw: unkn
     where: { accountCode: code, companyId: null },
     data: { companyId: company.id },
   });
-  const promoted = await promoteStagedAutopartHistory(actorUserId, company.id, code);
+  let promoted: HistoricPromotionResult;
+  try {
+    promoted = await historicPromotion.write(actorUserId, company.id, code, review.id);
+  } catch (error) {
+    await rememberIncompleteVerification(review.id);
+    if (error instanceof AuthError) throw error;
+    const detail = error instanceof Error ? error.message : "staged history failed";
+    throw new AuthError(
+      `Staged history was not fully applied (${detail}). Verification is incomplete and can be retried.`,
+      "PROMOTION_INCOMPLETE",
+      409,
+    );
+  }
+  if (!promoted.completed) {
+    await rememberIncompleteVerification(review.id);
+    throw new AuthError(
+      "Staged history was not fully applied. Verification is incomplete and can be retried.",
+      "PROMOTION_INCOMPLETE",
+      409,
+    );
+  }
   await recordAuditEvent({
     action: "autopart.history_review.verified",
     entityType: "AutopartHistoryReviewAccount",
@@ -1332,40 +1321,133 @@ export async function verifyHistoricReviewAccount(actorUserId: string, raw: unkn
     actorUserId,
     companyId: company.id,
     before: { accountCode: code, reason: review.reason, companyAutopartCode: company.autopartCustomerCode },
-    after: { accountCode: code, documents: promoted.documents, lines: promoted.lines },
+    after: { accountCode: code, documents: promoted.documents, lines: promoted.lines, status: "APPLIED" },
   });
   return { accountCode: code, companyId: company.id, ...promoted };
 }
 
-export async function promoteStagedAutopartHistory(actorUserId: string, companyId: string, code: string) {
+type HistoricPromotionResult = {
+  completed: boolean;
+  applied: boolean;
+  documents: number;
+  lines: number;
+};
+
+function idlePromotion(): HistoricPromotionResult {
+  return { completed: true, applied: false, documents: 0, lines: 0 };
+}
+
+const INCOMPLETE_VERIFICATION = [
+  "Verification is incomplete. Staged history was not fully applied. Retry verification.",
+];
+
+async function rememberIncompleteVerification(reviewId: string) {
+  await prisma.autopartHistoryReviewAccount.updateMany({
+    where: { id: reviewId, status: { in: ["OPEN", "VERIFYING"] } },
+    data: { status: "VERIFYING", warnings: INCOMPLETE_VERIFICATION },
+  });
+}
+
+export const historicPromotion = {
+  write(actorUserId: string, companyId: string, code: string, reviewId: string) {
+    return promoteStagedAutopartHistory(actorUserId, companyId, code, reviewId);
+  },
+};
+
+export async function stagedHistoricReviewIsPending(code: string): Promise<boolean> {
   const verified = code.trim().toUpperCase();
-  if (!verified) return { applied: false as const, documents: 0, lines: 0 };
+  if (!verified) return false;
   const latest = await prisma.autopartHistoryAllImport.findFirst({
     where: { status: "COMMITTED" },
     orderBy: { createdAt: "desc" },
+    select: { id: true },
   });
-  if (!latest) return { applied: false as const, documents: 0, lines: 0 };
-  const directory = await loadDirectory();
+  if (!latest) return false;
   const review = await prisma.autopartHistoryReviewAccount.findFirst({
-    where: { importId: latest.id, status: "OPEN", accountCode: verified },
+    where: {
+      importId: latest.id,
+      accountCode: verified,
+      status: { in: ["OPEN", "VERIFYING"] },
+      reason: { in: ["UNLINKED", "NOT_VERIFIED"] },
+    },
+    select: { id: true },
   });
-  if (!review || review.reason === "AMBIGUOUS") return { applied: false as const, documents: 0, lines: 0 };
+  return review != null;
+}
+
+export async function beginHistoricAccountVerification(code: string, companyId: string): Promise<void> {
+  const verified = code.trim().toUpperCase();
+  if (!verified) return;
+  const latest = await prisma.autopartHistoryAllImport.findFirst({
+    where: { status: "COMMITTED" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (!latest) return;
+  await prisma.autopartHistoryReviewAccount.updateMany({
+    where: {
+      importId: latest.id,
+      accountCode: verified,
+      status: { in: ["OPEN", "VERIFYING"] },
+      reason: { in: ["UNLINKED", "NOT_VERIFIED"] },
+    },
+    data: { status: "VERIFYING", companyId },
+  });
+}
+
+export async function promoteStagedAutopartHistory(
+  actorUserId: string,
+  companyId: string,
+  code: string,
+  reviewId?: string,
+): Promise<HistoricPromotionResult> {
+  const verified = code.trim().toUpperCase();
+  if (!verified) return idlePromotion();
+  const review = reviewId
+    ? await prisma.autopartHistoryReviewAccount.findFirst({
+        where: { id: reviewId, accountCode: verified, status: { in: ["OPEN", "VERIFYING"] } },
+      })
+    : await (async () => {
+        const latest = await prisma.autopartHistoryAllImport.findFirst({
+          where: { status: "COMMITTED" },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        if (!latest) return null;
+        return prisma.autopartHistoryReviewAccount.findFirst({
+          where: { importId: latest.id, accountCode: verified, status: { in: ["OPEN", "VERIFYING"] } },
+        });
+      })();
+  if (!review || review.reason === "AMBIGUOUS" || review.reason === "UNKNOWN") return idlePromotion();
+  const source = await prisma.autopartHistoryAllImport.findFirst({
+    where: { id: review.importId, status: "COMMITTED" },
+  });
+  if (!source) return idlePromotion();
+  const directory = await loadDirectory();
   const classified = classifyHistoricAccount(review.accountCode, directory);
   if (classified.outcome !== "import" || classified.companyId !== companyId) {
-    return { applied: false as const, documents: 0, lines: 0 };
+    await prisma.autopartHistoryReviewAccount.update({
+      where: { id: review.id },
+      data: { status: "VERIFYING", companyId, warnings: INCOMPLETE_VERIFICATION },
+    });
+    return { completed: false, applied: false, documents: 0, lines: 0 };
   }
+  await prisma.autopartHistoryReviewAccount.update({
+    where: { id: review.id },
+    data: { status: "VERIFYING", companyId },
+  });
   const runId = await openHistoricAccountWrite({
     actorUserId,
     companyId,
     accountCode: classified.canonicalCode,
-    filename561l: latest.filename561l,
-    filenameSlrb: latest.filenameSlrb,
-    fileHash561l: latest.fileHash561l,
-    fileHashSlrb: latest.fileHashSlrb ?? "",
-    parentImportId: latest.id,
+    filename561l: source.filename561l,
+    filenameSlrb: source.filenameSlrb,
+    fileHash561l: source.fileHash561l,
+    fileHashSlrb: source.fileHashSlrb ?? "",
+    parentImportId: source.id,
   });
   const docs = await prisma.autopartHistoryStagedDocument.findMany({
-    where: { importId: latest.id, accountCode: verified },
+    where: { importId: source.id, accountCode: verified },
   });
   await writeHistoricAccountBatch({
     runId,
@@ -1386,7 +1468,7 @@ export async function promoteStagedAutopartHistory(actorUserId: string, companyI
   let cursor: string | undefined;
   while (true) {
     const lines = await prisma.autopartHistoryStagedLine.findMany({
-      where: { importId: latest.id, accountCode: verified },
+      where: { importId: source.id, accountCode: verified },
       orderBy: { id: "asc" },
       take: BATCH,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -1411,12 +1493,48 @@ export async function promoteStagedAutopartHistory(actorUserId: string, companyI
       })),
     });
   }
+  await stampPromotedHistoricComparisons(companyId, source.id, verified);
   await closeHistoricAccountWrite(runId, { imported: lineCount, updated: 0 });
   await prisma.autopartHistoryReviewAccount.update({
     where: { id: review.id },
-    data: { status: "APPLIED", companyId, appliedAt: new Date() },
+    data: { status: "APPLIED", companyId, appliedAt: new Date(), warnings: [] },
   });
-  return { applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
+  return { completed: true, applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
+}
+
+async function stampPromotedHistoricComparisons(companyId: string, importId: string, accountCode: string) {
+  const [documents, grouped] = await Promise.all([
+    prisma.autopartHistoryStagedDocument.findMany({
+      where: { importId, accountCode },
+      select: { documentType: true, documentReference: true, goodsNet: true },
+    }),
+    prisma.autopartHistoryStagedLine.groupBy({
+      by: ["documentType", "documentReference"],
+      where: { importId, accountCode },
+      _sum: { salesNet: true },
+    }),
+  ]);
+  const lineMinorByDoc = new Map<string, number>();
+  for (const row of grouped) {
+    lineMinorByDoc.set(
+      `${row.documentType}|${row.documentReference}`,
+      moneyToMinor(row._sum.salesNet?.toString() ?? null) ?? 0,
+    );
+  }
+  for (const document of documents) {
+    if (document.goodsNet == null) continue;
+    const goodsMinor = moneyToMinor(document.goodsNet.toString());
+    if (goodsMinor == null) continue;
+    const lineMinor = lineMinorByDoc.get(`${document.documentType}|${document.documentReference}`) ?? 0;
+    const diff = lineMinor - goodsMinor;
+    await stampHistoricDocumentComparison({
+      companyId,
+      documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+      documentReference: document.documentReference,
+      linesNet: minorToMoney(lineMinor),
+      mismatchMinor: diff === 0 ? null : diff,
+    });
+  }
 }
 
 async function writeText(filename: string, text: string): Promise<StoredFile> {

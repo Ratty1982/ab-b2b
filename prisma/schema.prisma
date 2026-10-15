@@ -3151,6 +3151,9 @@ model AutopartHistoryAllImport {
   summary           Json?
   /// Process that currently owns a PROCESSING import. Cleared when it finishes or is recovered.
   lockOwner         String?
+  /// Fence copied from AutopartHistoryImportLock when this row was claimed.
+  /// Writes and completion must still match it. A replacement worker receives a higher fence.
+  lockFence         BigInt?
   heartbeatAt       DateTime?
   createdById       String?
   createdAt         DateTime                     @default(now())
@@ -3166,6 +3169,16 @@ model AutopartHistoryAllImport {
   @@index([fileHash561l, fileHashSlrb])
 }
 
+/// One row (id = 1). Every historical ALL import locks this row before writing.
+/// The fence increases on each claim and each recovery. An older fence cannot write.
+model AutopartHistoryImportLock {
+  id          Int       @id
+  fence       BigInt    @default(0)
+  owner       String?
+  importId    String?
+  heartbeatAt DateTime?
+}
+
 enum AutopartHistoryReviewReason {
   UNKNOWN
   AMBIGUOUS
@@ -3175,6 +3188,8 @@ enum AutopartHistoryReviewReason {
 
 enum AutopartHistoryReviewStatus {
   OPEN
+  /// Customer verification was saved before staged history finished. Retry the same account.
+  VERIFYING
   APPLIED
   SUPERSEDED
 }

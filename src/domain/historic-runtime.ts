@@ -42,9 +42,18 @@ export function describeHistoricEnvironment(
 export type HistoricStorageReport = {
   directory: string;
   configured: boolean;
+  /** True only after an operator has proved the directory survives container replacement. The path setting is not that proof. */
   persistent: boolean;
+  persistenceProven: false;
+  checklist: readonly string[];
   requirement: string;
 };
+
+const STORAGE_CHECKLIST = [
+  "Confirm the Coolify persistent volume is mounted at the AUTOPART_IMPORT_DIR path. Setting the variable only names a directory.",
+  "Write a marker file in that directory, replace the container, and confirm the marker and the original ALL files are still present.",
+  "Back up the import directory independently of PostgreSQL. A database backup stores the SHA-256 and the path. The original file bytes are not in the database, so restoring PostgreSQL does not restore the files.",
+] as const;
 
 export function describeHistoricStorage(env: NodeJS.ProcessEnv, cwd: string): HistoricStorageReport {
   const configured = Boolean(env["AUTOPART_IMPORT_DIR"]?.trim());
@@ -52,10 +61,12 @@ export function describeHistoricStorage(env: NodeJS.ProcessEnv, cwd: string): Hi
   return {
     directory,
     configured,
-    persistent: configured,
+    persistent: false,
+    persistenceProven: false,
+    checklist: STORAGE_CHECKLIST,
     requirement: configured
-      ? "AUTOPART_IMPORT_DIR is set. Mount that exact path as a Coolify persistent volume. The database stores the SHA-256 only; the original bytes live on that volume and must survive redeploy and container replacement."
-      : "AUTOPART_IMPORT_DIR is unset. Original ALL files are written under the application working directory, which Coolify replaces on deploy. Set AUTOPART_IMPORT_DIR to a mounted persistent volume before importing production history.",
+      ? `AUTOPART_IMPORT_DIR is set to ${directory}. That records a path only. It does not prove the directory is a Coolify persistent volume or that files survive container replacement. Confirm the volume is mounted, confirm a marker file is still there after the container is replaced, and back up that directory independently of PostgreSQL. The database stores the SHA-256 and the path. The original bytes are not in the database.`
+      : `AUTOPART_IMPORT_DIR is unset. Original ALL files are written under ${directory}, which a container replacement discards. Set the variable only after a Coolify persistent volume is mounted at that path. Confirm a marker file survives container replacement. Back up that directory independently of PostgreSQL, because the database stores the SHA-256 and the path, not the original bytes.`,
   };
 }
 

@@ -44,20 +44,28 @@ type Preview = {
   unmatchedLines: number;
   reasons: Record<string, number>;
   ongoingOverlaps: { documents: number; lines: number };
-  storage: { directory: string; persistent: boolean; requirement: string };
+  storage: { directory: string; persistent: boolean; persistenceProven: boolean; requirement: string; checklist: readonly string[] };
 };
 
 type Review = {
   id: string;
   accountCode: string;
   reason: string;
+  status: string;
   lineCount: number;
   lineNet: string;
+  goodsNet: string;
 };
 
 type Readiness = {
   environment: { kind: string; database: string | null; host: string | null; summary: string };
-  storage: { persistent: boolean; requirement: string; directory: string };
+  storage: {
+    persistent: boolean;
+    persistenceProven: boolean;
+    requirement: string;
+    directory: string;
+    checklist: readonly string[];
+  };
   verifiedCompanyCodes: number;
   masterAccounts: number;
   masterSplit: { import: number; UNKNOWN: number; AMBIGUOUS: number; UNLINKED: number; NOT_VERIFIED: number };
@@ -240,6 +248,14 @@ export function AutopartAllHistoryPanel() {
             </p>
           ) : null}
           <p className="mt-2 text-steel">{readiness.storage.requirement}</p>
+          <ul className="mt-2 list-disc pl-5 text-steel">
+            {readiness.storage.checklist.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          {readiness.storage.persistenceProven ? null : (
+            <p className="mt-2">Persistence is not proven. A configured path is not a mounted volume.</p>
+          )}
         </div>
       ) : null}
       <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -316,7 +332,9 @@ export function AutopartAllHistoryPanel() {
         <ul className="mt-2 space-y-1">
           {reviews.map((review) => (
             <li key={review.id}>
-              {review.accountCode} — {review.reason} — {review.lineCount} lines — {review.lineNet}
+              {review.accountCode} — {review.reason} — {review.lineCount} lines — 561L £{review.lineNet} — SLRB goods £
+              {review.goodsNet}
+              {review.status === "VERIFYING" ? " — verification incomplete, retry" : ""}
             </li>
           ))}
         </ul>
@@ -381,7 +399,7 @@ export function AutopartAllHistoryPanel() {
                   disabled={busy || !selectedCompanyId || !verifyConfirmed}
                   onClick={() => void verify(review)}
                 >
-                  Verify {review.accountCode}
+                  {review.status === "VERIFYING" ? "Retry" : "Verify"} {review.accountCode}
                 </button>
               ))}
           </div>

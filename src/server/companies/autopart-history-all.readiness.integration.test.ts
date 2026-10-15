@@ -13,6 +13,7 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   buildHistoricMatchingReadiness,
   claimHistoricImport,
+  historicPromotion,
   HISTORIC_VERIFY_PHRASE,
   listHistoricReviews,
   previewStoredHistoricImport,
@@ -226,6 +227,7 @@ describe("historical import readiness", () => {
     const waiting = await listHistoricReviews(adminId, { query: unlinked, reason: "UNLINKED", pageSize: 1 });
     expect(waiting.reviews).toHaveLength(1);
     expect(waiting.total).toBe(1);
+    expect(Number(waiting.reviews[0]!.goodsNet)).toBe(3);
     const verifiedResult = await verifyHistoricReviewAccount(adminId, {
       reviewId: waiting.reviews[0]!.id,
       companyId: targetCompanyId,
@@ -240,32 +242,209 @@ describe("historical import readiness", () => {
       where: { companyId: targetCompanyId, documentReference: "WAIT1", source: "561L" },
     });
     expect(promoted?.sku).toBe("SKU-C");
+    expect(Number(promoted?.salesNet)).toBe(3);
+    const promotedDocument = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId: targetCompanyId, documentReference: "WAIT1" },
+    });
+    expect(Number(promotedDocument.goodsNet)).toBe(3);
+    expect(Number(promotedDocument.linesNetSum)).toBe(3);
+    expect(promotedDocument.valueMismatchMinor).toBeNull();
     const stillOpen = await listHistoricReviews(adminId, { query: unlinked, reason: "UNLINKED" });
     expect(stillOpen.total).toBe(0);
   });
 
   it("blocks a second import while one lock is live and recovers an abandoned lock", async () => {
+    const owner = "otherhost:4242:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const live = await prisma.autopartHistoryAllImport.create({
       data: {
         status: "PROCESSING",
         fileHash561l: `live-${stamp}`,
-        lockOwner: "otherhost:4242:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        lockOwner: owner,
         heartbeatAt: new Date(),
         createdById: adminId,
       },
     });
+    await prisma.autopartHistoryImportLock.update({
+      where: { id: 1 },
+      data: { owner, importId: live.id, heartbeatAt: new Date() },
+    });
     const next = await storePair("10.00");
-    expect(await claimHistoricImport(next)).toBe("busy");
+    expect((await claimHistoricImport(next)).status).toBe("busy");
+    const stale = new Date(Date.now() - 10 * 60 * 1000);
     await prisma.autopartHistoryAllImport.update({
       where: { id: live.id },
-      data: { heartbeatAt: new Date(Date.now() - 10 * 60 * 1000) },
+      data: { heartbeatAt: stale },
+    });
+    await prisma.autopartHistoryImportLock.update({
+      where: { id: 1 },
+      data: { heartbeatAt: stale },
     });
     expect(await recoverAbandonedHistoricImports()).toBeGreaterThan(0);
     expect((await prisma.autopartHistoryAllImport.findUniqueOrThrow({ where: { id: live.id } })).status).toBe("FAILED");
-    expect(await claimHistoricImport(next)).toBe("claimed");
+    expect((await claimHistoricImport(next)).status).toBe("claimed");
     await prisma.autopartHistoryAllImport.update({
       where: { id: next },
-      data: { status: "FAILED", lockOwner: null },
+      data: { status: "FAILED", lockOwner: null, lockFence: null },
     });
+    await prisma.autopartHistoryImportLock.update({
+      where: { id: 1 },
+      data: { owner: null, importId: null, heartbeatAt: null },
+    });
+  });
+
+  it("keeps a staged £0.09 difference after verification and shows the SLRB goods total", async () => {
+    const code = `D${String(stamp).slice(-6)}`;
+    const company = await prisma.company.create({
+      data: { name: `Mismatch ${stamp}`, status: "ACTIVE", paymentTerms: "30 Days" },
+    });
+    createdCompanyIds.push(company.id);
+    await prisma.autopartAccount.create({
+      data: { accountCode: code, originalName: "Mismatch", classification: "TRADE_CANDIDATE" },
+    });
+    await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: company.id,
+        autopartCustomerCode: code,
+        documentType: "INVOICE",
+        documentReference: "MATCH9",
+        source: "561L",
+        goodsNet: "4.00",
+        linesNetSum: "4.25",
+        valueMismatchMinor: 25,
+      },
+    });
+    const file561 = path.join(directory, "diff-561.csv");
+    const fileSlrb = path.join(directory, "diff-slrb.csv");
+    await writeFile(
+      file561,
+      `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${code},I/DIFF9/1,SKU-DIFF,Diff,1,10.09
+${code},I/MATCH9/1,SKU-MATCH,Match,1,4.00
+`,
+    );
+    await writeFile(
+      fileSlrb,
+      `A/C,Type,Ref,Date,Tot Goods,Tot VAT,Total,Run Bal
+${code},INV,DIFF9,15 Oct 26,10.00,0.00,10.00,10.00
+${code},INV,MATCH9,15 Oct 26,4.00,0.00,4.00,4.00
+`,
+    );
+    const row = await prisma.autopartHistoryAllImport.create({
+      data: {
+        status: "PREVIEWED",
+        filename561l: "561L-ALL.CSV",
+        filenameSlrb: "SLRB-ALL.CSV",
+        fileHash561l: `diff-561-${stamp}`,
+        fileHashSlrb: `diff-slrb-${stamp}`,
+        storagePath561l: file561,
+        storagePathSlrb: fileSlrb,
+        encoding561l: "utf-8",
+        encodingSlrb: "utf-8",
+        createdById: adminId,
+      },
+    });
+    const imported = await runAllHistoricImport(row.id, adminId);
+    expect(imported.status).toBe("COMMITTED");
+    const queued = await listHistoricReviews(adminId, { query: code, reason: "UNLINKED" });
+    expect(queued.reviews).toHaveLength(1);
+    expect(Number(queued.reviews[0]!.goodsNet)).toBe(14);
+    const verifiedResult = await verifyHistoricReviewAccount(adminId, {
+      reviewId: queued.reviews[0]!.id,
+      companyId: company.id,
+      confirmation: HISTORIC_VERIFY_PHRASE,
+    });
+    expect(verifiedResult.lines).toBe(2);
+    const diff = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId: company.id, documentReference: "DIFF9" },
+      include: { lines: true },
+    });
+    const matched = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId: company.id, documentReference: "MATCH9" },
+      include: { lines: true },
+    });
+    expect(Number(diff.goodsNet).toFixed(2)).toBe("10.00");
+    expect(Number(diff.linesNetSum).toFixed(2)).toBe("10.09");
+    expect(diff.valueMismatchMinor).toBe(9);
+    expect(Number(diff.lines[0]?.salesNet).toFixed(2)).toBe("10.09");
+    expect(Number(matched.goodsNet)).toBe(4);
+    expect(Number(matched.linesNetSum)).toBe(4);
+    expect(matched.valueMismatchMinor).toBeNull();
+    expect(Number(matched.lines[0]?.salesNet)).toBe(4);
+    const staged = await prisma.autopartHistoryStagedDocument.findFirstOrThrow({
+      where: { importId: row.id, documentReference: "DIFF9" },
+    });
+    expect(Number(staged.goodsNet)).toBe(10);
+    await prisma.autopartAccount.deleteMany({ where: { accountCode: code } });
+  });
+
+  it("leaves verification incomplete when promotion fails and completes it on retry", async () => {
+    const code = `R${String(stamp).slice(-6)}`;
+    const company = await prisma.company.create({
+      data: { name: `Retry ${stamp}`, status: "ACTIVE", paymentTerms: "30 Days" },
+    });
+    createdCompanyIds.push(company.id);
+    await prisma.autopartAccount.create({
+      data: { accountCode: code, originalName: "Retry", classification: "TRADE_CANDIDATE" },
+    });
+    const file561 = path.join(directory, "retry-561.csv");
+    const fileSlrb = path.join(directory, "retry-slrb.csv");
+    await writeFile(
+      file561,
+      `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${code},I/RETRY1/1,SKU-R,Retry,1,2.00
+`,
+    );
+    await writeFile(
+      fileSlrb,
+      `A/C,Type,Ref,Date,Tot Goods,Tot VAT,Total,Run Bal
+${code},INV,RETRY1,15 Oct 26,2.00,0.00,2.00,2.00
+`,
+    );
+    const row = await prisma.autopartHistoryAllImport.create({
+      data: {
+        status: "PREVIEWED",
+        filename561l: "561L-ALL.CSV",
+        filenameSlrb: "SLRB-ALL.CSV",
+        fileHash561l: `retry-561-${stamp}`,
+        fileHashSlrb: `retry-slrb-${stamp}`,
+        storagePath561l: file561,
+        storagePathSlrb: fileSlrb,
+        encoding561l: "utf-8",
+        encodingSlrb: "utf-8",
+        createdById: adminId,
+      },
+    });
+    expect((await runAllHistoricImport(row.id, adminId)).status).toBe("COMMITTED");
+    const queued = await listHistoricReviews(adminId, { query: code, reason: "UNLINKED" });
+    const reviewId = queued.reviews[0]!.id;
+    const original = historicPromotion.write;
+    historicPromotion.write = () => Promise.reject(new Error("promotion stopped"));
+    try {
+      await expect(
+        verifyHistoricReviewAccount(adminId, {
+          reviewId,
+          companyId: company.id,
+          confirmation: HISTORIC_VERIFY_PHRASE,
+        }),
+      ).rejects.toMatchObject({ code: "PROMOTION_INCOMPLETE" });
+    } finally {
+      historicPromotion.write = original;
+    }
+    const saved = await prisma.company.findUniqueOrThrow({ where: { id: company.id } });
+    expect(saved.autopartCustomerCode).toBe(code);
+    expect(saved.autopartCustomerCodeVerifiedAt).not.toBeNull();
+    expect((await prisma.autopartHistoryReviewAccount.findUniqueOrThrow({ where: { id: reviewId } })).status).toBe(
+      "VERIFYING",
+    );
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: company.id, documentReference: "RETRY1" } })).toBe(0);
+    const retried = await verifyHistoricReviewAccount(adminId, {
+      reviewId,
+      companyId: company.id,
+      confirmation: HISTORIC_VERIFY_PHRASE,
+    });
+    expect(retried.lines).toBe(1);
+    expect((await prisma.autopartHistoryReviewAccount.findUniqueOrThrow({ where: { id: reviewId } })).status).toBe("APPLIED");
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: company.id, documentReference: "RETRY1" } })).toBe(1);
+    await prisma.autopartAccount.deleteMany({ where: { accountCode: code } });
   });
 });
