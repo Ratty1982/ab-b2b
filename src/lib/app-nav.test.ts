@@ -78,7 +78,9 @@ describe("canonical navigation contract", () => {
     expect(visible.map((i) => i.id)).toContain("cost-intelligence");
     expect(visible.map((i) => i.id)).toContain("crm-overview");
     expect(visible.map((i) => i.id)).toContain("crm-leads");
-    expect(visible.map((i) => i.id)).toContain("crm-autopart-imports");
+    expect(visible.map((i) => i.id)).toContain("integrations-autopart-imports");
+    expect(visible.map((i) => i.id)).toContain("integrations-autopart");
+    expect(visible.find((i) => i.id === "integrations-autopart-imports")?.to).toBe(ROUTES.adminAutopartImports);
     expect(visible.map((i) => i.id)).toContain("activities");
     expect(visible.map((i) => i.id)).not.toContain("audit-log");
     expect(visible.map((i) => i.id)).toContain("version-updates");
@@ -111,6 +113,7 @@ describe("canonical navigation contract", () => {
       "catalogue",
       "website",
       "operations",
+      "integrations",
       "system",
     ]);
     expect(BACK_OFFICE_NAV.map((s) => s.id)).toEqual(sections);
@@ -209,7 +212,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-stock");
     expect(ids).not.toContain("purchasing-forecast");
-    expect(ids).not.toContain("crm-autopart-imports");
+    expect(ids).not.toContain("integrations-autopart-imports");
     expect(ids).not.toContain("cost-intelligence");
     expect(ids).not.toContain("users");
     expect(ids).not.toContain("settings");
@@ -238,7 +241,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("portal-quick-order");
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-stock");
-    expect(ids).not.toContain("crm-autopart-imports");
+    expect(ids).not.toContain("integrations-autopart-imports");
     const backoffice = flattenVisible(visibleNav(BACK_OFFICE_NAV, navCtxFromUser(tradeBuyer)));
     expect(backoffice.some((i) => i.id === "website-homepage")).toBe(false);
     expect(backoffice.some((i) => i.id === "purchasing-dashboard")).toBe(false);
@@ -270,5 +273,12 @@ describe("canonical navigation contract", () => {
   it("builds Website > Homepage breadcrumbs", () => {
     const crumbs = breadcrumbsForPath("/admin/content/home", navCtxFromUser(superAdmin));
     expect(crumbs.map((c) => c.label)).toEqual(["Website", "Homepage"]);
+  });
+
+  it("builds Integrations > Autopart > Data Imports breadcrumbs", () => {
+    const crumbs = breadcrumbsForPath(ROUTES.adminAutopartImports, navCtxFromUser(superAdmin));
+    expect(crumbs.map((c) => c.label)).toEqual(["Integrations", "Autopart", "Data Imports"]);
+    const legacy = breadcrumbsForPath(ROUTES.adminAutopartImportsLegacy, navCtxFromUser(superAdmin));
+    expect(legacy.map((c) => c.label)).toEqual(["Integrations", "Autopart", "Data Imports"]);
   });
 });

@@ -111,6 +111,11 @@ function NavLink({
   );
 }
 
+function NavGlyph({ name }: { name: NavIconName }) {
+  const Icon = ICONS[name] ?? LayoutDashboard;
+  return <Icon className="size-4 shrink-0" aria-hidden />;
+}
+
 function NavTree({
   sections,
   pathname,
@@ -137,14 +142,41 @@ function NavTree({
           )}
           <div className="flex flex-col gap-0.5">
             {section.items.map((item) => (
-              <NavLink
-                key={item.id}
-                item={item}
-                pathname={pathname}
-                collapsed={collapsed}
-                touch={touch}
-                onNavigate={onNavigate}
-              />
+              <div key={item.id}>
+                {item.to && item.to !== "#" ? (
+                  <NavLink
+                    item={item}
+                    pathname={pathname}
+                    collapsed={collapsed}
+                    touch={touch}
+                    onNavigate={onNavigate}
+                  />
+                ) : (
+                  <div
+                    className={cn(
+                      "flex items-center gap-2.5 px-2.5 py-2 text-[13px] font-semibold text-sidebar-foreground",
+                      collapsed && "justify-center px-0",
+                    )}
+                  >
+                    <NavGlyph name={item.icon} />
+                    {collapsed ? <span className="sr-only">{item.label}</span> : <span className="truncate">{item.label}</span>}
+                  </div>
+                )}
+                {item.children.length ? (
+                  <div className={cn("flex flex-col gap-0.5", !collapsed && "ml-3 border-l border-sidebar-border pl-1")}>
+                    {item.children.map((child) => (
+                      <NavLink
+                        key={child.id}
+                        item={child}
+                        pathname={pathname}
+                        collapsed={collapsed}
+                        touch={touch}
+                        onNavigate={onNavigate}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ))}
           </div>
         </div>

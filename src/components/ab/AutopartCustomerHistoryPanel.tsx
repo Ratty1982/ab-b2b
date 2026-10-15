@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ROUTES } from "@/lib/app-nav";
 import { formatDateTime } from "@/lib/datetime";
 import { formatQuantity } from "@/lib/format-quantity";
 import { UnifiedSalesFigures } from "@/components/sales-intelligence/unified-sales";
@@ -352,7 +353,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               <li key={account.id}>
                 <a
                   className="text-cyan underline"
-                  href={`/admin/customers/autopart-imports?account=${encodeURIComponent(account.accountCode)}`}
+                  href={`${ROUTES.adminAutopartImports}?account=${encodeURIComponent(account.accountCode)}`}
                 >
                   View Autopart master record {account.accountCode}
                 </a>

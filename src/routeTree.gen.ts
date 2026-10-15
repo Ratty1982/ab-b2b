@@ -132,6 +132,7 @@ import { Route as SalesSalesIntelligenceRebatesRouteImport } from './routes/sale
 import { Route as AdminContentSlugPreviewRouteImport } from './routes/admin.content.$slug.preview'
 import { Route as AdminCustomersGroupsIndexRouteImport } from './routes/admin.customers.groups.index'
 import { Route as AdminCustomersGroupsGroupIdRouteImport } from './routes/admin.customers.groups.$groupId'
+import { Route as AdminIntegrationsAutopartImportsRouteImport } from './routes/admin.integrations.autopart.imports'
 import { Route as AdminProductsImportsIndexRouteImport } from './routes/admin.products.imports.index'
 import { Route as AdminProductsImportsIdRouteImport } from './routes/admin.products.imports.$id'
 import { Route as ApiAutopartImportsProspectExceptionsCsvRouteImport } from './routes/api/autopart-imports/prospect-exceptions.csv'
@@ -772,6 +773,12 @@ const AdminCustomersGroupsGroupIdRoute =
     path: '/customers/groups/$groupId',
     getParentRoute: () => AdminRoute,
   } as any)
+const AdminIntegrationsAutopartImportsRoute =
+  AdminIntegrationsAutopartImportsRouteImport.update({
+    id: '/integrations/autopart/imports',
+    path: '/integrations/autopart/imports',
+    getParentRoute: () => AdminRoute,
+  } as any)
 const AdminProductsImportsIndexRoute =
   AdminProductsImportsIndexRouteImport.update({
     id: '/',
@@ -937,6 +944,7 @@ export interface FileRoutesByFullPath {
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
+  '/admin/integrations/autopart/imports': typeof AdminIntegrationsAutopartImportsRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
@@ -1052,6 +1060,7 @@ export interface FileRoutesByTo {
   '/sales/sales-intelligence': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
+  '/admin/integrations/autopart/imports': typeof AdminIntegrationsAutopartImportsRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
@@ -1185,6 +1194,7 @@ export interface FileRoutesById {
   '/sales/sales-intelligence/': typeof SalesSalesIntelligenceIndexRoute
   '/admin/content/$slug/preview': typeof AdminContentSlugPreviewRoute
   '/admin/customers/groups/$groupId': typeof AdminCustomersGroupsGroupIdRoute
+  '/admin/integrations/autopart/imports': typeof AdminIntegrationsAutopartImportsRoute
   '/admin/products/imports/$id': typeof AdminProductsImportsIdRoute
   '/api/autopart-imports/prospect-exceptions/csv': typeof ApiAutopartImportsProspectExceptionsCsvRoute
   '/api/autopart-imports/reconciliation/csv': typeof ApiAutopartImportsReconciliationCsvRoute
@@ -1319,6 +1329,7 @@ export interface FileRouteTypes {
     | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
+    | '/admin/integrations/autopart/imports'
     | '/admin/products/imports/$id'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
@@ -1434,6 +1445,7 @@ export interface FileRouteTypes {
     | '/sales/sales-intelligence'
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
+    | '/admin/integrations/autopart/imports'
     | '/admin/products/imports/$id'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
@@ -1566,6 +1578,7 @@ export interface FileRouteTypes {
     | '/sales/sales-intelligence/'
     | '/admin/content/$slug/preview'
     | '/admin/customers/groups/$groupId'
+    | '/admin/integrations/autopart/imports'
     | '/admin/products/imports/$id'
     | '/api/autopart-imports/prospect-exceptions/csv'
     | '/api/autopart-imports/reconciliation/csv'
@@ -2476,6 +2489,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustomersGroupsGroupIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/integrations/autopart/imports': {
+      id: '/admin/integrations/autopart/imports'
+      path: '/integrations/autopart/imports'
+      fullPath: '/admin/integrations/autopart/imports'
+      preLoaderRoute: typeof AdminIntegrationsAutopartImportsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/products/imports/': {
       id: '/admin/products/imports/'
       path: '/'
@@ -2666,6 +2686,7 @@ interface AdminRouteChildren {
   AdminApplicationsIndexRoute: typeof AdminApplicationsIndexRoute
   AdminCustomersIndexRoute: typeof AdminCustomersIndexRoute
   AdminCustomersGroupsGroupIdRoute: typeof AdminCustomersGroupsGroupIdRoute
+  AdminIntegrationsAutopartImportsRoute: typeof AdminIntegrationsAutopartImportsRoute
   AdminCustomersGroupsIndexRoute: typeof AdminCustomersGroupsIndexRoute
 }
 
@@ -2689,6 +2710,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminApplicationsIndexRoute: AdminApplicationsIndexRoute,
   AdminCustomersIndexRoute: AdminCustomersIndexRoute,
   AdminCustomersGroupsGroupIdRoute: AdminCustomersGroupsGroupIdRoute,
+  AdminIntegrationsAutopartImportsRoute: AdminIntegrationsAutopartImportsRoute,
   AdminCustomersGroupsIndexRoute: AdminCustomersGroupsIndexRoute,
 }
 
