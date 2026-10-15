@@ -6,9 +6,12 @@
  * Historic lines are NOT AB Orders.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { Prisma, type AutopartHistoricDocumentType } from "@prisma/client";
+import { Prisma, PrismaClient, type AutopartHistoricDocumentType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
+
+/** Global client, or the publication transaction that must commit certified history together. */
+export type HistoricWriteClient = Prisma.TransactionClient | PrismaClient;
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
@@ -707,7 +710,7 @@ export async function resolveHistoricReportAccountMatch(input: {
   };
 }
 
-async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
+async function resolveSkuMap(skus: string[], db: HistoricWriteClient = prisma): Promise<Map<string, string>> {
   const cleaned = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
   const map = new Map<string, string>();
   if (!cleaned.length) return map;
@@ -716,7 +719,7 @@ async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
   const byUpper = new Map<string, string>();
   for (let i = 0; i < cleaned.length; i += SAFE_SKU_EQUALS_CHUNK) {
     const chunk = cleaned.slice(i, i + SAFE_SKU_EQUALS_CHUNK);
-    const variants = await prisma.productVariant.findMany({
+    const variants = await db.productVariant.findMany({
       where: {
         OR: chunk.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
       },
@@ -1357,6 +1360,7 @@ const PROTECTED_DOCUMENT_WHERE = Prisma.sql`
 async function bulkUpsertHistoricDocuments(
   docs: PreparedHistoricDocument[],
   onChunk?: (done: number, total: number) => Promise<void>,
+  db: HistoricWriteClient = prisma,
 ): Promise<{
   inserted: number;
   updated: number;
@@ -1377,7 +1381,7 @@ async function bulkUpsertHistoricDocuments(
     ids: refs,
     chunkSize: SAFE_IN_LIST_CHUNK,
     findChunk: (chunk) =>
-      prisma.autopartSalesDocument.findMany({
+      db.autopartSalesDocument.findMany({
         where: { companyId, documentReference: { in: chunk } },
         select: { id: true, documentType: true, documentReference: true },
       }),
@@ -1417,7 +1421,7 @@ async function bulkUpsertHistoricDocuments(
       }),
     );
 
-    const written = await prisma.$queryRaw<Array<{ documentType: string; documentReference: string }>>`
+    const written = await db.$queryRaw<Array<{ documentType: string; documentReference: string }>>`
       INSERT INTO "AutopartSalesDocument" (
         "id", "companyId", "autopartCustomerCode", "documentType", "documentReference",
         "documentDate", "goodsNet", "vat", "grossTotal", "source", "importRunId",
@@ -1473,7 +1477,7 @@ async function bulkUpsertHistoricDocuments(
     ids: refs,
     chunkSize: SAFE_IN_LIST_CHUNK,
     findChunk: (chunk) =>
-      prisma.autopartSalesDocument.findMany({
+      db.autopartSalesDocument.findMany({
         where: { companyId, documentReference: { in: chunk } },
         select: { id: true, documentType: true, documentReference: true },
       }),
@@ -1502,6 +1506,7 @@ async function bulkUpsertHistoricLines(
   idByDocKey: Map<string, string>,
   blockedDocKeys: Set<string>,
   onChunk?: (done: number, total: number) => Promise<void>,
+  db: HistoricWriteClient = prisma,
 ): Promise<{ inserted: number; updated: number; protectedLines: HistoricProtection[] }> {
   const uniqueLines = dedupePreparedHistoricLines(lines).filter(
     (line) => !blockedDocKeys.has(docKey(line.documentType, line.documentReference)),
@@ -1515,7 +1520,7 @@ async function bulkUpsertHistoricLines(
     ids: refs,
     chunkSize: SAFE_IN_LIST_CHUNK,
     findChunk: (chunk) =>
-      prisma.autopartSalesLine.findMany({
+      db.autopartSalesLine.findMany({
         where: { companyId, documentReference: { in: chunk } },
         select: {
           id: true,
@@ -1581,7 +1586,7 @@ async function bulkUpsertHistoricLines(
       }),
     );
 
-    const written = await prisma.$queryRaw<
+    const written = await db.$queryRaw<
       Array<{ documentType: string; documentReference: string; lineNumber: number }>
     >`
       INSERT INTO "AutopartSalesLine" (
@@ -2352,17 +2357,20 @@ export async function commitHistoricCompanySlice(input: {
   };
 }
 
-export async function openHistoricAccountWrite(input: {
-  actorUserId: string;
-  companyId: string;
-  accountCode: string;
-  filename561l: string | null;
-  filenameSlrb: string | null;
-  fileHash561l: string;
-  fileHashSlrb: string;
-  parentImportId: string;
-}): Promise<string> {
-  const run = await prisma.autopartCustomerImportRun.create({
+export async function openHistoricAccountWrite(
+  input: {
+    actorUserId: string;
+    companyId: string;
+    accountCode: string;
+    filename561l: string | null;
+    filenameSlrb: string | null;
+    fileHash561l: string;
+    fileHashSlrb: string;
+    parentImportId: string;
+  },
+  db: HistoricWriteClient = prisma,
+): Promise<string> {
+  const run = await db.autopartCustomerImportRun.create({
     data: {
       companyId: input.companyId,
       type: "HISTORY_561L_SLRB",
@@ -2403,8 +2411,10 @@ export async function writeHistoricAccountBatch(input: {
     salesNet: string;
     rawInvAndLn: string;
   }>;
-}): Promise<void> {
-  const skuMap = await resolveSkuMap(input.lines.map((line) => line.sku));
+},
+  db: HistoricWriteClient = prisma,
+): Promise<void> {
+  const skuMap = await resolveSkuMap(input.lines.map((line) => line.sku), db);
   const documents: PreparedHistoricDocument[] = input.documents.map((document) => ({
     companyId: input.companyId,
     autopartCustomerCode: input.accountCode,
@@ -2437,7 +2447,7 @@ export async function writeHistoricAccountBatch(input: {
     };
   });
   const writtenDocs = documents.length
-    ? await bulkUpsertHistoricDocuments(documents)
+    ? await bulkUpsertHistoricDocuments(documents, undefined, db)
     : {
         idByKey: new Map<string, string>(),
         blockedDocKeys: new Set<string>(),
@@ -2447,7 +2457,7 @@ export async function writeHistoricAccountBatch(input: {
       };
   if (!documents.length && lines.length) {
     const refs = [...new Set(lines.map((line) => line.documentReference))];
-    const existing = await prisma.autopartSalesDocument.findMany({
+    const existing = await db.autopartSalesDocument.findMany({
       where: { companyId: input.companyId, documentReference: { in: refs } },
       select: { id: true, documentType: true, documentReference: true },
     });
@@ -2455,11 +2465,17 @@ export async function writeHistoricAccountBatch(input: {
       writtenDocs.idByKey.set(docKey(row.documentType, row.documentReference), row.id);
     }
   }
-  if (lines.length) await bulkUpsertHistoricLines(lines, writtenDocs.idByKey, writtenDocs.blockedDocKeys);
+  if (lines.length) {
+    await bulkUpsertHistoricLines(lines, writtenDocs.idByKey, writtenDocs.blockedDocKeys, undefined, db);
+  }
 }
 
-export async function closeHistoricAccountWrite(runId: string, counts: { imported: number; updated: number }): Promise<void> {
-  await prisma.autopartCustomerImportRun.update({
+export async function closeHistoricAccountWrite(
+  runId: string,
+  counts: { imported: number; updated: number },
+  db: HistoricWriteClient = prisma,
+): Promise<void> {
+  await db.autopartCustomerImportRun.update({
     where: { id: runId },
     data: {
       status: "COMMITTED",
@@ -2497,14 +2513,17 @@ export async function clearMatchedHistoricComparisons(
   `;
 }
 
-export async function stampHistoricDocumentComparison(input: {
-  companyId: string;
-  documentType: "INVOICE" | "CREDIT";
-  documentReference: string;
-  linesNet: string;
-  mismatchMinor: number | null;
-}): Promise<void> {
-  await prisma.$executeRaw`
+export async function stampHistoricDocumentComparison(
+  input: {
+    companyId: string;
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    linesNet: string;
+    mismatchMinor: number | null;
+  },
+  db: HistoricWriteClient = prisma,
+): Promise<void> {
+  await db.$executeRaw`
     UPDATE "AutopartSalesDocument"
     SET "linesNetSum" = ${input.linesNet}::decimal,
         "valueMismatchMinor" = ${input.mismatchMinor},

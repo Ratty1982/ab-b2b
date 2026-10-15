@@ -317,3 +317,47 @@ export async function readOwnedFence(importId: string, db: PrismaClient = prisma
   }
   return row.lockFence;
 }
+
+const SIDE_WRITE_TIMEOUT_MS = 600_000;
+const SIDE_WRITE_MAX_WAIT_MS = 70_000;
+
+/**
+ * Holds the singleton import row for the whole side write.
+ * A fresh ALL-file import refuses the write. The row lock stops that import
+ * from claiming or flushing sales rows until this transaction ends.
+ */
+export async function assertHistoricSideWriteAvailable(tx: Prisma.TransactionClient): Promise<void> {
+  await ensureLockRow(tx);
+  const lock = await readLock(tx);
+  if (lockIsFresh(lock)) {
+    throw new AuthError(
+      "A historical ALL-file import is in progress. Promotion and retirement wait until it finishes.",
+      "IMPORT_IN_PROGRESS",
+      409,
+    );
+  }
+}
+
+export async function runHistoricSideWrite<T>(
+  write: (tx: Prisma.TransactionClient) => Promise<T>,
+  db: PrismaClient = prisma,
+): Promise<T> {
+  try {
+    return await db.$transaction(
+      async (tx) => {
+        await assertHistoricSideWriteAvailable(tx);
+        return write(tx);
+      },
+      { timeout: SIDE_WRITE_TIMEOUT_MS, maxWait: SIDE_WRITE_MAX_WAIT_MS },
+    );
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028") {
+      throw new AuthError(
+        "A historical ALL-file import is in progress. Promotion and retirement wait until it finishes.",
+        "IMPORT_IN_PROGRESS",
+        409,
+      );
+    }
+    throw error;
+  }
+}

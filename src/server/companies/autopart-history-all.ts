@@ -37,6 +37,7 @@ import {
   readOwnedFence,
   releaseHistoricImportProcess,
   reserveHistoricImportProcess,
+  runHistoricSideWrite,
   updateOwnedHistoricImport,
   withHistoricImportFence,
 } from "@/server/companies/historic-import-lock";
@@ -1072,39 +1073,42 @@ export async function retireAbsentHistoricDocuments(actorUserId: string, raw: un
   if (!imported || imported.status !== "COMMITTED") {
     throw new AuthError("Only a completed ALL import can retire documents it did not contain", "IMPORT_BLOCKED", 400);
   }
-  const gaps = await prisma.autopartHistorySnapshotGap.findMany({
-    where: { importId: input.importId, status: "OPEN" },
-  });
-  let retired = 0;
-  for (const gap of gaps) {
-    const document = await prisma.autopartSalesDocument.findFirst({
-      where: { companyId: gap.companyId, documentType: gap.documentType, documentReference: gap.documentReference },
+  const retired = await runHistoricSideWrite(async (tx) => {
+    const gaps = await tx.autopartHistorySnapshotGap.findMany({
+      where: { importId: input.importId, status: "OPEN" },
     });
-    if (!document || document.has504 || document.hasTrm21qc || ONGOING_SOURCES.includes(document.source as (typeof ONGOING_SOURCES)[number])) {
-      continue;
+    let count = 0;
+    for (const gap of gaps) {
+      const document = await tx.autopartSalesDocument.findFirst({
+        where: { companyId: gap.companyId, documentType: gap.documentType, documentReference: gap.documentReference },
+      });
+      if (!document || document.has504 || document.hasTrm21qc || ONGOING_SOURCES.includes(document.source as (typeof ONGOING_SOURCES)[number])) {
+        continue;
+      }
+      await tx.autopartSalesLine.deleteMany({
+        where: {
+          companyId: gap.companyId,
+          documentType: gap.documentType,
+          documentReference: gap.documentReference,
+          source: { not: "ONGOING_TRM21QC" },
+        },
+      });
+      await tx.autopartSalesDocument.deleteMany({
+        where: {
+          id: document.id,
+          has504: false,
+          hasTrm21qc: false,
+          source: { notIn: [...ONGOING_SOURCES] },
+        },
+      });
+      await tx.autopartHistorySnapshotGap.update({
+        where: { id: gap.id },
+        data: { status: "RETIRED", retiredAt: new Date() },
+      });
+      count += 1;
     }
-    await prisma.autopartSalesLine.deleteMany({
-      where: {
-        companyId: gap.companyId,
-        documentType: gap.documentType,
-        documentReference: gap.documentReference,
-        source: { not: "ONGOING_TRM21QC" },
-      },
-    });
-    await prisma.autopartSalesDocument.deleteMany({
-      where: {
-        id: document.id,
-        has504: false,
-        hasTrm21qc: false,
-        source: { notIn: [...ONGOING_SOURCES] },
-      },
-    });
-    await prisma.autopartHistorySnapshotGap.update({
-      where: { id: gap.id },
-      data: { status: "RETIRED", retiredAt: new Date() },
-    });
-    retired += 1;
-  }
+    return count;
+  });
   await recordAuditEvent({
     action: "autopart.history_snapshot_retired",
     entityType: "AutopartHistoryAllImport",
@@ -1349,6 +1353,10 @@ async function rememberIncompleteVerification(reviewId: string) {
 }
 
 export const historicPromotion = {
+  /** Certified line batch size. Tests set this to 1 to fail between batches. */
+  batchSize: 500,
+  /** Runs inside the publication transaction after each certified line batch. */
+  afterCertifiedBatch: null as ((linesWritten: number) => void | Promise<void>) | null,
   write(actorUserId: string, companyId: string, code: string, reviewId: string) {
     return promoteStagedAutopartHistory(actorUserId, companyId, code, reviewId);
   },
@@ -1436,79 +1444,97 @@ export async function promoteStagedAutopartHistory(
     where: { id: review.id },
     data: { status: "VERIFYING", companyId },
   });
-  const runId = await openHistoricAccountWrite({
-    actorUserId,
-    companyId,
-    accountCode: classified.canonicalCode,
-    filename561l: source.filename561l,
-    filenameSlrb: source.filenameSlrb,
-    fileHash561l: source.fileHash561l,
-    fileHashSlrb: source.fileHashSlrb ?? "",
-    parentImportId: source.id,
-  });
-  const docs = await prisma.autopartHistoryStagedDocument.findMany({
-    where: { importId: source.id, accountCode: verified },
-  });
-  await writeHistoricAccountBatch({
-    runId,
-    companyId,
-    accountCode: classified.canonicalCode,
-    documents: docs.map((document) => ({
-      documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
-      documentReference: document.documentReference,
-      documentDate: document.documentDate ? document.documentDate.toISOString().slice(0, 10) : null,
-      goodsNet: document.goodsNet?.toString() ?? null,
-      vat: document.vat?.toString() ?? null,
-      grossTotal: document.grossTotal?.toString() ?? null,
-      source: document.source === "561L" ? "561L" : "SLRB",
-    })),
-    lines: [],
-  });
-  let lineCount = 0;
-  let cursor: string | undefined;
-  while (true) {
-    const lines = await prisma.autopartHistoryStagedLine.findMany({
+  return runHistoricSideWrite(async (tx) => {
+    const runId = await openHistoricAccountWrite(
+      {
+        actorUserId,
+        companyId,
+        accountCode: classified.canonicalCode,
+        filename561l: source.filename561l,
+        filenameSlrb: source.filenameSlrb,
+        fileHash561l: source.fileHash561l,
+        fileHashSlrb: source.fileHashSlrb ?? "",
+        parentImportId: source.id,
+      },
+      tx,
+    );
+    const docs = await tx.autopartHistoryStagedDocument.findMany({
       where: { importId: source.id, accountCode: verified },
-      orderBy: { id: "asc" },
-      take: BATCH,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
-    if (!lines.length) break;
-    cursor = lines[lines.length - 1]!.id;
-    lineCount += lines.length;
-    await writeHistoricAccountBatch({
-      runId,
-      companyId,
-      accountCode: classified.canonicalCode,
-      documents: [],
-      lines: lines.map((line) => ({
-        documentType: line.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
-        documentReference: line.documentReference,
-        lineNumber: line.lineNumber,
-        sku: line.sku,
-        description: line.descriptionSnapshot,
-        units: line.units.toString(),
-        salesNet: line.salesNet.toString(),
-        rawInvAndLn: line.rawInvAndLn ?? "",
-      })),
+    await writeHistoricAccountBatch(
+      {
+        runId,
+        companyId,
+        accountCode: classified.canonicalCode,
+        documents: docs.map((document) => ({
+          documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+          documentReference: document.documentReference,
+          documentDate: document.documentDate ? document.documentDate.toISOString().slice(0, 10) : null,
+          goodsNet: document.goodsNet?.toString() ?? null,
+          vat: document.vat?.toString() ?? null,
+          grossTotal: document.grossTotal?.toString() ?? null,
+          source: document.source === "561L" ? "561L" : "SLRB",
+        })),
+        lines: [],
+      },
+      tx,
+    );
+    let lineCount = 0;
+    let cursor: string | undefined;
+    const batchSize = Math.max(1, historicPromotion.batchSize);
+    while (true) {
+      const lines = await tx.autopartHistoryStagedLine.findMany({
+        where: { importId: source.id, accountCode: verified },
+        orderBy: { id: "asc" },
+        take: batchSize,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      if (!lines.length) break;
+      cursor = lines[lines.length - 1]!.id;
+      lineCount += lines.length;
+      await writeHistoricAccountBatch(
+        {
+          runId,
+          companyId,
+          accountCode: classified.canonicalCode,
+          documents: [],
+          lines: lines.map((line) => ({
+            documentType: line.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+            documentReference: line.documentReference,
+            lineNumber: line.lineNumber,
+            sku: line.sku,
+            description: line.descriptionSnapshot,
+            units: line.units.toString(),
+            salesNet: line.salesNet.toString(),
+            rawInvAndLn: line.rawInvAndLn ?? "",
+          })),
+        },
+        tx,
+      );
+      if (historicPromotion.afterCertifiedBatch) await historicPromotion.afterCertifiedBatch(lineCount);
+    }
+    await stampPromotedHistoricComparisons(companyId, source.id, verified, tx);
+    await closeHistoricAccountWrite(runId, { imported: lineCount, updated: 0 }, tx);
+    await tx.autopartHistoryReviewAccount.update({
+      where: { id: review.id },
+      data: { status: "APPLIED", companyId, appliedAt: new Date(), warnings: [] },
     });
-  }
-  await stampPromotedHistoricComparisons(companyId, source.id, verified);
-  await closeHistoricAccountWrite(runId, { imported: lineCount, updated: 0 });
-  await prisma.autopartHistoryReviewAccount.update({
-    where: { id: review.id },
-    data: { status: "APPLIED", companyId, appliedAt: new Date(), warnings: [] },
+    return { completed: true, applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
   });
-  return { completed: true, applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
 }
 
-async function stampPromotedHistoricComparisons(companyId: string, importId: string, accountCode: string) {
+async function stampPromotedHistoricComparisons(
+  companyId: string,
+  importId: string,
+  accountCode: string,
+  db: Prisma.TransactionClient,
+) {
   const [documents, grouped] = await Promise.all([
-    prisma.autopartHistoryStagedDocument.findMany({
+    db.autopartHistoryStagedDocument.findMany({
       where: { importId, accountCode },
       select: { documentType: true, documentReference: true, goodsNet: true },
     }),
-    prisma.autopartHistoryStagedLine.groupBy({
+    db.autopartHistoryStagedLine.groupBy({
       by: ["documentType", "documentReference"],
       where: { importId, accountCode },
       _sum: { salesNet: true },
@@ -1527,13 +1553,16 @@ async function stampPromotedHistoricComparisons(companyId: string, importId: str
     if (goodsMinor == null) continue;
     const lineMinor = lineMinorByDoc.get(`${document.documentType}|${document.documentReference}`) ?? 0;
     const diff = lineMinor - goodsMinor;
-    await stampHistoricDocumentComparison({
-      companyId,
-      documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
-      documentReference: document.documentReference,
-      linesNet: minorToMoney(lineMinor),
-      mismatchMinor: diff === 0 ? null : diff,
-    });
+    await stampHistoricDocumentComparison(
+      {
+        companyId,
+        documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+        documentReference: document.documentReference,
+        linesNet: minorToMoney(lineMinor),
+        mismatchMinor: diff === 0 ? null : diff,
+      },
+      db,
+    );
   }
 }
 
