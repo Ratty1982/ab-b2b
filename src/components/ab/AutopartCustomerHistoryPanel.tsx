@@ -117,7 +117,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         setConfirmingHistory(false);
         setBusy(false);
         if (r.data.status === "COMMITTED") {
-          toast.success("Historic Autopart data imported");
+          toast.success("Historical sales imported");
           setHistoryPreview(null);
           setImportProgress(null);
           await load();
@@ -169,7 +169,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
       toast.message("A historic import is already processing — showing progress");
       return;
     }
-    toast.message(r.data.canCommit ? "Preview ready — review then confirm" : "Preview blocked");
+    toast.message(r.data.canCommit ? "Check complete. Review, then import." : "These files need attention before import.");
   }
 
   async function onConfirmHistory() {
@@ -207,7 +207,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
         void pollImportRun(r.data.runId);
         return;
       }
-      toast.success("Historic Autopart data imported");
+      toast.success("Historical sales imported");
       setHistoryPreview(null);
       setImportProgress(null);
       setWorkspace(r.data.workspace);
@@ -246,8 +246,54 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
   const importInFlight =
     confirmingHistory || importProgress?.status === "PROCESSING";
 
+  const status = workspace.historyStatus;
+
   return (
     <div className="space-y-6 p-4 sm:p-6">
+      <section className="rounded-lg border border-border p-5">
+        <h2 className="font-display text-base font-semibold uppercase">Historical sales</h2>
+        <p className="mt-2 text-[13px]">{status.label}</p>
+        <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <dt className="text-steel">Last successful import</dt>
+            <dd>{status.lastSuccessfulAt ? formatDateTime(status.lastSuccessfulAt) : "None yet"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Product lines report</dt>
+            <dd>{status.productReport ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Invoice report</dt>
+            <dd>{status.invoiceReport ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Documents</dt>
+            <dd>{status.documents.toLocaleString("en-GB")}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Product lines</dt>
+            <dd>{status.lines.toLocaleString("en-GB")}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Net sales ex VAT</dt>
+            <dd>{gbp(status.netSales)}</dd>
+          </div>
+        </dl>
+        {status.undatedDocuments > 0 ? (
+          <p className="mt-3 text-[12px] text-steel">
+            {status.undatedDocuments.toLocaleString("en-GB")} document
+            {status.undatedDocuments === 1 ? "" : "s"} have no date in the source report. No date was
+            added.
+          </p>
+        ) : null}
+        {status.attention.length ? (
+          <ul className="mt-3 space-y-1 text-[12px] text-warn">
+            {status.attention.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
       {workspace.unifiedSales ? (
         <section className="rounded-lg border border-border p-5">
           <h2 className="font-display text-base font-semibold uppercase">
@@ -287,11 +333,11 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             <dt className="text-steel">Historic purchase data</dt>
             <dd>
               {workspace.purchaseDataStatus === "GLOBAL"
-                ? "Global Autopart Import"
+                ? "Shared sales history"
                 : workspace.purchaseDataStatus === "LEGACY"
-                  ? "Legacy company import"
+                  ? "Imported for this customer"
                   : workspace.purchaseDataStatus === "RESTRICTED"
-                    ? "Restricted"
+                    ? "Not available"
                     : "Not imported"}
             </dd>
           </div>
@@ -577,16 +623,15 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
       </section>
 
       <section className="rounded-lg border border-border p-5">
-        <h2 className="font-display text-base font-semibold uppercase">Import historic data</h2>
+        <h2 className="font-display text-base font-semibold uppercase">Import historical sales</h2>
         <p className="mt-2 text-[12px] text-steel">
-          Upload 561L (lines) and SLRB (document dates). Format is detected from file content —
-          extension does not matter. Dry-run first — no database writes until confirm. Large retail
-          histories process server-side with live progress.
+          Upload this customer&apos;s product lines report and invoice report. Check the files
+          before saving. Importing the same reports again does not add those invoices twice.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="text-[12px]">
-            561L report
-            <span className="mt-0.5 block text-[11px] text-steel">Accepted: .txt, .csv</span>
+            Product lines report
+            <span className="mt-0.5 block text-[11px] text-steel">Autopart 561L, .txt or .csv</span>
             <input
               type="file"
               accept=".csv,.txt,text/csv,text/plain"
@@ -595,8 +640,10 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             />
           </label>
           <label className="text-[12px]">
-            SLRB report
-            <span className="mt-0.5 block text-[11px] text-steel">Accepted: .txt, .csv</span>
+            Invoice report
+            <span className="mt-0.5 block text-[11px] text-steel">
+              Autopart SLRB, dates and totals, .txt or .csv
+            </span>
             <input
               type="file"
               accept=".csv,.txt,text/csv,text/plain"
@@ -612,7 +659,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             onClick={() => void onPreviewHistory()}
             className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase"
           >
-            Preview
+            Check files
           </button>
           <button
             type="button"
@@ -625,7 +672,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             onClick={() => void onConfirmHistory()}
             className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-40"
           >
-            {importInFlight ? "Importing…" : "Confirm import"}
+            {importInFlight ? "Importing…" : "Import"}
           </button>
         </div>
 
@@ -774,19 +821,31 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
               </button>
             ) : null}
             <p>
-              561L: {historyPreview.report561l.validLines} lines (
-              {historyPreview.report561l.invoiceLines} inv / {historyPreview.report561l.creditLines}{" "}
-              credit) · SLRB: {historyPreview.reportSlrb.invoiceDocuments} invoices
+              Product lines: {historyPreview.report561l.validLines.toLocaleString("en-GB")} (
+              {historyPreview.report561l.invoiceLines.toLocaleString("en-GB")} invoices /{" "}
+              {historyPreview.report561l.creditLines.toLocaleString("en-GB")} credits). Invoice
+              report: {historyPreview.reportSlrb.invoiceDocuments.toLocaleString("en-GB")} invoices
               {historyPreview.reportSlrb.creditDocuments
-                ? ` / ${historyPreview.reportSlrb.creditDocuments} credits`
-                : null}
+                ? ` / ${historyPreview.reportSlrb.creditDocuments.toLocaleString("en-GB")} credits`
+                : ""}
+              .
             </p>
-            <p>
-              Matched docs: {historyPreview.matching.matchedDocuments} · Unmatched 561L:{" "}
-              {historyPreview.matching.unmatched561Documents} · SLRB without lines:{" "}
-              {historyPreview.matching.slrbDocumentsWithoutLines} · SKUs matched:{" "}
-              {historyPreview.products.matchedAbSkus}/{historyPreview.products.uniqueSkus}
-            </p>
+            {historyPreview.customerSlice?.mode === "isolated" ? (
+              <p>
+                This file includes other accounts. Only this customer&apos;s documents will be
+                imported
+                {historyPreview.customerSlice.excludedAccounts.length
+                  ? ` (${historyPreview.customerSlice.excludedAccounts.join(", ")} left out)`
+                  : ""}
+                .
+              </p>
+            ) : null}
+            {historyPreview.matching.linesWithoutDates > 0 ? (
+              <p className="text-steel">
+                {historyPreview.matching.linesWithoutDates.toLocaleString("en-GB")} product lines
+                have no invoice date. No date will be added.
+              </p>
+            ) : null}
             <ul className="space-y-1">
               {historyPreview.issues.map((i) => (
                 <li
@@ -799,13 +858,60 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
                         : "text-steel"
                   }
                 >
-                  [{i.severity}] {i.message}
+                  {i.severity === "BLOCKING"
+                    ? "Needs attention. "
+                    : i.severity === "WARNING"
+                      ? "Check. "
+                      : ""}
+                  {i.message}
+                  {workspace.showAdvanced ? ` (${i.code})` : ""}
                 </li>
               ))}
             </ul>
+            {workspace.showAdvanced ? (
+              <p className="text-steel">
+                File checks {historyPreview.fileHash561l.slice(0, 12)} /{" "}
+                {historyPreview.fileHashSlrb.slice(0, 12)}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </section>
+
+      {workspace.importHistory.length ? (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="font-display text-base font-semibold uppercase">Import history</h2>
+          <ul className="mt-3 space-y-3 text-[13px]">
+            {workspace.importHistory.map((run) => (
+              <li key={run.id} className="border-b border-border/60 pb-3 last:border-0">
+                <p className="font-semibold">
+                  {run.status}
+                  {run.completedAt ? ` · ${formatDateTime(run.completedAt)}` : ""}
+                </p>
+                <p className="text-steel">
+                  {run.productReport ?? "Product lines report"} · {run.invoiceReport ?? "Invoice report"}
+                </p>
+                <p>
+                  Saved {run.imported.toLocaleString("en-GB")}
+                  {run.updated ? `, updated ${run.updated.toLocaleString("en-GB")}` : ""}
+                  {run.skipped ? `, skipped ${run.skipped.toLocaleString("en-GB")}` : ""}
+                </p>
+                {run.attention.map((item) => (
+                  <p key={item} className="text-warn">
+                    {item}
+                  </p>
+                ))}
+                {workspace.showAdvanced && (run.productReportCheck || run.invoiceReportCheck) ? (
+                  <p className="text-[11px] text-steel">
+                    File checks {run.productReportCheck?.slice(0, 12) ?? "—"} /{" "}
+                    {run.invoiceReportCheck?.slice(0, 12) ?? "—"}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {workspace.globalHistory.products.length ? (
         <section className="rounded-lg border border-border p-5">
@@ -813,8 +919,7 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
             Historical products purchased
           </h2>
           <p className="mt-2 text-[12px] text-steel">
-            Quantities and net sales exclude VAT from the global Autopart import. Legacy company
-            import products are listed separately when that import exists.
+            Quantities and net sales exclude VAT. This list is from the shared sales history.
           </p>
           <table className="mt-3 w-full text-left text-[13px]">
             <thead>
