@@ -122,10 +122,10 @@ export function mapSlrbDocumentType(raw: string | null | undefined): AutopartSlr
   const t = raw.trim().toUpperCase();
   if (t === "INV" || t === "INVOICE" || t === "I") return "INVOICE";
   if (t === "CRN" || t === "CREDIT" || t === "C" || t === "CR") return "CREDIT";
-  if (t === "PAY" || t === "PAYMENT" || t === "CASH" || t === "REC" || t === "RECEIPT") {
+  if (t === "PAY" || t === "PAYMENT" || t === "CASH" || t === "CSH" || t === "REC" || t === "RECEIPT") {
     return "PAYMENT";
   }
-  if (t === "JNL" || t === "JOURNAL" || t === "ADJ") return "JOURNAL";
+  if (t === "JNL" || t === "JOURNAL" || t === "ADJ" || t === "OPB") return "JOURNAL";
   return "UNKNOWN";
 }
 

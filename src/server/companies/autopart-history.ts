@@ -6,9 +6,12 @@
  * Historic lines are NOT AB Orders.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { Prisma, type AutopartHistoricDocumentType } from "@prisma/client";
+import { Prisma, PrismaClient, type AutopartHistoricDocumentType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/infra/database/client";
+
+/** Global client, or the publication transaction that must commit certified history together. */
+export type HistoricWriteClient = Prisma.TransactionClient | PrismaClient;
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
@@ -707,7 +710,7 @@ export async function resolveHistoricReportAccountMatch(input: {
   };
 }
 
-async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
+async function resolveSkuMap(skus: string[], db: HistoricWriteClient = prisma): Promise<Map<string, string>> {
   const cleaned = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
   const map = new Map<string, string>();
   if (!cleaned.length) return map;
@@ -716,7 +719,7 @@ async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
   const byUpper = new Map<string, string>();
   for (let i = 0; i < cleaned.length; i += SAFE_SKU_EQUALS_CHUNK) {
     const chunk = cleaned.slice(i, i + SAFE_SKU_EQUALS_CHUNK);
-    const variants = await prisma.productVariant.findMany({
+    const variants = await db.productVariant.findMany({
       where: {
         OR: chunk.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
       },
@@ -1357,6 +1360,7 @@ const PROTECTED_DOCUMENT_WHERE = Prisma.sql`
 async function bulkUpsertHistoricDocuments(
   docs: PreparedHistoricDocument[],
   onChunk?: (done: number, total: number) => Promise<void>,
+  db: HistoricWriteClient = prisma,
 ): Promise<{
   inserted: number;
   updated: number;
@@ -1377,7 +1381,7 @@ async function bulkUpsertHistoricDocuments(
     ids: refs,
     chunkSize: SAFE_IN_LIST_CHUNK,
     findChunk: (chunk) =>
-      prisma.autopartSalesDocument.findMany({
+      db.autopartSalesDocument.findMany({
         where: { companyId, documentReference: { in: chunk } },
         select: { id: true, documentType: true, documentReference: true },
       }),
@@ -1417,7 +1421,7 @@ async function bulkUpsertHistoricDocuments(
       }),
     );
 
-    const written = await prisma.$queryRaw<Array<{ documentType: string; documentReference: string }>>`
+    const written = await db.$queryRaw<Array<{ documentType: string; documentReference: string }>>`
       INSERT INTO "AutopartSalesDocument" (
         "id", "companyId", "autopartCustomerCode", "documentType", "documentReference",
         "documentDate", "goodsNet", "vat", "grossTotal", "source", "importRunId",
@@ -1473,7 +1477,7 @@ async function bulkUpsertHistoricDocuments(
     ids: refs,
     chunkSize: SAFE_IN_LIST_CHUNK,
     findChunk: (chunk) =>
-      prisma.autopartSalesDocument.findMany({
+      db.autopartSalesDocument.findMany({
         where: { companyId, documentReference: { in: chunk } },
         select: { id: true, documentType: true, documentReference: true },
       }),
@@ -1502,6 +1506,7 @@ async function bulkUpsertHistoricLines(
   idByDocKey: Map<string, string>,
   blockedDocKeys: Set<string>,
   onChunk?: (done: number, total: number) => Promise<void>,
+  db: HistoricWriteClient = prisma,
 ): Promise<{ inserted: number; updated: number; protectedLines: HistoricProtection[] }> {
   const uniqueLines = dedupePreparedHistoricLines(lines).filter(
     (line) => !blockedDocKeys.has(docKey(line.documentType, line.documentReference)),
@@ -1515,7 +1520,7 @@ async function bulkUpsertHistoricLines(
     ids: refs,
     chunkSize: SAFE_IN_LIST_CHUNK,
     findChunk: (chunk) =>
-      prisma.autopartSalesLine.findMany({
+      db.autopartSalesLine.findMany({
         where: { companyId, documentReference: { in: chunk } },
         select: {
           id: true,
@@ -1581,7 +1586,7 @@ async function bulkUpsertHistoricLines(
       }),
     );
 
-    const written = await prisma.$queryRaw<
+    const written = await db.$queryRaw<
       Array<{ documentType: string; documentReference: string; lineNumber: number }>
     >`
       INSERT INTO "AutopartSalesLine" (
@@ -2239,6 +2244,299 @@ export async function getHistoricImportRunStatus(actorUserId: string, runId: str
     failure: diag["failure"] ?? null,
     partialProgress: diag["partialProgress"] ?? null,
   };
+}
+
+export async function commitHistoricCompanySlice(input: {
+  actorUserId: string;
+  companyId: string;
+  accountCode: string;
+  filename561l: string | null;
+  filenameSlrb: string | null;
+  fileHash561l: string;
+  fileHashSlrb: string;
+  parentImportId: string;
+  documents: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    documentDate: string | null;
+    goodsNet: string | null;
+    vat: string | null;
+    grossTotal: string | null;
+    source: "SLRB" | "561L";
+  }>;
+  lines: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    lineNumber: number;
+    sku: string;
+    description: string | null;
+    units: string;
+    salesNet: string;
+    rawInvAndLn: string;
+  }>;
+}): Promise<{
+  runId: string;
+  documentsInserted: number;
+  documentsUpdated: number;
+  linesInserted: number;
+  linesUpdated: number;
+  protected: number;
+}> {
+  const skuMap = await resolveSkuMap(input.lines.map((line) => line.sku));
+  const preparedDocs: PreparedHistoricDocument[] = input.documents.map((document) => ({
+    companyId: input.companyId,
+    autopartCustomerCode: input.accountCode,
+    documentType: document.documentType,
+    documentReference: document.documentReference,
+    documentDate: dateOnlyToUtcNoon(document.documentDate),
+    goodsNet: document.goodsNet,
+    vat: document.vat,
+    grossTotal: document.grossTotal,
+    source: document.source,
+    importRunId: "",
+  }));
+  const preparedLines: PreparedHistoricLine[] = input.lines.map((line) => {
+    const skuKey = line.sku.trim().toUpperCase();
+    const matchedVariantId = skuMap.get(skuKey) ?? null;
+    return {
+      companyId: input.companyId,
+      documentType: line.documentType,
+      documentReference: line.documentReference,
+      lineNumber: line.lineNumber,
+      sku: line.sku.trim(),
+      descriptionSnapshot: line.description,
+      units: line.units,
+      salesNet: line.salesNet,
+      matchedVariantId,
+      matchStatus: matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
+      rawInvAndLn: line.rawInvAndLn,
+      source: "561L",
+      importRunId: "",
+      autopartCustomerCode: input.accountCode,
+    };
+  });
+  const run = await prisma.autopartCustomerImportRun.create({
+    data: {
+      companyId: input.companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "PROCESSING",
+      filename: input.filename561l,
+      filenameSlrb: input.filenameSlrb,
+      fileHash: input.fileHash561l,
+      fileHashSlrb: input.fileHashSlrb,
+      detectedAccount: input.accountCode,
+      rowsRead: input.documents.length + input.lines.length,
+      rowsValid: input.lines.length,
+      dryRun: false,
+      createdById: input.actorUserId,
+      diagnostics: { allImportId: input.parentImportId } as Prisma.InputJsonValue,
+    },
+  });
+  for (const document of preparedDocs) document.importRunId = run.id;
+  for (const line of preparedLines) line.importRunId = run.id;
+  const written = await executeHistoricImportWrites({
+    runId: run.id,
+    companyId: input.companyId,
+    actorUserId: input.actorUserId,
+    preparedDocs,
+    preparedLines,
+    skipped: 0,
+    unmatched561Documents: 0,
+    previewSummary: { allImportId: input.parentImportId, accountCode: input.accountCode },
+    alreadyImported: false,
+    filename561l: input.filename561l,
+    filenameSlrb: input.filenameSlrb,
+  });
+  return {
+    runId: run.id,
+    documentsInserted: 0,
+    documentsUpdated: 0,
+    linesInserted: written.imported,
+    linesUpdated: written.updated,
+    protected: 0,
+  };
+}
+
+export async function openHistoricAccountWrite(
+  input: {
+    actorUserId: string;
+    companyId: string;
+    accountCode: string;
+    filename561l: string | null;
+    filenameSlrb: string | null;
+    fileHash561l: string;
+    fileHashSlrb: string;
+    parentImportId: string;
+  },
+  db: HistoricWriteClient = prisma,
+): Promise<string> {
+  const run = await db.autopartCustomerImportRun.create({
+    data: {
+      companyId: input.companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "PROCESSING",
+      filename: input.filename561l,
+      filenameSlrb: input.filenameSlrb,
+      fileHash: input.fileHash561l,
+      fileHashSlrb: input.fileHashSlrb,
+      detectedAccount: input.accountCode,
+      dryRun: false,
+      createdById: input.actorUserId,
+      diagnostics: { allImportId: input.parentImportId } as Prisma.InputJsonValue,
+    },
+  });
+  return run.id;
+}
+
+export async function writeHistoricAccountBatch(input: {
+  runId: string;
+  companyId: string;
+  accountCode: string;
+  documents: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    documentDate: string | null;
+    goodsNet: string | null;
+    vat: string | null;
+    grossTotal: string | null;
+    source: "SLRB" | "561L";
+  }>;
+  lines: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    lineNumber: number;
+    sku: string;
+    description: string | null;
+    units: string;
+    salesNet: string;
+    rawInvAndLn: string;
+  }>;
+},
+  db: HistoricWriteClient = prisma,
+): Promise<void> {
+  const skuMap = await resolveSkuMap(input.lines.map((line) => line.sku), db);
+  const documents: PreparedHistoricDocument[] = input.documents.map((document) => ({
+    companyId: input.companyId,
+    autopartCustomerCode: input.accountCode,
+    documentType: document.documentType,
+    documentReference: document.documentReference,
+    documentDate: dateOnlyToUtcNoon(document.documentDate),
+    goodsNet: document.goodsNet,
+    vat: document.vat,
+    grossTotal: document.grossTotal,
+    source: document.source,
+    importRunId: input.runId,
+  }));
+  const lines: PreparedHistoricLine[] = input.lines.map((line) => {
+    const matchedVariantId = skuMap.get(line.sku.trim().toUpperCase()) ?? null;
+    return {
+      companyId: input.companyId,
+      documentType: line.documentType,
+      documentReference: line.documentReference,
+      lineNumber: line.lineNumber,
+      sku: line.sku.trim(),
+      descriptionSnapshot: line.description,
+      units: line.units,
+      salesNet: line.salesNet,
+      matchedVariantId,
+      matchStatus: matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
+      rawInvAndLn: line.rawInvAndLn,
+      source: "561L",
+      importRunId: input.runId,
+      autopartCustomerCode: input.accountCode,
+    };
+  });
+  const writtenDocs = documents.length
+    ? await bulkUpsertHistoricDocuments(documents, undefined, db)
+    : {
+        idByKey: new Map<string, string>(),
+        blockedDocKeys: new Set<string>(),
+        inserted: 0,
+        updated: 0,
+        protectedDocs: [],
+      };
+  if (!documents.length && lines.length) {
+    const refs = [...new Set(lines.map((line) => line.documentReference))];
+    const existing = await db.autopartSalesDocument.findMany({
+      where: { companyId: input.companyId, documentReference: { in: refs } },
+      select: { id: true, documentType: true, documentReference: true },
+    });
+    for (const row of existing) {
+      writtenDocs.idByKey.set(docKey(row.documentType, row.documentReference), row.id);
+    }
+  }
+  if (lines.length) {
+    await bulkUpsertHistoricLines(lines, writtenDocs.idByKey, writtenDocs.blockedDocKeys, undefined, db);
+  }
+}
+
+export async function closeHistoricAccountWrite(
+  runId: string,
+  counts: { imported: number; updated: number },
+  db: HistoricWriteClient = prisma,
+): Promise<void> {
+  await db.autopartCustomerImportRun.update({
+    where: { id: runId },
+    data: {
+      status: "COMMITTED",
+      rowsImported: counts.imported,
+      rowsUpdated: counts.updated,
+      completedAt: new Date(),
+    },
+  });
+}
+
+/** Clears a previous mismatch when this import's line total now equals SLRB goods. */
+export async function clearMatchedHistoricComparisons(
+  companyId: string,
+  documents: Array<{ documentType: "INVOICE" | "CREDIT"; documentReference: string; linesNet: string }>,
+): Promise<void> {
+  if (!documents.length) return;
+  const values = documents.map(
+    (document) => Prisma.sql`(${document.documentReference}, ${document.documentType}, ${document.linesNet})`,
+  );
+  await prisma.$executeRaw`
+    UPDATE "AutopartSalesDocument" AS d
+    SET "linesNetSum" = v.net::decimal,
+        "valueMismatchMinor" = NULL,
+        "updatedAt" = NOW()
+    FROM (VALUES ${Prisma.join(values)}) AS v(reference, dtype, net)
+    WHERE d."companyId" = ${companyId}
+      AND d."documentReference" = v.reference
+      AND d."documentType"::text = v.dtype
+      AND d."valueMismatchMinor" IS NOT NULL
+      AND NOT (
+        d."has504" = true
+        OR d."hasTrm21qc" = true
+        OR d."source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+      )
+  `;
+}
+
+export async function stampHistoricDocumentComparison(
+  input: {
+    companyId: string;
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    linesNet: string;
+    mismatchMinor: number | null;
+  },
+  db: HistoricWriteClient = prisma,
+): Promise<void> {
+  await db.$executeRaw`
+    UPDATE "AutopartSalesDocument"
+    SET "linesNetSum" = ${input.linesNet}::decimal,
+        "valueMismatchMinor" = ${input.mismatchMinor},
+        "updatedAt" = NOW()
+    WHERE "companyId" = ${input.companyId}
+      AND "documentType" = ${input.documentType}::"AutopartHistoricDocumentType"
+      AND "documentReference" = ${input.documentReference}
+      AND NOT (
+        "has504" = true
+        OR "hasTrm21qc" = true
+        OR "source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+      )
+  `;
 }
 
 // ─── Credit control (removed) ────────────────────────────────────────────────

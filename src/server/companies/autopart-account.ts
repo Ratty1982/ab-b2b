@@ -228,6 +228,10 @@ export async function linkAndVerifyCompanyAutopartCustomerCode(
   });
   if (!before) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
+  const history = await import("@/server/companies/autopart-history-all");
+  const pending = await history.stagedHistoricReviewIsPending(next);
+  if (pending) await history.beginHistoricAccountVerification(next, input.companyId);
+
   try {
     const updated = await prisma.company.update({
       where: { id: input.companyId },
@@ -238,6 +242,20 @@ export async function linkAndVerifyCompanyAutopartCustomerCode(
       },
       select: autopartSelect,
     });
+
+    try {
+      const promoted = await history.promoteStagedAutopartHistory(actorUserId, input.companyId, next);
+      if (pending && !promoted.completed) {
+        throw new AuthError(
+          "The customer code was saved, but staged history was not fully applied. Retry verification.",
+          "PROMOTION_INCOMPLETE",
+          409,
+        );
+      }
+    } catch (error) {
+      if (pending) throw error;
+      console.error("[ab:history-promote] verified account was saved; no staged history was waiting", error);
+    }
 
     await recordAuditEvent({
       action: "company.autopart_account.linked_verified",

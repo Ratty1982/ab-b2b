@@ -158,7 +158,26 @@ Stock **imports** at **09:15, 12:15, 15:15, 18:15 Europe/London**. See [docs/aut
 
 Migration `20261008202311_autopart_customer_master` is additive. The entrypoint `prisma migrate deploy` applies it. Bootstrap upserts the `autopart.*` permissions. Deploy does **not** import 407EXP, 561L, or SLRB, and it does **not** enable historical access or create portal users.
 
-Leave `AUTOPART_PORTAL_HISTORY_ENABLED` unset or `false`. Optional `AUTOPART_IMPORT_MAX_BYTES` defaults to 262144000 (250 MB). Optional `AUTOPART_IMPORT_DIR` overrides the private upload directory.
+Leave `AUTOPART_PORTAL_HISTORY_ENABLED` unset or `false`. Optional `AUTOPART_IMPORT_MAX_BYTES` defaults to 262144000 (250 MB).
+
+## Historical ALL-file storage
+
+`561L-ALL` and `SLRB-ALL` uploads are hashed before they are decoded. PostgreSQL stores the SHA-256, the encoding, and the private path. It does not store the original file bytes. A `pg_dump` or Coolify database backup therefore cannot restore the files. Back up the import directory on its own schedule, separately from the database backup, and keep that copy off the application container.
+
+`AUTOPART_IMPORT_DIR` only names a directory. Setting it does not prove that a Coolify volume is mounted there, and the readiness report keeps persistence unproven until an operator confirms it. Before any production historical import:
+
+1. Mount a Coolify persistent volume on the application service at the same path, for example `/data/autopart-imports`. Do not point it at `public/` or at the container working directory.
+2. Set `AUTOPART_IMPORT_DIR` to that mounted path.
+3. Write a marker file in the directory, replace the container, and confirm the marker is still present. Original ALL files from before the replacement must still be present as well.
+4. Confirm the directory backup above is running. Restoring PostgreSQL restores hashes and paths only.
+
+Without the mounted volume, files written under the container working directory disappear when the container is replaced.
+
+Run one application replica for this import. The database holds a single lock row. A second import, including a second request for the same import id and a request from another process, waits on that row and is refused while the lock heartbeat is fresh. Each claim increases a fence. A restarted container leaves the import `PROCESSING` until the heartbeat is older than three minutes or the owning process on this host is gone. Recovery marks that import `FAILED` and recoverable, and increases the fence. The old worker cannot keep writing or mark the replacement job complete. Replay the stored files. Do not mark the interrupted import successful.
+
+Do not run the historical sales reset during deploy. A Coolify backup still needs an independent restore onto a different database, and a dry-run against the database that will actually be reset, before anyone types `RESET HISTORICAL SALES`.
+
+The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/history-all`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. Preview and commit return after the request is accepted; the multi-minute write continues in the application process.
 
 The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/upload`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. A confirmed import continues in the Node process after the confirm request returns, so the proxy timeout applies to the upload and the confirm call, not to the whole multi-minute write.
 

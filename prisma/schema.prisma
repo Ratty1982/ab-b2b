@@ -548,6 +548,7 @@ model User {
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   autopartHistoricalAccessGrants AutopartAccount[] @relation("AutopartHistoricalAccessGrant")
   autopartMasterImportBatches AutopartImportBatch[] @relation("AutopartMasterImportCreator")
+  autopartHistoryAllImports AutopartHistoryAllImport[] @relation("AutopartHistoryAllImportCreator")
   autopartProspectConversionRuns AutopartProspectConversionRun[] @relation("AutopartProspectConversionCreator")
   autopartImportIssuesResolved AutopartImportIssue[] @relation("AutopartImportIssueResolver")
   autopartAccountAliasesVerified AutopartCustomerAccountAlias[] @relation("AutopartAliasVerifier")
@@ -806,6 +807,7 @@ model Company {
   autopartCustomerImportRuns AutopartCustomerImportRun[]
   autopartBackorderLines AutopartBackorderLine[]
   autopartAccounts AutopartAccount[]
+  autopartHistoryReviews AutopartHistoryReviewAccount[]
 
   @@index([status])
   @@index([name])
@@ -3112,6 +3114,173 @@ model AutopartDocumentMatch {
   @@index([status])
   @@index([accountId])
   @@index([documentReference])
+}
+
+/// One upload of the all-customers 561L and SLRB pair. Not a second sales copy.
+model AutopartHistoryAllImport {
+  id                String                       @id @default(cuid())
+  status            AutopartCustomerImportStatus
+  filename561l      String?
+  filenameSlrb      String?
+  fileHash561l      String
+  fileHashSlrb      String?
+  /// Original product-lines report. Staff audit only.
+  fileBody561l      Bytes?
+  /// Original document report. Staff audit only.
+  fileBodySlrb      Bytes?
+  /// Private disk path of the original 561L bytes. Not a public URL.
+  storagePath561l   String?
+  storagePathSlrb   String?
+  encoding561l      String?
+  encodingSlrb      String?
+  accountsRead      Int                          @default(0)
+  accountsCommitted Int                          @default(0)
+  accountsReviewed  Int                          @default(0)
+  documentsWritten  Int                          @default(0)
+  linesWritten      Int                          @default(0)
+  parsed561l        Int                          @default(0)
+  parsedSlrb        Int                          @default(0)
+  malformed561l     Int                          @default(0)
+  malformedSlrb     Int                          @default(0)
+  excludedLedger    Int                          @default(0)
+  stagedLineCount   Int                          @default(0)
+  importedLineCount Int                          @default(0)
+  discrepancyCount  Int                          @default(0)
+  peakRssBytes      Int?
+  elapsedMs         Int?
+  summary           Json?
+  /// Process that currently owns a PROCESSING import. Cleared when it finishes or is recovered.
+  lockOwner         String?
+  /// Fence copied from AutopartHistoryImportLock when this row was claimed.
+  /// Writes and completion must still match it. A replacement worker receives a higher fence.
+  lockFence         BigInt?
+  heartbeatAt       DateTime?
+  createdById       String?
+  createdAt         DateTime                     @default(now())
+  completedAt       DateTime?
+
+  createdBy User?                         @relation("AutopartHistoryAllImportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  reviews   AutopartHistoryReviewAccount[]
+  documents AutopartHistoryStagedDocument[]
+  lines     AutopartHistoryStagedLine[]
+  gaps      AutopartHistorySnapshotGap[]
+
+  @@index([status, createdAt])
+  @@index([fileHash561l, fileHashSlrb])
+}
+
+/// One row (id = 1). Every historical ALL import locks this row before writing.
+/// The fence increases on each claim and each recovery. An older fence cannot write.
+model AutopartHistoryImportLock {
+  id          Int       @id
+  fence       BigInt    @default(0)
+  owner       String?
+  importId    String?
+  heartbeatAt DateTime?
+}
+
+enum AutopartHistoryReviewReason {
+  UNKNOWN
+  AMBIGUOUS
+  UNLINKED
+  NOT_VERIFIED
+}
+
+enum AutopartHistoryReviewStatus {
+  OPEN
+  /// Customer verification was saved before staged history finished. Retry the same account.
+  VERIFYING
+  APPLIED
+  SUPERSEDED
+}
+
+enum AutopartHistoryGapStatus {
+  OPEN
+  RETIRED
+}
+
+/// Historical document present before a later ALL snapshot and absent from that file.
+/// Listed for audit. Not deleted until an operator retires this exact list.
+model AutopartHistorySnapshotGap {
+  id                String                       @id @default(cuid())
+  importId          String
+  companyId         String
+  documentType      AutopartHistoricDocumentType
+  documentReference String
+  goodsNet          Decimal?                     @db.Decimal(14, 2)
+  status            AutopartHistoryGapStatus     @default(OPEN)
+  createdAt         DateTime                     @default(now())
+  retiredAt         DateTime?
+
+  import AutopartHistoryAllImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, companyId, documentType, documentReference])
+  @@index([importId, status])
+}
+
+/// Account in an all-customers file that is not written into certified sales.
+model AutopartHistoryReviewAccount {
+  id                String                       @id @default(cuid())
+  importId          String
+  accountCode       String
+  reason            AutopartHistoryReviewReason
+  status            AutopartHistoryReviewStatus  @default(OPEN)
+  companyId         String?
+  invoiceDocuments  Int                          @default(0)
+  creditDocuments   Int                          @default(0)
+  ledgerRows        Int                          @default(0)
+  lineCount         Int                          @default(0)
+  lineNet           Decimal                      @default(0) @db.Decimal(14, 2)
+  goodsNet          Decimal                      @default(0) @db.Decimal(14, 2)
+  warnings          Json?
+  appliedAt         DateTime?
+  createdAt         DateTime                     @default(now())
+
+  import  AutopartHistoryAllImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  company Company?                 @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@unique([importId, accountCode])
+  @@index([accountCode, status])
+  @@index([status, createdAt])
+}
+
+model AutopartHistoryStagedDocument {
+  id                String                       @id @default(cuid())
+  importId          String
+  accountCode       String
+  documentType      AutopartHistoricDocumentType
+  documentReference String
+  documentDate      DateTime?
+  goodsNet          Decimal?                     @db.Decimal(14, 2)
+  vat               Decimal?                     @db.Decimal(14, 2)
+  grossTotal        Decimal?                     @db.Decimal(14, 2)
+  source            String
+  createdAt         DateTime                     @default(now())
+
+  import AutopartHistoryAllImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, accountCode, documentType, documentReference])
+  @@index([accountCode, documentReference])
+}
+
+model AutopartHistoryStagedLine {
+  id                String   @id @default(cuid())
+  importId          String
+  accountCode       String
+  documentType      AutopartHistoricDocumentType
+  documentReference String
+  lineNumber        Int
+  sku               String
+  descriptionSnapshot String?
+  units             Decimal  @db.Decimal(14, 3)
+  salesNet          Decimal  @db.Decimal(14, 2)
+  rawInvAndLn       String?
+  createdAt         DateTime @default(now())
+
+  import AutopartHistoryAllImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, accountCode, documentType, documentReference, lineNumber])
+  @@index([accountCode, documentReference])
 }
 
 // ─── CRM ─────────────────────────────────────────────────────────────────────
