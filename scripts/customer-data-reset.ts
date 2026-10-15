@@ -8,13 +8,14 @@
  *
  * Execute (only after a backup has been restored to a different database):
  *
- *   AB_RESET_CONFIRM='RESET CUSTOMER TEST DATA' \
+ *   AB_RESET_CONFIRM='RESET HISTORICAL SALES' \
  *   AB_RESET_TARGET='database_name' \
  *   AB_RESET_RESTORE_URL='postgresql://.../restored_copy' \
  *   bun scripts/customer-data-reset.ts \
  *     --execute \
  *     --backup-proof /path/proof.json \
- *     --acknowledge-exported-orders
+ *     --acknowledge-exported-orders \
+     --include-b2b-orders
  *
  * proof.json:
  *   {
@@ -33,6 +34,8 @@ import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 import {
   databaseNameFromUrl,
+  describeDatabaseUrl,
+  resetInvocationIsBootstrap,
   type BackupProof,
 } from "../src/domain/customer-data-reset";
 import {
@@ -93,10 +96,15 @@ async function restoreAnswers(url: string): Promise<boolean> {
   }
 }
 
-function formatPlan(plan: Awaited<ReturnType<typeof planCustomerDataReset>>, database: string | null): string {
+function formatPlan(
+  plan: Awaited<ReturnType<typeof planCustomerDataReset>>,
+  identity: { database: string | null; host: string | null },
+): string {
   const lines: string[] = [];
-  lines.push("Customer data reset — dry-run");
-  lines.push(`Database: ${database ?? "unknown"}`);
+  lines.push("Historical sales reset — dry-run");
+  lines.push(`Environment: ${process.env.NODE_ENV ?? "unknown"}`);
+  lines.push(`Database: ${identity.database ?? "unknown"}`);
+  lines.push(`Host: ${identity.host ?? "unknown"}`);
   lines.push("");
   lines.push("Preserved");
   for (const item of plan.preserved) lines.push(`- ${item.name}: ${item.reason}`);
@@ -116,6 +124,17 @@ function formatPlan(plan: Awaited<ReturnType<typeof planCustomerDataReset>>, dat
   for (const [name, count] of Object.entries(plan.counts.reset)) {
     lines.push(`- ${name}: ${count}`);
   }
+  lines.push("");
+  lines.push("Financial source totals");
+  lines.push(`- Historical line net: ${plan.totals.historicLineNet}`);
+  lines.push(`- Ongoing TRM line net: ${plan.totals.ongoingLineNet}`);
+  lines.push(`- Historical document goods: ${plan.totals.historicGoods}`);
+  lines.push(`- Ongoing document goods: ${plan.totals.ongoingGoods}`);
+  lines.push(`- Global 561L sales: ${plan.totals.globalInvoiceSales}`);
+  lines.push(`- Global SLRB goods: ${plan.totals.globalLedgerGoods}`);
+  lines.push("");
+  lines.push("Reporting after the reset");
+  for (const effect of plan.reportingEffects) lines.push(`- ${effect}`);
   lines.push("");
   lines.push("CRM review only — these records are not deleted");
   for (const [name, count] of Object.entries(plan.counts.review)) {
@@ -159,11 +178,19 @@ async function main() {
     return;
   }
 
-  const database = databaseNameFromUrl(process.env.DATABASE_URL ?? "");
+  const duringBootstrap = resetInvocationIsBootstrap(process.env);
+  if (duringBootstrap) {
+    console.error("The reset cannot run during deployment, container startup, or a package lifecycle script.");
+    process.exitCode = 2;
+    return;
+  }
+
+  const identity = describeDatabaseUrl(process.env.DATABASE_URL ?? "");
+  const database = identity.database ?? databaseNameFromUrl(process.env.DATABASE_URL ?? "");
   const plan = await planCustomerDataReset(undefined, {
     acknowledgeExportedOrders: hasFlag("--acknowledge-exported-orders"),
   });
-  const text = formatPlan(plan, database);
+  const text = formatPlan(plan, identity);
   const reportPath = argValue("--report");
   if (reportPath) writeFileSync(reportPath, text);
   console.log(text);
@@ -182,6 +209,8 @@ async function main() {
     backupProof: proof,
     restoreCheckOk,
     acknowledgeExportedOrders: hasFlag("--acknowledge-exported-orders"),
+    includeB2bOrders: hasFlag("--include-b2b-orders"),
+    duringBootstrap,
     ongoingResetRequested: false,
   });
   if (!result.ok) {

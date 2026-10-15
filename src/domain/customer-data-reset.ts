@@ -5,7 +5,7 @@
  * until backup, restore, database, and typed confirmation all pass.
  */
 
-export const RESET_CONFIRMATION_PHRASE = "RESET CUSTOMER TEST DATA";
+export const RESET_CONFIRMATION_PHRASE = "RESET HISTORICAL SALES";
 
 /** How long a tested restore may be before execute refuses it. */
 export const BACKUP_RESTORE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -28,6 +28,8 @@ export type ResetGateInput = {
   restoreCheckOk: boolean;
   /** Ongoing 504/TRM removal is a separate operation and is not implemented. */
   ongoingResetRequested: boolean;
+  /** True when this process is container bootstrap, deploy, or a package lifecycle script. */
+  duringBootstrap?: boolean;
   now?: Date;
 };
 
@@ -43,6 +45,7 @@ export type OrderExportEvidence = {
   exportBatchReference: string | null;
   externalRef: string | null;
   fulfilmentSources: string[];
+  activeReservationQuantity?: number;
 };
 
 export type OrderResetDecision = {
@@ -73,25 +76,29 @@ export const PRESERVED = [
 
 /**
  * Rows the execute path removes. Ongoing 504/TRM rows are excluded inside these tables.
- * Global invoice lines are the shared 561L copy. Removing them leaves one historical
- * source after each customer is imported again.
+ * Global invoice lines are the overlapping 561L copy. Removing them leaves one historical
+ * source: the next 561L-ALL and SLRB-ALL import, written only onto verified companies.
  */
 export const RESET = [
-  { name: "AutopartInvoiceLine", reason: "Global 561L history. This is not the 407EXP customer master." },
-  { name: "AutopartLedgerTransaction", reason: "Global SLRB ledger copy." },
-  { name: "AutopartDocumentMatch", reason: "Global 561L/SLRB reconciliation rows." },
-  { name: "AutopartImportBatch kind INVOICE_LINES or LEDGER", reason: "Historical sales import runs. CUSTOMER_MASTER batches stay." },
+  { name: "AutopartInvoiceLine", reason: "Global 561L history. This is not the 407EXP customer master and is not rebuilt." },
+  { name: "AutopartLedgerTransaction", reason: "Global SLRB ledger copy. Payments stay in Autopart. They are not a second sales dataset." },
+  { name: "AutopartDocumentMatch", reason: "Global 561L/SLRB reconciliation. Customer documents carry the replacement check." },
+  { name: "AutopartImportBatch kind INVOICE_LINES or LEDGER", reason: "Historical sales batches. CUSTOMER_MASTER batches stay." },
   { name: "AutopartImportIssue on those batches", reason: "Issues for the historical sales batches only." },
-  { name: "AutopartSalesLine where source is not ONGOING_TRM21QC", reason: "Customer 561L lines. Daily TRM lines stay." },
-  { name: "AutopartSalesDocument that is not a 504 or TRM header", reason: "Customer historical invoices and credits. Daily documents stay." },
-  { name: "AutopartCustomerImportRun type HISTORY_561L_SLRB", reason: "Historical import runs, diagnostics, and stored report files." },
+  { name: "AutopartSalesLine where source is not ONGOING_TRM21QC", reason: "Historical product lines. Daily TRM lines stay, including lines on a protected document." },
+  { name: "AutopartSalesDocument that is not a 504 or TRM header", reason: "Historical invoices and credits. Daily documents stay." },
+  { name: "AutopartCustomerImportRun type HISTORY_561L_SLRB", reason: "Historical import runs and stored report files." },
   { name: "AutopartImportDiagnostic on those runs", reason: "Removed with the historical run." },
-  { name: "Basket, BasketItem", reason: "Test baskets." },
-  { name: "SalesOrderDraft, SalesOrderDraftLine", reason: "Staff order drafts." },
-  { name: "Quote, QuoteItem", reason: "Test quotations." },
-  { name: "Invoice linked to an order that is safe to remove", reason: "Invoices for the removed B2B order. 504C invoices with no order stay." },
-  { name: "Order, OrderItem, OrderStockReservation, OrderFulfilmentEvent", reason: "The B2B order and reservations, when export evidence allows it." },
-  { name: "TransactionalEmail for removed orders and quotes", reason: "Messages for the removed commercial records." },
+  { name: "B2B orders only when --include-b2b-orders is set and the order is not held", reason: "Stock holds are released first. Exported, despatched, or externally referenced orders stay unless that consequence is acknowledged." },
+] as const;
+
+/** What reporting does after the historical copies are removed. */
+export const REPORTING_EFFECTS = [
+  "Sales Intelligence stops counting global 561L rows when those rows are removed. A customer is counted again only after the 561L-ALL and SLRB-ALL import attaches that verified account.",
+  "Prospects whose history exists only in the global 561L copy lose that history until their Autopart account is verified. The customer record and 407EXP account stay. Their rows wait in the historical review queue and are not a second certified copy.",
+  "Dated Sales Intelligence and portal purchase history read AutopartSalesLine. Historical lines go away. Ongoing TRM21QC lines stay.",
+  "AutopartDocumentMatch is cleared and is not rebuilt. The all-accounts import checks 561L line nets against SLRB goods on the customer document instead.",
+  "Do not confirm a legacy global 561L or SLRB batch after this reset. That would recreate the overlapping copy.",
 ] as const;
 
 /** Explicitly not part of this reset. No replay path is provided. */
@@ -110,8 +117,8 @@ export const RESET_CHECKLIST = [
   "Run the tool again with the backup proof, the database name, and the confirmation phrase. It still does nothing during deploy or startup.",
   "Check the audit report. Customer master, staff, products, prices, and daily 504/TRM rows must match the before counts.",
   "Turn the daily sales schedules back on only after the report is accepted.",
-  "For each customer you activate, upload that customer's new product-lines report and invoice report, preview, then import.",
-  "Importing the same files again must not add a second copy of those invoices.",
+  "Import the fresh 561L-ALL and SLRB-ALL pair once. Verified accounts are written immediately. Other accounts wait in the review queue until that account is verified.",
+  "Importing the same ALL pair again must not add a second copy of those invoices.",
   "If the result is wrong, restore the tested backup. Do not run a second reset on top of a partial one.",
 ] as const;
 
@@ -145,6 +152,13 @@ export function validateBackupProof(
 
 export function evaluateResetGates(input: ResetGateInput): ResetGateResult {
   const mode = input.executeRequested ? "execute" : "dry-run";
+  if (input.duringBootstrap) {
+    return {
+      ok: false,
+      mode,
+      reason: "The reset cannot run during deployment, container startup, or a package lifecycle script.",
+    };
+  }
   if (input.ongoingResetRequested) {
     return {
       ok: false,
@@ -183,13 +197,22 @@ export function evaluateResetGates(input: ResetGateInput): ResetGateResult {
 }
 
 export function databaseNameFromUrl(url: string): string | null {
+  return describeDatabaseUrl(url).database;
+}
+
+export function describeDatabaseUrl(url: string): { database: string | null; host: string | null } {
   try {
     const parsed = new URL(url);
-    const name = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
-    return name || null;
+    const name = decodeURIComponent(parsed.pathname.replace(/^\//, "").split("?")[0] ?? "");
+    return { database: name || null, host: parsed.hostname || null };
   } catch {
-    return null;
+    return { database: null, host: null };
   }
+}
+
+export function resetInvocationIsBootstrap(env: NodeJS.ProcessEnv): boolean {
+  if (env["AB_RESET_DURING_BOOT"] === "1" || env["AB_ENTRYPOINT"] === "1") return true;
+  return Boolean(env["npm_lifecycle_event"]);
 }
 
 export function orderResetDecision(
@@ -202,13 +225,20 @@ export function orderResetDecision(
     Boolean(order.exportBatchReference);
   const autopartFulfilment = order.fulfilmentSources.some((source) => source.startsWith("AUTOPART_"));
   const external = Boolean(order.externalRef);
-  if (!exported && !autopartFulfilment && !external) {
+  const despatched = order.status === "DISPATCHED" || order.status === "DELIVERED";
+  const reserved = (order.activeReservationQuantity ?? 0) > 0;
+  if (!exported && !autopartFulfilment && !external && !despatched) {
     return {
       hold: false,
-      summary: `${order.orderNumber} has no Autopart export. Removing it only affects Automotive Brands.`,
+      summary: reserved
+        ? `${order.orderNumber} has no Autopart export. Removing it releases ${order.activeReservationQuantity} reserved units in Automotive Brands and does not change Autopart stock.`
+        : `${order.orderNumber} has no Autopart export. Removing it only affects Automotive Brands.`,
     };
   }
   const parts: string[] = [];
+  if (despatched) {
+    parts.push(`${order.orderNumber} is ${order.status}. Removing it deletes Automotive Brands fulfilment history.`);
+  }
   if (exported) {
     parts.push(
       `${order.orderNumber} has an Autopart CSV export${order.exportBatchReference ? ` (${order.exportBatchReference})` : ""}. Deleting it here does not delete it from Autopart.`,

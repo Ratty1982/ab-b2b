@@ -39,6 +39,21 @@ describe("customer data reset gates", () => {
     expect(result).toEqual({ ok: true, mode: "dry-run" });
   });
 
+  it("refuses to run during deployment or bootstrap", () => {
+    const result = evaluateResetGates({
+      executeRequested: true,
+      confirmation: RESET_CONFIRMATION_PHRASE,
+      targetDatabase: "automotive_brands",
+      actualDatabase: "automotive_brands",
+      backupProof: proof(),
+      restoreCheckOk: true,
+      ongoingResetRequested: false,
+      duringBootstrap: true,
+      now,
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("refuses an ongoing-feed reset", () => {
     const result = evaluateResetGates({
       executeRequested: false,
@@ -100,7 +115,14 @@ describe("customer data reset gates", () => {
     expect(orderResetDecision(evidence, true).hold).toBe(false);
     expect(
       orderResetDecision(
-        { ...evidence, autopartExportStatus: "NOT_EXPORTED", autopartExportCount: 0, exportBatchReference: null, fulfilmentSources: ["ORDER_PLACE"] },
+        {
+          ...evidence,
+          status: "PLACED",
+          autopartExportStatus: "NOT_EXPORTED",
+          autopartExportCount: 0,
+          exportBatchReference: null,
+          fulfilmentSources: ["ORDER_PLACE"],
+        },
         false,
       ).hold,
     ).toBe(false);

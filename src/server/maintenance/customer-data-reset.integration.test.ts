@@ -1,3 +1,4 @@
+import "@/server/testing/use-protect-integration-database";
 import { afterAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { planCustomerDataReset } from "@/server/maintenance/customer-data-reset";

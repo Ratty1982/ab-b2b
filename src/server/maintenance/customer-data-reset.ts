@@ -7,9 +7,11 @@
  */
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
+import { releaseStockForOrder } from "@/server/orders/reservations";
 import {
   NOT_RESET,
   PRESERVED,
+  REPORTING_EFFECTS,
   RESET,
   RESET_CHECKLIST,
   evaluateResetGates,
@@ -42,6 +44,15 @@ export type ResetPlan = {
   reset: typeof RESET;
   notReset: typeof NOT_RESET;
   checklist: typeof RESET_CHECKLIST;
+  reportingEffects: typeof REPORTING_EFFECTS;
+  totals: {
+    historicLineNet: string;
+    ongoingLineNet: string;
+    historicGoods: string;
+    ongoingGoods: string;
+    globalInvoiceSales: string;
+    globalLedgerGoods: string;
+  };
   counts: {
     preserved: Record<string, number>;
     reset: Record<string, number>;
@@ -111,6 +122,12 @@ async function scopeCounts(db: Db) {
     activities,
     tasks,
     notes,
+    historicLineNet,
+    ongoingLineNet,
+    historicGoods,
+    ongoingGoods,
+    globalInvoiceSales,
+    globalLedgerGoods,
   ] = await Promise.all([
     db.autopartAccount.count(),
     db.company.count(),
@@ -149,6 +166,30 @@ async function scopeCounts(db: Db) {
     db.activity.count(),
     db.task.count(),
     db.note.count(),
+    db.autopartSalesLine.aggregate({
+      where: { source: { not: "ONGOING_TRM21QC" } },
+      _sum: { salesNet: true },
+    }),
+    db.autopartSalesLine.aggregate({
+      where: { source: "ONGOING_TRM21QC" },
+      _sum: { salesNet: true },
+    }),
+    db.autopartSalesDocument.aggregate({
+      where: historicDocumentWhere,
+      _sum: { goodsNet: true },
+    }),
+    db.autopartSalesDocument.aggregate({
+      where: {
+        OR: [
+          { has504: true },
+          { hasTrm21qc: true },
+          { source: { in: [...ONGOING_DOCUMENT_SOURCES] } },
+        ],
+      },
+      _sum: { goodsNet: true },
+    }),
+    db.autopartInvoiceLine.aggregate({ _sum: { salesAmount: true } }),
+    db.autopartLedgerTransaction.aggregate({ _sum: { goodsAmount: true } }),
   ]);
 
   return {
@@ -185,7 +226,21 @@ async function scopeCounts(db: Db) {
       Note: notes,
     },
     ongoingProtected: { lines: ongoingLines, documents: ongoingDocuments, runs: ongoingRuns },
+    totals: {
+      historicLineNet: money(historicLineNet._sum.salesNet),
+      ongoingLineNet: money(ongoingLineNet._sum.salesNet),
+      historicGoods: money(historicGoods._sum.goodsNet),
+      ongoingGoods: money(ongoingGoods._sum.goodsNet),
+      globalInvoiceSales: money(globalInvoiceSales._sum.salesAmount),
+      globalLedgerGoods: money(globalLedgerGoods._sum.goodsAmount),
+    },
   };
+}
+
+function money(value: { toString(): string } | null | undefined): string {
+  if (value == null) return "0.00";
+  const parsed = Number(value.toString());
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
 }
 
 async function loadOrders(db: Db, acknowledgeExported: boolean): Promise<ResetOrderRow[]> {
@@ -201,9 +256,11 @@ async function loadOrders(db: Db, acknowledgeExported: boolean): Promise<ResetOr
       company: { select: { name: true } },
       autopartExportBatch: { select: { reference: true } },
       fulfilmentEvents: { select: { source: true } },
+      reservations: { where: { status: "ACTIVE" }, select: { quantity: true } },
     },
   });
   return orders.map((order) => {
+    const activeReservationQuantity = order.reservations.reduce((sum, row) => sum + row.quantity, 0);
     const evidence: OrderExportEvidence = {
       orderNumber: order.orderNumber,
       status: order.status,
@@ -212,6 +269,7 @@ async function loadOrders(db: Db, acknowledgeExported: boolean): Promise<ResetOr
       exportBatchReference: order.autopartExportBatch?.reference ?? null,
       externalRef: order.externalRef,
       fulfilmentSources: [...new Set(order.fulfilmentEvents.map((event) => event.source))],
+      activeReservationQuantity,
     };
     const decision = orderResetDecision(evidence, acknowledgeExported);
     return {
@@ -261,6 +319,8 @@ export async function planCustomerDataReset(
     reset: RESET,
     notReset: NOT_RESET,
     checklist: RESET_CHECKLIST,
+    reportingEffects: REPORTING_EFFECTS,
+    totals: counts.totals,
     counts: {
       preserved: counts.preserved,
       reset: counts.reset,
@@ -301,6 +361,8 @@ export async function executeCustomerDataReset(input: {
   backupProof: BackupProof | null;
   restoreCheckOk: boolean;
   acknowledgeExportedOrders: boolean;
+  includeB2bOrders: boolean;
+  duringBootstrap?: boolean;
   ongoingResetRequested: boolean;
   now?: Date;
 }): Promise<{ ok: true; report: Record<string, unknown> } | { ok: false; reason: string }> {
@@ -314,6 +376,7 @@ export async function executeCustomerDataReset(input: {
     actualDatabase: input.actualDatabase,
     backupProof: input.backupProof,
     restoreCheckOk: input.restoreCheckOk,
+    duringBootstrap: input.duringBootstrap ?? false,
     ongoingResetRequested: input.ongoingResetRequested,
     ...(input.now ? { now: input.now } : {}),
   });
@@ -324,8 +387,8 @@ export async function executeCustomerDataReset(input: {
   });
   const beforePreserve = { ...before.counts.preserved };
   const pausedFeeds = await pauseSalesImports(prisma);
-  const removable = before.orders.filter((order) => !order.hold);
-  const held = before.orders.filter((order) => order.hold);
+  const removable = input.includeB2bOrders ? before.orders.filter((order) => !order.hold) : [];
+  const held = input.includeB2bOrders ? before.orders.filter((order) => order.hold) : [];
 
   try {
     await prisma.$transaction(
@@ -333,29 +396,30 @@ export async function executeCustomerDataReset(input: {
         const orderIds = removable.map((order) => order.orderId);
         const orderNumbers = removable.map((order) => order.orderNumber);
         if (orderIds.length) {
+          for (const orderId of orderIds) {
+            await releaseStockForOrder(tx, { orderId });
+          }
           await tx.autopartSalesDocument.updateMany({
             where: {
               OR: [{ abOrderId: { in: orderIds } }, { abOrderNumber: { in: orderNumbers } }],
             },
             data: { abOrderId: null, abOrderNumber: null },
           });
-          await tx.invoice.deleteMany({ where: { orderId: { in: orderIds } } });
+          await tx.invoice.updateMany({
+            where: { orderId: { in: orderIds } },
+            data: { orderId: null },
+          });
           await tx.salesOrderDraft.deleteMany({
             where: {
               OR: [{ editingOrderId: { in: orderIds } }, { placedOrderId: { in: orderIds } }],
             },
           });
-        }
-        await tx.quote.deleteMany({});
-        await tx.salesOrderDraft.deleteMany({});
-        await tx.basket.deleteMany({});
-        if (orderIds.length) {
           await tx.retiredOrderNumber.createMany({
             data: removable.map((order) => ({
               orderNumber: order.orderNumber,
               orderId: order.orderId,
               previousStatus: order.status,
-              reason: "Customer data reset",
+              reason: "Historical sales reset",
             })),
             skipDuplicates: true,
           });
@@ -364,7 +428,6 @@ export async function executeCustomerDataReset(input: {
           });
           await tx.order.deleteMany({ where: { id: { in: orderIds } } });
         }
-        await tx.transactionalEmail.deleteMany({ where: { entityType: "Quote" } });
 
         await tx.autopartSalesLine.deleteMany({ where: { source: { not: "ONGOING_TRM21QC" } } });
         await tx.autopartSalesDocument.deleteMany({
@@ -382,6 +445,17 @@ export async function executeCustomerDataReset(input: {
         await tx.autopartDocumentMatch.deleteMany({});
         await tx.autopartInvoiceLine.deleteMany({});
         await tx.autopartLedgerTransaction.deleteMany({});
+        const salesBatches = await tx.autopartImportBatch.findMany({
+          where: { kind: { in: ["INVOICE_LINES", "LEDGER"] } },
+          select: { id: true },
+        });
+        const salesBatchIds = salesBatches.map((batch) => batch.id);
+        if (salesBatchIds.length) {
+          await tx.autopartAccount.updateMany({
+            where: { lastImportBatchId: { in: salesBatchIds } },
+            data: { lastImportBatchId: null },
+          });
+        }
         await tx.autopartImportBatch.deleteMany({
           where: { kind: { in: ["INVOICE_LINES", "LEDGER"] } },
         });
@@ -403,6 +477,8 @@ export async function executeCustomerDataReset(input: {
     ok: true,
     report: {
       mode: "execute",
+      includeB2bOrders: input.includeB2bOrders,
+      ordersLeftInPlace: input.includeB2bOrders ? [] : before.orders.map((order) => order.orderNumber),
       removedOrders: removable.map((order) => order.orderNumber),
       heldOrders: held.map((order) => ({ orderNumber: order.orderNumber, summary: order.summary })),
       externalConsequences: before.externalConsequences,
