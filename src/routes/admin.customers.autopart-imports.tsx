@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
+import { AutopartAllHistoryPanel } from "@/components/ab/AutopartAllHistoryPanel";
 import { AutopartProspectConversionPanel } from "@/components/ab/AutopartProspectConversionPanel";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
@@ -58,8 +59,8 @@ type Duplicates = Extract<
 
 const KINDS = [
   { kind: "CUSTOMER_MASTER", label: "407EXP customer master", accept: ".txt,text/plain" },
-  { kind: "INVOICE_LINES", label: "561L invoice lines", accept: ".csv,text/csv" },
-  { kind: "LEDGER", label: "SLRB ledger", accept: ".csv,text/csv" },
+  { kind: "INVOICE_LINES", label: "Legacy global 561L — do not use for the rebuild", accept: ".csv,text/csv" },
+  { kind: "LEDGER", label: "Legacy global SLRB — do not use for the rebuild", accept: ".csv,text/csv" },
 ] as const;
 
 const CLASSIFICATIONS = [
@@ -360,6 +361,7 @@ function AutopartImportsPage() {
           Uploads stay private. Preview does not write historical rows. A database import starts
           only after the confirmation box is ticked. Historical access stays off.
         </p>
+        <AutopartAllHistoryPanel />
         <AutopartProspectConversionPanel />
 
         <section className="grid gap-3 md:grid-cols-3">

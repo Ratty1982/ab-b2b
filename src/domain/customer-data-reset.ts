@@ -89,6 +89,7 @@ export const RESET = [
   { name: "AutopartSalesDocument that is not a 504 or TRM header", reason: "Historical invoices and credits. Daily documents stay." },
   { name: "AutopartCustomerImportRun type HISTORY_561L_SLRB", reason: "Historical import runs and stored report files." },
   { name: "AutopartImportDiagnostic on those runs", reason: "Removed with the historical run." },
+  { name: "AutopartHistoryAllImport, review accounts, and staged rows", reason: "The previous all-accounts file and its review queue. Certified ongoing rows are not in these tables." },
   { name: "B2B orders only when --include-b2b-orders is set and the order is not held", reason: "Stock holds are released first. Exported, despatched, or externally referenced orders stay unless that consequence is acknowledged." },
 ] as const;
 

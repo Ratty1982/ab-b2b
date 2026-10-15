@@ -99,6 +99,7 @@ import { Route as AdminVersionUpdatesIndexRouteImport } from './routes/admin.ver
 import { Route as AdminVersionUpdatesIdRouteImport } from './routes/admin.version-updates.$id'
 import { Route as AdminVersionUpdatesNewRouteImport } from './routes/admin.version-updates.new'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiAutopartImportsHistoryAllRouteImport } from './routes/api/autopart-imports/history-all'
 import { Route as ApiAutopartImportsUploadRouteImport } from './routes/api/autopart-imports/upload'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
@@ -594,6 +595,12 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAutopartImportsHistoryAllRoute =
+  ApiAutopartImportsHistoryAllRouteImport.update({
+    id: '/api/autopart-imports/history-all',
+    path: '/api/autopart-imports/history-all',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAutopartImportsUploadRoute =
   ApiAutopartImportsUploadRouteImport.update({
     id: '/api/autopart-imports/upload',
@@ -891,6 +898,7 @@ export interface FileRoutesByFullPath {
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/autopart-imports/history-all': typeof ApiAutopartImportsHistoryAllRoute
   '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
@@ -1006,6 +1014,7 @@ export interface FileRoutesByTo {
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/autopart-imports/history-all': typeof ApiAutopartImportsHistoryAllRoute
   '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
@@ -1137,6 +1146,7 @@ export interface FileRoutesById {
   '/admin/version-updates/$id': typeof AdminVersionUpdatesIdRoute
   '/admin/version-updates/new': typeof AdminVersionUpdatesNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/autopart-imports/history-all': typeof ApiAutopartImportsHistoryAllRoute
   '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
@@ -1270,6 +1280,7 @@ export interface FileRouteTypes {
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
+    | '/api/autopart-imports/history-all'
     | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
@@ -1385,6 +1396,7 @@ export interface FileRouteTypes {
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
+    | '/api/autopart-imports/history-all'
     | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
@@ -1515,6 +1527,7 @@ export interface FileRouteTypes {
     | '/admin/version-updates/$id'
     | '/admin/version-updates/new'
     | '/api/auth/$'
+    | '/api/autopart-imports/history-all'
     | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
@@ -1590,6 +1603,7 @@ export interface RootRouteChildren {
   BrandsIndexRoute: typeof BrandsIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiAutopartImportsHistoryAllRoute: typeof ApiAutopartImportsHistoryAllRoute
   ApiAutopartImportsUploadRoute: typeof ApiAutopartImportsUploadRoute
   ApiCmsMediaIdRoute: typeof ApiCmsMediaIdRoute
   ApiInternalStockSyncRoute: typeof ApiInternalStockSyncRoute
@@ -2229,6 +2243,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autopart-imports/history-all': {
+      id: '/api/autopart-imports/history-all'
+      path: '/api/autopart-imports/history-all'
+      fullPath: '/api/autopart-imports/history-all'
+      preLoaderRoute: typeof ApiAutopartImportsHistoryAllRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/autopart-imports/upload': {
@@ -2906,6 +2927,7 @@ const rootRouteChildren: RootRouteChildren = {
   BrandsIndexRoute: BrandsIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiAutopartImportsHistoryAllRoute: ApiAutopartImportsHistoryAllRoute,
   ApiAutopartImportsUploadRoute: ApiAutopartImportsUploadRoute,
   ApiCmsMediaIdRoute: ApiCmsMediaIdRoute,
   ApiInternalStockSyncRoute: ApiInternalStockSyncRoute,

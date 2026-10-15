@@ -441,6 +441,7 @@ export async function executeCustomerDataReset(input: {
             },
           },
         });
+        await tx.autopartHistoryAllImport.deleteMany({});
         await tx.autopartCustomerImportRun.deleteMany({ where: { type: "HISTORY_561L_SLRB" } });
         await tx.autopartDocumentMatch.deleteMany({});
         await tx.autopartInvoiceLine.deleteMany({});

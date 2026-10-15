@@ -2241,6 +2241,117 @@ export async function getHistoricImportRunStatus(actorUserId: string, runId: str
   };
 }
 
+export async function commitHistoricCompanySlice(input: {
+  actorUserId: string;
+  companyId: string;
+  accountCode: string;
+  filename561l: string | null;
+  filenameSlrb: string | null;
+  fileHash561l: string;
+  fileHashSlrb: string;
+  parentImportId: string;
+  documents: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    documentDate: string | null;
+    goodsNet: string | null;
+    vat: string | null;
+    grossTotal: string | null;
+    source: "SLRB" | "561L";
+  }>;
+  lines: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    lineNumber: number;
+    sku: string;
+    description: string | null;
+    units: string;
+    salesNet: string;
+    rawInvAndLn: string;
+  }>;
+}): Promise<{
+  runId: string;
+  documentsInserted: number;
+  documentsUpdated: number;
+  linesInserted: number;
+  linesUpdated: number;
+  protected: number;
+}> {
+  const skuMap = await resolveSkuMap(input.lines.map((line) => line.sku));
+  const preparedDocs: PreparedHistoricDocument[] = input.documents.map((document) => ({
+    companyId: input.companyId,
+    autopartCustomerCode: input.accountCode,
+    documentType: document.documentType,
+    documentReference: document.documentReference,
+    documentDate: dateOnlyToUtcNoon(document.documentDate),
+    goodsNet: document.goodsNet,
+    vat: document.vat,
+    grossTotal: document.grossTotal,
+    source: document.source,
+    importRunId: "",
+  }));
+  const preparedLines: PreparedHistoricLine[] = input.lines.map((line) => {
+    const skuKey = line.sku.trim().toUpperCase();
+    const matchedVariantId = skuMap.get(skuKey) ?? null;
+    return {
+      companyId: input.companyId,
+      documentType: line.documentType,
+      documentReference: line.documentReference,
+      lineNumber: line.lineNumber,
+      sku: line.sku.trim(),
+      descriptionSnapshot: line.description,
+      units: line.units,
+      salesNet: line.salesNet,
+      matchedVariantId,
+      matchStatus: matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
+      rawInvAndLn: line.rawInvAndLn,
+      source: "561L",
+      importRunId: "",
+      autopartCustomerCode: input.accountCode,
+    };
+  });
+  const run = await prisma.autopartCustomerImportRun.create({
+    data: {
+      companyId: input.companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "PROCESSING",
+      filename: input.filename561l,
+      filenameSlrb: input.filenameSlrb,
+      fileHash: input.fileHash561l,
+      fileHashSlrb: input.fileHashSlrb,
+      detectedAccount: input.accountCode,
+      rowsRead: input.documents.length + input.lines.length,
+      rowsValid: input.lines.length,
+      dryRun: false,
+      createdById: input.actorUserId,
+      diagnostics: { allImportId: input.parentImportId } as Prisma.InputJsonValue,
+    },
+  });
+  for (const document of preparedDocs) document.importRunId = run.id;
+  for (const line of preparedLines) line.importRunId = run.id;
+  const written = await executeHistoricImportWrites({
+    runId: run.id,
+    companyId: input.companyId,
+    actorUserId: input.actorUserId,
+    preparedDocs,
+    preparedLines,
+    skipped: 0,
+    unmatched561Documents: 0,
+    previewSummary: { allImportId: input.parentImportId, accountCode: input.accountCode },
+    alreadyImported: false,
+    filename561l: input.filename561l,
+    filenameSlrb: input.filenameSlrb,
+  });
+  return {
+    runId: run.id,
+    documentsInserted: 0,
+    documentsUpdated: 0,
+    linesInserted: written.imported,
+    linesUpdated: written.updated,
+    protected: 0,
+  };
+}
+
 // ─── Credit control (removed) ────────────────────────────────────────────────
 // Automotive Brands does not manage customer credit control. 407P100 import,
 // preview/confirm, and credit position snapshots are intentionally not supported.

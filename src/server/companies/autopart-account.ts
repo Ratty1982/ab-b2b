@@ -239,6 +239,13 @@ export async function linkAndVerifyCompanyAutopartCustomerCode(
       select: autopartSelect,
     });
 
+    try {
+      const history = await import("@/server/companies/autopart-history-all");
+      await history.promoteStagedAutopartHistory(actorUserId, input.companyId, next);
+    } catch (error) {
+      console.error("[ab:history-promote] verified account was saved; staged history was not applied", error);
+    }
+
     await recordAuditEvent({
       action: "company.autopart_account.linked_verified",
       entityType: "Company",
