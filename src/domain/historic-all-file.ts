@@ -14,11 +14,13 @@ export type HistoricAccountTarget = {
 export type HistoricAccountDirectory = {
   /** Exact verified code. Null means more than one company uses it. */
   verifiedByCode: ReadonlyMap<string, HistoricAccountTarget | null>;
-  /** 561L short prefix. Null means the prefix matches more than one verified customer. */
-  shortVerifiedByCode: ReadonlyMap<string, HistoricAccountTarget | null>;
   /** 407EXP account. Null company means the master row is not linked. */
   masterCompanyByCode: ReadonlyMap<string, string | null>;
-  accountFieldWidth: number | null;
+  /**
+   * File codes that are a proper prefix of one or more 407EXP accounts.
+   * These are never imported. A truncated code is not a verified identity.
+   */
+  truncatedPrefixes?: ReadonlySet<string>;
 };
 
 export type ClassifiedAccount =
@@ -31,12 +33,7 @@ export function classifyHistoricAccount(rawCode: string | null, directory: Histo
   const exact = directory.verifiedByCode.get(code);
   if (exact === null) return { outcome: "review", reason: "AMBIGUOUS" };
   if (exact) return { outcome: "import", companyId: exact.companyId, canonicalCode: exact.canonicalCode };
-  const width = directory.accountFieldWidth;
-  if (width != null && code.length === width) {
-    const short = directory.shortVerifiedByCode.get(code);
-    if (short === null) return { outcome: "review", reason: "AMBIGUOUS" };
-    if (short) return { outcome: "import", companyId: short.companyId, canonicalCode: short.canonicalCode };
-  }
+  if (directory.truncatedPrefixes?.has(code)) return { outcome: "review", reason: "AMBIGUOUS" };
   if (!directory.masterCompanyByCode.has(code)) return { outcome: "review", reason: "UNKNOWN" };
   const companyId = directory.masterCompanyByCode.get(code);
   if (!companyId) return { outcome: "review", reason: "UNLINKED" };
@@ -185,15 +182,25 @@ export function planAllHistoricFile(input: {
   documents: AllFileDocument[];
   directory: HistoricAccountDirectory;
 }): AllFilePlan {
-  const codes = new Set<string>();
-  for (const line of input.lines) codes.add(normalCode(line.accountCode));
-  for (const document of input.documents) codes.add(normalCode(document.accountCode));
+  const buckets = new Map<string, { lines: AllFileLine[]; documents: AllFileDocument[] }>();
+  const bucketFor = (code: string | null) => {
+    const key = normalCode(code);
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { lines: [], documents: [] };
+      buckets.set(key, bucket);
+    }
+    return bucket;
+  };
+  for (const line of input.lines) bucketFor(line.accountCode).lines.push(line);
+  for (const document of input.documents) bucketFor(document.accountCode).documents.push(document);
 
   const accounts: AccountPlan[] = [];
-  for (const accountCode of [...codes].sort()) {
+  for (const accountCode of [...buckets.keys()].sort()) {
+    const grouped = buckets.get(accountCode)!;
     const classification = classifyHistoricAccount(accountCode || null, input.directory);
-    const accountLines = input.lines.filter((line) => normalCode(line.accountCode) === accountCode);
-    const accountDocs = input.documents.filter((document) => normalCode(document.accountCode) === accountCode);
+    const accountLines = grouped.lines;
+    const accountDocs = grouped.documents;
     const salesDocs = accountDocs.filter(
       (document): document is AllFileDocument & { documentType: "INVOICE" | "CREDIT" } =>
         document.documentType === "INVOICE" || document.documentType === "CREDIT",

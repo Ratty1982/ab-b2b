@@ -1,45 +1,815 @@
 /**
- * Imports one 561L-ALL file and one SLRB-ALL file.
- * Verified accounts update the customer sales dataset.
- * Other accounts are staged for review and are not certified sales.
+ * One 561L-ALL file and one SLRB-ALL file.
+ * Original bytes are hashed before decoding and stored under the private import directory.
+ * Verified accounts update customer sales documents. Other accounts are staged.
+ * A later file lists historical documents it no longer contains. Those rows stay until
+ * an operator retires that exact list. Ongoing 504/TRM documents are never in that list.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import path from "node:path";
+import { once } from "node:events";
+import { finished } from "node:stream/promises";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { parseAutopart561l } from "@/domain/autopart-561l";
-import { parseAutopartSlrb } from "@/domain/autopart-slrb";
+import { parseInvAndLn } from "@/domain/autopart-561l";
+import {
+  fingerprintAutopartFile,
+  forEachAutopartCsvRecord,
+  type AutopartCsvRecord,
+} from "@/domain/autopart-csv-stream";
 import {
   classifyHistoricAccount,
-  indexShortVerifiedAccounts,
-  planAllHistoricFile,
-  type AccountPlan,
+  minorToMoney,
+  moneyToMinor,
   type HistoricAccountDirectory,
   type HistoricAccountTarget,
 } from "@/domain/historic-all-file";
+import { mapSlrbDocumentType } from "@/domain/autopart-slrb";
+import { parseAutopartDateOnly } from "@/domain/autopart-report-money";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
-import { commitHistoricCompanySlice } from "@/server/companies/autopart-history";
+import {
+  autopartImportMaxBytes,
+  autopartImportRoot,
+} from "@/server/companies/autopart-master-import";
+import {
+  closeHistoricAccountWrite,
+  openHistoricAccountWrite,
+  stampHistoricDocumentComparison,
+  writeHistoricAccountBatch,
+} from "@/server/companies/autopart-history";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 
-const confirmSchema = z.object({
-  file561l: z.string().min(1),
-  fileSlrb: z.string().min(1),
-  filename561l: z.string().max(260).optional(),
-  filenameSlrb: z.string().max(260).optional(),
-});
+export const HISTORIC_SNAPSHOT_RETIRE_PHRASE = "RETIRE ABSENT HISTORICAL DOCUMENTS";
 
-function sha256(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
+const ONGOING_SOURCES = ["ONGOING_504", "ONGOING_TRM21QC", "ONGOING_504_BRIDGE"] as const;
+const BATCH = 500;
+
+async function failSupersededAccountRuns(importId: string) {
+  await prisma.autopartCustomerImportRun.updateMany({
+    where: {
+      status: "PROCESSING",
+      type: "HISTORY_561L_SLRB",
+      diagnostics: { path: ["allImportId"], equals: importId },
+    },
+    data: { status: "FAILED", completedAt: new Date() },
+  });
 }
 
-function dateOnly(value: string | null): Date | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+type DocAccum = {
+  account: string;
+  documentType: "INVOICE" | "CREDIT";
+  documentReference: string;
+  documentDate: string | null;
+  goodsMinor: number | null;
+  vatMinor: number | null;
+  grossMinor: number | null;
+  ledgerRows: number;
+  lineMinor: number;
+  lineCount: number;
+};
+
+type StoredFile = {
+  path: string;
+  filename: string;
+  sha256: string;
+  bytes: number;
+  encoding: "utf-8" | "windows-1252";
+};
+
+class ImportInterrupted extends Error {
+  constructor(readonly linesSeen: number) {
+    super("Import stopped before completion");
+  }
 }
 
-async function loadDirectory(accountFieldWidth: number | null): Promise<HistoricAccountDirectory> {
+export async function saveHistoricUpload(input: {
+  actorUserId: string;
+  slot: "561l" | "slrb";
+  filename: string;
+  body: ReadableStream<Uint8Array> | null;
+  importId?: string | null;
+}): Promise<{ importId: string; sha256: string; bytes: number; encoding: string }> {
+  await requireSystemPermission(input.actorUserId, "autopart.import.manage");
+  if (!input.body) throw new AuthError("Upload body is empty", "VALIDATION", 400);
+  const safeName = input.filename.replace(/[^A-Za-z0-9._()-]+/g, "_").replace(/^\.+/, "").slice(0, 80);
+  if (!safeName) throw new AuthError("Filename is required", "VALIDATION", 400);
+  await mkdir(path.join(autopartImportRoot(), "history"), { recursive: true });
+  const dest = path.join(autopartImportRoot(), "history", `${randomUUID()}-${safeName}`);
+  const hash = createHash("sha256");
+  const ws = createWriteStream(dest, { flags: "wx" });
+  const reader = input.body.getReader();
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      bytes += value.byteLength;
+      if (bytes > autopartImportMaxBytes()) {
+        await reader.cancel();
+        throw new AuthError("File exceeds the Autopart upload limit", "VALIDATION", 400);
+      }
+      hash.update(value);
+      if (!ws.write(value)) await once(ws, "drain");
+    }
+    ws.end();
+    await finished(ws);
+  } catch (error) {
+    ws.destroy();
+    await rm(dest, { force: true });
+    throw error;
+  }
+  const sha256 = hash.digest("hex");
+  const fingerprint = await fingerprintAutopartFile(dest);
+  if (fingerprint.sha256 !== sha256 || fingerprint.bytes !== bytes) {
+    await rm(dest, { force: true });
+    throw new AuthError("Stored file does not match the uploaded bytes", "VALIDATION", 400);
+  }
+  const data =
+    input.slot === "561l"
+      ? {
+          filename561l: safeName,
+          fileHash561l: sha256,
+          storagePath561l: dest,
+          encoding561l: fingerprint.encoding,
+        }
+      : {
+          filenameSlrb: safeName,
+          fileHashSlrb: sha256,
+          storagePathSlrb: dest,
+          encodingSlrb: fingerprint.encoding,
+        };
+  if (input.importId) {
+    const existing = await prisma.autopartHistoryAllImport.findUnique({ where: { id: input.importId } });
+    if (!existing || existing.status === "COMMITTED") {
+      throw new AuthError("Upload target was not found", "NOT_FOUND", 404);
+    }
+    await prisma.autopartHistoryAllImport.update({ where: { id: input.importId }, data });
+    return { importId: input.importId, sha256, bytes, encoding: fingerprint.encoding };
+  }
+  const created = await prisma.autopartHistoryAllImport.create({
+    data: {
+      status: "PREVIEWED",
+      fileHash561l: input.slot === "561l" ? sha256 : "pending",
+      ...data,
+      createdById: input.actorUserId,
+    },
+  });
+  return { importId: created.id, sha256, bytes, encoding: fingerprint.encoding };
+}
+
+export async function previewStoredHistoricImport(actorUserId: string, importId: string) {
+  await requireSystemPermission(actorUserId, "autopart.import.view");
+  const row = await prisma.autopartHistoryAllImport.findUnique({ where: { id: importId } });
+  if (!row?.storagePath561l || !row.storagePathSlrb || !row.encoding561l || !row.encodingSlrb) {
+    throw new AuthError("Upload both the 561L-ALL and SLRB-ALL files before preview", "VALIDATION", 400);
+  }
+  const summary = await scanPair(
+    { path: row.storagePath561l, encoding: row.encoding561l as "utf-8" | "windows-1252" },
+    { path: row.storagePathSlrb, encoding: row.encodingSlrb as "utf-8" | "windows-1252" },
+  );
+  return summary;
+}
+
+export async function confirmAllHistoricImport(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "autopart.import.manage");
+  const input = z
+    .object({
+      file561l: z.string().min(1),
+      fileSlrb: z.string().min(1),
+      filename561l: z.string().max(260).optional(),
+      filenameSlrb: z.string().max(260).optional(),
+    })
+    .parse(raw);
+  const [file561, fileSlrb] = await Promise.all([
+    writeText(input.filename561l ?? "561L-ALL.CSV", input.file561l),
+    writeText(input.filenameSlrb ?? "SLRB-ALL.CSV", input.fileSlrb),
+  ]);
+  const created = await prisma.autopartHistoryAllImport.create({
+    data: {
+      status: "PROCESSING",
+      filename561l: file561.filename,
+      filenameSlrb: fileSlrb.filename,
+      fileHash561l: file561.sha256,
+      fileHashSlrb: fileSlrb.sha256,
+      storagePath561l: file561.path,
+      storagePathSlrb: fileSlrb.path,
+      encoding561l: file561.encoding,
+      encodingSlrb: fileSlrb.encoding,
+      createdById: actorUserId,
+    },
+  });
+  return runAllHistoricImport(created.id, actorUserId, { wait: true });
+}
+
+export async function startStoredHistoricImport(actorUserId: string, importId: string) {
+  await requireSystemPermission(actorUserId, "autopart.import.manage");
+  const row = await prisma.autopartHistoryAllImport.findUnique({ where: { id: importId } });
+  if (!row?.storagePath561l || !row.storagePathSlrb) {
+    throw new AuthError("Upload both files before importing", "VALIDATION", 400);
+  }
+  if (row.status === "COMMITTED") {
+    return { importId, status: "COMMITTED" as const, async: false as const };
+  }
+  await prisma.autopartHistoryAllImport.update({
+    where: { id: importId },
+    data: { status: "PROCESSING", completedAt: null },
+  });
+  void runAllHistoricImport(importId, actorUserId, { wait: true }).catch((error) => {
+    console.error("[ab:history-all] background import failed", error);
+  });
+  return { importId, status: "PROCESSING" as const, async: true as const };
+}
+
+export async function runAllHistoricImport(
+  importId: string,
+  actorUserId: string,
+  options?: { wait?: boolean; stopAfterLines?: number },
+) {
+  const row = await prisma.autopartHistoryAllImport.findUnique({ where: { id: importId } });
+  if (!row?.storagePath561l || !row.storagePathSlrb || !row.encoding561l || !row.encodingSlrb) {
+    throw new AuthError("The stored ALL files are incomplete", "VALIDATION", 400);
+  }
+  const started = Date.now();
+  let peak = process.memoryUsage().rss;
+  const sample = () => {
+    peak = Math.max(peak, process.memoryUsage().rss);
+  };
+  try {
+    const result = await executeImport({
+      importId,
+      actorUserId,
+      file561: {
+        path: row.storagePath561l,
+        filename: row.filename561l ?? "561L-ALL.CSV",
+        sha256: row.fileHash561l,
+        bytes: 0,
+        encoding: row.encoding561l as "utf-8" | "windows-1252",
+      },
+      fileSlrb: {
+        path: row.storagePathSlrb,
+        filename: row.filenameSlrb ?? "SLRB-ALL.CSV",
+        sha256: row.fileHashSlrb ?? "",
+        bytes: 0,
+        encoding: row.encodingSlrb as "utf-8" | "windows-1252",
+      },
+      ...(options?.stopAfterLines != null ? { stopAfterLines: options.stopAfterLines } : {}),
+      sample,
+    });
+    const elapsedMs = Date.now() - started;
+    sample();
+    await prisma.autopartHistoryAllImport.update({
+      where: { id: importId },
+      data: {
+        status: "COMMITTED",
+        completedAt: new Date(),
+        elapsedMs,
+        peakRssBytes: peak,
+        ...result.counts,
+        summary: result.summary as Prisma.InputJsonValue,
+      },
+    });
+    await recordAuditEvent({
+      action: "autopart.history_all_imported",
+      entityType: "AutopartHistoryAllImport",
+      entityId: importId,
+      actorUserId,
+      after: { importId, ...result.counts, elapsedMs, peakRssBytes: peak },
+    });
+    return {
+      importId,
+      status: "COMMITTED" as const,
+      accountsCommitted: result.counts.accountsCommitted,
+      accountsReviewed: result.counts.accountsReviewed,
+      documentsWritten: result.counts.documentsWritten,
+      linesWritten: result.counts.importedLineCount,
+      elapsedMs,
+      peakRssBytes: peak,
+      accounts: result.accountSample,
+    };
+  } catch (error) {
+    const interrupted = error instanceof ImportInterrupted;
+    await failSupersededAccountRuns(importId);
+    await prisma.autopartHistoryAllImport.update({
+      where: { id: importId },
+      data: {
+        status: "FAILED",
+        completedAt: new Date(),
+        elapsedMs: Date.now() - started,
+        peakRssBytes: peak,
+        summary: {
+          recoverable: true,
+          interrupted: interrupted,
+          linesSeen: interrupted ? error.linesSeen : undefined,
+          message: error instanceof Error ? error.message : "Import failed",
+        } as Prisma.InputJsonValue,
+      },
+    });
+    if (interrupted) {
+      return { importId, status: "FAILED" as const, recoverable: true as const, linesSeen: error.linesSeen };
+    }
+    throw error;
+  }
+}
+
+async function executeImport(input: {
+  importId: string;
+  actorUserId: string;
+  file561: StoredFile;
+  fileSlrb: StoredFile;
+  stopAfterLines?: number;
+  sample: () => void;
+}) {
+  await failSupersededAccountRuns(input.importId);
+  const directory = await loadDirectory();
+  const docs = new Map<string, DocAccum>();
+  const ledgerByAccount = new Map<string, number>();
+  let parsedSlrb = 0;
+  let malformedSlrb = 0;
+  let excludedLedger = 0;
+  let invRows = 0;
+  let crnRows = 0;
+  const malformedSamples: string[] = [];
+  let slrbHeader: string[] = [];
+  const progressStarted = Date.now();
+  let lastProgressAt = 0;
+  const publishProgress = async (
+    phase: string,
+    counts: {
+      parsed561l?: number;
+      parsedSlrb?: number;
+      malformed561l?: number;
+      malformedSlrb?: number;
+      excludedLedger?: number;
+    },
+  ) => {
+    const now = Date.now();
+    if (now - lastProgressAt < 2500) return;
+    lastProgressAt = now;
+    input.sample();
+    await prisma.autopartHistoryAllImport.update({
+      where: { id: input.importId },
+      data: {
+        ...counts,
+        elapsedMs: now - progressStarted,
+        peakRssBytes: process.memoryUsage().rss,
+        summary: { phase, recoverable: true } as Prisma.InputJsonValue,
+      },
+    });
+  };
+  await forEachAutopartCsvRecord(
+    input.fileSlrb.path,
+    input.fileSlrb.encoding,
+    async (record) => {
+      parsedSlrb += 1;
+      if ((parsedSlrb & 16383) === 0) {
+        input.sample();
+        await publishProgress("ledger", { parsedSlrb, malformedSlrb, excludedLedger });
+      }
+      const columns = headerIndex(slrbHeader);
+      if (record.malformed || columns.account < 0 || columns.type < 0 || columns.ref < 0) {
+        malformedSlrb += 1;
+        if (malformedSamples.length < 20) malformedSamples.push(`SLRB ${record.recordNumber}: ${record.issue ?? "unreadable"}`);
+        return;
+      }
+      const account = (record.fields[columns.account] ?? "").trim().toUpperCase();
+      const rawType = (record.fields[columns.type] ?? "").trim().toUpperCase();
+      const documentType = mapSlrbDocumentType(rawType);
+      if (documentType === "PAYMENT" || documentType === "JOURNAL" || rawType === "CSH" || rawType === "OPB") {
+        excludedLedger += 1;
+        ledgerByAccount.set(account, (ledgerByAccount.get(account) ?? 0) + 1);
+        return;
+      }
+      if (documentType !== "INVOICE" && documentType !== "CREDIT") {
+        malformedSlrb += 1;
+        if (malformedSamples.length < 20) malformedSamples.push(`SLRB ${record.recordNumber}: type ${rawType || "blank"}`);
+        return;
+      }
+      if (documentType === "INVOICE") invRows += 1;
+      else crnRows += 1;
+      const reference = (record.fields[columns.ref] ?? "").trim().toUpperCase();
+      if (!account || !reference) {
+        malformedSlrb += 1;
+        return;
+      }
+      const key = docKey(account, documentType, reference);
+      const goods = moneyToMinor(record.fields[columns.goods] ?? null);
+      const vat = moneyToMinor(columns.vat >= 0 ? record.fields[columns.vat] : null);
+      const gross = moneyToMinor(columns.total >= 0 ? record.fields[columns.total] : null);
+      const date = parseAutopartDateOnly(columns.date >= 0 ? record.fields[columns.date] : null);
+      const current = docs.get(key);
+      if (!current) {
+        docs.set(key, {
+          account,
+          documentType,
+          documentReference: reference,
+          documentDate: date,
+          goodsMinor: goods,
+          vatMinor: vat,
+          grossMinor: gross,
+          ledgerRows: 1,
+          lineMinor: 0,
+          lineCount: 0,
+        });
+      } else {
+        current.ledgerRows += 1;
+        current.goodsMinor = (current.goodsMinor ?? 0) + (goods ?? 0);
+        current.vatMinor = (current.vatMinor ?? 0) + (vat ?? 0);
+        current.grossMinor = (current.grossMinor ?? 0) + (gross ?? 0);
+      }
+    },
+    (header) => {
+      slrbHeader = header;
+    },
+  );
+
+  const lineState = new Map<string, { next: number; used: Set<number> }>();
+  const accountLines = new Map<string, number>();
+  const accountMinor = new Map<string, number>();
+  let parsed561 = 0;
+  let malformed561 = 0;
+  let valid561 = 0;
+  let multiline = 0;
+  let line561Header: string[] = [];
+  const stageBuffer: Prisma.AutopartHistoryStagedLineCreateManyInput[] = [];
+  const salesBuffer = new Map<string, Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    lineNumber: number;
+    sku: string;
+    description: string | null;
+    units: string;
+    salesNet: string;
+    rawInvAndLn: string;
+  }>>();
+  const companyRuns = new Map<string, { runId: string; code: string; lines: number }>();
+  const fileDocsByCompany = new Map<string, Set<string>>();
+
+  const flushStage = async () => {
+    if (!stageBuffer.length) return;
+    await prisma.autopartHistoryStagedLine.createMany({ data: stageBuffer.splice(0, stageBuffer.length), skipDuplicates: true });
+  };
+  const flushSales = async (companyId: string) => {
+    const lines = salesBuffer.get(companyId);
+    if (!lines?.length) return;
+    const run = companyRuns.get(companyId);
+    if (!run) return;
+    await writeHistoricAccountBatch({
+      runId: run.runId,
+      companyId,
+      accountCode: run.code,
+      documents: [],
+      lines: lines.splice(0, lines.length),
+    });
+  };
+
+  await forEachAutopartCsvRecord(
+    input.file561.path,
+    input.file561.encoding,
+    async (record) => {
+      parsed561 += 1;
+      if (record.multiline) multiline += 1;
+      if ((parsed561 & 16383) === 0) {
+        input.sample();
+        await publishProgress("lines", {
+          parsed561l: parsed561,
+          parsedSlrb,
+          malformed561l: malformed561,
+          malformedSlrb,
+          excludedLedger,
+        });
+      }
+      if (input.stopAfterLines && valid561 >= input.stopAfterLines) throw new ImportInterrupted(valid561);
+      const columns = headerIndex(line561Header);
+      const parsed = accept561(record, columns);
+      if (!parsed) {
+        malformed561 += 1;
+        if (malformedSamples.length < 20) malformedSamples.push(`561L ${record.recordNumber}: ${record.issue ?? "not a sales line"}`);
+        return;
+      }
+      valid561 += 1;
+      const lineNumber = assignLineNumber(lineState, parsed.account, parsed.documentType, parsed.documentReference, parsed.sourceLineNumber);
+      const key = docKey(parsed.account, parsed.documentType, parsed.documentReference);
+      const accum = docs.get(key) ?? {
+        account: parsed.account,
+        documentType: parsed.documentType,
+        documentReference: parsed.documentReference,
+        documentDate: null,
+        goodsMinor: null,
+        vatMinor: null,
+        grossMinor: null,
+        ledgerRows: 0,
+        lineMinor: 0,
+        lineCount: 0,
+      };
+      accum.lineMinor += parsed.minor;
+      accum.lineCount += 1;
+      docs.set(key, accum);
+      accountLines.set(parsed.account, (accountLines.get(parsed.account) ?? 0) + 1);
+      accountMinor.set(parsed.account, (accountMinor.get(parsed.account) ?? 0) + parsed.minor);
+      const classified = classifyHistoricAccount(parsed.account, directory);
+      if (classified.outcome === "import") {
+        let run = companyRuns.get(classified.companyId);
+        if (!run) {
+          const runId = await openHistoricAccountWrite({
+            actorUserId: input.actorUserId,
+            companyId: classified.companyId,
+            accountCode: classified.canonicalCode,
+            filename561l: input.file561.filename,
+            filenameSlrb: input.fileSlrb.filename,
+            fileHash561l: input.file561.sha256,
+            fileHashSlrb: input.fileSlrb.sha256,
+            parentImportId: input.importId,
+          });
+          run = { runId, code: classified.canonicalCode, lines: 0 };
+          companyRuns.set(classified.companyId, run);
+        }
+        const bucket = salesBuffer.get(classified.companyId) ?? [];
+        bucket.push({
+          documentType: parsed.documentType,
+          documentReference: parsed.documentReference,
+          lineNumber,
+          sku: parsed.sku,
+          description: parsed.description,
+          units: parsed.units,
+          salesNet: parsed.salesNet,
+          rawInvAndLn: parsed.rawInvAndLn,
+        });
+        salesBuffer.set(classified.companyId, bucket);
+        run.lines += 1;
+        const keys = fileDocsByCompany.get(classified.companyId) ?? new Set<string>();
+        keys.add(`${parsed.documentType}::${parsed.documentReference}`);
+        fileDocsByCompany.set(classified.companyId, keys);
+        if (bucket.length >= BATCH) await flushSales(classified.companyId);
+      } else {
+        stageBuffer.push({
+          importId: input.importId,
+          accountCode: parsed.account,
+          documentType: parsed.documentType,
+          documentReference: parsed.documentReference,
+          lineNumber,
+          sku: parsed.sku,
+          descriptionSnapshot: parsed.description,
+          units: parsed.units,
+          salesNet: parsed.salesNet,
+          rawInvAndLn: parsed.rawInvAndLn,
+        });
+        if (stageBuffer.length >= BATCH) await flushStage();
+      }
+    },
+    (header) => {
+      line561Header = header;
+    },
+  );
+  for (const companyId of salesBuffer.keys()) await flushSales(companyId);
+  await flushStage();
+
+  if (parsed561 !== valid561 + malformed561) {
+    throw new Error(`561L count mismatch: parsed ${parsed561}, valid ${valid561}, malformed ${malformed561}`);
+  }
+  if (parsedSlrb !== invRows + crnRows + excludedLedger + malformedSlrb) {
+    throw new Error(`SLRB count mismatch: parsed ${parsedSlrb}`);
+  }
+
+  let documentsWritten = 0;
+  const stagedDocs: Prisma.AutopartHistoryStagedDocumentCreateManyInput[] = [];
+  const discrepancies: Array<{ account: string; reference: string; lineNet: string; goodsNet: string; minor: number }> = [];
+  let discrepancyCount = 0;
+  const verifiedDocs = new Map<string, DocAccum[]>();
+  for (const doc of docs.values()) {
+    const classified = classifyHistoricAccount(doc.account, directory);
+    const goods = doc.goodsMinor == null ? null : minorToMoney(doc.goodsMinor);
+    const diff = doc.goodsMinor == null ? null : doc.lineMinor - doc.goodsMinor;
+    if (diff != null && diff !== 0) {
+      discrepancyCount += 1;
+      if (discrepancies.length < 30 || doc.documentReference === "SS272042") {
+        discrepancies.push({
+          account: doc.account,
+          reference: doc.documentReference,
+          lineNet: minorToMoney(doc.lineMinor),
+          goodsNet: goods ?? "",
+          minor: diff,
+        });
+      }
+    }
+    if (classified.outcome === "import") {
+      const list = verifiedDocs.get(classified.companyId) ?? [];
+      list.push(doc);
+      verifiedDocs.set(classified.companyId, list);
+      const keys = fileDocsByCompany.get(classified.companyId) ?? new Set<string>();
+      keys.add(`${doc.documentType}::${doc.documentReference}`);
+      fileDocsByCompany.set(classified.companyId, keys);
+    } else if (doc.ledgerRows > 0 || doc.lineCount > 0) {
+      stagedDocs.push({
+        importId: input.importId,
+        accountCode: doc.account,
+        documentType: doc.documentType,
+        documentReference: doc.documentReference,
+        documentDate: doc.documentDate ? new Date(`${doc.documentDate}T12:00:00.000Z`) : null,
+        goodsNet: goods,
+        vat: doc.vatMinor == null ? null : minorToMoney(doc.vatMinor),
+        grossTotal: doc.grossMinor == null ? null : minorToMoney(doc.grossMinor),
+        source: doc.ledgerRows > 0 ? "SLRB" : "561L",
+      });
+      if (stagedDocs.length >= BATCH) {
+        await prisma.autopartHistoryStagedDocument.createMany({ data: stagedDocs.splice(0, stagedDocs.length), skipDuplicates: true });
+      }
+    }
+  }
+  if (stagedDocs.length) {
+    await prisma.autopartHistoryStagedDocument.createMany({ data: stagedDocs, skipDuplicates: true });
+  }
+  for (const [companyId, list] of verifiedDocs) {
+    let run = companyRuns.get(companyId);
+    if (!run) {
+      const classified = classifyHistoricAccount(list[0]?.account ?? "", directory);
+      if (classified.outcome !== "import") continue;
+      const runId = await openHistoricAccountWrite({
+        actorUserId: input.actorUserId,
+        companyId,
+        accountCode: classified.canonicalCode,
+        filename561l: input.file561.filename,
+        filenameSlrb: input.fileSlrb.filename,
+        fileHash561l: input.file561.sha256,
+        fileHashSlrb: input.fileSlrb.sha256,
+        parentImportId: input.importId,
+      });
+      run = { runId, code: classified.canonicalCode, lines: 0 };
+      companyRuns.set(companyId, run);
+    }
+    for (let index = 0; index < list.length; index += 100) {
+      const slice = list.slice(index, index + 100);
+      await writeHistoricAccountBatch({
+        runId: run.runId,
+        companyId,
+        accountCode: run.code,
+        documents: slice.map((doc) => ({
+          documentType: doc.documentType,
+          documentReference: doc.documentReference,
+          documentDate: doc.documentDate,
+          goodsNet: doc.goodsMinor == null ? null : minorToMoney(doc.goodsMinor),
+          vat: doc.vatMinor == null ? null : minorToMoney(doc.vatMinor),
+          grossTotal: doc.grossMinor == null ? null : minorToMoney(doc.grossMinor),
+          source: doc.ledgerRows > 0 ? "SLRB" : "561L",
+        })),
+        lines: [],
+      });
+      documentsWritten += slice.length;
+      for (const doc of slice) {
+        if (doc.goodsMinor == null) continue;
+        const diff = doc.lineMinor - doc.goodsMinor;
+        if (diff === 0) continue;
+        await stampHistoricDocumentComparison({
+          companyId,
+          documentType: doc.documentType,
+          documentReference: doc.documentReference,
+          linesNet: minorToMoney(doc.lineMinor),
+          mismatchMinor: diff,
+        });
+      }
+    }
+  }
+
+  for (const run of companyRuns.values()) {
+    await closeHistoricAccountWrite(run.runId, { imported: run.lines, updated: 0 });
+  }
+  await recordSnapshotGaps(input.importId, fileDocsByCompany);
+  await replaceReviewRows(input.importId, directory, accountLines, accountMinor, ledgerByAccount);
+
+  const stagedLineCount = await prisma.autopartHistoryStagedLine.count({ where: { importId: input.importId } });
+  const importedLineCount = [...companyRuns.values()].reduce((sum, run) => sum + run.lines, 0);
+  if (stagedLineCount + importedLineCount !== valid561) {
+    throw new Error(`Sales lines were not all retained: valid ${valid561}, staged ${stagedLineCount}, imported ${importedLineCount}`);
+  }
+
+  const accountSample = [...accountLines.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(0, 50)
+    .map(([accountCode, lineCount]) => {
+      const classified = classifyHistoricAccount(accountCode, directory);
+      return {
+        accountCode,
+        outcome: classified.outcome,
+        companyId: classified.outcome === "import" ? classified.companyId : null,
+        reason: classified.outcome === "review" ? classified.reason : null,
+        invoiceDocuments: 0,
+        creditDocuments: 0,
+        ledgerRows: ledgerByAccount.get(accountCode) ?? 0,
+        lineCount,
+        lineNet: minorToMoney(accountMinor.get(accountCode) ?? 0),
+        goodsNet: "0.00",
+        warnings: [] as string[],
+      };
+    });
+
+  return {
+    counts: {
+      accountsRead: accountLines.size,
+      accountsCommitted: [...accountLines.keys()].filter(
+        (code) => classifyHistoricAccount(code, directory).outcome === "import",
+      ).length,
+      accountsReviewed: [...accountLines.keys()].filter(
+        (code) => classifyHistoricAccount(code, directory).outcome === "review",
+      ).length,
+      documentsWritten,
+      linesWritten: importedLineCount,
+      parsed561l: parsed561,
+      parsedSlrb,
+      malformed561l: malformed561,
+      malformedSlrb,
+      excludedLedger,
+      stagedLineCount,
+      importedLineCount,
+      discrepancyCount,
+    },
+    summary: {
+      multiline561: multiline,
+      invoiceLedgerRows: invRows,
+      creditLedgerRows: crnRows,
+      malformedSamples,
+      discrepancies: discrepancies.slice(0, 31),
+      snapshotRule:
+        "Documents in this file update customer history. Historical documents for those verified accounts that are absent from this file are listed as snapshot gaps and stay until RETIRE ABSENT HISTORICAL DOCUMENTS is confirmed. Ongoing 504/TRM documents are never retired here.",
+    },
+    accountSample,
+  };
+}
+
+function accept561(record: AutopartCsvRecord, columns: ReturnType<typeof headerIndex>) {
+  if (record.malformed || columns.account < 0 || columns.inv < 0 || columns.part < 0 || columns.sales < 0) return null;
+  const account = (record.fields[columns.account] ?? "").trim().toUpperCase();
+  const identity = parseInvAndLn(record.fields[columns.inv]);
+  const sku = (record.fields[columns.part] ?? "").trim();
+  const salesNet = (record.fields[columns.sales] ?? "").trim();
+  const minor = moneyToMinor(salesNet);
+  if (!account || !identity.ok || !identity.documentReference || !sku || minor == null) return null;
+  if (identity.documentType !== "INVOICE" && identity.documentType !== "CREDIT") return null;
+  return {
+    account,
+    documentType: identity.documentType,
+    documentReference: identity.documentReference,
+    sourceLineNumber: identity.sourceLineNumber,
+    sku,
+    description: columns.description >= 0 ? record.fields[columns.description] ?? null : null,
+    units: columns.units >= 0 ? (record.fields[columns.units] ?? "0").trim() : "0",
+    salesNet: minorToMoney(minor),
+    minor,
+    rawInvAndLn: record.fields[columns.inv] ?? "",
+  };
+}
+
+function assignLineNumber(
+  state: Map<string, { next: number; used: Set<number> }>,
+  account: string,
+  documentType: string,
+  documentReference: string,
+  sourceLineNumber: number | null,
+): number {
+  const key = docKey(account, documentType, documentReference);
+  let row = state.get(key);
+  if (!row) {
+    row = { next: 1, used: new Set<number>() };
+    state.set(key, row);
+  }
+  if (sourceLineNumber != null && sourceLineNumber >= 1 && !row.used.has(sourceLineNumber)) {
+    row.used.add(sourceLineNumber);
+    if (sourceLineNumber >= row.next) row.next = sourceLineNumber + 1;
+    return sourceLineNumber;
+  }
+  while (row.used.has(row.next)) row.next += 1;
+  const assigned = row.next;
+  row.used.add(assigned);
+  row.next += 1;
+  return assigned;
+}
+
+function docKey(account: string, documentType: string, documentReference: string): string {
+  return `${account}|${documentType}|${documentReference}`;
+}
+
+function headerIndex(header: string[]) {
+  const names = header.map((field) => field.trim().toLowerCase().replace(/^\./, "").replace(/\.$/, ""));
+  const find = (...wanted: string[]) => names.findIndex((name) => wanted.includes(name));
+  return {
+    account: find("acct", "a/c", "account"),
+    inv: find("inv & ln", "inv ln", "invoice line"),
+    part: find("part number", "part", "sku"),
+    description: find("description", "desc"),
+    units: find("units", "qty", "quantity"),
+    sales: find("sales", "net", "value"),
+    type: find("type"),
+    ref: find("ref", "reference"),
+    date: find("date"),
+    goods: find("tot goods", "goods"),
+    vat: find("tot vat", "vat"),
+    total: find("total"),
+  };
+}
+
+async function loadDirectory(): Promise<HistoricAccountDirectory> {
   const [companies, aliases, masters] = await Promise.all([
     prisma.company.findMany({
       where: { autopartCustomerCodeVerifiedAt: { not: null }, autopartCustomerCode: { not: null } },
@@ -67,269 +837,164 @@ async function loadDirectory(accountFieldWidth: number | null): Promise<Historic
     addVerified(alias.alias, alias.companyId, canonical);
   }
   const masterCompanyByCode = new Map<string, string | null>();
+  const truncatedPrefixes = new Set<string>();
   for (const account of masters) {
-    const key = account.accountCode.trim().toUpperCase();
-    masterCompanyByCode.set(key, account.companyId);
+    const code = account.accountCode.trim().toUpperCase();
+    masterCompanyByCode.set(code, account.companyId);
+    for (let length = 4; length < code.length; length += 1) truncatedPrefixes.add(code.slice(0, length));
   }
-  return {
-    verifiedByCode,
-    shortVerifiedByCode: indexShortVerifiedAccounts(verifiedByCode, accountFieldWidth),
-    masterCompanyByCode,
-    accountFieldWidth,
-  };
+  for (const code of masterCompanyByCode.keys()) truncatedPrefixes.delete(code);
+  return { verifiedByCode, masterCompanyByCode, truncatedPrefixes };
 }
 
-function toPublicAccount(account: AccountPlan) {
-  return {
-    accountCode: account.accountCode,
-    outcome: account.classification.outcome,
-    companyId: account.classification.outcome === "import" ? account.classification.companyId : null,
-    reason: account.classification.outcome === "review" ? account.classification.reason : null,
-    invoiceDocuments: account.invoiceDocuments,
-    creditDocuments: account.creditDocuments,
-    ledgerRows: account.ledgerRows,
-    lineCount: account.lineCount,
-    lineNet: account.lineNet,
-    goodsNet: account.goodsNet,
-    warnings: account.warnings,
-  };
-}
-
-export async function previewAllHistoricImport(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "autopart.import.view");
-  const input = confirmSchema.parse(raw);
-  const parsed561 = parseAutopart561l(input.file561l);
-  const parsedSlrb = parseAutopartSlrb(input.fileSlrb);
-  const directory = await loadDirectory(parsed561.accountFieldWidth);
-  const plan = planAllHistoricFile({
-    directory,
-    lines: parsed561.lines.map((line) => ({
-      accountCode: line.accountCode,
-      documentType: line.documentType,
-      documentReference: line.documentReference,
-      sourceLineNumber: line.sourceLineNumber,
-      partNumber: line.partNumber,
-      description: line.description,
-      units: String(line.units ?? 0),
-      salesNet: line.salesNet ?? "0.00",
-      rawInvAndLn: line.rawInvAndLn,
-    })),
-    documents: parsedSlrb.documents
-      .concat(parsedSlrb.rows.filter((row) => row.documentType === "PAYMENT" || row.documentType === "JOURNAL"))
-      .map((document) => ({
-        accountCode: document.accountCode,
-        documentType: document.documentType,
-        documentReference: document.documentReference,
-        documentDate: document.documentDate,
-        goodsNet: document.goodsNet,
-        vat: document.vat,
-        grossTotal: document.grossTotal,
-      })),
-  });
-  return {
-    fileHash561l: sha256(input.file561l),
-    fileHashSlrb: sha256(input.fileSlrb),
-    importedAccounts: plan.importedAccounts,
-    reviewAccounts: plan.reviewAccounts,
-    accounts: plan.accounts.map(toPublicAccount),
-    canCommit: plan.accounts.some((account) => account.lineCount > 0 || account.invoiceDocuments + account.creditDocuments > 0),
-  };
-}
-
-async function buildPlan(file561l: string, fileSlrb: string) {
-  const parsed561 = parseAutopart561l(file561l);
-  const parsedSlrb = parseAutopartSlrb(fileSlrb);
-  const directory = await loadDirectory(parsed561.accountFieldWidth);
-  const ledgerRows = parsedSlrb.rows.filter(
-    (row) => row.documentType === "PAYMENT" || row.documentType === "JOURNAL",
-  );
-  const plan = planAllHistoricFile({
-    directory,
-    lines: parsed561.lines.map((line) => ({
-      accountCode: line.accountCode,
-      documentType: line.documentType,
-      documentReference: line.documentReference,
-      sourceLineNumber: line.sourceLineNumber,
-      partNumber: line.partNumber,
-      description: line.description,
-      units: String(line.units ?? 0),
-      salesNet: line.salesNet ?? "0.00",
-      rawInvAndLn: line.rawInvAndLn,
-    })),
-    documents: [...parsedSlrb.documents, ...ledgerRows].map((document) => ({
-      accountCode: document.accountCode,
-      documentType: document.documentType,
-      documentReference: document.documentReference,
-      documentDate: document.documentDate,
-      goodsNet: document.goodsNet,
-      vat: document.vat,
-      grossTotal: document.grossTotal,
-    })),
-  });
-  return plan;
-}
-
-export async function confirmAllHistoricImport(actorUserId: string, raw: unknown) {
-  await requireSystemPermission(actorUserId, "autopart.import.manage");
-  const input = confirmSchema.parse(raw);
-  const plan = await buildPlan(input.file561l, input.fileSlrb);
-  if (!plan.accounts.length) {
-    throw new AuthError("The reports have no customer accounts.", "IMPORT_BLOCKED", 400);
+async function replaceReviewRows(
+  importId: string,
+  directory: HistoricAccountDirectory,
+  accountLines: Map<string, number>,
+  accountMinor: Map<string, number>,
+  ledgerByAccount: Map<string, number>,
+) {
+  await prisma.autopartHistoryReviewAccount.deleteMany({ where: { importId } });
+  const codes = new Set<string>([...accountLines.keys(), ...ledgerByAccount.keys()]);
+  const reviewCodes: string[] = [];
+  const rows: Prisma.AutopartHistoryReviewAccountCreateManyInput[] = [];
+  for (const accountCode of codes) {
+    const classified = classifyHistoricAccount(accountCode, directory);
+    if (classified.outcome === "import") continue;
+    reviewCodes.push(accountCode);
+    rows.push({
+      importId,
+      accountCode,
+      reason: classified.reason,
+      lineCount: accountLines.get(accountCode) ?? 0,
+      lineNet: minorToMoney(accountMinor.get(accountCode) ?? 0),
+      goodsNet: "0.00",
+      ledgerRows: ledgerByAccount.get(accountCode) ?? 0,
+      warnings:
+        classified.reason === "AMBIGUOUS"
+          ? ["Truncated or conflicting account code was not imported."]
+          : [],
+    });
+    if (rows.length >= BATCH) {
+      await prisma.autopartHistoryReviewAccount.createMany({ data: rows.splice(0, rows.length) });
+    }
   }
-  const hash561 = sha256(input.file561l);
-  const hashSlrb = sha256(input.fileSlrb);
-  const created = await prisma.autopartHistoryAllImport.create({
-    data: {
-      status: "PROCESSING",
-      filename561l: input.filename561l ?? null,
-      filenameSlrb: input.filenameSlrb ?? null,
-      fileHash561l: hash561,
-      fileHashSlrb: hashSlrb,
-      fileBody561l: Buffer.from(input.file561l, "utf8"),
-      fileBodySlrb: Buffer.from(input.fileSlrb, "utf8"),
-      accountsRead: plan.accounts.length,
-      createdById: actorUserId,
-      summary: { accounts: plan.accounts.map(toPublicAccount) } as Prisma.InputJsonValue,
-    },
-  });
-
-  const reviewCodes = plan.accounts
-    .filter((account) => account.classification.outcome === "review")
-    .map((account) => account.accountCode);
+  if (rows.length) await prisma.autopartHistoryReviewAccount.createMany({ data: rows });
   if (reviewCodes.length) {
     await prisma.autopartHistoryReviewAccount.updateMany({
-      where: { status: "OPEN", accountCode: { in: reviewCodes }, importId: { not: created.id } },
+      where: { status: "OPEN", accountCode: { in: reviewCodes }, importId: { not: importId } },
       data: { status: "SUPERSEDED" },
     });
   }
-
-  let documentsWritten = 0;
-  let linesWritten = 0;
-  let accountsCommitted = 0;
-  try {
-    for (const account of plan.accounts) {
-      if (account.classification.outcome !== "import") continue;
-      const written = await commitHistoricCompanySlice({
-        actorUserId,
-        companyId: account.classification.companyId,
-        accountCode: account.classification.canonicalCode,
-        filename561l: input.filename561l ?? null,
-        filenameSlrb: input.filenameSlrb ?? null,
-        fileHash561l: hash561,
-        fileHashSlrb: hashSlrb,
-        parentImportId: created.id,
-        documents: account.documents,
-        lines: account.lines,
-      });
-      documentsWritten += account.documents.length;
-      linesWritten += account.lines.length;
-      accountsCommitted += 1;
-      void written;
-    }
-
-    const reviews = plan.accounts.filter((account) => account.classification.outcome === "review");
-    if (reviews.length) {
-      await prisma.autopartHistoryReviewAccount.createMany({
-        data: reviews.map((account) => ({
-          importId: created.id,
-          accountCode: account.accountCode,
-          reason: account.classification.outcome === "review" ? account.classification.reason : "UNKNOWN",
-          invoiceDocuments: account.invoiceDocuments,
-          creditDocuments: account.creditDocuments,
-          ledgerRows: account.ledgerRows,
-          lineCount: account.lineCount,
-          lineNet: account.lineNet,
-          goodsNet: account.goodsNet,
-          warnings: account.warnings as unknown as Prisma.InputJsonValue,
-        })),
-      });
-      await stageReviewAccounts(created.id, reviews);
-    }
-  } catch (error) {
-    await prisma.autopartHistoryAllImport.update({
-      where: { id: created.id },
-      data: {
-        status: "FAILED",
-        completedAt: new Date(),
-        accountsCommitted,
-        documentsWritten,
-        linesWritten,
-      },
-    });
-    throw error;
-  }
-
-  await prisma.autopartHistoryAllImport.update({
-    where: { id: created.id },
-    data: {
-      status: "COMMITTED",
-      completedAt: new Date(),
-      accountsCommitted,
-      accountsReviewed: reviewCodes.length,
-      documentsWritten,
-      linesWritten,
-    },
-  });
-  await recordAuditEvent({
-    action: "autopart.history_all_imported",
-    entityType: "AutopartHistoryAllImport",
-    entityId: created.id,
-    actorUserId,
-    after: {
-      importId: created.id,
-      fileHash561l: hash561,
-      fileHashSlrb: hashSlrb,
-      accountsCommitted,
-      accountsReviewed: reviewCodes.length,
-      documentsWritten,
-      linesWritten,
-    },
-  });
-  return {
-    importId: created.id,
-    status: "COMMITTED" as const,
-    accountsCommitted,
-    accountsReviewed: reviewCodes.length,
-    documentsWritten,
-    linesWritten,
-    accounts: plan.accounts.map(toPublicAccount),
-  };
 }
 
-async function stageReviewAccounts(importId: string, accounts: AccountPlan[]) {
-  const documents = accounts.flatMap((account) =>
-    account.documents.map((document) => ({
-      importId,
-      accountCode: account.accountCode,
-      documentType: document.documentType,
-      documentReference: document.documentReference,
-      documentDate: dateOnly(document.documentDate),
-      goodsNet: document.goodsNet,
-      vat: document.vat,
-      grossTotal: document.grossTotal,
-      source: document.source,
-    })),
-  );
-  const lines = accounts.flatMap((account) =>
-    account.lines.map((line) => ({
-      importId,
-      accountCode: account.accountCode,
-      documentType: line.documentType,
-      documentReference: line.documentReference,
-      lineNumber: line.lineNumber,
-      sku: line.sku,
-      descriptionSnapshot: line.description,
-      units: line.units,
-      salesNet: line.salesNet,
-      rawInvAndLn: line.rawInvAndLn,
-    })),
-  );
-  for (let i = 0; i < documents.length; i += 300) {
-    await prisma.autopartHistoryStagedDocument.createMany({ data: documents.slice(i, i + 300) });
+async function recordSnapshotGaps(importId: string, fileDocsByCompany: Map<string, Set<string>>) {
+  await prisma.autopartHistorySnapshotGap.deleteMany({ where: { importId } });
+  for (const [companyId, keys] of fileDocsByCompany) {
+    const existing = await prisma.autopartSalesDocument.findMany({
+      where: {
+        companyId,
+        NOT: {
+          OR: [{ has504: true }, { hasTrm21qc: true }, { source: { in: [...ONGOING_SOURCES] } }],
+        },
+      },
+      select: { documentType: true, documentReference: true, goodsNet: true },
+    });
+    const gaps = existing.filter((doc) => !keys.has(`${doc.documentType}::${doc.documentReference}`));
+    if (!gaps.length) continue;
+    await prisma.autopartHistorySnapshotGap.createMany({
+      data: gaps.map((doc) => ({
+        importId,
+        companyId,
+        documentType: doc.documentType,
+        documentReference: doc.documentReference,
+        goodsNet: doc.goodsNet,
+      })),
+      skipDuplicates: true,
+    });
   }
-  for (let i = 0; i < lines.length; i += 300) {
-    await prisma.autopartHistoryStagedLine.createMany({ data: lines.slice(i, i + 300) });
+}
+
+export async function retireAbsentHistoricDocuments(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "autopart.import.manage");
+  const input = z
+    .object({ importId: z.string().min(1), confirmation: z.string() })
+    .parse(raw);
+  if (input.confirmation !== HISTORIC_SNAPSHOT_RETIRE_PHRASE) {
+    throw new AuthError("Type the retirement confirmation before removing absent documents", "CONFIRMATION_REQUIRED", 400);
   }
+  const imported = await prisma.autopartHistoryAllImport.findUnique({ where: { id: input.importId } });
+  if (!imported || imported.status !== "COMMITTED") {
+    throw new AuthError("Only a completed ALL import can retire documents it did not contain", "IMPORT_BLOCKED", 400);
+  }
+  const gaps = await prisma.autopartHistorySnapshotGap.findMany({
+    where: { importId: input.importId, status: "OPEN" },
+  });
+  let retired = 0;
+  for (const gap of gaps) {
+    const document = await prisma.autopartSalesDocument.findFirst({
+      where: { companyId: gap.companyId, documentType: gap.documentType, documentReference: gap.documentReference },
+    });
+    if (!document || document.has504 || document.hasTrm21qc || ONGOING_SOURCES.includes(document.source as (typeof ONGOING_SOURCES)[number])) {
+      continue;
+    }
+    await prisma.autopartSalesLine.deleteMany({
+      where: {
+        companyId: gap.companyId,
+        documentType: gap.documentType,
+        documentReference: gap.documentReference,
+        source: { not: "ONGOING_TRM21QC" },
+      },
+    });
+    await prisma.autopartSalesDocument.deleteMany({
+      where: {
+        id: document.id,
+        has504: false,
+        hasTrm21qc: false,
+        source: { notIn: [...ONGOING_SOURCES] },
+      },
+    });
+    await prisma.autopartHistorySnapshotGap.update({
+      where: { id: gap.id },
+      data: { status: "RETIRED", retiredAt: new Date() },
+    });
+    retired += 1;
+  }
+  await recordAuditEvent({
+    action: "autopart.history_snapshot_retired",
+    entityType: "AutopartHistoryAllImport",
+    entityId: input.importId,
+    actorUserId,
+    after: { retired, confirmation: HISTORIC_SNAPSHOT_RETIRE_PHRASE },
+  });
+  return { retired };
+}
+
+export async function getHistoricAllImport(actorUserId: string, importId: string) {
+  await requireSystemPermission(actorUserId, "autopart.import.view");
+  const row = await prisma.autopartHistoryAllImport.findUnique({ where: { id: importId } });
+  if (!row) throw new AuthError("Import not found", "NOT_FOUND", 404);
+  return {
+    id: row.id,
+    status: row.status,
+    parsed561l: row.parsed561l,
+    parsedSlrb: row.parsedSlrb,
+    malformed561l: row.malformed561l,
+    malformedSlrb: row.malformedSlrb,
+    excludedLedger: row.excludedLedger,
+    stagedLineCount: row.stagedLineCount,
+    importedLineCount: row.importedLineCount,
+    discrepancyCount: row.discrepancyCount,
+    accountsCommitted: row.accountsCommitted,
+    accountsReviewed: row.accountsReviewed,
+    elapsedMs: row.elapsedMs,
+    peakRssBytes: row.peakRssBytes,
+    fileHash561l: row.fileHash561l,
+    fileHashSlrb: row.fileHashSlrb,
+    encoding561l: row.encoding561l,
+    encodingSlrb: row.encodingSlrb,
+    summary: row.summary,
+  };
 }
 
 export async function listOpenHistoricReviews(actorUserId: string) {
@@ -337,7 +1002,14 @@ export async function listOpenHistoricReviews(actorUserId: string) {
   const latest = await prisma.autopartHistoryAllImport.findFirst({
     where: { status: "COMMITTED" },
     orderBy: { createdAt: "desc" },
-    select: { id: true, createdAt: true, filename561l: true, filenameSlrb: true, fileHash561l: true, fileHashSlrb: true },
+    select: {
+      id: true,
+      createdAt: true,
+      filename561l: true,
+      filenameSlrb: true,
+      fileHash561l: true,
+      fileHashSlrb: true,
+    },
   });
   if (!latest) return { import: null, reviews: [] };
   const reviews = await prisma.autopartHistoryReviewAccount.findMany({
@@ -374,46 +1046,62 @@ export async function promoteStagedAutopartHistory(actorUserId: string, companyI
     where: { status: "COMMITTED" },
     orderBy: { createdAt: "desc" },
   });
-  if (!latest?.fileBody561l || !latest.fileBodySlrb) return { applied: false as const, documents: 0, lines: 0 };
-  const parsed561 = parseAutopart561l(Buffer.from(latest.fileBody561l).toString("utf8"));
-  const directory = await loadDirectory(parsed561.accountFieldWidth);
-  const candidates = [verified];
-  if (directory.accountFieldWidth && verified.length > directory.accountFieldWidth) {
-    candidates.push(verified.slice(0, directory.accountFieldWidth));
-  }
-  const reviews = await prisma.autopartHistoryReviewAccount.findMany({
-    where: { importId: latest.id, status: "OPEN", accountCode: { in: candidates } },
+  if (!latest) return { applied: false as const, documents: 0, lines: 0 };
+  const directory = await loadDirectory();
+  const review = await prisma.autopartHistoryReviewAccount.findFirst({
+    where: { importId: latest.id, status: "OPEN", accountCode: verified },
   });
-  let documents = 0;
-  let lines = 0;
-  for (const review of reviews) {
-    if (review.reason === "AMBIGUOUS") continue;
-    const classified = classifyHistoricAccount(review.accountCode, directory);
-    if (classified.outcome !== "import" || classified.companyId !== companyId) continue;
-    const [stagedDocs, stagedLines] = await Promise.all([
-      prisma.autopartHistoryStagedDocument.findMany({ where: { importId: latest.id, accountCode: review.accountCode } }),
-      prisma.autopartHistoryStagedLine.findMany({ where: { importId: latest.id, accountCode: review.accountCode } }),
-    ]);
-    if (!stagedDocs.length && !stagedLines.length) continue;
-    await commitHistoricCompanySlice({
-      actorUserId,
+  if (!review || review.reason === "AMBIGUOUS") return { applied: false as const, documents: 0, lines: 0 };
+  const classified = classifyHistoricAccount(review.accountCode, directory);
+  if (classified.outcome !== "import" || classified.companyId !== companyId) {
+    return { applied: false as const, documents: 0, lines: 0 };
+  }
+  const runId = await openHistoricAccountWrite({
+    actorUserId,
+    companyId,
+    accountCode: classified.canonicalCode,
+    filename561l: latest.filename561l,
+    filenameSlrb: latest.filenameSlrb,
+    fileHash561l: latest.fileHash561l,
+    fileHashSlrb: latest.fileHashSlrb ?? "",
+    parentImportId: latest.id,
+  });
+  const docs = await prisma.autopartHistoryStagedDocument.findMany({
+    where: { importId: latest.id, accountCode: verified },
+  });
+  await writeHistoricAccountBatch({
+    runId,
+    companyId,
+    accountCode: classified.canonicalCode,
+    documents: docs.map((document) => ({
+      documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+      documentReference: document.documentReference,
+      documentDate: document.documentDate ? document.documentDate.toISOString().slice(0, 10) : null,
+      goodsNet: document.goodsNet?.toString() ?? null,
+      vat: document.vat?.toString() ?? null,
+      grossTotal: document.grossTotal?.toString() ?? null,
+      source: document.source === "561L" ? "561L" : "SLRB",
+    })),
+    lines: [],
+  });
+  let lineCount = 0;
+  let cursor: string | undefined;
+  while (true) {
+    const lines = await prisma.autopartHistoryStagedLine.findMany({
+      where: { importId: latest.id, accountCode: verified },
+      orderBy: { id: "asc" },
+      take: BATCH,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (!lines.length) break;
+    cursor = lines[lines.length - 1]!.id;
+    lineCount += lines.length;
+    await writeHistoricAccountBatch({
+      runId,
       companyId,
       accountCode: classified.canonicalCode,
-      filename561l: latest.filename561l,
-      filenameSlrb: latest.filenameSlrb,
-      fileHash561l: latest.fileHash561l,
-      fileHashSlrb: latest.fileHashSlrb ?? "",
-      parentImportId: latest.id,
-      documents: stagedDocs.map((document) => ({
-        documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
-        documentReference: document.documentReference,
-        documentDate: document.documentDate ? document.documentDate.toISOString().slice(0, 10) : null,
-        goodsNet: document.goodsNet?.toString() ?? null,
-        vat: document.vat?.toString() ?? null,
-        grossTotal: document.grossTotal?.toString() ?? null,
-        source: document.source === "561L" ? "561L" : "SLRB",
-      })),
-      lines: stagedLines.map((line) => ({
+      documents: [],
+      lines: lines.map((line) => ({
         documentType: line.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
         documentReference: line.documentReference,
         lineNumber: line.lineNumber,
@@ -424,12 +1112,43 @@ export async function promoteStagedAutopartHistory(actorUserId: string, companyI
         rawInvAndLn: line.rawInvAndLn ?? "",
       })),
     });
-    await prisma.autopartHistoryReviewAccount.update({
-      where: { id: review.id },
-      data: { status: "APPLIED", companyId, appliedAt: new Date() },
-    });
-    documents += stagedDocs.length;
-    lines += stagedLines.length;
   }
-  return { applied: documents + lines > 0, documents, lines };
+  await closeHistoricAccountWrite(runId, { imported: lineCount, updated: 0 });
+  await prisma.autopartHistoryReviewAccount.update({
+    where: { id: review.id },
+    data: { status: "APPLIED", companyId, appliedAt: new Date() },
+  });
+  return { applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
+}
+
+async function writeText(filename: string, text: string): Promise<StoredFile> {
+  await mkdir(path.join(autopartImportRoot(), "history"), { recursive: true });
+  const dest = path.join(autopartImportRoot(), "history", `${randomUUID()}-${filename.replace(/[^A-Za-z0-9._()-]+/g, "_")}`);
+  const bytes = Buffer.from(text, "utf8");
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(dest, bytes);
+  return { path: dest, filename, sha256: hash, bytes: bytes.length, encoding: "utf-8" };
+}
+
+async function scanPair(
+  file561: { path: string; encoding: "utf-8" | "windows-1252" },
+  fileSlrb: { path: string; encoding: "utf-8" | "windows-1252" },
+) {
+  let parsed561 = 0;
+  let malformed561 = 0;
+  let parsedSlrb = 0;
+  let malformedSlrb = 0;
+  let excludedLedger = 0;
+  await forEachAutopartCsvRecord(file561.path, file561.encoding, (record) => {
+    parsed561 += 1;
+    if (record.malformed) malformed561 += 1;
+  });
+  await forEachAutopartCsvRecord(fileSlrb.path, fileSlrb.encoding, (record) => {
+    parsedSlrb += 1;
+    if (record.malformed) malformedSlrb += 1;
+    const type = (record.fields[3] ?? "").toUpperCase();
+    if (type === "CSH" || type === "OPB" || type === "PAY" || type === "JNL") excludedLedger += 1;
+  });
+  return { parsed561, malformed561, parsedSlrb, malformedSlrb, excludedLedger };
 }

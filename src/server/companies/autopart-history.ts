@@ -2352,6 +2352,147 @@ export async function commitHistoricCompanySlice(input: {
   };
 }
 
+export async function openHistoricAccountWrite(input: {
+  actorUserId: string;
+  companyId: string;
+  accountCode: string;
+  filename561l: string | null;
+  filenameSlrb: string | null;
+  fileHash561l: string;
+  fileHashSlrb: string;
+  parentImportId: string;
+}): Promise<string> {
+  const run = await prisma.autopartCustomerImportRun.create({
+    data: {
+      companyId: input.companyId,
+      type: "HISTORY_561L_SLRB",
+      status: "PROCESSING",
+      filename: input.filename561l,
+      filenameSlrb: input.filenameSlrb,
+      fileHash: input.fileHash561l,
+      fileHashSlrb: input.fileHashSlrb,
+      detectedAccount: input.accountCode,
+      dryRun: false,
+      createdById: input.actorUserId,
+      diagnostics: { allImportId: input.parentImportId } as Prisma.InputJsonValue,
+    },
+  });
+  return run.id;
+}
+
+export async function writeHistoricAccountBatch(input: {
+  runId: string;
+  companyId: string;
+  accountCode: string;
+  documents: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    documentDate: string | null;
+    goodsNet: string | null;
+    vat: string | null;
+    grossTotal: string | null;
+    source: "SLRB" | "561L";
+  }>;
+  lines: Array<{
+    documentType: "INVOICE" | "CREDIT";
+    documentReference: string;
+    lineNumber: number;
+    sku: string;
+    description: string | null;
+    units: string;
+    salesNet: string;
+    rawInvAndLn: string;
+  }>;
+}): Promise<void> {
+  const skuMap = await resolveSkuMap(input.lines.map((line) => line.sku));
+  const documents: PreparedHistoricDocument[] = input.documents.map((document) => ({
+    companyId: input.companyId,
+    autopartCustomerCode: input.accountCode,
+    documentType: document.documentType,
+    documentReference: document.documentReference,
+    documentDate: dateOnlyToUtcNoon(document.documentDate),
+    goodsNet: document.goodsNet,
+    vat: document.vat,
+    grossTotal: document.grossTotal,
+    source: document.source,
+    importRunId: input.runId,
+  }));
+  const lines: PreparedHistoricLine[] = input.lines.map((line) => {
+    const matchedVariantId = skuMap.get(line.sku.trim().toUpperCase()) ?? null;
+    return {
+      companyId: input.companyId,
+      documentType: line.documentType,
+      documentReference: line.documentReference,
+      lineNumber: line.lineNumber,
+      sku: line.sku.trim(),
+      descriptionSnapshot: line.description,
+      units: line.units,
+      salesNet: line.salesNet,
+      matchedVariantId,
+      matchStatus: matchedVariantId ? "MATCHED" : "NOT_IN_AB_CATALOGUE",
+      rawInvAndLn: line.rawInvAndLn,
+      source: "561L",
+      importRunId: input.runId,
+      autopartCustomerCode: input.accountCode,
+    };
+  });
+  const writtenDocs = documents.length
+    ? await bulkUpsertHistoricDocuments(documents)
+    : {
+        idByKey: new Map<string, string>(),
+        blockedDocKeys: new Set<string>(),
+        inserted: 0,
+        updated: 0,
+        protectedDocs: [],
+      };
+  if (!documents.length && lines.length) {
+    const refs = [...new Set(lines.map((line) => line.documentReference))];
+    const existing = await prisma.autopartSalesDocument.findMany({
+      where: { companyId: input.companyId, documentReference: { in: refs } },
+      select: { id: true, documentType: true, documentReference: true },
+    });
+    for (const row of existing) {
+      writtenDocs.idByKey.set(docKey(row.documentType, row.documentReference), row.id);
+    }
+  }
+  if (lines.length) await bulkUpsertHistoricLines(lines, writtenDocs.idByKey, writtenDocs.blockedDocKeys);
+}
+
+export async function closeHistoricAccountWrite(runId: string, counts: { imported: number; updated: number }): Promise<void> {
+  await prisma.autopartCustomerImportRun.update({
+    where: { id: runId },
+    data: {
+      status: "COMMITTED",
+      rowsImported: counts.imported,
+      rowsUpdated: counts.updated,
+      completedAt: new Date(),
+    },
+  });
+}
+
+export async function stampHistoricDocumentComparison(input: {
+  companyId: string;
+  documentType: "INVOICE" | "CREDIT";
+  documentReference: string;
+  linesNet: string;
+  mismatchMinor: number | null;
+}): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE "AutopartSalesDocument"
+    SET "linesNetSum" = ${input.linesNet}::decimal,
+        "valueMismatchMinor" = ${input.mismatchMinor},
+        "updatedAt" = NOW()
+    WHERE "companyId" = ${input.companyId}
+      AND "documentType" = ${input.documentType}::"AutopartHistoricDocumentType"
+      AND "documentReference" = ${input.documentReference}
+      AND NOT (
+        "has504" = true
+        OR "hasTrm21qc" = true
+        OR "source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+      )
+  `;
+}
+
 // ─── Credit control (removed) ────────────────────────────────────────────────
 // Automotive Brands does not manage customer credit control. 407P100 import,
 // preview/confirm, and credit position snapshots are intentionally not supported.

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   assignHistoricLineNumbers,
   classifyHistoricAccount,
-  indexShortVerifiedAccounts,
   planAllHistoricFile,
   type HistoricAccountDirectory,
 } from "@/domain/historic-all-file";
@@ -18,14 +17,12 @@ function directory(overrides: Partial<HistoricAccountDirectory> = {}): HistoricA
   ]);
   return {
     verifiedByCode,
-    shortVerifiedByCode: indexShortVerifiedAccounts(verifiedByCode, 7),
     masterCompanyByCode: new Map([
       ["ACME001", "co_acme"],
       ["BETA002", "co_beta"],
       ["WAITING", null],
       ["LINKED9", "co_other"],
     ]),
-    accountFieldWidth: 7,
     ...overrides,
   };
 }
@@ -38,25 +35,17 @@ describe("all-file historical account matching", () => {
       companyId: "co_acme",
       canonicalCode: "ACME001",
     });
-    expect(classifyHistoricAccount("ACMELON", dir)).toEqual({
-      outcome: "import",
-      companyId: "co_acme",
-      canonicalCode: "ACMELONG",
-    });
+    expect(classifyHistoricAccount("ACMELON", dir)).toEqual({ outcome: "review", reason: "UNKNOWN" });
+    expect(
+      classifyHistoricAccount("ACMELON", { ...dir, truncatedPrefixes: new Set(["ACMELON"]) }),
+    ).toEqual({ outcome: "review", reason: "AMBIGUOUS" });
     expect(classifyHistoricAccount("WAITING", dir)).toEqual({ outcome: "review", reason: "UNLINKED" });
     expect(classifyHistoricAccount("LINKED9", dir)).toEqual({ outcome: "review", reason: "NOT_VERIFIED" });
     expect(classifyHistoricAccount("NOBODY", dir)).toEqual({ outcome: "review", reason: "UNKNOWN" });
   });
 
-  it("treats a short code that matches two verified customers as ambiguous", () => {
-    const verifiedByCode = new Map([
-      ["RETAILAA", { companyId: "co_a", canonicalCode: "RETAILAA" }],
-      ["RETAILAB", { companyId: "co_b", canonicalCode: "RETAILAB" }],
-    ]);
-    const dir = directory({
-      verifiedByCode,
-      shortVerifiedByCode: indexShortVerifiedAccounts(verifiedByCode, 7),
-    });
+  it("does not import a truncated code even when it prefixes two verified customers", () => {
+    const dir = directory({ truncatedPrefixes: new Set(["RETAILA"]) });
     expect(classifyHistoricAccount("RETAILA", dir)).toEqual({ outcome: "review", reason: "AMBIGUOUS" });
   });
 

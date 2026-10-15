@@ -7,6 +7,8 @@
  */
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
+import { rm } from "node:fs/promises";
+import { autopartImportRoot } from "@/server/companies/autopart-master-import";
 import { releaseStockForOrder } from "@/server/orders/reservations";
 import {
   NOT_RESET,
@@ -386,6 +388,9 @@ export async function executeCustomerDataReset(input: {
     acknowledgeExportedOrders: input.acknowledgeExportedOrders,
   });
   const beforePreserve = { ...before.counts.preserved };
+  const storedFiles = await prisma.autopartHistoryAllImport.findMany({
+    select: { storagePath561l: true, storagePathSlrb: true },
+  });
   const pausedFeeds = await pauseSalesImports(prisma);
   const removable = input.includeB2bOrders ? before.orders.filter((order) => !order.hold) : [];
   const held = input.includeB2bOrders ? before.orders.filter((order) => order.hold) : [];
@@ -470,6 +475,12 @@ export async function executeCustomerDataReset(input: {
     };
   }
 
+  const root = autopartImportRoot();
+  for (const file of storedFiles) {
+    for (const stored of [file.storagePath561l, file.storagePathSlrb]) {
+      if (stored && stored.startsWith(root)) await rm(stored, { force: true });
+    }
+  }
   const after = await scopeCounts(prisma);
   const preserveKeys = Object.keys(after.preserved) as Array<keyof typeof after.preserved>;
   const preserveDrift = preserveKeys.filter((key) => beforePreserve[key] !== after.preserved[key]);

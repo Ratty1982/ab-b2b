@@ -3128,11 +3128,26 @@ model AutopartHistoryAllImport {
   fileBody561l      Bytes?
   /// Original document report. Staff audit only.
   fileBodySlrb      Bytes?
+  /// Private disk path of the original 561L bytes. Not a public URL.
+  storagePath561l   String?
+  storagePathSlrb   String?
+  encoding561l      String?
+  encodingSlrb      String?
   accountsRead      Int                          @default(0)
   accountsCommitted Int                          @default(0)
   accountsReviewed  Int                          @default(0)
   documentsWritten  Int                          @default(0)
   linesWritten      Int                          @default(0)
+  parsed561l        Int                          @default(0)
+  parsedSlrb        Int                          @default(0)
+  malformed561l     Int                          @default(0)
+  malformedSlrb     Int                          @default(0)
+  excludedLedger    Int                          @default(0)
+  stagedLineCount   Int                          @default(0)
+  importedLineCount Int                          @default(0)
+  discrepancyCount  Int                          @default(0)
+  peakRssBytes      Int?
+  elapsedMs         Int?
   summary           Json?
   createdById       String?
   createdAt         DateTime                     @default(now())
@@ -3142,6 +3157,7 @@ model AutopartHistoryAllImport {
   reviews   AutopartHistoryReviewAccount[]
   documents AutopartHistoryStagedDocument[]
   lines     AutopartHistoryStagedLine[]
+  gaps      AutopartHistorySnapshotGap[]
 
   @@index([status, createdAt])
   @@index([fileHash561l, fileHashSlrb])
@@ -3158,6 +3174,30 @@ enum AutopartHistoryReviewStatus {
   OPEN
   APPLIED
   SUPERSEDED
+}
+
+enum AutopartHistoryGapStatus {
+  OPEN
+  RETIRED
+}
+
+/// Historical document present before a later ALL snapshot and absent from that file.
+/// Listed for audit. Not deleted until an operator retires this exact list.
+model AutopartHistorySnapshotGap {
+  id                String                       @id @default(cuid())
+  importId          String
+  companyId         String
+  documentType      AutopartHistoricDocumentType
+  documentReference String
+  goodsNet          Decimal?                     @db.Decimal(14, 2)
+  status            AutopartHistoryGapStatus     @default(OPEN)
+  createdAt         DateTime                     @default(now())
+  retiredAt         DateTime?
+
+  import AutopartHistoryAllImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, companyId, documentType, documentReference])
+  @@index([importId, status])
 }
 
 /// Account in an all-customers file that is not written into certified sales.
