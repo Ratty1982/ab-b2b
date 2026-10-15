@@ -396,7 +396,7 @@ export async function executeCustomerDataReset(input: {
   }
 
   const after = await scopeCounts(prisma);
-  const preserveKeys = Object.keys(beforePreserve) as Array<keyof typeof beforePreserve>;
+  const preserveKeys = Object.keys(after.preserved) as Array<keyof typeof after.preserved>;
   const preserveDrift = preserveKeys.filter((key) => beforePreserve[key] !== after.preserved[key]);
 
   return {
