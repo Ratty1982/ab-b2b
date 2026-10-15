@@ -2743,6 +2743,10 @@ model AutopartCustomerImportRun {
   filenameSlrb    String?
   fileHash        String?
   fileHashSlrb    String?
+  /// Original product-lines report. Kept for audit. Not shown to customers.
+  fileBody561l    Bytes?
+  /// Original invoice report. Kept for audit. Not shown to customers.
+  fileBodySlrb    Bytes?
   detectedAccount String?
   rowsRead        Int                          @default(0)
   rowsValid       Int                          @default(0)

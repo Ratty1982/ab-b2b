@@ -14,8 +14,10 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
-import { parseAutopart561l } from "@/domain/autopart-561l";
-import { parseAutopartSlrb } from "@/domain/autopart-slrb";
+import { parseAutopart561l, type Autopart561lParseResult } from "@/domain/autopart-561l";
+import { parseAutopartSlrb, type AutopartSlrbParseResult } from "@/domain/autopart-slrb";
+import { isolateCustomerHistory } from "@/domain/historic-customer-isolation";
+import { summariseHistoricOverlap } from "@/domain/historic-overlap-summary";
 import {
   autopartAccountsEqual,
   normaliseAccountToken,
@@ -55,6 +57,8 @@ export type HistoricImportProgress = {
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
+
+const MAX_HISTORIC_FILE_CHARS = 20_000_000;
 
 function dateOnlyToUtcNoon(dateOnly: string | null | undefined): Date | null {
   if (!dateOnly || !/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return null;
@@ -328,6 +332,167 @@ function rowAccountAcceptable(
   // Also accept when parser width alone confirms the slice
   if (width != null && isShortAccountOf(row, fullAccount, width)) return true;
   return false;
+}
+
+async function ambiguousShortAccounts(input: {
+  companyId: string;
+  codes: string[];
+  accepted: Set<string>;
+  width: number | null;
+}): Promise<Set<string>> {
+  const ambiguous = new Set<string>();
+  if (input.width == null) return ambiguous;
+  for (const code of input.codes) {
+    const shortOfAccepted = [...input.accepted].some(
+      (full) =>
+        code.length === input.width && full.length > input.width! && full.startsWith(code),
+    );
+    if (!shortOfAccepted) continue;
+    if (
+      await truncatedFormAmbiguous({
+        companyId: input.companyId,
+        truncated: code,
+        width: input.width,
+      })
+    ) {
+      ambiguous.add(code);
+    }
+  }
+  return ambiguous;
+}
+
+/**
+ * When a report contains more than one customer, keep the selected verified
+ * account and drop the rest. Ambiguous documents stay out. A refused file is
+ * left unchanged so the existing account check can block it.
+ */
+async function applyHistoricCustomerSlice(input: {
+  companyId: string;
+  verifiedCode: string | null;
+  parsed561: Autopart561lParseResult;
+  parsedSlrb: AutopartSlrbParseResult;
+}) {
+  const accepted = input.verifiedCode
+    ? await loadAcceptedAccounts(input.companyId, input.verifiedCode)
+    : new Set<string>();
+  const reportCustomer = normaliseAccountToken(
+    input.parsed561.reportStartCustomer ?? input.parsedSlrb.reportStartCustomer,
+  );
+  const slrbAccounts = uniqAccounts(input.parsedSlrb.documents.map((row) => row.accountCode));
+  const rowAccounts = uniqAccounts(input.parsed561.lines.map((row) => row.accountCode));
+  const width = input.parsed561.accountFieldWidth;
+  const ambiguous = await ambiguousShortAccounts({
+    companyId: input.companyId,
+    codes: [...rowAccounts, ...slrbAccounts],
+    accepted,
+    width,
+  });
+  const fullIdentityPresent =
+    (reportCustomer != null && accepted.has(reportCustomer)) ||
+    slrbAccounts.some((account) => accepted.has(account));
+  const isolated = isolateCustomerHistory({
+    lines: input.parsed561.lines,
+    documents: input.parsedSlrb.documents,
+    acceptedAccounts: accepted,
+    width,
+    ambiguousShortAccounts: ambiguous,
+    fullIdentityPresent,
+  });
+  if (!input.verifiedCode || isolated.mode === "refused") return isolated;
+
+  input.parsed561.lines = isolated.lines;
+  input.parsed561.detectedAccounts = uniqAccounts(isolated.lines.map((row) => row.accountCode));
+  input.parsed561.creditLines = isolated.lines.filter((row) => row.documentType === "CREDIT").length;
+  input.parsed561.invoiceLines = isolated.lines.length - input.parsed561.creditLines;
+  input.parsedSlrb.documents = isolated.documents;
+  input.parsedSlrb.detectedAccounts = uniqAccounts(
+    isolated.documents.map((row) => row.accountCode),
+  );
+  input.parsedSlrb.invoiceDocuments = isolated.documents.filter(
+    (row) => row.documentType === "INVOICE",
+  ).length;
+  input.parsedSlrb.creditDocuments = isolated.documents.filter(
+    (row) => row.documentType === "CREDIT",
+  ).length;
+  const reportIsAccepted =
+    reportCustomer != null &&
+    (accepted.has(reportCustomer) ||
+      (width != null &&
+        [...accepted].some(
+          (full) =>
+            reportCustomer.length === width &&
+            full.length > width &&
+            full.startsWith(reportCustomer),
+        )));
+  if (!reportIsAccepted) {
+    input.parsed561.reportStartCustomer = null;
+    input.parsedSlrb.reportStartCustomer = null;
+  }
+  return isolated;
+}
+
+async function ongoingOverlapForImport(
+  companyId: string,
+  lines: Autopart561lParseResult["lines"],
+  documents: AutopartSlrbParseResult["documents"],
+) {
+  const refs = [
+    ...new Set(
+      [...lines.map((line) => line.documentReference), ...documents.map((doc) => doc.documentReference)].filter(
+        (ref): ref is string => Boolean(ref),
+      ),
+    ),
+  ];
+  if (!refs.length) return { leftUnchanged: [] as string[], differs: [] as Array<{ reference: string; documentType: string }> };
+  const ongoing = await findManyByInChunks({
+    ids: refs,
+    findChunk: (chunk) =>
+      prisma.autopartSalesDocument.findMany({
+        where: {
+          companyId,
+          documentReference: { in: chunk },
+          OR: [
+            { has504: true },
+            { hasTrm21qc: true },
+            { source: { in: ["ONGOING_504", "ONGOING_TRM21QC", "ONGOING_504_BRIDGE"] } },
+          ],
+        },
+        select: {
+          documentReference: true,
+          documentType: true,
+          goodsNet: true,
+          linesNetSum: true,
+        },
+      }),
+  });
+  const lineNetByRef = new Map<string, number>();
+  for (const line of lines) {
+    if (!line.documentReference || line.salesNet == null) continue;
+    const value = Number(line.salesNet);
+    if (!Number.isFinite(value)) continue;
+    lineNetByRef.set(line.documentReference, (lineNetByRef.get(line.documentReference) ?? 0) + value);
+  }
+  const goodsByRef = new Map<string, string | null>();
+  const typeByRef = new Map<string, string>();
+  for (const doc of documents) {
+    if (!doc.documentReference) continue;
+    goodsByRef.set(doc.documentReference, doc.goodsNet);
+    typeByRef.set(doc.documentReference, doc.documentType);
+  }
+  return summariseHistoricOverlap({
+    incoming: refs.map((ref) => ({
+      reference: ref,
+      documentType: typeByRef.get(ref) ?? "INVOICE",
+      goodsNet: goodsByRef.get(ref) ?? null,
+      lineNet: lineNetByRef.has(ref) ? lineNetByRef.get(ref)!.toFixed(2) : null,
+    })),
+    ongoing: ongoing.map((doc) => ({
+      reference: doc.documentReference,
+      documentType: doc.documentType,
+      goodsNet: doc.goodsNet == null ? null : String(doc.goodsNet),
+      lineNet: doc.linesNetSum == null ? null : String(doc.linesNetSum),
+    })),
+  });
 }
 
 async function truncatedFormAmbiguous(input: {
@@ -733,8 +898,39 @@ async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
 
 // ─── Workspace summary ───────────────────────────────────────────────────────
 
+function friendlyImportStatus(status: string): string {
+  switch (status) {
+    case "COMMITTED":
+      return "Imported";
+    case "FAILED":
+      return "Did not finish";
+    case "PROCESSING":
+      return "In progress";
+    case "PREVIEWED":
+      return "Checked";
+    case "BLOCKED":
+      return "Needs attention";
+    default:
+      return "Recorded";
+  }
+}
+
+function attentionFromIssues(issues: unknown): string[] {
+  if (!Array.isArray(issues)) return [];
+  return issues
+    .filter((issue): issue is { severity?: string; message?: string } =>
+      Boolean(issue) && typeof issue === "object",
+    )
+    .filter((issue) => issue.severity === "WARNING" || issue.severity === "BLOCKING")
+    .map((issue) => issue.message)
+    .filter((message): message is string => typeof message === "string" && message.length > 0)
+    .slice(0, 5);
+}
+
 export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, companyId: string) {
-  await assertStaffCompanyAccess(actorUserId, companyId, "companies.view");
+  const profile = await assertStaffCompanyAccess(actorUserId, companyId, "companies.view");
+  const showAdvanced =
+    profile.systemRoles.includes("SUPER_ADMIN") || grants(profile, "admin.access");
   const company = await loadVerifiedCompany(companyId);
   const verified = Boolean(company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt);
 
@@ -788,6 +984,41 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
     orderBy: { documentDate: "desc" },
     select: { documentDate: true },
   });
+  const [undatedDocuments, recentRuns] = await Promise.all([
+    prisma.autopartSalesDocument.count({
+      where: { companyId, documentDate: null, source: { in: ["561L", "SLRB"] } },
+    }),
+    prisma.autopartCustomerImportRun.findMany({
+      where: { companyId, type: "HISTORY_561L_SLRB", dryRun: false },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        status: true,
+        filename: true,
+        filenameSlrb: true,
+        rowsImported: true,
+        rowsUpdated: true,
+        rowsSkipped: true,
+        createdAt: true,
+        completedAt: true,
+        issues: true,
+        fileHash: true,
+        fileHashSlrb: true,
+      },
+    }),
+  ]);
+  const netSales = moneyToString(
+    parseMoney(String(aggregates._sum.salesNet ?? 0)) ?? moneyZero(),
+    2,
+  );
+  const latestRun = recentRuns[0];
+  const attention = [
+    ...attentionFromIssues(lastHistory?.issues),
+    ...(latestRun?.status === "FAILED"
+      ? ["The last import did not finish. You can try the same files again."]
+      : []),
+  ].slice(0, 5);
 
   const globalHistory = await loadCompanyGlobalAutopartHistory(actorUserId, companyId);
   const unifiedSales = globalHistory.restricted
@@ -808,14 +1039,40 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
       legacyLines: lineCount,
     }),
     globalHistory,
+    historyStatus: {
+      label:
+        lineCount > 0
+          ? "Historical sales are saved for this customer"
+          : "No historical sales imported yet",
+      lastSuccessfulAt: lastHistory?.completedAt?.toISOString() ?? null,
+      productReport: lastHistory?.filename ?? null,
+      invoiceReport: lastHistory?.filenameSlrb ?? null,
+      documents: docCount,
+      lines: lineCount,
+      netSales,
+      undatedDocuments,
+      attention,
+    },
+    importHistory: recentRuns.map((run) => ({
+      id: run.id,
+      status: friendlyImportStatus(run.status),
+      productReport: run.filename,
+      invoiceReport: run.filenameSlrb,
+      imported: run.rowsImported,
+      updated: run.rowsUpdated,
+      skipped: run.rowsSkipped,
+      createdAt: run.createdAt.toISOString(),
+      completedAt: run.completedAt?.toISOString() ?? null,
+      attention: attentionFromIssues(run.issues),
+      productReportCheck: showAdvanced ? run.fileHash : null,
+      invoiceReportCheck: showAdvanced ? run.fileHashSlrb : null,
+    })),
+    showAdvanced,
     historic: {
       imported: lineCount > 0,
       lineCount,
       documentCount: docCount,
-      netSpend: moneyToString(
-        parseMoney(String(aggregates._sum.salesNet ?? 0)) ?? moneyZero(),
-        2,
-      ),
+      netSpend: netSales,
       netUnits: Number(aggregates._sum.units ?? 0),
       productsPurchased: skuGroups.length,
       lastImportedAt: lastHistory?.completedAt?.toISOString() ?? null,
@@ -913,6 +1170,16 @@ async function buildHistoryPreview(
 ) {
   const company = await loadVerifiedCompany(input.companyId);
   const issues: ImportIssue[] = [];
+  if (
+    input.file561l.length > MAX_HISTORIC_FILE_CHARS ||
+    input.fileSlrb.length > MAX_HISTORIC_FILE_CHARS
+  ) {
+    throw new AuthError(
+      "These reports are too large to import together. Split them by customer and try again.",
+      "FILE_TOO_LARGE",
+      400,
+    );
+  }
 
   if (!company.autopartCustomerCode || !company.autopartCustomerCodeVerifiedAt) {
     issues.push({
@@ -947,9 +1214,29 @@ async function buildHistoryPreview(
   const verifiedCode = company.autopartCustomerCode
     ? normaliseAccountToken(company.autopartCustomerCode)
     : null;
-  const accepted = verifiedCode
-    ? await loadAcceptedAccounts(input.companyId, verifiedCode)
-    : new Set<string>();
+  const customerSlice = await applyHistoricCustomerSlice({
+    companyId: input.companyId,
+    verifiedCode,
+    parsed561,
+    parsedSlrb,
+  });
+  if (customerSlice.mode === "isolated") {
+    if (customerSlice.excludedAccounts.length) {
+      issues.push({
+        severity: "INFO",
+        code: "OTHER_CUSTOMERS_LEFT_OUT",
+        message: `Other accounts in this file were left out (${customerSlice.excludedAccounts.join(", ")}). Only the selected customer will be imported.`,
+      });
+    }
+    if (customerSlice.refusedDocumentCount || customerSlice.refusedLineCount) {
+      const count = Math.max(customerSlice.refusedDocumentCount, customerSlice.refusedLineCount);
+      issues.push({
+        severity: "WARNING",
+        code: "AMBIGUOUS_ROWS_LEFT_OUT",
+        message: `${count} document${count === 1 ? "" : "s"} ${count === 1 ? "was" : "were"} left out because the account was not clear.`,
+      });
+    }
+  }
 
   const reportStartCustomer =
     parsed561.reportStartCustomer ?? parsedSlrb.reportStartCustomer ?? null;
@@ -961,6 +1248,9 @@ async function buildHistoryPreview(
     accountsSlrb: parsedSlrb.detectedAccounts,
     accountFieldWidth561l: parsed561.accountFieldWidth,
   };
+  const accepted = verifiedCode
+    ? await loadAcceptedAccounts(input.companyId, verifiedCode)
+    : new Set<string>();
   const accountMatch = await resolveHistoricReportAccountMatch({
     companyId: input.companyId,
     verifiedCode,
@@ -1110,6 +1400,36 @@ async function buildHistoryPreview(
     else linesWithoutDates += 1;
   }
 
+  const overlap = await ongoingOverlapForImport(
+    input.companyId,
+    parsed561.lines,
+    parsedSlrb.documents,
+  );
+  if (overlap.leftUnchanged.length) {
+    issues.push({
+      severity: "INFO",
+      code: "ONGOING_LEFT_UNCHANGED",
+      message:
+        overlap.leftUnchanged.length === 1
+          ? `Document ${overlap.leftUnchanged[0]} is already on the daily sales feed and will be left as it is.`
+          : `${overlap.leftUnchanged.length} documents are already on the daily sales feed and will be left as they are.`,
+    });
+  }
+  if (overlap.differs.length) {
+    const sample = overlap.differs
+      .slice(0, 8)
+      .map((row) => row.reference)
+      .join(", ");
+    issues.push({
+      severity: "WARNING",
+      code: "ONGOING_DOCUMENT_DIFFERS",
+      message:
+        overlap.differs.length === 1
+          ? `Document ${overlap.differs[0]!.reference} does not match the daily sales feed. It will be left unchanged for review.`
+          : `${overlap.differs.length} documents do not match the daily sales feed and will be left unchanged for review: ${sample}.`,
+    });
+  }
+
   const blocking = issues.some((i) => i.severity === "BLOCKING");
   const preview = {
     companyId: company.id,
@@ -1136,6 +1456,21 @@ async function buildHistoryPreview(
     },
     fileHash561l: hash561,
     fileHashSlrb: hashSlrb,
+    customerSlice: {
+      mode: customerSlice.mode,
+      excludedAccounts: customerSlice.excludedAccounts,
+      refusedAmbiguousAccounts: customerSlice.refusedAmbiguousAccounts,
+      includedLines: customerSlice.includedLineCount,
+      excludedLines: customerSlice.excludedLineCount,
+      refusedLines: customerSlice.refusedLineCount,
+      includedDocuments: customerSlice.includedDocumentCount,
+      excludedDocuments: customerSlice.excludedDocumentCount,
+      refusedDocuments: customerSlice.refusedDocumentCount,
+    },
+    overlap: {
+      leftUnchanged: overlap.leftUnchanged.length,
+      differs: overlap.differs.map((row) => row.reference).slice(0, 20),
+    },
     alreadyImported: Boolean(prior),
     priorImport: prior
       ? {
@@ -1221,6 +1556,8 @@ async function buildHistoryPreview(
         filenameSlrb: input.filenameSlrb ?? null,
         fileHash: hash561,
         fileHashSlrb: hashSlrb,
+        fileBody561l: Buffer.from(input.file561l, "utf8"),
+        fileBodySlrb: Buffer.from(input.fileSlrb, "utf8"),
         detectedAccount: accountMatch.sourceAccount,
         rowsRead: parsed561.rows.length + parsedSlrb.rows.length,
         rowsValid: parsed561.lines.length + parsedSlrb.documents.length,
@@ -1658,6 +1995,12 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
   const verifiedCode = normaliseAccountToken(company.autopartCustomerCode)!;
   const parsed561 = parseAutopart561l(input.file561l);
   const parsedSlrb = parseAutopartSlrb(input.fileSlrb);
+  await applyHistoricCustomerSlice({
+    companyId: company.id,
+    verifiedCode,
+    parsed561,
+    parsedSlrb,
+  });
   const slrbByRef = new Map(parsedSlrb.documents.map((d) => [d.documentReference!, d]));
 
   // Bulk SKU resolution once (never per-line)
@@ -1844,6 +2187,8 @@ export async function confirmAutopartHistoryImport(actorUserId: string, raw: unk
       filenameSlrb: input.filenameSlrb ?? null,
       fileHash: preview.fileHash561l,
       fileHashSlrb: preview.fileHashSlrb,
+      fileBody561l: Buffer.from(input.file561l, "utf8"),
+      fileBodySlrb: Buffer.from(input.fileSlrb, "utf8"),
       detectedAccount: verifiedCode,
       rowsRead: parsed561.rows.length + parsedSlrb.rows.length,
       rowsValid: parsed561.lines.length,
