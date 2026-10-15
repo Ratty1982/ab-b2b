@@ -954,16 +954,18 @@ function headerIndex(header: string[]) {
   };
 }
 
-async function loadDirectory(): Promise<HistoricAccountDirectory> {
+async function loadDirectory(
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<HistoricAccountDirectory> {
   const [companies, aliases, masters] = await Promise.all([
-    prisma.company.findMany({
+    db.company.findMany({
       where: { autopartCustomerCodeVerifiedAt: { not: null }, autopartCustomerCode: { not: null } },
       select: { id: true, autopartCustomerCode: true },
     }),
-    prisma.autopartCustomerAccountAlias.findMany({
+    db.autopartCustomerAccountAlias.findMany({
       select: { companyId: true, alias: true, company: { select: { autopartCustomerCode: true } } },
     }),
-    prisma.autopartAccount.findMany({ select: { accountCode: true, companyId: true } }),
+    db.autopartAccount.findMany({ select: { accountCode: true, companyId: true } }),
   ]);
   const verifiedByCode = new Map<string, HistoricAccountTarget | null>();
   const addVerified = (code: string | null | undefined, companyId: string, canonicalCode: string) => {
@@ -1444,82 +1446,193 @@ export async function promoteStagedAutopartHistory(
     where: { id: review.id },
     data: { status: "VERIFYING", companyId },
   });
-  return runHistoricSideWrite(async (tx) => {
-    const runId = await openHistoricAccountWrite(
-      {
-        actorUserId,
-        companyId,
-        accountCode: classified.canonicalCode,
-        filename561l: source.filename561l,
-        filenameSlrb: source.filenameSlrb,
-        fileHash561l: source.fileHash561l,
-        fileHashSlrb: source.fileHashSlrb ?? "",
-        parentImportId: source.id,
-      },
-      tx,
-    );
-    const docs = await tx.autopartHistoryStagedDocument.findMany({
-      where: { importId: source.id, accountCode: verified },
+  return runHistoricSideWrite((tx) =>
+    publishStagedHistoricAccount(tx, {
+      actorUserId,
+      companyId,
+      code: verified,
+      canonicalCode: classified.canonicalCode,
+      reviewId: review.id,
+      source,
+    }),
+  );
+}
+
+type HistoricPublicationSource = {
+  id: string;
+  filename561l: string | null;
+  filenameSlrb: string | null;
+  fileHash561l: string;
+  fileHashSlrb: string | null;
+};
+
+async function publishStagedHistoricAccount(
+  tx: Prisma.TransactionClient,
+  input: {
+    actorUserId: string;
+    companyId: string;
+    code: string;
+    canonicalCode: string;
+    reviewId: string;
+    source: HistoricPublicationSource;
+  },
+): Promise<HistoricPromotionResult> {
+  const { actorUserId, companyId, code, canonicalCode, reviewId, source } = input;
+  await tx.autopartHistoryReviewAccount.update({
+    where: { id: reviewId },
+    data: { status: "VERIFYING", companyId },
+  });
+  const runId = await openHistoricAccountWrite(
+    {
+      actorUserId,
+      companyId,
+      accountCode: canonicalCode,
+      filename561l: source.filename561l,
+      filenameSlrb: source.filenameSlrb,
+      fileHash561l: source.fileHash561l,
+      fileHashSlrb: source.fileHashSlrb ?? "",
+      parentImportId: source.id,
+    },
+    tx,
+  );
+  const docs = await tx.autopartHistoryStagedDocument.findMany({
+    where: { importId: source.id, accountCode: code },
+  });
+  await writeHistoricAccountBatch(
+    {
+      runId,
+      companyId,
+      accountCode: canonicalCode,
+      documents: docs.map((document) => ({
+        documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+        documentReference: document.documentReference,
+        documentDate: document.documentDate ? document.documentDate.toISOString().slice(0, 10) : null,
+        goodsNet: document.goodsNet?.toString() ?? null,
+        vat: document.vat?.toString() ?? null,
+        grossTotal: document.grossTotal?.toString() ?? null,
+        source: document.source === "561L" ? "561L" : "SLRB",
+      })),
+      lines: [],
+    },
+    tx,
+  );
+  let lineCount = 0;
+  let cursor: string | undefined;
+  const batchSize = Math.max(1, historicPromotion.batchSize);
+  while (true) {
+    const lines = await tx.autopartHistoryStagedLine.findMany({
+      where: { importId: source.id, accountCode: code },
+      orderBy: { id: "asc" },
+      take: batchSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
+    if (!lines.length) break;
+    cursor = lines[lines.length - 1]!.id;
+    lineCount += lines.length;
     await writeHistoricAccountBatch(
       {
         runId,
         companyId,
-        accountCode: classified.canonicalCode,
-        documents: docs.map((document) => ({
-          documentType: document.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
-          documentReference: document.documentReference,
-          documentDate: document.documentDate ? document.documentDate.toISOString().slice(0, 10) : null,
-          goodsNet: document.goodsNet?.toString() ?? null,
-          vat: document.vat?.toString() ?? null,
-          grossTotal: document.grossTotal?.toString() ?? null,
-          source: document.source === "561L" ? "561L" : "SLRB",
+        accountCode: canonicalCode,
+        documents: [],
+        lines: lines.map((line) => ({
+          documentType: line.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+          documentReference: line.documentReference,
+          lineNumber: line.lineNumber,
+          sku: line.sku,
+          description: line.descriptionSnapshot,
+          units: line.units.toString(),
+          salesNet: line.salesNet.toString(),
+          rawInvAndLn: line.rawInvAndLn ?? "",
         })),
-        lines: [],
       },
       tx,
     );
-    let lineCount = 0;
-    let cursor: string | undefined;
-    const batchSize = Math.max(1, historicPromotion.batchSize);
-    while (true) {
-      const lines = await tx.autopartHistoryStagedLine.findMany({
-        where: { importId: source.id, accountCode: verified },
-        orderBy: { id: "asc" },
-        take: batchSize,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      });
-      if (!lines.length) break;
-      cursor = lines[lines.length - 1]!.id;
-      lineCount += lines.length;
-      await writeHistoricAccountBatch(
-        {
-          runId,
-          companyId,
-          accountCode: classified.canonicalCode,
-          documents: [],
-          lines: lines.map((line) => ({
-            documentType: line.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
-            documentReference: line.documentReference,
-            lineNumber: line.lineNumber,
-            sku: line.sku,
-            description: line.descriptionSnapshot,
-            units: line.units.toString(),
-            salesNet: line.salesNet.toString(),
-            rawInvAndLn: line.rawInvAndLn ?? "",
-          })),
-        },
-        tx,
-      );
-      if (historicPromotion.afterCertifiedBatch) await historicPromotion.afterCertifiedBatch(lineCount);
-    }
-    await stampPromotedHistoricComparisons(companyId, source.id, verified, tx);
-    await closeHistoricAccountWrite(runId, { imported: lineCount, updated: 0 }, tx);
-    await tx.autopartHistoryReviewAccount.update({
-      where: { id: review.id },
-      data: { status: "APPLIED", companyId, appliedAt: new Date(), warnings: [] },
+    if (historicPromotion.afterCertifiedBatch) await historicPromotion.afterCertifiedBatch(lineCount);
+  }
+  await stampPromotedHistoricComparisons(companyId, source.id, code, tx);
+  await closeHistoricAccountWrite(runId, { imported: lineCount, updated: 0 }, tx);
+  await tx.autopartHistoryReviewAccount.update({
+    where: { id: reviewId },
+    data: { status: "APPLIED", companyId, appliedAt: new Date(), warnings: [] },
+  });
+  return { completed: true, applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
+}
+
+/**
+ * Writes the verified Autopart code and publishes staged history in one lock.
+ * The historical import row is held before either write. A failure rolls both back.
+ */
+export async function commitHistoricMatchUnderLock(
+  actorUserId: string,
+  input: { companyId: string; accountId: string; code: string },
+): Promise<HistoricPromotionResult> {
+  const code = input.code.trim().toUpperCase();
+  return runHistoricSideWrite(async (tx) => {
+    const company = await tx.company.findUnique({
+      where: { id: input.companyId },
+      select: { id: true, autopartCustomerCode: true, autopartCustomerCodeVerifiedAt: true },
     });
-    return { completed: true, applied: docs.length + lineCount > 0, documents: docs.length, lines: lineCount };
+    if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
+    const stored = company.autopartCustomerCode?.trim().toUpperCase() ?? "";
+    const alreadyVerified = Boolean(company.autopartCustomerCodeVerifiedAt) && stored === code;
+    if (!alreadyVerified) {
+      if (stored && stored !== code) {
+        throw new AuthError("That customer already has a different Autopart account", "IMPORT_BLOCKED", 409);
+      }
+      const holder = await tx.company.findFirst({
+        where: { autopartCustomerCode: code, id: { not: company.id } },
+        select: { id: true },
+      });
+      if (holder) {
+        throw new AuthError("That Autopart code is already stored on another company", "IMPORT_BLOCKED", 409);
+      }
+      await tx.company.update({
+        where: { id: company.id },
+        data: {
+          autopartCustomerCode: code,
+          autopartCustomerCodeVerifiedAt: new Date(),
+          autopartCustomerCodeVerifiedById: actorUserId,
+        },
+      });
+    }
+    const account = await tx.autopartAccount.findUnique({
+      where: { id: input.accountId },
+      select: { id: true, companyId: true },
+    });
+    if (!account) throw new AuthError("The 407EXP account no longer exists", "NOT_FOUND", 404);
+    if (account.companyId && account.companyId !== company.id) {
+      throw new AuthError("The 407EXP account is linked to a different company", "IMPORT_BLOCKED", 409);
+    }
+    if (!account.companyId) {
+      await tx.autopartAccount.update({ where: { id: account.id }, data: { companyId: company.id } });
+    }
+    const directory = await loadDirectory(tx);
+    const classified = classifyHistoricAccount(code, directory);
+    if (classified.outcome !== "import" || classified.companyId !== company.id) {
+      throw new AuthError(
+        "The mapping was not saved. Staged history could not be tied to one verified company.",
+        "PROMOTION_INCOMPLETE",
+        409,
+      );
+    }
+    const latest = await tx.autopartHistoryAllImport.findFirst({
+      where: { status: "COMMITTED" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!latest) return idlePromotion();
+    const review = await tx.autopartHistoryReviewAccount.findFirst({
+      where: { importId: latest.id, accountCode: code, status: { in: ["OPEN", "VERIFYING"] } },
+    });
+    if (!review || review.reason === "AMBIGUOUS" || review.reason === "UNKNOWN") return idlePromotion();
+    return publishStagedHistoricAccount(tx, {
+      actorUserId,
+      companyId: company.id,
+      code,
+      canonicalCode: classified.canonicalCode,
+      reviewId: review.id,
+      source: latest,
+    });
   });
 }
 

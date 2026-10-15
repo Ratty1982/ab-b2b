@@ -186,19 +186,6 @@ export const STAFF_PERMISSION_TREE: readonly PermissionTreeCategory[] = [
         actions: ["crm.activities.view", "crm.activities.create"],
       },
       { id: "tasks", label: "Tasks", actions: ["tasks.view", "tasks.manage"] },
-      {
-        id: "crm-autopart-imports",
-        label: "Autopart Imports",
-        actions: [
-          "autopart.import.view",
-          "autopart.import.manage",
-          "autopart.customer.view",
-          "autopart.history.view",
-          "autopart.ledger.view",
-          "autopart.mapping.manage",
-          "autopart.portal-access.manage",
-        ],
-      },
     ],
   },
   {
@@ -320,6 +307,25 @@ export const STAFF_PERMISSION_TREE: readonly PermissionTreeCategory[] = [
         id: "documents",
         label: "Documents",
         actions: ["catalogue.documents.view", "catalogue.documents.edit", "integrations.sharepoint.manage"],
+      },
+    ],
+  },
+  {
+    id: "integrations",
+    label: "Integrations",
+    sections: [
+      {
+        id: "integrations-autopart-imports",
+        label: "Autopart data imports",
+        actions: [
+          "autopart.import.view",
+          "autopart.import.manage",
+          "autopart.customer.view",
+          "autopart.history.view",
+          "autopart.ledger.view",
+          "autopart.mapping.manage",
+          "autopart.portal-access.manage",
+        ],
       },
     ],
   },

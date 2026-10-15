@@ -31,7 +31,8 @@ export const ROUTES = {
   adminCustomers: "/admin/customers",
   adminCustomer: (id: string) => `/admin/customers/${id}` as const,
   adminAutopartAccounts: "/admin/customers/autopart-accounts",
-  adminAutopartImports: "/admin/customers/autopart-imports",
+  adminAutopartImports: "/admin/integrations/autopart/imports",
+  adminAutopartImportsLegacy: "/admin/customers/autopart-imports",
   adminCustomerGroups: "/admin/customers/groups",
   adminCustomerGroup: (id: string) => `/admin/customers/groups/${id}` as const,
   adminApplications: "/admin/applications",
@@ -255,6 +256,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         resolveTo: (ctx) =>
           canUseAdminShell(ctx) ? ROUTES.adminCustomers : ROUTES.salesCustomers,
         matchPrefixes: [ROUTES.adminCustomers, ROUTES.salesCustomers],
+        excludePrefixes: [ROUTES.adminAutopartImportsLegacy],
         permission: ["companies.view", "sales.view_own_accounts"],
         implemented: true,
       },
@@ -360,15 +362,6 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: ROUTES.crmTasks,
         matchPrefixes: [ROUTES.crmTasks],
         permission: "tasks.view",
-        implemented: true,
-      },
-      {
-        id: "crm-autopart-imports",
-        label: "Autopart Imports",
-        icon: "file-text",
-        to: ROUTES.adminAutopartImports,
-        matchPrefixes: [ROUTES.adminAutopartImports],
-        permission: "autopart.import.view",
         implemented: true,
       },
     ],
@@ -679,6 +672,31 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         permission: ["catalogue.documents.view", "catalogue.documents.edit"],
         adminShellOnly: true,
         implemented: true,
+      },
+    ],
+  },
+
+{
+    id: "integrations",
+    label: "Integrations",
+    items: [
+      {
+        id: "integrations-autopart",
+        label: "Autopart",
+        icon: "download",
+        implemented: false,
+        children: [
+          {
+            id: "integrations-autopart-imports",
+            label: "Data Imports",
+            icon: "file-text",
+            to: ROUTES.adminAutopartImports,
+            matchPrefixes: [ROUTES.adminAutopartImports, ROUTES.adminAutopartImportsLegacy],
+            permission: "autopart.import.view",
+            adminShellOnly: true,
+            implemented: true,
+          },
+        ],
       },
     ],
   },
@@ -1030,7 +1048,10 @@ export function breadcrumbsForPath(
   if (!hit) {
     return extra?.length ? extra : [{ label: "Dashboard", to: areaHomePath(ctx) }];
   }
-  const crumbs: NavCrumb[] = [{ label: hit.section.label }, { label: hit.item.label, to: hit.item.to }];
+  const crumbs: NavCrumb[] = [{ label: hit.section.label }];
+  const parent = hit.section.items.find((item) => item.children.some((child) => child.id === hit.item.id));
+  if (parent) crumbs.push({ label: parent.label });
+  crumbs.push({ label: hit.item.label, to: hit.item.to });
   if (extra) crumbs.push(...extra);
   return crumbs;
 }
