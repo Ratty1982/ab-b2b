@@ -22,7 +22,7 @@ describe("customer data reset dry-run", () => {
     expect(afterLines).toBe(beforeLines);
     expect(afterOrders).toBe(beforeOrders);
     expect(plan.mode).toBe("dry-run");
-    expect(plan.counts.preserved.AutopartAccount).toBe(beforeAccounts);
+    expect(plan.counts.preserved["AutopartAccount"]).toBe(beforeAccounts);
     expect(plan.preserved.some((item) => item.name === "AutopartAccount")).toBe(true);
     expect(plan.notReset.some((item) => item.name.startsWith("Ongoing"))).toBe(true);
     expect(plan.checklist.length).toBeGreaterThan(5);
