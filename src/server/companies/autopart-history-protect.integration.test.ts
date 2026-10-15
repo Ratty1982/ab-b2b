@@ -1,7 +1,11 @@
 /**
  * Historical 561L/SLRB imports must not replace ongoing TRM21QC lines or 504/TRM headers.
  * Repeated product lines on an Amazon FBA invoice stay separate lines.
+ *
+ * Requires TEST_DATABASE_URL: a local database whose name ends with _test.
+ * This file refuses the application database and removes the rows it creates.
  */
+import "@/server/testing/use-protect-integration-database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
@@ -15,9 +19,21 @@ import {
 const prisma = new PrismaClient();
 const stamp = Date.now();
 const account = `HP${String(stamp).slice(-8)}`;
+const createdCompanyIds: string[] = [];
+const createdUserIds: string[] = [];
+const accountCodes = new Set<string>([account]);
+const documentReferences = new Set<string>();
 
 let adminId = "";
 let companyId = "";
+
+function rememberCompany(id: string) {
+  createdCompanyIds.push(id);
+}
+
+function rememberReference(reference: string) {
+  documentReferences.add(reference);
+}
 
 async function ensureUser(email: string) {
   let user = await prisma.user.findUnique({ where: { email } });
@@ -38,7 +54,58 @@ async function ensureUser(email: string) {
     create: { userId: user.id, roleId: role.id },
     update: {},
   });
+  createdUserIds.push(user.id);
   return user.id;
+}
+
+async function removeFixtures() {
+  const companies = createdCompanyIds.filter(Boolean);
+  const users = createdUserIds.filter(Boolean);
+  const codes = [...accountCodes];
+  const references = [...documentReferences];
+  const companyOrCode = [
+    ...(companies.length ? [{ companyId: { in: companies } }] : []),
+    ...(codes.length ? [{ autopartCustomerCode: { in: codes } }] : []),
+  ];
+  if (companyOrCode.length) {
+    await prisma.autopartSalesLine.deleteMany({ where: { OR: companyOrCode } });
+    await prisma.autopartSalesDocument.deleteMany({
+      where: {
+        OR: [
+          ...companyOrCode,
+          ...(references.length ? [{ documentReference: { in: references } }] : []),
+        ],
+      },
+    });
+  } else if (references.length) {
+    await prisma.autopartSalesDocument.deleteMany({
+      where: { documentReference: { in: references } },
+    });
+  }
+  if (companies.length || users.length) {
+    await prisma.autopartCustomerImportRun.deleteMany({
+      where: {
+        OR: [
+          ...(companies.length ? [{ companyId: { in: companies } }] : []),
+          ...(users.length ? [{ createdById: { in: users } }] : []),
+        ],
+      },
+    });
+    await prisma.auditEvent.deleteMany({
+      where: {
+        OR: [
+          ...(companies.length ? [{ companyId: { in: companies } }] : []),
+          ...(users.length ? [{ actorUserId: { in: users } }] : []),
+        ],
+      },
+    });
+  }
+  if (companies.length) {
+    await prisma.company.deleteMany({ where: { id: { in: companies } } });
+  }
+  if (users.length) {
+    await prisma.user.deleteMany({ where: { id: { in: users } } });
+  }
 }
 
 function historyFiles(input: {
@@ -83,16 +150,22 @@ beforeAll(async () => {
     data: { name: `Historic protect ${stamp}`, status: "ACTIVE", paymentTerms: "30 Days" },
   });
   companyId = company.id;
+  rememberCompany(company.id);
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId, code: account });
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  try {
+    await removeFixtures();
+  } finally {
+    await prisma.$disconnect();
+  }
 });
 
 describe("historical import protection", () => {
   it("keeps repeated FBA product lines and repeats the same historical import", async () => {
     const reference = `FBA${String(stamp).slice(-6)}`;
+    rememberReference(reference);
     const skuA = `FBA-A-${String(stamp).slice(-5)}`;
     const skuB = `FBA-B-${String(stamp).slice(-5)}`;
     const files = historyFiles({
@@ -138,6 +211,7 @@ describe("historical import protection", () => {
 
   it("does not overwrite a TRM21QC line or a 504 header, and still imports a non-colliding line", async () => {
     const reference = `TRM${String(stamp).slice(-6)}`;
+    rememberReference(reference);
     const trmSku = `TRM-${String(stamp).slice(-5)}`;
     const extraSku = `EXT-${String(stamp).slice(-5)}`;
     const trm = await confirmAutopartTrm21qcImport(adminId, {
@@ -238,6 +312,8 @@ describe("historical import protection", () => {
   it("imports an ordinary document in the same run as a protected one", async () => {
     const protectedRef = `MIX${String(stamp).slice(-6)}`;
     const plainRef = `PLN${String(stamp).slice(-6)}`;
+    rememberReference(protectedRef);
+    rememberReference(plainRef);
     const trmSku = `MIX-${String(stamp).slice(-5)}`;
     const plainSku = `PLN-${String(stamp).slice(-5)}`;
     await confirmAutopartTrm21qcImport(adminId, {
@@ -276,6 +352,7 @@ ${account},INV,${plainRef},15 Oct 26,12.00,0.00,12.00,12.00
 
   it("lets the ongoing feed replace a historical line, then keeps that feed line on the next historical import", async () => {
     const reference = `AFT${String(stamp).slice(-6)}`;
+    rememberReference(reference);
     const sku = `AFT-${String(stamp).slice(-5)}`;
     await confirmAutopartHistoryImport(adminId, {
       companyId,
@@ -326,6 +403,7 @@ ${account},INV,${plainRef},15 Oct 26,12.00,0.00,12.00,12.00
 
   it("keeps 504 goods when a later historical file repeats the document", async () => {
     const reference = `GDS${String(stamp).slice(-6)}`;
+    rememberReference(reference);
     const sku = `GDS-${String(stamp).slice(-5)}`;
     await confirmAutopartHistoryImport(adminId, {
       companyId,
@@ -377,8 +455,161 @@ ${account},INV,${plainRef},15 Oct 26,12.00,0.00,12.00,12.00
     expect(after.lines[0]?.source).toBe("561L");
   });
 
+  it("lets another company import the same invoice reference", async () => {
+    const reference = `SHR${String(stamp).slice(-6)}`;
+    rememberReference(reference);
+    const otherAccount = `HQ${String(stamp).slice(-8)}`;
+    accountCodes.add(otherAccount);
+    const other = await prisma.company.create({
+      data: { name: `Historic protect other ${stamp}`, status: "ACTIVE", paymentTerms: "30 Days" },
+    });
+    rememberCompany(other.id);
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, {
+      companyId: other.id,
+      code: otherAccount,
+    });
+
+    const trm = await confirmAutopartTrm21qcImport(adminId, {
+      text: trmFile(reference, `SHR-${String(stamp).slice(-5)}`, "2", "11.00"),
+      filename: "TRM21QC-shared.csv",
+      source: "MANUAL",
+    });
+    expect(trm.status).toBe("COMMITTED");
+    await confirmAutopart504Import(adminId, {
+      text: report504(reference, "11.00"),
+      filename: "504-shared.csv",
+      source: "MANUAL",
+    });
+    const protectedHeader = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId, documentReference: reference },
+    });
+    expect(protectedHeader.has504).toBe(true);
+
+    const otherImport = await confirmAutopartHistoryImport(adminId, {
+      companyId: other.id,
+      file561l: `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${otherAccount},I/${reference}/1,OTHER-SKU,Other customer,3,21.00
+`,
+      fileSlrb: `A/C,Type,Ref,Date,Tot Goods,Tot VAT,Total,Run Bal
+${otherAccount},INV,${reference},15 Oct 26,21.00,0.00,21.00,21.00
+`,
+      filename561l: "561L-OTHER.CSV",
+      filenameSlrb: "SLRB-OTHER.CSV",
+    });
+    expect(otherImport.status).toBe("COMMITTED");
+
+    const otherHeader = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId: other.id, documentReference: reference },
+      include: { lines: true },
+    });
+    expect(Number(otherHeader.goodsNet)).toBe(21);
+    expect(otherHeader.has504).toBe(false);
+    expect(otherHeader.lines).toHaveLength(1);
+    expect(otherHeader.lines[0]?.sku).toBe("OTHER-SKU");
+    expect(otherHeader.lines[0]?.source).toBe("561L");
+
+    const stillProtected = await prisma.autopartSalesDocument.findUniqueOrThrow({
+      where: { id: protectedHeader.id },
+      include: { lines: true },
+    });
+    expect(stillProtected.goodsNet?.toString()).toBe(protectedHeader.goodsNet?.toString());
+    expect(stillProtected.source).toBe(protectedHeader.source);
+    expect(stillProtected.importRunId).toBe(protectedHeader.importRunId);
+    expect(stillProtected.has504).toBe(true);
+    expect(stillProtected.lines.every((line) => line.source === "ONGOING_TRM21QC")).toBe(true);
+
+    const sameCompanyRun = await prisma.autopartCustomerImportRun.create({
+      data: {
+        companyId,
+        type: "HISTORY_561L_SLRB",
+        status: "COMMITTED",
+        dryRun: false,
+        createdById: adminId,
+      },
+    });
+    await expect(
+      prisma.autopartSalesDocument.create({
+        data: {
+          companyId,
+          autopartCustomerCode: account,
+          documentType: "INVOICE",
+          documentReference: reference,
+          source: "561L",
+          importRunId: sameCompanyRun.id,
+        },
+      }),
+    ).rejects.toThrow();
+    expect(
+      await prisma.autopartSalesDocument.count({
+        where: { companyId, documentReference: reference },
+      }),
+    ).toBe(1);
+  });
+
+  it("does not treat a missing company id as another customer's invoice", async () => {
+    const reference = `NUL${String(stamp).slice(-6)}`;
+    rememberReference(reference);
+    const unmapped = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: null,
+        autopartCustomerCode: `UN${String(stamp).slice(-6)}`,
+        documentType: "INVOICE",
+        documentReference: reference,
+        source: "ONGOING_504",
+        has504: true,
+        goodsNet: "4.00",
+      },
+    });
+    accountCodes.add(unmapped.autopartCustomerCode);
+
+    const mapped = await confirmAutopartHistoryImport(adminId, {
+      companyId,
+      ...historyFiles({
+        reference,
+        goods: "6.00",
+        lines: [{ line: 1, sku: `NUL-${String(stamp).slice(-5)}`, units: "1", sales: "6.00" }],
+      }),
+      filename561l: "561L-NULL.CSV",
+      filenameSlrb: "SLRB-NULL.CSV",
+    });
+    expect(mapped.status).toBe("COMMITTED");
+    const companyCopy = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId, documentReference: reference },
+    });
+    expect(companyCopy.id).not.toBe(unmapped.id);
+    expect(Number(companyCopy.goodsNet)).toBe(6);
+
+    const historyRun = await prisma.autopartCustomerImportRun.create({
+      data: {
+        type: "HISTORY_561L_SLRB",
+        status: "COMMITTED",
+        dryRun: false,
+        createdById: adminId,
+      },
+    });
+    await expect(
+      prisma.autopartSalesDocument.create({
+        data: {
+          companyId: null,
+          autopartCustomerCode: unmapped.autopartCustomerCode,
+          documentType: "INVOICE",
+          documentReference: reference,
+          source: "561L",
+          importRunId: historyRun.id,
+        },
+      }),
+    ).rejects.toThrow();
+    const unmappedAfter = await prisma.autopartSalesDocument.findUniqueOrThrow({
+      where: { id: unmapped.id },
+    });
+    expect(unmappedAfter.companyId).toBeNull();
+    expect(unmappedAfter.source).toBe("ONGOING_504");
+    expect(Number(unmappedAfter.goodsNet)).toBe(4);
+  });
+
   it("refuses a direct historical update of a TRM21QC line at write time", async () => {
     const reference = `LCK${String(stamp).slice(-6)}`;
+    rememberReference(reference);
     const sku = `LCK-${String(stamp).slice(-5)}`;
     await confirmAutopartTrm21qcImport(adminId, {
       text: trmFile(reference, sku, "2", "8.00"),

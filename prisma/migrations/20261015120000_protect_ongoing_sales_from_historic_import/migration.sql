@@ -55,12 +55,22 @@ BEGIN
     ) THEN
       RETURN NEW;
     END IF;
+    -- Company + document type + reference is the historic identity
+    -- (unique on companyId, documentType, documentReference).
+    -- companyId is nullable for an unmatched ongoing row. NULL is not another
+    -- customer's id: IS NOT DISTINCT FROM keeps two unknown rows together and
+    -- does not treat NULL as equal to a real company.
     IF EXISTS (
       SELECT 1
       FROM "AutopartSalesDocument" d
-      WHERE d."documentType" = NEW."documentType"
-        AND d."documentReference" = NEW."documentReference"
-        AND (d."has504" OR d."hasTrm21qc" OR d."source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE'))
+      WHERE d."documentType" IS NOT DISTINCT FROM NEW."documentType"
+        AND d."documentReference" IS NOT DISTINCT FROM NEW."documentReference"
+        AND d."companyId" IS NOT DISTINCT FROM NEW."companyId"
+        AND (
+          d."has504"
+          OR d."hasTrm21qc"
+          OR d."source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+        )
     ) THEN
       RETURN NULL;
     END IF;
