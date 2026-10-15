@@ -19,7 +19,11 @@ import { minorToMoney, moneyToMinor } from "@/domain/historic-all-file";
 import { describeHistoricEnvironment, describeHistoricStorage } from "@/domain/historic-runtime";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
-import { buildHistoricMatchingReadiness, promoteStagedAutopartHistory } from "@/server/companies/autopart-history-all";
+import {
+  buildHistoricMatchingReadiness,
+  commitHistoricMatchUnderLock,
+  promoteStagedAutopartHistory,
+} from "@/server/companies/autopart-history-all";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 
@@ -96,6 +100,26 @@ function pushId(ids: string[], id: string | null | undefined) {
   if (id) ids.push(id);
 }
 
+function indexCompanyKeys(entries: Array<{ key: string; companyId: string }>): {
+  unique: Map<string, string>;
+  duplicated: Set<string>;
+} {
+  const grouped = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    if (!entry.key) continue;
+    const companies = grouped.get(entry.key) ?? new Set<string>();
+    companies.add(entry.companyId);
+    grouped.set(entry.key, companies);
+  }
+  const unique = new Map<string, string>();
+  const duplicated = new Set<string>();
+  for (const [key, companies] of grouped) {
+    if (companies.size === 1) unique.set(key, [...companies][0]!);
+    else duplicated.add(key);
+  }
+  return { unique, duplicated };
+}
+
 async function loadClassifiedAccounts(): Promise<{
   rows: ClassifiedRow[];
   outsideMaster: { customerHistory: LineBucket; globalInvoices: LineBucket; staged: LineBucket };
@@ -103,51 +127,40 @@ async function loadClassifiedAccounts(): Promise<{
   verifiedCompanyCodesNotOnMaster: number;
 }> {
   const historyTables = await tableExists("AutopartHistoryAllImport");
-  const [masters, companies, aliases, staffLinks, numberedCompanies, orderCompanies, quoteCompanies, invoiceCompanies, applicationCompanies, activeUsers, customerLines, globalLines] =
-    await Promise.all([
-      prisma.autopartAccount.findMany({
-        select: { id: true, accountCode: true, originalName: true, companyId: true },
-      }),
-      prisma.company.findMany({
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          autopartCustomerCode: true,
-          autopartCustomerCodeVerifiedAt: true,
-          externalRef: true,
-          accountNumber: true,
-          companyNumber: true,
-          vatNumber: true,
-          notes: true,
-        },
-      }),
-      prisma.autopartCustomerAccountAlias.findMany({ select: { companyId: true, alias: true } }),
-      prisma.auditEvent.findMany({
-        where: { action: "autopart_account_linked", entityType: "AutopartAccount" },
-        select: { entityId: true },
-      }),
-      prisma.company.findMany({
-        where: { OR: [{ companyNumber: { not: null } }, { vatNumber: { not: null } }] },
-        select: { id: true, companyNumber: true, vatNumber: true },
-      }),
-      prisma.order.findMany({ distinct: ["companyId"], select: { companyId: true } }),
-      prisma.quote.findMany({ distinct: ["companyId"], select: { companyId: true } }),
-      prisma.invoice.findMany({ distinct: ["companyId"], select: { companyId: true } }),
-      prisma.tradeApplication.findMany({ distinct: ["companyId"], select: { companyId: true } }),
-      prisma.companyUser.findMany({ where: { status: "ACTIVE" }, distinct: ["companyId"], select: { companyId: true } }),
-      prisma.autopartSalesLine.groupBy({
-        by: ["autopartCustomerCode"],
-        where: { source: { not: "ONGOING_TRM21QC" } },
-        _count: { _all: true },
-        _sum: { salesNet: true },
-      }),
-      prisma.autopartInvoiceLine.groupBy({
-        by: ["accountCode"],
-        _count: { _all: true },
-        _sum: { salesAmount: true },
-      }),
-    ]);
+  const [masters, companies, aliases, staffLinks, customerLines, globalLines] = await Promise.all([
+    prisma.autopartAccount.findMany({
+      select: { id: true, accountCode: true, originalName: true, companyId: true },
+    }),
+    prisma.company.findMany({
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        autopartCustomerCode: true,
+        autopartCustomerCodeVerifiedAt: true,
+        externalRef: true,
+        accountNumber: true,
+        notes: true,
+      },
+    }),
+    prisma.autopartCustomerAccountAlias.findMany({ select: { companyId: true, alias: true } }),
+    prisma.auditEvent.findMany({
+      where: { action: "autopart_account_linked", entityType: "AutopartAccount" },
+      select: { entityId: true, companyId: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.autopartSalesLine.groupBy({
+      by: ["autopartCustomerCode"],
+      where: { source: { not: "ONGOING_TRM21QC" } },
+      _count: { _all: true },
+      _sum: { salesNet: true },
+    }),
+    prisma.autopartInvoiceLine.groupBy({
+      by: ["accountCode"],
+      _count: { _all: true },
+      _sum: { salesAmount: true },
+    }),
+  ]);
 
   const latest = historyTables
     ? await prisma.autopartHistoryAllImport.findFirst({
@@ -176,9 +189,24 @@ async function loadClassifiedAccounts(): Promise<{
     : [[], []];
 
   const companyById = new Map(companies.map((company) => [company.id, company]));
-  const codeHolder = new Map<string, string>();
-  const externalRefCompany = new Map<string, string>();
-  const accountNumberCompany = new Map<string, string>();
+  const storedCodes = indexCompanyKeys(
+    companies.flatMap((company) => {
+      const key = norm(company.autopartCustomerCode);
+      return key ? [{ key, companyId: company.id }] : [];
+    }),
+  );
+  const externalRefs = indexCompanyKeys(
+    companies.flatMap((company) => {
+      const key = norm(company.externalRef);
+      return key ? [{ key, companyId: company.id }] : [];
+    }),
+  );
+  const accountNumbers = indexCompanyKeys(
+    companies.flatMap((company) => {
+      const key = norm(company.accountNumber);
+      return key ? [{ key, companyId: company.id }] : [];
+    }),
+  );
   const verifiedByCode = new Map<string, string[]>();
   const verifiedCodes = new Set<string>();
 
@@ -192,17 +220,19 @@ async function loadClassifiedAccounts(): Promise<{
 
   for (const company of companies) {
     const stored = norm(company.autopartCustomerCode);
-    if (stored) codeHolder.set(stored, company.id);
-    const external = norm(company.externalRef);
-    if (external) externalRefCompany.set(external, company.id);
-    const accountNumber = norm(company.accountNumber);
-    if (accountNumber) accountNumberCompany.set(accountNumber, company.id);
     if (company.autopartCustomerCodeVerifiedAt && stored) {
       rememberVerified(stored, company.id);
       verifiedCodes.add(stored);
     }
   }
   for (const alias of aliases) rememberVerified(alias.alias, alias.companyId);
+  const staffByAccount = new Map<string, Array<{ companyId: string | null }>>();
+  for (const event of staffLinks) {
+    if (!event.entityId) continue;
+    const list = staffByAccount.get(event.entityId) ?? [];
+    list.push({ companyId: event.companyId });
+    staffByAccount.set(event.entityId, list);
+  }
 
   const mastersOnCompany = new Map<string, number>();
   const masterCodes = new Set<string>();
@@ -212,14 +242,6 @@ async function loadClassifiedAccounts(): Promise<{
     mastersOnCompany.set(account.companyId, (mastersOnCompany.get(account.companyId) ?? 0) + 1);
   }
   const truncated = truncatedAccountCodes(masters.map((account) => account.accountCode));
-  const staffLinked = new Set(staffLinks.map((event) => event.entityId).filter((id): id is string => Boolean(id)));
-  const independent = new Set<string>();
-  for (const company of numberedCompanies) {
-    if (company.companyNumber?.trim() || company.vatNumber?.trim()) independent.add(company.id);
-  }
-  for (const row of [...orderCompanies, ...quoteCompanies, ...invoiceCompanies, ...applicationCompanies, ...activeUsers]) {
-    if (row.companyId) independent.add(row.companyId);
-  }
 
   const customerHistory = new Map<string, LineBucket>();
   const globalInvoices = new Map<string, LineBucket>();
@@ -233,34 +255,33 @@ async function loadClassifiedAccounts(): Promise<{
     const code = norm(account.accountCode);
     const linked = account.companyId ? companyById.get(account.companyId) : undefined;
     const verifiedCompanyIds = verifiedByCode.get(code) ?? [];
+    const staffEvents = staffByAccount.get(account.id) ?? [];
+    const latestStaff = staffEvents.length ? staffEvents[staffEvents.length - 1] : undefined;
+    const staffAgrees = Boolean(account.companyId) && latestStaff?.companyId === account.companyId;
     const indicated: string[] = [];
     pushId(indicated, account.companyId);
-    pushId(indicated, codeHolder.get(code));
-    pushId(indicated, externalRefCompany.get(code));
-    pushId(indicated, accountNumberCompany.get(code));
+    pushId(indicated, storedCodes.duplicated.has(code) ? null : storedCodes.unique.get(code));
+    pushId(indicated, accountNumbers.duplicated.has(code) ? null : accountNumbers.unique.get(code));
     if (verifiedCompanyIds.length === 1) pushId(indicated, verifiedCompanyIds[0]);
     const foreignStoredCode = [...new Set(indicated)].some((companyId) => {
       const stored = norm(companyById.get(companyId)?.autopartCustomerCode);
       return Boolean(stored) && stored !== code;
     });
-    const candidateCompanyId = decisionCompanyId(
-      account.companyId,
-      codeHolder.get(code),
-      externalRefCompany.get(code),
-      accountNumberCompany.get(code),
-    );
     const decision = classifyHistoricMasterAccount({
       accountCode: code,
       linkedCompanyId: account.companyId,
       otherMastersOnCompany: account.companyId ? Math.max(0, (mastersOnCompany.get(account.companyId) ?? 1) - 1) : 0,
       truncatedCode: truncated.has(code),
       verifiedCompanyIds,
-      codeHolderCompanyId: codeHolder.get(code) ?? null,
-      externalRefCompanyId: externalRefCompany.get(code) ?? null,
-      accountNumberCompanyId: accountNumberCompany.get(code) ?? null,
+      codeHolderCompanyId: storedCodes.duplicated.has(code) ? null : (storedCodes.unique.get(code) ?? null),
+      duplicateStoredCodes: storedCodes.duplicated.has(code),
+      externalRefCompanyId: externalRefs.duplicated.has(code) ? null : (externalRefs.unique.get(code) ?? null),
+      duplicateExternalRefs: externalRefs.duplicated.has(code),
+      accountNumberCompanyId: accountNumbers.duplicated.has(code) ? null : (accountNumbers.unique.get(code) ?? null),
+      duplicateAccountNumbers: accountNumbers.duplicated.has(code),
       linkedCompanyCode: linked?.autopartCustomerCode ? norm(linked.autopartCustomerCode) : null,
-      independentIdentity: candidateCompanyId != null && independent.has(candidateCompanyId),
-      staffLinked: staffLinked.has(account.id),
+      staffLinkCompanyId: staffAgrees ? account.companyId : null,
+      staffLinkDisputed: staffEvents.length > 0 && !staffAgrees,
       prospectCreated: prospectNoteMarksCreatedCompany(linked?.notes),
       foreignStoredCode,
     });
@@ -300,15 +321,6 @@ async function loadClassifiedAccounts(): Promise<{
     verifiedCompanyCodes: verifiedCodes.size,
     verifiedCompanyCodesNotOnMaster: [...verifiedCodes].filter((code) => !masterCodes.has(code)).length,
   };
-}
-
-function decisionCompanyId(
-  linked: string | null,
-  holder: string | undefined,
-  external: string | undefined,
-  accountNumber: string | undefined,
-): string | null {
-  return linked ?? holder ?? external ?? accountNumber ?? null;
 }
 
 function emptyCategoryTotals() {
@@ -420,10 +432,14 @@ export async function historicAccountMatchReport(actorUserId: string, raw: unkno
     })),
     rules: [
       "Company name similarity is not evidence and is not used.",
+      "A company number, VAT number, order, trade application, or portal user does not prove an Autopart code.",
+      "A stored Autopart code is not evidence until it is already verified, or a staff link ties this account to this company.",
+      "An external reference can be a legacy non-Autopart reference, so it is not identity evidence.",
+      "The same external reference, account number, or Autopart code on more than one company is a conflict.",
       "A truncated code, two companies, or two master accounts on one company stay conflicts.",
       "A company created from the Autopart row is not identity evidence on its own.",
       "Customer history, global invoice lines, and staged ALL-file lines are separate. Adding them would count the same sale more than once.",
-      "Approval does not change company status, create portal users, or send invitations.",
+      "Approval waits for the historical import lock and does not change company status, create portal users, or send invitations.",
     ],
   };
 }
@@ -541,43 +557,32 @@ export async function approveHistoricAccountMatches(actorUserId: string, raw: un
       skipped.push({ accountCode: row.accountCode, detail: "The 407EXP account is linked to a different company." });
       continue;
     }
+    let promoted: { completed: boolean; applied: boolean; documents: number; lines: number };
     try {
-      await prisma.company.update({
-        where: { id: company.id },
-        data: {
-          autopartCustomerCode: code,
-          autopartCustomerCodeVerifiedAt: new Date(),
-          autopartCustomerCodeVerifiedById: actorUserId,
-        },
+      promoted = await commitHistoricMatchUnderLock(actorUserId, {
+        companyId: company.id,
+        accountId: account.id,
+        code,
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         skipped.push({ accountCode: row.accountCode, detail: "That Autopart code is already stored on another company." });
         continue;
       }
-      throw error;
-    }
-    if (!account.companyId) {
-      await prisma.autopartAccount.update({ where: { id: account.id }, data: { companyId: company.id } });
-    }
-    let promoted: { completed: boolean; applied: boolean; documents: number; lines: number };
-    try {
-      promoted = await promoteStagedAutopartHistory(actorUserId, company.id, code);
-    } catch (error) {
       const detail = error instanceof Error ? error.message : "staged history failed";
       incomplete.push({
         accountCode: row.accountCode,
         companyId: company.id,
-        detail: `The mapping was saved. Staged history was not fully applied (${detail}).`,
+        detail: `The mapping was not saved (${detail}). Retry verification after the historical import lock is free.`,
       });
       await recordAuditEvent({
-        action: "autopart.historic_match.verified",
+        action: "autopart.historic_match.incomplete",
         entityType: "AutopartAccount",
         entityId: account.id,
         actorUserId,
         companyId: company.id,
         before: { status: company.status, autopartCustomerCode: company.autopartCustomerCode },
-        after: { status: company.status, autopartCustomerCode: code, publication: "incomplete" },
+        after: { status: company.status, autopartCustomerCode: company.autopartCustomerCode, publication: "rolled-back" },
       });
       if (error instanceof AuthError && error.code === "IMPORT_IN_PROGRESS") break;
       continue;
@@ -586,7 +591,7 @@ export async function approveHistoricAccountMatches(actorUserId: string, raw: un
       incomplete.push({
         accountCode: row.accountCode,
         companyId: company.id,
-        detail: "The mapping was saved. Staged history was not fully applied and can be retried.",
+        detail: "The mapping was not saved. Staged history was not fully applied and can be retried.",
       });
       continue;
     }

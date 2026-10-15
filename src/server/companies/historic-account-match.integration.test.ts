@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { HISTORIC_MATCH_VERIFY_PHRASE } from "@/domain/historic-account-match";
+import { claimHistoricImport, finishHistoricImport } from "@/server/companies/historic-import-lock";
+import { historicPromotion } from "@/server/companies/autopart-history-all";
 import { approveHistoricAccountMatches, historicAccountMatchReport } from "@/server/companies/historic-account-match";
 
 const prisma = new PrismaClient();
@@ -19,8 +21,15 @@ const shortCode = `T${stamp}`;
 const longCode = `T${stamp}X`;
 const verifiedCode = `VF${stamp}`;
 const otherCode = `OT${stamp}`;
+const vatCode = `VAT${stamp}`.slice(0, 20);
+const staleCode = `ST${stamp}`.slice(0, 20);
+const dupCode = `D${stamp}`;
+const lockCode = `LK${stamp}`.slice(0, 20);
+const retryCode = `RY${stamp}`.slice(0, 20);
 const evidenceSku = `EVS${stamp}`.slice(0, 24);
 const otherSku = `OTS${stamp}`.slice(0, 24);
+const retrySku = `RYS${stamp}`.slice(0, 24);
+const liveSku = `LV${stamp}`.slice(0, 24);
 const createdCompanyIds: string[] = [];
 const createdUserIds: string[] = [];
 const createdImportIds: string[] = [];
@@ -31,6 +40,11 @@ let prospectCompanyId = "";
 let shortCompanyId = "";
 let verifiedCompanyId = "";
 let otherCompanyId = "";
+let vatCompanyId = "";
+let staleCompanyId = "";
+let staleOtherCompanyId = "";
+let lockCompanyId = "";
+let retryCompanyId = "";
 
 async function releaseSingleton() {
   await prisma.$executeRaw`
@@ -71,7 +85,7 @@ beforeAll(async () => {
   await prisma.userRole.create({ data: { userId: adminId, roleId: role.id } });
 
   const evidence = await prisma.company.create({
-    data: { name: `Evidence ${stamp}`, status: "PROSPECT", externalRef: evidenceCode },
+    data: { name: `Evidence ${stamp}`, status: "PROSPECT" },
   });
   const prospect = await prisma.company.create({
     data: {
@@ -96,45 +110,168 @@ beforeAll(async () => {
   const other = await prisma.company.create({
     data: { name: `Other ${stamp}`, status: "ACTIVE" },
   });
+  const vat = await prisma.company.create({
+    data: {
+      name: `Vat ${stamp}`,
+      status: "ACTIVE",
+      companyNumber: `CN${stamp}`.slice(0, 20),
+      vatNumber: `GB${stamp}`.slice(0, 20),
+      autopartCustomerCode: vatCode,
+    },
+  });
+  const stale = await prisma.company.create({
+    data: { name: `Stale current ${stamp}`, status: "PROSPECT", autopartCustomerCode: staleCode },
+  });
+  const staleOther = await prisma.company.create({
+    data: { name: `Stale previous ${stamp}`, status: "PROSPECT" },
+  });
+  const lockCompany = await prisma.company.create({
+    data: { name: `Lock ${stamp}`, status: "PROSPECT", autopartCustomerCode: lockCode },
+  });
+  const retryCompany = await prisma.company.create({
+    data: { name: `Retry ${stamp}`, status: "PROSPECT", autopartCustomerCode: retryCode },
+  });
+  const dupLower = await prisma.company.create({
+    data: { name: `Dup lower ${stamp}`, status: "PROSPECT", externalRef: dupCode.toLowerCase(), accountNumber: dupCode.toLowerCase() },
+  });
+  const dupUpper = await prisma.company.create({
+    data: { name: `Dup upper ${stamp}`, status: "PROSPECT", externalRef: dupCode, accountNumber: dupCode },
+  });
   evidenceCompanyId = evidence.id;
   prospectCompanyId = prospect.id;
   shortCompanyId = short.id;
   verifiedCompanyId = verified.id;
   otherCompanyId = other.id;
-  createdCompanyIds.push(evidenceCompanyId, prospectCompanyId, shortCompanyId, verifiedCompanyId, otherCompanyId);
+  vatCompanyId = vat.id;
+  staleCompanyId = stale.id;
+  staleOtherCompanyId = staleOther.id;
+  lockCompanyId = lockCompany.id;
+  retryCompanyId = retryCompany.id;
+  createdCompanyIds.push(
+    evidenceCompanyId,
+    prospectCompanyId,
+    shortCompanyId,
+    verifiedCompanyId,
+    otherCompanyId,
+    vatCompanyId,
+    staleCompanyId,
+    staleOtherCompanyId,
+    lockCompanyId,
+    retryCompanyId,
+    dupLower.id,
+    dupUpper.id,
+  );
 
   await prisma.autopartAccount.createMany({
     data: [
-      { accountCode: evidenceCode, originalName: "Evidence motors", classification: "TRADE_CANDIDATE" },
+      { accountCode: evidenceCode, originalName: "Evidence motors", classification: "TRADE_CANDIDATE", companyId: evidenceCompanyId },
       { accountCode: prospectCode, originalName: "Prospect motors", classification: "TRADE_CANDIDATE", companyId: prospectCompanyId },
       { accountCode: shortCode, originalName: "Short motors", classification: "TRADE_CANDIDATE", companyId: shortCompanyId },
       { accountCode: longCode, originalName: "Long motors", classification: "TRADE_CANDIDATE" },
       { accountCode: verifiedCode, originalName: "Verified motors", classification: "TRADE_CANDIDATE", companyId: verifiedCompanyId },
       { accountCode: otherCode, originalName: "Other motors", classification: "TRADE_CANDIDATE" },
+      { accountCode: vatCode, originalName: "Vat motors", classification: "TRADE_CANDIDATE", companyId: vatCompanyId },
+      { accountCode: staleCode, originalName: "Stale motors", classification: "TRADE_CANDIDATE", companyId: staleCompanyId },
+      { accountCode: dupCode, originalName: "Duplicate motors", classification: "TRADE_CANDIDATE" },
+      { accountCode: lockCode, originalName: "Lock motors", classification: "TRADE_CANDIDATE", companyId: lockCompanyId },
+      { accountCode: retryCode, originalName: "Retry motors", classification: "TRADE_CANDIDATE", companyId: retryCompanyId },
     ],
   });
+  const evidenceAccount = await prisma.autopartAccount.findFirstOrThrow({ where: { accountCode: evidenceCode } });
   const shortAccount = await prisma.autopartAccount.findFirstOrThrow({ where: { accountCode: shortCode } });
+  const lockAccount = await prisma.autopartAccount.findFirstOrThrow({ where: { accountCode: lockCode } });
+  const retryAccount = await prisma.autopartAccount.findFirstOrThrow({ where: { accountCode: retryCode } });
+  await prisma.auditEvent.createMany({
+    data: [
+      {
+        action: "autopart_account_linked",
+        entityType: "AutopartAccount",
+        entityId: evidenceAccount.id,
+        actorUserId: adminId,
+        companyId: evidenceCompanyId,
+      },
+      {
+        action: "autopart_account_linked",
+        entityType: "AutopartAccount",
+        entityId: shortAccount.id,
+        actorUserId: adminId,
+        companyId: shortCompanyId,
+      },
+      {
+        action: "autopart_account_linked",
+        entityType: "AutopartAccount",
+        entityId: lockAccount.id,
+        actorUserId: adminId,
+        companyId: lockCompanyId,
+      },
+      {
+        action: "autopart_account_linked",
+        entityType: "AutopartAccount",
+        entityId: retryAccount.id,
+        actorUserId: adminId,
+        companyId: retryCompanyId,
+      },
+    ],
+  });
+  const staleAccount = await prisma.autopartAccount.findFirstOrThrow({ where: { accountCode: staleCode } });
   await prisma.auditEvent.create({
     data: {
       action: "autopart_account_linked",
       entityType: "AutopartAccount",
-      entityId: shortAccount.id,
+      entityId: staleAccount.id,
       actorUserId: adminId,
-      companyId: shortCompanyId,
+      companyId: staleOtherCompanyId,
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
     },
   });
-  await prisma.autopartSalesLine.create({
+  const kept = await prisma.autopartSalesDocument.create({
     data: {
       companyId: otherCompanyId,
       autopartCustomerCode: otherCode,
       documentType: "INVOICE",
       documentReference: `KEEP${stamp}`.slice(0, 20),
-      lineNumber: 1,
-      sku: otherSku,
-      units: "1",
-      salesNet: "4.00",
+      goodsNet: "4.00",
       source: "561L",
     },
+  });
+  const live = await prisma.autopartSalesDocument.create({
+    data: {
+      companyId: otherCompanyId,
+      autopartCustomerCode: otherCode,
+      documentType: "INVOICE",
+      documentReference: `LIVE${stamp}`.slice(0, 20),
+      goodsNet: "11.00",
+      source: "ONGOING_TRM21QC",
+      hasTrm21qc: true,
+    },
+  });
+  await prisma.autopartSalesLine.createMany({
+    data: [
+      {
+        companyId: otherCompanyId,
+        documentId: kept.id,
+        autopartCustomerCode: otherCode,
+        documentType: "INVOICE",
+        documentReference: `KEEP${stamp}`.slice(0, 20),
+        lineNumber: 1,
+        sku: otherSku,
+        units: "1",
+        salesNet: "4.00",
+        source: "561L",
+      },
+      {
+        companyId: otherCompanyId,
+        documentId: live.id,
+        autopartCustomerCode: otherCode,
+        documentType: "INVOICE",
+        documentReference: `LIVE${stamp}`.slice(0, 20),
+        lineNumber: 1,
+        sku: liveSku,
+        units: "1",
+        salesNet: "11.00",
+        source: "ONGOING_TRM21QC",
+      },
+    ],
   });
 
   const imported = await prisma.autopartHistoryAllImport.create({
@@ -186,6 +323,41 @@ beforeAll(async () => {
       salesNet: "9.50",
     },
   });
+  await prisma.autopartHistoryReviewAccount.create({
+    data: {
+      importId: imported.id,
+      accountCode: retryCode,
+      reason: "NOT_VERIFIED",
+      status: "OPEN",
+      lineCount: 1,
+      lineNet: "2.00",
+      goodsNet: "2.00",
+    },
+  });
+  await prisma.autopartHistoryStagedDocument.create({
+    data: {
+      importId: imported.id,
+      accountCode: retryCode,
+      documentType: "INVOICE",
+      documentReference: "RETRY1",
+      goodsNet: "2.00",
+      vat: "0.40",
+      grossTotal: "2.40",
+      source: "SLRB",
+    },
+  });
+  await prisma.autopartHistoryStagedLine.create({
+    data: {
+      importId: imported.id,
+      accountCode: retryCode,
+      documentType: "INVOICE",
+      documentReference: "RETRY1",
+      lineNumber: 1,
+      sku: retrySku,
+      units: "1",
+      salesNet: "2.00",
+    },
+  });
 }, 120_000);
 
 afterAll(async () => {
@@ -195,7 +367,11 @@ afterAll(async () => {
     await prisma.autopartSalesDocument.deleteMany({ where: { companyId: { in: createdCompanyIds } } });
     await prisma.autopartCustomerImportRun.deleteMany({ where: { companyId: { in: createdCompanyIds } } });
     await prisma.autopartAccount.deleteMany({
-      where: { accountCode: { in: [evidenceCode, prospectCode, shortCode, longCode, verifiedCode, otherCode] } },
+      where: {
+        accountCode: {
+          in: [evidenceCode, prospectCode, shortCode, longCode, verifiedCode, otherCode, vatCode, staleCode, dupCode, lockCode, retryCode],
+        },
+      },
     });
     await prisma.autopartHistoryAllImport.deleteMany({ where: { id: { in: createdImportIds } } });
     await prisma.company.deleteMany({ where: { id: { in: createdCompanyIds } } });
@@ -262,8 +438,13 @@ describe("historic account matching", () => {
     const verifiedCompany = await prisma.company.findUniqueOrThrow({ where: { id: verifiedCompanyId } });
     expect(verifiedCompany.autopartCustomerCodeVerifiedAt?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
     expect(verifiedCompany.autopartCustomerCodeVerifiedById).toBe(adminId);
-    const otherLines = await prisma.autopartSalesLine.findMany({ where: { companyId: otherCompanyId } });
-    expect(otherLines.map((line) => line.sku)).toEqual([otherSku]);
+    const otherLines = await prisma.autopartSalesLine.findMany({
+      where: { companyId: otherCompanyId },
+      orderBy: { sku: "asc" },
+    });
+    expect(otherLines.map((line) => line.sku)).toEqual([liveSku, otherSku].sort());
+    expect(otherLines.find((line) => line.sku === liveSku)?.source).toBe("ONGOING_TRM21QC");
+    expect(await prisma.autopartSalesDocument.count({ where: { companyId: otherCompanyId, hasTrm21qc: true } })).toBe(1);
 
     const again = await approveHistoricAccountMatches(adminId, {
       accountCodes: [evidenceCode],
@@ -279,5 +460,93 @@ describe("historic account matching", () => {
       orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
+  }, 120_000);
+
+  it("does not verify a company number, a stale staff link, or a duplicated reference", async () => {
+    const vat = await historicAccountMatchReport(adminId, { query: vatCode, category: "LINKED_UNVERIFIED" });
+    expect(vat.rows.map((row) => row.accountCode)).toContain(vatCode);
+    const stale = await historicAccountMatchReport(adminId, { query: staleCode, category: "CONFLICT" });
+    expect(stale.rows.find((row) => row.accountCode === staleCode)?.conflicts.join(" ")).toContain("different company");
+    const duplicated = await historicAccountMatchReport(adminId, { query: dupCode, category: "CONFLICT" });
+    const dupRow = duplicated.rows.find((row) => row.accountCode === dupCode);
+    expect(dupRow?.conflicts.join(" ")).toContain("external reference");
+    expect(dupRow?.conflicts.join(" ")).toContain("account number");
+
+    const saved = await approveHistoricAccountMatches(adminId, {
+      accountCodes: [vatCode, staleCode, dupCode],
+      confirmation: HISTORIC_MATCH_VERIFY_PHRASE,
+    });
+    expect(saved.approved).toEqual([]);
+    expect(saved.skipped.map((row) => row.accountCode).sort()).toEqual([dupCode, staleCode, vatCode].sort());
+    expect((await prisma.company.findUniqueOrThrow({ where: { id: vatCompanyId } })).autopartCustomerCodeVerifiedAt).toBeNull();
+    expect((await prisma.company.findUniqueOrThrow({ where: { id: staleCompanyId } })).autopartCustomerCodeVerifiedAt).toBeNull();
+  }, 120_000);
+
+  it("refuses bulk verification while an ALL-file import holds the lock", async () => {
+    const busy = await prisma.autopartHistoryAllImport.create({
+      data: { status: "PREVIEWED", fileHash561l: randomUUID(), createdById: adminId },
+    });
+    createdImportIds.push(busy.id);
+    const claimed = await claimHistoricImport(busy.id);
+    expect(claimed.status).toBe("claimed");
+    if (claimed.status !== "claimed") throw new Error(`lock claim returned ${claimed.status}`);
+    try {
+      const saved = await approveHistoricAccountMatches(adminId, {
+        accountCodes: [lockCode],
+        confirmation: HISTORIC_MATCH_VERIFY_PHRASE,
+      });
+      expect(saved.approved).toEqual([]);
+      expect(saved.incomplete.map((row) => row.accountCode)).toEqual([lockCode]);
+      const company = await prisma.company.findUniqueOrThrow({ where: { id: lockCompanyId } });
+      expect(company.autopartCustomerCodeVerifiedAt).toBeNull();
+      expect(company.autopartCustomerCode).toBe(lockCode);
+    } finally {
+      await finishHistoricImport(busy.id, claimed.fence, {
+        status: "FAILED",
+        completedAt: new Date(),
+        summary: { recoverable: true, message: "Test import released the lock." },
+      });
+      await releaseSingleton();
+    }
+  }, 120_000);
+
+  it("rolls back a failed bulk verification and retries it once", async () => {
+    historicPromotion.batchSize = 1;
+    historicPromotion.afterCertifiedBatch = (linesWritten) => {
+      if (linesWritten >= 1) throw new Error("stopped after first certified batch");
+    };
+    try {
+      const failed = await approveHistoricAccountMatches(adminId, {
+        accountCodes: [retryCode],
+        confirmation: HISTORIC_MATCH_VERIFY_PHRASE,
+      });
+      expect(failed.approved).toEqual([]);
+      expect(failed.incomplete.map((row) => row.accountCode)).toEqual([retryCode]);
+    } finally {
+      historicPromotion.batchSize = 500;
+      historicPromotion.afterCertifiedBatch = null;
+    }
+    const company = await prisma.company.findUniqueOrThrow({ where: { id: retryCompanyId } });
+    expect(company.autopartCustomerCodeVerifiedAt).toBeNull();
+    expect(company.status).toBe("PROSPECT");
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: retryCompanyId } })).toBe(0);
+    const review = await prisma.autopartHistoryReviewAccount.findFirstOrThrow({
+      where: { accountCode: retryCode },
+    });
+    expect(review.status).toBe("OPEN");
+
+    const retried = await approveHistoricAccountMatches(adminId, {
+      accountCodes: [retryCode],
+      confirmation: HISTORIC_MATCH_VERIFY_PHRASE,
+    });
+    expect(retried.approved.map((row) => row.accountCode)).toEqual([retryCode]);
+    expect(retried.approved[0]?.lines).toBe(1);
+    const verified = await prisma.company.findUniqueOrThrow({ where: { id: retryCompanyId } });
+    expect(verified.status).toBe("PROSPECT");
+    expect(verified.autopartCustomerCode).toBe(retryCode);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: retryCompanyId, sku: retrySku } })).toBe(1);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: otherCompanyId, sku: liveSku, source: "ONGOING_TRM21QC" } })).toBe(1);
+    const keptVerified = await prisma.company.findUniqueOrThrow({ where: { id: verifiedCompanyId } });
+    expect(keptVerified.autopartCustomerCodeVerifiedAt?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
   }, 120_000);
 });

@@ -1,6 +1,7 @@
 /**
  * Classifies one 407EXP account for staff review.
  * Company name similarity is never an input and never a reason to verify.
+ * A company number, VAT number, order, application, or portal user does not connect an Autopart code.
  * A truncated code, two companies, or two master accounts on one company stay conflicts.
  */
 
@@ -20,18 +21,24 @@ export type HistoricMatchFacts = {
   truncatedCode: boolean;
   /** Companies independently verified for this exact code or an exact alias. */
   verifiedCompanyIds: readonly string[];
-  /** The one company whose stored Autopart code is exactly this account, if any. */
+  /** The one company whose stored Autopart code is exactly this account, when only one company has it. */
   codeHolderCompanyId: string | null;
-  /** The one company whose external reference is exactly this account, if any. */
+  /** More than one company stores this normalised Autopart code. */
+  duplicateStoredCodes: boolean;
+  /** The one company whose external reference equals this account, when only one company has it. Not identity evidence. */
   externalRefCompanyId: string | null;
-  /** The one company whose account number is exactly this account, if any. */
+  /** More than one company has this normalised external reference. */
+  duplicateExternalRefs: boolean;
+  /** The one company whose account number equals this account, when only one company has it. */
   accountNumberCompanyId: string | null;
+  /** More than one company has this normalised account number. */
+  duplicateAccountNumbers: boolean;
   /** Linked company's stored Autopart code, when it has one. */
   linkedCompanyCode: string | null;
-  /** Company number, VAT number, order, quote, invoice, trade application, or active portal user. */
-  independentIdentity: boolean;
-  /** A person used Link on this account. Prospect conversion is not this. */
-  staffLinked: boolean;
+  /** Latest staff link for this account, when it names the current company and no later link moved it. */
+  staffLinkCompanyId: string | null;
+  /** A staff-link audit names a different company from the account's current link. */
+  staffLinkDisputed: boolean;
   /** The linked company was created from this Autopart row. */
   prospectCreated: boolean;
   /** An indicated company already stores a different Autopart code. */
@@ -69,10 +76,6 @@ export function truncatedAccountCodes(codes: readonly string[]): Set<string> {
   return truncated;
 }
 
-function sameCompany(left: string | null, right: string | null): boolean {
-  return left != null && right != null && left === right;
-}
-
 function distinctCompanies(ids: Array<string | null>): string[] {
   return [...new Set(ids.filter((id): id is string => Boolean(id)))];
 }
@@ -81,11 +84,19 @@ export function classifyHistoricMasterAccount(facts: HistoricMatchFacts): Histor
   const indicated = distinctCompanies([
     facts.linkedCompanyId,
     facts.codeHolderCompanyId,
-    facts.externalRefCompanyId,
     facts.accountNumberCompanyId,
     facts.verifiedCompanyIds.length === 1 ? facts.verifiedCompanyIds[0]! : null,
   ]);
   const conflicts: string[] = [];
+  if (facts.duplicateStoredCodes) {
+    conflicts.push("More than one company stores this Autopart code.");
+  }
+  if (facts.duplicateExternalRefs) {
+    conflicts.push("More than one company has this external reference.");
+  }
+  if (facts.duplicateAccountNumbers) {
+    conflicts.push("More than one company has this account number.");
+  }
   if (facts.verifiedCompanyIds.length > 1) {
     conflicts.push("More than one company is verified for this exact code.");
   }
@@ -118,33 +129,17 @@ export function classifyHistoricMasterAccount(facts: HistoricMatchFacts): Histor
   if (facts.foreignStoredCode) {
     conflicts.push("A matching company is stored with a different Autopart code.");
   }
+  if (facts.staffLinkDisputed) {
+    conflicts.push("A staff link for this account points at a different company.");
+  }
   if (conflicts.length) {
     return { category: "CONFLICT", companyId: indicated.length === 1 ? indicated[0]! : facts.linkedCompanyId, evidence: [], conflicts };
   }
 
-  const companyId =
-    facts.linkedCompanyId ??
-    facts.codeHolderCompanyId ??
-    facts.externalRefCompanyId ??
-    facts.accountNumberCompanyId;
+  const companyId = facts.linkedCompanyId;
   const evidence: string[] = [];
-  if (companyId && facts.staffLinked && (facts.linkedCompanyId == null || facts.linkedCompanyId === companyId)) {
-    evidence.push("A staff member linked this Autopart account to the company.");
-  }
-  if (companyId && sameCompany(facts.externalRefCompanyId, companyId)) {
-    evidence.push("The company external reference equals this Autopart code.");
-  }
-  if (companyId && sameCompany(facts.accountNumberCompanyId, companyId)) {
-    evidence.push("The company account number equals this Autopart code.");
-  }
-  if (
-    companyId &&
-    sameCompany(facts.codeHolderCompanyId, companyId) &&
-    facts.independentIdentity
-  ) {
-    evidence.push(
-      "The company already stores this exact Autopart code and has its own company number, VAT number, trading document, application, or portal user.",
-    );
+  if (companyId && facts.staffLinkCompanyId === companyId) {
+    evidence.push("A staff member linked this Autopart account to this company, and no later link moved it.");
   }
 
   if (companyId && evidence.length) {
@@ -163,7 +158,7 @@ export function classifyHistoricMasterAccount(facts: HistoricMatchFacts): Histor
   return {
     category: "NO_MATCH",
     companyId: null,
-    evidence: ["No exact company code, external reference, account number, or staff link matches this account."],
+    evidence: ["No staff link ties this Autopart account to one company."],
     conflicts: [],
   };
 }
