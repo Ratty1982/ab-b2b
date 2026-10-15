@@ -31,6 +31,8 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "UNMAPPED_CUSTOMER",
   "NOT_IN_AB_CATALOGUE",
   "MALFORMED_ROW",
+  "PROTECTED_ONGOING_LINE",
+  "PROTECTED_ONGOING_DOCUMENT",
 ] as const;
 
 export type AutopartImportReasonCode = (typeof AUTOPART_IMPORT_REASON_CODES)[number];
@@ -54,6 +56,10 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
   NOT_IN_AB_CATALOGUE:
     "SKU not found in the AB catalogue (exact trim / case-insensitive match). Line was still imported with unmatched status.",
   MALFORMED_ROW: "Required monetary or identity fields were missing or invalid.",
+  PROTECTED_ONGOING_LINE:
+    "This line is an ongoing TRM21QC record. The historical import left its quantity, net, source and provenance unchanged.",
+  PROTECTED_ONGOING_DOCUMENT:
+    "This document header belongs to an ongoing 504 or TRM21QC feed. The historical import left its goods, dates, source and provenance unchanged.",
 };
 
 export type AutopartImportDiagnosticDraft = {
