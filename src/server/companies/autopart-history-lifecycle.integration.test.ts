@@ -338,7 +338,7 @@ describe("historic import lifecycle semantics", () => {
     const { file561, fileSlrb } = tinyPair(code, stamp);
 
     const spy = vi
-      .spyOn(PrismaClient.prototype, "$executeRaw")
+      .spyOn(PrismaClient.prototype, "$queryRaw")
       .mockRejectedValueOnce(new Error("forced bulk upsert failure"));
     await expect(
       confirmAutopartHistoryImport(adminId, {

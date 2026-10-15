@@ -33,6 +33,8 @@ import {
   SAFE_SKU_EQUALS_CHUNK,
   findManyByInChunks,
 } from "@/server/db/prisma-in-chunks";
+import { makeDiagnostic } from "@/domain/autopart-import-diagnostics";
+import { persistImportDiagnostics } from "@/server/companies/autopart-ongoing-sales-diagnostics";
 
 export type ImportIssue = {
   severity: "BLOCKING" | "WARNING" | "INFO";
@@ -1321,6 +1323,32 @@ function docKey(type: string, ref: string): string {
   return `${type}::${ref}`;
 }
 
+function lineKey(type: string, ref: string, lineNumber: number): string {
+  return `${type}::${ref}::${lineNumber}`;
+}
+
+type HistoricProtection = {
+  kind: "document" | "line";
+  documentType: string;
+  documentReference: string;
+  lineNumber: number | null;
+  sku: string | null;
+  quantity: string | null;
+  salesNet: string | null;
+};
+
+/**
+ * Ongoing headers are authoritative. A historical upsert must not fill or replace them.
+ * Kept in SQL as well as the write trigger so a concurrent commit is refused with the row lock.
+ */
+const PROTECTED_DOCUMENT_WHERE = Prisma.sql`
+  NOT (
+    "AutopartSalesDocument"."has504"
+    OR "AutopartSalesDocument"."hasTrm21qc"
+    OR "AutopartSalesDocument"."source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+  )
+`;
+
 /**
  * Bulk upsert historic documents via Postgres ON CONFLICT.
  * Short chunked statements — never one interactive transaction of thousands of awaits.
@@ -1329,9 +1357,17 @@ function docKey(type: string, ref: string): string {
 async function bulkUpsertHistoricDocuments(
   docs: PreparedHistoricDocument[],
   onChunk?: (done: number, total: number) => Promise<void>,
-): Promise<{ inserted: number; updated: number; idByKey: Map<string, string> }> {
+): Promise<{
+  inserted: number;
+  updated: number;
+  idByKey: Map<string, string>;
+  protectedDocs: HistoricProtection[];
+  blockedDocKeys: Set<string>;
+}> {
   const idByKey = new Map<string, string>();
-  if (!docs.length) return { inserted: 0, updated: 0, idByKey };
+  const protectedDocs: HistoricProtection[] = [];
+  const blockedDocKeys = new Set<string>();
+  if (!docs.length) return { inserted: 0, updated: 0, idByKey, protectedDocs, blockedDocKeys };
 
   const companyId = docs[0]!.companyId;
   const refs = [...new Set(docs.map((d) => d.documentReference))];
@@ -1381,7 +1417,7 @@ async function bulkUpsertHistoricDocuments(
       }),
     );
 
-    await prisma.$executeRaw`
+    const written = await prisma.$queryRaw<Array<{ documentType: string; documentReference: string }>>`
       INSERT INTO "AutopartSalesDocument" (
         "id", "companyId", "autopartCustomerCode", "documentType", "documentReference",
         "documentDate", "goodsNet", "vat", "grossTotal", "source", "importRunId",
@@ -1400,13 +1436,33 @@ async function bulkUpsertHistoricDocuments(
         END,
         "importRunId" = EXCLUDED."importRunId",
         "updatedAt" = EXCLUDED."updatedAt"
+      WHERE ${PROTECTED_DOCUMENT_WHERE}
+      RETURNING "documentType"::text AS "documentType", "documentReference"
     `;
+    const writtenKeys = new Set(written.map((row) => docKey(row.documentType, row.documentReference)));
 
     for (const d of chunk) {
-      if (existingKeys.has(docKey(d.documentType, d.documentReference))) updated += 1;
+      const key = docKey(d.documentType, d.documentReference);
+      if (!writtenKeys.has(key)) {
+        protectedDocs.push({
+          kind: "document",
+          documentType: d.documentType,
+          documentReference: d.documentReference,
+          lineNumber: null,
+          sku: null,
+          quantity: null,
+          salesNet: d.goodsNet,
+        });
+        if (!existingKeys.has(key)) {
+          idByKey.delete(key);
+          blockedDocKeys.add(key);
+        }
+        continue;
+      }
+      if (existingKeys.has(key)) updated += 1;
       else {
         inserted += 1;
-        existingKeys.add(docKey(d.documentType, d.documentReference));
+        existingKeys.add(key);
       }
     }
     if (onChunk) await onChunk(Math.min(i + chunk.length, docs.length), docs.length);
@@ -1426,7 +1482,7 @@ async function bulkUpsertHistoricDocuments(
     idByKey.set(docKey(row.documentType, row.documentReference), row.id);
   }
 
-  return { inserted, updated, idByKey };
+  return { inserted, updated, idByKey, protectedDocs, blockedDocKeys };
 }
 
 /**
@@ -1444,10 +1500,14 @@ function dedupePreparedHistoricLines(lines: PreparedHistoricLine[]): PreparedHis
 async function bulkUpsertHistoricLines(
   lines: PreparedHistoricLine[],
   idByDocKey: Map<string, string>,
+  blockedDocKeys: Set<string>,
   onChunk?: (done: number, total: number) => Promise<void>,
-): Promise<{ inserted: number; updated: number }> {
-  const uniqueLines = dedupePreparedHistoricLines(lines);
-  if (!uniqueLines.length) return { inserted: 0, updated: 0 };
+): Promise<{ inserted: number; updated: number; protectedLines: HistoricProtection[] }> {
+  const uniqueLines = dedupePreparedHistoricLines(lines).filter(
+    (line) => !blockedDocKeys.has(docKey(line.documentType, line.documentReference)),
+  );
+  const protectedLines: HistoricProtection[] = [];
+  if (!uniqueLines.length) return { inserted: 0, updated: 0, protectedLines };
 
   const companyId = uniqueLines[0]!.companyId;
   const refs = [...new Set(uniqueLines.map((l) => l.documentReference))];
@@ -1521,7 +1581,9 @@ async function bulkUpsertHistoricLines(
       }),
     );
 
-    await prisma.$executeRaw`
+    const written = await prisma.$queryRaw<
+      Array<{ documentType: string; documentReference: string; lineNumber: number }>
+    >`
       INSERT INTO "AutopartSalesLine" (
         "id", "companyId", "documentId", "autopartCustomerCode", "documentType",
         "documentReference", "lineNumber", "sku", "descriptionSnapshot",
@@ -1542,10 +1604,27 @@ async function bulkUpsertHistoricLines(
         "source" = EXCLUDED."source",
         "importRunId" = EXCLUDED."importRunId",
         "updatedAt" = EXCLUDED."updatedAt"
+      WHERE "AutopartSalesLine"."source" IS DISTINCT FROM 'ONGOING_TRM21QC'
+      RETURNING "documentType"::text AS "documentType", "documentReference", "lineNumber"
     `;
+    const writtenKeys = new Set(
+      written.map((row) => lineKey(row.documentType, row.documentReference, row.lineNumber)),
+    );
 
     for (const l of chunk) {
-      const key = `${l.documentType}::${l.documentReference}::${l.lineNumber}`;
+      const key = lineKey(l.documentType, l.documentReference, l.lineNumber);
+      if (!writtenKeys.has(key)) {
+        protectedLines.push({
+          kind: "line",
+          documentType: l.documentType,
+          documentReference: l.documentReference,
+          lineNumber: l.lineNumber,
+          sku: l.sku,
+          quantity: l.units,
+          salesNet: l.salesNet,
+        });
+        continue;
+      }
       if (existingKeys.has(key)) updated += 1;
       else {
         inserted += 1;
@@ -1555,7 +1634,7 @@ async function bulkUpsertHistoricLines(
     if (onChunk) await onChunk(Math.min(i + chunk.length, uniqueLines.length), uniqueLines.length);
   }
 
-  return { inserted, updated };
+  return { inserted, updated, protectedLines };
 }
 
 /** Above this combined size, confirm returns immediately and finishes in-process asynchronously. */
@@ -1877,6 +1956,7 @@ async function executeHistoricImportWrites(args: {
   let linesUpdated = 0;
   let partialDocs = 0;
   let partialLines = 0;
+  let protectedRows: HistoricProtection[] = [];
 
   try {
     await patchHistoricImportProgress(args.runId, {
@@ -1906,6 +1986,7 @@ async function executeHistoricImportWrites(args: {
     );
     docsInserted = docResult.inserted;
     docsUpdated = docResult.updated;
+    protectedRows = docResult.protectedDocs;
 
     await patchHistoricImportProgress(args.runId, {
       phase: "lines",
@@ -1920,6 +2001,7 @@ async function executeHistoricImportWrites(args: {
     const lineResult = await bulkUpsertHistoricLines(
       args.preparedLines,
       docResult.idByKey,
+      docResult.blockedDocKeys,
       async (done, total) => {
         partialLines = done;
         await patchHistoricImportProgress(args.runId, {
@@ -1935,6 +2017,7 @@ async function executeHistoricImportWrites(args: {
     );
     linesInserted = lineResult.inserted;
     linesUpdated = lineResult.updated;
+    protectedRows = [...protectedRows, ...lineResult.protectedLines];
   } catch (error) {
     console.error("[ab:autopart-history-import] confirm failed", {
       runId: args.runId,
@@ -2006,19 +2089,60 @@ async function executeHistoricImportWrites(args: {
 
   const imported = docsInserted + linesInserted;
   const updated = docsUpdated + linesUpdated;
+  const protectedCount = protectedRows.length;
+
+  if (protectedCount > 0) {
+    await persistImportDiagnostics(
+      args.runId,
+      protectedRows.map((row) =>
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: row.kind === "line" ? "PROTECTED_ONGOING_LINE" : "PROTECTED_ONGOING_DOCUMENT",
+          reason:
+            row.kind === "line"
+              ? `Historical import left ongoing TRM21QC line ${row.lineNumber} on ${row.documentReference} unchanged. Quantity, net, source and provenance were kept. Incoming ${row.sku ?? "line"} ${row.quantity ?? ""} ${row.salesNet ?? ""} was not written.`
+              : `Historical import left the ongoing 504/TRM document ${row.documentReference} unchanged. Goods, dates, source and provenance were kept.`,
+          documentReference: row.documentReference,
+          sku: row.sku,
+          quantity: row.quantity,
+          salesNet: row.salesNet,
+          companyId: args.companyId,
+          rowNumber: row.lineNumber,
+          isWarning: true,
+        }),
+      ),
+    );
+  }
 
   try {
+    const existingRun = await prisma.autopartCustomerImportRun.findUnique({
+      where: { id: args.runId },
+      select: { issues: true },
+    });
+    const priorIssues = Array.isArray(existingRun?.issues) ? existingRun.issues : [];
+    const collisionIssues: ImportIssue[] =
+      protectedCount === 0
+        ? []
+        : [
+            {
+              severity: "WARNING",
+              code: "PROTECTED_ONGOING_RECORD",
+              message: `${protectedCount} ongoing 504/TRM record${protectedCount === 1 ? "" : "s"} already on file. Historical import left those quantities, goods, source and provenance unchanged.`,
+            },
+          ];
     await prisma.autopartCustomerImportRun.update({
       where: { id: args.runId },
       data: {
         status: "COMMITTED",
         rowsImported: imported,
         rowsUpdated: updated,
-        rowsSkipped: args.skipped,
+        rowsSkipped: args.skipped + protectedCount,
         rowsUnmatched: args.unmatched561Documents,
+        issues: [...priorIssues, ...collisionIssues] as unknown as Prisma.InputJsonValue,
         completedAt: new Date(),
         diagnostics: {
           previewSummary: args.previewSummary,
+          protectedOngoingRecords: protectedCount,
           progress: {
             phase: "complete",
             message: "Import complete",
