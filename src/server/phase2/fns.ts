@@ -93,6 +93,18 @@ export const getCompanyWorkspaceFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listCompanyInvoicesFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string; q?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const invoices = await import("@/server/companies/company-invoices");
+      return { ok: true as const, data: await invoices.listCompanyInvoices(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const createCompanyFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

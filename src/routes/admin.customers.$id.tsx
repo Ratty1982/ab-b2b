@@ -43,6 +43,7 @@ import {
 } from "@/server/phase2/fns";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
+import { CompanyInvoicesPanel, CompanyOrdersPanel, CompanyQuotesPanel } from "@/components/admin/CompanyCommercialTabs";
 import { formatDate, formatOrDash } from "@/lib/datetime";
 import { toast } from "sonner";
 
@@ -53,19 +54,17 @@ export const Route = createFileRoute("/admin/customers/$id")({
   component: CustomerWorkspace,
 });
 
-const tabs = [
-  "Overview",
-  "Contacts",
-  "Users",
-  "Addresses",
-  "Commercial",
-  "Autopart",
-  "Activity",
-  "Documents",
-  "Orders",
-  "Quotes",
-  "Invoices",
-] as const;
+const baseTabs = ["Overview", "Contacts", "Users", "Addresses", "Commercial", "Autopart", "Activity"] as const;
+
+type CustomerTab = (typeof baseTabs)[number] | "Orders" | "Quotes" | "Invoices";
+
+function visibleCustomerTabs(permissions: readonly string[]): CustomerTab[] {
+  const tabs: CustomerTab[] = [...baseTabs];
+  if (permissions.includes("orders.view")) tabs.push("Orders");
+  if (permissions.includes("quotes.view")) tabs.push("Quotes");
+  if (permissions.includes("invoices.view")) tabs.push("Invoices");
+  return tabs;
+}
 
 function CustomerWorkspace() {
   const { id } = Route.useParams();
@@ -73,7 +72,8 @@ function CustomerWorkspace() {
   const session = useSession();
   const canPlaceForCustomer =
     session.signedIn && session.user.navPermissions.includes("orders.place_for_customer");
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
+  const tabs = visibleCustomerTabs(session.signedIn ? session.user.navPermissions : []);
+  const [tab, setTab] = useState<CustomerTab>("Overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Workspace payload from getCompanyWorkspaceFn
@@ -267,6 +267,14 @@ function CustomerWorkspace() {
                 Created <InstantText value={company.createdAt} variant="audit" /> · Updated{" "}
                 <InstantText value={company.updatedAt} variant="audit" />
               </p>
+              <div className="mt-4 flex flex-wrap gap-3 text-[13px]">
+                <Link to={ROUTES.adminApplications} className="text-primary hover:underline">
+                  Trade applications
+                </Link>
+                {registrationAutopartClaim?.applicationReference ? (
+                  <span className="text-steel">Application {registrationAutopartClaim.applicationReference}</span>
+                ) : null}
+              </div>
             </section>
             {permissions.canDelete ? (
               <section className="border border-bad/40 bg-surface/40 p-5 lg:col-span-2">
@@ -552,18 +560,9 @@ function CustomerWorkspace() {
           </ul>
         ) : null}
 
-        {tab === "Documents" || tab === "Orders" || tab === "Quotes" || tab === "Invoices" ? (
-          <div className="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-steel">
-            {tab} will be available in a later phase.
-            {tab === "Documents" ? (
-              <div className="mt-2">
-                <Link to={ROUTES.adminApplications} className="text-primary hover:underline">
-                  Related trade applications
-                </Link>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        {tab === "Orders" ? <CompanyOrdersPanel companyId={company.id} /> : null}
+        {tab === "Quotes" ? <CompanyQuotesPanel companyId={company.id} /> : null}
+        {tab === "Invoices" ? <CompanyInvoicesPanel companyId={company.id} /> : null}
       </div>
 
       {contactOpen ? (
