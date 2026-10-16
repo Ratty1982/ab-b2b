@@ -184,7 +184,7 @@ function OverstockPage() {
       ) : null}
       {data && data.rows.length > 0 ? (
         <>
-          <div className="overflow-x-auto">
+          <div className="min-w-0 overflow-x-auto">
             <table className="w-full min-w-[1200px] text-left text-[13px]">
               <thead className="bg-secondary/40 text-[10px] font-semibold uppercase tracking-[0.12em] text-steel">
                 <tr>

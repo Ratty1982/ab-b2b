@@ -627,17 +627,17 @@ export function UnifiedCustomerSalesPanel({
           </div>
 
           <div className="grid gap-4 lg:grid-cols-5">
-            <div className="rounded-md border border-border bg-card p-4 lg:col-span-3">
+            <div className="min-w-0 rounded-md border border-border bg-card p-4 lg:col-span-3">
               <h3 className="font-display text-[15px] font-semibold">Monthly sales, last 12 months</h3>
               <p className="mt-1 text-[12px] text-steel">Dated invoices and credits only. Undated history is not plotted.</p>
               {chart.every((point) => point.net === 0) ? (
                 <p className="mt-6 text-[13px] text-steel">No dated sales in the last 12 months.</p>
               ) : (
-                <div className="mt-3 h-56">
+                <div className="mt-3 h-56 min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chart}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} angle={-35} height={48} textAnchor="end" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" height={32} />
                       <YAxis tick={{ fontSize: 10 }} />
                       <Tooltip formatter={(value) => formatGbp(Number(value).toFixed(2))} />
                       <Bar dataKey="net" name="Net sales" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} />

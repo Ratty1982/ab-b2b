@@ -395,7 +395,7 @@ export function SiField({
 
 export function siControlClassName(active = false) {
   return cn(
-    "block h-9 w-full rounded-md border bg-background px-2.5 text-[13px] text-foreground",
+    "block h-11 min-h-11 w-full rounded-md border bg-background px-2.5 text-base text-foreground lg:h-9 lg:min-h-9 lg:text-[13px]",
     active ? "border-primary" : "border-border",
   );
 }

@@ -285,8 +285,8 @@ function CostDetailBody({
             onClick={() => setRange(id)}
             className={
               range === id
-                ? "h-8 rounded-md bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground"
-                : "h-8 rounded-md border border-border px-3 text-[11px] font-bold uppercase text-steel"
+                ? "inline-flex min-h-11 items-center rounded-md bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground"
+                : "inline-flex min-h-11 items-center rounded-md border border-border px-3 text-[11px] font-bold uppercase text-steel"
             }
           >
             {label}
@@ -296,7 +296,7 @@ function CostDetailBody({
 
       <div className="mt-4">
         {showChart ? (
-          <div className="h-56 w-full">
+          <div className="h-56 w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={movements.map((p) => ({
@@ -358,7 +358,8 @@ function CostDetailBody({
       </div>
 
       {movements.length ? (
-        <table className="mt-4 w-full text-left text-[13px]">
+        <div className="mt-4 min-w-0 overflow-x-auto">
+        <table className="w-full min-w-[28rem] text-left text-[13px]">
           <thead>
             <tr className="border-b border-border text-[11px] uppercase text-steel">
               <th className="py-2">Cost</th>
@@ -385,6 +386,7 @@ function CostDetailBody({
             ))}
           </tbody>
         </table>
+        </div>
       ) : null}
     </>
   );
