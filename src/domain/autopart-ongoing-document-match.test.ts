@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ongoingDocumentOwnershipAllowsUpdate,
   resolveOngoingDocumentIdentity,
   type OngoingDocumentCandidate,
 } from "@/domain/autopart-ongoing-document-match";
@@ -139,5 +140,86 @@ describe("ongoing document identity", () => {
       companyAssignment: "blocked-by-historic",
       companyId: null,
     });
+  });
+
+  it("does not let an unresolved account reuse another company's ongoing document", () => {
+    const decision = resolveOngoingDocumentIdentity({
+      documentReference: "INV1",
+      documentType: "INVOICE",
+      companyId: null,
+      evidence: { accounts: ["ACCT-B"], authority: "unresolved" },
+      candidates: [
+        row({
+          id: "ongoing",
+          companyId: "company-a",
+          autopartCustomerCode: "ACCT-A",
+          hasTrm21qc: true,
+          source: "ONGOING_TRM21QC",
+        }),
+      ],
+    });
+    expect(decision).toMatchObject({ action: "reject", reason: "COMPANY_OWNERSHIP" });
+    if (decision.action === "reject") expect(decision.detail).toContain("INV1");
+  });
+
+  it("does not overwrite an unassigned account with a different verified customer", () => {
+    const decision = resolveOngoingDocumentIdentity({
+      documentReference: "INV1",
+      documentType: "INVOICE",
+      companyId: "company-b",
+      evidence: { accounts: ["ACCT-B"], authority: "verified-code" },
+      candidates: [
+        row({
+          id: "ongoing",
+          companyId: null,
+          autopartCustomerCode: "ACCT-A",
+          has504: true,
+          source: "ONGOING_504",
+        }),
+      ],
+    });
+    expect(decision).toMatchObject({ action: "reject", reason: "COMPANY_OWNERSHIP" });
+  });
+
+  it("accepts a verified alias for the company that already owns the document", () => {
+    const decision = resolveOngoingDocumentIdentity({
+      documentReference: "INV1",
+      documentType: "INVOICE",
+      companyId: "company-a",
+      evidence: { accounts: ["YORKMOTO", "YORKMOT"], authority: "verified-alias" },
+      candidates: [
+        row({
+          id: "ongoing",
+          companyId: "company-a",
+          autopartCustomerCode: "YORKMOT",
+          has504: true,
+          source: "ONGOING_504",
+        }),
+      ],
+    });
+    expect(decision).toMatchObject({ action: "update", documentId: "ongoing", companyAssignment: "unchanged" });
+  });
+
+  it("does not treat an unverified stored code or a 407EXP link as ownership of another document", () => {
+    const stored = ongoingDocumentOwnershipAllowsUpdate({
+      documentReference: "INV1",
+      documentType: "INVOICE",
+      documentCompanyId: "company-a",
+      documentAccount: "ACCT-A",
+      incomingCompanyId: "company-c",
+      accounts: ["STORED"],
+      authority: "stored-code",
+    });
+    const linked = ongoingDocumentOwnershipAllowsUpdate({
+      documentReference: "INV1",
+      documentType: "INVOICE",
+      documentCompanyId: null,
+      documentAccount: "ACCT-A",
+      incomingCompanyId: "company-b",
+      accounts: ["EXP1"],
+      authority: "account-link",
+    });
+    expect(stored.allow).toBe(false);
+    expect(linked.allow).toBe(false);
   });
 });

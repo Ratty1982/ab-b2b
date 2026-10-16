@@ -9,11 +9,28 @@ export const ONGOING_DOCUMENT_SOURCES = ["ONGOING_504", "ONGOING_TRM21QC", "ONGO
 export type OngoingDocumentCandidate = {
   id: string;
   companyId: string | null;
+  autopartCustomerCode?: string | null;
   documentType: string;
   source: string;
   has504: boolean;
   hasTrm21qc: boolean;
   createdAt: Date;
+};
+
+/** Account evidence supplied by a 504 or TRM21QC row. Verified aliases share the verified-code company. */
+export type OngoingOwnershipAuthority =
+  | "verified-code"
+  | "verified-alias"
+  | "stored-code"
+  | "account-link"
+  | "ambiguous"
+  | "unresolved"
+  | "ab-order"
+  | "none";
+
+export type OngoingOwnershipEvidence = {
+  accounts: readonly string[];
+  authority: OngoingOwnershipAuthority;
 };
 
 export type OngoingDocumentDecision =
@@ -57,11 +74,64 @@ function sameStoredType(row: OngoingDocumentCandidate, incomingType: string): bo
   return row.documentType === incomingType || row.documentType === "UNKNOWN";
 }
 
+function normaliseAccount(value: string | null | undefined): string {
+  return (value ?? "").trim().toUpperCase();
+}
+
+/** Verified company code, verified alias, or the same AB order company. A reference match is not evidence. */
+export function ongoingDocumentOwnershipAllowsUpdate(input: {
+  documentReference: string;
+  documentType: string;
+  documentCompanyId: string | null;
+  documentAccount: string | null;
+  incomingCompanyId: string | null;
+  accounts: readonly string[];
+  authority: OngoingOwnershipAuthority;
+}): { allow: true } | { allow: false; detail: string } {
+  const stored = normaliseAccount(input.documentAccount);
+  const accounts = new Set(input.accounts.map(normaliseAccount).filter((account) => account && account !== "UNKNOWN"));
+  const storedIsAccount = stored !== "" && stored !== "UNKNOWN";
+  const verified = input.authority === "verified-code" || input.authority === "verified-alias";
+  const sameCompany = Boolean(
+    input.documentCompanyId && input.incomingCompanyId && input.documentCompanyId === input.incomingCompanyId,
+  );
+  const accountAgrees = storedIsAccount && accounts.has(stored);
+  if (verified && sameCompany) return { allow: true };
+  if (verified && accountAgrees && (!input.documentCompanyId || !input.incomingCompanyId || sameCompany)) {
+    return { allow: true };
+  }
+  if (verified && !input.documentCompanyId && !storedIsAccount) return { allow: true };
+  if (input.authority === "ab-order" && sameCompany) return { allow: true };
+  if (input.authority === "ab-order" && !input.documentCompanyId && input.incomingCompanyId && !storedIsAccount) {
+    return { allow: true };
+  }
+  if ((input.authority === "stored-code" || input.authority === "account-link") && sameCompany && accountAgrees) {
+    return { allow: true };
+  }
+  if (
+    !input.documentCompanyId &&
+    accountAgrees &&
+    (input.authority === "stored-code" || input.authority === "account-link" || input.authority === "unresolved")
+  ) {
+    return { allow: true };
+  }
+  if (!input.documentCompanyId && !input.incomingCompanyId && accountAgrees) return { allow: true };
+  if (input.authority === "none" && accounts.size === 0 && !input.incomingCompanyId) return { allow: true };
+
+  const incoming = [...accounts].join(", ") || "no account";
+  const owner = storedIsAccount ? `account ${stored}` : input.documentCompanyId ? "another customer" : "an unassigned document";
+  return {
+    allow: false,
+    detail: `Document ${input.documentReference} (${input.documentType}) belongs to ${owner}. Incoming account ${incoming} is not a verified code or verified alias for that customer. Existing totals and lines were not changed.`,
+  };
+}
+
 export function resolveOngoingDocumentIdentity(input: {
   documentReference: string;
   documentType: string;
   companyId: string | null;
   candidates: readonly OngoingDocumentCandidate[];
+  evidence?: OngoingOwnershipEvidence;
 }): OngoingDocumentDecision {
   const reference = input.documentReference.trim();
   const incomingType = input.documentType;
@@ -97,9 +167,34 @@ export function resolveOngoingDocumentIdentity(input: {
         detail: `Document ${reference} (${storedType(target, incomingType)}) already belongs to another customer. Historical rows were not changed.`,
       };
     }
+    if (input.evidence) {
+      const ownership = ongoingDocumentOwnershipAllowsUpdate({
+        documentReference: reference,
+        documentType: storedType(target, incomingType),
+        documentCompanyId: target.companyId,
+        documentAccount: target.autopartCustomerCode ?? null,
+        incomingCompanyId: input.companyId,
+        accounts: input.evidence.accounts,
+        authority: input.evidence.authority,
+      });
+      if (!ownership.allow) {
+        return {
+          action: "reject",
+          reason: "COMPANY_OWNERSHIP",
+          documentId: target.id,
+          detail: ownership.detail,
+        };
+      }
+    }
     const nextType = storedType(target, incomingType);
+    const verifiedOwnership =
+      !input.evidence ||
+      input.evidence.authority === "verified-code" ||
+      input.evidence.authority === "verified-alias" ||
+      input.evidence.authority === "ab-order";
     const historicHoldsCompany = Boolean(
-      input.companyId &&
+      verifiedOwnership &&
+        input.companyId &&
         !target.companyId &&
         historic.some((row) => row.companyId === input.companyId && storedType(row, incomingType) === nextType),
     );
@@ -109,7 +204,11 @@ export function resolveOngoingDocumentIdentity(input: {
       preserveHistoricFinancials: false,
       companyId: target.companyId,
       companyAssignment:
-        target.companyId || !input.companyId ? "unchanged" : historicHoldsCompany ? "blocked-by-historic" : "assign",
+        !verifiedOwnership || target.companyId || !input.companyId
+          ? "unchanged"
+          : historicHoldsCompany
+            ? "blocked-by-historic"
+            : "assign",
     };
   }
 

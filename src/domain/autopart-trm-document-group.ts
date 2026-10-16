@@ -7,6 +7,7 @@
 export type TrmAccountAuthority =
   | "verified-code"
   | "verified-alias"
+  | "stored-code"
   | "account-link"
   | "ambiguous"
   | "unresolved";
@@ -30,6 +31,7 @@ export type TrmGroupDecision =
       companyId: string | null;
       canonicalCode: string | null;
       accounts: string[];
+      authority: TrmAccountAuthority;
     }
   | {
       action: "reject";
@@ -96,12 +98,22 @@ export function classifyTrmDocumentGroup(input: {
     resolved.find((row) => row.canonicalCode)?.canonicalCode ??
     accounts[0] ??
     null;
+  const authority: TrmAccountAuthority = resolved.some((row) => row.authority === "verified-code")
+    ? "verified-code"
+    : resolved.some((row) => row.authority === "verified-alias")
+      ? "verified-alias"
+      : resolved.some((row) => row.authority === "stored-code")
+        ? "stored-code"
+        : resolved.some((row) => row.authority === "account-link")
+          ? "account-link"
+          : "unresolved";
   return {
     action: "accept",
     documentType,
     companyId,
     canonicalCode: canonical,
     accounts,
+    authority,
   };
 }
 

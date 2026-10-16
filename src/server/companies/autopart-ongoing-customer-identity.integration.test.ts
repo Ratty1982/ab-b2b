@@ -10,8 +10,10 @@ import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { ongoingSalesReportContentHash } from "@/domain/autopart-ongoing-sales-attachment";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
 import {
+  confirmAutopart504Import,
   confirmAutopartTrm21qcImport,
   listOngoingSalesImportRuns,
+  resolveCompanyByAutopartCode,
 } from "@/server/companies/autopart-ongoing-sales";
 import { processOngoingSalesEmailBatch } from "@/server/companies/autopart-ongoing-sales-poll";
 
@@ -22,6 +24,8 @@ const accountB = `IB${stamp}`.slice(0, 12);
 const aliasA = `AL${stamp}`.slice(0, 12);
 const sku = `ISK${stamp}`.slice(0, 16);
 const references: string[] = [];
+const extraCompanyIds: string[] = [];
+const orderIds: string[] = [];
 let adminId = "";
 let companyAId = "";
 let companyBId = "";
@@ -90,8 +94,16 @@ afterAll(async () => {
       await prisma.autopartSalesDocument.deleteMany({ where: { documentReference: { in: references } } });
       await prisma.autopartImportDiagnostic.deleteMany({ where: { documentReference: { in: references } } });
     }
+    const companyIds = [companyAId, companyBId, ...extraCompanyIds].filter(Boolean);
+    if (companyIds.length) {
+      await prisma.invoice.deleteMany({ where: { companyId: { in: companyIds } } });
+    }
+    if (orderIds.length) await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    await prisma.autopartAccount.deleteMany({ where: { companyId: { in: [companyAId, companyBId, ...extraCompanyIds] } } });
     await prisma.autopartCustomerImportRun.deleteMany({ where: { createdById: adminId } });
-    await prisma.company.deleteMany({ where: { id: { in: [companyAId, companyBId].filter(Boolean) } } });
+    await prisma.company.deleteMany({
+      where: { id: { in: [companyAId, companyBId, ...extraCompanyIds].filter(Boolean) } },
+    });
     await prisma.user.deleteMany({ where: { id: adminId } });
   } finally {
     await prisma.$disconnect();
@@ -388,5 +400,260 @@ describe("ongoing customer identity", () => {
     });
     expect(await prisma.autopartCustomerImportRun.count({ where: { fileHash: hash } })).toBe(1);
     expect(await prisma.autopartSalesDocument.count({ where: { documentReference: document } })).toBe(0);
+  });
+
+  it("keeps an unresolved account off a company-owned ongoing document", async () => {
+    const document = reference("O");
+    const unknown = `UB${stamp}`.slice(0, 12);
+    const ongoing = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: companyAId,
+        autopartCustomerCode: accountA,
+        documentType: "INVOICE",
+        documentReference: document,
+        goodsNet: "16.00",
+        source: "ONGOING_504",
+        has504: true,
+      },
+    });
+    await prisma.autopartSalesLine.create({
+      data: {
+        companyId: companyAId,
+        documentId: ongoing.id,
+        autopartCustomerCode: accountA,
+        documentType: "INVOICE",
+        documentReference: document,
+        lineNumber: 1,
+        sku,
+        units: "2",
+        salesNet: "16.00",
+        source: "ONGOING_TRM21QC",
+      },
+    });
+    const imported = await confirmAutopartTrm21qcImport(adminId, {
+      text: trm([{ account: unknown, document, qty: "9", sales: "90.00" }]),
+      filename: "TRM21QC-unresolved-owner.csv",
+      source: "MANUAL",
+    });
+    expect(imported.status).toBe("COMMITTED");
+    expect((imported.diagnostics as { attentionRequired?: boolean }).attentionRequired).toBe(true);
+    const kept = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { id: ongoing.id },
+      include: { lines: true },
+    });
+    expect(kept.companyId).toBe(companyAId);
+    expect(kept.autopartCustomerCode).toBe(accountA);
+    expect(kept.goodsNet?.toString()).toBe("16");
+    expect(kept.lines).toHaveLength(1);
+    expect(kept.lines[0]?.companyId).toBe(companyAId);
+    expect(Number(kept.lines[0]?.units)).toBe(2);
+  });
+
+  it("does not attach a verified customer to an unassigned document for a different account", async () => {
+    const document = reference("N");
+    const ongoing = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: null,
+        autopartCustomerCode: accountA,
+        documentType: "INVOICE",
+        documentReference: document,
+        goodsNet: "11.00",
+        source: "ONGOING_TRM21QC",
+        hasTrm21qc: true,
+      },
+    });
+    await prisma.autopartSalesLine.create({
+      data: {
+        companyId: null,
+        documentId: ongoing.id,
+        autopartCustomerCode: accountA,
+        documentType: "INVOICE",
+        documentReference: document,
+        lineNumber: 1,
+        sku,
+        units: "4",
+        salesNet: "11.00",
+        source: "ONGOING_TRM21QC",
+      },
+    });
+    const imported = await confirmAutopartTrm21qcImport(adminId, {
+      text: trm([{ account: accountB, document, qty: "8", sales: "80.00" }]),
+      filename: "TRM21QC-verified-other.csv",
+      source: "MANUAL",
+    });
+    expect((imported.diagnostics as { attentionRequired?: boolean }).attentionRequired).toBe(true);
+    const kept = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { id: ongoing.id },
+      include: { lines: true },
+    });
+    expect(kept.companyId).toBeNull();
+    expect(kept.autopartCustomerCode).toBe(accountA);
+    expect(Number(kept.lines[0]?.units)).toBe(4);
+    expect(kept.lines[0]?.companyId).toBeNull();
+    expect(await prisma.autopartSalesLine.count({ where: { documentReference: document, companyId: companyBId } })).toBe(0);
+  });
+
+  it("distinguishes an unverified stored code and a linked 407EXP account from a verified code", async () => {
+    const storedCode = `SC${stamp}`.slice(0, 12);
+    const linkedCode = `EX${stamp}`.slice(0, 12);
+    const storedCompany = await prisma.company.create({
+      data: {
+        name: `Unverified ${stamp}`,
+        status: "ACTIVE",
+        paymentTerms: "30 Days",
+        autopartCustomerCode: storedCode,
+      },
+    });
+    extraCompanyIds.push(storedCompany.id);
+    const stored = await resolveCompanyByAutopartCode(storedCode);
+    expect(stored.authority).toBe("stored-code");
+    expect(stored.companyId).toBe(storedCompany.id);
+    expect(storedCompany.autopartCustomerCodeVerifiedAt).toBeNull();
+    const verified = await resolveCompanyByAutopartCode(accountA);
+    expect(verified.authority).toBe("verified-code");
+
+    await prisma.autopartAccount.create({
+      data: {
+        sourceSystem: "AUTOPART",
+        accountCode: linkedCode,
+        originalName: `Master ${stamp}`,
+        classification: "TRADE_CANDIDATE",
+        companyId: companyBId,
+        portalEligible: false,
+      },
+    });
+    const linked = await resolveCompanyByAutopartCode(linkedCode);
+    expect(linked.authority).toBe("account-link");
+    expect(linked.companyId).toBe(companyBId);
+    const stillIneligible = await prisma.autopartAccount.findFirstOrThrow({
+      where: { accountCode: linkedCode },
+    });
+    expect(stillIneligible.portalEligible).toBe(false);
+
+    const document = reference("V");
+    const ongoing = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: companyAId,
+        autopartCustomerCode: accountA,
+        documentType: "INVOICE",
+        documentReference: document,
+        goodsNet: "21.00",
+        source: "ONGOING_504",
+        has504: true,
+      },
+    });
+    await prisma.autopartSalesLine.create({
+      data: {
+        companyId: companyAId,
+        documentId: ongoing.id,
+        autopartCustomerCode: accountA,
+        documentType: "INVOICE",
+        documentReference: document,
+        lineNumber: 1,
+        sku,
+        units: "3",
+        salesNet: "21.00",
+        source: "ONGOING_TRM21QC",
+      },
+    });
+    for (const account of [storedCode, linkedCode]) {
+      const imported = await confirmAutopartTrm21qcImport(adminId, {
+        text: trm([{ account, document, qty: "6", sales: "60.00" }]),
+        filename: `TRM21QC-${account}.csv`,
+        source: "MANUAL",
+      });
+      expect((imported.diagnostics as { attentionRequired?: boolean }).attentionRequired).toBe(true);
+    }
+    const kept = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { id: ongoing.id },
+      include: { lines: true },
+    });
+    expect(kept.companyId).toBe(companyAId);
+    expect(kept.autopartCustomerCode).toBe(accountA);
+    expect(kept.goodsNet?.toString()).toBe("21");
+    expect(kept.lines).toHaveLength(1);
+    expect(Number(kept.lines[0]?.units)).toBe(3);
+    expect(kept.lines[0]?.companyId).toBe(companyAId);
+  });
+
+  it("reconciles 504 and TRM21QC for the same verified customer and leaves the other company unchanged", async () => {
+    const document = reference("R");
+    const historic = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: companyBId,
+        autopartCustomerCode: accountB,
+        documentType: "INVOICE",
+        documentReference: document,
+        goodsNet: "40.00",
+        source: "SLRB",
+      },
+    });
+    await prisma.autopartSalesLine.create({
+      data: {
+        companyId: companyBId,
+        documentId: historic.id,
+        autopartCustomerCode: accountB,
+        documentType: "INVOICE",
+        documentReference: document,
+        lineNumber: 1,
+        sku,
+        units: "4",
+        salesNet: "40.00",
+        source: "561L",
+      },
+    });
+    const orderNumber = `AB-${String(Date.now())}`;
+    const order = await prisma.order.create({
+      data: {
+        orderNumber,
+        companyId: companyAId,
+        status: "CONFIRMED",
+        subtotal: 16,
+        vatTotal: 3.2,
+        deliveryTotal: 0,
+        grandTotal: 19.2,
+        placedAt: new Date(),
+        autopartCustomerCodeSnapshot: accountA,
+        autopartAccountLinked: true,
+        autopartExportStatus: "EXPORTED",
+        deliveryAddress: { line1: "1 High Street", town: "Leeds", postcode: "LS1 1AA", country: "GB" },
+        contactSnapshot: { name: "Alex Buyer", email: `buyer-${stamp}@example.test`, phone: "01130000000" },
+      },
+    });
+    orderIds.push(order.id);
+    const feed = await confirmAutopart504Import(adminId, {
+      text: `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
+ACCOUNT,${document},14/10/2026,13:05,IDENTITY A,16.00,3.20,19.20,WR,${orderNumber}
+`,
+      filename: "504-same-customer.csv",
+      source: "MANUAL",
+    });
+    expect(feed.status).toBe("COMMITTED");
+    const lines = await confirmAutopartTrm21qcImport(adminId, {
+      text: trm([{ account: aliasA, document, qty: "2", sales: "16.00" }]),
+      filename: "TRM21QC-same-customer.csv",
+      source: "MANUAL",
+    });
+    expect(lines.status).toBe("COMMITTED");
+    expect((lines.diagnostics as { attentionRequired?: boolean }).attentionRequired).toBe(false);
+    const reconciled = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { documentReference: document, companyId: companyAId, has504: true },
+      include: { lines: true },
+    });
+    expect(reconciled.hasTrm21qc).toBe(true);
+    expect(Number(reconciled.goodsNet)).toBe(16);
+    expect(reconciled.lines).toHaveLength(1);
+    expect(reconciled.lines[0]?.companyId).toBe(companyAId);
+    expect(Number(reconciled.lines[0]?.units)).toBe(2);
+    const other = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { id: historic.id },
+      include: { lines: true },
+    });
+    expect(other.companyId).toBe(companyBId);
+    expect(other.goodsNet?.toString()).toBe("40");
+    expect(other.has504).toBe(false);
+    expect(other.lines).toHaveLength(1);
+    expect(other.lines[0]?.source).toBe("561L");
+    expect(Number(other.lines[0]?.units)).toBe(4);
   });
 });
