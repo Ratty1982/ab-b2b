@@ -405,7 +405,7 @@ function PerformancePanel({ report }: { report: Performance }) {
         Linked credit documents: {report.credits.linkedCreditDocuments} (£{report.credits.linkedCreditSubtotalExVat} ex VAT). {report.credits.note}
       </p>
       {report.months.length > 0 ? (
-        <table className="w-full text-left text-[13px]">
+        <div className="min-w-0 overflow-x-auto"><table className="w-full min-w-[32rem] text-left text-[13px]">
           <thead>
             <tr className="text-[11px] uppercase text-steel">
               <th className="py-1">Month</th>
@@ -424,10 +424,10 @@ function PerformancePanel({ report }: { report: Performance }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : null}
       {report.customers.items.length > 0 ? (
-        <table className="w-full text-left text-[13px]">
+        <div className="min-w-0 overflow-x-auto"><table className="w-full min-w-[32rem] text-left text-[13px]">
           <thead>
             <tr className="text-[11px] uppercase text-steel">
               <th className="py-1">Customer</th>
@@ -446,10 +446,10 @@ function PerformancePanel({ report }: { report: Performance }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : null}
       {report.orders.items.length > 0 ? (
-        <table className="w-full text-left text-[13px]">
+        <div className="min-w-0 overflow-x-auto"><table className="w-full min-w-[32rem] text-left text-[13px]">
           <thead>
             <tr className="text-[11px] uppercase text-steel">
               <th className="py-1">Order</th>
@@ -472,7 +472,7 @@ function PerformancePanel({ report }: { report: Performance }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : null}
     </section>
   );
