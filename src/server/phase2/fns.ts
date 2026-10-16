@@ -3737,6 +3737,17 @@ export const getOngoingSalesImportRunDetailFn = createServerFn({ method: "GET" }
     }
   });
 
+export const readOngoingSalesSafetyReportFn = createServerFn({ method: "GET" })
+  .handler(async () => {
+    try {
+      const userId = await requireUserId();
+      const safety = await import("@/server/companies/autopart-ongoing-sales-safety");
+      return { ok: true as const, data: await safety.readOngoingSalesSafetyReport(userId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listOngoingSalesImportDiagnosticsFn = createServerFn({ method: "GET" })
   .inputValidator(
     (data: unknown) =>

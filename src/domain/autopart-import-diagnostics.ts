@@ -33,6 +33,8 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "MALFORMED_ROW",
   "PROTECTED_ONGOING_LINE",
   "PROTECTED_ONGOING_DOCUMENT",
+  "ONGOING_DOCUMENT_CONFLICT",
+  "HISTORIC_COMPANY_REFERENCE",
 ] as const;
 
 export type AutopartImportReasonCode = (typeof AUTOPART_IMPORT_REASON_CODES)[number];
@@ -60,6 +62,10 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
     "This line is an ongoing TRM21QC record. The historical import left its quantity, net, source and provenance unchanged.",
   PROTECTED_ONGOING_DOCUMENT:
     "This document header belongs to an ongoing 504 or TRM21QC feed. The historical import left its goods, dates, source and provenance unchanged.",
+  ONGOING_DOCUMENT_CONFLICT:
+    "This document reference is already an ongoing 504 or TRM21QC document. Historical rows were not changed and the other customer's totals were not attached.",
+  HISTORIC_COMPANY_REFERENCE:
+    "This company already has a historical document with the same type and reference. The ongoing document was kept separate.",
 };
 
 export type AutopartImportDiagnosticDraft = {

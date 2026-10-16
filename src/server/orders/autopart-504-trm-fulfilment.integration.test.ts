@@ -289,10 +289,28 @@ describe("504 + TRM fulfilment modes", () => {
     expect(view?.lines[0]?.despatchedQty).toBe(6);
     expect(view?.lines[0]?.remainingQty).toBe(4);
 
+    const eventsBeforeReplay = await prisma.orderFulfilmentEvent.count({
+      where: { orderId: order.id, source: "AUTOPART_504_TRM" },
+    });
+    const emailsBeforeReplay = await prisma.transactionalEmail.count({
+      where: { entityId: order.id, purpose: { in: ["ORDER_DESPATCHED", "ORDER_PART_DESPATCHED"] } },
+    });
+    const invoicesBeforeReplay = await prisma.invoice.count({ where: { orderId: order.id } });
     const replay = await run504TrmFulfilmentAfterImport(adminId);
     expect(replay.ordersMutated).toBe(0);
+    expect(replay.emailsQueued).toBe(0);
     const again = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
     expect(again.despatchedQty).toBe(6);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: order.id, source: "AUTOPART_504_TRM" } })).toBe(
+      eventsBeforeReplay,
+    );
+    expect(
+      await prisma.transactionalEmail.count({
+        where: { entityId: order.id, purpose: { in: ["ORDER_DESPATCHED", "ORDER_PART_DESPATCHED"] } },
+      }),
+    ).toBe(emailsBeforeReplay);
+    expect(await prisma.invoice.count({ where: { orderId: order.id } })).toBe(invoicesBeforeReplay);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(0);
 
     await expect(
       updateAutopart504cFeedSettings(adminId, { enabled: false }),

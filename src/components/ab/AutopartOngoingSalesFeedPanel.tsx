@@ -15,6 +15,7 @@ import {
   getOngoingSalesImportRunDetailFn,
   listOngoingSalesImportDiagnosticsFn,
   listOngoingSalesImportRunsFn,
+  readOngoingSalesSafetyReportFn,
   pollOngoingSalesMailboxFn,
   preview504TrmFulfilmentFn,
   previewAutopart504Fn,
@@ -54,6 +55,10 @@ type FulfilmentSettings = Extract<
 >["data"];
 type FulfilmentPreview = Extract<
   Awaited<ReturnType<typeof preview504TrmFulfilmentFn>>,
+  { ok: true }
+>["data"];
+type SafetyReport = Extract<
+  Awaited<ReturnType<typeof readOngoingSalesSafetyReportFn>>,
   { ok: true }
 >["data"];
 
@@ -118,6 +123,7 @@ export function AutopartOngoingSalesFeedPanel() {
   const [fulfilmentModeDraft, setFulfilmentModeDraft] = useState<"OFF" | "PREVIEW" | "ACTIVE">("OFF");
   const [fulfilmentFromDraft, setFulfilmentFromDraft] = useState("");
   const [fulfilmentPreview, setFulfilmentPreview] = useState<FulfilmentPreview | null>(null);
+  const [safetyReport, setSafetyReport] = useState<SafetyReport | null>(null);
 
   const load = useCallback(async () => {
     const [s, history, fulfilmentSettings] = await Promise.all([
@@ -609,6 +615,63 @@ export function AutopartOngoingSalesFeedPanel() {
             Confirm TRM21QC import
           </button>
         </div>
+      </div>
+
+      <div className="rounded-lg border border-border p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-[12px] font-semibold uppercase tracking-wide text-steel">
+            Document identity and despatch
+          </h3>
+          <button
+            type="button"
+            className={buttonClass()}
+            disabled={!!busy}
+            onClick={() =>
+              void (async () => {
+                setBusy("safety");
+                const report = await readOngoingSalesSafetyReportFn();
+                setBusy(null);
+                if (!report.ok) {
+                  toast.error(report.error);
+                  return;
+                }
+                setSafetyReport(report.data);
+              })()
+            }
+          >
+            Review collisions
+          </button>
+        </div>
+        <p className="mt-2 text-[12px] text-steel">
+          Read-only. Historical documents that share a reference stay separate. This does not replay a file, despatch an order, or send email.
+        </p>
+        {safetyReport ? (
+          <div className="mt-3 space-y-2 text-[12px]">
+            <p>
+              {safetyReport.collisions.length} ongoing/historical collision
+              {safetyReport.collisions.length === 1 ? "" : "s"}. {safetyReport.sharedHistoricalReferences} historical
+              references are shared by more than one company and are not treated as duplicates.
+            </p>
+            <p>
+              {safetyReport.failedImports.length} failed import
+              {safetyReport.failedImports.length === 1 ? "" : "s"} with a document identity error.{" "}
+              {safetyReport.undispatchedOrders.length} order
+              {safetyReport.undispatchedOrders.length === 1 ? "" : "s"} still have invoicing evidence without a full despatch.
+            </p>
+            <ul className="space-y-1">
+              {safetyReport.recovery.steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ul>
+            {safetyReport.undispatchedOrders.slice(0, 20).map((order) => (
+              <p key={order.orderId}>
+                <span className="font-semibold">{order.orderNumber}</span> {order.status}. Invoices{" "}
+                {order.invoiceReferences.join(", ") || "—"}. Documents {order.documentReferences.join(", ") || "—"}.{" "}
+                {order.blockingReasons.map((reason) => reason.detail).join(" ")}
+              </p>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-border">
