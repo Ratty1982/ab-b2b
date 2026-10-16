@@ -115,17 +115,45 @@ function finishReportDate(
   };
 }
 
+export type Weekend216vDateReviewDetail = {
+  filename: string | null;
+  observedDate: string;
+  weekday: string;
+  becameCurrent: boolean;
+  detail: string;
+};
+
 /**
- * Review copy for a weekend-dated 216V file whose reporting business day
- * cannot be established. The observed date is left unchanged.
+ * One date-review sentence. Recorded dates are not rewritten.
+ * Filename and schedule notes belong in `weekend216vImportDetail`.
+ */
+export function concise216vWeekendDateWarning(input: {
+  count: number;
+  weekdaySnapshotRemains: boolean;
+  observedDate?: string | null;
+}): string {
+  if (input.count <= 0) return "";
+  const dated =
+    input.count === 1 && input.observedDate && isRealIsoDate(input.observedDate)
+      ? ` (${civilWeekdayName(input.observedDate)} ${input.observedDate})`
+      : "";
+  if (!input.weekdaySnapshotRemains) {
+    return `Review the report date${dated}. The only snapshot is dated on a weekend. Outstanding lines are kept.`;
+  }
+  const files = input.count === 1 ? "A weekend-dated file is on file." : "Weekend-dated files are on file.";
+  return `Review the report date${dated}. ${files} The weekday snapshot stays current.`;
+}
+
+/**
+ * Detail line for a weekend-dated file. The observed date is left unchanged.
  */
 export function describe216vWeekendReportReview(input: {
   filename?: string | null;
   observedDate: string;
 }): string {
-  const name = input.filename?.trim() || "This 216V file";
+  const name = input.filename?.trim() || "This file";
   const weekday = civilWeekdayName(input.observedDate);
-  return `${name} carries ${weekday} ${input.observedDate}. Scheduled 216V reports arrive Monday to Friday at about 18:15 Europe/London. The file contents have no reporting date, so this calendar date is kept and flagged for review.`;
+  return `${name} is dated ${weekday} ${input.observedDate}. Scheduled reports arrive Monday to Friday. This file has no reporting date, so the calendar date is stored as received.`;
 }
 
 export function weekend216vImportNotice(input: {
@@ -133,11 +161,37 @@ export function weekend216vImportNotice(input: {
   observedDate: string;
   becameCurrent: boolean;
 }): string {
+  return concise216vWeekendDateWarning({
+    count: 1,
+    weekdaySnapshotRemains: !input.becameCurrent,
+    observedDate: input.observedDate,
+  });
+}
+
+export function weekend216vImportDetail(input: {
+  filename?: string | null;
+  observedDate: string;
+  becameCurrent: boolean;
+}): string {
   const review = describe216vWeekendReportReview(input);
   const position = input.becameCurrent
-    ? "It stays visible because no Monday–Friday snapshot is on file."
+    ? "No Monday–Friday snapshot is on file."
     : "The latest Monday–Friday snapshot stays in place.";
   return `${review} ${position}`;
+}
+
+export function weekend216vReviewDetail(input: {
+  filename?: string | null;
+  observedDate: string;
+  becameCurrent: boolean;
+}): Weekend216vDateReviewDetail {
+  return {
+    filename: input.filename?.trim() || null,
+    observedDate: input.observedDate,
+    weekday: civilWeekdayName(input.observedDate),
+    becameCurrent: input.becameCurrent,
+    detail: weekend216vImportDetail(input),
+  };
 }
 
 function isoFromBusinessDate(value: Date | string): string | null {
