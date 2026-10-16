@@ -231,10 +231,15 @@ async function loadCandidateOrders(orderIds?: string[]) {
 
   const docs = await prisma.autopartSalesDocument.findMany({
     where: {
-      OR: [
-        { abOrderId: { not: null } },
-        { abOrderNumber: { startsWith: "AB-" } },
-        { customerOrderNumber: { startsWith: "AB-" } },
+      AND: [
+        { OR: [{ has504: true }, { hasTrm21qc: true }] },
+        {
+          OR: [
+            { abOrderId: { not: null } },
+            { abOrderNumber: { startsWith: "AB-" } },
+            { customerOrderNumber: { startsWith: "AB-" } },
+          ],
+        },
       ],
     },
     include: {
@@ -525,7 +530,7 @@ async function applyEvaluation(
       }
     }
 
-    if (evaluation.canApply) {
+    if (evaluation.canApply && !alreadySame) {
       const kind = evaluation.conceptually === "DISPATCHED" ? "DESPATCHED" : "PART_DESPATCHED";
       await recordFulfilmentEvent(tx, {
         orderId: evaluation.orderId,

@@ -140,19 +140,21 @@ async function persistEmailReceiptIfFullyHandled(input: {
     .catch(() => undefined);
 }
 
-async function findCommittedContentDuplicate(input: {
+async function findHandledContent(input: {
   contentHash: string;
   detectedType: "ONGOING_504" | "TRM21QC";
-}): Promise<boolean> {
+}): Promise<"committed" | "failed" | null> {
   const prior = await prisma.autopartCustomerImportRun.findFirst({
     where: {
       fileHash: input.contentHash,
       type: input.detectedType === "ONGOING_504" ? "ONGOING_504" : "ONGOING_TRM21QC",
-      status: "COMMITTED",
+      status: { in: ["COMMITTED", "FAILED"] },
     },
-    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    select: { status: true },
   });
-  return Boolean(prior);
+  if (!prior) return null;
+  return prior.status === "FAILED" ? "failed" : "committed";
 }
 
 export async function processOngoingSalesEmailBatch(input: {
@@ -227,11 +229,11 @@ export async function processOngoingSalesEmailBatch(input: {
 
       const contentHash = ongoingSalesReportContentHash(text);
       const contentKey = `${detected}:${contentHash}`;
-      const alreadyImported =
-        seenContentHashes.has(contentKey) ||
-        (await findCommittedContentDuplicate({ contentHash, detectedType: detected }));
+      const handled = seenContentHashes.has(contentKey)
+        ? "committed"
+        : await findHandledContent({ contentHash, detectedType: detected });
 
-      if (alreadyImported) {
+      if (handled === "committed") {
         result.duplicatesIgnored += 1;
         handledCandidates += 1;
         result.attachments.push({ ...baseDiag, result: "duplicate", skipReason: null });
@@ -244,6 +246,15 @@ export async function processOngoingSalesEmailBatch(input: {
         });
         // Mailbox audit only — never used as the import-skip identity.
         await persistAttachmentReceipt({ email, filename: att.filename, consumed: true });
+        continue;
+      }
+      if (handled === "failed") {
+        result.attachments.push({
+          ...baseDiag,
+          result: "skipped",
+          skipReason:
+            "This file already failed and was not imported again. Re-upload it after the problem is fixed. Mailbox polling will not create another failure run.",
+        });
         continue;
       }
 

@@ -401,7 +401,7 @@ ${account},INV,${plainRef},15 Oct 26,12.00,0.00,12.00,12.00
     expect(kept.importRunId).toBe(runId);
   });
 
-  it("keeps 504 goods when a later historical file repeats the document", async () => {
+  it("keeps historical goods when an unresolved 504 repeats the document reference", async () => {
     const reference = `GDS${String(stamp).slice(-6)}`;
     rememberReference(reference);
     const sku = `GDS-${String(stamp).slice(-5)}`;
@@ -417,16 +417,31 @@ ${account},INV,${plainRef},15 Oct 26,12.00,0.00,12.00,12.00
       filename561l: "561L-GOODS.CSV",
       filenameSlrb: "SLRB-GOODS.CSV",
     });
+    const before = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { companyId, documentReference: reference },
+      include: { lines: true },
+    });
     await confirmAutopart504Import(adminId, {
       text: report504(reference, "80.00"),
       filename: "504-goods.csv",
       source: "MANUAL",
     });
-    const protectedHeader = await prisma.autopartSalesDocument.findFirstOrThrow({
-      where: { companyId, documentReference: reference },
+    const historic = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { id: before.id },
+      include: { lines: true },
     });
-    expect(Number(protectedHeader.goodsNet)).toBe(80);
-    expect(protectedHeader.has504).toBe(true);
+    expect(Number(historic.goodsNet)).toBe(10);
+    expect(historic.has504).toBe(false);
+    expect(historic.companyId).toBe(companyId);
+    expect(historic.autopartCustomerCode).toBe(before.autopartCustomerCode);
+    expect(Number(historic.lines[0]?.units)).toBe(1);
+    const ongoing = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { documentReference: reference, has504: true },
+    });
+    expect(ongoing.id).not.toBe(before.id);
+    expect(ongoing.companyId).toBeNull();
+    expect(Number(ongoing.goodsNet)).toBe(80);
+    expect(ongoing.customerOrderNumber).toBe("FBA-1");
 
     await confirmAutopartHistoryImport(adminId, {
       companyId,
@@ -440,19 +455,18 @@ ${account},INV,${plainRef},15 Oct 26,12.00,0.00,12.00,12.00
       filename561l: "561L-GOODS-2.CSV",
       filenameSlrb: "SLRB-GOODS-2.CSV",
     });
-    const after = await prisma.autopartSalesDocument.findFirstOrThrow({
-      where: { id: protectedHeader.id },
+    const afterHistoric = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { id: before.id },
       include: { lines: true },
     });
-    expect(Number(after.goodsNet)).toBe(80);
-    expect(after.vat?.toString()).toBe(protectedHeader.vat?.toString());
-    expect(after.grossTotal?.toString()).toBe(protectedHeader.grossTotal?.toString());
-    expect(after.source).toBe(protectedHeader.source);
-    expect(after.importRunId).toBe(protectedHeader.importRunId);
-    expect(after.has504).toBe(true);
-    expect(after.customerOrderNumber).toBe("FBA-1");
-    expect(Number(after.lines[0]?.units)).toBe(6);
-    expect(after.lines[0]?.source).toBe("561L");
+    expect(afterHistoric.companyId).toBe(companyId);
+    expect(Number(afterHistoric.lines[0]?.units)).toBe(6);
+    expect(afterHistoric.lines[0]?.source).toBe("561L");
+    const afterOngoing = await prisma.autopartSalesDocument.findFirstOrThrow({ where: { id: ongoing.id } });
+    expect(afterOngoing.companyId).toBeNull();
+    expect(Number(afterOngoing.goodsNet)).toBe(80);
+    expect(afterOngoing.has504).toBe(true);
+    expect(afterOngoing.customerOrderNumber).toBe("FBA-1");
   });
 
   it("lets another company import the same invoice reference", async () => {

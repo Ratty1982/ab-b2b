@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeCreditsHandling,
+  describeUndispatchedOrder,
   evaluateOrder504TrmFulfilment,
   isAfterFulfilmentFrom,
   matchAbOrderNumber,
@@ -448,5 +449,120 @@ describe("cumulative fulfilment", () => {
     });
     expect(result.documents[0]?.status).toBe("SKIPPED_BEFORE_FROM");
     expect(result.canApply).toBe(false);
+  });
+});
+
+describe("undispatched invoiced orders", () => {
+  it("names the blocker and does not treat an invoice reference as despatch", () => {
+    const waiting = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "CONFIRMED",
+      items: [item("a", "A", 10)],
+      fulfilmentFrom: from,
+      documents: [
+        invoiceDoc({
+          ref: "SS1",
+          order: "AB-100001",
+          goods: "10.00",
+          hasTrm: false,
+          lines: [],
+        }),
+      ],
+    });
+    expect(describeUndispatchedOrder({ invoiceReferences: ["SS1"], evaluation: waiting }).map((row) => row.code)).toContain(
+      "MISSING_TRM_LINES",
+    );
+    expect(waiting.nextStatus).toBeNull();
+
+    const partial = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "CONFIRMED",
+      items: [item("a", "A", 10)],
+      fulfilmentFrom: from,
+      documents: [
+        invoiceDoc({
+          ref: "SS1",
+          order: "AB-100001",
+          goods: "4.00",
+          lines: [{ sku: "A", units: 4, salesNet: "4.00" }],
+        }),
+        invoiceDoc({
+          ref: "SS2",
+          order: "AB-100001",
+          goods: "6.00",
+          lines: [{ sku: "A", units: 6, salesNet: "6.00" }],
+        }),
+      ],
+    });
+    expect(partial.conceptually).toBe("DISPATCHED");
+    expect(partial.documents.filter((doc) => doc.includedInFulfilment).map((doc) => doc.documentReference)).toEqual([
+      "SS1",
+      "SS2",
+    ]);
+    expect(describeUndispatchedOrder({ invoiceReferences: ["SS1", "SS2"], evaluation: partial }).map((row) => row.code)).toContain(
+      "READY_FOR_FULFILMENT_REVIEW",
+    );
+  });
+
+  it("classifies a financial mismatch, a bad order reference, and a date outside the window", () => {
+    const mismatch = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "PICKING",
+      items: [item("a", "A", 2)],
+      fulfilmentFrom: from,
+      documents: [
+        invoiceDoc({
+          ref: "SS9",
+          order: "AB-100001",
+          goods: "50.00",
+          lines: [{ sku: "A", units: 2, salesNet: "10.00" }],
+        }),
+      ],
+    });
+    expect(describeUndispatchedOrder({ invoiceReferences: ["SS9"], evaluation: mismatch }).map((row) => row.code)).toContain(
+      "FINANCIAL_DISCREPANCY",
+    );
+
+    const wrongRef = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "CONFIRMED",
+      items: [item("a", "A", 2)],
+      fulfilmentFrom: from,
+      documents: [
+        invoiceDoc({
+          ref: "SS8",
+          order: "PO-44",
+          goods: "10.00",
+          lines: [{ sku: "A", units: 2, salesNet: "10.00" }],
+        }),
+      ],
+    });
+    expect(describeUndispatchedOrder({ invoiceReferences: [], evaluation: wrongRef }).map((row) => row.code)).toContain(
+      "MISSING_AB_ORDER_REFERENCE",
+    );
+
+    const early = evaluateOrder504TrmFulfilment({
+      orderId: "o1",
+      orderNumber: "AB-100001",
+      orderStatus: "PARTIALLY_DESPATCHED",
+      items: [item("a", "A", 2)],
+      fulfilmentFrom: from,
+      documents: [
+        invoiceDoc({
+          ref: "SS7",
+          order: "AB-100001",
+          goods: "10.00",
+          date: new Date("2026-09-01T12:00:00.000Z"),
+          lines: [{ sku: "A", units: 2, salesNet: "10.00" }],
+        }),
+      ],
+    });
+    expect(describeUndispatchedOrder({ invoiceReferences: ["SS7"], evaluation: early }).map((row) => row.code)).toContain(
+      "OUTSIDE_FULFILMENT_WINDOW",
+    );
   });
 });

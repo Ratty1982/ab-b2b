@@ -450,3 +450,62 @@ export function describeCreditsHandling(): string {
     "Credit documents are recorded as SKIPPED_CREDIT for fulfilment and never reverse OrderItem.despatchedQty.",
   ].join(" ");
 }
+
+export const UNDISPATCHED_BLOCKING_REASONS = [
+  "MISSING_TRM_LINES",
+  "MISSING_504_HEADER",
+  "MISSING_AB_ORDER_REFERENCE",
+  "INVOICE_CREDIT_CONFLICT",
+  "SKU_OR_QUANTITY_MISMATCH",
+  "FINANCIAL_DISCREPANCY",
+  "OUTSIDE_FULFILMENT_WINDOW",
+  "PARTIAL_QUANTITY_REMAINING",
+  "READY_FOR_FULFILMENT_REVIEW",
+] as const;
+
+export type UndispatchedBlockingReason = (typeof UNDISPATCHED_BLOCKING_REASONS)[number];
+
+const BLOCKING_DETAIL: Record<UndispatchedBlockingReason, string> = {
+  MISSING_TRM_LINES: "Missing TRM21QC lines, including lines lost when an import failed.",
+  MISSING_504_HEADER: "Missing 504 header.",
+  MISSING_AB_ORDER_REFERENCE: "Incorrect or missing AB order reference.",
+  INVOICE_CREDIT_CONFLICT: "Invoice and credit classification left no positive invoice quantity.",
+  SKU_OR_QUANTITY_MISMATCH: "SKU or quantity does not match the order.",
+  FINANCIAL_DISCREPANCY: "504 goods and TRM21QC lines do not reconcile.",
+  OUTSIDE_FULFILMENT_WINDOW: "Document date is outside the configured fulfilment window.",
+  PARTIAL_QUANTITY_REMAINING: "Invoiced quantity does not cover the whole order.",
+  READY_FOR_FULFILMENT_REVIEW: "Matched evidence can be re-evaluated. Invoice presence alone does not despatch the order.",
+};
+
+/**
+ * Explains why an order with invoicing evidence is still not fully despatched.
+ * It does not change order status.
+ */
+export function describeUndispatchedOrder(input: {
+  invoiceReferences: readonly string[];
+  evaluation: OrderFulfilmentEvaluation;
+}): Array<{ code: UndispatchedBlockingReason; detail: string }> {
+  const reasons: UndispatchedBlockingReason[] = [];
+  const docs = input.evaluation.documents;
+  const push = (code: UndispatchedBlockingReason) => {
+    if (!reasons.includes(code)) reasons.push(code);
+  };
+
+  if (input.invoiceReferences.length > 0 && docs.length === 0) push("MISSING_TRM_LINES");
+  if (docs.some((doc) => doc.status === "WAITING_FOR_TRM")) push("MISSING_TRM_LINES");
+  if (docs.some((doc) => doc.status === "WAITING_FOR_504")) push("MISSING_504_HEADER");
+  if (docs.some((doc) => doc.status === "NOT_AB_ORDER")) push("MISSING_AB_ORDER_REFERENCE");
+  if (
+    docs.some((doc) => doc.status === "SKIPPED_CREDIT") &&
+    !docs.some((doc) => doc.includedInFulfilment)
+  ) {
+    push("INVOICE_CREDIT_CONFLICT");
+  }
+  if (input.evaluation.lineMatchReview) push("SKU_OR_QUANTITY_MISMATCH");
+  if (input.evaluation.financialReview) push("FINANCIAL_DISCREPANCY");
+  if (docs.some((doc) => doc.status === "SKIPPED_BEFORE_FROM")) push("OUTSIDE_FULFILMENT_WINDOW");
+  if (input.evaluation.conceptually === "PARTIALLY_DESPATCHED") push("PARTIAL_QUANTITY_REMAINING");
+  if (input.evaluation.canApply && input.evaluation.nextStatus) push("READY_FOR_FULFILMENT_REVIEW");
+
+  return reasons.map((code) => ({ code, detail: BLOCKING_DETAIL[code] }));
+}

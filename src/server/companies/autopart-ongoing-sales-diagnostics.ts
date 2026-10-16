@@ -15,6 +15,7 @@ import {
   type AutopartImportDiagnosticDraft,
   type AutopartImportDiagnosticStatus,
 } from "@/domain/autopart-import-diagnostics";
+import { importRunNeedsAttention } from "@/domain/autopart-ongoing-import-attention";
 
 async function requireOngoingSalesAdmin(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
@@ -207,6 +208,8 @@ export async function getOngoingSalesImportRunDetail(actorUserId: string, runId:
       warnings: warningCount,
       errors: byStatus["ERROR"] ?? 0,
     },
+    attentionRequired: importRunNeedsAttention(run.diagnostics, run.issues),
+    attentionReason: typeof diagJson["attentionReason"] === "string" ? diagJson["attentionReason"] : null,
   };
 }
 
