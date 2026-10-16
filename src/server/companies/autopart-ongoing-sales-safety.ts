@@ -2,6 +2,7 @@
  * Read-only diagnostics for ongoing 504/TRM21QC document identity and undispatched orders.
  * Nothing here writes documents, orders, stock, or email.
  */
+import type { OrderStatus } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import {
   describeUndispatchedOrder,
@@ -10,6 +11,11 @@ import {
   type FulfilmentDocumentInput,
 } from "@/domain/autopart-504-trm-fulfilment";
 import { isAuthoritativeOngoingDocument } from "@/domain/autopart-ongoing-document-match";
+import { importRunNeedsAttention } from "@/domain/autopart-ongoing-import-attention";
+import {
+  describeSafetyReportCoverage,
+  ONGOING_SAFETY_SAMPLE_LIMITS,
+} from "@/domain/autopart-ongoing-safety-report";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants } from "@/server/rbac/access";
 import { read504TrmFulfilmentSettings } from "@/server/orders/autopart-504-trm-fulfilment";
@@ -18,7 +24,8 @@ const RECOVERY_STEPS = [
   "Re-import the failed TRM21QC file, including TRM21QC_20261014.csv, after this matching fix. The importer updates the ongoing document for that document type and reference.",
   "Historical documents that share a reference across companies stay unchanged. They are not duplicates and their totals are not overwritten.",
   "A document already owned by another customer is reported and skipped. Its financial rows are not moved.",
-  "A file that failed part-way through can be replayed. Documents already saved match the ongoing identity and are not inserted again.",
+  "A committed import that skipped document conflicts is marked Needs attention. It is not a complete success. Re-upload that file after the customer identity is resolved. Rows already saved are not inserted again.",
+  "Mailbox polling does not create another run for a file that already committed or already failed. It does not send customer email or mark orders despatched.",
   "After the replay is verified, preview 504/TRM fulfilment. Apply it only when the preview is accepted. An invoice reference alone does not despatch an order.",
   "A repeated fulfilment with the same fingerprint does not create another fulfilment event, invoice, stock movement, or customer email.",
 ] as const;
@@ -44,7 +51,21 @@ function asNumber(value: number | bigint): number {
 
 export async function readOngoingSalesSafetyReport(actorUserId: string) {
   await requireOngoingSalesAdmin(actorUserId);
-  const [collisionRows, sharedHistorical, failedRuns, settings] = await Promise.all([
+  const [collisionTotalRows, collisionRows, sharedHistorical, attentionTotalRows, attentionRuns, settings] =
+    await Promise.all([
+    prisma.$queryRaw<Array<{ total: number }>>`
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT 1
+        FROM "AutopartSalesDocument"
+        GROUP BY "documentReference", "documentType"
+        HAVING COUNT(*) > 1
+           AND COUNT(*) FILTER (
+             WHERE "has504" OR "hasTrm21qc"
+                OR "source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+           ) > 0
+      ) groups
+    `,
     prisma.$queryRaw<CollisionRow[]>`
       SELECT "documentReference",
              "documentType"::text AS "documentType",
@@ -66,7 +87,7 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
               OR "source" IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
          ) > 0
       ORDER BY "documentReference"
-      LIMIT 100
+      LIMIT ${ONGOING_SAFETY_SAMPLE_LIMITS.collisions}
     `,
     prisma.$queryRaw<Array<{ sharedReferences: number }>>`
       SELECT COUNT(*)::int AS "sharedReferences"
@@ -81,12 +102,55 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
         HAVING COUNT(DISTINCT "companyId") > 1
       ) shared
     `,
-    prisma.autopartCustomerImportRun.findMany({
-      where: { status: "FAILED", type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
-      orderBy: { createdAt: "desc" },
-      take: 40,
-      select: { id: true, type: true, filename: true, createdAt: true, issues: true },
-    }),
+    prisma.$queryRaw<Array<{ total: number }>>`
+      SELECT COUNT(*)::int AS total
+      FROM "AutopartCustomerImportRun"
+      WHERE "type"::text IN ('ONGOING_504', 'ONGOING_TRM21QC')
+        AND (
+          "status"::text = 'FAILED'
+          OR (
+            "status"::text = 'COMMITTED'
+            AND (
+              COALESCE("diagnostics"->>'attentionRequired', '') = 'true'
+              OR (
+                jsonb_typeof("issues"->'conflicts') = 'array'
+                AND jsonb_array_length("issues"->'conflicts') > 0
+              )
+            )
+          )
+        )
+    `,
+    prisma.$queryRaw<
+      Array<{
+        id: string;
+        type: string;
+        filename: string | null;
+        status: string;
+        createdAt: Date;
+        issues: unknown;
+        diagnostics: unknown;
+      }>
+    >`
+      SELECT "id", "type"::text AS "type", "filename", "status"::text AS "status",
+             "createdAt", "issues", "diagnostics"
+      FROM "AutopartCustomerImportRun"
+      WHERE "type"::text IN ('ONGOING_504', 'ONGOING_TRM21QC')
+        AND (
+          "status"::text = 'FAILED'
+          OR (
+            "status"::text = 'COMMITTED'
+            AND (
+              COALESCE("diagnostics"->>'attentionRequired', '') = 'true'
+              OR (
+                jsonb_typeof("issues"->'conflicts') = 'array'
+                AND jsonb_array_length("issues"->'conflicts') > 0
+              )
+            )
+          )
+        )
+      ORDER BY "createdAt" DESC
+      LIMIT ${ONGOING_SAFETY_SAMPLE_LIMITS.attentionImports}
+    `,
     read504TrmFulfilmentSettings(),
   ]);
 
@@ -135,42 +199,83 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
     };
   });
 
-  const failedImports = failedRuns
-    .filter((run) => {
-      const text = JSON.stringify(run.issues ?? {});
-      return text.includes("Unique constraint") || text.includes("documentReference");
-    })
-    .map((run) => {
-      const issues = (run.issues ?? {}) as { error?: string; documentReference?: string | null; detail?: string };
-      return {
-        id: run.id,
-        feed: run.type === "ONGOING_504" ? "504" : "TRM21QC",
-        filename: run.filename,
-        createdAt: run.createdAt.toISOString(),
-        documentReference: issues.documentReference ?? null,
-        error: issues.error ?? "Import failed",
-        detail: issues.detail ?? null,
-      };
-    });
-
-  const ongoingDocs = await prisma.autopartSalesDocument.findMany({
-    where: {
-      AND: [
-        { OR: [{ has504: true }, { hasTrm21qc: true }] },
-        {
-          OR: [
-            { abOrderId: { not: null } },
-            { abOrderNumber: { startsWith: "AB-" } },
-            { customerOrderNumber: { startsWith: "AB-" } },
-          ],
-        },
-      ],
-    },
-    include: {
-      lines: { select: { sku: true, units: true, salesNet: true, documentType: true } },
-    },
-    take: 500,
+  const attentionImports = attentionRuns.map((run) => {
+    const issues = (run.issues ?? {}) as {
+      error?: string;
+      documentReference?: string | null;
+      detail?: string;
+      conflicts?: Array<{ documentReference?: string; detail?: string }>;
+    };
+    const needsAttention = run.status === "COMMITTED" || importRunNeedsAttention(run.diagnostics, run.issues);
+    const firstConflict = issues.conflicts?.[0];
+    return {
+      id: run.id,
+      feed: run.type === "ONGOING_504" ? "504" : "TRM21QC",
+      filename: run.filename,
+      status: run.status,
+      classification: needsAttention && run.status === "COMMITTED" ? ("NEEDS_ATTENTION" as const) : ("FAILED" as const),
+      createdAt: run.createdAt.toISOString(),
+      documentReference: issues.documentReference ?? firstConflict?.documentReference ?? null,
+      error: issues.error ?? firstConflict?.detail ?? "Import needs attention",
+      detail: issues.detail ?? firstConflict?.detail ?? null,
+    };
   });
+  const attentionTotal = asNumber(attentionTotalRows[0]?.total ?? 0);
+
+  const ongoingDocumentWhere = {
+    AND: [
+      { OR: [{ has504: true }, { hasTrm21qc: true }] },
+      {
+        OR: [
+          { abOrderId: { not: null } },
+          { abOrderNumber: { startsWith: "AB-" } },
+          { customerOrderNumber: { startsWith: "AB-" } },
+        ],
+      },
+    ],
+  };
+  const undispatchedStatuses: OrderStatus[] = ["CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED"];
+  const invoiceWhere = {
+    externalRef: { not: null },
+    order: { archivedAt: null, status: { in: undispatchedStatuses } },
+  };
+  const [ongoingDocumentTotal, invoiceTotal, candidateOrderRows, ongoingDocs, invoicedOrders] = await Promise.all([
+    prisma.autopartSalesDocument.count({ where: ongoingDocumentWhere }),
+    prisma.invoice.count({ where: invoiceWhere }),
+    prisma.$queryRaw<Array<{ total: number }>>`
+      SELECT COUNT(*)::int AS total
+      FROM "Order" o
+      WHERE o."archivedAt" IS NULL
+        AND o."status"::text IN ('CONFIRMED', 'PICKING', 'PARTIALLY_DESPATCHED')
+        AND (
+          EXISTS (
+            SELECT 1 FROM "Invoice" i
+            WHERE i."orderId" = o.id AND i."externalRef" IS NOT NULL
+          )
+          OR EXISTS (
+            SELECT 1 FROM "AutopartSalesDocument" d
+            WHERE (d."has504" OR d."hasTrm21qc")
+              AND (
+                d."abOrderId" = o.id
+                OR d."abOrderNumber" = o."orderNumber"
+                OR d."customerOrderNumber" = o."orderNumber"
+              )
+          )
+        )
+    `,
+    prisma.autopartSalesDocument.findMany({
+      where: ongoingDocumentWhere,
+      include: {
+        lines: { select: { sku: true, units: true, salesNet: true, documentType: true } },
+      },
+      take: ONGOING_SAFETY_SAMPLE_LIMITS.documents,
+    }),
+    prisma.invoice.findMany({
+      where: invoiceWhere,
+      select: { orderId: true, externalRef: true, order: { select: { orderNumber: true } } },
+      take: ONGOING_SAFETY_SAMPLE_LIMITS.invoices,
+    }),
+  ]);
   const orderIds = new Set<string>();
   const orderNumbers = new Set<string>();
   for (const document of ongoingDocs) {
@@ -178,14 +283,6 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
     const ref = parseExactAbOrderReference(document.customerOrderNumber ?? document.abOrderNumber);
     if (ref) orderNumbers.add(ref);
   }
-  const invoicedOrders = await prisma.invoice.findMany({
-    where: {
-      externalRef: { not: null },
-      order: { archivedAt: null, status: { in: ["CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED"] } },
-    },
-    select: { orderId: true, externalRef: true, order: { select: { orderNumber: true } } },
-    take: 500,
-  });
   for (const invoice of invoicedOrders) {
     if (invoice.orderId) orderIds.add(invoice.orderId);
   }
@@ -205,7 +302,7 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
       status: true,
       items: { select: { id: true, sku: true, name: true, qty: true } },
     },
-    take: 200,
+    take: ONGOING_SAFETY_SAMPLE_LIMITS.ordersInspected,
   });
 
   const undispatchedOrders = orders.map((order) => {
@@ -258,6 +355,24 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
     };
   });
 
+  const blockingOrders = undispatchedOrders.filter((order) => order.blockingReasons.length > 0);
+  const collisionTotal = asNumber(collisionTotalRows[0]?.total ?? collisions.length);
+  const candidateOrders = asNumber(candidateOrderRows[0]?.total ?? orders.length);
+  const documentsTruncated = ongoingDocumentTotal > ongoingDocs.length;
+  const invoicesTruncated = invoiceTotal > invoicedOrders.length;
+  const coverage = describeSafetyReportCoverage({
+    collisionTotal,
+    collisionShown: collisions.length,
+    attentionTotal,
+    attentionShown: attentionImports.length,
+    candidateOrders,
+    inspectedOrders: orders.length,
+    blockingInSample: blockingOrders.length,
+    blockingShown: Math.min(blockingOrders.length, ONGOING_SAFETY_SAMPLE_LIMITS.ordersShown),
+    documentsTruncated,
+    invoicesTruncated,
+  });
+
   return {
     readOnly: true as const,
     appliesChanges: false as const,
@@ -265,12 +380,34 @@ export async function readOngoingSalesSafetyReport(actorUserId: string) {
     updatesOrders: false as const,
     fulfilmentFrom: settings.fulfilmentFrom?.toISOString() ?? null,
     fulfilmentMode: settings.fulfilmentMode,
+    sampleLimits: ONGOING_SAFETY_SAMPLE_LIMITS,
+    coverageNote: coverage.note,
+    inspectedEveryCandidate: coverage.inspectedEveryCandidate,
     sharedHistoricalReferences: asNumber(sharedHistorical[0]?.sharedReferences ?? 0),
     sharedHistoricalNote:
       "Historical documents may share a reference across companies. Those rows are not duplicates and are not merged.",
-    collisions,
-    failedImports,
-    undispatchedOrders: undispatchedOrders.filter((order) => order.blockingReasons.length > 0),
+    collisions: {
+      total: collisionTotal,
+      shown: collisions,
+      limit: ONGOING_SAFETY_SAMPLE_LIMITS.collisions,
+      truncated: collisionTotal > collisions.length,
+    },
+    attentionImports: {
+      total: attentionTotal,
+      shown: attentionImports,
+      limit: ONGOING_SAFETY_SAMPLE_LIMITS.attentionImports,
+      truncated: attentionTotal > attentionImports.length,
+    },
+    undispatchedOrders: {
+      candidateTotal: candidateOrders,
+      inspected: orders.length,
+      blockingInSample: blockingOrders.length,
+      shown: blockingOrders.slice(0, ONGOING_SAFETY_SAMPLE_LIMITS.ordersShown),
+      limit: ONGOING_SAFETY_SAMPLE_LIMITS.ordersShown,
+      documentsTruncated,
+      invoicesTruncated,
+      truncated: candidateOrders > orders.length || documentsTruncated || invoicesTruncated,
+    },
     recovery: {
       dryRun: true,
       targetFile: "TRM21QC_20261014.csv",

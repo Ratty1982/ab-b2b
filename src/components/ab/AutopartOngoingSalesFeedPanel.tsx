@@ -77,11 +77,17 @@ function statusTone(enabled: boolean, configured: boolean): Tone {
   return "neutral";
 }
 
-function runStatusTone(status: string): Tone {
+function runStatusTone(status: string, attentionRequired = false): Tone {
+  if (attentionRequired) return "warn";
   if (status === "COMMITTED") return "good";
   if (status === "FAILED" || status === "BLOCKED") return "bad";
   if (status === "PROCESSING") return "warn";
   return "neutral";
+}
+
+function runStatusLabel(status: string, attentionRequired = false): string {
+  if (attentionRequired) return "Needs attention";
+  return status;
 }
 
 const DIAG_FILTERS = [
@@ -647,23 +653,30 @@ export function AutopartOngoingSalesFeedPanel() {
         </p>
         {safetyReport ? (
           <div className="mt-3 space-y-2 text-[12px]">
+            <p>{safetyReport.coverageNote}</p>
             <p>
-              {safetyReport.collisions.length} ongoing/historical collision
-              {safetyReport.collisions.length === 1 ? "" : "s"}. {safetyReport.sharedHistoricalReferences} historical
-              references are shared by more than one company and are not treated as duplicates.
+              Showing {safetyReport.collisions.shown.length} of {safetyReport.collisions.total} ongoing/historical
+              collision groups. {safetyReport.sharedHistoricalReferences} historical references are shared by more than
+              one company and are not treated as duplicates.
             </p>
             <p>
-              {safetyReport.failedImports.length} failed import
-              {safetyReport.failedImports.length === 1 ? "" : "s"} with a document identity error.{" "}
-              {safetyReport.undispatchedOrders.length} order
-              {safetyReport.undispatchedOrders.length === 1 ? "" : "s"} still have invoicing evidence without a full despatch.
+              Showing {safetyReport.attentionImports.shown.length} of {safetyReport.attentionImports.total} imports that
+              need attention. Showing {safetyReport.undispatchedOrders.shown.length} of{" "}
+              {safetyReport.undispatchedOrders.blockingInSample} blocking orders in the inspected sample.{" "}
+              {safetyReport.undispatchedOrders.candidateTotal} candidate orders were counted.
             </p>
             <ul className="space-y-1">
               {safetyReport.recovery.steps.map((step) => (
                 <li key={step}>{step}</li>
               ))}
             </ul>
-            {safetyReport.undispatchedOrders.slice(0, 20).map((order) => (
+            {safetyReport.attentionImports.shown.map((run) => (
+              <p key={run.id}>
+                <span className="font-semibold">{run.classification}</span> {run.feed} {run.filename ?? "—"}.{" "}
+                {run.documentReference ?? "—"} {run.detail ?? run.error}
+              </p>
+            ))}
+            {safetyReport.undispatchedOrders.shown.map((order) => (
               <p key={order.orderId}>
                 <span className="font-semibold">{order.orderNumber}</span> {order.status}. Invoices{" "}
                 {order.invoiceReferences.join(", ") || "—"}. Documents {order.documentReferences.join(", ") || "—"}.{" "}
@@ -700,7 +713,9 @@ export function AutopartOngoingSalesFeedPanel() {
                       : ""}
                   </span>
                   <span className="flex flex-wrap items-center gap-2">
-                    <StatusBadge tone={runStatusTone(run.status)}>{run.status}</StatusBadge>
+                    <StatusBadge tone={runStatusTone(run.status, run.attentionRequired)}>
+                      {runStatusLabel(run.status, run.attentionRequired)}
+                    </StatusBadge>
                     <span className="text-steel">
                       Inserted {run.rowsImported} · Updated {run.rowsUpdated}
                       {run.rowsUnchanged ? ` · Unchanged ${run.rowsUnchanged}` : ""}
@@ -748,7 +763,7 @@ export function AutopartOngoingSalesFeedPanel() {
           <div className="space-y-4 p-4 text-[13px]">
             <dl className="grid gap-2 sm:grid-cols-2">
               <Metric label="Feed" value={detail.feed} />
-              <Metric label="Status" value={detail.status} />
+              <Metric label="Status" value={runStatusLabel(detail.status, detail.attentionRequired)} />
               <Metric label="Source" value={detail.source.replace(/_/g, " ")} />
               <Metric
                 label="Duration"
@@ -771,6 +786,14 @@ export function AutopartOngoingSalesFeedPanel() {
             </dl>
 
             <FeedMetricsBlock detail={detail} />
+
+            {detail.attentionRequired ? (
+              <p className="rounded-md border border-bad/40 bg-bad/5 px-3 py-2 text-[12px]">
+                <span className="font-semibold">Needs attention.</span>{" "}
+                {detail.attentionReason ??
+                  "This committed import skipped document conflicts. Re-upload the file after the customer identity is resolved. Mailbox polling will not create another run for the same file."}
+              </p>
+            ) : null}
 
             {detail.aggregateNote ? (
               <p className="rounded-md border border-border bg-surface/40 px-3 py-2 text-[12px] text-steel">

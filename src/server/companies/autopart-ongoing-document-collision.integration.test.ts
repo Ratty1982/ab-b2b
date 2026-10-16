@@ -209,7 +209,13 @@ ACCOUNT,${reference},14/10/2026,13:05,COLLISION A,18.00,3.60,21.60,WR,PO-KEEP
     expect(report.readOnly).toBe(true);
     expect(report.appliesChanges).toBe(false);
     expect(report.recovery.targetFile).toBe("TRM21QC_20261014.csv");
-    expect(report.collisions.some((row) => row.documentReference === reference && row.historicalCount >= 2)).toBe(true);
+    expect(report.collisions.total).toBeGreaterThanOrEqual(report.collisions.shown.length);
+    expect(report.collisions.shown.some((row) => row.documentReference === reference && row.historicalCount >= 2)).toBe(
+      true,
+    );
+    expect(report.coverageNote).toContain("Showing");
+    expect(report.attentionImports.total).toBeGreaterThanOrEqual(report.attentionImports.shown.length);
+    expect(report.undispatchedOrders.candidateTotal).toBeGreaterThanOrEqual(report.undispatchedOrders.inspected);
     expect(report.sharedHistoricalNote).toContain("not duplicates");
   }, 120_000);
 });

@@ -35,6 +35,9 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "PROTECTED_ONGOING_DOCUMENT",
   "ONGOING_DOCUMENT_CONFLICT",
   "HISTORIC_COMPANY_REFERENCE",
+  "MIXED_CUSTOMER_DOCUMENT",
+  "MIXED_DOCUMENT_TYPE",
+  "AMBIGUOUS_CUSTOMER_ACCOUNT",
 ] as const;
 
 export type AutopartImportReasonCode = (typeof AUTOPART_IMPORT_REASON_CODES)[number];
@@ -66,6 +69,12 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
     "This document reference is already an ongoing 504 or TRM21QC document. Historical rows were not changed and the other customer's totals were not attached.",
   HISTORIC_COMPANY_REFERENCE:
     "This company already has a historical document with the same type and reference. The ongoing document was kept separate.",
+  MIXED_CUSTOMER_DOCUMENT:
+    "This document reference contains more than one customer identity. No lines were written and historical rows were not changed.",
+  MIXED_DOCUMENT_TYPE:
+    "This document reference mixes invoice and credit lines. No lines were written.",
+  AMBIGUOUS_CUSTOMER_ACCOUNT:
+    "This Autopart account is linked to more than one customer. No lines were written.",
 };
 
 export type AutopartImportDiagnosticDraft = {

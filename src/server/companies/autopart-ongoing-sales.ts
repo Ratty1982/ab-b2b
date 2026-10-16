@@ -31,6 +31,17 @@ import {
   resolveOngoingDocumentIdentity,
   type OngoingDocumentDecision,
 } from "@/domain/autopart-ongoing-document-match";
+import {
+  describeOngoingImportAttention,
+  importRunNeedsAttention,
+  type OngoingIdentityConflict,
+} from "@/domain/autopart-ongoing-import-attention";
+import {
+  classifyTrmDocumentGroup,
+  incomingLineMayReplace,
+  type TrmAccountAuthority,
+  type TrmGroupDecision,
+} from "@/domain/autopart-trm-document-group";
 import { ongoingSalesReportContentHash } from "@/domain/autopart-ongoing-sales-attachment";
 import {
   decimalStringsEqual,
@@ -77,18 +88,21 @@ function utcNoon(dateOnly: string | null): Date | null {
   return new Date(`${dateOnly}T12:00:00.000Z`);
 }
 
-async function resolveCompanyByAutopartCode(code: string): Promise<{
-  companyId: string;
+type AutopartAccountResolution = {
+  companyId: string | null;
   code: string;
-} | null> {
+  authority: TrmAccountAuthority;
+};
+
+async function resolveCompanyByAutopartCode(code: string): Promise<AutopartAccountResolution> {
   const normalised = code.trim().toUpperCase();
-  if (!normalised) return null;
+  if (!normalised) return { companyId: null, code: "", authority: "unresolved" };
   const direct = await prisma.company.findFirst({
     where: { autopartCustomerCode: { equals: normalised, mode: "insensitive" } },
     select: { id: true, autopartCustomerCode: true },
   });
   if (direct?.autopartCustomerCode) {
-    return { companyId: direct.id, code: direct.autopartCustomerCode };
+    return { companyId: direct.id, code: direct.autopartCustomerCode, authority: "verified-code" };
   }
   const alias = await prisma.autopartCustomerAccountAlias.findFirst({
     where: { alias: normalised },
@@ -98,6 +112,7 @@ async function resolveCompanyByAutopartCode(code: string): Promise<{
     return {
       companyId: alias.companyId,
       code: alias.company.autopartCustomerCode ?? normalised,
+      authority: "verified-alias",
     };
   }
   const linked = await prisma.autopartAccount.findMany({
@@ -110,13 +125,15 @@ async function resolveCompanyByAutopartCode(code: string): Promise<{
     take: 2,
   });
   const owners = new Set(linked.map((row) => row.companyId));
+  if (owners.size > 1) return { companyId: null, code: normalised, authority: "ambiguous" };
   if (owners.size === 1 && linked[0]?.companyId) {
     return {
       companyId: linked[0].companyId,
       code: linked[0].company?.autopartCustomerCode ?? normalised,
+      authority: "account-link",
     };
   }
-  return null;
+  return { companyId: null, code: normalised, authority: "unresolved" };
 }
 
 async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
@@ -436,16 +453,19 @@ export async function previewAutopartTrm21qcImport(
   const ok = parsed.rows.filter((r) => r.classification === "OK");
   const skuMap = await resolveSkuMap(ok.map((r) => r.partNumber));
   const accountCache = new Map<string, Awaited<ReturnType<typeof resolveCompanyByAutopartCode>>>();
-  async function mappedAccount(code: string) {
+  async function mappedAccount(code: string): Promise<AutopartAccountResolution> {
     const key = code.trim().toUpperCase();
-    if (!accountCache.has(key)) accountCache.set(key, await resolveCompanyByAutopartCode(key));
-    return accountCache.get(key) ?? null;
+    const cached = accountCache.get(key);
+    if (cached) return cached;
+    const resolved = await resolveCompanyByAutopartCode(key);
+    accountCache.set(key, resolved);
+    return resolved;
   }
   const accounts = [...new Set(ok.map((r) => r.customerAccount.toUpperCase()))];
   let matchedCustomers = 0;
   let unmatchedCustomers = 0;
   for (const acct of accounts) {
-    if (await mappedAccount(acct)) matchedCustomers += 1;
+    if ((await mappedAccount(acct)).companyId) matchedCustomers += 1;
     else unmatchedCustomers += 1;
   }
   let netSales = 0;
@@ -489,21 +509,17 @@ export async function previewAutopartTrm21qcImport(
   for (const r of stable) {
     const mapped = await mappedAccount(r.customerAccount);
     const inCatalogue = skuMap.has(r.partNumber.toUpperCase());
-    if (!mapped) {
-      const found =
-        (await prisma.autopartSalesLine.findFirst({
-          where: {
-            companyId: null,
-            documentType: r.kind === "CREDIT" ? "CREDIT" : "INVOICE",
-            documentReference: r.documentNumber,
-            lineNumber: r.stableLineNumber,
-          },
-          select: { id: true, units: true, salesNet: true, sku: true },
-        })) ??
-        (await prisma.autopartSalesLine.findFirst({
-          where: { documentReference: r.documentNumber, sku: r.partNumber, lineNumber: r.stableLineNumber },
-          select: { id: true, units: true, salesNet: true, sku: true },
-        }));
+    if (!mapped.companyId) {
+      const found = await prisma.autopartSalesLine.findFirst({
+        where: {
+          companyId: null,
+          documentType: r.kind === "CREDIT" ? "CREDIT" : "INVOICE",
+          documentReference: r.documentNumber,
+          lineNumber: r.stableLineNumber,
+          autopartCustomerCode: { in: [mapped.code || r.customerAccount.toUpperCase(), "UNKNOWN"] },
+        },
+        select: { id: true, units: true, salesNet: true, sku: true },
+      });
       if (found) {
         existingLines += 1;
         const identical =
@@ -702,6 +718,33 @@ async function resolveFeedDocument(input: {
   return { decision, document };
 }
 
+async function resolveTrmGroup(
+  documentReference: string,
+  lines: readonly { customerAccount: string; kind: "INVOICE" | "CREDIT" | "UNKNOWN" }[],
+): Promise<TrmGroupDecision> {
+  const accounts = [...new Set(lines.map((line) => line.customerAccount.trim().toUpperCase()).filter(Boolean))];
+  const resolutions = await Promise.all(
+    accounts.map(async (account) => {
+      const resolved = await resolveCompanyByAutopartCode(account);
+      return {
+        account,
+        companyId: resolved.companyId,
+        canonicalCode: resolved.code || account,
+        authority: resolved.authority,
+      };
+    }),
+  );
+  return classifyTrmDocumentGroup({ documentReference, lines, resolutions });
+}
+
+function attentionDiagnostics(identityConflicts: OngoingIdentityConflict[]) {
+  const attention = describeOngoingImportAttention(identityConflicts);
+  return {
+    attention,
+    issues: attention.attentionRequired ? { attentionRequired: true, conflicts: identityConflicts } : undefined,
+  };
+}
+
 async function refreshDocumentReconciliation(documentId: string) {
   const doc = await prisma.autopartSalesDocument.findUnique({
     where: { id: documentId },
@@ -798,7 +841,7 @@ export async function confirmAutopart504Import(
   let unchanged = 0;
   const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds: string[] = [];
-  const identityConflicts: Array<{ documentReference: string; documentType: string; detail: string }> = [];
+  const identityConflicts: OngoingIdentityConflict[] = [];
   let currentDocument: string | null = null;
 
   try {
@@ -1123,6 +1166,7 @@ export async function confirmAutopart504Import(
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
+    const attention = attentionDiagnostics(identityConflicts);
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -1133,7 +1177,7 @@ export async function confirmAutopart504Import(
         rowsUpdated: updated,
         rowsSkipped: skipped,
         rowsValid: imported + updated + unchanged,
-        ...(identityConflicts.length ? { issues: { conflicts: identityConflicts } } : {}),
+        ...(attention.issues ? { issues: attention.issues } : {}),
         diagnostics: {
           source: raw.source ?? "MANUAL",
           headerFound: parsed.headerFound,
@@ -1146,14 +1190,18 @@ export async function confirmAutopart504Import(
           counts,
           hasRowDiagnostics: true,
           identityConflicts,
+          attentionRequired: attention.attention.attentionRequired,
+          attentionReason: attention.attention.attentionReason,
         },
       },
     });
 
-    await prisma.autopartOngoingSalesFeedSettings.update({
-      where: { id: "default" },
-      data: { lastSuccess504At: new Date() },
-    }).catch(() => undefined);
+    if (!attention.attention.attentionRequired || imported + updated + unchanged > 0) {
+      await prisma.autopartOngoingSalesFeedSettings.update({
+        where: { id: "default" },
+        data: { lastSuccess504At: new Date() },
+      }).catch(() => undefined);
+    }
 
     await recordAuditEvent({
       action: "autopart.ongoing_504_imported",
@@ -1225,7 +1273,7 @@ export async function confirmAutopartTrm21qcImport(
   let unmatchedCustomers = 0;
   const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds = new Set<string>();
-  const identityConflicts: Array<{ documentReference: string; documentType: string; detail: string }> = [];
+  const identityConflicts: OngoingIdentityConflict[] = [];
   let currentDocument: string | null = null;
 
   try {
@@ -1266,27 +1314,50 @@ export async function confirmAutopartTrm21qcImport(
 
     for (const [documentNumber, lines] of byDoc) {
       const first = lines[0]!;
-      const mapped = await resolveCompanyByAutopartCode(first.customerAccount);
-
-      const creditNet = lines
-        .filter((l) => l.kind === "CREDIT")
-        .reduce((s, l) => s + Number(l.salesNet ?? 0), 0);
-      const invoiceNet = lines
-        .filter((l) => l.kind === "INVOICE")
-        .reduce((s, l) => s + Number(l.salesNet ?? 0), 0);
-      // TRM21QC lines for a credit document are all negative — classify from first line.
-      const documentType: AutopartHistoricDocumentType =
-        first.kind === "CREDIT" || (creditNet < 0 && invoiceNet === 0) ? "CREDIT" : "INVOICE";
-
+      const group = await resolveTrmGroup(
+        documentNumber,
+        lines.map((line) => ({ customerAccount: line.customerAccount, kind: line.kind })),
+      );
       currentDocument = documentNumber;
+      if (group.action === "reject") {
+        skipped += lines.length;
+        identityConflicts.push({
+          documentReference: documentNumber,
+          documentType: "UNKNOWN",
+          detail: group.detail,
+        });
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "ERROR",
+              reasonCode: group.reason,
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              documentDate: line.documentDate,
+              sku: line.partNumber,
+              description: line.description,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              reason: group.detail,
+            }),
+          );
+        }
+        continue;
+      }
+
+      const documentType: AutopartHistoricDocumentType = group.documentType;
+      const mappedCompanyId = group.companyId;
+      const mappedCode = group.canonicalCode;
+      const mapped = Boolean(mappedCompanyId);
       const resolved = await resolveFeedDocument({
         documentReference: documentNumber,
         documentType,
-        companyId: mapped?.companyId ?? null,
+        companyId: mappedCompanyId,
       });
       if (resolved.decision.action === "reject") {
         skipped += lines.length;
-        unmatchedCustomers += mapped ? 0 : lines.length;
+        if (!mapped) unmatchedCustomers += lines.length;
         identityConflicts.push({
           documentReference: documentNumber,
           documentType,
@@ -1305,7 +1376,7 @@ export async function confirmAutopartTrm21qcImport(
               description: line.description,
               quantity: line.qty,
               salesNet: line.salesNet,
-              companyId: mapped?.companyId ?? null,
+              companyId: mappedCompanyId,
               reason: resolved.decision.detail,
             }),
           );
@@ -1314,16 +1385,18 @@ export async function confirmAutopartTrm21qcImport(
       }
 
       let doc = resolved.document;
+      const authorisedAccounts = new Set(
+        [...group.accounts, mappedCode ?? ""].map((account) => account.trim().toUpperCase()).filter(Boolean),
+      );
       const blockedForeignAccount =
         resolved.decision.action === "update" &&
         resolved.decision.companyAssignment === "blocked-by-historic" &&
-        mapped != null &&
         doc != null &&
         doc.autopartCustomerCode !== "UNKNOWN" &&
-        doc.autopartCustomerCode !== mapped.code;
+        !authorisedAccounts.has(doc.autopartCustomerCode.trim().toUpperCase());
       if (blockedForeignAccount && doc) {
         skipped += lines.length;
-        const detail = `Document ${documentNumber} (${documentType}) is already an ongoing document for account ${doc.autopartCustomerCode}. It was not attached to ${mapped?.code}. Historical rows were not changed.`;
+        const detail = `Document ${documentNumber} (${documentType}) is already an ongoing document for account ${doc.autopartCustomerCode}. It was not attached to ${mappedCode ?? first.customerAccount}. Historical rows were not changed.`;
         identityConflicts.push({ documentReference: documentNumber, documentType, detail });
         for (const line of lines) {
           diagnosticDrafts.push(
@@ -1336,7 +1409,7 @@ export async function confirmAutopartTrm21qcImport(
               sku: line.partNumber,
               quantity: line.qty,
               salesNet: line.salesNet,
-              companyId: mapped?.companyId ?? null,
+              companyId: mappedCompanyId,
               reason: detail,
             }),
           );
@@ -1345,17 +1418,16 @@ export async function confirmAutopartTrm21qcImport(
       }
       const nextCompanyId =
         resolved.decision.action === "update" && resolved.decision.companyAssignment === "assign"
-          ? mapped?.companyId ?? doc?.companyId ?? null
-          : doc?.companyId ?? (resolved.decision.action === "create" ? mapped?.companyId ?? null : null);
+          ? mappedCompanyId ?? doc?.companyId ?? null
+          : doc?.companyId ?? (resolved.decision.action === "create" ? mappedCompanyId : null);
       const autopartCustomerCode =
         resolved.decision.action === "update" && resolved.decision.companyAssignment === "blocked-by-historic"
-          ? mapped?.code ?? doc?.autopartCustomerCode ?? "UNKNOWN"
-          : mapped?.code ??
-            (nextCompanyId ? first.customerAccount.toUpperCase() : null) ??
+          ? mappedCode ?? doc?.autopartCustomerCode ?? "UNKNOWN"
+          : mappedCode ??
             doc?.autopartCustomerCode ??
             (first.customerAccount.toUpperCase() || "UNKNOWN");
 
-      if (!nextCompanyId || !mapped) unmatchedCustomers += 1;
+      if (!nextCompanyId) unmatchedCustomers += 1;
 
       if (resolved.decision.action === "update" && doc) {
         const preserveHistoric = resolved.decision.preserveHistoricFinancials;
@@ -1406,7 +1478,7 @@ export async function confirmAutopartTrm21qcImport(
               reasonCode: "HISTORIC_COMPANY_REFERENCE",
               customerAccount: first.customerAccount,
               documentReference: documentNumber,
-              companyId: mapped?.companyId ?? null,
+              companyId: mappedCompanyId,
               reason: `Document ${documentNumber} (${documentType}) stays on the ongoing row. This company already has a historical document with this reference.`,
             }),
           );
@@ -1509,6 +1581,36 @@ export async function confirmAutopartTrm21qcImport(
           (sameIdentity && (sameIdentity.documentId == null || sameIdentity.documentId === doc.id)
             ? sameIdentity
             : null);
+        if (
+          existingLine &&
+          !incomingLineMayReplace({
+            existingCompanyId: existingLine.companyId,
+            existingAccount: existingLine.autopartCustomerCode,
+            incomingCompanyId: companyId,
+            incomingAccounts: group.accounts,
+          })
+        ) {
+          skipped += 1;
+          const detail = `Document ${documentNumber} line ${line.stableLineNumber} belongs to account ${existingLine.autopartCustomerCode}. It was not overwritten for ${line.customerAccount}.`;
+          identityConflicts.push({ documentReference: documentNumber, documentType: doc.documentType, detail });
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "ERROR",
+              reasonCode: "MIXED_CUSTOMER_DOCUMENT",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              documentDate: line.documentDate,
+              sku: line.partNumber,
+              description: line.description,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId,
+              reason: detail,
+            }),
+          );
+          continue;
+        }
         if (existingLine) {
           const identical =
             decimalStringsEqual(existingLine.units.toString(), line.qty) &&
@@ -1605,6 +1707,7 @@ export async function confirmAutopartTrm21qcImport(
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
+    const attention = attentionDiagnostics(identityConflicts);
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -1616,7 +1719,7 @@ export async function confirmAutopartTrm21qcImport(
         rowsSkipped: skipped,
         rowsValid: imported + updated + unchanged,
         rowsUnmatched: unmatchedCustomers,
-        ...(identityConflicts.length ? { issues: { conflicts: identityConflicts } } : {}),
+        ...(attention.issues ? { issues: attention.issues } : {}),
         diagnostics: {
           source: raw.source ?? "MANUAL",
           headerFound: parsed.headerFound,
@@ -1626,14 +1729,18 @@ export async function confirmAutopartTrm21qcImport(
           counts,
           hasRowDiagnostics: true,
           identityConflicts,
+          attentionRequired: attention.attention.attentionRequired,
+          attentionReason: attention.attention.attentionReason,
         },
       },
     });
 
-    await prisma.autopartOngoingSalesFeedSettings.update({
-      where: { id: "default" },
-      data: { lastSuccessTrm21qcAt: new Date() },
-    }).catch(() => undefined);
+    if (!attention.attention.attentionRequired || imported + updated + unchanged > 0) {
+      await prisma.autopartOngoingSalesFeedSettings.update({
+        where: { id: "default" },
+        data: { lastSuccessTrm21qcAt: new Date() },
+      }).catch(() => undefined);
+    }
 
     await recordAuditEvent({
       action: "autopart.ongoing_trm21qc_imported",
@@ -1701,6 +1808,7 @@ export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25
       rowsSkipped: true,
       rowsUnmatched: true,
       diagnostics: true,
+      issues: true,
       dryRun: true,
       _count: { select: { rowDiagnostics: true } },
     },
@@ -1741,6 +1849,8 @@ export async function listOngoingSalesImportRuns(actorUserId: string, limit = 25
             : "MANUAL_UPLOAD",
       hasRowDiagnostics: run._count.rowDiagnostics > 0 || Boolean(diag["hasRowDiagnostics"]),
       dryRun: run.dryRun,
+      attentionRequired: importRunNeedsAttention(run.diagnostics, run.issues),
+      attentionReason: typeof diag["attentionReason"] === "string" ? diag["attentionReason"] : null,
     };
   });
 }

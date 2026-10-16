@@ -135,25 +135,8 @@ export function resolveOngoingDocumentIdentity(input: {
     };
   }
 
-  if (!input.companyId && historic.length === 1) {
-    const target = historic[0]!;
-    return {
-      action: "update",
-      documentId: target.id,
-      preserveHistoricFinancials: true,
-      companyId: target.companyId,
-      companyAssignment: "unchanged",
-    };
-  }
-  if (!input.companyId && historic.length > 1) {
-    return {
-      action: "reject",
-      reason: "AMBIGUOUS_HISTORIC",
-      documentId: null,
-      detail: `Document ${reference} (${incomingType}) is on more than one historical company and this feed row has no customer. None of those totals were changed.`,
-    };
-  }
-
+  // No resolved company: do not inherit a historical company's identity from the
+  // reference alone. A new unassigned ongoing row keeps the feed evidence separate.
   return { action: "create" };
 }
 

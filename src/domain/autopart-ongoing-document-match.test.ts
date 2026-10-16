@@ -90,14 +90,14 @@ describe("ongoing document identity", () => {
     expect(decision).toMatchObject({ action: "reject", reason: "DUPLICATE_ONGOING" });
   });
 
-  it("updates the only historical document when the feed has not resolved a company", () => {
+  it("does not give an unresolved feed the only historical company's document", () => {
     const decision = resolveOngoingDocumentIdentity({
       documentReference: "INV1",
       documentType: "INVOICE",
       companyId: null,
       candidates: [row({ id: "hist-a", companyId: "company-a" })],
     });
-    expect(decision).toMatchObject({ action: "update", documentId: "hist-a" });
+    expect(decision).toEqual({ action: "create" });
   });
 
   it("does not guess a company when several historical rows share the reference", () => {
@@ -110,7 +110,7 @@ describe("ongoing document identity", () => {
         row({ id: "hist-b", companyId: "company-b" }),
       ],
     });
-    expect(decision).toMatchObject({ action: "reject", reason: "AMBIGUOUS_HISTORIC" });
+    expect(decision).toEqual({ action: "create" });
   });
 
   it("creates a new ongoing document when the reference belongs only to other companies", () => {
