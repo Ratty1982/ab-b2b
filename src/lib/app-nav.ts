@@ -784,7 +784,7 @@ export const TRADE_PORTAL_NAV: NavSectionDef[] = [
         icon: "clipboard-list",
         to: ROUTES.portalQuickOrder,
         permission: "orders.create",
-        implemented: false,
+        implemented: true,
       },
       {
         id: "portal-orders",
