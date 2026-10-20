@@ -161,9 +161,9 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
         ) : (
           identity.map((code) => (
             <span key={code.code} title={code.note ?? code.via.join(", ")}>
-              <StatusBadge tone={code.attached ? "info" : "warn"}>
+              <StatusBadge tone={code.mappingVerified ? "info" : "warn"}>
                 <span className="font-mono">{code.code}</span>
-                {code.attached ? "" : " · not attached"}
+                {code.mappingVerified ? "" : " · needs review"}
               </StatusBadge>
             </span>
           ))

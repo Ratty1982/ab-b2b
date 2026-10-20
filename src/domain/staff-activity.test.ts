@@ -10,11 +10,15 @@ describe("staff activity catalog", () => {
     expect(humanStaffActivityAction("sales_followup.completed")).toBe("Completed follow-up");
     expect(humanStaffActivityAction("si.daily_brief.opened")).toBe("Opened Daily Sales Brief");
     expect(humanStaffActivityAction("company.updated")).toBe("Updated customer");
+    expect(humanStaffActivityAction("company.autopart_account.bulk_verified")).toBe(
+      "Verified assigned Autopart IDs automatically",
+    );
   });
 
   it("classifies actions into operational areas", () => {
     expect(staffActivityAreaForAction("LOGIN_SUCCESS")).toBe("security");
     expect(staffActivityAreaForAction("company.updated")).toBe("customers");
+    expect(staffActivityAreaForAction("company.autopart_account.bulk_verified")).toBe("customers");
     expect(staffActivityAreaForAction("crm.task.created")).toBe("crm");
     expect(staffActivityAreaForAction("quote.created")).toBe("sales");
     expect(staffActivityAreaForAction("si.portfolio.opened")).toBe("sales_intelligence");

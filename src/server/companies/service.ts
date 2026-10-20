@@ -14,6 +14,8 @@ import {
   AuthError,
 } from "@/server/rbac/guards";
 import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
+import { normaliseAssignedAutopartCode } from "@/domain/autopart-account-verification";
+import { describeCompanyAutopartMapping } from "@/server/companies/autopart-account-verification";
 import {
   companyCreateSchema,
   companyDeleteSchema,
@@ -241,6 +243,8 @@ function serializeCompany(row: {
     autopartAccount: {
       code: row.autopartCustomerCode,
       verified: autopartVerified,
+      verificationRecorded: autopartVerified,
+      attention: null as string | null,
       verifiedAt: row.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
       verifiedBy: row.autopartCustomerCodeVerifiedBy
         ? {
@@ -250,6 +254,11 @@ function serializeCompany(row: {
               row.autopartCustomerCodeVerifiedBy.email,
             email: row.autopartCustomerCodeVerifiedBy.email,
           }
+        : null,
+      verifiedByLabel: autopartVerified
+        ? (row.autopartCustomerCodeVerifiedBy?.name ??
+          row.autopartCustomerCodeVerifiedBy?.email ??
+          "Automatic")
         : null,
       aliasCount: aliases.length,
       aliases: aliases.map((a) => a.alias),
@@ -329,11 +338,24 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
     grants(profile, "pricing.edit", "admin.access");
 
   const serialized = serializeCompany(company);
+  const mapping = await describeCompanyAutopartMapping({
+    companyId,
+    code: company.autopartCustomerCode,
+    verifiedAt: company.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+    verifiedByName: serialized.autopartAccount.verifiedBy?.name ?? null,
+  });
+  serialized.autopartAccount = {
+    ...serialized.autopartAccount,
+    verified: mapping.verified,
+    verificationRecorded: mapping.verificationRecorded,
+    attention: mapping.attention,
+    verifiedByLabel: mapping.verifiedByLabel,
+  };
 
   const claimedCode = signupApplication?.claimedAutopartCustomerCode?.trim() || null;
-  const verifiedLinked = Boolean(
-    serialized.autopartAccount.code && serialized.autopartAccount.verified,
-  );
+  const assignedKey = normaliseAssignedAutopartCode(serialized.autopartAccount.code).key;
+  const claimKey = normaliseAssignedAutopartCode(claimedCode).key;
+  const verifiedLinked = Boolean(assignedKey && claimKey && assignedKey === claimKey && mapping.verified);
 
   return {
     company: serialized,

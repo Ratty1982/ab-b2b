@@ -253,13 +253,13 @@ function CustomerWorkspace() {
                 <Row
                   label="Autopart account"
                   value={
-                    company.autopartAccount?.verified && company.autopartAccount?.code
-                      ? `${company.autopartAccount.code} (linked)`
+                    company.autopartAccount?.code && company.autopartAccount.verified
+                      ? `${company.autopartAccount.code} (verified)`
                       : company.autopartAccount?.code
-                        ? `${company.autopartAccount.code} (unverified)`
+                        ? `${company.autopartAccount.code} (needs review)`
                         : registrationAutopartClaim?.code
-                          ? `Not linked (claimed ${registrationAutopartClaim.code})`
-                          : "Not linked"
+                          ? `Not assigned (claimed ${registrationAutopartClaim.code})`
+                          : "Not assigned"
                   }
                 />
               </dl>
@@ -965,8 +965,11 @@ function AutopartAccountEditor({
   account: {
     code: string | null;
     verified: boolean;
+    verificationRecorded?: boolean;
+    attention?: string | null;
     verifiedAt: string | null;
     verifiedBy: { id: string; name: string; email: string } | null;
+    verifiedByLabel?: string | null;
   };
   registrationClaim: {
     code: string;
@@ -982,12 +985,14 @@ function AutopartAccountEditor({
   const [accounts, setAccounts] = useState<
     Array<{
       accountCode: string;
-      kind: "PRIMARY" | "ALIAS";
+      kind: "PRIMARY" | "ALIAS" | "MASTER_LINK";
+      verified?: boolean;
       verifiedAt: string | null;
       mappedAt: string | null;
       mappedBy: string | null;
       source: string;
       note: string | null;
+      attention?: string | null;
     }>
   >([]);
 
@@ -1005,36 +1010,39 @@ function AutopartAccountEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, account.code, account.verifiedAt]);
 
-  const linked = Boolean(account.code && account.verified);
+  const verified = Boolean(account.code && account.verified);
+  const needsReview = Boolean(account.code && !account.verified);
 
   return (
     <section className="max-w-xl space-y-4 rounded-lg border border-border bg-surface/30 p-4 sm:p-5">
       <div>
         <h3 className="font-display text-lg font-semibold uppercase">Autopart accounts</h3>
         <p className="mt-1 text-[13px] text-steel">
-          Primary Autopart customer code and verified aliases used by ongoing 504 / TRM21QC matching.
-          Internal only — never shown in the customer portal.
+          Assigned Autopart ID for 504 and TRM21QC matching. Verification accepts that unique
+          mapping. It does not approve portal access or move invoices, orders, or sales history.
         </p>
       </div>
 
       <dl className="grid gap-2 text-[13px]">
         <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
-          <dt className="text-steel">Account status</dt>
+          <dt className="text-steel">Status</dt>
           <dd>
-            <StatusBadge tone={linked ? "good" : "warn"}>
-              {linked ? "Linked" : "Not linked"}
+            <StatusBadge tone={verified ? "good" : needsReview ? "warn" : "neutral"}>
+              {verified ? "Verified" : needsReview ? "Needs review" : "Not assigned"}
             </StatusBadge>
           </dd>
         </div>
         <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
-          <dt className="text-steel">Customer code</dt>
+          <dt className="text-steel">Assigned Autopart ID</dt>
           <dd className="num">{account.code ?? "—"}</dd>
         </div>
         <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
           <dt className="text-steel">Verified</dt>
           <dd>
-            {account.verifiedAt ? (
+            {account.verificationRecorded && account.verifiedAt ? (
               <InstantText value={account.verifiedAt} variant="audit" />
+            ) : verified ? (
+              "Yes"
             ) : (
               "—"
             )}
@@ -1042,9 +1050,21 @@ function AutopartAccountEditor({
         </div>
         <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
           <dt className="text-steel">Verified by</dt>
-          <dd>{account.verifiedBy?.name ?? "—"}</dd>
+          <dd>{account.verifiedByLabel ?? account.verifiedBy?.name ?? "—"}</dd>
         </div>
       </dl>
+
+      {account.attention ? (
+        <p className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-steel">
+          {account.attention}
+        </p>
+      ) : null}
+      {verified && account.verificationRecorded === false ? (
+        <p className="text-[12px] text-steel">
+          This assigned ID is unique, so it is shown as verified. The timestamp is stored when an
+          administrator runs the approved bulk verification. That does not approve portal access.
+        </p>
+      ) : null}
 
       {registrationClaim?.needsVerification ? (
         <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-3 text-[13px]">
@@ -1107,8 +1127,10 @@ function AutopartAccountEditor({
                 else {
                   toast.success(
                     r.data.code
-                      ? "Autopart account code saved (unverified until you verify)"
-                      : "Autopart account cleared",
+                      ? r.data.verified
+                        ? "Autopart ID saved and verified"
+                        : "Autopart ID saved"
+                      : "Autopart ID cleared",
                   );
                   await onChanged();
                 }
@@ -1193,7 +1215,12 @@ function AutopartAccountEditor({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="font-semibold">{a.accountCode}</span>
-                    <span className="ml-2 text-steel">{a.kind}</span>
+                    <span className="ml-2 text-steel">
+                      {a.kind === "MASTER_LINK" ? "407EXP" : a.kind === "ALIAS" ? "Alias" : "Primary"}
+                    </span>
+                    <span className="ml-2">
+                      {a.attention ? "Needs review" : a.verified === false ? "Needs review" : "Verified"}
+                    </span>
                   </div>
                   {canEdit && a.kind === "ALIAS" ? (
                     <button
@@ -1229,6 +1256,7 @@ function AutopartAccountEditor({
                     </>
                   ) : null}
                 </div>
+                {a.attention ? <div className="mt-1 text-steel">{a.attention}</div> : null}
                 {a.note ? <div className="mt-1 text-steel">{a.note}</div> : null}
               </li>
             ))}

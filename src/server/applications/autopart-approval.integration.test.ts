@@ -195,8 +195,8 @@ describe("Autopart claim / approval verification", () => {
       code: `${claim}X`,
     });
     const workspace = await getCompanyWorkspace(adminId, approved.companyId);
-    // Code set but unverified → still needs verification relative to claim discrepancy
-    expect(workspace.company.autopartAccount.verified).toBe(false);
+    expect(workspace.company.autopartAccount.verified).toBe(true);
+    expect(workspace.registrationAutopartClaim?.needsVerification).toBe(true);
   });
 
   it("order snapshot uses verified company code; later company change does not rewrite; CSV blocks null", async () => {

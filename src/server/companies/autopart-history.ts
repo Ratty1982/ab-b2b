@@ -17,6 +17,7 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
 import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
+import { describeCompanyAutopartMapping } from "@/server/companies/autopart-account-verification";
 import { parseAutopart561l } from "@/domain/autopart-561l";
 import { parseAutopartSlrb } from "@/domain/autopart-slrb";
 import {
@@ -237,6 +238,7 @@ async function loadVerifiedCompany(companyId: string) {
       name: true,
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
+      autopartCustomerCodeVerifiedById: true,
     },
   });
   if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
@@ -739,7 +741,13 @@ async function resolveSkuMap(skus: string[], db: HistoricWriteClient = prisma): 
 export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, companyId: string) {
   await assertStaffCompanyAccess(actorUserId, companyId, "companies.view");
   const company = await loadVerifiedCompany(companyId);
-  const verified = Boolean(company.autopartCustomerCode && company.autopartCustomerCodeVerifiedAt);
+  const mapping = await describeCompanyAutopartMapping({
+    companyId,
+    code: company.autopartCustomerCode,
+    verifiedAt: company.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+    verifiedByName: null,
+  });
+  const verified = mapping.verified;
 
   const [lineCount, docCount, lastHistory, aliases, topSkus, skuGroups] =
     await Promise.all([
@@ -804,6 +812,7 @@ export async function getCompanyAutopartHistoryWorkspace(actorUserId: string, co
       name: company.name,
       autopartCustomerCode: company.autopartCustomerCode,
       verified,
+      attention: mapping.attention,
     },
     purchaseDataStatus: purchaseDataStatus({
       restricted: globalHistory.restricted,
@@ -917,7 +926,11 @@ async function buildHistoryPreview(
   const company = await loadVerifiedCompany(input.companyId);
   const issues: ImportIssue[] = [];
 
-  if (!company.autopartCustomerCode || !company.autopartCustomerCodeVerifiedAt) {
+  if (
+    !company.autopartCustomerCode ||
+    !company.autopartCustomerCodeVerifiedAt ||
+    !company.autopartCustomerCodeVerifiedById
+  ) {
     issues.push({
       severity: "BLOCKING",
       code: "AUTOPART_NOT_VERIFIED",
