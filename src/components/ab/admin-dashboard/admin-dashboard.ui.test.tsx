@@ -78,8 +78,8 @@ describe("admin dashboard UI states", () => {
             href: "/admin/settings?tab=email",
           },
           {
-            id: "autopart-504c",
-            label: "504C Order Status Feed",
+            id: "sales-feed",
+            label: "Ongoing Sales Feed",
             statusLabel: "Not configured",
             tone: "not_configured",
             href: "/admin/settings?tab=autopart",

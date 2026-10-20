@@ -30,7 +30,7 @@ export const DASHBOARD_ATTENTION_APPLICATION_STATUSES = [
   "MORE_INFO_REQUIRED",
 ] as const;
 
-/** Fulfilment states after Autopart CSV export, awaiting 504C / despatch. */
+/** Fulfilment states after Autopart CSV export, awaiting 504 + TRM21QC despatch. */
 export const DASHBOARD_PROCESSING_ORDER_STATUSES = ["CONFIRMED", "PICKING"] as const;
 
 export const PROTOTYPE_ADMIN_DASHBOARD_STRINGS = [
@@ -190,7 +190,6 @@ export function attentionActionLabel(id: string): string {
     case "export-blocked":
     case "email-failures":
     case "stock-issues":
-    case "504c-not-configured":
       return "FIX";
     case "callbacks":
     case "quotes-expiring":
@@ -242,20 +241,6 @@ export function emailHealthFromState(input: {
     return { statusLabel: "Disabled", tone: "disabled" };
   }
   return { statusLabel: "Healthy", tone: "healthy" };
-}
-
-export function feed504cHealthFromState(input: {
-  configured: boolean;
-  enabled: boolean;
-  statusLabel: string;
-}): { statusLabel: string; tone: SystemHealthTone } {
-  if (!input.configured) {
-    return { statusLabel: "Not configured", tone: "not_configured" };
-  }
-  if (!input.enabled || input.statusLabel === "DISABLED") {
-    return { statusLabel: "Disabled", tone: "disabled" };
-  }
-  return { statusLabel: "Running", tone: "running" };
 }
 
 export function stockHealthTone(

@@ -247,7 +247,7 @@ const registry: RegistryEntry[] = [
     purpose: "ORDER_PART_DESPATCHED",
     audience: "customer",
     group: "customer",
-    description: "Partial despatch. Unknown 504C quantities never invent SKU lines.",
+    description: "Partial despatch. Unknown quantities never invent SKU lines.",
     scenarios: [
       { id: "known-qty", label: "Known line quantities" },
       { id: "unknown-qty", label: "Order-level confirmation / quantities unavailable" },

@@ -77,10 +77,10 @@ describe("PL-007 — free delivery business confirmation", () => {
   });
 });
 
-describe("PL-008 — 504C test isolation helper", () => {
+describe("PL-008 — fulfilment test isolation helper", () => {
   it("uses uniqueAbOrderNumber for AB references", () => {
     const src = readFileSync(
-      join(root, "src/server/orders/autopart-504c.integration.test.ts"),
+      join(root, "src/server/orders/autopart-504-trm-fulfilment.integration.test.ts"),
       "utf8",
     );
     expect(src).toContain("uniqueAbOrderNumber");

@@ -11,7 +11,7 @@ Status of BLOCKER / HIGH findings from the Automotive Brands B2B pre-live audit.
 | PL-005 | FIXED | CMS `BRAND_LOGO_STRIP` uses database `listPublicBrands` (`catalogueBrands` + logos), not mock `lib/data`. |
 | PL-006 | FIXED | `/api/cms-media/$id` serves anonymous bytes only when media is publicly eligible (brand/category/product/team/sales-rep binding or published CMS reference). Authorised CMS/product staff may still preview draft media. |
 | PL-007 | RESOLVED / BUSINESS CONFIRMED | Free delivery threshold remains **£100.00 ex VAT** goods subtotal; carriage below threshold **£5.95 ex VAT**. Not changed to £150. |
-| PL-008 | FIXED | 504C integration test allocates unique `AB-######` numbers via existence check to avoid shared-DB collisions. |
+| PL-008 | FIXED | 504 + TRM fulfilment integration test allocates unique `AB-######` numbers via existence check to avoid shared-DB collisions. |
 
 ## Dead mock modules
 

@@ -1,6 +1,6 @@
 /**
  * ORDER_DESPATCHED transactional email.
- * Sent on authoritative full despatch (504C financial completion / line evidence).
+ * Sent on authoritative full despatch from matched 504 + TRM21QC evidence.
  * Failures must not roll back invoice/status — callers catch and record for retry.
  */
 

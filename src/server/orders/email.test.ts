@@ -73,7 +73,7 @@ describe("part-despatch email quantities", () => {
     expect(bodies.text).not.toMatch(/Exact item quantities will appear/);
   });
 
-  it("does not invent SKU quantities when 504C line detail is unknown", () => {
+  it("does not invent SKU quantities when line detail is unknown", () => {
     const bodies = buildOrderPartDespatchedCustomerBodies(snapshot(), { lineQuantitiesKnown: false });
     expect(bodies.text).toMatch(/Exact item quantities will appear/);
     expect(bodies.text).toContain("4 × Widget B");

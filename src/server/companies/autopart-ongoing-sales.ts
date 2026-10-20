@@ -3,7 +3,7 @@
  *
  * Manual upload and email ingestion share this pipeline.
  * Writes AutopartSalesDocument / AutopartSalesLine for Sales Intelligence.
- * AB-order despatch reuses Invoice.externalRef idempotency with 504C.
+ * Order fulfilment, when ACTIVE, uses matched 504 + TRM21QC evidence only.
  */
 
 import type { AutopartHistoricDocumentType, Prisma } from "@prisma/client";
@@ -53,13 +53,7 @@ import {
   countsFromDrafts,
   persistImportDiagnostics,
 } from "@/server/companies/autopart-ongoing-sales-diagnostics";
-import { applyAutopart504cFile } from "@/server/orders/autopart-504c";
-import { format504cDataRow, AUTOPART_504C_HEADER, AUTOPART_504C_SEPARATOR } from "@/domain/autopart-504c-fixture";
-import {
-  read504TrmFulfilmentSettings,
-  run504TrmFulfilmentAfterImport,
-  shouldBridge504To504c,
-} from "@/server/orders/autopart-504-trm-fulfilment";
+import { run504TrmFulfilmentAfterImport } from "@/server/orders/autopart-504-trm-fulfilment";
 
 export {
   getOngoingSalesImportRunDetail,
@@ -779,40 +773,6 @@ async function refreshDocumentReconciliation(documentId: string) {
   });
 }
 
-/**
- * Build a minimal 504C-shaped text so we can reuse AB invoice despatch apply
- * for AB-matching 504 invoice/credit rows without rewriting proven logic.
- */
-function build504cBridgeText(rows: Autopart504Row[]): string {
-  const abRows = rows.filter(
-    (r) =>
-      (r.classification === "AB_INVOICE" || r.classification === "AB_CREDIT") && r.abOrderNumber,
-  );
-  const lines = [
-    "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)",
-    AUTOPART_504C_HEADER,
-    AUTOPART_504C_SEPARATOR,
-    ...abRows.map((r) =>
-      format504cDataRow({
-        document: r.documentNumber,
-        date: r.documentDate
-          ? `${r.documentDate.slice(8, 10)}/${r.documentDate.slice(5, 7)}/${r.documentDate.slice(0, 4)}`
-          : "01/01/2026",
-        time: r.documentTime ?? "12:00",
-        account: "AB504",
-        customer: r.customerName.slice(0, 28) || "CUSTOMER",
-        goods: r.goods ?? "0.00",
-        vat: r.vat ?? "0.00",
-        value: r.value ?? "0.00",
-        inits: (r.initials ?? "XX").slice(0, 4),
-        orderNumber: r.abOrderNumber!,
-      }),
-    ),
-    "*** END OF REPORT ***",
-  ];
-  return lines.join("\n");
-}
-
 export async function confirmAutopart504Import(
   actorUserId: string | null,
   raw: { text: string; filename?: string; source?: "MANUAL" | "EMAIL" | "SCHEDULE" },
@@ -1140,40 +1100,15 @@ export async function confirmAutopart504Import(
       await refreshDocumentReconciliation(id);
     }
 
-    const fulfilmentSettings = await read504TrmFulfilmentSettings();
-    // Legacy 504C bridge remains only while 504/TRM fulfilment is OFF.
-    // PREVIEW/ACTIVE must not let 504C mutate the same orders.
-    if (shouldBridge504To504c(fulfilmentSettings.fulfilmentMode)) {
-      const bridge = build504cBridgeText(parsed.rows);
-      if (bridge.includes(AUTOPART_504C_SEPARATOR) && parsed.abInvoiceRows.length + parsed.abCreditRows.length > 0) {
-        try {
-          await applyAutopart504cFile(actorUserId, {
-            text: bridge,
-            filename: `bridge-from-504-${raw.filename ?? "504.csv"}`,
-            source: "ONGOING_504_BRIDGE",
-            allowApply: true,
-          });
-        } catch (err) {
-          await recordAuditEvent({
-            action: "autopart.ongoing_504_despatch_bridge_failed",
-            entityType: "AutopartCustomerImportRun",
-            entityId: run.id,
-            actorUserId: actorUserId ?? null,
-            metadata: { error: err instanceof Error ? err.message : "unknown" },
-          });
-        }
-      }
-    } else {
-      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-        recordAuditEvent({
-          action: "autopart.504_trm_fulfilment_failed",
-          entityType: "AutopartCustomerImportRun",
-          entityId: run.id,
-          actorUserId: actorUserId ?? null,
-          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
-        }),
-      );
-    }
+    await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+      recordAuditEvent({
+        action: "autopart.504_trm_fulfilment_failed",
+        entityType: "AutopartCustomerImportRun",
+        entityId: run.id,
+        actorUserId: actorUserId ?? null,
+        metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
+      }),
+    );
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
@@ -1773,18 +1708,15 @@ export async function confirmAutopartTrm21qcImport(
       },
     });
 
-    const fulfilmentSettings = await read504TrmFulfilmentSettings();
-    if (!shouldBridge504To504c(fulfilmentSettings.fulfilmentMode)) {
-      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-        recordAuditEvent({
-          action: "autopart.504_trm_fulfilment_failed",
-          entityType: "AutopartCustomerImportRun",
-          entityId: run.id,
-          actorUserId: actorUserId ?? null,
-          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
-        }),
-      );
-    }
+    await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+      recordAuditEvent({
+        action: "autopart.504_trm_fulfilment_failed",
+        entityType: "AutopartCustomerImportRun",
+        entityId: run.id,
+        actorUserId: actorUserId ?? null,
+        metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
+      }),
+    );
 
     return finished;
   } catch (error) {

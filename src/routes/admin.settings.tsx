@@ -5,7 +5,6 @@ import { PanelHeader } from "@/components/ab/AppShell";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { EmailSettingsPanel } from "@/components/ab/EmailSettingsPanel";
 import { TradeOrderingSettingsPanel } from "@/components/ab/TradeOrderingSettingsPanel";
-import { Autopart504cFeedPanel } from "@/components/ab/Autopart504cFeedPanel";
 import { AutopartOngoingSalesFeedPanel } from "@/components/ab/AutopartOngoingSalesFeedPanel";
 import { SharePointSdsSettingsPanel } from "@/components/catalogue/SharePointSdsSettingsPanel";
 import { getMyTradeTestLevelFn, getSharePointSdsSettingsFn, setMyTradeTestLevelFn } from "@/server/phase2/fns";
@@ -359,25 +358,9 @@ function AutopartTab() {
       <div>
         <h2 className="font-display text-lg font-semibold uppercase">Autopart integrations</h2>
         <p className="mt-1 max-w-3xl text-[13px] text-steel">
-          Separate mailbox feeds for order status and ongoing sales. Settings and polling remain
-          independent — do not merge these integrations.
+          Ongoing invoice, credit, and order fulfilment from Autopart 504 and TRM21QC.
         </p>
       </div>
-
-      <section aria-labelledby="autopart-504c-heading" className="space-y-3">
-        <div>
-          <h3
-            id="autopart-504c-heading"
-            className="font-display text-base font-semibold uppercase"
-          >
-            504C — Order status
-          </h3>
-          <p className="mt-1 text-[12px] text-steel">
-            Invoice / despatch feed (report 504C). Connection, schedule, and dry-run tools below.
-          </p>
-        </div>
-        <Autopart504cFeedPanel />
-      </section>
 
       <section aria-labelledby="autopart-ongoing-heading" className="space-y-3">
         <div>

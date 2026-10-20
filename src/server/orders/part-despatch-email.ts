@@ -1,7 +1,7 @@
 /**
  * ORDER_PART_DESPATCHED transactional email.
  *
- * Sent when 504C (or authoritative fulfilment) confirms a partial despatch.
+ * Sent when 504 + TRM21QC fulfilment confirms a partial despatch.
  * Failures must not roll back invoice/status.
  *
  * Idempotent per invoice document: ORDER_PART_DESPATCHED:{orderId}:{invoiceExternalRef}

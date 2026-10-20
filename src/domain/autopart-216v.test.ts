@@ -36,7 +36,6 @@ import {
   label216vSnapshotSource,
   resolveAutopart216vFreshness,
 } from "@/domain/autopart-216v-freshness";
-import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 import { skuMatchKey } from "@/domain/stock";
 
 describe("Autopart 216V detector/parser", () => {
@@ -51,7 +50,7 @@ describe("Autopart 216V detector/parser", () => {
     expect(isAutopart216vReport("Order,Qty\nA,1")).toBe(false);
     expect(
       isAutopart216vReport(
-        `LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}`,
+        "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n",
       ),
     ).toBe(false);
   });

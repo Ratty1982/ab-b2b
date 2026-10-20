@@ -6,7 +6,6 @@ import {
   buildDashboardGreeting,
   DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES,
   emailHealthFromState,
-  feed504cHealthFromState,
   firstNameFromDisplayName,
   formatGbpIncVat,
   greetingForLondonHour,
@@ -71,7 +70,7 @@ describe("admin dashboard helpers", () => {
     expect(attentionActionLabel("export-ready")).toBe("VIEW");
     expect(resolveAttentionTone("critical", "export-blocked")).toBe("critical");
     expect(resolveAttentionTone("attention", "applications")).toBe("attention");
-    expect(resolveAttentionTone("info", "504c-not-configured")).toBe("info");
+    expect(resolveAttentionTone("info", "sales-feed")).toBe("info");
     expect(resolveAttentionTone("action", "export-blocked")).toBe("critical");
     expect(resolveAttentionTone("action", "applications")).toBe("attention");
   });
@@ -93,14 +92,6 @@ describe("admin dashboard helpers", () => {
     expect(emailHealthFromState({ configured: true, enabled: true, recentFailures: 2 })).toEqual({
       statusLabel: "Failures",
       tone: "attention",
-    });
-    expect(feed504cHealthFromState({ configured: false, enabled: false, statusLabel: "NOT_CONFIGURED" })).toEqual({
-      statusLabel: "Not configured",
-      tone: "not_configured",
-    });
-    expect(feed504cHealthFromState({ configured: true, enabled: true, statusLabel: "ENABLED" })).toEqual({
-      statusLabel: "Running",
-      tone: "running",
     });
     expect(
       ongoingSalesHealthFromState({

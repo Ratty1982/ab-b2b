@@ -15,7 +15,7 @@ import {
   AUTOPART_504_DAYEND_TITLE,
   buildAutopart504DayEndFixture,
 } from "@/domain/autopart-504-dayend-fixture";
-import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
+const LEGACY_504C_SAMPLE = "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n";
 import { classifyOngoingSalesAttachment } from "@/server/companies/autopart-ongoing-sales-poll";
 import { reconcile504GoodsToTrmSales } from "@/domain/autopart-504-trm21qc-reconcile";
 import { detectOngoingSalesAttachmentType } from "@/domain/autopart-ongoing-sales-attachment";
@@ -42,7 +42,7 @@ describe("Autopart 504 parser", () => {
   });
 
   it("rejects 504C fixed-width content and filenames", () => {
-    const c = `LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}\n`;
+    const c = LEGACY_504C_SAMPLE;
     expect(isAutopart504Report(c)).toBe(false);
     expect(detectAutopart504Filename("504C.CSV")).toBe(false);
     expect(detectAutopart504Filename("504.CSV")).toBe(true);
@@ -82,7 +82,7 @@ describe("Autopart 504 production day-end TXT", () => {
   });
 
   it("keeps genuine legacy 504C as LEGACY_504C and out of the 504 parser", () => {
-    const c = `LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}\n`;
+    const c = LEGACY_504C_SAMPLE;
     expect(isAutopart504Report(c)).toBe(false);
     expect(detectOngoingSalesAttachmentType("504.txt", c)).toBe("LEGACY_504C");
     expect(detectOngoingSalesAttachmentType("504C_20261005.txt", c)).toBe("LEGACY_504C");

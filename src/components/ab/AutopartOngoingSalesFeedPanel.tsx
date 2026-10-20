@@ -207,7 +207,7 @@ export function AutopartOngoingSalesFeedPanel() {
   async function saveFulfilmentSettings() {
     if (fulfilmentModeDraft === "ACTIVE") {
       const ok = window.confirm(
-        "Switching 504/TRM fulfilment to ACTIVE retires legacy 504C. 504 + TRM21QC becomes the only order fulfilment mutator. Continue?",
+        "ACTIVE fulfils eligible orders using 504 and TRM21QC. Continue?",
       );
       if (!ok) return;
     }
@@ -216,7 +216,6 @@ export function AutopartOngoingSalesFeedPanel() {
       data: {
         fulfilmentMode: fulfilmentModeDraft,
         fulfilmentFrom: fulfilmentFromDraft || null,
-        retire504c: fulfilmentModeDraft === "ACTIVE",
       },
     });
     setBusy(null);
@@ -227,8 +226,8 @@ export function AutopartOngoingSalesFeedPanel() {
     setFulfilment(res.data);
     toast.success(
       res.data.fulfilmentMode === "ACTIVE"
-        ? "504/TRM fulfilment is ACTIVE. Legacy 504C is retired."
-        : "504/TRM fulfilment settings saved",
+        ? "504 + TRM21QC fulfilment is ACTIVE."
+        : "Fulfilment settings saved",
     );
     await load();
   }
@@ -369,10 +368,7 @@ export function AutopartOngoingSalesFeedPanel() {
           <p className="mt-1 text-[12px] text-steel">
             Autopart 504 — Invoice &amp; Credit Documents · Autopart TRM21QC — Product Sales &amp;
             Credits (NET / EX VAT). Expected email windows {AUTOPART_ONGOING_SALES_SCHEDULE_LABEL}.
-            Poll Now can run at any time.
-            {fulfilment?.runtime504c === "RETIRED" || fulfilment?.fulfilmentMode === "ACTIVE"
-              ? " Legacy 504C is retired. Order fulfilment uses 504 + TRM21QC."
-              : " Default fulfilment mode is OFF so legacy 504C can still bridge despatch until 504 + TRM is proven."}
+            Poll Now can run at any time. Order fulfilment uses 504 and TRM21QC.
           </p>
         </div>
         {settings ? (
@@ -429,9 +425,9 @@ export function AutopartOngoingSalesFeedPanel() {
               504 + TRM21QC order fulfilment
             </h3>
             <p className="mt-1 text-[12px] text-steel">
-              OFF keeps 504C as the despatch bridge. PREVIEW inspects 504 + TRM without mutating
-              orders. ACTIVE retires 504C and becomes the sole fulfilment mutator. Join is Autopart
-              document number; AB match is exact AB-###### only.
+              OFF — no automatic order fulfilment. PREVIEW — evaluate without changing orders.
+              ACTIVE — fulfil eligible orders using 504 + TRM21QC. Join is Autopart document
+              number; AB match is exact AB-###### only.
             </p>
           </div>
           {fulfilment ? (
@@ -464,10 +460,10 @@ export function AutopartOngoingSalesFeedPanel() {
                 <span className="font-semibold">{mode}</span>
                 <span className="mt-0.5 block text-[11px] text-steel">
                   {mode === "OFF"
-                    ? "504C may still despatch"
+                    ? "No automatic order fulfilment"
                     : mode === "PREVIEW"
-                      ? "Inspect only — no mutations"
-                      : "Retires 504C and applies despatch"}
+                      ? "Evaluate without changing orders"
+                      : "Fulfil eligible orders using 504 + TRM21QC"}
                 </span>
               </span>
             </label>
@@ -501,15 +497,18 @@ export function AutopartOngoingSalesFeedPanel() {
             </button>
           </div>
         </div>
-        {fulfilment ? (
+        {fulfilment && (fulfilment.fulfilmentLastPreviewAt || fulfilment.fulfilmentLastAppliedAt) ? (
           <p className="text-[12px] text-steel">
-            504C runtime {fulfilment.runtime504c}
-            {fulfilment.fulfilmentLastPreviewAt
-              ? ` · Last preview ${formatOperationalDateTime(fulfilment.fulfilmentLastPreviewAt)}`
-              : ""}
-            {fulfilment.fulfilmentLastAppliedAt
-              ? ` · Last applied ${formatOperationalDateTime(fulfilment.fulfilmentLastAppliedAt)}`
-              : ""}
+            {[
+              fulfilment.fulfilmentLastPreviewAt
+                ? `Last preview ${formatOperationalDateTime(fulfilment.fulfilmentLastPreviewAt)}`
+                : null,
+              fulfilment.fulfilmentLastAppliedAt
+                ? `Last applied ${formatOperationalDateTime(fulfilment.fulfilmentLastAppliedAt)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
         ) : null}
         {fulfilmentPreview ? (

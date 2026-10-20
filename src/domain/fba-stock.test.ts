@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
-import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 import {
   FBA_PARTIAL_CSV_WARNING,
   FBA_WAREHOUSE_FILE_MESSAGE,
@@ -76,7 +75,7 @@ describe("FBA stock file validation", () => {
   it("rejects 216V, 504, 504C, and TRM21QC", () => {
     expect(assessFbaStockFile(buildAutopart216vFixture()).ok).toBe(false);
     expect(assessFbaStockFile("Type,Document,Date,Goods\nACCOUNT,SS1,01/01/2026,10\n").ok).toBe(false);
-    expect(assessFbaStockFile(`LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}\n`).ok).toBe(
+    expect(assessFbaStockFile("LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n").ok).toBe(
       false,
     );
     const trm = assessFbaStockFile(

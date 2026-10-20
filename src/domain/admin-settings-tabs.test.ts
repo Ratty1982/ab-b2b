@@ -65,9 +65,8 @@ describe("admin settings workspace structure", () => {
     expect(src).toMatch(/function GeneralTab[\s\S]*PlatformDefaultsSection/);
     expect(src).toMatch(/function TradeTab[\s\S]*TradeTestingPanel[\s\S]*TradeOrderingSettingsPanel/);
     expect(src).toMatch(/function EmailTab[\s\S]*EmailSettingsPanel/);
-    expect(src).toMatch(
-      /function AutopartTab[\s\S]*Autopart504cFeedPanel[\s\S]*AutopartOngoingSalesFeedPanel/,
-    );
+    expect(src).toMatch(/function AutopartTab[\s\S]*AutopartOngoingSalesFeedPanel/);
+    expect(src).not.toContain("Autopart504cFeedPanel");
     expect(src).toMatch(/function DocumentsTab[\s\S]*SDS management/);
     expect(src).toMatch(/function DocumentsTab[\s\S]*Bulk SDS Upload/);
     expect(src).toMatch(/function DocumentsTab[\s\S]*sharePointEnabled \?/);
@@ -98,21 +97,21 @@ describe("admin settings workspace structure", () => {
 });
 
 describe("504/TRM fulfilment settings surfaces", () => {
-  it("wires the fulfilment switch and retired 504C copy", () => {
+  it("explains only OFF, PREVIEW, and ACTIVE fulfilment", () => {
     const ongoing = readFileSync(join(root, "src/components/ab/AutopartOngoingSalesFeedPanel.tsx"), "utf8");
-    const c504 = readFileSync(join(root, "src/components/ab/Autopart504cFeedPanel.tsx"), "utf8");
     const order = readFileSync(join(root, "src/routes/admin.orders.$orderId.tsx"), "utf8");
     expect(ongoing).toContain("get504TrmFulfilmentSettingsFn");
     expect(ongoing).toContain("update504TrmFulfilmentSettingsFn");
     expect(ongoing).toContain("preview504TrmFulfilmentFn");
     expect(ongoing).toContain('data-admin-section="autopart-504-trm-fulfilment"');
-    expect(ongoing).toContain("OFF");
-    expect(ongoing).toContain("PREVIEW");
-    expect(ongoing).toContain("ACTIVE");
-    expect(c504).toMatch(/Legacy 504C is retired/);
-    expect(c504).toContain("runtimeMode === \"RETIRED\"");
+    expect(ongoing).toContain("No automatic order fulfilment");
+    expect(ongoing).toContain("Evaluate without changing orders");
+    expect(ongoing).toContain("Fulfil eligible orders using 504 + TRM21QC");
+    expect(ongoing).not.toContain("retire504c");
+    expect(ongoing).not.toContain("504C may still despatch");
     expect(order).toContain("autopartFulfilment");
-    expect(order).toContain("Autopart fulfilment");
+    expect(order).toContain("504 and TRM21QC");
+    expect(order).not.toContain("504C");
   });
 });
 

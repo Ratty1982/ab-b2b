@@ -71,7 +71,7 @@ When **Transactional email** is disabled:
 | `ORDER_RECEIVED` | B2B order placed (customer contact) |
 | `ORDER_UPDATED` | Staff amend a submitted order (customer contact, one immutable snapshot per amendment) |
 | `ORDER_RECEIVED_INTERNAL` | B2B order placed (staff recipients) |
-| `ORDER_PART_DESPATCHED` | Partial despatch (504C / fulfilment) |
+| `ORDER_PART_DESPATCHED` | Partial despatch (504 + TRM21QC fulfilment) |
 | `ORDER_DESPATCHED` | Full or remaining despatch |
 | `QUOTE_SENT` | Staff send quotation |
 | `QUOTE_DECLINED_INTERNAL` | Customer declines quotation |

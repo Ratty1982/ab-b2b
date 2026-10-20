@@ -1,22 +1,16 @@
 /**
- * 504 + TRM21QC fulfilment apply, preview, and 504C retirement.
+ * 504 + TRM21QC fulfilment apply and preview.
+ * OFF must not despatch. Legacy 504C settings stay retired and disabled.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
-import { AuthError } from "@/server/rbac/guards";
-import {
-  applyAutopart504cFile,
-  pollAutopart504cMailboxNow,
-  updateAutopart504cFeedSettings,
-} from "@/server/orders/autopart-504c";
 import {
   getAutopartFulfilmentForOrder,
   preview504TrmFulfilment,
   run504TrmFulfilmentAfterImport,
   update504TrmFulfilmentSettings,
 } from "@/server/orders/autopart-504-trm-fulfilment";
-import { AUTOPART_504C_HEADER, AUTOPART_504C_SEPARATOR, format504cDataRow } from "@/domain/autopart-504c-fixture";
 
 const prisma = new PrismaClient();
 let adminId = "";
@@ -56,16 +50,15 @@ async function uniqueAbOrderNumber(): Promise<string> {
   throw new Error("Could not allocate a unique AB-######");
 }
 
-async function restoreLegacyBridge() {
+async function parkFulfilmentOff() {
   await prisma.autopartOngoingSalesFeedSettings.upsert({
     where: { id: "default" },
     create: { id: "default", fulfilmentMode: "OFF", fulfilmentFrom: new Date() },
     update: { fulfilmentMode: "OFF" },
   });
-  await prisma.autopart504cFeedSettings.upsert({
+  await prisma.autopart504cFeedSettings.updateMany({
     where: { id: "default" },
-    create: { id: "default", runtimeMode: "ACTIVE", enabled: false },
-    update: { runtimeMode: "ACTIVE", enabled: false },
+    data: { runtimeMode: "RETIRED", enabled: false },
   });
 }
 
@@ -206,16 +199,16 @@ async function attach504TrmEvidence(input: {
 beforeAll(async () => {
   await bootstrapRbac(prisma);
   adminId = await ensureUser(`504-trm.admin.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
-  await restoreLegacyBridge();
+  await parkFulfilmentOff();
 });
 
 afterAll(async () => {
-  await restoreLegacyBridge();
+  await parkFulfilmentOff();
   await prisma.$disconnect();
 });
 
 describe("504 + TRM fulfilment modes", () => {
-  it("OFF previews nothing applied and leaves 504C able to poll as disabled", async () => {
+  it("OFF does not change the order", async () => {
     const orderNumber = await uniqueAbOrderNumber();
     const sku = `SKU-TRM-${orderNumber.slice(-6)}`;
     const { order, company } = await createConfirmedOrder(orderNumber, sku);
@@ -235,13 +228,9 @@ describe("504 + TRM fulfilment modes", () => {
     expect(applied.applied).toBe(false);
     const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
     expect(refreshed.status).toBe("CONFIRMED");
-
-    const poll = await pollAutopart504cMailboxNow(adminId);
-    expect(poll.ran).toBe(false);
-    expect(poll.reason).toMatch(/DISABLED|NOT CONFIGURED/i);
   });
 
-  it("PREVIEW does not mutate; ACTIVE retires 504C and despatches from 504+TRM", async () => {
+  it("PREVIEW does not mutate; ACTIVE despatches from 504+TRM", async () => {
     const orderNumber = await uniqueAbOrderNumber();
     const sku = `SKU-TRM-${orderNumber.slice(-6)}`;
     const document = `SS${orderNumber.slice(-6)}A`;
@@ -312,35 +301,12 @@ describe("504 + TRM fulfilment modes", () => {
     expect(await prisma.invoice.count({ where: { orderId: order.id } })).toBe(invoicesBeforeReplay);
     expect((await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).qtyReserved).toBe(0);
 
-    await expect(
-      updateAutopart504cFeedSettings(adminId, { enabled: false }),
-    ).rejects.toBeInstanceOf(AuthError);
+    const legacy = await prisma.autopart504cFeedSettings.findUnique({ where: { id: "default" } });
+    if (legacy) {
+      expect(legacy.runtimeMode).toBe("RETIRED");
+      expect(legacy.enabled).toBe(false);
+    }
 
-    const poll = await pollAutopart504cMailboxNow(adminId);
-    expect(poll.ran).toBe(false);
-    expect(poll.reason).toMatch(/RETIRED/i);
-
-    const report = [
-      "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)",
-      AUTOPART_504C_HEADER,
-      AUTOPART_504C_SEPARATOR,
-      format504cDataRow({
-        document: `I${orderNumber.slice(-6)}`,
-        date: "06/10/2026",
-        time: "14:12",
-        account: "AB001",
-        customer: "EXAMPLE MOTOR FACTORS",
-        goods: "10.00",
-        vat: "2.00",
-        value: "12.00",
-        inits: "WR",
-        orderNumber,
-      }),
-    ].join("\n");
-    await expect(
-      applyAutopart504cFile(adminId, { text: report, filename: "retired.txt", allowApply: true }),
-    ).rejects.toMatchObject({ code: "504C_RETIRED" });
-
-    await restoreLegacyBridge();
+    await parkFulfilmentOff();
   });
 });

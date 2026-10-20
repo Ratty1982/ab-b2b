@@ -9,7 +9,7 @@
  * 231PO3NEW Avail remains sellable stock — this path does not decrement Inventory.qtyOnHand.
  */
 
-import type { Autopart504TrmFulfilmentMode, Autopart504cRuntimeMode, Prisma } from "@prisma/client";
+import type { Autopart504TrmFulfilmentMode, Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants, hasPermission } from "@/server/rbac/access";
@@ -34,8 +34,6 @@ export type Autopart504TrmFulfilmentPublicSettings = {
   fulfilmentFrom: string | null;
   fulfilmentLastPreviewAt: string | null;
   fulfilmentLastAppliedAt: string | null;
-  runtime504c: Autopart504cRuntimeMode;
-  bothMutatorsPrevented: boolean;
 };
 
 export type Autopart504TrmFulfilmentPreview = {
@@ -88,16 +86,10 @@ export async function read504TrmFulfilmentSettings(): Promise<{
   fulfilmentFrom: Date | null;
   fulfilmentLastPreviewAt: Date | null;
   fulfilmentLastAppliedAt: Date | null;
-  runtime504c: Autopart504cRuntimeMode;
 }> {
   const ongoing = await prisma.autopartOngoingSalesFeedSettings.upsert({
     where: { id: "default" },
     create: { id: "default", fulfilmentFrom: new Date() },
-    update: {},
-  });
-  const c504 = await prisma.autopart504cFeedSettings.upsert({
-    where: { id: "default" },
-    create: { id: "default" },
     update: {},
   });
   return {
@@ -105,7 +97,6 @@ export async function read504TrmFulfilmentSettings(): Promise<{
     fulfilmentFrom: ongoing.fulfilmentFrom,
     fulfilmentLastPreviewAt: ongoing.fulfilmentLastPreviewAt,
     fulfilmentLastAppliedAt: ongoing.fulfilmentLastAppliedAt,
-    runtime504c: c504.runtimeMode,
   };
 }
 
@@ -119,17 +110,7 @@ export async function get504TrmFulfilmentSettingsForActor(
     fulfilmentFrom: row.fulfilmentFrom?.toISOString() ?? null,
     fulfilmentLastPreviewAt: row.fulfilmentLastPreviewAt?.toISOString() ?? null,
     fulfilmentLastAppliedAt: row.fulfilmentLastAppliedAt?.toISOString() ?? null,
-    runtime504c: row.runtime504c,
-    bothMutatorsPrevented: row.fulfilmentMode !== "ACTIVE" || row.runtime504c === "RETIRED",
   };
-}
-
-export function shouldBridge504To504c(mode: Autopart504TrmFulfilmentMode): boolean {
-  return mode === "OFF";
-}
-
-export function is504cRuntimeRetired(mode: Autopart504cRuntimeMode): boolean {
-  return mode === "RETIRED";
 }
 
 export async function update504TrmFulfilmentSettings(
@@ -137,7 +118,6 @@ export async function update504TrmFulfilmentSettings(
   patch: {
     fulfilmentMode?: Autopart504TrmFulfilmentMode;
     fulfilmentFrom?: string | null;
-    retire504c?: boolean;
   },
 ) {
   await requireFulfilmentAdmin(userId);
@@ -151,18 +131,8 @@ export async function update504TrmFulfilmentSettings(
     nextFrom = new Date();
   }
 
-  const retire504c = patch.retire504c === true || nextMode === "ACTIVE";
-  if (nextMode === "ACTIVE" && !retire504c) {
-    throw new AuthError(
-      "504/TRM fulfilment cannot be ACTIVE while 504C still mutates orders. Retire 504C first.",
-      "FULFILMENT_MUTATOR_CONFLICT",
-      400,
-    );
-  }
-
   const before = {
     fulfilmentMode: current.fulfilmentMode,
-    runtime504c: current.runtime504c,
     fulfilmentFrom: current.fulfilmentFrom?.toISOString() ?? null,
   };
 
@@ -175,22 +145,11 @@ export async function update504TrmFulfilmentSettings(
     },
   });
 
-  if (retire504c) {
-    await prisma.autopart504cFeedSettings.upsert({
-      where: { id: "default" },
-      create: {
-        id: "default",
-        runtimeMode: "RETIRED",
-        enabled: false,
-        updatedByUserId: userId,
-      },
-      update: {
-        runtimeMode: "RETIRED",
-        enabled: false,
-        updatedByUserId: userId,
-      },
-    });
-  }
+  // Keep any stored legacy feed row disabled. Do not create one, and do not use it to despatch.
+  await prisma.autopart504cFeedSettings.updateMany({
+    where: { id: "default" },
+    data: { runtimeMode: "RETIRED", enabled: false, updatedByUserId: userId },
+  });
 
   await recordAuditEvent({
     action: "autopart.504_trm_fulfilment_switch",
@@ -200,7 +159,6 @@ export async function update504TrmFulfilmentSettings(
     before,
     after: {
       fulfilmentMode: nextMode,
-      runtime504c: retire504c ? "RETIRED" : current.runtime504c,
       fulfilmentFrom: nextFrom?.toISOString() ?? null,
     },
   });
@@ -210,8 +168,6 @@ export async function update504TrmFulfilmentSettings(
     fulfilmentFrom: ongoing.fulfilmentFrom?.toISOString() ?? null,
     fulfilmentLastPreviewAt: ongoing.fulfilmentLastPreviewAt?.toISOString() ?? null,
     fulfilmentLastAppliedAt: ongoing.fulfilmentLastAppliedAt?.toISOString() ?? null,
-    runtime504c: retire504c ? ("RETIRED" as const) : current.runtime504c,
-    bothMutatorsPrevented: nextMode !== "ACTIVE" || retire504c,
   };
 }
 
@@ -745,17 +701,6 @@ async function run504TrmFulfilmentInner(
       data: { fulfilmentLastPreviewAt: new Date() },
     });
     return { mode: "PREVIEW", applied: false, preview, emailsQueued: 0, ordersMutated: 0 };
-  }
-
-  if (settings.runtime504c !== "RETIRED") {
-    await recordAuditEvent({
-      action: "autopart.504_trm_fulfilment_blocked_504c_active",
-      entityType: "AutopartOngoingSalesFeedSettings",
-      entityId: "default",
-      actorUserId,
-      metadata: { reason: "504C still ACTIVE — refusing dual mutation" },
-    });
-    return { mode: "ACTIVE", applied: false, preview, emailsQueued: 0, ordersMutated: 0 };
   }
 
   let emailsQueued = 0;

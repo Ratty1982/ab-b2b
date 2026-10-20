@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
 import { filenameMatchesStockPattern } from "@/domain/stock-email";
-import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
-import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
+const LEGACY_504C_TITLE = "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)";
 import { buildAutopart504DayEndFixture } from "@/domain/autopart-504-dayend-fixture";
 import {
   classifyOngoingSalesAttachment,
@@ -22,7 +21,7 @@ const SAMPLE_TRM = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,C
 AB001,TRADE,SS100001,29/09/2026,SKU-A,Cleaner A,2,200.00,100.00,100.00,50.0
 `;
 
-const SAMPLE_504C = `${AUTOPART_504C_REPORT_TITLE}\n${AUTOPART_504C_HEADER}\n`;
+const SAMPLE_504C = `${LEGACY_504C_TITLE}\n`;
 
 describe("ongoing sales attachment candidates", () => {
   it("treats 504.TXT / 504.txt as candidates regardless of case", () => {

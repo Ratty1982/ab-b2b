@@ -2,15 +2,15 @@
  * Authoritative order fulfilment events + line despatch quantities.
  *
  * Rules:
- * - Never invent despatchedQty from Autopart Avail or 504C financial totals alone.
+ * - Never invent despatchedQty from financial totals alone.
  * - Timeline events must be backed by real place/export/invoice/manual evidence.
  * - Email failures must not roll back fulfilment state.
+ * - Historical events may record source AUTOPART_504C. New line despatch is MANUAL
+ *   or the 504 + TRM21QC fulfilment service.
  */
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
-import { moneyToString, moneyZero, parseMoney, addMoney } from "@/domain/money";
-import { compareAbOrderTo504cFinancials } from "@/domain/autopart-504c-plan";
 
 export async function recordFulfilmentEvent(
   tx: Prisma.TransactionClient | typeof prisma,
@@ -64,7 +64,7 @@ export async function applyAuthoritativeLineDespatch(
   input: {
     orderId: string;
     lines: Array<{ orderItemId: string; despatchedQty: number }>;
-    source: "AUTOPART_504C" | "MANUAL";
+    source: "MANUAL";
     invoiceId?: string | null;
     summary: string;
   },
@@ -109,48 +109,3 @@ export async function applyAuthoritativeLineDespatch(
 
   return { status, fullyComplete };
 }
-
-/**
- * Financial completion check across all linked Autopart invoices for an order.
- * 504C Goods includes SDEL delivery — compare to AB subtotal + deliveryTotal.
- */
-export async function orderInvoicesFinanciallyComplete(orderId: string): Promise<boolean> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    select: {
-      subtotal: true,
-      deliveryTotal: true,
-      vatTotal: true,
-      grandTotal: true,
-      invoices: {
-        where: { autopartDocumentKind: "INVOICE" },
-        select: { subtotal: true, vatTotal: true, grandTotal: true },
-      },
-    },
-  });
-  if (!order || order.invoices.length === 0) return false;
-
-  let goods = moneyZero();
-  let vat = moneyZero();
-  let value = moneyZero();
-  for (const inv of order.invoices) {
-    goods = addMoney(goods, parseMoney(String(inv.subtotal)) ?? moneyZero());
-    vat = addMoney(vat, parseMoney(String(inv.vatTotal)) ?? moneyZero());
-    value = addMoney(value, parseMoney(String(inv.grandTotal)) ?? moneyZero());
-  }
-
-  const compare = compareAbOrderTo504cFinancials({
-    abGoods: moneyToString(parseMoney(String(order.subtotal)) ?? moneyZero(), 2),
-    abDelivery: moneyToString(parseMoney(String(order.deliveryTotal)) ?? moneyZero(), 2),
-    abVat: moneyToString(parseMoney(String(order.vatTotal)) ?? moneyZero(), 2),
-    abTotal: moneyToString(parseMoney(String(order.grandTotal)) ?? moneyZero(), 2),
-    c504Goods: moneyToString(goods, 2),
-    c504Vat: moneyToString(vat, 2),
-    c504Value: moneyToString(value, 2),
-  });
-
-  return compare.status === "OK";
-}
-
-export const FULFILMENT_LINE_QTY_LIMITATION =
-  "504C provides order-level invoice totals only — SKU despatch quantities are not available from this feed.";
