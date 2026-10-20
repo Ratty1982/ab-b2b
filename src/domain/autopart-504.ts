@@ -301,46 +301,28 @@ function colByKey(layout: FixedColumnLayout[], key: FixedColumnKey): FixedColumn
 }
 
 /**
- * Autopart right-aligns Goods/VAT/Value. VAT can overflow the naive Goods→Vat
- * slice (e.g. "49.99    10" / ".00"). Recover the three money tokens from the
- * Goods…Inits (or Goods…Order) span when individual slices are not clean.
+ * Autopart right-aligns Goods/VAT/Value to the header words. Wider amounts and
+ * leading minus signs overflow to the left of the heading (Goods starts at 71,
+ * so 399.20 and -44.16 begin at 70). A slice that starts on the heading drops
+ * that character and can still look like a money token.
+ *
+ * Accept a triple only when the complete whitespace-separated tokens balance
+ * within 1p. A right-edge read is a second opinion: if both succeed they must
+ * agree. Anything else is rejected — never store a shortened amount.
  */
-function extractFixedWidthMoney(
-  line: string,
-  layout: FixedColumnLayout[],
-): Autopart504MoneyTriple {
-  const goodsCol = colByKey(layout, "goods");
-  const vatCol = colByKey(layout, "vat");
-  const valueCol = colByKey(layout, "value");
-  const initsCol = colByKey(layout, "inits");
-  const orderCol = colByKey(layout, "orderNumber");
-
-  const slicedGoods = goodsCol ? parseAutopartMoneyToken(line.slice(goodsCol.start, goodsCol.end)) : null;
-  const slicedVat = vatCol ? parseAutopartMoneyToken(line.slice(vatCol.start, vatCol.end)) : null;
-  const slicedValue = valueCol ? parseAutopartMoneyToken(line.slice(valueCol.start, valueCol.end)) : null;
-  if (slicedGoods && slicedValue && (!vatCol || slicedVat)) {
-    return { goods: slicedGoods, vat: slicedVat, value: slicedValue };
+function extractFixedWidthMoney(line: string, layout: FixedColumnLayout[]): FixedMoneyExtract {
+  const fromTokens = tokenMoneyTriple(line, layout);
+  const fromEdges = edgeMoneyTriple(line, layout);
+  if (fromTokens && fromEdges && !triplesMatch(fromTokens.triple, fromEdges)) return rejectedMoney();
+  if (fromTokens) {
+    return { ...fromTokens.triple, verified: true, diagnostic: null, goodsStart: fromTokens.goodsStart };
   }
-
-  const spanStart = goodsCol?.start ?? vatCol?.start ?? valueCol?.start ?? 0;
-  const spanEnd = initsCol?.start ?? orderCol?.start ?? line.length;
-  const tokens = line
-    .slice(spanStart, Math.max(spanEnd, spanStart))
-    .trim()
-    .split(/\s+/)
-    .map((tok) => parseAutopartMoneyToken(tok))
-    .filter((tok): tok is string => tok != null);
-
-  if (tokens.length >= 3) {
-    return { goods: tokens[0]!, vat: tokens[1]!, value: tokens[2]! };
+  if (fromEdges) {
+    const goodsCol = colByKey(layout, "goods");
+    const goodsStart = goodsCol ? completeMoneyStart(line, goodsCol.start) : null;
+    return { ...fromEdges, verified: true, diagnostic: null, goodsStart };
   }
-  if (tokens.length === 2) {
-    return { goods: tokens[0]!, vat: slicedVat, value: tokens[1]! };
-  }
-  if (tokens.length === 1) {
-    return { goods: tokens[0]!, vat: slicedVat, value: slicedValue ?? tokens[0]! };
-  }
-  return { goods: slicedGoods, vat: slicedVat, value: slicedValue };
+  return rejectedMoney();
 }
 
 function looksLikeLegacy504cContent(sampleUpper: string): boolean {
@@ -399,6 +381,140 @@ function moneyMinor(raw: string | null): number | null {
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
   return Math.round(n * 100);
+}
+
+/** ±1p. Goods NET + VAT must equal Value before a 504 amount is trusted. */
+export const AUTOPART_504_MONEY_TOLERANCE_MINOR = 1;
+
+export function autopart504MinorUnits(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return moneyMinor(trimmed);
+}
+
+export function autopart504TripleBalances(
+  goods: string | null | undefined,
+  vat: string | null | undefined,
+  value: string | null | undefined,
+  toleranceMinor = AUTOPART_504_MONEY_TOLERANCE_MINOR,
+): boolean {
+  const g = autopart504MinorUnits(goods);
+  const val = autopart504MinorUnits(value);
+  if (g == null || val == null) return false;
+  const v = autopart504MinorUnits(vat ?? "0.00");
+  if (v == null) return false;
+  return Math.abs(g + v - val) <= toleranceMinor;
+}
+
+const UNVERIFIED_MONEY =
+  "missing goods/value; monetary amounts could not be verified (goods + VAT must equal value within 1p); refusing truncated or ambiguous values";
+
+const MONEY_LABEL_LENGTH = { goods: "Goods".length, vat: "Vat".length, value: "Value".length } as const;
+
+type FixedMoneyExtract = Autopart504MoneyTriple & {
+  verified: boolean;
+  diagnostic: string | null;
+  /** Index of the first character of the goods token, when verified. */
+  goodsStart: number | null;
+};
+
+function rejectedMoney(): FixedMoneyExtract {
+  return { goods: null, vat: null, value: null, verified: false, diagnostic: UNVERIFIED_MONEY, goodsStart: null };
+}
+
+function completeMoneyStart(line: string, index: number): number {
+  let i = Math.max(0, index);
+  while (i > 0 && /[\d.,]/.test(line[i - 1]!)) i -= 1;
+  if (i > 0 && (line[i - 1] === "-" || line[i - 1] === "(")) {
+    const before = i >= 2 ? line[i - 2]! : " ";
+    if (i === 1 || /\s/.test(before)) i -= 1;
+  }
+  return i;
+}
+
+function triplesMatch(a: Autopart504MoneyTriple, b: Autopart504MoneyTriple): boolean {
+  return a.goods === b.goods && a.vat === b.vat && a.value === b.value;
+}
+
+function tokenMoneyTriple(
+  line: string,
+  layout: FixedColumnLayout[],
+): { triple: Autopart504MoneyTriple; goodsStart: number } | null {
+  const goodsCol = colByKey(layout, "goods");
+  const vatCol = colByKey(layout, "vat");
+  const valueCol = colByKey(layout, "value");
+  const initsCol = colByKey(layout, "inits");
+  const orderCol = colByKey(layout, "orderNumber");
+  const headingStart = goodsCol?.start ?? vatCol?.start ?? valueCol?.start ?? 0;
+  const spanStart = completeMoneyStart(line, headingStart);
+  const spanEnd = initsCol?.start ?? orderCol?.start ?? line.length;
+  const rawTokens = line
+    .slice(spanStart, Math.max(spanEnd, spanStart))
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (rawTokens.length === 0) return null;
+  const parsed = rawTokens.map((tok) => parseAutopartMoneyToken(tok));
+  if (parsed.some((tok) => tok == null)) return null;
+  const goodsStart = line.indexOf(rawTokens[0]!, spanStart);
+  if (parsed.length === 3) {
+    const triple = { goods: parsed[0]!, vat: parsed[1]!, value: parsed[2]! };
+    if (!autopart504TripleBalances(triple.goods, triple.vat, triple.value)) return null;
+    return { triple, goodsStart: goodsStart < 0 ? spanStart : goodsStart };
+  }
+  if (parsed.length === 2 && autopart504TripleBalances(parsed[0], "0.00", parsed[1])) {
+    return {
+      triple: { goods: parsed[0]!, vat: "0.00", value: parsed[1]! },
+      goodsStart: goodsStart < 0 ? spanStart : goodsStart,
+    };
+  }
+  return null;
+}
+
+function readRightAlignedMoney(line: string, rightEdge: number): { parsed: string; start: number } | null {
+  if (rightEdge < 0 || rightEdge >= line.length) return null;
+  const atEdge = line[rightEdge]!;
+  if (/\s/.test(atEdge)) return null;
+  const after = rightEdge + 1 < line.length ? line[rightEdge + 1]! : " ";
+  if (!/\s/.test(after)) return null;
+  let start = rightEdge;
+  while (start > 0 && /[\d.,]/.test(line[start - 1]!)) start -= 1;
+  if (start > 0 && (line[start - 1] === "-" || line[start - 1] === "(")) {
+    const before = start >= 2 ? line[start - 2]! : " ";
+    if (start === 1 || /\s/.test(before)) start -= 1;
+  }
+  if (start > 0 && !/\s/.test(line[start - 1]!)) return null;
+  const parsed = parseAutopartMoneyToken(line.slice(start, rightEdge + 1));
+  if (!parsed) return null;
+  return { parsed, start };
+}
+
+function edgeMoneyTriple(line: string, layout: FixedColumnLayout[]): Autopart504MoneyTriple | null {
+  const goodsCol = colByKey(layout, "goods");
+  const vatCol = colByKey(layout, "vat");
+  const valueCol = colByKey(layout, "value");
+  if (!goodsCol || !valueCol) return null;
+  const goodsEdge = goodsCol.start + MONEY_LABEL_LENGTH.goods - 1;
+  const valueEdge = valueCol.start + MONEY_LABEL_LENGTH.value - 1;
+  const goods = readRightAlignedMoney(line, goodsEdge);
+  const value = readRightAlignedMoney(line, valueEdge);
+  if (!goods || !value) return null;
+  let vatParsed = "0.00";
+  let vatStart = goodsEdge + 1;
+  let vatEdge = goodsEdge;
+  if (vatCol) {
+    vatEdge = vatCol.start + MONEY_LABEL_LENGTH.vat - 1;
+    const vat = readRightAlignedMoney(line, vatEdge);
+    if (!vat) return null;
+    vatParsed = vat.parsed;
+    vatStart = vat.start;
+    if (vatStart <= goodsEdge || value.start <= vatEdge) return null;
+  } else if (value.start <= goodsEdge) {
+    return null;
+  }
+  if (!autopart504TripleBalances(goods.parsed, vatParsed, value.parsed)) return null;
+  return { goods: goods.parsed, vat: vatParsed, value: value.parsed };
 }
 
 function classifyDocumentRow(input: {
@@ -576,6 +692,7 @@ export function parseAutopart504Report(text: string): Autopart504ParseResult {
     let valueRaw = "";
     let initials: string | null = null;
     let customerOrderNumber = "";
+    let monetaryDiagnostic: string | null = null;
 
     if (layoutMode === "csv" && headerMap) {
       const cells = splitCsvLine(line, delimiter);
@@ -603,9 +720,17 @@ export function parseAutopart504Report(text: string): Autopart504ParseResult {
       initials = fields["inits"] || null;
       customerOrderNumber = fields["orderNumber"] ?? "";
       const money = extractFixedWidthMoney(line, fixedLayout);
-      goodsRaw = money.goods ?? "";
-      vatRaw = money.vat ?? "";
-      valueRaw = money.value ?? "";
+      if (!money.verified) {
+        monetaryDiagnostic = money.diagnostic;
+      } else {
+        goodsRaw = money.goods ?? "";
+        vatRaw = money.vat ?? "";
+        valueRaw = money.value ?? "";
+        const customerCol = colByKey(fixedLayout, "customer");
+        if (customerCol && money.goodsStart != null && money.goodsStart < customerCol.end) {
+          customerName = line.slice(customerCol.start, money.goodsStart).trim();
+        }
+      }
     }
 
     if (!documentNumber) {
@@ -613,11 +738,19 @@ export function parseAutopart504Report(text: string): Autopart504ParseResult {
       continue;
     }
 
-    const goods =
-      layoutMode === "fixed-width" ? goodsRaw || null : parseAutopartMoneyToken(goodsRaw);
-    const vat = layoutMode === "fixed-width" ? vatRaw || null : parseAutopartMoneyToken(vatRaw);
-    const value =
-      layoutMode === "fixed-width" ? valueRaw || null : parseAutopartMoneyToken(valueRaw);
+    let goods = layoutMode === "fixed-width" ? goodsRaw || null : parseAutopartMoneyToken(goodsRaw);
+    let vat = layoutMode === "fixed-width" ? vatRaw || null : parseAutopartMoneyToken(vatRaw);
+    let value = layoutMode === "fixed-width" ? valueRaw || null : parseAutopartMoneyToken(valueRaw);
+    if (!monetaryDiagnostic && goods && value && !autopart504TripleBalances(goods, vat, value)) {
+      monetaryDiagnostic = UNVERIFIED_MONEY;
+    }
+    if (monetaryDiagnostic) {
+      goods = null;
+      vat = null;
+      value = null;
+    } else if (goods && value && !vat) {
+      vat = "0.00";
+    }
     const { kind, classification } = classifyDocumentRow({
       documentNumber,
       customerOrderNumber,
@@ -626,7 +759,11 @@ export function parseAutopart504Report(text: string): Autopart504ParseResult {
     });
     let finalClassification = classification;
     let malformedReason: string | null = null;
-    if (kind === "UNKNOWN") {
+    if (monetaryDiagnostic) {
+      finalClassification = "MALFORMED";
+      malformedReason = monetaryDiagnostic;
+      errors.push(`Line ${lineNumber}: ${malformedReason}; document candidate ${documentNumber}`);
+    } else if (kind === "UNKNOWN") {
       malformedReason = `unknown document type`;
       errors.push(`Line ${lineNumber}: ${malformedReason}; document candidate ${documentNumber}`);
     } else if (finalClassification === "MALFORMED") {
