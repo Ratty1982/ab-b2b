@@ -5,9 +5,12 @@ import { historicalProductLineIdentity, ongoingImportAllowsCatchUp, signedHistor
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import { redactIneligibleSalesDiagnostic } from "@/domain/autopart-import-diagnostics";
 import {
+  IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT,
   IMPORTED_SALES_RESET_CONFIRMATION,
+  IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
   archivedBytesMatch,
   evaluateImportedSalesResetGates,
+  importedSalesResetVerificationProblem,
   isProductionSalesDatabase,
   persistentSalesArchiveProblem,
 } from "@/domain/imported-sales-reset";
@@ -172,12 +175,65 @@ describe("imported sales reset gates", () => {
     expect(ready).toEqual({ ok: true, mode: "execute" });
   });
 
+  it("waives only the backup and restore checks for automotivebrands", () => {
+    const base = {
+      executeRequested: true as const,
+      confirmation: IMPORTED_SALES_RESET_CONFIRMATION,
+      targetDatabase: "automotivebrands",
+      actualDatabase: "automotivebrands",
+      backupProof: null,
+      restoreCheckOk: false,
+      allowProductionDatabase: true,
+      acceptNoBackupRisk: true,
+      noBackupAcknowledgement: IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT,
+      now,
+    };
+    expect(evaluateImportedSalesResetGates(base)).toEqual({ ok: true, mode: "execute" });
+    expect(evaluateImportedSalesResetGates({ ...base, acceptNoBackupRisk: false }).ok).toBe(false);
+    expect(evaluateImportedSalesResetGates({ ...base, allowProductionDatabase: false }).ok).toBe(false);
+    expect(evaluateImportedSalesResetGates({ ...base, noBackupAcknowledgement: "yes" }).ok).toBe(false);
+    expect(evaluateImportedSalesResetGates({ ...base, confirmation: "RESET IMPORTED AUTOPART SALES" }).ok).toBe(false);
+    expect(
+      evaluateImportedSalesResetGates({
+        ...base,
+        targetDatabase: "automotive_brands_sales_reset_test",
+        actualDatabase: "automotive_brands_sales_reset_test",
+      }).ok,
+    ).toBe(false);
+    expect(evaluateImportedSalesResetGates({ ...base, duringBootstrap: true }).ok).toBe(false);
+    expect(IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS).toBeGreaterThanOrEqual(180_000);
+    expect(
+      importedSalesResetVerificationProblem({
+        preservedBefore: { companies: 2, orders: 1 },
+        preservedAfter: { companies: 2, orders: 1 },
+        removedAfter: { salesDocuments: 0, salesLines: 0 },
+      }),
+    ).toBeNull();
+    expect(
+      importedSalesResetVerificationProblem({
+        preservedBefore: { companies: 2 },
+        preservedAfter: { companies: 1 },
+        removedAfter: { salesDocuments: 0 },
+      }),
+    ).toMatch(/companies/);
+    expect(
+      importedSalesResetVerificationProblem({
+        preservedBefore: { companies: 2 },
+        preservedAfter: { companies: 2 },
+        removedAfter: { salesDocuments: 3 },
+      }),
+    ).toMatch(/salesDocuments/);
+  });
+
   it("is not referenced by application startup", () => {
     const root = resolve(import.meta.dirname, "../..");
     const server = readFileSync(resolve(root, "src/server.ts"), "utf8");
     const entry = readFileSync(resolve(root, "scripts/docker-entrypoint.sh"), "utf8");
+    const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8");
     expect(server).not.toContain("imported-sales-reset");
     expect(entry).not.toContain("imported-sales-reset");
+    expect(entry).not.toContain("accept-no-backup-risk");
+    expect(dockerfile).not.toContain("imported-sales-reset");
     expect(server).not.toContain("customer-sales-import");
   });
 });

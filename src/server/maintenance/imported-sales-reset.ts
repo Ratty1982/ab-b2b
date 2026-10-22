@@ -1,8 +1,10 @@
 /**
  * Read-only plan and gated execute for the pre-launch imported-sales wipe.
  * Not imported by application startup. Execute is only reached from
- * scripts/imported-sales-reset.ts after the backup gates pass.
+ * scripts/imported-sales-reset.ts or the temporary maintenance runner.
  */
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -11,7 +13,10 @@ import {
   IMPORTED_SALES_EFFECTS,
   IMPORTED_SALES_PRESERVED,
   IMPORTED_SALES_REMOVED,
+  IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
   evaluateImportedSalesResetGates,
+  importedSalesResetTransactionOptions,
+  importedSalesResetVerificationProblem,
   type BackupProof,
 } from "@/domain/imported-sales-reset";
 import { archiveImportedSalesSources, SalesArchiveError } from "@/server/maintenance/sales-source-archive";
@@ -60,7 +65,9 @@ async function tableCounts(db: Db) {
     reservations,
     fulfilmentEvents,
     users,
+    roles,
     permissions,
+    emailSettings,
     customerMasterBatches,
     legacy504cRuns,
     salesDocuments,
@@ -96,7 +103,9 @@ async function tableCounts(db: Db) {
     db.orderStockReservation.count(),
     db.orderFulfilmentEvent.count(),
     db.user.count(),
+    db.role.count(),
     db.permission.count(),
+    db.emailSettings.count(),
     db.autopartImportBatch.count({ where: { kind: "CUSTOMER_MASTER" } }),
     db.autopart504cImportRun.count(),
     db.autopartSalesDocument.count(),
@@ -137,7 +146,9 @@ async function tableCounts(db: Db) {
       reservations,
       fulfilmentEvents,
       users,
+      roles,
       permissions,
+      emailSettings,
       customerMasterBatches,
       legacy504cRuns,
     },
@@ -200,7 +211,7 @@ export async function planImportedSalesReset(db: Db = prisma): Promise<ImportedS
   };
 }
 
-async function deleteImportedSales(db: Db) {
+export async function deleteImportedSales(db: Db) {
   const salesBatchIds = (
     await db.autopartImportBatch.findMany({
       where: { kind: { in: [...SALES_BATCH_KINDS] } },
@@ -261,15 +272,33 @@ async function deleteImportedSales(db: Db) {
   };
 }
 
+export async function deleteImportedSalesAndVerify(
+  db: Db,
+  preservedBefore: Record<string, number>,
+) {
+  const deleted = await deleteImportedSales(db);
+  const after = await tableCounts(db);
+  const problem = importedSalesResetVerificationProblem({
+    preservedBefore,
+    preservedAfter: after.preserved,
+    removedAfter: after.removed,
+  });
+  if (problem) throw new Error(`RESET_VERIFICATION_FAILED: ${problem}`);
+  return { deleted, after };
+}
+
 export async function executeImportedSalesReset(input: {
-  db?: Db;
+  db?: PrismaClient;
   confirmation: string | null;
   targetDatabase: string | null;
   actualDatabase: string | null;
+  databaseHost?: string | null;
   backupProof: BackupProof | null;
   restoreCheckOk: boolean;
   duringBootstrap?: boolean;
   allowProductionDatabase?: boolean;
+  acceptNoBackupRisk?: boolean;
+  noBackupAcknowledgement?: string | null;
   now?: Date;
   actorUserId?: string | null;
 }) {
@@ -283,6 +312,10 @@ export async function executeImportedSalesReset(input: {
     ...(input.duringBootstrap != null ? { duringBootstrap: input.duringBootstrap } : {}),
     ...(input.allowProductionDatabase != null
       ? { allowProductionDatabase: input.allowProductionDatabase }
+      : {}),
+    ...(input.acceptNoBackupRisk != null ? { acceptNoBackupRisk: input.acceptNoBackupRisk } : {}),
+    ...(input.noBackupAcknowledgement != null
+      ? { noBackupAcknowledgement: input.noBackupAcknowledgement }
       : {}),
     ...(input.now != null ? { now: input.now } : {}),
   });
@@ -299,24 +332,63 @@ export async function executeImportedSalesReset(input: {
       : "Source archive failed. Imported sales were not deleted.";
     return { ok: false as const, mode: "execute" as const, reason };
   }
-  await prisma.autopartOngoingSalesFeedSettings.upsert({
+
+  await db.autopartOngoingSalesFeedSettings.upsert({
     where: { id: "default" },
     create: { id: "default", enabled: false, configured: true, fulfilmentMode: "OFF" },
     update: { enabled: false },
   });
 
-  const deleted = input.db
-    ? await deleteImportedSales(input.db)
-    : await prisma.$transaction((tx) => deleteImportedSales(tx), { timeout: 180_000 });
+  const timeoutMs = String(IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS);
+  const started = Date.now();
+  let deletedOutcome: Awaited<ReturnType<typeof deleteImportedSalesAndVerify>> & {
+    statementTimeout: string;
+  };
+  try {
+    deletedOutcome = await db.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SELECT set_config('statement_timeout', '${timeoutMs}ms', true)`);
+      const verified = await deleteImportedSalesAndVerify(tx, before.counts.preserved);
+      if (process.env["AB_RESET_INJECT_DELETE_FAILURE"] === "1") {
+        throw new Error("RESET_INJECTED_FAILURE");
+      }
+      const [setting] = await tx.$queryRaw<Array<{ statement_timeout: string }>>`
+        SELECT current_setting('statement_timeout') AS statement_timeout
+      `;
+      return { ...verified, statementTimeout: setting?.statement_timeout ?? "" };
+    }, importedSalesResetTransactionOptions);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "delete failed";
+    return {
+      ok: false as const,
+      mode: "execute" as const,
+      reason: `Imported-sales deletions were rolled back. Automatic importing was left disabled. ${message}`,
+    };
+  }
+  const deleteTransactionMs = Date.now() - started;
   const after = await tableCounts(db);
-  const feed = await prisma.autopartOngoingSalesFeedSettings.findUnique({
+  const followUp = importedSalesResetVerificationProblem({
+    preservedBefore: before.counts.preserved,
+    preservedAfter: after.preserved,
+    removedAfter: after.removed,
+  });
+  if (followUp) {
+    return {
+      ok: false as const,
+      mode: "execute" as const,
+      reason: `The delete transaction committed, then the follow-up check failed. ${followUp}`,
+    };
+  }
+  const feed = await db.autopartOngoingSalesFeedSettings.findUnique({
     where: { id: "default" },
     select: { enabled: true },
   });
 
   const report = {
     mode: "execute" as const,
-    deleted,
+    backup: input.acceptNoBackupRisk === true ? ("waived" as const) : ("verified" as const),
+    database: input.actualDatabase,
+    host: input.databaseHost ?? null,
+    deleted: deletedOutcome.deleted,
     planned: before.counts.removed,
     preservedBefore: before.counts.preserved,
     preservedAfter: after.preserved,
@@ -324,25 +396,44 @@ export async function executeImportedSalesReset(input: {
     orderReferences: before.orderReferences,
     feedEnabledBefore: before.feedEnabled,
     feedEnabledAfter: feed?.enabled ?? false,
-    archive,
+    archiveDirectory: archive.directory,
+    archiveFiles: archive.files,
+    deleteTransactionMs,
+    statementTimeout: deletedOutcome.statementTimeout,
+    transactionTimeoutMs: IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
+    auditReportPath: null as string | null,
   };
-
-  if (input.db == null) {
-    await recordAuditEvent({
-      action: "autopart.imported_sales_reset_executed",
-      entityType: "AutopartSalesDocument",
-      entityId: null,
-      actorUserId: input.actorUserId ?? null,
-      metadata: {
-        deleted,
-        feedEnabledBefore: report.feedEnabledBefore,
-        feedEnabledAfter: report.feedEnabledAfter,
-        archiveDirectory: archive.directory,
-        archiveFiles: archive.files,
-        orderReferences: before.orderReferences.length,
-      },
-    });
+  const auditReportPath = path.join(archive.directory, "reset-audit.json");
+  writeFileSync(auditReportPath, JSON.stringify({ ...report, auditReportPath }, null, 2));
+  const written = readFileSync(auditReportPath, "utf8");
+  if (!written.includes(`"database": ${JSON.stringify(input.actualDatabase)}`)) {
+    return {
+      ok: false as const,
+      mode: "execute" as const,
+      reason: "The audit report could not be read back after the reset committed.",
+    };
   }
+  report.auditReportPath = auditReportPath;
+
+  await recordAuditEvent({
+    action: "autopart.imported_sales_reset_executed",
+    entityType: "AutopartSalesDocument",
+    entityId: null,
+    actorUserId: input.actorUserId ?? null,
+    metadata: {
+      database: report.database,
+      host: report.host,
+      backup: report.backup,
+      deleted: report.deleted,
+      preservedBefore: report.preservedBefore,
+      preservedAfter: report.preservedAfter,
+      archiveDirectory: report.archiveDirectory,
+      archiveFiles: report.archiveFiles,
+      deleteTransactionMs: report.deleteTransactionMs,
+      feedEnabledBefore: report.feedEnabledBefore,
+      feedEnabledAfter: report.feedEnabledAfter,
+    },
+  });
 
   return { ok: true as const, mode: "execute" as const, report };
 }

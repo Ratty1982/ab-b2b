@@ -177,6 +177,40 @@ Run one application replica for this import. The database holds a single lock ro
 
 Do not run the historical sales reset during deploy. A Coolify backup still needs an independent restore onto a different database, and a dry-run against the database that will actually be reset, before anyone types `RESET HISTORICAL SALES`.
 
+## Pre-launch imported-sales reset
+
+The running Coolify application image does not contain Bun or `scripts/imported-sales-reset.ts`, and the container entrypoint does not run the reset. Use a temporary container built from this repository. Mount the persistent Autopart volume at a path outside `/app`, for example `/data/autopart-imports`.
+
+Dry-run, which prints the database identity and before-reset counts and deletes nothing:
+
+```bash
+docker build -f docker/imported-sales-reset-runner.Dockerfile -t ab-imported-sales-reset-runner .
+
+docker run --rm \
+  --network <coolify_network> \
+  -e DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/automotivebrands' \
+  -e AUTOPART_SALES_ARCHIVE_DIR=/data/autopart-imports/sales-reset-archive \
+  -v /path/on/host/autopart-imports:/data/autopart-imports \
+  ab-imported-sales-reset-runner
+```
+
+The default execute path still requires a backup proof and a tested restore. A pre-launch run that deliberately skips only those two checks is separate. It still archives 561L/SLRB sources and checks each copy before deletion:
+
+```bash
+docker run --rm \
+  --network <coolify_network> \
+  -e DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/automotivebrands' \
+  -e AB_RESET_CONFIRM='RESET PRELAUNCH IMPORTED SALES' \
+  -e AB_RESET_TARGET='automotivebrands' \
+  -e AB_RESET_NO_BACKUP_ACK='I ACCEPT IRREVERSIBLE IMPORTED SALES LOSS WITHOUT A BACKUP' \
+  -e AUTOPART_SALES_ARCHIVE_DIR=/data/autopart-imports/sales-reset-archive \
+  -v /path/on/host/autopart-imports:/data/autopart-imports \
+  ab-imported-sales-reset-runner \
+  --execute --accept-no-backup-risk --allow-production-database
+```
+
+Read the printed counts before the command continues into deletion. The JSON report after `IMPORTED_SALES_RESET_REPORT` includes the database name, deleted counts, preserved counts, and archive directory. The same JSON is written to `reset-audit.json` in that archive directory. Automatic 504/TRM21QC importing is left off. A failed delete rolls the sales rows back and still leaves importing off.
+
 The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/history-all`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. Preview and commit return after the request is accepted; the multi-minute write continues in the application process.
 
 The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/upload`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. A confirmed import continues in the Node process after the confirm request returns, so the proxy timeout applies to the upload and the confirm call, not to the whole multi-minute write.
