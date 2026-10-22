@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { PanelHeader } from "@/components/ab/AppShell";
 import { StatusBadge } from "@/components/ab/Badges";
@@ -39,8 +39,11 @@ type CompanyRow = {
   customerGroup?: { id: string; name: string; active: boolean } | null;
 };
 
+const PAGE_SIZE = 25;
+
 function AdminCustomers() {
   const navigate = useNavigate();
+  const [draftQ, setDraftQ] = useState("");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("");
   const [salesRepId, setSalesRepId] = useState("");
@@ -51,39 +54,50 @@ function AdminCustomers() {
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<CompanyRow[]>([]);
   const [total, setTotal] = useState(0);
+  const [statusLabel, setStatusLabel] = useState("Active customers");
   const [reps, setReps] = useState<Array<{ id: string; label: string }>>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const requestId = useRef(0);
 
-  async function load() {
+  function applySearch(nextDraft = draftQ) {
+    const trimmed = nextDraft.trim();
+    setDraftQ(trimmed);
+    setQ(trimmed);
+    setPage(1);
+  }
+
+  useEffect(() => {
+    const id = ++requestId.current;
+    const closedGroup = status === "CLOSED_OR_SUSPENDED";
+    const explicitStatus = status && status !== "ALL" && !closedGroup ? status : undefined;
     setLoading(true);
     setError(null);
-    const closedGroup = status === "CLOSED_OR_SUSPENDED";
-    const result = await listCompaniesFn({
+    void listCompaniesFn({
       data: {
         q: q || undefined,
-        status: !closedGroup && status ? status : undefined,
+        status: explicitStatus,
         statusGroup: closedGroup ? "CLOSED_OR_SUSPENDED" : undefined,
+        statusScope: status === "" ? "DIRECTORY_DEFAULT" : status === "ALL" ? "ALL" : undefined,
         salesRepId: salesRepId || undefined,
         autopartLink: autopartLink || undefined,
         historicalSales: historicalSales || undefined,
         page,
-        pageSize: 25,
+        pageSize: PAGE_SIZE,
       },
+    }).then((result) => {
+      if (id !== requestId.current) return;
+      if (!result.ok) {
+        setError(result.error);
+        setItems([]);
+        setTotal(0);
+      } else {
+        setItems(result.data.items as CompanyRow[]);
+        setTotal(result.data.total);
+        setStatusLabel(result.data.statusScope.label);
+      }
+      setLoading(false);
     });
-    if (!result.ok) {
-      setError(result.error);
-      setItems([]);
-    } else {
-      setItems(result.data.items as CompanyRow[]);
-      setTotal(result.data.total);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, status, salesRepId, autopartLink, historicalSales]);
+  }, [page, q, status, salesRepId, autopartLink, historicalSales]);
 
   useEffect(() => {
     void listSalesRepsFn().then((r) => {
@@ -95,7 +109,7 @@ function AdminCustomers() {
     <div>
       <PanelHeader
         title="Customers"
-        sub={`${total} companies`}
+        sub={`${total} ${statusLabel.toLowerCase()}`}
         crumbs={[{ label: "Sales" }, { label: "Customers", to: ROUTES.adminCustomers }]}
         actions={
           <div className="flex flex-wrap gap-2">
@@ -127,16 +141,14 @@ function AdminCustomers() {
         <div className="flex h-9 min-w-52 flex-1 items-center gap-2 rounded-md border border-border bg-surface px-3">
           <Search className="size-4 text-steel" aria-hidden />
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={draftQ}
+            onChange={(e) => setDraftQ(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                setPage(1);
-                void load();
-              }
+              if (e.key === "Enter") applySearch(e.currentTarget.value);
             }}
-            placeholder="Search name, account, email, VAT…"
+            placeholder="Search name, trading name, account, Autopart code, email, VAT…"
             className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+            aria-label="Search customers"
           />
         </div>
         <select
@@ -147,7 +159,8 @@ function AdminCustomers() {
           }}
           className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
         >
-          <option value="">All statuses</option>
+          <option value="">Active (prospects in search)</option>
+          <option value="ALL">All statuses</option>
           {COMPANY_STATUSES.map((s) => (
             <option key={s} value={s}>
               {COMPANY_STATUS_LABEL[s]}
@@ -196,15 +209,30 @@ function AdminCustomers() {
         </select>
         <button
           type="button"
-          onClick={() => {
-            setPage(1);
-            void load();
-          }}
+          onClick={() => applySearch()}
           className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
         >
           Search
         </button>
+        {draftQ || q ? (
+          <button
+            type="button"
+            onClick={() => applySearch("")}
+            className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold"
+          >
+            Clear search
+          </button>
+        ) : null}
       </div>
+      <p className="border-b border-border/70 px-4 py-2 text-[12px] text-steel sm:px-6" role="status">
+        Showing {statusLabel.toLowerCase()}
+        {q ? ` matching “${q}”` : ""}.
+        {status === "" && q
+          ? " Prospects appear in these results. Choose a status to search only that status."
+          : status === ""
+            ? " Search also includes prospects. Choose a status to override that."
+            : ""}
+      </p>
 
       <div className="p-4 sm:p-6">
         {error ? (
@@ -216,9 +244,13 @@ function AdminCustomers() {
           <div className="text-sm text-steel">Loading customers…</div>
         ) : items.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-6 py-16 text-center">
-            <p className="font-display text-xl uppercase">No customers yet</p>
+            <p className="font-display text-xl uppercase">
+              {q ? "No customers match" : "No customers yet"}
+            </p>
             <p className="mt-2 text-sm text-steel">
-              Create a customer or approve a trade application.
+              {q
+                ? `Nothing in ${statusLabel.toLowerCase()} matches “${q}”.`
+                : "Create a customer or approve a trade application."}
             </p>
             <button
               type="button"
@@ -317,7 +349,7 @@ function AdminCustomers() {
           </div>
         )}
 
-        {total > 25 ? (
+        {total > PAGE_SIZE ? (
           <div className="mt-4 flex items-center gap-2">
             <button
               type="button"
@@ -328,11 +360,11 @@ function AdminCustomers() {
               Previous
             </button>
             <span className="text-[12px] text-steel">
-              Page {page} of {Math.ceil(total / 25)}
+              Page {page} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
             </span>
             <button
               type="button"
-              disabled={page * 25 >= total}
+              disabled={page * PAGE_SIZE >= total}
               onClick={() => setPage((p) => p + 1)}
               className="h-9 rounded-md border border-border px-3 text-[12px] disabled:opacity-40"
             >

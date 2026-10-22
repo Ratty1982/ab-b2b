@@ -21,6 +21,7 @@ import {
   companyDeleteSchema,
   companyListQuerySchema,
   companyUpdateSchema,
+  resolveCompanyListStatusScope,
   contactSchema,
   contactUpdateSchema,
   addressSchema,
@@ -124,10 +125,9 @@ export async function listCompaniesForActor(
   if (scope !== "all") {
     where.id = { in: scope.length ? scope : ["__none__"] };
   }
-  if (query.status) where.status = query.status;
-  else if (query.statusGroup === "CLOSED_OR_SUSPENDED") {
-    where.status = { in: ["CLOSED", "SUSPENDED", "ON_HOLD"] };
-  }
+  const statusScope = resolveCompanyListStatusScope(query);
+  if (statusScope.statuses.length === 1) where.status = statusScope.statuses[0];
+  else if (statusScope.statuses.length > 1) where.status = { in: statusScope.statuses };
   if (query.salesRepId) {
     where.assignments = { some: { salesRepId: query.salesRepId } };
   }
@@ -147,6 +147,7 @@ export async function listCompaniesForActor(
       { companyNumber: { contains: q, mode: "insensitive" } },
       { autopartCustomerCode: { contains: q, mode: "insensitive" } },
       { autopartAccountAliases: { some: { alias: { contains: q, mode: "insensitive" } } } },
+      { contacts: { some: { email: { contains: q, mode: "insensitive" } } } },
     ];
   }
   const and: Prisma.CompanyWhereInput[] = [];
@@ -187,6 +188,7 @@ export async function listCompaniesForActor(
     total,
     page: query.page,
     pageSize: query.pageSize,
+    statusScope,
     items: rows.map(serializeCompany),
   };
 }
