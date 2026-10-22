@@ -1,7 +1,7 @@
 /**
  * Sales Intelligence — Rebate / Net Spend Analysis.
  *
- * Source of truth: AutopartSalesDocument + AutopartSalesLine (561L + SLRB).
+ * Source of truth: ongoing 504 headers and TRM21QC lines.
  * Net Spend === Sales Enquiry Net Sales for the same customer + period.
  * No rebate eligibility schemes in Phase 4.
  */
@@ -11,6 +11,7 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { loadIntelligenceByMatchKeys } from "@/server/stock/autopart-products";
 import type { LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
+import { ONGOING_SALES_DATA_SOURCE } from "@/server/sales-intelligence/history-sources";
 import {
   dateOnlyIsoFromDate,
   todayLondonDateOnly,
@@ -540,9 +541,9 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
 
   return {
     dataSource:
-      "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included. Net Spend is total historic invoiced net sales after credits — rebate eligibility rules are not applied.",
+      `${ONGOING_SALES_DATA_SOURCE} Net spend is ongoing invoiced net sales after credits. Rebate eligibility rules are not applied.`,
     disclaimer:
-      "Net spend includes all imported invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
+      "Net spend includes ongoing 504 and TRM21QC invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
     company,
     period: toRebatePeriodDto(primary),
     summary: {
@@ -931,9 +932,9 @@ export async function getMultiCustomerRebateAnalysis(actorUserId: string, raw: u
 
   return {
     dataSource:
-      "Autopart historic sales (561L + SLRB). Aggregates include only customers in the actor’s Sales Intelligence scope.",
+      `${ONGOING_SALES_DATA_SOURCE} Aggregates include only customers in the actor’s Sales Intelligence scope.`,
     disclaimer:
-      "Net spend includes all imported invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
+      "Net spend includes ongoing 504 and TRM21QC invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
     period: toRebatePeriodDto(primary),
     summary: {
       customers: rows.length,

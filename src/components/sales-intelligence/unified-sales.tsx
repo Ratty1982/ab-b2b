@@ -190,9 +190,8 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
       ) : null}
       <p className="text-[11px] text-steel">
         Refreshes: TRM21QC {dateTimeUk(refresh.ongoingTrm21qcAt)} · 504{" "}
-        {dateTimeUk(refresh.ongoing504At)} · 561L history {dateTimeUk(refresh.global561lAt)} ·
-        customer import {dateTimeUk(refresh.customerImportAt)}. New invoices and credits arrive
-        through the existing import and feed runs only.
+        {dateTimeUk(refresh.ongoing504At)} · customer import {dateTimeUk(refresh.customerImportAt)}.
+        New invoices and credits arrive through the existing 504 and TRM21QC runs only.
       </p>
     </div>
   );

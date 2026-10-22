@@ -20,6 +20,9 @@
  * company, document, and line). Do not add those tables together.
  */
 
+export const ONGOING_SALES_DATA_SOURCE =
+  "Ongoing 504 invoice headers and TRM21QC product lines. Historical 561L and SLRB purchases are not included. AB Orders and retired 504C feeds are not included in these totals.";
+
 export const DATED_SALES_ENQUIRY_SOURCE =
   "Sales Enquiry uses ongoing TRM21QC product lines and 504 invoice headers. Historical 561L and SLRB purchases are not included. An empty result means no ongoing sales are recorded.";
 

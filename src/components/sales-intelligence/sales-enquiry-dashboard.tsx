@@ -69,7 +69,7 @@ const SECTIONS: Array<{ id: SalesEnquirySection; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "transactions", label: "Transactions" },
   { id: "products", label: "Products Purchased" },
-  { id: "history", label: "Historical Reporting" },
+  { id: "history", label: "Reconciliation" },
 ];
 
 function dateUk(value: string | null | undefined, fallback = "—"): string {
@@ -500,8 +500,8 @@ export function UnifiedCustomerSalesPanel({
         <p className="mt-1 text-[12px] text-steel">
           Figures are ex VAT, in GBP.
           {data.period.includesUndatedHistory
-            ? " All Time includes undated historic sales. The monthly chart uses dated invoices only."
-            : " Undated historic sales are not included in this period."}
+            ? " All Time includes ongoing sales, including documents with no invoice date. The monthly chart uses dated invoices only."
+            : " Documents without an invoice date are not included in this period."}
         </p>
         <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Reporting period">
           {SALES_ENQUIRY_DASHBOARD_PERIODS.map((preset) => (
@@ -970,7 +970,7 @@ export function UnifiedCustomerSalesPanel({
           className="space-y-3"
         >
           {!history && !loadingHistory ? (
-            <p className="text-[13px] text-steel">Historical reporting is loaded when you open this section.</p>
+            <p className="text-[13px] text-steel">Reconciliation is loaded when you open this section.</p>
           ) : null}
           {history ? (
             <HistoricalReport
@@ -1002,12 +1002,10 @@ function HistoricalReport({
   return (
     <div className="space-y-3">
       <p className="text-[13px] text-steel">
-        Undated historic sales are kept separate from monthly and yearly totals. Source records are not changed.
+        Reconciliation covers ongoing 504 and TRM21QC documents. Source records are not changed.
+        Historical 561L and SLRB purchases are not included.
       </p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-md border border-border bg-card p-3">
-          <SiMetricCard label="Undated historic sales" value={formatGbp(summary.historicalNet)} />
-        </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-md border border-border bg-card p-3">
           <SiMetricCard
             label={summary.certification === "COMPLETE" ? "All-time certified sales" : "Certified sales, excl. held lines"}
@@ -1015,10 +1013,10 @@ function HistoricalReport({
           />
         </div>
         <div className="rounded-md border border-border bg-card p-3">
-          <SiMetricCard label="Historic invoices" value={String(summary.invoiceCount)} />
+          <SiMetricCard label="Invoices" value={String(summary.invoiceCount)} />
         </div>
         <div className="rounded-md border border-border bg-card p-3">
-          <SiMetricCard label="Historic credits" value={formatGbp(summary.creditsAndAdjustments)} />
+          <SiMetricCard label="Credits" value={formatGbp(summary.creditsAndAdjustments)} />
         </div>
       </div>
       <details className="rounded-md border border-border bg-card p-3">
@@ -1041,11 +1039,7 @@ function HistoricalReport({
             <dd className="tabular-nums">{summary.undatedLineCount}</dd>
           </div>
           <div>
-            <dt className="text-steel">Held historic value</dt>
-            <dd className="tabular-nums">{formatGbp(summary.unreconciledHistoricalNet)}</dd>
-          </div>
-          <div>
-            <dt className="text-steel">Held dated value</dt>
+            <dt className="text-steel">Held value still to reconcile</dt>
             <dd className="tabular-nums">{formatGbp(summary.unreconciledDatedNet)}</dd>
           </div>
           <div>
@@ -1057,11 +1051,11 @@ function HistoricalReport({
           <p className="mt-3 text-[12px] text-warn">{certification.discrepancyNote}</p>
         ) : (
           <p className="mt-3 text-[12px] text-steel">
-            Certified sales, duplicates and held lines account for the attached history.
+            Certified sales, duplicates and held lines account for the ongoing documents checked.
           </p>
         )}
         <button type="button" className="mt-3 text-[12px] font-semibold text-primary underline" onClick={onViewUndated}>
-          View all transactions, including undated history
+          View transactions
         </button>
       </details>
       {history.investigationPermitted ? <SalesReconciliationInvestigation companyId={companyId} /> : null}

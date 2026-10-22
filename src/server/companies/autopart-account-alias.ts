@@ -4,8 +4,8 @@ import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { grants } from "@/server/rbac/access";
 import { canAccessCompanyAsSales } from "@/server/rbac/sales-access";
-import { normalizeAutopartCustomerCode } from "@/server/companies/autopart-account";
-import { autopartAccountsEqual, normaliseAccountToken } from "@/domain/autopart-report-money";
+import { normaliseAssignedAutopartCode } from "@/domain/autopart-account-verification";
+import { assertUnambiguousAutopartCode } from "@/server/companies/autopart-account-verification";
 
 const aliasSchema = z.object({
   companyId: z.string().cuid(),
@@ -40,27 +40,36 @@ export async function verifyAutopartAccountAlias(actorUserId: string, raw: unkno
       400,
     );
   }
-  const alias = normaliseAccountToken(input.alias);
-  if (!alias) throw new AuthError("Invalid alias", "VALIDATION", 400);
-  const primary = normalizeAutopartCustomerCode(company.autopartCustomerCode);
-  if (primary && autopartAccountsEqual(alias, primary)) {
+  const normalised = await assertUnambiguousAutopartCode(input.alias, input.companyId);
+  const primary = normaliseAssignedAutopartCode(company.autopartCustomerCode);
+  if (primary.key && primary.key === normalised.key) {
     throw new AuthError("Alias matches the verified account code — not needed", "VALIDATION", 400);
   }
+  const alias = normalised.key;
+  if (!alias) throw new AuthError("Invalid alias", "AUTOPART_CODE_INVALID", 400);
 
-  const row = await prisma.autopartCustomerAccountAlias.upsert({
-    where: { companyId_alias: { companyId: input.companyId, alias } },
-    create: {
-      companyId: input.companyId,
-      alias,
-      verifiedById: actorUserId,
-      note: input.note ?? null,
-    },
-    update: {
-      verifiedById: actorUserId,
-      verifiedAt: new Date(),
-      note: input.note ?? null,
-    },
+  const existing = await prisma.autopartCustomerAccountAlias.findFirst({
+    where: { companyId: input.companyId, alias: { equals: alias, mode: "insensitive" } },
+    select: { id: true },
   });
+  const row = existing
+    ? await prisma.autopartCustomerAccountAlias.update({
+        where: { id: existing.id },
+        data: {
+          alias,
+          verifiedById: actorUserId,
+          verifiedAt: new Date(),
+          note: input.note ?? null,
+        },
+      })
+    : await prisma.autopartCustomerAccountAlias.create({
+        data: {
+          companyId: input.companyId,
+          alias,
+          verifiedById: actorUserId,
+          note: input.note ?? null,
+        },
+      });
 
   await recordAuditEvent({
     action: "autopart.account_alias_verified",

@@ -105,17 +105,11 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
   if (filters.documentType) unifiedParts.push(Prisma.sql`u.doc_type = ${filters.documentType}`);
   const unifiedWhere = Prisma.join(unifiedParts, " AND ");
   const ambiguousGate = includeAmbiguous ? Prisma.sql`TRUE` : Prisma.sql`FALSE`;
-  const accountHistorical = filters.accountCode
-    ? Prisma.sql`AND UPPER(btrim(l."accountCode")) = ${filters.accountCode}`
-    : Prisma.empty;
   const accountDated = filters.accountCode
     ? Prisma.sql`AND UPPER(btrim(l."autopartCustomerCode")) = ${filters.accountCode}`
     : Prisma.empty;
   const accountHeader = filters.accountCode
     ? Prisma.sql`AND UPPER(btrim(d."autopartCustomerCode")) = ${filters.accountCode}`
-    : Prisma.empty;
-  const typeHistorical = filters.documentType
-    ? Prisma.sql`AND (CASE WHEN l."documentType" IN ('INVOICE', 'CREDIT') THEN l."documentType" ELSE 'UNKNOWN' END) = ${filters.documentType}`
     : Prisma.empty;
   const typeDated = filters.documentType
     ? Prisma.sql`AND l."documentType"::text = ${filters.documentType}`
@@ -196,25 +190,6 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
         COALESCE(u.doc_ref, 'LINE:' || u.line_id) AS group_ref
       FROM u
       WHERE ${unifiedWhere}
-      UNION ALL
-      SELECT
-        l.id,
-        'HISTORICAL_561L'::text,
-        UPPER(btrim(l."accountCode")),
-        CASE WHEN l."documentType" IN ('INVOICE', 'CREDIT') THEN l."documentType" ELSE 'UNKNOWN' END,
-        NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), ''),
-        UPPER(btrim(l."partNumber")),
-        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."quantity") ELSE l."quantity" END)::numeric(18, 3),
-        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."salesAmount") ELSE l."salesAmount" END)::numeric(18, 2),
-        ${AMBIGUOUS_ACCOUNT_REASON}::text,
-        COALESCE(NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), ''), 'LINE:' || l.id)
-      FROM "AutopartInvoiceLine" l
-      INNER JOIN ambiguous_codes a ON a.code = UPPER(btrim(l."accountCode"))
-      WHERE FALSE
-        AND ${ambiguousGate}
-        AND l."salesMeasure" = 'NET_EX_VAT'
-        ${accountHistorical}
-        ${typeHistorical}
       UNION ALL
       SELECT
         l.id,

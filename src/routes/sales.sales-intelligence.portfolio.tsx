@@ -740,7 +740,7 @@ function SalesRepPortfolioPage() {
             </section>
 
             <SiProvenance
-              text={`Portfolio uses Autopart realised sales only. Credits are signed negative and do not create purchase presence. Comparison uses the previous equivalent-length period.${data.salesRepFilterLabel ? ` Scope: ${data.salesRepFilterLabel}.` : ""}`}
+              text={`Portfolio uses ongoing 504 and TRM21QC sales. Historical 561L and SLRB purchases are not included. Credits are signed negative and do not create purchase presence. Comparison uses the previous equivalent-length period.${data.salesRepFilterLabel ? ` Scope: ${data.salesRepFilterLabel}.` : ""}`}
             />
           </>
         ) : null}

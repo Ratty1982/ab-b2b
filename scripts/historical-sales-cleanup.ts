@@ -5,8 +5,9 @@
  *   bun scripts/historical-sales-cleanup.ts
  *
  * Apply is refused until a tested PostgreSQL restore and a storage backup
- * are attested. Apply is not run by deploy, startup, or this repository's
- * default command. Do not pass --apply until that evidence has been reviewed.
+ * are attested. This command never deletes. The executable procedure is
+ * scripts/historical-sales-cleanup.apply.sql and is run only in a later
+ * reviewed session. Deploy and server start do not run either file.
  *
  *   bun scripts/historical-sales-cleanup.ts \
  *     --apply \
@@ -49,7 +50,7 @@ if (apply && plan.gates.mode !== "apply") {
   process.exitCode = 1;
 } else if (apply && plan.gates.mode === "apply") {
   console.error(
-    "Apply gates passed, but deletion is not executed by this command. Archive the listed files, take the approved backup, and run the reviewed SQL from docs/historical-sales-cleanup.md in a controlled session.",
+    "Apply gates passed, but this command does not delete. After the dry-run and a tested backup restore, a separate reviewed session may run scripts/historical-sales-cleanup.apply.sql.",
   );
   process.exitCode = 2;
 }

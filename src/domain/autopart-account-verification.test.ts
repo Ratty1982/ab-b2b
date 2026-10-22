@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ongoingDocumentOwnershipAllowsUpdate } from "@/domain/autopart-ongoing-document-match";
 import {
@@ -247,8 +247,10 @@ describe("verification confirmation", () => {
     expect(apply).toContain('attribution: "automatic"');
     const sales = readFileSync("src/server/sales-intelligence/unified-sales.ts", "utf8");
     expect(sales).toContain('c."autopartCustomerCodeVerifiedById" IS NOT NULL');
-    const history = readFileSync("src/server/companies/autopart-history.ts", "utf8");
-    expect(history).toContain("!company.autopartCustomerCodeVerifiedById");
+    expect(existsSync("src/server/companies/autopart-history.ts")).toBe(false);
+    const alias = readFileSync("src/server/companies/autopart-account-alias.ts", "utf8");
+    expect(alias).toContain("assertUnambiguousAutopartCode");
+    expect(alias).toContain("normaliseAssignedAutopartCode");
     expect(source).not.toContain("prisma.order");
     expect(source).not.toContain("prisma.invoice");
     expect(source).not.toContain("prisma.autopartSalesDocument");
