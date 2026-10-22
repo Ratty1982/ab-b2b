@@ -71,11 +71,61 @@ export const companyDeleteSchema = z.object({
   id: z.string().cuid(),
 });
 
+export type CompanyListStatusScope = {
+  mode: "ACTIVE" | "ACTIVE_AND_PROSPECT" | "STATUS" | "CLOSED_OR_SUSPENDED" | "ALL";
+  label: string;
+  statuses: CompanyStatusKey[];
+};
+
+/** Status filter for the admin customer directory and other company lists. */
+export function resolveCompanyListStatusScope(query: {
+  q?: string;
+  status?: CompanyStatusKey;
+  statusGroup?: "CLOSED_OR_SUSPENDED";
+  statusScope?: "DIRECTORY_DEFAULT" | "ALL";
+}): CompanyListStatusScope {
+  if (query.status) {
+    return {
+      mode: "STATUS",
+      label: `${COMPANY_STATUS_LABEL[query.status]} customers`,
+      statuses: [query.status],
+    };
+  }
+  if (query.statusGroup === "CLOSED_OR_SUSPENDED") {
+    return {
+      mode: "CLOSED_OR_SUSPENDED",
+      label: "Closed, suspended and on-hold customers",
+      statuses: ["CLOSED", "SUSPENDED", "ON_HOLD"],
+    };
+  }
+  if (query.statusScope === "DIRECTORY_DEFAULT") {
+    if (query.q?.trim()) {
+      return {
+        mode: "ACTIVE_AND_PROSPECT",
+        label: "Active customers and prospects",
+        statuses: ["ACTIVE", "PROSPECT"],
+      };
+    }
+    return {
+      mode: "ACTIVE",
+      label: "Active customers",
+      statuses: ["ACTIVE"],
+    };
+  }
+  return { mode: "ALL", label: "All statuses", statuses: [] };
+}
+
 export const companyListQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
   status: z.enum(COMPANY_STATUSES).optional(),
   /** Closed, suspended, and on hold without adding a new company status. */
   statusGroup: z.enum(["CLOSED_OR_SUSPENDED"]).optional(),
+  /**
+   * Admin customer directory only. Ignored when status or statusGroup is set.
+   * With no query this is Active. A query also includes Prospects.
+   * Other callers omit this and keep an unscoped status list.
+   */
+  statusScope: z.enum(["DIRECTORY_DEFAULT", "ALL"]).optional(),
   salesRepId: z.string().cuid().optional(),
   /** Customer Group id, or "__none__" for ungrouped companies. */
   customerGroupId: z.string().optional(),
