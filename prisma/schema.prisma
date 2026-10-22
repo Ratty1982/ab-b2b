@@ -258,6 +258,8 @@ enum AutopartHistoricLineMatchStatus {
 
 enum CustomerSalesHistoryStatus {
   NOT_STARTED
+  /// Valid rows may be stored, but rejected, malformed, or unowned rows still need a person to review them.
+  REVIEW
   COMPLETE
 }
 

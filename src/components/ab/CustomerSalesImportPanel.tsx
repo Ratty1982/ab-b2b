@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ONGOING_REPORT_RETENTION } from "@/domain/customer-sales-import";
 import {
   confirmCustomerSalesImportFn,
   listCustomerSalesAccountsFn,
@@ -53,9 +54,15 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
         </h3>
         <p className="mt-1 text-[13px] text-steel">{accounts.assessment}</p>
         <p className="mt-1 text-[12px] text-steel">
-          Cutover: {accounts.historyStatus === "COMPLETE" ? "complete" : "not started"}
+          Cutover:{" "}
+          {accounts.historyStatus === "COMPLETE"
+            ? "complete"
+            : accounts.historyStatus === "REVIEW"
+              ? "needs review"
+              : "not started"}
           {accounts.historyFrom ? ` (${accounts.historyFrom} to ${accounts.historyTo ?? accounts.historyFrom})` : ""}
         </p>
+        <p className="mt-1 text-[12px] text-steel">{ONGOING_REPORT_RETENTION}</p>
       </div>
       <form
         className="grid gap-3 px-4 py-4"

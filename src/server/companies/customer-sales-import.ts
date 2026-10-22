@@ -84,6 +84,13 @@ async function loadCustomerSalesTarget(companyId: string, accountCode: string) {
   if (company.status !== "ACTIVE") {
     throw new AuthError("Ongoing sales are stored only for an Active customer.", "VALIDATION", 400);
   }
+  if (company.salesCutover?.historyStatus === "REVIEW") {
+    throw new AuthError(
+      "Historical import has exceptions waiting for review. Ongoing sales stay off until that review is completed.",
+      "VALIDATION",
+      400,
+    );
+  }
   if (company.salesCutover?.historyStatus !== "COMPLETE") {
     throw new AuthError(
       "Complete Import Sales History, or record that this customer has no historical sales, before importing 504 or TRM21QC.",

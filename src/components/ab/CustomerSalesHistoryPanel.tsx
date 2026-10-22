@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
+  acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
   confirmCustomerSalesHistoryFn,
+  listCustomerSalesAccountsFn,
   previewCustomerSalesHistoryFn,
 } from "@/server/phase2/fns";
 
@@ -14,7 +16,17 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   const [text561l, setText561l] = useState("");
   const [textSlrb, setTextSlrb] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
   const [busy, setBusy] = useState(false);
+
+  async function refreshStatus() {
+    const accounts = await listCustomerSalesAccountsFn({ data: { companyId } });
+    if (accounts.ok) setHistoryStatus(accounts.data.historyStatus);
+  }
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [companyId]);
 
   return (
     <section className="mb-6 border border-border/80">
@@ -23,7 +35,7 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
         <p className="mt-1 text-[13px] text-steel">
           For this Active customer and its verified Autopart aliases. 561L is product-sales evidence.
           SLRB is ledger and document evidence. Payments are not new sales. Becoming Active does not
-          import history.
+          import history. Cutover is {historyStatus === "COMPLETE" ? "complete" : historyStatus === "REVIEW" ? "in review" : "not started"}.
         </p>
       </div>
       <form
@@ -95,6 +107,7 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
                   toast.error(result.error);
                   return;
                 }
+                await refreshStatus();
                 toast.success(
                   result.data.alreadyComplete
                     ? "Historical cutover is already complete"
@@ -105,6 +118,28 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
           >
             No historical sales
           </button>
+          {historyStatus === "REVIEW" ? (
+            <button
+              type="button"
+              disabled={busy}
+              className="h-9 rounded-md bg-primary px-3 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+              onClick={() => {
+                void (async () => {
+                  setBusy(true);
+                  const result = await acknowledgeCustomerSalesHistoryFn({ data: { companyId } });
+                  setBusy(false);
+                  if (!result.ok) {
+                    toast.error(result.error);
+                    return;
+                  }
+                  await refreshStatus();
+                  toast.success("Exceptions accepted. Historical cutover is complete");
+                })();
+              }}
+            >
+              Exceptions reviewed
+            </button>
+          ) : null}
         </div>
       </form>
       {preview ? (
@@ -163,7 +198,12 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
                   toast.error(result.error);
                   return;
                 }
-                toast.success("Sales history stored for this customer");
+                toast.success(
+                  result.data.historyStatus === "REVIEW"
+                    ? "Valid rows stored. Cutover stays in review"
+                    : "Sales history stored for this customer",
+                );
+                await refreshStatus();
                 const again = await previewCustomerSalesHistoryFn({
                   data: { companyId, text561l, textSlrb, filename561l, filenameSlrb },
                 });

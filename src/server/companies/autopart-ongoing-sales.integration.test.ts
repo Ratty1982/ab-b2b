@@ -395,7 +395,11 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
       where: { importRunId: trmRun.id, reasonCode: "UNMAPPED_CUSTOMER" },
     });
     expect(skipped.length).toBeGreaterThanOrEqual(1);
-    expect(Number(skipped[0]?.salesNet)).toBeCloseTo(10, 2);
+    expect(skipped[0]?.salesNet).toBeNull();
+    expect(skipped[0]?.quantity).toBeNull();
+    expect(skipped[0]?.sku).toBeNull();
+    expect(skipped[0]?.customerAccount).toBe(unmappedAcct);
+    expect(skipped.every((row) => row.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
     expect(await prisma.autopartSalesLine.count({ where: { documentReference: docT } })).toBe(0);
     expect(await prisma.autopartSalesDocument.count({ where: { documentReference: docT } })).toBe(0);
 

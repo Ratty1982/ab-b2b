@@ -11,7 +11,10 @@
  *   AB_RESET_RESTORE_URL='postgresql://.../restored_copy' \
  *   bun scripts/imported-sales-reset.ts --execute --backup-proof /path/proof.json
  *
- * A production database name also requires --allow-production-database.
+ * Production names automotive_brands, automotivebrands, ab_b2b, and postgres
+ * also require --allow-production-database.
+ * Set AUTOPART_SALES_ARCHIVE_DIR to a persistent volume outside the container,
+ * for example /data/autopart-imports/sales-reset-archive.
  * Execute leaves automatic 504/TRM21QC importing off.
  */
 import { createHash } from "node:crypto";

@@ -17,6 +17,9 @@ export type CustomerSalesReportKind = "504" | "TRM21QC" | "HISTORICAL_561L_SLRB"
 export const CUSTOMER_SALES_SOURCE_ASSESSMENT =
   "Ongoing 504 and TRM21QC sales are stored only after this Active customer's historical import and cutover are complete, and only for a uniquely verified Autopart account. A 504 row is kept only when its AB order, or an existing document, already belongs to the selected customer. A TRM21QC row is kept only when its customer code is the selected verified account. 561L and SLRB belong in Import Sales History. The retired global historical importer is not used.";
 
+export const ONGOING_REPORT_RETENTION =
+  "Original 504 and TRM21QC files are not stored in the imported-sales tables. Re-upload the original report on this screen after the customer is Active and historical cutover is complete. Emailed copies stay in the Autopart mailbox and move to Processed or Archive after a successful poll. When AUTOPART_SALES_ARCHIVE_DIR is a persistent volume, each report is also copied there by content hash.";
+
 export const CUSTOMER_SALES_IMPORT_EFFECTS = [
   "Does not run 504/TRM fulfilment.",
   "Does not change stock or reservations.",

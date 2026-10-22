@@ -58,6 +58,7 @@ import { run504TrmFulfilmentAfterImport } from "@/server/orders/autopart-504-trm
 import type { CustomerSalesScope } from "@/domain/customer-sales-import";
 import { accountInCustomerScope } from "@/domain/customer-sales-import";
 import { assessOngoingSalesWrite, type OngoingSalesWriteDecision } from "@/server/companies/ongoing-sales-eligibility";
+import { retainOngoingSalesReport } from "@/server/maintenance/sales-source-archive";
 
 export {
   getOngoingSalesImportRunDetail,
@@ -1217,6 +1218,11 @@ export async function confirmAutopart504Import(
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
     const attention = attentionDiagnostics(identityConflicts);
+    const sourceArchive = retainOngoingSalesReport({
+      kind: "ONGOING_504",
+      filename: raw.filename ?? null,
+      text: raw.text,
+    });
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -1243,6 +1249,8 @@ export async function confirmAutopart504Import(
           identityConflicts,
           attentionRequired: attention.attention.attentionRequired,
           attentionReason: attention.attention.attentionReason,
+          sourceArchiveRetained: sourceArchive.retained,
+          ...(sourceArchive.path ? { sourceArchivePath: sourceArchive.path } : {}),
         },
       },
     });
@@ -1914,6 +1922,11 @@ export async function confirmAutopartTrm21qcImport(
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
     const attention = attentionDiagnostics(identityConflicts);
+    const sourceArchive = retainOngoingSalesReport({
+      kind: "TRM21QC",
+      filename: raw.filename ?? null,
+      text: raw.text,
+    });
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -1938,6 +1951,8 @@ export async function confirmAutopartTrm21qcImport(
           identityConflicts,
           attentionRequired: attention.attention.attentionRequired,
           attentionReason: attention.attention.attentionReason,
+          sourceArchiveRetained: sourceArchive.retained,
+          ...(sourceArchive.path ? { sourceArchivePath: sourceArchive.path } : {}),
         },
       },
     });

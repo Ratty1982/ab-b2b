@@ -131,6 +131,29 @@ export function explainReason(code: AutopartImportReasonCode): string {
   return AUTOPART_IMPORT_REASON_LABELS[code];
 }
 
+/** Ineligible rows keep a reason code and account, not amounts, quantities, or product payloads. */
+export const INELIGIBLE_SALES_DIAGNOSTIC_CODES = new Set<AutopartImportReasonCode>([
+  "NOT_ACTIVE",
+  "OWNERSHIP_NOT_UNIQUE",
+  "HISTORY_CUTOVER_INCOMPLETE",
+  "UNMAPPED_CUSTOMER",
+  "AMBIGUOUS_CUSTOMER_ACCOUNT",
+  "CUSTOMER_OUT_OF_SCOPE",
+]);
+
+export function redactIneligibleSalesDiagnostic(
+  draft: AutopartImportDiagnosticDraft,
+): AutopartImportDiagnosticDraft {
+  if (!INELIGIBLE_SALES_DIAGNOSTIC_CODES.has(draft.reasonCode)) return draft;
+  return {
+    ...draft,
+    sku: null,
+    description: null,
+    quantity: null,
+    salesNet: null,
+  };
+}
+
 export function makeDiagnostic(
   partial: Omit<AutopartImportDiagnosticDraft, "reason"> & { reason?: string },
 ): AutopartImportDiagnosticDraft {

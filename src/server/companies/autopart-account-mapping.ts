@@ -526,7 +526,8 @@ export type UnmappedAccountWorkspaceRow = {
   customerNameSnapshot: string | null;
   unmappedDocuments: number;
   unmappedLines: number;
-  netSalesAffected: string;
+  /** Null when the skipped rows did not retain a sales amount. */
+  netSalesAffected: string | null;
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   status: "UNMAPPED" | "MAPPED" | "REVIEW";
@@ -590,6 +591,7 @@ export async function listAutopartAccountMappingWorkspace(
     docs: Set<string>;
     lines: number;
     netSales: number;
+    salesKnown: boolean;
     firstSeen: Date | null;
     lastSeen: Date | null;
   };
@@ -615,6 +617,7 @@ export async function listAutopartAccountMappingWorkspace(
         docs: new Set(),
         lines: 0,
         netSales: 0,
+        salesKnown: false,
         firstSeen: null,
         lastSeen: null,
       };
@@ -623,7 +626,10 @@ export async function listAutopartAccountMappingWorkspace(
     if (opts.name && !row.customerNameSnapshot) row.customerNameSnapshot = opts.name;
     if (opts.doc) row.docs.add(opts.doc);
     if (opts.lineInc) row.lines += opts.lineInc;
-    if (opts.sales != null && Number.isFinite(opts.sales)) row.netSales += opts.sales;
+    if (opts.sales != null && Number.isFinite(opts.sales)) {
+      row.netSales += opts.sales;
+      row.salesKnown = true;
+    }
     if (opts.seen) {
       if (!row.firstSeen || opts.seen < row.firstSeen) row.firstSeen = opts.seen;
       if (!row.lastSeen || opts.seen > row.lastSeen) row.lastSeen = opts.seen;
@@ -634,7 +640,7 @@ export async function listAutopartAccountMappingWorkspace(
     touch(d.customerAccount, {
       doc: d.documentReference,
       lineInc: 1,
-      sales: Number(d.salesNet ?? 0),
+      ...(d.salesNet == null ? {} : { sales: Number(d.salesNet) }),
       seen: d.createdAt,
     });
   }
@@ -707,7 +713,7 @@ export async function listAutopartAccountMappingWorkspace(
       customerNameSnapshot: agg.customerNameSnapshot,
       unmappedDocuments: agg.docs.size,
       unmappedLines: agg.lines,
-      netSalesAffected: agg.netSales.toFixed(2),
+      netSalesAffected: agg.salesKnown ? agg.netSales.toFixed(2) : null,
       firstSeenAt: agg.firstSeen?.toISOString() ?? null,
       lastSeenAt: agg.lastSeen?.toISOString() ?? null,
       status: mapped ? ("MAPPED" as const) : ("UNMAPPED" as const),

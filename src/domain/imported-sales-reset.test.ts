@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { ongoingImportAllowsCatchUp, signedHistoricalMeasure } from "@/domain/customer-sales-history";
+import { historicalProductLineIdentity, ongoingImportAllowsCatchUp, signedHistoricalMeasure } from "@/domain/customer-sales-history";
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
+import { redactIneligibleSalesDiagnostic } from "@/domain/autopart-import-diagnostics";
 import {
   IMPORTED_SALES_RESET_CONFIRMATION,
+  archivedBytesMatch,
   evaluateImportedSalesResetGates,
+  isProductionSalesDatabase,
+  persistentSalesArchiveProblem,
 } from "@/domain/imported-sales-reset";
 import type { BackupProof } from "@/domain/customer-data-reset";
 
@@ -29,6 +33,40 @@ describe("historical sales measures", () => {
     expect(signedHistoricalMeasure("CREDIT", "-51.90", 2)).toBe("-51.90");
     expect(signedHistoricalMeasure("INVOICE", "622.80", 2)).toBe("622.80");
     expect(signedHistoricalMeasure("PAYMENT", "400.00", 2)).toBeNull();
+    const first = historicalProductLineIdentity({
+      documentType: "INVOICE",
+      documentReference: "SS1",
+      sku: "SS",
+      sourceLineNumber: 1,
+      rawInvAndLn: "I/SS1/1",
+      skuOrdinal: 1,
+    });
+    const second = historicalProductLineIdentity({
+      documentType: "INVOICE",
+      documentReference: "SS1",
+      sku: "SS",
+      sourceLineNumber: 2,
+      rawInvAndLn: "I/SS1/2",
+      skuOrdinal: 1,
+    });
+    expect(first.fingerprint).not.toBe(second.fingerprint);
+    expect(first.lineNumber).toBe(1);
+    expect(second.lineNumber).toBe(2);
+    const redacted = redactIneligibleSalesDiagnostic({
+      status: "SKIPPED",
+      reasonCode: "NOT_ACTIVE",
+      reason: "not active",
+      sku: "SS",
+      quantity: "2",
+      salesNet: "10.00",
+      description: "Widget",
+      customerAccount: "PROSPECT",
+    });
+    expect(redacted.salesNet).toBeNull();
+    expect(redacted.quantity).toBeNull();
+    expect(redacted.sku).toBeNull();
+    expect(redacted.customerAccount).toBe("PROSPECT");
+    expect(redacted.reasonCode).toBe("NOT_ACTIVE");
     expect(ongoingImportAllowsCatchUp({ skippedIneligible: 2 })).toBe(true);
     expect(ongoingImportAllowsCatchUp({ skippedIneligible: 0 })).toBe(false);
     expect(ongoingImportAllowsCatchUp(null)).toBe(false);
@@ -95,6 +133,32 @@ describe("imported sales reset gates", () => {
       now,
     });
     expect(production.ok).toBe(false);
+    expect(isProductionSalesDatabase("automotivebrands")).toBe(true);
+    const namedProduction = evaluateImportedSalesResetGates({
+      executeRequested: true,
+      confirmation: IMPORTED_SALES_RESET_CONFIRMATION,
+      targetDatabase: "automotivebrands",
+      actualDatabase: "automotivebrands",
+      backupProof: proof({ sourceDatabase: "automotivebrands" }),
+      restoreCheckOk: true,
+      now,
+    });
+    expect(namedProduction.ok).toBe(false);
+    const namedReady = evaluateImportedSalesResetGates({
+      executeRequested: true,
+      confirmation: IMPORTED_SALES_RESET_CONFIRMATION,
+      targetDatabase: "automotivebrands",
+      actualDatabase: "automotivebrands",
+      backupProof: proof({ sourceDatabase: "automotivebrands" }),
+      restoreCheckOk: true,
+      allowProductionDatabase: true,
+      now,
+    });
+    expect(namedReady).toEqual({ ok: true, mode: "execute" });
+    expect(persistentSalesArchiveProblem("/workspace/var/autopart-sales-archive", "/workspace")).toMatch(/application directory/);
+    expect(persistentSalesArchiveProblem("/data/autopart-imports/sales-reset-archive", "/workspace")).toBeNull();
+    expect(archivedBytesMatch({ expectedSha256: "abc", expectedBytes: 4, actualSha256: "ABC", actualBytes: 4 })).toBe(true);
+    expect(archivedBytesMatch({ expectedSha256: "abc", expectedBytes: 4, actualSha256: "abc", actualBytes: 3 })).toBe(false);
 
     const ready = evaluateImportedSalesResetGates({
       executeRequested: true,

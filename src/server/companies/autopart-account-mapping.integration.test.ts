@@ -178,7 +178,7 @@ describe("autopart account mapping workflow", () => {
     expect(warnings).toBeGreaterThanOrEqual(0);
   });
 
-  it("aggregates unique unmapped accounts with signed net sales", async () => {
+  it("lists unmapped accounts by count and reason without retained sales amounts", async () => {
     const ws = await listAutopartAccountMappingWorkspace(adminId, {
       status: "UNMAPPED",
       q: unmappedAcct,
@@ -186,7 +186,13 @@ describe("autopart account mapping workflow", () => {
     const row = ws.items.find((i) => i.accountCode === unmappedAcct);
     expect(row).toBeTruthy();
     expect(row!.unmappedLines).toBeGreaterThanOrEqual(2);
-    expect(Number(row!.netSalesAffected)).toBeCloseTo(45, 2);
+    expect(row!.netSalesAffected).toBeNull();
+
+    const stored = await prisma.autopartImportDiagnostic.findMany({
+      where: { customerAccount: unmappedAcct, reasonCode: "UNMAPPED_CUSTOMER" },
+    });
+    expect(stored.length).toBeGreaterThanOrEqual(2);
+    expect(stored.every((d) => d.salesNet == null && d.quantity == null && d.sku == null)).toBe(true);
   });
 
   it("searches companies and maps account explicitly with conflict protection", async () => {

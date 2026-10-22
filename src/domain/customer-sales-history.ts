@@ -23,6 +23,35 @@ export function signedHistoricalMeasure(
   return signed.toFixed(scale);
 }
 
+/**
+ * Same SKU on one invoice is not a duplicate. Identity is the source line number
+ * when Autopart sent one, otherwise a fingerprint of the line plus its ordinal.
+ */
+export function historicalProductLineIdentity(input: {
+  documentType: string;
+  documentReference: string;
+  sku: string;
+  sourceLineNumber: number | null;
+  rawInvAndLn: string | null;
+  skuOrdinal: number;
+}): { fingerprint: string; lineNumber: number | null } {
+  const type = input.documentType.trim().toUpperCase();
+  const reference = input.documentReference.trim().toUpperCase();
+  const sku = input.sku.trim().toUpperCase();
+  if (input.sourceLineNumber != null && input.sourceLineNumber > 0) {
+    return {
+      fingerprint: `ln:${type}|${reference}|${input.sourceLineNumber}`,
+      lineNumber: input.sourceLineNumber,
+    };
+  }
+  const raw = (input.rawInvAndLn ?? "").trim().toUpperCase();
+  const ordinal = input.skuOrdinal > 0 ? input.skuOrdinal : 1;
+  return {
+    fingerprint: `fp:${type}|${reference}|${raw}|${sku}|${ordinal}`,
+    lineNumber: null,
+  };
+}
+
 export function ongoingImportAllowsCatchUp(diagnostics: unknown): boolean {
   if (!diagnostics || typeof diagnostics !== "object" || Array.isArray(diagnostics)) return false;
   const value = (diagnostics as { skippedIneligible?: unknown }).skippedIneligible;

@@ -44,7 +44,8 @@ export const IMPORTED_SALES_EFFECTS = [
   "A sales document that names an AB order is removed. The order, its items, and its fulfilment events stay.",
   "Customer prices, products, suppliers, warehouse stock, and purchasing settings stay.",
   "Automatic 504/TRM21QC importing is switched off during execute and is left off.",
-  "Original 561L, SLRB, and sales-batch files are copied to the archive before their database rows are deleted. The archive is not deleted.",
+  "561L and SLRB sources are copied to AUTOPART_SALES_ARCHIVE_DIR before deletion. That directory must be a persistent volume outside the application container. Each copy is checked for existence, size, and SHA-256. A missing or mismatched source stops the reset and deletes nothing.",
+  "504 and TRM21QC originals are not stored in the imported-sales tables. Staff re-upload the original report from the customer workspace. Emailed copies stay in the Autopart mailbox. When the persistent archive is configured, each report is also copied there by content hash.",
   "Dry-run does not delete rows, copy files, or change the feed switch.",
 ] as const;
 
@@ -54,7 +55,7 @@ export const IMPORTED_SALES_APPROVAL_GATES = [
   "Run bun scripts/imported-sales-reset.ts with no --execute flag and read the before-reset counts.",
   "Run the same command with --execute against the restored copy before production.",
   "Set AB_RESET_CONFIRM to RESET PRELAUNCH IMPORTED SALES, AB_RESET_TARGET to the database name, and AB_RESET_RESTORE_URL to the restored copy.",
-  "Pass --backup-proof for that backup. A production database also needs --allow-production-database.",
+  "Pass --backup-proof for that backup. Production database names automotive_brands, automotivebrands, ab_b2b, and postgres also need --allow-production-database.",
   "The command refuses to run during deploy, container startup, or a package lifecycle script.",
   "After execute, confirm imported-sales counts are zero, protected counts are unchanged, and the ongoing feed is off.",
   "Rebuild each Active customer from Import Sales History, then catch up 504/TRM21QC. Do not turn automatic importing back on as part of the reset.",
@@ -77,7 +78,36 @@ export type ImportedSalesResetGateResult =
   | { ok: true; mode: "dry-run" | "execute" }
   | { ok: false; mode: "dry-run" | "execute"; reason: string };
 
-const PRODUCTION_DATABASE_NAMES = new Set(["automotive_brands", "ab_b2b", "postgres"]);
+export const PRODUCTION_DATABASE_NAMES = ["automotive_brands", "automotivebrands", "ab_b2b", "postgres"] as const;
+
+export function isProductionSalesDatabase(name: string): boolean {
+  return (PRODUCTION_DATABASE_NAMES as readonly string[]).includes(name);
+}
+
+/** Empty or inside the application directory is not a Coolify persistent volume. */
+export function persistentSalesArchiveProblem(resolvedDirectory: string, resolvedCwd: string): string | null {
+  const directory = resolvedDirectory.trim().replace(/[/\\]+$/, "");
+  if (!directory) {
+    return "Set AUTOPART_SALES_ARCHIVE_DIR to a Coolify persistent volume outside the application container, for example /data/autopart-imports/sales-reset-archive.";
+  }
+  const root = resolvedCwd.trim().replace(/[/\\]+$/, "");
+  if (directory === root || directory.startsWith(`${root}/`)) {
+    return "The sales archive is inside the application directory. Coolify replaces that container, so set AUTOPART_SALES_ARCHIVE_DIR to the mounted persistent volume.";
+  }
+  return null;
+}
+
+export function archivedBytesMatch(input: {
+  expectedSha256: string;
+  expectedBytes: number;
+  actualSha256: string;
+  actualBytes: number;
+}): boolean {
+  return (
+    input.expectedBytes === input.actualBytes &&
+    input.expectedSha256.toLowerCase() === input.actualSha256.toLowerCase()
+  );
+}
 
 export function evaluateImportedSalesResetGates(
   input: ImportedSalesResetGateInput,
@@ -104,7 +134,7 @@ export function evaluateImportedSalesResetGates(
       reason: "The database name you typed does not match the database this command is connected to.",
     };
   }
-  if (PRODUCTION_DATABASE_NAMES.has(input.actualDatabase) && !input.allowProductionDatabase) {
+  if (isProductionSalesDatabase(input.actualDatabase) && !input.allowProductionDatabase) {
     return {
       ok: false,
       mode,

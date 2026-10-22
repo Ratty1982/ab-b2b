@@ -4,7 +4,7 @@
  * Refuses every database name except automotive_brands_sales_reset_test.
  */
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 import { databaseNameFromUrl } from "../src/domain/customer-data-reset";
 import { IMPORTED_SALES_RESET_CONFIRMATION } from "../src/domain/imported-sales-reset";
@@ -12,6 +12,8 @@ import { bootstrapRbac } from "../prisma/bootstrap/rbac";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "../src/server/companies/autopart-account";
 import { confirmCustomerSalesImport } from "../src/server/companies/customer-sales-import";
 import {
+  acknowledgeCustomerSalesHistoryReview,
+  completeCustomerSalesCutoverWithoutHistory,
   confirmCustomerSalesHistory,
   previewCustomerSalesHistory,
 } from "../src/server/companies/customer-sales-history-import";
@@ -30,10 +32,11 @@ function assertIsolatedDatabase() {
 async function ensureCutoverTable() {
   await prisma.$executeRawUnsafe(`
     DO $$ BEGIN
-      CREATE TYPE "CustomerSalesHistoryStatus" AS ENUM ('NOT_STARTED', 'COMPLETE');
+      CREATE TYPE "CustomerSalesHistoryStatus" AS ENUM ('NOT_STARTED', 'REVIEW', 'COMPLETE');
     EXCEPTION WHEN duplicate_object THEN NULL;
     END $$;
   `);
+  await prisma.$executeRawUnsafe(`ALTER TYPE "CustomerSalesHistoryStatus" ADD VALUE IF NOT EXISTS 'REVIEW'`);
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "CustomerSalesCutover" (
       "companyId" TEXT NOT NULL,
@@ -163,12 +166,16 @@ async function main() {
   const salesBatch = await prisma.autopartImportBatch.create({
     data: { kind: "INVOICE_LINES", status: "COMMITTED", filename: `lines-${stamp}.csv`, fileHash: `${stamp}-lines` },
   });
+  const archiveDir = `/tmp/ab-sales-archive-${stamp}`;
+  process.env["AUTOPART_SALES_ARCHIVE_DIR"] = archiveDir;
+  const historyBody = Buffer.from("historical bytes");
+  const historyHash = createHash("sha256").update(historyBody).digest("hex");
   await prisma.autopartHistoryAllImport.create({
     data: {
       status: "COMMITTED",
-      filename561l: "561L.csv",
-      fileHash561l: `${stamp}-561`,
-      fileBody561l: Buffer.from("historical bytes"),
+      filename561l: "missing.csv",
+      fileHash561l: historyHash,
+      storagePath561l: `/tmp/missing-561l-${stamp}.csv`,
     },
   });
   await prisma.stockEmailReceipt.create({
@@ -271,6 +278,38 @@ async function main() {
     await restore.$disconnect();
   }
 
+  const blockedArchive = await executeImportedSalesReset({
+    confirmation: IMPORTED_SALES_RESET_CONFIRMATION,
+    targetDatabase: REQUIRED_DATABASE,
+    actualDatabase: REQUIRED_DATABASE,
+    backupProof: {
+      backupPath,
+      backupBytes: Buffer.byteLength(backupBody),
+      backupSha256,
+      sourceDatabase: REQUIRED_DATABASE,
+      restoredDatabase: "automotive_brands_sales_reset_restore",
+      restoredAt: new Date().toISOString(),
+    },
+    restoreCheckOk,
+    duringBootstrap: false,
+    allowProductionDatabase: false,
+    actorUserId: admin.id,
+  });
+  if (blockedArchive.ok) throw new Error("Reset deleted sales without an archived source file.");
+  if ((await prisma.autopartSalesDocument.count()) < 3) throw new Error("Failed archive still deleted documents.");
+  if ((await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({ where: { id: "default" } })).enabled !== true) {
+    throw new Error("Failed archive switched the feed off.");
+  }
+  await prisma.autopartHistoryAllImport.deleteMany();
+  const archivedHistory = await prisma.autopartHistoryAllImport.create({
+    data: {
+      status: "COMMITTED",
+      filename561l: "561L.csv",
+      fileHash561l: historyHash,
+      fileBody561l: historyBody,
+    },
+  });
+
   const executed = await executeImportedSalesReset({
     confirmation: IMPORTED_SALES_RESET_CONFIRMATION,
     targetDatabase: REQUIRED_DATABASE,
@@ -294,6 +333,13 @@ async function main() {
   if ((await prisma.autopartSalesLine.count()) !== 0) throw new Error("Imported lines remained.");
   if ((await prisma.autopartCustomerImportRun.count()) !== 0) throw new Error("Import runs remained.");
   if ((await prisma.autopartHistoryAllImport.count()) !== 0) throw new Error("Historical staging remained.");
+  const archivedPath = `${executed.report.archive.directory}/history/${archivedHistory.id}/561l.bin`;
+  if (!existsSync(archivedPath)) throw new Error("Archived 561L file is missing.");
+  const archivedBytes = readFileSync(archivedPath);
+  if (archivedBytes.length !== historyBody.length) throw new Error("Archived 561L size does not match.");
+  if (createHash("sha256").update(archivedBytes).digest("hex") !== historyHash) {
+    throw new Error("Archived 561L hash does not match.");
+  }
   if ((await prisma.stockEmailReceipt.count({ where: { receiptKey: { startsWith: "ongoing-hash:" } } })) !== 0) {
     throw new Error("Ongoing duplicate receipts remained.");
   }
@@ -333,6 +379,7 @@ async function main() {
 
   const history561 = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
 ${account},I/${historicalRef}/1,${variant.sku},Widget,2,"£20.00"
+${account},I/${historicalRef}/2,${variant.sku},Widget again,3,"£6.00"
 ${account},C/SC${stamp.slice(0, 6).toUpperCase()}/1,${variant.sku},Widget,1,"£4.00"
 `;
   const creditRef = `SC${stamp.slice(0, 6).toUpperCase()}`;
@@ -358,6 +405,21 @@ ${prospectAccount},INV,SXOTHER01,18 Jan 20,"£9.00","£1.80","£10.80","£10.80"
     filenameSlrb: "SLRB.csv",
   });
   if (history.rowsImported < 1) throw new Error("History import stored nothing.");
+  if (history.historyStatus !== "REVIEW") throw new Error("Rejected history row was marked complete.");
+  let zeroHistoryRefused = false;
+  try {
+    await completeCustomerSalesCutoverWithoutHistory(admin.id, company.id);
+  } catch (error) {
+    zeroHistoryRefused = error instanceof Error && error.message.includes("not a zero-history");
+  }
+  if (!zeroHistoryRefused) throw new Error("Zero history was accepted while exceptions were open.");
+  await acknowledgeCustomerSalesHistoryReview(admin.id, company.id);
+  if ((await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: company.id } })).historyStatus !== "COMPLETE") {
+    throw new Error("Reviewed history did not complete.");
+  }
+  if ((await prisma.autopartSalesLine.count({ where: { companyId: company.id, documentReference: historicalRef, source: "561L" } })) !== 2) {
+    throw new Error("Repeated SKU lines were collapsed.");
+  }
   const credit = await prisma.autopartSalesLine.findFirstOrThrow({
     where: { companyId: company.id, documentReference: creditRef },
   });
@@ -398,8 +460,8 @@ ${account},GRP,${historicalRef},15/01/2020,${variant.sku},Widget,2,20.00,8.00,12
   if ((await prisma.autopartSalesLine.count({ where: { documentReference: "SXPROSPECT" } })) !== 0) {
     throw new Error("Prospect ongoing line was stored.");
   }
-  if ((await prisma.autopartSalesLine.count({ where: { documentReference: historicalRef, source: "561L" } })) !== 1) {
-    throw new Error("Historical line was duplicated or removed.");
+  if ((await prisma.autopartSalesLine.count({ where: { documentReference: historicalRef, source: "561L" } })) !== 2) {
+    throw new Error("Historical lines were duplicated or removed.");
   }
   if ((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status !== "CONFIRMED") {
     throw new Error("Reimport changed the B2B order.");

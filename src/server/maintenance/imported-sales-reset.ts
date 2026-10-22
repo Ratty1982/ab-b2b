@@ -3,8 +3,6 @@
  * Not imported by application startup. Execute is only reached from
  * scripts/imported-sales-reset.ts after the backup gates pass.
  */
-import { mkdirSync, copyFileSync, existsSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
@@ -14,9 +12,9 @@ import {
   IMPORTED_SALES_PRESERVED,
   IMPORTED_SALES_REMOVED,
   evaluateImportedSalesResetGates,
-  salesArchiveDirectory,
   type BackupProof,
 } from "@/domain/imported-sales-reset";
+import { archiveImportedSalesSources, SalesArchiveError } from "@/server/maintenance/sales-source-archive";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -202,65 +200,6 @@ export async function planImportedSalesReset(db: Db = prisma): Promise<ImportedS
   };
 }
 
-async function archiveSourceReports(): Promise<{ directory: string; files: number }> {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const directory = path.resolve(salesArchiveDirectory(), stamp);
-  mkdirSync(directory, { recursive: true });
-  const manifest: Array<Record<string, string | number | null>> = [];
-  let files = 0;
-
-  const history = await prisma.autopartHistoryAllImport.findMany({
-    select: {
-      id: true,
-      filename561l: true,
-      filenameSlrb: true,
-      storagePath561l: true,
-      storagePathSlrb: true,
-      fileBody561l: true,
-      fileBodySlrb: true,
-    },
-  });
-  for (const row of history) {
-    const folder = path.join(directory, "history", row.id);
-    mkdirSync(folder, { recursive: true });
-    if (row.fileBody561l) {
-      writeFileSync(path.join(folder, row.filename561l || "561l.bin"), row.fileBody561l);
-      files += 1;
-    }
-    if (row.fileBodySlrb) {
-      writeFileSync(path.join(folder, row.filenameSlrb || "slrb.bin"), row.fileBodySlrb);
-      files += 1;
-    }
-    for (const storagePath of [row.storagePath561l, row.storagePathSlrb]) {
-      if (!storagePath || !existsSync(storagePath)) continue;
-      copyFileSync(storagePath, path.join(folder, path.basename(storagePath)));
-      files += 1;
-    }
-    manifest.push({
-      kind: "history",
-      id: row.id,
-      filename561l: row.filename561l,
-      filenameSlrb: row.filenameSlrb,
-    });
-  }
-
-  const batches = await prisma.autopartImportBatch.findMany({
-    where: { kind: { in: [...SALES_BATCH_KINDS] }, storagePath: { not: null } },
-    select: { id: true, kind: true, filename: true, storagePath: true },
-  });
-  for (const batch of batches) {
-    manifest.push({ kind: batch.kind, id: batch.id, filename: batch.filename, storagePath: batch.storagePath });
-    if (!batch.storagePath || !existsSync(batch.storagePath)) continue;
-    const folder = path.join(directory, "batches");
-    mkdirSync(folder, { recursive: true });
-    copyFileSync(batch.storagePath, path.join(folder, `${batch.id}-${path.basename(batch.storagePath)}`));
-    files += 1;
-  }
-
-  writeFileSync(path.join(directory, "manifest.json"), JSON.stringify({ files, items: manifest }, null, 2));
-  return { directory, files };
-}
-
 async function deleteImportedSales(db: Db) {
   const salesBatchIds = (
     await db.autopartImportBatch.findMany({
@@ -351,7 +290,15 @@ export async function executeImportedSalesReset(input: {
 
   const db = input.db ?? prisma;
   const before = await planImportedSalesReset(db);
-  const archive = input.db ? { directory: salesArchiveDirectory(), files: 0 } : await archiveSourceReports();
+  let archive: { directory: string; files: number };
+  try {
+    archive = await archiveImportedSalesSources(db);
+  } catch (error) {
+    const reason = error instanceof SalesArchiveError || error instanceof Error
+      ? error.message
+      : "Source archive failed. Imported sales were not deleted.";
+    return { ok: false as const, mode: "execute" as const, reason };
+  }
   await prisma.autopartOngoingSalesFeedSettings.upsert({
     where: { id: "default" },
     create: { id: "default", enabled: false, configured: true, fulfilmentMode: "OFF" },
