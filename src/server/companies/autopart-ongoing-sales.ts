@@ -44,6 +44,7 @@ import {
   type TrmGroupDecision,
 } from "@/domain/autopart-trm-document-group";
 import { ongoingSalesReportContentHash } from "@/domain/autopart-ongoing-sales-attachment";
+import { ongoingPrimaryAuthority } from "@/domain/autopart-account-verification";
 import {
   decimalStringsEqual,
   makeDiagnostic,
@@ -100,7 +101,7 @@ export async function resolveCompanyByAutopartCode(code: string): Promise<Autopa
     return {
       companyId: direct.id,
       code: direct.autopartCustomerCode,
-      authority: direct.autopartCustomerCodeVerifiedAt ? "verified-code" : "stored-code",
+      authority: ongoingPrimaryAuthority(direct.autopartCustomerCodeVerifiedAt),
     };
   }
   const alias = await prisma.autopartCustomerAccountAlias.findFirst({

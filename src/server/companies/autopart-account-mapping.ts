@@ -13,6 +13,16 @@ import { normaliseAccountToken } from "@/domain/autopart-report-money";
 import { confirmAutopart504Import, confirmAutopartTrm21qcImport } from "@/server/companies/autopart-ongoing-sales";
 import { isAutopart504Report } from "@/domain/autopart-504";
 import { isAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
+import {
+  assignmentBlockers,
+  normaliseAssignedAutopartCode,
+} from "@/domain/autopart-account-verification";
+import {
+  assertUnambiguousAutopartCode,
+  describeCompanyAutopartMapping,
+  describeCompanyMasterLinks,
+  foreignAutopartClaims,
+} from "@/server/companies/autopart-account-verification";
 
 async function requireMappingView(userId: string) {
   const profile = await requireSystemPermission(userId, "companies.view");
@@ -235,8 +245,56 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
   });
   if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
 
+  const normalised = normaliseAssignedAutopartCode(code);
+  if (!normalised.valid) {
+    throw new AuthError(
+      normalised.reason ?? "Enter a valid Autopart customer ID",
+      "AUTOPART_CODE_INVALID",
+      400,
+    );
+  }
+
   const existing = await findBinding(code);
+  const foreign = await foreignAutopartClaims(code, company.id);
+  const blockers = assignmentBlockers(foreign, existing);
+  if (blockers.length > 0) {
+    throw new AuthError(
+      `Autopart account ${code} is already held by another company and was not verified`,
+      "AUTOPART_CODE_CONFLICT",
+      409,
+    );
+  }
   if (existing && existing.companyId === company.id) {
+    if (existing.kind === "PRIMARY" && !existing.verifiedAt) {
+      const verifiedAt = new Date();
+      await prisma.company.update({
+        where: { id: company.id },
+        data: {
+          autopartCustomerCodeVerifiedAt: verifiedAt,
+          autopartCustomerCodeVerifiedById: null,
+        },
+      });
+      await recordAuditEvent({
+        action: "company.autopart_account.verified",
+        entityType: "Company",
+        entityId: company.id,
+        actorUserId,
+        companyId: company.id,
+        after: {
+          autopartCustomerCode: company.autopartCustomerCode,
+          verifiedAt: verifiedAt.toISOString(),
+          verifiedById: null,
+        },
+      });
+      return {
+        ok: true as const,
+        alreadyMapped: true,
+        binding: { ...existing, verifiedAt: verifiedAt.toISOString() },
+        reassigned: false,
+        recoveryHint:
+          "Account already mapped. Re-upload the TRM21QC/504 report to import any previously skipped lines.",
+      };
+    }
     return {
       ok: true as const,
       alreadyMapped: true,
@@ -294,7 +352,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
       data: {
         autopartCustomerCode: code,
         autopartCustomerCodeVerifiedAt: new Date(),
-        autopartCustomerCodeVerifiedById: actorUserId,
+        autopartCustomerCodeVerifiedById: null,
       },
     });
     binding = {
@@ -312,7 +370,7 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
         where: { id: company.id },
         data: {
           autopartCustomerCodeVerifiedAt: new Date(),
-          autopartCustomerCodeVerifiedById: actorUserId,
+          autopartCustomerCodeVerifiedById: null,
         },
       });
     }
@@ -326,12 +384,35 @@ export async function mapAutopartCustomerAccount(actorUserId: string, raw: unkno
       verifiedByName: null,
     };
   } else {
-    if (!company.autopartCustomerCodeVerifiedAt) {
+    if (!company.autopartCustomerCode) {
       throw new AuthError(
         "Verify this company's primary Autopart account before adding another account as an alias",
         "AUTOPART_NOT_VERIFIED",
         400,
       );
+    }
+    await assertUnambiguousAutopartCode(company.autopartCustomerCode, company.id);
+    if (!company.autopartCustomerCodeVerifiedAt) {
+      const verifiedAt = new Date();
+      await prisma.company.update({
+        where: { id: company.id },
+        data: {
+          autopartCustomerCodeVerifiedAt: verifiedAt,
+          autopartCustomerCodeVerifiedById: null,
+        },
+      });
+      await recordAuditEvent({
+        action: "company.autopart_account.verified",
+        entityType: "Company",
+        entityId: company.id,
+        actorUserId,
+        companyId: company.id,
+        after: {
+          autopartCustomerCode: company.autopartCustomerCode,
+          verifiedAt: verifiedAt.toISOString(),
+          verifiedById: null,
+        },
+      });
     }
     // Ensure no other company holds this as alias (race)
     const clash = await prisma.autopartCustomerAccountAlias.findFirst({
@@ -714,28 +795,38 @@ export async function listCompanyAutopartAccounts(actorUserId: string, companyId
 
   const accounts: Array<{
     accountCode: string;
-    kind: "PRIMARY" | "ALIAS";
+    kind: "PRIMARY" | "ALIAS" | "MASTER_LINK";
     aliasId: string | null;
+    verified: boolean;
     verifiedAt: string | null;
     mappedAt: string | null;
     mappedBy: string | null;
     note: string | null;
     source: string;
+    attention: string | null;
   }> = [];
 
   if (company.autopartCustomerCode) {
+    const mapping = await describeCompanyAutopartMapping({
+      companyId,
+      code: company.autopartCustomerCode,
+      verifiedAt: company.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+      verifiedByName:
+        company.autopartCustomerCodeVerifiedBy?.name ??
+        company.autopartCustomerCodeVerifiedBy?.email ??
+        null,
+    });
     accounts.push({
       accountCode: company.autopartCustomerCode,
       kind: "PRIMARY",
       aliasId: null,
+      verified: mapping.verified,
       verifiedAt: company.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
       mappedAt: company.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
-      mappedBy:
-        company.autopartCustomerCodeVerifiedBy?.name ??
-        company.autopartCustomerCodeVerifiedBy?.email ??
-        null,
-      note: null,
-      source: "Company primary Autopart account",
+      mappedBy: mapping.verifiedByLabel,
+      note: mapping.verificationRecorded ? null : mapping.verified ? "Verification timestamp not stored yet." : null,
+      source: "Assigned Autopart ID",
+      attention: mapping.attention,
     });
   }
   for (const a of company.autopartAccountAliases) {
@@ -743,11 +834,32 @@ export async function listCompanyAutopartAccounts(actorUserId: string, companyId
       accountCode: a.alias,
       kind: "ALIAS",
       aliasId: a.id,
+      verified: true,
       verifiedAt: a.verifiedAt.toISOString(),
       mappedAt: a.createdAt.toISOString(),
       mappedBy: a.verifiedBy.name ?? a.verifiedBy.email,
       note: a.note,
       source: "Verified account alias",
+      attention: null,
+    });
+  }
+  const links = await describeCompanyMasterLinks({
+    companyId,
+    primaryCode: company.autopartCustomerCode,
+  });
+  for (const link of links) {
+    if (!link.display || link.decision === "MATCHES_PRIMARY") continue;
+    accounts.push({
+      accountCode: link.display,
+      kind: "MASTER_LINK",
+      aliasId: null,
+      verified: link.decision === "UNIQUE_EXTRA",
+      verifiedAt: null,
+      mappedAt: null,
+      mappedBy: link.decision === "UNIQUE_EXTRA" ? "Automatic" : null,
+      note: link.reason,
+      source: "407EXP linked account",
+      attention: link.decision === "UNIQUE_EXTRA" ? null : link.reason,
     });
   }
   return { companyId: company.id, companyName: company.name, accounts };

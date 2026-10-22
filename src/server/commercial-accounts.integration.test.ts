@@ -216,7 +216,8 @@ describe("Phase 6A.5 commercial accounts", () => {
       code: `AP-${suffix}`,
     });
     expect(set.code).toBe(`AP-${suffix}`);
-    expect(set.verified).toBe(false);
+    expect(set.verified).toBe(true);
+    expect(set.verifiedBy).toBeNull();
 
     const verified = await verifyCompanyAutopartCustomerCode(adminId, { companyId: companyA });
     expect(verified.verified).toBe(true);
@@ -227,8 +228,8 @@ describe("Phase 6A.5 commercial accounts", () => {
       code: `AP2-${suffix}`,
     });
     expect(changed.code).toBe(`AP2-${suffix}`);
-    expect(changed.verified).toBe(false);
-    expect(changed.verifiedAt).toBeNull();
+    expect(changed.verified).toBe(true);
+    expect(changed.verifiedBy).toBeNull();
 
     await setCompanyAutopartCustomerCode(adminId, {
       companyId: companyB,
@@ -239,7 +240,7 @@ describe("Phase 6A.5 commercial accounts", () => {
       },
       (error) => {
         expect(error).toBeInstanceOf(AuthError);
-        expect((error as AuthError).code).toBe("AUTOPART_CODE_DUPLICATE");
+        expect((error as AuthError).code).toBe("AUTOPART_CODE_CONFLICT");
       },
     );
 

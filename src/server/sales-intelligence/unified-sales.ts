@@ -3,8 +3,9 @@
  *
  * Nothing is copied or rewritten. Each query builds the same reconciled line set in SQL:
  *
- * 1. Identity: an account code belongs to a CRM company only through an explicit link —
- *    a verified primary code, a verified alias, or an AutopartAccount row linked to the company.
+ * 1. Identity: historic 561L lines belong to a CRM company through a staff-verified primary
+ *    (a person recorded in autopartCustomerCodeVerifiedById), a verified alias, or a linked
+ *    AutopartAccount. A mapping timestamp with no staff verifier does not attach that history.
  *    Codes linked to more than one company are excluded and listed for reconciliation.
  *    Names are never used.
  * 2. Lines: global 561L AutopartInvoiceLine rows (undated) for linked codes, plus dated
@@ -28,6 +29,8 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { AuthError } from "@/server/rbac/guards";
+import { describeCompanyAutopartMapping } from "@/server/companies/autopart-account-verification";
+import { normaliseAssignedAutopartCode } from "@/domain/autopart-account-verification";
 import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { buildCsv } from "@/domain/sales-intelligence";
 import {
@@ -105,6 +108,7 @@ function identityMapSql(universe: CompanyUniverse): Prisma.Sql {
       FROM "Company" c
       WHERE c."autopartCustomerCode" IS NOT NULL
         AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedById" IS NOT NULL
       UNION ALL
       SELECT UPPER(btrim(al."alias")), al."companyId"
       FROM "AutopartCustomerAccountAlias" al
@@ -130,6 +134,7 @@ function identityMapSql(universe: CompanyUniverse): Prisma.Sql {
       WHERE c.id IN (${ids})
         AND c."autopartCustomerCode" IS NOT NULL
         AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedById" IS NOT NULL
       UNION ALL
       SELECT UPPER(btrim(al."alias")), al."companyId"
       FROM "AutopartCustomerAccountAlias" al
@@ -691,27 +696,44 @@ export async function loadUnifiedDatabaseCertification(): Promise<UnifiedFinanci
 export type UnifiedIdentityCode = {
   code: string;
   via: Array<"PRIMARY_VERIFIED" | "PRIMARY_UNVERIFIED" | "ALIAS" | "ACCOUNT_LINK">;
+  /** Historic 561L lines are included for this code. Mapping verification alone does not set this. */
   attached: boolean;
+  /** Unique Autopart-to-company mapping. Independent of historic 561L attachment. */
+  mappingVerified: boolean;
   note: string | null;
 };
 
-/** Verified account codes for one company. Unverified primary codes are listed but never attach 561L history. */
+/** Account codes shown on the customer. Mapping verification does not attach 561L history. */
 export async function loadUnifiedIdentity(companyId: string): Promise<UnifiedIdentityCode[]> {
   const company = await prisma.company.findUnique({
     where: { id: companyId },
     select: {
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
+      autopartCustomerCodeVerifiedById: true,
       autopartAccountAliases: { select: { alias: true } },
       autopartAccounts: { where: { sourceSystem: AUTOPART_SOURCE }, select: { accountCode: true } },
     },
   });
   if (!company) throw new AuthError("Company not found", "NOT_FOUND", 404);
+  const mapping = await describeCompanyAutopartMapping({
+    companyId,
+    code: company.autopartCustomerCode,
+    verifiedAt: company.autopartCustomerCodeVerifiedAt?.toISOString() ?? null,
+    verifiedByName: null,
+  });
+  const primaryKey = normaliseAssignedAutopartCode(company.autopartCustomerCode).key;
   const byCode = new Map<string, UnifiedIdentityCode>();
   const add = (raw: string | null | undefined, via: UnifiedIdentityCode["via"][number]) => {
     const code = raw?.trim().toUpperCase();
     if (!code) return;
-    const entry = byCode.get(code) ?? { code, via: [], attached: false, note: null };
+    const entry = byCode.get(code) ?? {
+      code,
+      via: [],
+      attached: false,
+      mappingVerified: false,
+      note: null,
+    };
     if (!entry.via.includes(via)) entry.via.push(via);
     byCode.set(code, entry);
   };
@@ -746,15 +768,26 @@ export async function loadUnifiedIdentity(companyId: string): Promise<UnifiedIde
       GROUP BY code
     `;
     const ownerCount = new Map(owners.map((row) => [row.code, Number(row.companies)]));
+    const staffHistory = Boolean(company.autopartCustomerCodeVerifiedById);
     for (const entry of byCode.values()) {
-      const verified = entry.via.some((via) => via !== "PRIMARY_UNVERIFIED");
       const shared = (ownerCount.get(entry.code) ?? 0) > 1;
-      entry.attached = verified && !shared;
+      const isPrimary = entry.code === primaryKey;
+      const historyLink =
+        entry.via.includes("ALIAS") ||
+        entry.via.includes("ACCOUNT_LINK") ||
+        (isPrimary && staffHistory);
+      entry.attached = historyLink && !shared;
+      entry.mappingVerified = isPrimary
+        ? mapping.verified
+        : entry.via.includes("ALIAS") || (entry.via.includes("ACCOUNT_LINK") && !shared);
       entry.note = shared
         ? "Linked to more than one CRM company. Held for reconciliation and not counted."
-        : verified
-          ? null
-          : "Primary code is not verified. Dated feed rows already assigned still count; 561L history is not attached.";
+        : !entry.mappingVerified
+          ? (mapping.attention ??
+            "This Autopart ID needs review. Historic 561L lines are not attached.")
+          : entry.attached
+            ? null
+            : "Assigned Autopart ID is verified for this company. Historic 561L lines are not included.";
     }
   }
   return [...byCode.values()].sort((a, b) => a.code.localeCompare(b.code));
@@ -1842,7 +1875,9 @@ export async function getUnifiedReconciliationQueue(actorUserId: string, raw: un
     idmap_raw AS (
       SELECT UPPER(btrim(c."autopartCustomerCode")) AS code, c.id AS company_id
       FROM "Company" c
-      WHERE c."autopartCustomerCode" IS NOT NULL AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+      WHERE c."autopartCustomerCode" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+        AND c."autopartCustomerCodeVerifiedById" IS NOT NULL
       UNION ALL
       SELECT UPPER(btrim(al."alias")), al."companyId" FROM "AutopartCustomerAccountAlias" al
       UNION ALL

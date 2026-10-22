@@ -43,7 +43,11 @@ function SalesCustomer() {
       priceList: { name: string } | null;
       salesperson: { name: string } | null;
       taxStatus: string;
-      autopartAccount?: { code: string | null };
+      autopartAccount?: {
+        code: string | null;
+        verified?: boolean;
+        attention?: string | null;
+      };
     };
     contacts: Array<{
       id: string;
@@ -144,10 +148,18 @@ function SalesCustomer() {
                 <dd>{company.tradingName ?? "—"}</dd>
               </div>
               <div>
-                <dt className="text-steel">Autopart account</dt>
+                <dt className="text-steel">Assigned Autopart ID</dt>
                 <dd className="font-mono">
-                  {crm?.company.autopartCustomerCode ?? company.autopartAccount?.code ?? "—"}
+                  {company.autopartAccount?.code ?? crm?.company.autopartCustomerCode ?? "Not assigned"}
+                  {company.autopartAccount?.code
+                    ? company.autopartAccount.verified
+                      ? " · Verified"
+                      : " · Needs review"
+                    : ""}
                 </dd>
+                {company.autopartAccount?.attention ? (
+                  <dd className="mt-1 text-steel">{company.autopartAccount.attention}</dd>
+                ) : null}
               </div>
               <div>
                 <dt className="text-steel">Email</dt>

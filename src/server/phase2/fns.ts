@@ -2680,6 +2680,28 @@ export const listAutopartAccountMappingWorkspaceFn = createServerFn({ method: "G
     }
   });
 
+export const previewAutopartAccountVerificationFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    const mod = await import("@/server/companies/autopart-account-verification");
+    return { ok: true as const, data: await mod.previewAutopartAccountVerification(userId) };
+  } catch (e) {
+    return toError(e);
+  }
+});
+
+export const applyAutopartAccountVerificationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { confirmation?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const mod = await import("@/server/companies/autopart-account-verification");
+      return { ok: true as const, data: await mod.applyAutopartAccountVerification(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listCompanyAutopartAccountsFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { companyId: string })
   .handler(async ({ data }) => {
