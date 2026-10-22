@@ -1,10 +1,7 @@
 /**
- * Proves the imported-sales reset and a customer reimport on an isolated database.
+ * Proves the pre-launch imported-sales reset on an isolated database, then
+ * rebuilds one Active customer's history and ongoing sales.
  * Refuses every database name except automotive_brands_sales_reset_test.
- *
- * The database must already contain the application schema. This script creates
- * its own fixtures, deletes only the removable ongoing sales it created, and
- * reimports one TRM21QC line for that customer.
  */
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -14,6 +11,10 @@ import { IMPORTED_SALES_RESET_CONFIRMATION } from "../src/domain/imported-sales-
 import { bootstrapRbac } from "../prisma/bootstrap/rbac";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "../src/server/companies/autopart-account";
 import { confirmCustomerSalesImport } from "../src/server/companies/customer-sales-import";
+import {
+  confirmCustomerSalesHistory,
+  previewCustomerSalesHistory,
+} from "../src/server/companies/customer-sales-history-import";
 import { executeImportedSalesReset, planImportedSalesReset } from "../src/server/maintenance/imported-sales-reset";
 
 const REQUIRED_DATABASE = "automotive_brands_sales_reset_test";
@@ -26,11 +27,36 @@ function assertIsolatedDatabase() {
   }
 }
 
+async function ensureCutoverTable() {
+  await prisma.$executeRawUnsafe(`
+    DO $$ BEGIN
+      CREATE TYPE "CustomerSalesHistoryStatus" AS ENUM ('NOT_STARTED', 'COMPLETE');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "CustomerSalesCutover" (
+      "companyId" TEXT NOT NULL,
+      "historyStatus" "CustomerSalesHistoryStatus" NOT NULL DEFAULT 'NOT_STARTED',
+      "historyFrom" TIMESTAMP(3),
+      "historyTo" TIMESTAMP(3),
+      "completedAt" TIMESTAMP(3),
+      "completedById" TEXT,
+      "evidence" JSONB,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
+      CONSTRAINT "CustomerSalesCutover_pkey" PRIMARY KEY ("companyId")
+    );
+  `);
+}
+
 async function main() {
   assertIsolatedDatabase();
+  await ensureCutoverTable();
   await prisma.autopartSalesLine.deleteMany();
   await prisma.autopartSalesDocument.deleteMany();
   await prisma.autopartCustomerImportRun.deleteMany();
+  await prisma.customerSalesCutover.deleteMany();
   await bootstrapRbac(prisma);
   const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   const admin = await prisma.user.create({
@@ -52,7 +78,9 @@ async function main() {
   const prospect = await prisma.company.create({
     data: { name: `Reset Prospect ${stamp}`, status: "PROSPECT" },
   });
+  const prospectAccount = `RX${stamp.slice(0, 8).toUpperCase()}`;
   await linkAndVerifyCompanyAutopartCustomerCode(admin.id, { companyId: company.id, code: account });
+  await linkAndVerifyCompanyAutopartCustomerCode(admin.id, { companyId: prospect.id, code: prospectAccount });
   await prisma.autopartCustomerAccountAlias.create({
     data: { companyId: company.id, alias: `RA${stamp.slice(0, 8).toUpperCase()}`, verifiedById: admin.id },
   });
@@ -113,61 +141,90 @@ async function main() {
       contactSnapshot: { name: "Buyer", email: "buyer@example.invalid", phone: "01130000000" },
     },
   });
-
+  await prisma.orderStockReservation.create({
+    data: { orderId: order.id, variantId: variant.id, inventoryId: inventory.id, quantity: 1, status: "ACTIVE" },
+  });
+  await prisma.orderFulfilmentEvent.create({
+    data: {
+      orderId: order.id,
+      kind: "NOTE",
+      summary: "Proof fulfilment evidence",
+      source: "MANUAL",
+    },
+  });
   await prisma.autopartOngoingSalesFeedSettings.upsert({
     where: { id: "default" },
-    create: { id: "default", enabled: false, fulfilmentMode: "OFF" },
-    update: { fulfilmentMode: "OFF" },
+    create: { id: "default", enabled: true, fulfilmentMode: "OFF" },
+    update: { enabled: true, fulfilmentMode: "OFF" },
+  });
+  await prisma.autopartImportBatch.create({
+    data: { kind: "CUSTOMER_MASTER", status: "COMMITTED", filename: `master-${stamp}.csv`, fileHash: stamp },
+  });
+  const salesBatch = await prisma.autopartImportBatch.create({
+    data: { kind: "INVOICE_LINES", status: "COMMITTED", filename: `lines-${stamp}.csv`, fileHash: `${stamp}-lines` },
+  });
+  await prisma.autopartHistoryAllImport.create({
+    data: {
+      status: "COMMITTED",
+      filename561l: "561L.csv",
+      fileHash561l: `${stamp}-561`,
+      fileBody561l: Buffer.from("historical bytes"),
+    },
+  });
+  await prisma.stockEmailReceipt.create({
+    data: {
+      receiptKey: `ongoing-hash:ONGOING_504:${stamp}`,
+      emailUid: stamp,
+      fromAddress: "reports@example.invalid",
+      subject: "504",
+      receivedAt: new Date(),
+      consumed: true,
+    },
   });
 
-  const protectedRef = `SSPW${stamp.slice(0, 8).toUpperCase()}`;
-  const removableRef = `SSRM${stamp.slice(0, 8).toUpperCase()}`;
+  const octoberRef = `SSPW${stamp.slice(0, 8).toUpperCase()}`;
+  const ongoingRef = `SSRM${stamp.slice(0, 8).toUpperCase()}`;
   const historicalRef = `SSHX${stamp.slice(0, 8).toUpperCase()}`;
-  const protectedRun = await prisma.autopartCustomerImportRun.create({
-    data: { type: "ONGOING_504", status: "COMMITTED", filename: "protected-504.txt", companyId: company.id, dryRun: false },
+  const octoberRun = await prisma.autopartCustomerImportRun.create({
+    data: { type: "ONGOING_504", status: "COMMITTED", filename: "october-504.txt", companyId: company.id, dryRun: false },
   });
-  const removableRun = await prisma.autopartCustomerImportRun.create({
-    data: { type: "ONGOING_504", status: "COMMITTED", filename: "removable-504.txt", companyId: company.id, dryRun: false },
-  });
-  const protectedDoc = await prisma.autopartSalesDocument.create({
+  await prisma.autopartSalesDocument.create({
     data: {
       companyId: company.id,
       autopartCustomerCode: account,
       documentType: "INVOICE",
-      documentReference: protectedRef,
+      documentReference: octoberRef,
       documentDate: new Date("2026-10-10T12:00:00.000Z"),
       goodsNet: "10.00",
       vat: "2.00",
       grossTotal: "12.00",
       source: "ONGOING_504",
       has504: true,
-      hasTrm21qc: false,
-      importRunId: protectedRun.id,
+      abOrderId: order.id,
+      abOrderNumber: orderNumber,
+      importRunId: octoberRun.id,
     },
   });
-  const removableDoc = await prisma.autopartSalesDocument.create({
+  const ongoingDoc = await prisma.autopartSalesDocument.create({
     data: {
       companyId: company.id,
       autopartCustomerCode: account,
       documentType: "INVOICE",
-      documentReference: removableRef,
+      documentReference: ongoingRef,
       documentDate: new Date("2026-09-01T12:00:00.000Z"),
       goodsNet: "4.00",
-      vat: "0.80",
-      grossTotal: "4.80",
       source: "ONGOING_504",
       has504: true,
       hasTrm21qc: true,
-      importRunId: removableRun.id,
     },
   });
   await prisma.autopartSalesLine.create({
     data: {
       companyId: company.id,
-      documentId: removableDoc.id,
+      documentId: ongoingDoc.id,
       autopartCustomerCode: account,
       documentType: "INVOICE",
-      documentReference: removableRef,
+      documentReference: ongoingRef,
       lineNumber: 1,
       sku: variant.sku,
       units: "1",
@@ -182,19 +239,21 @@ async function main() {
       documentType: "INVOICE",
       documentReference: historicalRef,
       documentDate: new Date("2020-01-15T12:00:00.000Z"),
-      source: "561L",
-      has504: false,
-      hasTrm21qc: false,
+      goodsNet: "8.00",
+      source: "SLRB",
     },
   });
 
+  const beforeOrders = await prisma.order.count();
+  const beforeCompanies = await prisma.company.count();
   const dryRun = await planImportedSalesReset(prisma);
   if (dryRun.mode !== "dry-run") throw new Error("Plan was not a dry-run.");
-  if (!dryRun.protectedDocuments.some((doc) => doc.documentReference === protectedRef)) {
-    throw new Error("Dry-run did not protect the recovery-window document.");
+  if (!dryRun.orderReferences.some((doc) => doc.documentReference === octoberRef && doc.abOrderNumber === orderNumber)) {
+    throw new Error("Dry-run did not report the order linked to an imported document.");
   }
-  if (!dryRun.removableDocuments.some((doc) => doc.documentReference === removableRef)) {
-    throw new Error("Dry-run did not propose removal of the ongoing document outside the recovery window.");
+  if ((await prisma.autopartSalesDocument.count()) < 3) throw new Error("Dry-run deleted documents.");
+  if ((await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({ where: { id: "default" } })).enabled !== true) {
+    throw new Error("Dry-run changed the feed switch.");
   }
 
   const backupPath = `/tmp/imported-sales-reset-${stamp}.txt`;
@@ -231,22 +290,31 @@ async function main() {
   });
   if (!executed.ok) throw new Error(executed.reason);
 
-  const protectedAfter = await prisma.autopartSalesDocument.findUnique({ where: { id: protectedDoc.id } });
-  const removableAfter = await prisma.autopartSalesDocument.findUnique({ where: { id: removableDoc.id } });
-  const historicalAfter = await prisma.autopartSalesDocument.findFirst({ where: { documentReference: historicalRef } });
+  if ((await prisma.autopartSalesDocument.count()) !== 0) throw new Error("Imported documents remained.");
+  if ((await prisma.autopartSalesLine.count()) !== 0) throw new Error("Imported lines remained.");
+  if ((await prisma.autopartCustomerImportRun.count()) !== 0) throw new Error("Import runs remained.");
+  if ((await prisma.autopartHistoryAllImport.count()) !== 0) throw new Error("Historical staging remained.");
+  if ((await prisma.stockEmailReceipt.count({ where: { receiptKey: { startsWith: "ongoing-hash:" } } })) !== 0) {
+    throw new Error("Ongoing duplicate receipts remained.");
+  }
+  if ((await prisma.autopartImportBatch.count({ where: { id: salesBatch.id } })) !== 0) {
+    throw new Error("Sales import batch remained.");
+  }
+  if ((await prisma.autopartImportBatch.count({ where: { kind: "CUSTOMER_MASTER" } })) < 1) {
+    throw new Error("Customer-master batch was deleted.");
+  }
   const orderAfter = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
   const stockAfter = await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
-  if (!protectedAfter) throw new Error("Recovery-window document was deleted.");
-  if (!(await prisma.autopartCustomerImportRun.findUnique({ where: { id: protectedRun.id } }))) {
-    throw new Error("Import run for the recovery document was deleted.");
-  }
-  if (await prisma.autopartCustomerImportRun.findUnique({ where: { id: removableRun.id } })) {
-    throw new Error("Import run for the removed document was kept.");
-  }
-  if (removableAfter) throw new Error("Ongoing document outside the recovery window was kept.");
-  if (!historicalAfter) throw new Error("Historical 561L document was deleted.");
   if (orderAfter.status !== "CONFIRMED") throw new Error("B2B order changed.");
+  if ((await prisma.orderFulfilmentEvent.count({ where: { orderId: order.id } })) !== 1) {
+    throw new Error("Fulfilment evidence changed.");
+  }
+  if ((await prisma.orderStockReservation.count({ where: { orderId: order.id, status: "ACTIVE" } })) !== 1) {
+    throw new Error("Stock reservation changed.");
+  }
   if (stockAfter.qtyOnHand !== 7 || stockAfter.qtyReserved !== 1) throw new Error("Stock changed.");
+  if ((await prisma.order.count()) !== beforeOrders) throw new Error("Order count changed.");
+  if ((await prisma.company.count()) !== beforeCompanies) throw new Error("Company count changed.");
   if ((await prisma.company.count({ where: { id: { in: [company.id, prospect.id] } } })) !== 2) {
     throw new Error("Customer or prospect was deleted.");
   }
@@ -256,22 +324,83 @@ async function main() {
   if ((await prisma.customerPrice.count({ where: { companyId: company.id } })) !== 1) {
     throw new Error("Customer price was deleted.");
   }
+  if ((await prisma.autopartOngoingSalesFeedSettings.findUniqueOrThrow({ where: { id: "default" } })).enabled !== false) {
+    throw new Error("Automatic importing was left on.");
+  }
+  if (executed.report.preservedAfter["orders"] !== executed.report.preservedBefore["orders"]) {
+    throw new Error("Protected order count changed.");
+  }
 
-  const replacement = `SRE${stamp.slice(0, 8).toUpperCase()}`;
-  const text = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
-${account},GRP,${replacement},02/09/2026,${variant.sku},Widget,1,8.00,3.00,5.00,62.500
+  const history561 = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${account},I/${historicalRef}/1,${variant.sku},Widget,2,"£20.00"
+${account},C/SC${stamp.slice(0, 6).toUpperCase()}/1,${variant.sku},Widget,1,"£4.00"
+`;
+  const creditRef = `SC${stamp.slice(0, 6).toUpperCase()}`;
+  const historySlrb = `A/C,Type,Ref,Date,Tot Goods,Tot VAT,Total,Run Bal
+${account},INV,${historicalRef},15 Jan 20,"£20.00","£4.00","£24.00","£24.00"
+${account},CRN,${creditRef},16 Jan 20,"-£4.00","-£0.80","-£4.80","£19.20"
+${account},PAY,REC${stamp.slice(0, 4).toUpperCase()},17 Jan 20,"£0.00","£0.00","-£10.00","£9.20"
+${prospectAccount},INV,SXOTHER01,18 Jan 20,"£9.00","£1.80","£10.80","£10.80"
+`;
+  const preview = await previewCustomerSalesHistory(admin.id, {
+    companyId: company.id,
+    text561l: history561,
+    textSlrb: historySlrb,
+    filename561l: "561L.csv",
+    filenameSlrb: "SLRB.csv",
+  });
+  if (preview.counts.rejected < 1) throw new Error("Foreign history row was not rejected.");
+  const history = await confirmCustomerSalesHistory(admin.id, {
+    companyId: company.id,
+    text561l: history561,
+    textSlrb: historySlrb,
+    filename561l: "561L.csv",
+    filenameSlrb: "SLRB.csv",
+  });
+  if (history.rowsImported < 1) throw new Error("History import stored nothing.");
+  const credit = await prisma.autopartSalesLine.findFirstOrThrow({
+    where: { companyId: company.id, documentReference: creditRef },
+  });
+  if (Number(credit.units) >= 0 || Number(credit.salesNet) >= 0) throw new Error("Credit was not stored as negative.");
+  const payment = await prisma.autopartSalesDocument.findFirstOrThrow({
+    where: { companyId: company.id, documentType: "PAYMENT" },
+  });
+  if (payment.goodsNet != null) throw new Error("Payment was stored as goods.");
+  if ((await prisma.autopartSalesLine.count({ where: { documentType: "PAYMENT" } })) !== 0) {
+    throw new Error("Payment created a product line.");
+  }
+  if ((await prisma.autopartSalesDocument.count({ where: { autopartCustomerCode: prospectAccount } })) !== 0) {
+    throw new Error("Prospect history was stored on the Active import.");
+  }
+  const repeated = await confirmCustomerSalesHistory(admin.id, {
+    companyId: company.id,
+    text561l: history561,
+    textSlrb: historySlrb,
+  });
+  if (repeated.rowsImported !== 0) throw new Error("Repeated history import stored more rows.");
+
+  const caughtUp = `SSCU${stamp.slice(0, 6).toUpperCase()}`;
+  const trm = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
+${account},GRP,${caughtUp},02/10/2026,${variant.sku},Widget,1,8.00,3.00,5.00,62.500
+${prospectAccount},GRP,SXPROSPECT,02/10/2026,${variant.sku},Widget,1,3.00,1.00,2.00,66.000
+${account},GRP,${historicalRef},15/01/2020,${variant.sku},Widget,2,20.00,8.00,12.00,60.000
 `;
   const imported = await confirmCustomerSalesImport(admin.id, {
     companyId: company.id,
     accountCode: account,
-    text,
+    text: trm,
     filename: "TRM21QC.csv",
   });
-  if (imported.rowsImported !== 1) throw new Error(`Reimport stored ${imported.rowsImported} rows.`);
-  const line = await prisma.autopartSalesLine.findFirst({
-    where: { documentReference: replacement, companyId: company.id },
-  });
-  if (!line || line.autopartCustomerCode !== account) throw new Error("Reimport did not store the customer line.");
+  if (imported.rowsImported !== 1) throw new Error(`Catch-up stored ${imported.rowsImported} rows.`);
+  if ((await prisma.autopartSalesLine.count({ where: { documentReference: caughtUp, companyId: company.id } })) !== 1) {
+    throw new Error("Catch-up line missing.");
+  }
+  if ((await prisma.autopartSalesLine.count({ where: { documentReference: "SXPROSPECT" } })) !== 0) {
+    throw new Error("Prospect ongoing line was stored.");
+  }
+  if ((await prisma.autopartSalesLine.count({ where: { documentReference: historicalRef, source: "561L" } })) !== 1) {
+    throw new Error("Historical line was duplicated or removed.");
+  }
   if ((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status !== "CONFIRMED") {
     throw new Error("Reimport changed the B2B order.");
   }
@@ -284,12 +413,12 @@ ${account},GRP,${replacement},02/09/2026,${variant.sku},Widget,1,8.00,3.00,5.00,
       {
         database: REQUIRED_DATABASE,
         deleted: executed.report.deleted,
-        protectedDocument: protectedRef,
-        removedDocument: removableRef,
-        historicalDocument: historicalRef,
-        reimportedDocument: replacement,
+        feedEnabledAfter: executed.report.feedEnabledAfter,
         orderStatus: orderAfter.status,
         stockOnHand: stockAfter.qtyOnHand,
+        historyImported: history.rowsImported,
+        catchUpDocument: caughtUp,
+        removedOctoberDocument: octoberRef,
       },
       null,
       2,
@@ -299,7 +428,7 @@ ${account},GRP,${replacement},02/09/2026,${variant.sku},Widget,1,8.00,3.00,5.00,
 
 main()
   .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    console.error(error instanceof Error ? error.stack ?? error.message : error);
     process.exitCode = 1;
   })
   .finally(async () => {

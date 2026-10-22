@@ -1,9 +1,8 @@
 /**
- * Gates for removing imported ongoing Autopart sales so they can be rebuilt
- * from customer-scoped 504 and TRM21QC files.
+ * Gates for the one-time pre-launch wipe of imported Autopart sales.
  *
- * This is not the historical sales cleanup. Historical 561L and SLRB rows stay.
- * Documents in the outstanding 504 financial-recovery window stay.
+ * Historical 561L/SLRB and ongoing 504/TRM21QC rows are both removed.
+ * Customers, prices, stock, orders, and configuration stay.
  * Dry-run is the default. Execute is refused until backup, restore, database
  * name, and the confirmation phrase all pass.
  */
@@ -15,53 +14,50 @@ import {
 
 export type { BackupProof };
 
-export const IMPORTED_SALES_RESET_CONFIRMATION = "RESET IMPORTED AUTOPART SALES";
-
-/** 504 headers in this window are the outstanding financial recovery population. */
-export const IMPORTED_SALES_RECOVERY_WINDOW = {
-  from: "2026-10-06",
-  to: "2026-10-19",
-  affectedDocuments: 123,
-} as const;
+export const IMPORTED_SALES_RESET_CONFIRMATION = "RESET PRELAUNCH IMPORTED SALES";
 
 export const IMPORTED_SALES_PRESERVED = [
-  { name: "Company, Contact, Address, prospect and portal users", reason: "Customers and prospects stay." },
-  { name: "AutopartAccount", reason: "407EXP master accounts stay." },
-  { name: "AutopartCustomerAccountAlias and Company.autopartCustomerCode", reason: "Verified account mappings stay." },
-  { name: "CustomerPrice, PriceList, Product, Inventory", reason: "Pricing, catalogue, and stock stay." },
-  { name: "User, Role, Permission", reason: "Staff and permissions stay." },
+  { name: "Company, Contact, Address, Active customers and prospects", reason: "The customer master stays, including every Active and Prospect company." },
+  { name: "AutopartAccount", reason: "407EXP master accounts and customer mappings stay." },
+  { name: "AutopartCustomerAccountAlias and Company.autopartCustomerCode", reason: "Verified Autopart IDs and aliases stay." },
+  { name: "CustomerPrice, PriceList, Product, Supplier, Inventory", reason: "Pricing, catalogue, suppliers, and stock stay." },
+  { name: "User, Role, Permission", reason: "Staff, authentication, and permissions stay." },
   { name: "Order, OrderItem, Invoice, OrderStockReservation, OrderFulfilmentEvent", reason: "Legitimate B2B orders, invoices, fulfilment, and stock reservations stay." },
-  { name: "AutopartSalesDocument with has504 and a date in the 504 recovery window", reason: "Outstanding 504 financial recovery. These headers are not rebuilt by deleting them." },
-  { name: "Product lines and import runs attached to those recovery documents", reason: "The recovery still needs the stored document, its lines, and the import audit." },
-  { name: "Historical 561L and SLRB documents, lines, and runs", reason: "No customer reimport path exists for those retired files, so this reset does not delete them." },
+  { name: "Autopart504cImportRun", reason: "Operational invoices can point at a 504C run. Those runs are not imported sales documents." },
+  { name: "AutopartImportBatch of kind CUSTOMER_MASTER", reason: "Customer-master import history is not a sales dataset." },
+  { name: "CMS, configuration, and AuditEvent", reason: "Site content and audit history stay." },
 ] as const;
 
 export const IMPORTED_SALES_REMOVED = [
-  { name: "Ongoing AutopartSalesDocument outside the 504 recovery window", reason: "504 and TRM headers a customer-specific 504 or TRM21QC import can store again." },
-  { name: "Ongoing AutopartSalesLine on those documents", reason: "Product lines for the same documents. Lines on a protected recovery document stay." },
-  { name: "AutopartCustomerImportRun of type ONGOING_504 or ONGOING_TRM21QC with no remaining document or line", reason: "Import audit for rebuilt sales. Runs that still hold a recovery document stay." },
-  { name: "AutopartImportDiagnostic on a removed run", reason: "Removed with that run. Diagnostics for a protected recovery run stay." },
+  { name: "AutopartSalesDocument", reason: "Every imported invoice, credit, payment, and unmatched header, including historical 561L/SLRB and ongoing 504/TRM21QC." },
+  { name: "AutopartSalesLine", reason: "Every imported product line, historical and ongoing." },
+  { name: "AutopartCustomerImportRun and AutopartImportDiagnostic", reason: "Historical and ongoing sales import runs, diagnostics, and processing state." },
+  { name: "AutopartHistoryAllImport and its staged documents, lines, reviews, and gaps", reason: "Obsolete historical staging. Original report bytes are copied to the archive first." },
+  { name: "AutopartInvoiceLine, AutopartLedgerTransaction, AutopartDocumentMatch", reason: "Bulk historical sales and ledger copies." },
+  { name: "AutopartImportBatch of kind INVOICE_LINES or LEDGER, and their issues", reason: "Sales import batches only. Customer-master batches stay." },
+  { name: "StockEmailReceipt keys beginning ongoing-hash:", reason: "Duplicate-detection receipts that would block a clean 504/TRM21QC reimport. Other mailbox receipts stay." },
+  { name: "CustomerSalesCutover", reason: "Cutover state is cleared so history must be imported again before ongoing sales are stored." },
 ] as const;
 
 export const IMPORTED_SALES_EFFECTS = [
-  "B2B orders, invoices, fulfilment events, and stock reservations are not deleted or released.",
-  "Customer prices, products, warehouse stock, purchasing settings, and rebate configuration stay.",
-  "Sales Enquiry, purchasing history, and rebate figures that read ongoing Autopart lines lose the removed documents until those customers are reimported.",
-  "Protected 504 documents inside 6–19 October 2026 remain available to the financial recovery.",
-  "Historical 561L and SLRB rows remain. This tool does not call the historical cleanup.",
-  "No fulfilment, stock movement, or customer email is triggered by the reset or by the customer reimport.",
+  "B2B orders, invoices, fulfilment events, and stock reservations are not deleted or changed.",
+  "A sales document that names an AB order is removed. The order, its items, and its fulfilment events stay.",
+  "Customer prices, products, suppliers, warehouse stock, and purchasing settings stay.",
+  "Automatic 504/TRM21QC importing is switched off during execute and is left off.",
+  "Original 561L, SLRB, and sales-batch files are copied to the archive before their database rows are deleted. The archive is not deleted.",
+  "Dry-run does not delete rows, copy files, or change the feed switch.",
 ] as const;
 
 export const IMPORTED_SALES_APPROVAL_GATES = [
   "Take a fresh production backup and restore it to a different database.",
   "Query the restored database and confirm the backup checksum, size, source name, and restore time.",
-  "Run scripts/imported-sales-reset.ts with no --execute flag and read the dry-run.",
-  "Confirm the protected recovery documents are the outstanding 504 financial-recovery set.",
-  "Set AB_RESET_CONFIRM to RESET IMPORTED AUTOPART SALES, AB_RESET_TARGET to the database name, and AB_RESET_RESTORE_URL to the restored copy.",
+  "Run bun scripts/imported-sales-reset.ts with no --execute flag and read the before-reset counts.",
+  "Run the same command with --execute against the restored copy before production.",
+  "Set AB_RESET_CONFIRM to RESET PRELAUNCH IMPORTED SALES, AB_RESET_TARGET to the database name, and AB_RESET_RESTORE_URL to the restored copy.",
   "Pass --backup-proof for that backup. A production database also needs --allow-production-database.",
   "The command refuses to run during deploy, container startup, or a package lifecycle script.",
-  "Reimport each customer from the customer workspace with the original 504 and TRM21QC reports. Do not upload 561L or SLRB.",
-  "If the result is wrong, restore the tested backup. Do not run a second reset on a partial one.",
+  "After execute, confirm imported-sales counts are zero, protected counts are unchanged, and the ongoing feed is off.",
+  "Rebuild each Active customer from Import Sales History, then catch up 504/TRM21QC. Do not turn automatic importing back on as part of the reset.",
 ] as const;
 
 export type ImportedSalesResetGateInput = {
@@ -127,4 +123,10 @@ export function evaluateImportedSalesResetGates(
     return { ok: false, mode, reason: "The restored database did not answer a test query." };
   }
   return { ok: true, mode: "execute" };
+}
+
+export function salesArchiveDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env["AUTOPART_SALES_ARCHIVE_DIR"]?.trim();
+  if (configured) return configured;
+  return "var/autopart-sales-archive";
 }

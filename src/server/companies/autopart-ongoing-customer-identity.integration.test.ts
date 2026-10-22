@@ -82,6 +82,14 @@ beforeAll(async () => {
   companyBId = companyB.id;
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: companyAId, code: accountA });
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: companyBId, code: accountB });
+  await prisma.customerSalesCutover.createMany({
+    data: [companyAId, companyBId].map((companyId) => ({
+      companyId,
+      historyStatus: "COMPLETE" as const,
+      completedAt: new Date(),
+      evidence: { kind: "NO_HISTORICAL_SALES" },
+    })),
+  });
   await prisma.autopartCustomerAccountAlias.create({
     data: { companyId: companyAId, alias: aliasA, verifiedById: adminId },
   });
@@ -159,14 +167,16 @@ describe("ongoing customer identity", () => {
     expect(kept.lines.map((line) => [line.source, Number(line.units), line.autopartCustomerCode])).toEqual([
       ["561L", 1, accountA],
     ]);
-    const ongoing = await prisma.autopartSalesDocument.findFirstOrThrow({
-      where: { documentReference: document, hasTrm21qc: true },
-      include: { lines: true },
+    expect(
+      await prisma.autopartSalesDocument.count({ where: { documentReference: document, hasTrm21qc: true } }),
+    ).toBe(0);
+    expect(
+      await prisma.autopartSalesLine.count({ where: { documentReference: document, source: "ONGOING_TRM21QC" } }),
+    ).toBe(0);
+    const skipped = await prisma.autopartImportDiagnostic.findMany({
+      where: { importRunId: imported.id, reasonCode: "UNMAPPED_CUSTOMER" },
     });
-    expect(ongoing.companyId).toBeNull();
-    expect(ongoing.autopartCustomerCode).toBe(unknown);
-    expect(ongoing.lines).toHaveLength(1);
-    expect(Number(ongoing.lines[0]?.units)).toBe(3);
+    expect(skipped.length).toBeGreaterThan(0);
 
     const replay = await confirmAutopartTrm21qcImport(adminId, {
       text: trm([{ account: unknown, document, qty: "3", sales: "16.00" }]),
@@ -174,7 +184,6 @@ describe("ongoing customer identity", () => {
       source: "MANUAL",
     });
     expect(replay.status).toBe("COMMITTED");
-    expect(await prisma.autopartSalesLine.count({ where: { documentId: ongoing.id } })).toBe(1);
     expect(await prisma.autopartSalesLine.count({ where: { documentId: historic.id, source: "561L" } })).toBe(1);
   });
 
@@ -436,7 +445,11 @@ describe("ongoing customer identity", () => {
       source: "MANUAL",
     });
     expect(imported.status).toBe("COMMITTED");
-    expect((imported.diagnostics as { attentionRequired?: boolean }).attentionRequired).toBe(true);
+    expect(
+      await prisma.autopartImportDiagnostic.count({
+        where: { importRunId: imported.id, reasonCode: "UNMAPPED_CUSTOMER" },
+      }),
+    ).toBeGreaterThan(0);
     const kept = await prisma.autopartSalesDocument.findFirstOrThrow({
       where: { id: ongoing.id },
       include: { lines: true },
@@ -562,7 +575,14 @@ describe("ongoing customer identity", () => {
         filename: `TRM21QC-${account}.csv`,
         source: "MANUAL",
       });
-      expect((imported.diagnostics as { attentionRequired?: boolean }).attentionRequired).toBe(true);
+      expect(
+        await prisma.autopartImportDiagnostic.count({
+          where: {
+            importRunId: imported.id,
+            reasonCode: { in: ["UNMAPPED_CUSTOMER", "OWNERSHIP_NOT_UNIQUE"] },
+          },
+        }),
+      ).toBeGreaterThan(0);
     }
     const kept = await prisma.autopartSalesDocument.findFirstOrThrow({
       where: { id: ongoing.id },

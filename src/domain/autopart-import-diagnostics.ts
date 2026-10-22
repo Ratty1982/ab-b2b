@@ -39,6 +39,9 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "MIXED_DOCUMENT_TYPE",
   "AMBIGUOUS_CUSTOMER_ACCOUNT",
   "CUSTOMER_OUT_OF_SCOPE",
+  "NOT_ACTIVE",
+  "OWNERSHIP_NOT_UNIQUE",
+  "HISTORY_CUTOVER_INCOMPLETE",
 ] as const;
 
 export type AutopartImportReasonCode = (typeof AUTOPART_IMPORT_REASON_CODES)[number];
@@ -78,6 +81,11 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
     "This Autopart account is linked to more than one customer. No lines were written.",
   CUSTOMER_OUT_OF_SCOPE:
     "This row is not for the verified Autopart account selected on the customer. It was not imported and was not assigned to another customer.",
+  NOT_ACTIVE: "Company is not Active. No sales document or product line was stored.",
+  OWNERSHIP_NOT_UNIQUE:
+    "Autopart account ownership is not uniquely verified. No sales document or product line was stored.",
+  HISTORY_CUTOVER_INCOMPLETE:
+    "Historical sales import and cutover are not complete. Ongoing sales were not stored.",
 };
 
 export type AutopartImportDiagnosticDraft = {

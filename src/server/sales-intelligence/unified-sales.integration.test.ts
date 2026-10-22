@@ -816,7 +816,7 @@ describe("unified customer sales", () => {
     expect(JSON.stringify(followUp)).toContain("45.00");
   });
 
-  it("attaches new feed invoices and credits to a prospect once, without activating it", async () => {
+  it("does not attach feed invoices to a prospect and does not activate it", async () => {
     const before = await loadUnifiedCustomerSummary(feedProspectId);
     expect(before.summary.historicalNet).toBe("0.00");
     expect(before.summary.datedNet).toBe("0.00");
@@ -831,16 +831,6 @@ ${codeT},GRP,${invoiceDoc},02/10/2026,${skuA},Synthetic,2,24.00,12.00,12.00,50.0
       filename: "trm-invoice.csv",
       source: "MANUAL",
     });
-    const afterInvoice = await loadUnifiedCustomerSummary(feedProspectId);
-    expect(afterInvoice.summary.datedInvoicedSales).toBe("24.00");
-    expect(afterInvoice.summary.certifiedNet).toBe("24.00");
-    expect(afterInvoice.summary.lastDatedInvoice).toBe("2026-10-02");
-    expect(afterInvoice.refresh.ongoingTrm21qcAt).not.toBeNull();
-    const stored = await prisma.autopartSalesLine.findMany({
-      where: { documentReference: invoiceDoc },
-    });
-    expect(stored.map((line) => line.companyId)).toEqual([feedProspectId]);
-
     const creditText = `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
 ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.000
 `;
@@ -849,29 +839,15 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
       filename: "trm-credit.csv",
       source: "MANUAL",
     });
-    const afterCredit = await loadUnifiedCustomerSummary(feedProspectId);
-    expect(afterCredit.summary.creditsAndAdjustments).toBe("-12.00");
-    expect(afterCredit.summary.certifiedNet).toBe("12.00");
-    const creditRows = await listUnifiedCustomerTransactions(adminId, {
-      companyId: feedProspectId,
-      type: "CREDIT",
-    });
-    expect(creditRows.items[0]?.reference).toBe(creditDoc);
-    expect(creditRows.items[0]?.date).toBe("2026-10-03");
-
-    await confirmAutopartTrm21qcImport(adminId, {
-      text: invoiceText,
-      filename: "trm-invoice-again.csv",
-      source: "MANUAL",
-    });
-    await confirmAutopartTrm21qcImport(adminId, {
-      text: creditText,
-      filename: "trm-credit-again.csv",
-      source: "MANUAL",
-    });
-    const replayed = await loadUnifiedCustomerSummary(feedProspectId);
-    expect(replayed.summary).toEqual(afterCredit.summary);
-
+    expect(await prisma.autopartSalesLine.count({ where: { documentReference: { in: [invoiceDoc, creditDoc] } } })).toBe(
+      0,
+    );
+    expect(
+      await prisma.autopartSalesDocument.count({ where: { documentReference: { in: [invoiceDoc, creditDoc] } } }),
+    ).toBe(0);
+    const after = await loadUnifiedCustomerSummary(feedProspectId);
+    expect(after.summary.datedNet).toBe(before.summary.datedNet);
+    expect(after.summary.certifiedNet).toBe(before.summary.certifiedNet);
     const company = await prisma.company.findUniqueOrThrow({ where: { id: feedProspectId } });
     expect(company.status).toBe("PROSPECT");
     const linked = await prisma.autopartAccount.findFirstOrThrow({ where: { accountCode: codeT } });

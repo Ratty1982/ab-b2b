@@ -57,6 +57,14 @@ beforeAll(async () => {
   createdCompanyIds.push(companyAId, companyBId);
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: companyAId, code: accountA });
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: companyBId, code: accountB });
+  await prisma.customerSalesCutover.createMany({
+    data: [companyAId, companyBId].map((companyId) => ({
+      companyId,
+      historyStatus: "COMPLETE" as const,
+      completedAt: new Date(),
+      evidence: { kind: "NO_HISTORICAL_SALES" },
+    })),
+  });
 
   const historicA = await prisma.autopartSalesDocument.create({
     data: {
@@ -125,7 +133,7 @@ afterAll(async () => {
 });
 
 describe("ongoing document collision", () => {
-  it("attaches TRM lines to the ongoing document and leaves both historical companies unchanged", async () => {
+  it("does not copy a historical line onto an unassigned 504 header", async () => {
     const first = await confirmAutopartTrm21qcImport(adminId, {
       text: trm(accountA, "3", "16.00"),
       filename: "TRM21QC_20261014.csv",
@@ -148,25 +156,14 @@ describe("ongoing document collision", () => {
     expect(historicB?.goodsNet?.toString()).toBe("80");
     expect(historicB?.lines).toHaveLength(0);
     expect(ongoing?.companyId).toBeNull();
-    expect(ongoing?.autopartCustomerCode).toBe(accountA);
-    expect(ongoing?.hasTrm21qc).toBe(true);
+    expect(ongoing?.autopartCustomerCode).toBe("UNKNOWN");
+    expect(ongoing?.hasTrm21qc).toBe(false);
     expect(ongoing?.goodsNet?.toString()).toBe("16");
-    expect(ongoing?.lines).toHaveLength(1);
-    expect(ongoing?.lines[0]?.source).toBe("ONGOING_TRM21QC");
-    expect(Number(ongoing?.lines[0]?.units)).toBe(3);
+    expect(ongoing?.lines).toHaveLength(0);
+    expect(await prisma.autopartSalesLine.count({ where: { documentReference: reference, source: "ONGOING_TRM21QC" } })).toBe(
+      0,
+    );
     if (!ongoing || !historicA || !historicB) throw new Error("expected historic and ongoing documents");
-    const ongoingId = ongoing.id;
-    const historicAId = historicA.id;
-    const historicBId = historicB.id;
-
-    const replay = await confirmAutopartTrm21qcImport(adminId, {
-      text: trm(accountA, "3", "16.00"),
-      filename: "TRM21QC_20261014.csv",
-      source: "MANUAL",
-    });
-    expect(replay.status).toBe("COMMITTED");
-    expect(await prisma.autopartSalesLine.count({ where: { documentId: ongoingId, source: "ONGOING_TRM21QC" } })).toBe(1);
-    expect(await prisma.autopartSalesLine.count({ where: { documentReference: reference, source: "561L" } })).toBe(1);
 
     const otherCustomer = await confirmAutopartTrm21qcImport(adminId, {
       text: trm(accountB, "9", "80.00"),
@@ -174,23 +171,13 @@ describe("ongoing document collision", () => {
       source: "MANUAL",
     });
     expect(otherCustomer.status).toBe("COMMITTED");
-    const diagnostics = await prisma.autopartImportDiagnostic.findMany({
-      where: { importRunId: otherCustomer.id, documentReference: reference },
-    });
-    expect(diagnostics.some((row) => row.reasonCode === "ONGOING_DOCUMENT_CONFLICT" && row.reason?.includes(reference))).toBe(
-      true,
+    expect((await prisma.autopartSalesDocument.findFirstOrThrow({ where: { id: historicA.id } })).goodsNet?.toString()).toBe(
+      "10",
     );
-    const ongoingAfter = await prisma.autopartSalesDocument.findFirstOrThrow({
-      where: { id: ongoingId },
-      include: { lines: true },
-    });
-    expect(ongoingAfter.companyId).toBeNull();
-    expect(ongoingAfter.autopartCustomerCode).toBe(accountA);
-    expect(ongoingAfter.lines).toHaveLength(1);
-    expect(Number(ongoingAfter.lines[0]?.units)).toBe(3);
-    expect((await prisma.autopartSalesDocument.findFirstOrThrow({ where: { id: historicBId } })).goodsNet?.toString()).toBe(
+    expect((await prisma.autopartSalesDocument.findFirstOrThrow({ where: { id: historicB.id } })).goodsNet?.toString()).toBe(
       "80",
     );
+    expect(await prisma.autopartSalesLine.count({ where: { documentId: historicA.id, source: "561L" } })).toBe(1);
 
     const feed = await confirmAutopart504Import(adminId, {
       text: `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
@@ -201,9 +188,9 @@ ACCOUNT,${reference},14/10/2026,13:05,COLLISION A,18.00,3.60,21.60,WR,PO-KEEP
     });
     expect(feed.status).toBe("COMMITTED");
     const after504 = await prisma.autopartSalesDocument.findMany({ where: { documentReference: reference } });
-    expect(after504.find((row) => row.id === ongoingId)?.goodsNet?.toString()).toBe("18");
-    expect(after504.find((row) => row.id === historicAId)?.goodsNet?.toString()).toBe("10");
-    expect(after504.find((row) => row.id === historicBId)?.goodsNet?.toString()).toBe("80");
+    expect(after504.find((row) => row.id === ongoing.id)?.goodsNet?.toString()).toBe("16");
+    expect(after504.find((row) => row.id === historicA.id)?.goodsNet?.toString()).toBe("10");
+    expect(after504.find((row) => row.id === historicB.id)?.goodsNet?.toString()).toBe("80");
 
     const report = await readOngoingSalesSafetyReport(adminId);
     expect(report.readOnly).toBe(true);

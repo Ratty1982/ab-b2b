@@ -73,12 +73,24 @@ async function loadCustomerSalesTarget(companyId: string, accountCode: string) {
     select: {
       id: true,
       name: true,
+      status: true,
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
       autopartAccountAliases: { select: { alias: true } },
+      salesCutover: { select: { historyStatus: true } },
     },
   });
   if (!company) throw new AuthError("Customer not found", "NOT_FOUND", 404);
+  if (company.status !== "ACTIVE") {
+    throw new AuthError("Ongoing sales are stored only for an Active customer.", "VALIDATION", 400);
+  }
+  if (company.salesCutover?.historyStatus !== "COMPLETE") {
+    throw new AuthError(
+      "Complete Import Sales History, or record that this customer has no historical sales, before importing 504 or TRM21QC.",
+      "VALIDATION",
+      400,
+    );
+  }
   if (!company.autopartCustomerCode || !company.autopartCustomerCodeVerifiedAt) {
     throw new AuthError(
       "Verify this customer's Autopart account before importing sales.",
@@ -128,9 +140,11 @@ export async function listCustomerSalesAccounts(actorUserId: string, companyId: 
     select: {
       id: true,
       name: true,
+      status: true,
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
       autopartAccountAliases: { select: { alias: true }, orderBy: { alias: "asc" } },
+      salesCutover: { select: { historyStatus: true, historyFrom: true, historyTo: true } },
     },
   });
   if (!company) throw new AuthError("Customer not found", "NOT_FOUND", 404);
@@ -152,6 +166,10 @@ export async function listCustomerSalesAccounts(actorUserId: string, companyId: 
     accounts,
     assessment: CUSTOMER_SALES_SOURCE_ASSESSMENT,
     effects: CUSTOMER_SALES_IMPORT_EFFECTS,
+    status: company.status,
+    historyStatus: company.salesCutover?.historyStatus ?? "NOT_STARTED",
+    historyFrom: company.salesCutover?.historyFrom?.toISOString().slice(0, 10) ?? null,
+    historyTo: company.salesCutover?.historyTo?.toISOString().slice(0, 10) ?? null,
   };
 }
 
@@ -172,7 +190,7 @@ export async function previewCustomerSalesImport(
 
   if (kind === "HISTORICAL_561L_SLRB") {
     message =
-      "Historical 561L and SLRB import is retired. Upload the ongoing 504 report or the TRM21QC product report for this customer.";
+      "561L and SLRB belong in Import Sales History. This upload accepts ongoing 504 and TRM21QC reports only.";
     pushRow(rows, counts, {
       document: "",
       type: "HISTORICAL",

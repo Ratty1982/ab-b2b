@@ -15,7 +15,7 @@ export type CustomerSalesScope = {
 export type CustomerSalesReportKind = "504" | "TRM21QC" | "HISTORICAL_561L_SLRB" | "UNKNOWN";
 
 export const CUSTOMER_SALES_SOURCE_ASSESSMENT =
-  "Customer sales are rebuilt from ongoing 504 invoice and credit reports and TRM21QC product lines. A 504 row is kept only when its AB order, or an existing document, already belongs to the selected customer. A TRM21QC row is kept only when its customer code is the selected verified account. Historical 561L and SLRB files are rejected, and the retired global historical importer is not used.";
+  "Ongoing 504 and TRM21QC sales are stored only after this Active customer's historical import and cutover are complete, and only for a uniquely verified Autopart account. A 504 row is kept only when its AB order, or an existing document, already belongs to the selected customer. A TRM21QC row is kept only when its customer code is the selected verified account. 561L and SLRB belong in Import Sales History. The retired global historical importer is not used.";
 
 export const CUSTOMER_SALES_IMPORT_EFFECTS = [
   "Does not run 504/TRM fulfilment.",

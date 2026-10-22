@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { ongoingImportAllowsCatchUp, signedHistoricalMeasure } from "@/domain/customer-sales-history";
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import {
   IMPORTED_SALES_RESET_CONFIRMATION,
@@ -22,6 +23,18 @@ function proof(overrides: Partial<BackupProof> = {}): BackupProof {
   };
 }
 
+describe("historical sales measures", () => {
+  it("stores credits as negative and leaves payments out of sales", () => {
+    expect(signedHistoricalMeasure("CREDIT", "51.90", 2)).toBe("-51.90");
+    expect(signedHistoricalMeasure("CREDIT", "-51.90", 2)).toBe("-51.90");
+    expect(signedHistoricalMeasure("INVOICE", "622.80", 2)).toBe("622.80");
+    expect(signedHistoricalMeasure("PAYMENT", "400.00", 2)).toBeNull();
+    expect(ongoingImportAllowsCatchUp({ skippedIneligible: 2 })).toBe(true);
+    expect(ongoingImportAllowsCatchUp({ skippedIneligible: 0 })).toBe(false);
+    expect(ongoingImportAllowsCatchUp(null)).toBe(false);
+  });
+});
+
 describe("customer sales report source", () => {
   it("accepts ongoing 504 and TRM21QC and rejects historical files", () => {
     expect(
@@ -42,6 +55,10 @@ describe("customer sales report source", () => {
 });
 
 describe("imported sales reset gates", () => {
+  it("uses the pre-launch confirmation phrase", () => {
+    expect(IMPORTED_SALES_RESET_CONFIRMATION).toBe("RESET PRELAUNCH IMPORTED SALES");
+  });
+
   it("dry-run needs no backup", () => {
     expect(
       evaluateImportedSalesResetGates({

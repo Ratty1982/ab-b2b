@@ -38,8 +38,8 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
           Import this customer's sales
         </h3>
         <p className="mt-2 text-[13px] text-steel">
-          Verify an Autopart account on this customer before uploading a 504 or TRM21QC report.
-          Historical 561L and SLRB files are not accepted.
+          Verify an Autopart account on this Active customer, then complete Import Sales History,
+          before uploading a 504 or TRM21QC report.
         </p>
       </section>
     );
@@ -52,6 +52,10 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
           Import this customer's sales
         </h3>
         <p className="mt-1 text-[13px] text-steel">{accounts.assessment}</p>
+        <p className="mt-1 text-[12px] text-steel">
+          Cutover: {accounts.historyStatus === "COMPLETE" ? "complete" : "not started"}
+          {accounts.historyFrom ? ` (${accounts.historyFrom} to ${accounts.historyTo ?? accounts.historyFrom})` : ""}
+        </p>
       </div>
       <form
         className="grid gap-3 px-4 py-4"

@@ -57,6 +57,7 @@ import {
 import { run504TrmFulfilmentAfterImport } from "@/server/orders/autopart-504-trm-fulfilment";
 import type { CustomerSalesScope } from "@/domain/customer-sales-import";
 import { accountInCustomerScope } from "@/domain/customer-sales-import";
+import { assessOngoingSalesWrite, type OngoingSalesWriteDecision } from "@/server/companies/ongoing-sales-eligibility";
 
 export {
   getOngoingSalesImportRunDetail,
@@ -502,10 +503,9 @@ export async function previewAutopartTrm21qcImport(
           }),
         );
       } else {
-        newLines += 1;
         diagnostics.push(
           makeDiagnostic({
-            status: "INSERTED",
+            status: "SKIPPED",
             reasonCode: "UNMAPPED_CUSTOMER",
             rowNumber: r.lineNumber,
             customerAccount: r.customerAccount,
@@ -516,9 +516,34 @@ export async function previewAutopartTrm21qcImport(
             quantity: r.qty,
             salesNet: r.salesNet,
             isWarning: true,
+            reason: "No uniquely verified Active customer owns this row. No sales document or product line will be stored.",
           }),
         );
       }
+      continue;
+    }
+    const eligibility = await assessOngoingSalesWrite({
+      companyId: mapped.companyId,
+      autopartCode: r.customerAccount,
+    });
+    if (!eligibility.persist) {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: eligibility.reasonCode,
+          rowNumber: r.lineNumber,
+          customerAccount: r.customerAccount,
+          documentReference: r.documentNumber,
+          documentDate: r.documentDate,
+          sku: r.partNumber,
+          description: r.description,
+          quantity: r.qty,
+          salesNet: r.salesNet,
+          companyId: mapped.companyId,
+          isWarning: true,
+          reason: eligibility.reason,
+        }),
+      );
       continue;
     }
     const found = await prisma.autopartSalesLine.findUnique({
@@ -773,9 +798,11 @@ export async function confirmAutopart504Import(
   let updated = 0;
   let skipped = 0;
   let unchanged = 0;
+  let skippedIneligible = 0;
   const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds: string[] = [];
   const identityConflicts: OngoingIdentityConflict[] = [];
+  const eligibilityCache = new Map<string, OngoingSalesWriteDecision>();
   let currentDocument: string | null = null;
 
   try {
@@ -886,13 +913,57 @@ export async function confirmAutopart504Import(
           autopartCustomerCode = scope.accountCodes[0]?.trim().toUpperCase() || autopartCustomerCode;
         }
       }
+      if (!companyId && row.documentNumber) {
+        const existingOwners = await prisma.autopartSalesDocument.findMany({
+          where: { documentReference: row.documentNumber, documentType, companyId: { not: null } },
+          select: { companyId: true, autopartCustomerCode: true },
+        });
+        const ownerIds = [...new Set(existingOwners.map((doc) => doc.companyId).filter((id): id is string => Boolean(id)))];
+        if (ownerIds.length === 1) {
+          companyId = ownerIds[0] ?? null;
+          const ownerCode = existingOwners.find((doc) => doc.companyId === companyId)?.autopartCustomerCode;
+          if (ownerCode && ownerCode !== "UNKNOWN") autopartCustomerCode = ownerCode;
+        }
+      }
+      const eligibilityKey = `${companyId ?? ""}|${autopartCustomerCode}`;
+      let eligibility = eligibilityCache.get(eligibilityKey);
+      if (!eligibility) {
+        eligibility = await assessOngoingSalesWrite({
+          companyId,
+          autopartCode: autopartCustomerCode === "UNKNOWN" ? null : autopartCustomerCode,
+        });
+        eligibilityCache.set(eligibilityKey, eligibility);
+      }
+      if (!eligibility.persist) {
+        skipped += 1;
+        skippedIneligible += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "SKIPPED",
+            reasonCode: eligibility.reasonCode,
+            rowNumber: row.lineNumber,
+            documentReference: row.documentNumber,
+            documentDate: row.documentDate,
+            customerOrderNumber: row.customerOrderNumber || null,
+            abOrderReference: row.abOrderNumber,
+            companyId,
+            abOrderId,
+            salesNet: row.goods,
+            isWarning: true,
+            reason: eligibility.reason,
+          }),
+        );
+        continue;
+      }
+      companyId = eligibility.companyId;
+      if (autopartCustomerCode === "UNKNOWN") autopartCustomerCode = eligibility.autopartCode;
       const resolved = await resolveFeedDocument({
         documentReference: row.documentNumber,
         documentType,
         companyId,
         evidence: {
           accounts: autopartCustomerCode !== "UNKNOWN" ? [autopartCustomerCode] : [],
-          authority: abOrderId && companyId ? "ab-order" : "none",
+          authority: abOrderId ? "ab-order" : eligibility.authority,
         },
       });
       if (resolved.decision.action === "reject") {
@@ -1168,6 +1239,7 @@ export async function confirmAutopart504Import(
           abCredits: parsed.abCreditRows.length,
           counts,
           hasRowDiagnostics: true,
+          skippedIneligible,
           identityConflicts,
           attentionRequired: attention.attention.attentionRequired,
           attentionReason: attention.attention.attentionReason,
@@ -1175,7 +1247,7 @@ export async function confirmAutopart504Import(
       },
     });
 
-    if (!attention.attention.attentionRequired || imported + updated + unchanged > 0) {
+    if (imported + updated + unchanged > 0) {
       await prisma.autopartOngoingSalesFeedSettings.update({
         where: { id: "default" },
         data: { lastSuccess504At: new Date() },
@@ -1256,9 +1328,11 @@ export async function confirmAutopartTrm21qcImport(
   let skipped = 0;
   let unchanged = 0;
   let unmatchedCustomers = 0;
+  let skippedIneligible = 0;
   const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds = new Set<string>();
   const identityConflicts: OngoingIdentityConflict[] = [];
+  const eligibilityCache = new Map<string, OngoingSalesWriteDecision>();
   let currentDocument: string | null = null;
 
   try {
@@ -1364,6 +1438,40 @@ export async function confirmAutopartTrm21qcImport(
           continue;
         }
       }
+      const eligibilityKey = `${raw.customerScope?.companyId ?? group.companyId ?? ""}|${first.customerAccount.toUpperCase()}`;
+      let eligibility = eligibilityCache.get(eligibilityKey);
+      if (!eligibility) {
+        eligibility = await assessOngoingSalesWrite({
+          companyId: raw.customerScope?.companyId ?? group.companyId,
+          autopartCode: first.customerAccount,
+        });
+        eligibilityCache.set(eligibilityKey, eligibility);
+      }
+      if (!eligibility.persist) {
+        skipped += lines.length;
+        skippedIneligible += lines.length;
+        unmatchedCustomers += lines.length;
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "SKIPPED",
+              reasonCode: eligibility.reasonCode,
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              documentDate: line.documentDate,
+              sku: line.partNumber,
+              description: line.description,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId: raw.customerScope?.companyId ?? group.companyId,
+              isWarning: true,
+              reason: eligibility.reason,
+            }),
+          );
+        }
+        continue;
+      }
       const verifiedCustomer = group.authority === "verified-code" || group.authority === "verified-alias";
       const mappedCompanyId = verifiedCustomer ? group.companyId : null;
       const mappedCode = group.canonicalCode;
@@ -1455,6 +1563,39 @@ export async function confirmAutopartTrm21qcImport(
               salesNet: line.salesNet,
               companyId: mappedCompanyId,
               reason: detail,
+            }),
+          );
+        }
+        continue;
+      }
+      const historicalSkus = new Set(
+        (
+          await prisma.autopartSalesLine.findMany({
+            where: {
+              companyId: eligibility.companyId,
+              documentType,
+              documentReference: documentNumber,
+              source: "561L",
+            },
+            select: { sku: true },
+          })
+        ).map((line) => line.sku.toUpperCase()),
+      );
+      if (lines.every((line) => historicalSkus.has(line.partNumber.toUpperCase()))) {
+        unchanged += lines.length;
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "UNCHANGED",
+              reasonCode: "ALREADY_IMPORTED",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              sku: line.partNumber,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId: eligibility.companyId,
+              reason: "This product line is already stored from the historical 561L report. It was not imported again.",
             }),
           );
         }
@@ -1628,6 +1769,24 @@ export async function confirmAutopartTrm21qcImport(
           (sameIdentity && (sameIdentity.documentId == null || sameIdentity.documentId === doc.id)
             ? sameIdentity
             : null);
+        if (historicalSkus.has(line.partNumber.toUpperCase()) || existingLine?.source === "561L") {
+          unchanged += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "UNCHANGED",
+              reasonCode: "ALREADY_IMPORTED",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              sku: line.partNumber,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId,
+              reason: "This product line is already stored from the historical 561L report. It was not imported again.",
+            }),
+          );
+          continue;
+        }
         if (
           existingLine &&
           !incomingLineMayReplace({
@@ -1775,6 +1934,7 @@ export async function confirmAutopartTrm21qcImport(
           documents: parsed.documents.length,
           counts,
           hasRowDiagnostics: true,
+          skippedIneligible,
           identityConflicts,
           attentionRequired: attention.attention.attentionRequired,
           attentionReason: attention.attention.attentionReason,
@@ -1782,7 +1942,7 @@ export async function confirmAutopartTrm21qcImport(
       },
     });
 
-    if (!attention.attention.attentionRequired || imported + updated + unchanged > 0) {
+    if (imported + updated + unchanged > 0) {
       await prisma.autopartOngoingSalesFeedSettings.update({
         where: { id: "default" },
         data: { lastSuccessTrm21qcAt: new Date() },

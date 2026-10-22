@@ -1,18 +1,18 @@
 /**
- * Dry-run by default. Removes imported ongoing Autopart sales outside the
- * 504 financial-recovery window. Does not delete customers, orders, stock,
- * prices, or historical 561L/SLRB rows, and does not call the historical cleanup.
+ * Dry-run by default. One-time pre-launch wipe of imported Autopart sales.
+ * Does not delete customers, orders, stock, prices, or configuration.
  *
  *   bun scripts/imported-sales-reset.ts
  *
  * Execute only after a backup has been restored to a different database:
  *
- *   AB_RESET_CONFIRM='RESET IMPORTED AUTOPART SALES' \
+ *   AB_RESET_CONFIRM='RESET PRELAUNCH IMPORTED SALES' \
  *   AB_RESET_TARGET='database_name' \
  *   AB_RESET_RESTORE_URL='postgresql://.../restored_copy' \
  *   bun scripts/imported-sales-reset.ts --execute --backup-proof /path/proof.json
  *
  * A production database name also requires --allow-production-database.
+ * Execute leaves automatic 504/TRM21QC importing off.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
@@ -73,24 +73,25 @@ async function restoreAnswers(url: string): Promise<boolean> {
 
 function formatPlan(plan: Awaited<ReturnType<typeof planImportedSalesReset>>, database: string | null): string {
   const lines = [
-    "Imported Autopart sales reset — dry-run",
+    "Pre-launch imported sales reset — dry-run",
     `Database: ${database ?? "unknown"}`,
-    `Recovery window: ${plan.recoveryWindow.from} to ${plan.recoveryWindow.to} (${plan.recoveryWindow.affectedDocuments} documents in the incident)`,
+    `Automatic 504/TRM21QC importing is currently ${plan.feedEnabled ? "ON" : "OFF"}. Execute switches it OFF and leaves it off.`,
     "",
     "Would stay",
   ];
   for (const [name, count] of Object.entries(plan.counts.preserved)) lines.push(`- ${name}: ${count}`);
   lines.push("", "Would be removed");
   for (const [name, count] of Object.entries(plan.counts.removed)) lines.push(`- ${name}: ${count}`);
-  lines.push("", "Protected recovery documents (sample)");
-  if (!plan.protectedDocuments.length) lines.push("- None in this database.");
-  for (const doc of plan.protectedDocuments) {
-    lines.push(`- ${doc.documentReference} ${doc.documentType} ${doc.documentDate ?? "no date"}`);
+  lines.push(
+    "",
+    `Imported documents that name a B2B order (the order is kept): ${plan.orderReferenceCount}`,
+  );
+  if (plan.orderReferenceCount > plan.orderReferences.length) {
+    lines.push(`Showing the first ${plan.orderReferences.length}.`);
   }
-  lines.push("", "Removable documents (sample)");
-  if (!plan.removableDocuments.length) lines.push("- None.");
-  for (const doc of plan.removableDocuments) {
-    lines.push(`- ${doc.documentReference} ${doc.documentType} ${doc.source}`);
+  if (!plan.orderReferences.length) lines.push("- None.");
+  for (const doc of plan.orderReferences) {
+    lines.push(`- ${doc.documentReference} ${doc.documentType} ${doc.abOrderNumber ?? doc.abOrderId ?? ""}`);
   }
   lines.push("", "Effect");
   for (const effect of plan.effects) lines.push(`- ${effect}`);

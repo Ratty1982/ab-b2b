@@ -256,6 +256,30 @@ enum AutopartHistoricLineMatchStatus {
   NOT_IN_AB_CATALOGUE
 }
 
+enum CustomerSalesHistoryStatus {
+  NOT_STARTED
+  COMPLETE
+}
+
+/// Explicit historical-sales cutover for one customer. Ongoing 504/TRM21QC
+/// sales are stored only after this row is COMPLETE. Becoming Active does not
+/// create it.
+model CustomerSalesCutover {
+  companyId     String                     @id
+  historyStatus CustomerSalesHistoryStatus @default(NOT_STARTED)
+  historyFrom   DateTime?
+  historyTo     DateTime?
+  completedAt   DateTime?
+  completedById String?
+  /// Filenames, content hashes, and row counts from the history import.
+  evidence      Json?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  completedBy User?   @relation("CustomerSalesCutoverCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+}
+
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
   /// Ongoing Autopart all-branches 504 document feed.
@@ -546,6 +570,7 @@ model User {
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
+  salesCutoversCompleted     CustomerSalesCutover[]      @relation("CustomerSalesCutoverCompleter")
   autopartHistoricalAccessGrants AutopartAccount[] @relation("AutopartHistoricalAccessGrant")
   autopartMasterImportBatches AutopartImportBatch[] @relation("AutopartMasterImportCreator")
   autopartHistoryAllImports AutopartHistoryAllImport[] @relation("AutopartHistoryAllImportCreator")
@@ -808,6 +833,7 @@ model Company {
   autopartBackorderLines AutopartBackorderLine[]
   autopartAccounts AutopartAccount[]
   autopartHistoryReviews AutopartHistoryReviewAccount[]
+  salesCutover CustomerSalesCutover?
 
   @@index([status])
   @@index([name])

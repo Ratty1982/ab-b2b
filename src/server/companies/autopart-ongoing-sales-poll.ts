@@ -29,6 +29,7 @@ import {
   getOngoingSalesFeedSettings,
 } from "@/server/companies/autopart-ongoing-sales";
 import { decodeAutopart216vBytes, isAutopart216vReport } from "@/domain/autopart-216v";
+import { ongoingImportAllowsCatchUp } from "@/domain/customer-sales-history";
 
 export { classifyOngoingSalesAttachment };
 
@@ -151,10 +152,17 @@ async function findHandledContent(input: {
       status: { in: ["COMMITTED", "FAILED"] },
     },
     orderBy: { createdAt: "desc" },
-    select: { status: true },
+    select: { status: true, diagnostics: true, rowsImported: true, rowsUpdated: true },
   });
   if (!prior) return null;
-  return prior.status === "FAILED" ? "failed" : "committed";
+  if (prior.status === "FAILED") return "failed";
+  const counts =
+    prior.diagnostics && typeof prior.diagnostics === "object" && !Array.isArray(prior.diagnostics)
+      ? (prior.diagnostics as { counts?: { unchanged?: number } }).counts
+      : undefined;
+  const storedNothing = prior.rowsImported === 0 && prior.rowsUpdated === 0 && (counts?.unchanged ?? 0) === 0;
+  if (storedNothing && ongoingImportAllowsCatchUp(prior.diagnostics)) return null;
+  return "committed";
 }
 
 export async function processOngoingSalesEmailBatch(input: {

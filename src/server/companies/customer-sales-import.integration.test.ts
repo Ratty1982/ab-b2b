@@ -68,6 +68,14 @@ beforeAll(async () => {
   otherCompanyId = other.id;
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId, code: account });
   await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: otherCompanyId, code: otherAccount });
+  await prisma.customerSalesCutover.create({
+    data: {
+      companyId,
+      historyStatus: "COMPLETE",
+      completedAt: new Date(),
+      evidence: { kind: "NO_HISTORICAL_SALES" },
+    },
+  });
   await prisma.autopartCustomerAccountAlias.create({
     data: { companyId, alias: `AL${stamp.slice(0, 8).toUpperCase()}`, verifiedById: adminId },
   });
