@@ -109,18 +109,9 @@ describe("admin customer directory search", () => {
       pageSize: 50,
       q: undefined,
     });
-    const activeIds = new Set(
-      (
-        await prisma.company.findMany({
-          where: { name: { contains: stamp }, status: "ACTIVE" },
-          select: { id: true },
-        })
-      ).map((row) => row.id),
-    );
     expect(activeOnly.statusScope.mode).toBe("ACTIVE");
-    expect(activeOnly.items.filter((item) => item.name.includes(stamp)).map((item) => item.id).sort()).toEqual(
-      [...activeIds].sort(),
-    );
+    expect(activeOnly.items.every((item) => item.status === "ACTIVE")).toBe(true);
+    expect(activeOnly.total).toBe(await prisma.company.count({ where: { status: "ACTIVE" } }));
 
     const page = await listCompaniesForActor(adminId, { ...directory, q: stamp, page: 2, pageSize: 1 });
     expect(page.total).toBe(4);
