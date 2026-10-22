@@ -162,7 +162,7 @@ Quote convert does **not**:
 - call Autopart API / APC
 - mark Processing / Despatched
 
-Existing workflow remains: Received → Autopart CSV (`External Reference = AB-######`, paid delivery as `SDEL`) → Processing → 504C → Despatched.
+Existing workflow remains: Received → Autopart CSV (`External Reference = AB-######`, paid delivery as `SDEL`) → Processing → 504 + TRM21QC fulfilment, when ACTIVE → Despatched.
 
 MAM Account comes from the resulting Order’s verified `autopartCustomerCodeSnapshot`. Customer PO remains separate.
 

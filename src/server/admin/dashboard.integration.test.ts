@@ -199,12 +199,9 @@ describe("admin production dashboard", () => {
     expect(dash.quickActions.some((a) => a.id === "trade-applications")).toBe(true);
     expect(dash.quickActions.every((a) => a.href.startsWith("/"))).toBe(true);
 
-    expect(dash.systemHealth.some((r) => r.id === "autopart-504c")).toBe(true);
+    expect(dash.systemHealth.some((r) => r.id === "autopart-504c")).toBe(false);
     expect(dash.systemHealth.some((r) => r.id === "sales-feed")).toBe(true);
     expect(dash.systemHealth.every((r) => r.statusLabel.length > 0 && r.href.length > 0)).toBe(true);
-    // Must not invent Healthy for unconfigured 504C
-    const feed504 = dash.systemHealth.find((r) => r.id === "autopart-504c");
-    expect(feed504?.tone).not.toBe("healthy");
 
     expect(dash.ordersAttention.readyForExport.count).toBeGreaterThanOrEqual(1);
     expect(dash.ordersAttention.readyForExport.href).toContain("autopartExport=READY");
@@ -252,10 +249,6 @@ describe("admin production dashboard", () => {
     expect(await prisma.order.count({ where: { id: orderId, status: { not: "DRAFT" } } })).toBe(1);
 
     expect(dash.recentActivity.some((a) => a.what === "Order received")).toBe(true);
-    expect(dash.autopart504c).not.toBeNull();
-    expect(dash.autopart504c?.configured).toBe(false);
-    expect(dash.autopart504c?.automaticPolling).toBe("OFF");
-    expect(dash.autopart504c?.informational).toBe(true);
 
     expect(dash.needsAttention.some((i) => i.id === "applications" && i.actionLabel === "REVIEW")).toBe(
       true,
@@ -268,9 +261,7 @@ describe("admin production dashboard", () => {
         (i) => i.id === "export-blocked" && i.severity === "critical" && i.actionLabel === "FIX",
       ),
     ).toBe(true);
-    expect(dash.needsAttention.some((i) => i.id === "504c-not-configured" && i.severity === "info")).toBe(
-      true,
-    );
+    expect(dash.needsAttention.some((i) => i.id === "504c-not-configured")).toBe(false);
     expect(dash.recentActivity.every((a) => a.whenTimeLabel.length >= 4)).toBe(true);
     // Ignored INVALID/DUPLICATE diagnostics must never appear as Needs Attention.
     expect(dash.needsAttention.some((i) => i.id === "stock-issues")).toBe(false);

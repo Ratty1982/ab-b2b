@@ -16,7 +16,7 @@ It is **not** a vanity analytics surface. Fabricated prototype metrics (Sales YT
 
 `getAdminDashboard(actorUserId)` in `src/server/admin/dashboard.ts`, exposed as `getAdminDashboardFn`.
 
-All values are aggregated from production Prisma models (Order, Company, TradeApplication, Quote, Task, AuditEvent, StockSyncRun, EmailSettings, Autopart504cFeedSettings).
+All values are aggregated from production Prisma models (Order, Company, TradeApplication, Quote, Task, AuditEvent, StockSyncRun, EmailSettings, AutopartOngoingSalesFeedSettings).
 
 ## Summary cards
 
@@ -63,15 +63,9 @@ Latest **live** `StockSyncRun` with status SUCCESS or PARTIAL:
 - Status: Healthy / Attention required / No sync yet  
   Ignored INVALID/DUPLICATE diagnostics alone keep Status **Healthy**
 
-## 504C invoice / despatch
+## Ongoing sales feed
 
-Read-only settings from `getAutopart504cFeedSettings()`:
-
-- Expected production state while waiting on Autopart: **Not configured**, automatic polling **OFF**
-- Schedule label: 13:15 · 16:15 Europe/London (working days)
-- Listed under Needs attention as **informational**, not a critical error
-
-Dry-run import records must never be presented as live imports on this dashboard.
+Read-only freshness from `AutopartOngoingSalesFeedSettings` (504 + TRM21QC). A feed that has not succeeded yet is **No data**, not a fabricated healthy state.
 
 ## Recent orders / activity
 
@@ -88,7 +82,7 @@ When `settings.view` is available: SMTP+sender configured flag, delivery enabled
 
 ## Needs attention
 
-Built only from genuine conditions (applications, export ready/blocked, callbacks, email failures, **actionable** stock-sync issues). Ignored INVALID/DUPLICATE Autopart row diagnostics do **not** create Needs Attention. 504C not-configured is severity `info`.
+Built only from genuine conditions (applications, export ready/blocked, callbacks, email failures, **actionable** stock-sync issues). Ignored INVALID/DUPLICATE Autopart row diagnostics do **not** create Needs Attention.
 
 ## RBAC / sales scope
 

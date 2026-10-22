@@ -510,7 +510,7 @@ function AdminOrderDetailPage() {
           <p className="mt-3 text-[12px] text-steel">
             Successful CSV export marks the order Processing for the customer portal. It does not
             book APC, call Autopart APIs, send another customer email, or mark the order Despatched.
-            Despatch follows a future Autopart 504C invoice match.
+            Despatch follows matched 504 and TRM21QC evidence when fulfilment is ACTIVE.
           </p>
         </section>
         <section className="rounded-lg border border-border p-5 lg:col-span-2">

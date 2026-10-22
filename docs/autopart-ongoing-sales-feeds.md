@@ -9,9 +9,8 @@
 | **AB Orders** | Operational AB-originated orders (SKU/qty/price) — not SI realised-sales rows |
 | **504** | Ongoing Autopart invoice/credit **documents** (Goods net, VAT, Value, Customer Order Number) |
 | **TRM21QC** | Ongoing Autopart **product lines** (signed Qty + NET Sales EX VAT) |
-| **504C** | Legacy/fallback order-despatch feed — **kept** until 504 is proven in production |
 
-Do **not** use 504UF.
+Order fulfilment uses **504 + TRM21QC** only. A legacy 504C attachment is rejected and is not imported as a 504 report. Do **not** use 504UF.
 
 ## Join
 
@@ -65,7 +64,7 @@ Autopart is asked to email **both** 504 and TRM21QC at:
 - 13:15 Europe/London Mon–Fri (interim)
 - 18:15 Europe/London Mon–Fri (final expected daily feed)
 
-In-app scheduler follows the 504C pattern (minute tick, window keys, no Coolify cron). Defaults **OFF**.
+In-app scheduler ticks every minute and no-ops while the feed is disabled. Defaults **OFF**. No Coolify cron is required.
 
 Polling must tolerate late arrival. Missing companion report mid-day → `AWAITING_504` / `AWAITING_LINES` (not fatal). After the final expected 18:15 window, unresolved companion gaps are more visible in diagnostics. No Saturday/Sunday missing-feed warnings.
 
@@ -90,13 +89,11 @@ Autopart day-end delivery is:
 | **504** invoice/credit documents | `.TXT` / `.txt` (CSV still accepted) |
 | **TRM21QC** product lines | `.CSV` / `.csv` |
 
-IMAP candidate filter accepts `.txt` / `.csv` plus `text/plain` and `application/octet-stream` when the filename is a plausible 504/TRM attachment. **Content detection is authoritative.** A `.txt` file is never imported as 504 unless `isAutopart504Report` matches. Production Autopart day-end 504 is a **fixed-width** TXT whose title is `LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)`. Column boundaries come from that report's header labels (`Type`, `Document`, `Date`, `Time`, `Name`, `Goods`, `Vat`, `Value`, `Inits`, `Customer Order Number`). The Document field is 9 characters, so `OIN02573006 Oct 26` is document `OIN025730` plus date `06 Oct 26` — not `OIN02573006`. ACCOUNT and CONSOL rows are both persisted (`reportType504`); page banners, separators, subtotals, and grand totals are not documents. Legacy **504C** content/filenames are skipped (not financial 504). 231PO3NEW stock files are excluded.
+IMAP candidate filter accepts `.txt` / `.csv` plus `text/plain` and `application/octet-stream` when the filename is a plausible 504/TRM attachment. **Content detection is authoritative.** A `.txt` file is never imported as 504 unless `isAutopart504Report` matches. Production Autopart day-end 504 is a **fixed-width** TXT whose title is `LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)`. Column boundaries come from that report's header labels (`Type`, `Document`, `Date`, `Time`, `Name`, `Goods`, `Vat`, `Value`, `Inits`, `Customer Order Number`). The Document field is 9 characters, so `OIN02573006 Oct 26` is document `OIN025730` plus date `06 Oct 26` — not `OIN02573006`. ACCOUNT and CONSOL rows are both persisted (`reportType504`); page banners, separators, subtotals, and grand totals are not documents. A legacy 504C attachment is skipped and is not imported as financial 504. 231PO3NEW stock files are excluded.
 
 Poll Now lists each attachment: filename, MIME, candidate type, content-detected type, imported / duplicate / skipped (+ reason). Credentials and message headers are not shown.
 
 Report-level duplicate identity is the **SHA-256 of attachment content** (`AutopartCustomerImportRun.fileHash` for a COMMITTED ONGOING_504 / ONGOING_TRM21QC run). Same filename with different bytes is a **new report** and must import. Same content under a different filename is a duplicate. Message-ID, IMAP UID, and attachment-name receipts are mailbox audit only — they must not block a genuinely changed 504.txt / TRM21QC.csv. Business-record idempotency (document / TRM line identities) remains separate: a later report may include earlier rows plus new invoices/credits without treating the whole file as a duplicate. UNKNOWN/skipped attachments are **not** marked consumed, so Poll Now can reconsider a previously unrecognised 504.txt after a detector fix. An email previously marked consumed because TRM CSV was imported will still be reconsidered for an unprocessed 504 TXT on Poll Now, as long as the message remains in the inbox. Auto-archive is off by default; if a message was moved out of INBOX, resend the 504 report.
-
-Legacy **Autopart invoice / despatch feed (504C)** panel remains above.
 
 ### Preview workflow
 
@@ -228,15 +225,16 @@ Filter **Errors** on a run to see the exact row and reason (`INVALID_NET_SALES`,
 - **Warning** — written, but needs attention (e.g. SKU not in catalogue).
 - **Error** — source row invalid / unparseable.
 
-### 504 vs 504C
+### Fulfilment modes
 
-| Feed | Role |
+| Mode | Effect |
 | --- | --- |
-| **504** | Ongoing Autopart invoice/credit **documents** (Goods net, VAT, Value, Customer Order Number) |
-| **504C** | Legacy/fallback **despatch/status** feed — kept until 504 is proven |
+| **OFF** | No automatic order fulfilment |
+| **PREVIEW** | Evaluate without changing orders |
+| **ACTIVE** | Fulfil eligible orders using 504 + TRM21QC |
 
-Parsers and detectors remain distinct. Do not treat a 504 upload as 504C.
+OFF does not start any other despatch process. A 504C file is never treated as a 504 report.
 
 ## Automatic import
 
-Defaults **OFF**. Enable only after Autopart configures the scheduled emails. Reuses stock IMAP credentials; attachment pattern broadened to `*.csv` for this poll; content detection distinguishes 504 vs 504C vs TRM21QC.
+Defaults **OFF**. Enable only after Autopart configures the scheduled emails. Reuses stock IMAP credentials; attachment pattern broadened to `*.csv` for this poll; content detection distinguishes 504, TRM21QC, and a rejected 504C attachment.

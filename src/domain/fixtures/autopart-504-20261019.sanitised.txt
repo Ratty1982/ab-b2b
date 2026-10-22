@@ -1,0 +1,77 @@
+504.vtr~REPORTS~17~123~LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)~0~NODAYENDPRINT
+ Page : 1            **********************************   18:00:12   19 Oct 2026
+                     *  A U T O P A R T  S Y S T E M  *
+                     **********************************
+
+LISTING OF INVOICES AND CREDITS BY CUSTOMER TYPE (504)
+            [Select Branch ALL] [Start Date 19/10/2026] [Ending Date 19/10/2026]
+Type      Document Date      Time  Name.............................   Goods      Vat       Value Inits  Customer Order Number
+----------------------------------------------------------------------------------------------------------------------------------
+ACCOUNT   SC506126 19 Oct 26 08:57 Cust SC506126                      -44.16    -8.83      -52.99 TJ     REF-SC506126
+ACCOUNT   SC506127 19 Oct 26 09:02 Cust SC506127                      -31.66    -6.33      -37.99 TJ     REF-SC506127
+ACCOUNT   SS306541 19 Oct 26 08:38 Cust SS306541                       14.12     2.82       16.94 RS     REF-SS306541
+ACCOUNT   SS306542 19 Oct 26 08:39 Cust SS306542                       11.62     2.32       13.94 RS     REF-SS306542
+ACCOUNT   SS306543 19 Oct 26 08:39 Cust SS306543                        9.12     1.82       10.94 RS     REF-SS306543
+ACCOUNT   SS306544 19 Oct 26 08:40 Cust SS306544                        9.95     1.99       11.94 RS     REF-SS306544
+ACCOUNT   SS306545 19 Oct 26 08:40 Cust SS306545                       13.28     2.66       15.94 RS     REF-SS306545
+ACCOUNT   SS306546 19 Oct 26 09:26 Cust SS306546                       37.49     7.50       44.99 TJ     REF-SS306546
+ACCOUNT   SS306547 19 Oct 26 09:26 Cust SS306547                       66.65    13.33       79.98 TJ     REF-SS306547
+ACCOUNT   SS306548 19 Oct 26 09:27 Cust SS306548                       35.83     7.16       42.99 TJ     REF-SS306548
+ACCOUNT   SS306549 19 Oct 26 09:27 Cust SS306549                      107.48    21.49      128.97 TJ     REF-SS306549
+ACCOUNT   SS306550 19 Oct 26 09:27 Cust SS306550                       35.83     7.16       42.99 TJ     REF-SS306550
+ACCOUNT   SS306551 19 Oct 26 09:28 Cust SS306551                       35.83     7.16       42.99 TJ     REF-SS306551
+ACCOUNT   SS306552 19 Oct 26 09:28 Cust SS306552                       33.33     6.66       39.99 TJ     REF-SS306552
+ACCOUNT   SS306553 19 Oct 26 09:29 Cust SS306553                       35.83     7.16       42.99 TJ     REF-SS306553
+ACCOUNT   SS306554 19 Oct 26 09:40 Cust SS306554                        9.99     2.00       11.99 TJ     REF-SS306554
+ACCOUNT   SS306555 19 Oct 26 09:40 Cust SS306555                        9.16     1.83       10.99 TJ     REF-SS306555
+ACCOUNT   SS306556 19 Oct 26 09:40 Cust SS306556                        9.99     2.00       11.99 TJ     REF-SS306556
+ACCOUNT   SS306557 19 Oct 26 09:40 Cust SS306557                       10.83     2.16       12.99 TJ     REF-SS306557
+ACCOUNT   SS306558 19 Oct 26 09:41 Cust SS306558                       39.98     7.99       47.97 TJ     REF-SS306558
+ACCOUNT   SS306559 19 Oct 26 09:41 Cust SS306559                       18.27     3.65       21.92 TJ     REF-SS306559
+ACCOUNT   SS306560 19 Oct 26 09:42 Cust SS306560                       13.28     2.66       15.94 TJ     REF-SS306560
+ACCOUNT   SS306561 19 Oct 26 09:47 Cust SS306561                       49.99    10.00       59.99 TJ     REF-SS306561
+ACCOUNT   SS306562 19 Oct 26 09:48 Cust SS306562                       38.33     7.66       45.99 TJ     REF-SS306562
+ACCOUNT   SS306563 19 Oct 26 09:49 Cust SS306563                       35.83     7.16       42.99 TJ     REF-SS306563
+ACCOUNT   SS306564 19 Oct 26 09:49 Cust SS306564                       16.66     3.33       19.99 TJ     REF-SS306564
+ACCOUNT   SS306565 19 Oct 26 09:49 Cust SS306565                       16.66     3.33       19.99 TJ     REF-SS306565
+ACCOUNT   SS306566 19 Oct 26 09:50 Cust SS306566                       18.28     3.66       21.94 TJ     REF-SS306566
+ACCOUNT   SS306567 19 Oct 26 09:52 Cust SS306567                       16.62     3.32       19.94 TJ     REF-SS306567
+ACCOUNT   SS306568 19 Oct 26 09:53 Cust SS306568                       24.16     4.83       28.99 TJ     REF-SS306568
+ACCOUNT   SS306569 19 Oct 26 09:53 Cust SS306569                       27.49     5.50       32.99 TJ     REF-SS306569
+ACCOUNT   SS306570 19 Oct 26 09:53 Cust SS306570                       18.33     3.66       21.99 TJ     REF-SS306570
+ACCOUNT   SS306571 19 Oct 26 09:54 Cust SS306571                       27.49     5.50       32.99 TJ     REF-SS306571
+ACCOUNT   SS306572 19 Oct 26 09:54 Cust SS306572                       27.49     5.50       32.99 TJ     REF-SS306572
+ACCOUNT   SS306573 19 Oct 26 09:54 Cust SS306573                       49.99    10.00       59.99 TJ     REF-SS306573
+ACCOUNT   SS306574 19 Oct 26 09:55 Cust SS306574                       18.33     3.66       21.99 TJ     REF-SS306574
+ACCOUNT   SS306575 19 Oct 26 09:55 Cust SS306575                       18.33     3.66       21.99 TJ     REF-SS306575
+ACCOUNT   SS306576 19 Oct 26 10:01 Cust SS306576                      187.01    37.40      224.41 JS     REF-SS306576
+ACCOUNT   SS306577 19 Oct 26 10:01 Cust SS306577                       28.18     5.63       33.81 TJ     REF-SS306577
+ACCOUNT   SS306578 19 Oct 26 11:44 Cust SS306578                        2.62     0.52        3.14 TJ     REF-SS306578
+ACCOUNT   SS306580 19 Oct 26 12:27 Cust SS306580                        0.00     0.00        0.00 TJ     REF-SS306580
+ACCOUNT   SS306581 19 Oct 26 13:07 Cust SS306581                       34.99     7.00       41.99 RS     REF-SS306581
+ACCOUNT   SS306582 19 Oct 26 13:07 Cust SS306582                       34.99     7.00       41.99 RS     REF-SS306582
+ACCOUNT   SS306583 19 Oct 26 13:08 Cust SS306583                       33.33     6.66       39.99 RS     REF-SS306583
+ACCOUNT   SS306584 19 Oct 26 13:09 Cust SS306584                       33.33     6.66       39.99 RS     REF-SS306584
+ACCOUNT   SS306585 19 Oct 26 13:09 Cust SS306585                       18.33     3.66       21.99 RS     REF-SS306585
+ACCOUNT   SS306586 19 Oct 26 13:10 Cust SS306586                       18.33     3.66       21.99 RS     REF-SS306586
+ACCOUNT   SS306587 19 Oct 26 13:10 Cust SS306587                       13.28     2.66       15.94 RS     REF-SS306587
+ACCOUNT   SS306588 19 Oct 26 13:11 Cust SS306588                        9.99     2.00       11.99 RS     REF-SS306588
+ACCOUNT   SS306589 19 Oct 26 13:11 Cust SS306589                       44.16     8.83       52.99 RS     REF-SS306589
+ACCOUNT   SS306590 19 Oct 26 13:41 Cust SS306590                        0.00     0.00        0.00 TJ
+ACCOUNT   SS306591 19 Oct 26 13:43 Cust SS306591                      399.20    79.84      479.04 RS     AB-000013
+ACCOUNT   SS306592 19 Oct 26 13:53 Cust SS306592                        9.95     1.99       11.94 RS     REF-SS306592
+ACCOUNT   SS306593 19 Oct 26 13:53 Cust SS306593                        8.28     1.66        9.94 RS     REF-SS306593
+ACCOUNT   SS306594 19 Oct 26 14:17 Cust SS306594                      657.60   131.52      789.12 TJ     REF-SS306594
+ACCOUNT   SS306595 19 Oct 26 14:24 Cust SS306595                      231.60    46.32      277.92 RS     REF-SS306595
+ACCOUNT   SS306596 19 Oct 26 14:35 Cust SS306596                       33.33     6.66       39.99 RS     REF-SS306596
+ACCOUNT   SS306597 19 Oct 26 14:36 Cust SS306597                       18.33     3.66       21.99 RS     REF-SS306597
+ACCOUNT   SS306598 19 Oct 26 14:36 Cust SS306598                       18.33     3.66       21.99 RS     REF-SS306598
+                                                                   --------- -------- -----------
+                                                                     2721.18   544.12     3265.30
+
+CONSOL    SS306579 19 Oct 26 12:12 Cust SS306579                      237.12    47.42      284.54 JS     REF-SS306579
+                                                                   --------- -------- -----------
+                                                                      237.12    47.42      284.54
+
+                                                                   ========= ======== ===========
+                                                                     2958.30   591.54     3549.84

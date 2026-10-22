@@ -27,10 +27,10 @@ Staff exports Autopart CSV (this document)
 
 Staff manually imports CSV into MAM Autopart
 → warehouse picks / invoices in Autopart
-→ future 504C reconciliation → DESPATCHED
+→ 504 + TRM21QC fulfilment, when ACTIVE → DESPATCHED
 ```
 
-See also: `docs/autopart-504c-invoice-feed.md`.
+See also: `docs/autopart-ongoing-sales-feeds.md`.
 
 ## AlphaOps contract reference
 
@@ -54,13 +54,13 @@ Shipping, VAT, Total, Price, Source, Payment Amount 1, MAM Account
 
 `External Reference` is **always** the Automotive Brands order number (e.g. `AB-000002`).
 
-This is deliberate: Autopart 504C returns the value as **Customer Order Number**, which is the AB reconciliation key.
+This is deliberate: Autopart 504 returns the value as **Customer Order Number**, which is the AB reconciliation key.
 
 | Concept | Value |
 | --- | --- |
 | AB Order Number | `AB-000002` |
 | External Reference (CSV) | `AB-000002` |
-| Autopart Customer Order Number (504C) | `AB-000002` |
+| Autopart Customer Order Number (504) | `AB-000002` |
 
 Customer PO / reference (e.g. `PO696969`) is preserved separately on the order (`poNumber`) and shown in admin, portal, and emails. It must **never** replace External Reference.
 
@@ -157,7 +157,7 @@ Agreed business rule:
 - `SUBMITTED` (Received) → `CONFIRMED` (Processing) on **successful committed CSV export only**
 - Preview / modal / validation / failed / blocked export does **not** change status
 - Re-export of an already Processing order leaves it Processing
-- **No** additional customer email on export (next automatic email is DESPATCH via 504C)
+- **No** additional customer email on export (the next automatic email is despatch from 504 + TRM21QC when fulfilment is ACTIVE)
 - **No** APC side effects
 - `OrderStockReservation` is **unchanged** by export
 

@@ -165,7 +165,7 @@ An ACTIVE, trade-visible product with zero stock and effective ALLOW is **ordera
 | `backorderQtyAtOrder` | Historical backorder at placement (immutable) |
 | `despatchedQty` | Cumulative units with **authoritative line-level** despatch evidence only |
 
-Never invent `despatchedQty` from Autopart Avail, CSV export, or 504C order totals alone.
+Never invent `despatchedQty` from Autopart Avail, CSV export, or invoice totals alone.
 
 ## Fulfilment timeline
 
@@ -175,31 +175,26 @@ Never invent `despatchedQty` from Autopart Avail, CSV export, or 504C order tota
 | --- | --- |
 | `ORDER_RECEIVED` | Order placement |
 | `EXPORTED_FOR_PROCESSING` | Successful Autopart CSV export (Processing) |
-| `INVOICE_LINKED` | 504C invoice linked |
+| `INVOICE_LINKED` | Invoice linked from matched fulfilment evidence |
 | `PART_DESPATCHED` | Partial fulfilment evidence |
 | `DESPATCHED` | Full fulfilment evidence |
 
 Never manufacture timeline events. Export ≠ Picked. Stock feed ≠ Despatched.
 
-## 504C capability matrix
+## 504 + TRM21QC fulfilment
 
-| Capability | Supported by 504C today? |
+| Mode | Effect |
 | --- | --- |
-| Full-order despatch (no backorder / financially complete) | Yes — order-level invoice totals |
-| Partial-order despatch (known backorder) | Conservatively — mark `PARTIALLY_DESPATCHED` |
-| Line-level despatched quantities | **No** — 504C has no SKU lines |
-| Exact remaining backorder quantity after partial invoice | **No** — cannot invent from totals |
+| OFF | No automatic order fulfilment |
+| PREVIEW | Evaluate without changing orders |
+| ACTIVE | Fulfil eligible orders when 504 and TRM21QC evidence matches |
 
-### Future Autopart integration requirement
-
-AB needs an additional Autopart report/feed that provides **line-level** fulfilment quantities (SKU + qty despatched per AB order / invoice) before customer portal can show exact Despatched / Outstanding splits after a partial 504C invoice.
-
-Until then:
+Line quantities come from matched TRM21QC units. Financial totals alone do not set `despatchedQty`. OFF does not start another despatch process.
 
 - Placement snapshots (`availableQtyAtOrder` / `backorderQtyAtOrder`) remain accurate
-- Partial 504C → `PARTIALLY_DESPATCHED` + `ORDER_PART_DESPATCHED` (no invented SKU qty)
-- Cumulative invoices that financially complete the AB order → full `DISPATCHED` + `ORDER_DESPATCHED`
-- Multiple Autopart invoices may link to one AB order (`externalRef` / document number remains unique)
+- A partial matched quantity → `PARTIALLY_DESPATCHED` + `ORDER_PART_DESPATCHED`
+- A fully matched quantity → `DISPATCHED` + `ORDER_DESPATCHED`
+- Replay of the same evidence must not duplicate fulfilment, stock movement, invoice, or despatch email
 
 ## Customer portal
 

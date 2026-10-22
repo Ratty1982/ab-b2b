@@ -14,9 +14,6 @@ import { reconcile504GoodsToTrmSales } from "@/domain/autopart-504-trm21qc-recon
 export const AUTOPART_504_TRM_FULFILMENT_MODES = ["OFF", "PREVIEW", "ACTIVE"] as const;
 export type Autopart504TrmFulfilmentMode = (typeof AUTOPART_504_TRM_FULFILMENT_MODES)[number];
 
-export const AUTOPART_504C_RUNTIME_MODES = ["ACTIVE", "RETIRED"] as const;
-export type Autopart504cRuntimeMode = (typeof AUTOPART_504C_RUNTIME_MODES)[number];
-
 export const AUTOPART_DOCUMENT_FULFILMENT_STATUSES = [
   "WAITING_FOR_504",
   "WAITING_FOR_TRM",

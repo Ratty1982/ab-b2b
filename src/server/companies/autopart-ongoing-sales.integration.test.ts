@@ -19,8 +19,7 @@ import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/aut
 import { AuthError } from "@/server/rbac/guards";
 import { loadHistoricSalesLines, summarizeHistoricLines } from "@/server/sales-intelligence/historic-lines";
 import { isAutopart504Report } from "@/domain/autopart-504";
-import { AUTOPART_504C_REPORT_TITLE } from "@/domain/autopart-504c";
-import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
+const LEGACY_504C_TITLE = "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)";
 import { processOngoingSalesEmailBatch } from "@/server/companies/autopart-ongoing-sales-poll";
 import { attachmentReceiptKey, emailReceiptKey } from "@/domain/stock-email";
 import {
@@ -278,7 +277,6 @@ describe("ongoing 504 + TRM21QC", () => {
         contactSnapshot: { name: "Buyer", email: `cr-${stamp}@example.test`, phone: "01130000000" },
       },
     });
-    // 504C bridge pads Document to 10 chars — keep credit refs within that width.
     const creditDoc = `SC${String(stamp).slice(-8)}`;
     const text = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
 ACCOUNT,${creditDoc},29/09/2026,14:10,EXAMPLE MOTOR FACTORS,-33.33,-6.66,-39.99,WR,${creditOrderNumber}
@@ -292,8 +290,14 @@ ACCOUNT,${creditDoc},29/09/2026,14:10,EXAMPLE MOTOR FACTORS,-33.33,-6.66,-39.99,
     expect(after.status).not.toBe("DISPATCHED");
     expect(after.status).toBe("CONFIRMED");
 
-    const inv = await prisma.invoice.findFirst({ where: { externalRef: creditDoc } });
-    expect(inv?.autopartDocumentKind).toBe("CREDIT");
+    const credit = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { documentReference: creditDoc, documentType: "CREDIT" },
+    });
+    expect(credit.has504).toBe(true);
+    expect(credit.companyId).toBe(companyId);
+    expect(Number(credit.goodsNet)).toBeCloseTo(-33.33, 2);
+    expect(credit.abOrderId).toBe(creditOrder.id);
+    expect(await prisma.invoice.findFirst({ where: { externalRef: creditDoc } })).toBeNull();
   });
 
   it("awaits companion report without failing", async () => {
@@ -451,7 +455,7 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
     const text504 = sample504();
     expect(isAutopart504Report(text504)).toBe(true);
     expect(text504.toUpperCase()).not.toContain("504C");
-    expect(text504.toUpperCase()).not.toContain(AUTOPART_504C_REPORT_TITLE.toUpperCase());
+    expect(text504.toUpperCase()).not.toContain(LEGACY_504C_TITLE.toUpperCase());
   });
 });
 
@@ -600,7 +604,7 @@ ${account},GRP,${lateInv},29/09/2026,${txtTrmSku},Late line,1,12.00,6.00,6.00,50
         attachments: [
           {
             filename: "504.TXT",
-            content: Buffer.from(`${AUTOPART_504C_REPORT_TITLE}\n${AUTOPART_504C_HEADER}\n`),
+            content: Buffer.from(`${LEGACY_504C_TITLE}\n`),
             contentType: "text/plain",
           },
         ],

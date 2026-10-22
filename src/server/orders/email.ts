@@ -416,7 +416,7 @@ ${emailParagraph("Status: SUBMITTED (received / pending Autopart handoff — not
 
 /**
  * Partial despatch notification.
- * When line quantities are unknown (504C order-level only), do not invent SKU despatch qty.
+ * When line quantities are unknown, do not invent SKU despatch qty.
  */
 export function buildOrderPartDespatchedCustomerBodies(
   order: OrderEmailSnapshot,

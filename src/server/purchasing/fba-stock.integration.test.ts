@@ -11,7 +11,6 @@ import { getPublicProduct } from "@/server/catalogue/products";
 import { applyStockFeed } from "@/server/stock/service";
 import { buildNative231Po3New, type Native231Po3NewRow } from "@/server/stock/fixtures/native-231po3new";
 import { buildAutopart216vFixture } from "@/domain/autopart-216v-fixture";
-import { AUTOPART_504C_HEADER } from "@/domain/autopart-504c-fixture";
 import { skuMatchKey } from "@/domain/stock";
 import { FBA_WAREHOUSE_FILE_MESSAGE } from "@/domain/fba-stock";
 import { plannerPurchaseQty } from "@/domain/purchasing-planner";
@@ -221,7 +220,7 @@ ACCOUNT,SS100001,29/09/2026,13:05,EXAMPLE MOTOR FACTORS,303.00,60.60,363.60,WR,A
     await expect(
       importFbaStock(adminId, {
         fileName: "504c.csv",
-        text: `LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n${AUTOPART_504C_HEADER}\n`,
+        text: "LISTING OF INVOICES AND CREDITS BY CUSTOMER (504C)\n",
       }),
     ).rejects.toMatchObject({ message: expect.stringMatching(/504C/) });
     await expect(

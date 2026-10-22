@@ -20,7 +20,6 @@ import {
   DASHBOARD_EMAIL_HEALTH_EXCLUDED_PURPOSES,
   sdsCoverageHealthFromState,
   emailHealthFromState,
-  feed504cHealthFromState,
   formatGbpIncVat,
   ongoingSalesHealthFromState,
   sharePointSdsHealthFromState,
@@ -33,7 +32,6 @@ import {
 } from "@/domain/admin-dashboard";
 import { OPEN_APPLICATION_STATUSES } from "@/domain/trade-application";
 import { customerOrderStatusLabel } from "@/domain/order-status";
-import { AUTOPART_504C_SCHEDULE_LABEL } from "@/domain/autopart-504c-schedule";
 import {
   formatAuditDateTime,
   formatDate,
@@ -200,15 +198,6 @@ export type AdminDashboardPayload = {
     statusLabel: "Healthy" | "Attention required" | "No sync yet";
     href: string;
   } | null;
-  autopart504c: {
-    configured: boolean;
-    enabled: boolean;
-    automaticPolling: "ON" | "OFF";
-    statusLabel: string;
-    scheduleLabel: string;
-    href: string;
-    informational: true;
-  } | null;
   email: {
     configured: boolean;
     enabled: boolean;
@@ -373,7 +362,6 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
     stockSuccess,
     emailDto,
     emailFailures,
-    feed504c,
     ongoingFreshness,
     sharePointSds,
   ] = await Promise.all([
@@ -573,12 +561,6 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
           },
         })
       : Promise.resolve(0),
-    canSeeOrders
-      ? (async () => {
-          const { getAutopart504cFeedSettings } = await import("@/server/orders/autopart-504c");
-          return getAutopart504cFeedSettings();
-        })()
-      : Promise.resolve(null),
     canSeeOngoingSales
       ? (async () => {
           const settings = await prisma.autopartOngoingSalesFeedSettings.findUnique({
@@ -747,18 +729,6 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
   const settingsEmailHref = `${ROUTES.adminSettings}?tab=email`;
   const settingsDocumentsHref = `${ROUTES.adminSettings}?tab=documents`;
 
-  const autopart504c = feed504c
-    ? {
-        configured: feed504c.configured,
-        enabled: feed504c.enabled,
-        automaticPolling: feed504c.automaticPolling,
-        statusLabel: feed504c.statusLabel,
-        scheduleLabel: feed504c.scheduleLabel || AUTOPART_504C_SCHEDULE_LABEL,
-        href: settingsAutopartHref,
-        informational: true as const,
-      }
-    : null;
-
   const email = emailDto
     ? {
         configured: emailDto.configured,
@@ -854,17 +824,6 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       actionLabel: attentionActionLabel("stock-issues"),
     });
   }
-  if (autopart504c && !autopart504c.configured) {
-    needsAttention.push({
-      id: "504c-not-configured",
-      label: "504C invoice/despatch feed not configured (waiting on Autopart)",
-      count: null,
-      href: settingsAutopartHref,
-      severity: "info",
-      actionLabel: attentionActionLabel("504c-not-configured"),
-    });
-  }
-
   const systemHealth: SystemHealthRow[] = [];
   if (stock) {
     systemHealth.push({
@@ -873,16 +832,6 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       statusLabel: stock.statusLabel,
       tone: stockHealthTone(stock.statusLabel),
       href: stock.href,
-    });
-  }
-  if (autopart504c) {
-    const h = feed504cHealthFromState(autopart504c);
-    systemHealth.push({
-      id: "autopart-504c",
-      label: "504C Order Status Feed",
-      statusLabel: h.statusLabel,
-      tone: h.tone,
-      href: autopart504c.href,
     });
   }
   if (ongoingFreshness) {
@@ -1067,7 +1016,6 @@ export async function getAdminDashboard(actorUserId: string): Promise<AdminDashb
       newlyApproved7d,
     },
     stock,
-    autopart504c,
     email,
     systemHealth,
     needsAttention,

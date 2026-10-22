@@ -2519,7 +2519,7 @@ model Invoice {
   @@index([autopartImportRunId])
 }
 
-/// 504C invoice/despatch feed settings — automatic polling defaults OFF.
+/// Historical 504C feed settings. Polling stays off. Do not use this row to despatch.
 model Autopart504cFeedSettings {
   id                 String   @id @default("default")
   /// When false (default), scheduler and live Poll Now must not reconcile mailbox files.
@@ -2542,8 +2542,8 @@ model Autopart504cFeedSettings {
   lastPolledAt       DateTime?
   lastSuccessAt      DateTime?
   lastError          String?
-  /// ACTIVE (legacy operational) or RETIRED (history only — no mutation/poll).
-  runtimeMode        Autopart504cRuntimeMode @default(ACTIVE)
+  /// Historical flag. RETIRED disables any leftover poll. Do not create an ACTIVE row.
+  runtimeMode        Autopart504cRuntimeMode @default(RETIRED)
   updatedAt          DateTime @updatedAt
   updatedByUserId    String?
 }
@@ -2600,7 +2600,7 @@ model AutopartOngoingSalesFeedSettings {
   lastSuccess504At           DateTime?
   lastSuccessTrm21qcAt       DateTime?
   lastError                  String?
-  /// OFF: 504C bridge may still despatch. PREVIEW: inspect only. ACTIVE: sole fulfilment mutator.
+  /// OFF: no automatic fulfilment. PREVIEW: evaluate only. ACTIVE: fulfil from 504 + TRM21QC.
   fulfilmentMode             Autopart504TrmFulfilmentMode @default(OFF)
   /// Date-only activation boundary (UTC noon). Documents before this day are not auto-fulfilled.
   fulfilmentFrom             DateTime?
