@@ -65,7 +65,7 @@ export const Route = createFileRoute("/sales/sales-intelligence/")({
       { title: "Sales Enquiry — Sales Intelligence — Automotive Brands" },
       {
         name: "description",
-        content: "Internal customer and product sales enquiry from Autopart historic invoices.",
+        content: "Internal customer and product sales enquiry from ongoing 504 and TRM21QC sales.",
       },
     ],
   }),

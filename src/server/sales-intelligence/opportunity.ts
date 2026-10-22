@@ -11,6 +11,7 @@ import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import type { LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
+import { ONGOING_SALES_DATA_SOURCE } from "@/server/sales-intelligence/history-sources";
 import {
   loadHistoricSalesLines,
   summarizeHistoricLines,
@@ -378,7 +379,7 @@ export async function getCustomerRangeOpportunities(actorUserId: string, raw: un
 
   const emptyBase = {
     dataSource:
-      "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included. Range Opportunities recommend current catalogue products only.",
+      `${ONGOING_SALES_DATA_SOURCE} Range Opportunities recommend current catalogue products only.`,
     company: {
       id: company.id,
       name: company.name,

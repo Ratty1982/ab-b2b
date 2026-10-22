@@ -7,6 +7,7 @@ import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import type { LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
+import { ONGOING_SALES_DATA_SOURCE } from "@/server/sales-intelligence/history-sources";
 import {
   groupHistoricByCompany,
   groupHistoricBySku,
@@ -395,7 +396,7 @@ export async function getCustomerGapAnalysis(actorUserId: string, raw: unknown) 
 
   return {
     dataSource:
-      "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included in these totals.",
+      ONGOING_SALES_DATA_SOURCE,
     company: {
       id: company.id,
       name: company.name,
@@ -619,7 +620,7 @@ export async function getProductGapAnalysis(actorUserId: string, raw: unknown) {
 
   return {
     dataSource:
-      "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included in these totals.",
+      ONGOING_SALES_DATA_SOURCE,
     product: {
       sku: variant?.sku ?? input.sku.trim(),
       name: variant?.product.name ?? info?.description ?? historicDesc ?? input.sku.trim(),

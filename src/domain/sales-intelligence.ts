@@ -1,9 +1,9 @@
 /**
  * Sales Intelligence — domain definitions for internal Sales Enquiry.
  *
- * Source of truth for invoiced sales: AutopartSalesDocument + AutopartSalesLine
- * (561L lines + SLRB document dates). AB Orders and 504C are excluded from
- * Invoice Sales / Credits / Net Sales.
+ * Source of truth for invoiced sales: ongoing 504 headers and TRM21QC lines.
+ * Historical 561L and SLRB purchases are not included. AB Orders and retired
+ * 504C feeds are excluded from Invoice Sales / Credits / Net Sales.
  */
 
 import type { DateOnlyRange, SalesEnquiryPeriodPreset } from "@/domain/sales-history-period";
@@ -192,7 +192,7 @@ export function compareSalesTotals(
 
 export type SalesEnquiryUrlSearch = {
   mode?: SalesEnquiryMode;
-  /** Defaults to dated Sales Enquiry. `global` is All Historical Autopart Sales. */
+  /** Retained for old bookmarks. `global` is ignored and is not a sales mode. */
   source?: SalesEnquiryHistorySource;
   /** Exact Autopart account code. Names are never used to link an account. */
   accountCode?: string;
@@ -233,7 +233,6 @@ export function parseSalesEnquiryUrlSearch(
   if (search["mode"] === "products" || search["mode"] === "customers") {
     out.mode = search["mode"];
   }
-  if (search["source"] === "global") out.source = "global";
   if (typeof search["accountCode"] === "string" && search["accountCode"].trim()) {
     out.accountCode = search["accountCode"].trim().slice(0, 40);
   }
@@ -287,7 +286,6 @@ export function parseSalesEnquiryUrlSearch(
 export function compactSalesEnquiryUrlSearch(search: SalesEnquiryUrlSearch): SalesEnquiryUrlSearch {
   const out: SalesEnquiryUrlSearch = {};
   if (search.mode && search.mode !== "customers") out.mode = search.mode;
-  if (search.source === "global") out.source = "global";
   if (search.accountCode) out.accountCode = search.accountCode;
   if (search.companyId) out.companyId = search.companyId;
   if (search.customerGroupId) out.customerGroupId = search.customerGroupId;

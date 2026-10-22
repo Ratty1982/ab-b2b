@@ -1420,7 +1420,7 @@ async function queryTransactions(
     dateFilterNote: contradiction
       ? "A date range only includes dated transactions, so undated rows are not shown."
       : input.from || input.to
-        ? "Date range applied. Undated 561L history is excluded."
+        ? "Date range applied. Documents without an invoice date are not included."
         : null,
   };
 }

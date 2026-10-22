@@ -181,7 +181,7 @@ export function SiPeriodSummary({
 export function SiProvenance({ text }: { text: string }) {
   return (
     <p className="text-[11px] text-steel/80" title={text}>
-      Historic invoiced sales source: Autopart 561L + SLRB.
+      {text}
     </p>
   );
 }

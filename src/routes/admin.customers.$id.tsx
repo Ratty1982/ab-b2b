@@ -326,8 +326,7 @@ function CustomerWorkspace() {
             {permissions.canManageUsers && company.status !== "ACTIVE" ? (
               <p className="text-[13px] text-steel">
                 Invite the customer to the trade portal only after the account is Active. Prospects
-                stay internal: historical sales are visible to authorised staff, and no login is
-                sent automatically.
+                stay internal, and no login is sent automatically.
               </p>
             ) : null}
             <WorkspaceList

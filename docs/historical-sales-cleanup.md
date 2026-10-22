@@ -39,7 +39,7 @@ The JSON report is written under `HISTORICAL_CLEANUP_OUT` or `/tmp/historical-cl
 - foreign keys that reference the historical tables
 - the count of ongoing 504 documents with a monetary discrepancy (preserved)
 
-`--apply` still does not delete. If the confirmation phrase, a PostgreSQL restore tested within the last 7 days, and a storage backup path are missing, the command exits 1. If those gates pass, it exits 2 and prints that deletion is not executed.
+`--apply` still does not delete. If the confirmation phrase, a PostgreSQL restore tested within the last 7 days, and a storage backup path are missing, the command exits 1. If those gates pass, it exits 2 and names the SQL procedure. It does not run that procedure.
 
 ```bash
 bun scripts/historical-sales-cleanup.ts \
@@ -56,9 +56,30 @@ bun scripts/historical-sales-cleanup.ts \
 3. Copy the file paths listed by the dry-run, plus any temporary ALL-file working directories, to restricted archive storage. Record the archive path.
 4. Keep the archive for the legal and operational retention period agreed with the business. The operational copies are what a later approved session may delete.
 
+## Executable cleanup procedure
+
+`scripts/historical-sales-cleanup.apply.sql` is the deletion procedure. It is separate from the dry-run and from every migration. Nothing in deploy, startup, or `package.json` runs it. Do not run it as part of reviewing this pull request.
+
+After the production dry-run has been read, a backup has been restored and queried, and the file archive path has been recorded, a later reviewed session can run:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -c "SET ab.historical_cleanup_confirm = 'ARCHIVE_AND_DELETE_HISTORICAL_SALES';" \
+  -f scripts/historical-sales-cleanup.apply.sql
+```
+
+`psql -c` and `-f` use separate sessions, so set the confirmation in the same session as the file:
+
+```sql
+SET ab.historical_cleanup_confirm = 'ARCHIVE_AND_DELETE_HISTORICAL_SALES';
+\i scripts/historical-sales-cleanup.apply.sql
+```
+
+The script starts a transaction, refuses to continue when the confirmation is missing, deletes historical rows in child-before-parent order, then compares counts of companies, 407EXP accounts, verified aliases, orders, invoices, customer prices, products, inventory, audit events, customer-master batches, ongoing import runs, ongoing 504/TRM documents, discrepant 504 documents, and ongoing TRM21QC lines. A changed count raises an exception and rolls the transaction back.
+
 ## Rows a later approved session may delete
 
-Only after the dry-run has been read and the backup has been tested. Delete children before parents.
+Only after the dry-run has been read and the backup has been tested. The SQL procedure deletes children before parents.
 
 - `AutopartHistoryStagedLine`, `AutopartHistoryStagedDocument`, `AutopartHistoryReviewAccount`, `AutopartHistorySnapshotGap`, `AutopartHistoryImportLock`, then `AutopartHistoryAllImport`.
 - `AutopartInvoiceLine`, `AutopartLedgerTransaction`, `AutopartDocumentMatch`.

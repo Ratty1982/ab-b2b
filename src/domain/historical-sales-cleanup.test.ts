@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   HISTORICAL_CLEANUP_CONFIRMATION,
@@ -40,6 +41,25 @@ describe("historical sales cleanup gates", () => {
       now,
     });
     expect(result).toEqual({ mode: "apply", errors: [] });
+  });
+
+  it("ships an executable SQL procedure that refuses to run without the confirmation", () => {
+    const sql = readFileSync("scripts/historical-sales-cleanup.apply.sql", "utf8");
+    const command = readFileSync("scripts/historical-sales-cleanup.ts", "utf8");
+    expect(sql).toContain(HISTORICAL_CLEANUP_CONFIRMATION);
+    expect(sql).toContain("current_setting('ab.historical_cleanup_confirm', true)");
+    expect(sql).toContain("RAISE EXCEPTION");
+    expect(sql).not.toContain('DELETE FROM "Company"');
+    expect(sql).not.toContain('DELETE FROM "AutopartAccount"');
+    expect(sql).not.toContain('DELETE FROM "AutopartCustomerAccountAlias"');
+    expect(sql).not.toContain('DELETE FROM "Order"');
+    expect(sql).toContain('DELETE FROM "AutopartInvoiceLine"');
+    expect(sql).toContain("valueMismatchMinor");
+    expect(sql).toContain("ONGOING_TRM21QC");
+    expect(command).toContain("scripts/historical-sales-cleanup.apply.sql");
+    expect(command).not.toContain("$executeRaw");
+    expect(command).not.toContain("readFileSync");
+    expect(command).toContain("this command does not delete");
   });
 
   it("does not class a discrepant ongoing 504 document as historical", () => {
