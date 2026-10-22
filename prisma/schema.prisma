@@ -282,6 +282,47 @@ model CustomerSalesCutover {
   completedBy User?   @relation("CustomerSalesCutoverCompleter", fields: [completedById], references: [id], onDelete: SetNull)
 }
 
+/// Temporary private copy of one customer sales report. Not an imported sale.
+enum CustomerSalesUploadRole {
+  HISTORY_561L
+  HISTORY_SLRB
+  ONGOING
+}
+
+enum CustomerSalesUploadStatus {
+  STORED
+  PREVIEWED
+  PROCESSING
+  COMMITTED
+  FAILED
+  EXPIRED
+}
+
+/// Streamed upload for Import Sales History and customer 504/TRM21QC preview.
+/// The reset does not read or delete these rows. Confirm reads the file again.
+model CustomerSalesUpload {
+  id          String                    @id @default(cuid())
+  companyId   String
+  createdById String?
+  role        CustomerSalesUploadRole
+  status      CustomerSalesUploadStatus @default(STORED)
+  filename    String
+  storagePath String
+  byteSize    Int
+  sha256      String
+  /// Verified account selected when an ongoing report was previewed.
+  accountCode String?
+  expiresAt   DateTime
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("CustomerSalesUploadCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, createdAt])
+  @@index([expiresAt, status])
+}
+
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
   /// Ongoing Autopart all-branches 504 document feed.
@@ -573,6 +614,7 @@ model User {
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   salesCutoversCompleted     CustomerSalesCutover[]      @relation("CustomerSalesCutoverCompleter")
+  customerSalesUploads       CustomerSalesUpload[]       @relation("CustomerSalesUploadCreator")
   autopartHistoricalAccessGrants AutopartAccount[] @relation("AutopartHistoricalAccessGrant")
   autopartMasterImportBatches AutopartImportBatch[] @relation("AutopartMasterImportCreator")
   autopartHistoryAllImports AutopartHistoryAllImport[] @relation("AutopartHistoryAllImportCreator")
@@ -836,6 +878,7 @@ model Company {
   autopartAccounts AutopartAccount[]
   autopartHistoryReviews AutopartHistoryReviewAccount[]
   salesCutover CustomerSalesCutover?
+  customerSalesUploads CustomerSalesUpload[]
 
   @@index([status])
   @@index([name])

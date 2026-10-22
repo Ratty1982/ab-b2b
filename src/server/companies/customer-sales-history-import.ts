@@ -59,7 +59,7 @@ type HistoryTarget = {
   codes: string[];
 };
 
-async function requireHistoryImporter(userId: string) {
+export async function requireHistoryImporter(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
   if (!grants(profile, "admin.access", "orders.edit")) {
     throw new AuthError("Not permitted to import customer sales history", "FORBIDDEN", 403);
@@ -127,9 +127,10 @@ function pushRow(
   rows: CustomerSalesHistoryRow[],
   counts: CustomerSalesHistoryPreview["counts"],
   row: CustomerSalesHistoryRow,
+  sampleLimit = PREVIEW_ROW_LIMIT,
 ) {
   counts[row.disposition] += 1;
-  if (rows.length < PREVIEW_ROW_LIMIT) rows.push(row);
+  if (rows.length < sampleLimit) rows.push(row);
 }
 
 function utcNoon(dateOnly: string | null): Date | null {
@@ -170,12 +171,15 @@ function planHistory(input: {
   text561l?: string;
   textSlrb?: string;
   codes: string[];
+  sampleLimit?: number;
 }) {
+  const sampleLimit = input.sampleLimit ?? PREVIEW_ROW_LIMIT;
   const authorised = new Set(input.codes.map((code) => code.toUpperCase()));
   const documents = new Map<string, PlannedDocument>();
   const lines: PlannedLine[] = [];
   const rows: CustomerSalesHistoryRow[] = [];
   const counts = emptyCounts();
+  const remember = (row: CustomerSalesHistoryRow) => pushRow(rows, counts, row, sampleLimit);
   const dates: string[] = [];
   const lineKeys = new Set<string>();
   const skuOrdinal = new Map<string, number>();
@@ -198,7 +202,7 @@ function planHistory(input: {
     const parsed = parseAutopartSlrb(input.textSlrb);
     for (const row of parsed.rows) {
       if (row.classification !== "MALFORMED") continue;
-      pushRow(rows, counts, {
+      remember({
         document: row.documentReference ?? "",
         type: row.documentType,
         date: row.documentDate,
@@ -221,7 +225,7 @@ function planHistory(input: {
       const account = row.accountCode.trim().toUpperCase();
       const documentType = row.documentType;
       if (!authorised.has(account)) {
-        pushRow(rows, counts, {
+        remember({
           document: row.documentReference,
           type: documentType,
           date: row.documentDate,
@@ -237,7 +241,7 @@ function planHistory(input: {
       const sale = historicalDocumentIsSale(documentType);
       const key = `${documentType}|${row.documentReference}`;
       if (documents.has(key) || lineKeys.has(`doc|${key}`)) {
-        pushRow(rows, counts, {
+        remember({
           document: row.documentReference,
           type: documentType,
           date: row.documentDate,
@@ -262,7 +266,7 @@ function planHistory(input: {
       });
       lineKeys.add(`doc|${key}`);
       if (row.documentDate) dates.push(row.documentDate);
-      pushRow(rows, counts, {
+      remember({
         document: row.documentReference,
         type: documentType,
         date: row.documentDate,
@@ -282,7 +286,7 @@ function planHistory(input: {
     const parsed = parseAutopart561l(input.text561l);
     for (const row of parsed.rows) {
       if (row.classification !== "MALFORMED") continue;
-      pushRow(rows, counts, {
+      remember({
         document: row.documentReference ?? "",
         type: row.documentType,
         date: null,
@@ -297,7 +301,7 @@ function planHistory(input: {
     for (const row of parsed.lines) {
       if (row.classification !== "LINE" || !row.documentReference || !row.accountCode || !row.partNumber) {
         if (row.classification === "MALFORMED" || row.issue) {
-          pushRow(rows, counts, {
+          remember({
             document: row.documentReference ?? "",
             type: row.documentType,
             date: null,
@@ -314,7 +318,7 @@ function planHistory(input: {
       const account = row.accountCode.trim().toUpperCase();
       const documentType = row.documentType;
       if (!authorised.has(account)) {
-        pushRow(rows, counts, {
+        remember({
           document: row.documentReference,
           type: documentType,
           date: null,
@@ -330,7 +334,7 @@ function planHistory(input: {
       const units = signedHistoricalMeasure(documentType, row.units == null ? null : String(row.units), 3);
       const salesNet = signedHistoricalMeasure(documentType, row.salesNet, 2);
       if (!units || !salesNet) {
-        pushRow(rows, counts, {
+        remember({
           document: row.documentReference,
           type: documentType,
           date: null,
@@ -357,7 +361,7 @@ function planHistory(input: {
         skuOrdinal: ordinal,
       });
       if (lineKeys.has(identity.fingerprint)) {
-        pushRow(rows, counts, {
+        remember({
           document: row.documentReference,
           type: documentType,
           date: null,
@@ -397,7 +401,7 @@ function planHistory(input: {
         fingerprint: identity.fingerprint,
       });
       lineKeys.add(identity.fingerprint);
-      pushRow(rows, counts, {
+      remember({
         document: row.documentReference,
         type: documentType,
         date: null,
@@ -415,23 +419,48 @@ function planHistory(input: {
   return { documents: [...documents.values()], lines, rows, counts, dates };
 }
 
+async function loadStoredHistory(companyId: string, refs: string[]) {
+  const storedDocs: { documentType: string; documentReference: string }[] = [];
+  const storedLines: { documentType: string; documentReference: string; lineNumber: number; sourceFingerprint: string | null }[] = [];
+  for (let index = 0; index < refs.length; index += 400) {
+    const chunk = refs.slice(index, index + 400);
+    storedDocs.push(
+      ...(await prisma.autopartSalesDocument.findMany({
+        where: { companyId, documentReference: { in: chunk } },
+        select: { documentType: true, documentReference: true },
+      })),
+    );
+    storedLines.push(
+      ...(await prisma.autopartSalesLine.findMany({
+        where: { companyId, documentReference: { in: chunk } },
+        select: { documentType: true, documentReference: true, lineNumber: true, sourceFingerprint: true },
+      })),
+    );
+  }
+  return { storedDocs, storedLines };
+}
+
 async function markExisting(target: HistoryTarget, planned: ReturnType<typeof planHistory>) {
   const refs = [...new Set(planned.documents.map((doc) => doc.documentReference))];
-  const storedDocs = refs.length
-    ? await prisma.autopartSalesDocument.findMany({
-        where: { companyId: target.companyId, documentReference: { in: refs } },
-        select: { documentType: true, documentReference: true },
-      })
-    : [];
-  const storedLines = refs.length
-    ? await prisma.autopartSalesLine.findMany({
-        where: { companyId: target.companyId, documentReference: { in: refs } },
-        select: { documentType: true, documentReference: true, lineNumber: true, sourceFingerprint: true },
-      })
-    : [];
+  const { storedDocs, storedLines } = refs.length
+    ? await loadStoredHistory(target.companyId, refs)
+    : { storedDocs: [], storedLines: [] };
   const docKeys = new Set(storedDocs.map((doc) => `${doc.documentType}|${doc.documentReference}`));
   const fingerprints = new Set(storedLines.map((line) => line.sourceFingerprint).filter((value): value is string => Boolean(value)));
   const lineNumbers = new Set(storedLines.map((line) => `${line.documentType}|${line.documentReference}|${line.lineNumber}`));
+  for (const line of planned.lines) {
+    const docKey = `${line.documentType}|${line.documentReference}`;
+    if (fingerprints.has(line.fingerprint) || lineNumbers.has(`${docKey}|${line.lineNumber}`)) {
+      planned.counts.import -= 1;
+      planned.counts.duplicate += 1;
+    }
+  }
+  for (const doc of planned.documents) {
+    if (doc.source !== "SLRB" || !docKeys.has(`${doc.documentType}|${doc.documentReference}`)) continue;
+    const bucket = historicalDocumentIsSale(doc.documentType) ? "import" : "ledger";
+    planned.counts[bucket] -= 1;
+    planned.counts.duplicate += 1;
+  }
   for (const row of planned.rows) {
     if (row.disposition !== "import" && row.disposition !== "ledger") continue;
     const docKey = `${row.type}|${row.document}`;
@@ -439,9 +468,7 @@ async function markExisting(target: HistoryTarget, planned: ReturnType<typeof pl
     const sameLine = lineNumber != null && lineNumbers.has(`${docKey}|${lineNumber}`);
     const sameFingerprint = Boolean(row.fingerprint && fingerprints.has(row.fingerprint));
     if (sameFingerprint || sameLine || (!row.sku && docKeys.has(docKey))) {
-      planned.counts[row.disposition] -= 1;
       row.disposition = "duplicate";
-      planned.counts.duplicate += 1;
       row.reason = row.sku
         ? "This source line is already stored for this customer."
         : "This document is already stored for this customer.";
@@ -452,9 +479,13 @@ async function markExisting(target: HistoryTarget, planned: ReturnType<typeof pl
 export async function previewCustomerSalesHistory(
   actorUserId: string,
   input: { companyId: string; text561l?: string; textSlrb?: string; filename561l?: string; filenameSlrb?: string },
+  options?: { bounded?: boolean; sampleLimit?: number },
 ): Promise<CustomerSalesHistoryPreview> {
   await requireHistoryImporter(actorUserId);
-  if ((input.text561l?.length ?? 0) > MAX_REPORT_CHARS || (input.textSlrb?.length ?? 0) > MAX_REPORT_CHARS) {
+  if (
+    !options?.bounded &&
+    ((input.text561l?.length ?? 0) > MAX_REPORT_CHARS || (input.textSlrb?.length ?? 0) > MAX_REPORT_CHARS)
+  ) {
     throw new AuthError("Report is too large to preview.", "VALIDATION", 400);
   }
   const target = await loadCustomerSalesHistoryTarget(input.companyId);
@@ -475,6 +506,7 @@ export async function previewCustomerSalesHistory(
     ...(input.text561l ? { text561l: input.text561l } : {}),
     ...(input.textSlrb ? { textSlrb: input.textSlrb } : {}),
     codes: target.codes,
+    ...(options?.sampleLimit ? { sampleLimit: options.sampleLimit } : {}),
   });
   await markExisting(target, planned);
   const sortedDates = [...planned.dates].sort();
@@ -490,10 +522,10 @@ export async function previewCustomerSalesHistory(
     companyName: target.companyName,
     accountCodes: target.codes,
     message: hasExceptions
-      ? "These reports contain rejected, malformed, or unowned rows. Valid rows can be stored. Cutover stays in review until a member of staff accepts the exceptions. This is not a zero-history account."
+      ? "Preview shows proposed changes and does not create sales records. These reports contain rejected, malformed, or unowned rows. Valid rows can be stored. Cutover stays in review until a member of staff accepts the exceptions. This is not a zero-history account."
       : canCommit
-        ? null
-        : "Nothing new in these reports belongs to this customer's verified accounts.",
+        ? "Preview shows proposed changes and does not create sales records."
+        : "Preview does not create sales records. Nothing new in these reports belongs to this customer's verified accounts.",
     counts: planned.counts,
     rows: planned.rows,
     dateFrom: sortedDates[0] ?? null,
@@ -519,8 +551,15 @@ export async function previewCustomerSalesHistory(
 export async function confirmCustomerSalesHistory(
   actorUserId: string,
   input: { companyId: string; text561l?: string; textSlrb?: string; filename561l?: string; filenameSlrb?: string },
+  options?: {
+    bounded?: boolean;
+    sourceSha256561l?: string | null;
+    sourceSha256Slrb?: string | null;
+    rowsRead?: number;
+    otherCustomerRows?: number;
+  },
 ) {
-  const preview = await previewCustomerSalesHistory(actorUserId, input);
+  const preview = await previewCustomerSalesHistory(actorUserId, input, options);
   if (!preview.canCommit && preview.counts.duplicate === 0) {
     throw new AuthError(preview.message ?? "Nothing can be imported.", "VALIDATION", 400);
   }
@@ -548,8 +587,8 @@ export async function confirmCustomerSalesHistory(
       status: "PROCESSING",
       filename: input.filename561l ?? null,
       filenameSlrb: input.filenameSlrb ?? null,
-      fileHash: hashText(input.text561l),
-      fileHashSlrb: hashText(input.textSlrb),
+      fileHash: options?.sourceSha256561l ?? hashText(input.text561l),
+      fileHashSlrb: options?.sourceSha256Slrb ?? hashText(input.textSlrb),
       dryRun: false,
       createdById: actorUserId,
       rowsRead: planned.documents.length + planned.lines.length,
@@ -681,11 +720,12 @@ export async function confirmCustomerSalesHistory(
     kind: "561L_SLRB",
     filename561l: input.filename561l ?? null,
     filenameSlrb: input.filenameSlrb ?? null,
-    sha256561l: hashText(input.text561l),
-    sha256Slrb: hashText(input.textSlrb),
+    sha256561l: options?.sourceSha256561l ?? hashText(input.text561l),
+    sha256Slrb: options?.sourceSha256Slrb ?? hashText(input.textSlrb),
     imported,
     duplicates,
     rejected: planned.counts.rejected,
+    ...(options?.rowsRead != null ? { rowsRead: options.rowsRead, otherCustomerRows: options.otherCustomerRows ?? 0 } : {}),
     completion: historyStatus,
   };
   await prisma.customerSalesCutover.upsert({

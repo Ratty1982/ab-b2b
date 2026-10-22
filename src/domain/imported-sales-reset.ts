@@ -47,6 +47,7 @@ export const IMPORTED_SALES_PRESERVED = [
   { name: "Order, OrderItem, Invoice, OrderStockReservation, OrderFulfilmentEvent", reason: "Legitimate B2B orders, invoices, fulfilment, and stock reservations stay." },
   { name: "Autopart504cImportRun", reason: "Operational invoices can point at a 504C run. Those runs are not imported sales documents." },
   { name: "AutopartImportBatch of kind CUSTOMER_MASTER", reason: "Customer-master import history is not a sales dataset." },
+  { name: "CustomerSalesUpload", reason: "Temporary private copies of reports being previewed. They are not sales rows. The reset does not import them and does not delete them." },
   { name: "CMS, configuration, and AuditEvent", reason: "Site content and audit history stay." },
 ] as const;
 
