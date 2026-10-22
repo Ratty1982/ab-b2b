@@ -6,6 +6,8 @@ import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
+import { CustomerSalesHistoryPanel } from "@/components/ab/CustomerSalesHistoryPanel";
+import { CustomerSalesImportPanel } from "@/components/ab/CustomerSalesImportPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
@@ -527,10 +529,12 @@ function CustomerWorkspace() {
         {tab === "Autopart" ? (
           <>
             <AutopartMasterAccessPanel companyId={company.id} />
+            <CustomerSalesHistoryPanel companyId={company.id} />
+            <CustomerSalesImportPanel companyId={company.id} />
             <p className="text-[13px] text-steel">
-              Historical 561L and SLRB import is retired. Invoices and credits shown to this
-              customer come from the ongoing 504 and TRM21QC feeds. Verifying the Autopart ID does
-              not import purchase history or approve portal login.
+              Import Sales History stores 561L product lines and SLRB ledger evidence for this
+              Active customer only. Ongoing 504 and TRM21QC sales start after that cutover.
+              Verifying the Autopart ID does not import history or approve portal login.
             </p>
           </>
         ) : null}

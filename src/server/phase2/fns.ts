@@ -3641,6 +3641,118 @@ export const confirmAutopartTrm21qcFn = createServerFn({ method: "POST" })
     }
   });
 
+export const listCustomerSalesAccountsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/companies/customer-sales-import");
+      return { ok: true as const, data: await sales.listCustomerSalesAccounts(userId, data.companyId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewCustomerSalesImportFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { companyId: string; accountCode: string; text: string; filename?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/companies/customer-sales-import");
+      return { ok: true as const, data: await sales.previewCustomerSalesImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmCustomerSalesImportFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { companyId: string; accountCode: string; text: string; filename?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const sales = await import("@/server/companies/customer-sales-import");
+      return { ok: true as const, data: await sales.confirmCustomerSalesImport(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewCustomerSalesHistoryFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        companyId: string;
+        text561l?: string;
+        textSlrb?: string;
+        filename561l?: string;
+        filenameSlrb?: string;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/companies/customer-sales-history-import");
+      return { ok: true as const, data: await history.previewCustomerSalesHistory(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmCustomerSalesHistoryFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        companyId: string;
+        text561l?: string;
+        textSlrb?: string;
+        filename561l?: string;
+        filenameSlrb?: string;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/companies/customer-sales-history-import");
+      return { ok: true as const, data: await history.confirmCustomerSalesHistory(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const acknowledgeCustomerSalesHistoryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/companies/customer-sales-history-import");
+      return {
+        ok: true as const,
+        data: await history.acknowledgeCustomerSalesHistoryReview(userId, data.companyId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const completeCustomerSalesCutoverFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/companies/customer-sales-history-import");
+      return {
+        ok: true as const,
+        data: await history.completeCustomerSalesCutoverWithoutHistory(userId, data.companyId),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const listOngoingSalesImportRunsFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data as { limit?: number } | undefined)
   .handler(async ({ data }) => {

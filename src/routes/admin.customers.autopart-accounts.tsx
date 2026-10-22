@@ -256,7 +256,9 @@ function AutopartAccountMappingPage() {
                     </td>
                     <td className="num px-3 py-2">{row.unmappedDocuments}</td>
                     <td className="num px-3 py-2">{row.unmappedLines}</td>
-                    <td className="num px-3 py-2">£{row.netSalesAffected}</td>
+                    <td className="num px-3 py-2">
+                      {row.netSalesAffected == null ? "—" : `£${row.netSalesAffected}`}
+                    </td>
                     <td className="px-3 py-2 text-steel">
                       <InstantText value={row.firstSeenAt} variant="audit" />
                     </td>

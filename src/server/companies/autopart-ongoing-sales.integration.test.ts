@@ -94,6 +94,14 @@ beforeAll(async () => {
     companyId,
     code: account,
   });
+  await prisma.customerSalesCutover.create({
+    data: {
+      companyId,
+      historyStatus: "COMPLETE",
+      completedAt: new Date(),
+      evidence: { kind: "NO_HISTORICAL_SALES" },
+    },
+  });
 
   const brand = await prisma.brand.create({
     data: { name: `OG Brand ${stamp}`, slug: `og-brand-${stamp}` },
@@ -369,8 +377,10 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
       text: textTrm,
       filename: "trm-preview.csv",
     });
-    expect(trmPreview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
-    expect(trmPreview.wouldInsert).toBeGreaterThanOrEqual(1);
+    expect(trmPreview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER" && d.status === "SKIPPED")).toBe(
+      true,
+    );
+    expect(trmPreview.wouldInsert).toBe(0);
     expect(
       await prisma.autopartSalesLine.count({ where: { documentReference: docT } }),
     ).toBe(linesBefore);
@@ -380,15 +390,18 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
       filename: "trm-preview.csv",
       source: "MANUAL",
     });
-    expect(trmRun.rowsImported).toBeGreaterThanOrEqual(1);
+    expect(trmRun.rowsImported).toBe(0);
     const skipped = await prisma.autopartImportDiagnostic.findMany({
       where: { importRunId: trmRun.id, reasonCode: "UNMAPPED_CUSTOMER" },
     });
     expect(skipped.length).toBeGreaterThanOrEqual(1);
-    expect(Number(skipped[0]?.salesNet)).toBeCloseTo(10, 2);
-    expect(
-      await prisma.autopartSalesLine.count({ where: { documentReference: docT, companyId: null } }),
-    ).toBeGreaterThanOrEqual(1);
+    expect(skipped[0]?.salesNet).toBeNull();
+    expect(skipped[0]?.quantity).toBeNull();
+    expect(skipped[0]?.sku).toBeNull();
+    expect(skipped[0]?.customerAccount).toBe(unmappedAcct);
+    expect(skipped.every((row) => row.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
+    expect(await prisma.autopartSalesLine.count({ where: { documentReference: docT } })).toBe(0);
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: docT } })).toBe(0);
 
     // Idempotent re-import — financial rows not duplicated; unchanged diagnostics appear
     const again = await confirmAutopartTrm21qcImport(adminId, {
@@ -407,7 +420,7 @@ ${account},GRP,${docInv},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.0
 
     const detail = await getOngoingSalesImportRunDetail(adminId, trmRun.id);
     expect(detail.hasRowDiagnostics).toBe(true);
-    expect(detail.counts.inserted).toBeGreaterThanOrEqual(1);
+    expect(detail.counts.inserted).toBe(0);
     expect(detail.warnings).toBeGreaterThanOrEqual(1);
 
     const csv = await exportOngoingSalesImportDiagnosticsCsv(adminId, trmRun.id);
@@ -693,7 +706,7 @@ ${account},GRP,${lateInv},29/09/2026,${txtTrmSku},Late line,1,12.00,6.00,6.00,50
         vat: "83.35",
         value: "500.09",
         inits: "RS",
-        orderNumber: "KEITH051026",
+        orderNumber,
       }),
       format504DayEndRow({
         type: "CONSOL",
@@ -739,20 +752,11 @@ ${account},GRP,${ssAcc},06/10/2026,${txtTrmSku},Brake pad,1,416.74,200.00,216.74
     expect(first.processed504).toBe(1);
     expect(first.processedTrm21qc).toBe(1);
 
-    const amazon = await prisma.autopartSalesDocument.findFirst({ where: { documentReference: oin } });
-    expect(amazon?.has504).toBe(true);
-    expect(amazon?.reportType504).toBe("ACCOUNT");
-    expect(Number(amazon?.goodsNet)).toBeCloseTo(49.99, 2);
-    expect(amazon?.customerNameSnapshot).toBe("Retail Amazon");
-    expect(amazon?.customerOrderNumber).toBe("206-1152538-1059517");
-    expect(amazon?.documentDate?.toISOString().startsWith("2026-10-06")).toBe(true);
-
-    const consol = await prisma.autopartSalesDocument.findFirst({
-      where: { documentReference: ssConsol },
+    expect(await prisma.autopartSalesDocument.count({ where: { documentReference: { in: [oin, ssConsol] } } })).toBe(0);
+    const skipped = await prisma.autopartImportDiagnostic.count({
+      where: { documentReference: { in: [oin, ssConsol] }, reasonCode: { in: ["UNMAPPED_CUSTOMER", "NOT_ACTIVE"] } },
     });
-    expect(consol?.reportType504).toBe("CONSOL");
-    expect(consol?.documentType).toBe("INVOICE");
-    expect(Number(consol?.goodsNet)).toBeCloseTo(116.4, 2);
+    expect(skipped).toBeGreaterThanOrEqual(2);
 
     expect(await prisma.autopartSalesDocument.count({ where: { documentReference: "7779.09" } })).toBe(0);
 
@@ -792,7 +796,7 @@ ${account},GRP,${ssAcc},06/10/2026,${txtTrmSku},Brake pad,1,416.74,200.00,216.74
         vat: "2.40",
         value: "14.40",
         inits: "WB",
-        orderNumber: "SR-REPOLL",
+        orderNumber,
       }),
     ].join("\n");
     const emailUnknown = {
@@ -852,14 +856,14 @@ describe("ongoing report content-hash dedupe", () => {
 
   function contentA504() {
     return `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${early504Inv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,40.00,8.00,48.00,WR,CUTOFF-A
+ACCOUNT,${early504Inv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,40.00,8.00,48.00,WR,${orderNumber}
 `;
   }
 
   function contentB504() {
     return `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${early504Inv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,40.00,8.00,48.00,WR,CUTOFF-A
-ACCOUNT,${late504Inv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,15.00,3.00,18.00,WR,LATE-B
+ACCOUNT,${early504Inv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,40.00,8.00,48.00,WR,${orderNumber}
+ACCOUNT,${late504Inv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,15.00,3.00,18.00,WR,${orderNumber}
 `;
   }
 
@@ -993,11 +997,11 @@ ${account},GRP,${lateTrmInv},06/10/2026,${hashSku},Pad late,1,15.00,7.00,8.00,53
     const earlyInv = `SSHE${String(stamp).slice(-5)}`;
     const lateInv = `SSHF${String(stamp).slice(-5)}`;
     const early = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${earlyInv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,22.00,4.40,26.40,WR,EARLY
+ACCOUNT,${earlyInv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,22.00,4.40,26.40,WR,${orderNumber}
 `;
     const later = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${earlyInv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,22.00,4.40,26.40,WR,EARLY
-ACCOUNT,${lateInv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,9.00,1.80,10.80,WR,LATE
+ACCOUNT,${earlyInv},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,22.00,4.40,26.40,WR,${orderNumber}
+ACCOUNT,${lateInv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,9.00,1.80,10.80,WR,${orderNumber}
 `;
     const first = await processOngoingSalesEmailBatch({
       emails: [
@@ -1037,7 +1041,7 @@ ACCOUNT,${lateInv},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,9.00,1.80,10.80,WR,LAT
   it("same content under a different filename remains a content-hash duplicate", async () => {
     const inv = `SSHG${String(stamp).slice(-5)}`;
     const body = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${inv},06/10/2026,19:00,EXAMPLE MOTOR FACTORS,11.00,2.20,13.20,WR,RENAME
+ACCOUNT,${inv},06/10/2026,19:00,EXAMPLE MOTOR FACTORS,11.00,2.20,13.20,WR,${orderNumber}
 `;
     const first = await processOngoingSalesEmailBatch({
       emails: [
@@ -1071,11 +1075,11 @@ ACCOUNT,${inv},06/10/2026,19:00,EXAMPLE MOTOR FACTORS,11.00,2.20,13.20,WR,RENAME
     const invA = `SSHH${String(stamp).slice(-5)}`;
     const invB = `SSHI${String(stamp).slice(-5)}`;
     const contentA = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${invA},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,5.00,1.00,6.00,WR,SAME-KEY-A
+ACCOUNT,${invA},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,5.00,1.00,6.00,WR,${orderNumber}
 `;
     const contentB = `Type,Document,Date,Time,Customer Name,Goods,VAT,Value,Inits,Customer Order Number
-ACCOUNT,${invA},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,5.00,1.00,6.00,WR,SAME-KEY-A
-ACCOUNT,${invB},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,7.00,1.40,8.40,WR,SAME-KEY-B
+ACCOUNT,${invA},06/10/2026,18:00,EXAMPLE MOTOR FACTORS,5.00,1.00,6.00,WR,${orderNumber}
+ACCOUNT,${invB},06/10/2026,22:08,EXAMPLE MOTOR FACTORS,7.00,1.40,8.40,WR,${orderNumber}
 `;
     const sharedUid = `uid-same-att-${hashStamp}`;
     const sharedMid = `<same-att-${hashStamp}@example.invalid>`;

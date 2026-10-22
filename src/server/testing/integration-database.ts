@@ -5,6 +5,7 @@
 
 const APPLICATION_DATABASE_NAMES = new Set([
   "automotive_brands",
+  "automotivebrands",
   "postgres",
   "template0",
   "template1",

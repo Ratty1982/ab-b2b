@@ -93,6 +93,14 @@ beforeAll(async () => {
     companyId,
     code: account,
   });
+  await prisma.customerSalesCutover.create({
+    data: {
+      companyId,
+      historyStatus: "COMPLETE",
+      completedAt: new Date(),
+      evidence: { kind: "NO_HISTORICAL_SALES" },
+    },
+  });
 
   const companyB = await prisma.company.create({
     data: {
@@ -131,8 +139,10 @@ describe("autopart account mapping workflow", () => {
       text: sampleTrm(),
       filename: "trm-map.csv",
     });
-    expect(preview.wouldInsert).toBeGreaterThanOrEqual(3);
-    expect(preview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER")).toBe(true);
+    expect(preview.wouldInsert).toBe(1);
+    expect(preview.diagnostics.some((d) => d.reasonCode === "UNMAPPED_CUSTOMER" && d.status === "SKIPPED")).toBe(
+      true,
+    );
 
     const run = await confirmAutopartTrm21qcImport(adminId, {
       text: sampleTrm(),
@@ -140,7 +150,7 @@ describe("autopart account mapping workflow", () => {
       source: "MANUAL",
     });
     expect(run.status).toBe("COMMITTED");
-    expect(run.rowsImported).toBeGreaterThanOrEqual(3);
+    expect(run.rowsImported).toBe(1);
 
     const written = await prisma.autopartSalesLine.count({
       where: { companyId, documentReference: docMapped },
@@ -150,7 +160,7 @@ describe("autopart account mapping workflow", () => {
     const unmappedLines = await prisma.autopartSalesLine.count({
       where: { documentReference: { in: [docUnmapped, docUnmappedCredit] }, companyId: null },
     });
-    expect(unmappedLines).toBeGreaterThanOrEqual(2);
+    expect(unmappedLines).toBe(0);
 
     const retailSku = await prisma.productVariant.findFirst({
       where: { sku: { equals: `RETAIL-ONLY-${stamp}`, mode: "insensitive" } },
@@ -168,7 +178,7 @@ describe("autopart account mapping workflow", () => {
     expect(warnings).toBeGreaterThanOrEqual(0);
   });
 
-  it("aggregates unique unmapped accounts with signed net sales", async () => {
+  it("lists unmapped accounts by count and reason without retained sales amounts", async () => {
     const ws = await listAutopartAccountMappingWorkspace(adminId, {
       status: "UNMAPPED",
       q: unmappedAcct,
@@ -176,9 +186,13 @@ describe("autopart account mapping workflow", () => {
     const row = ws.items.find((i) => i.accountCode === unmappedAcct);
     expect(row).toBeTruthy();
     expect(row!.unmappedLines).toBeGreaterThanOrEqual(2);
-    expect(row!.unmappedDocuments).toBeGreaterThanOrEqual(1);
-    // 55.00 + (-10.00) = 45.00
-    expect(Number(row!.netSalesAffected)).toBeCloseTo(45, 2);
+    expect(row!.netSalesAffected).toBeNull();
+
+    const stored = await prisma.autopartImportDiagnostic.findMany({
+      where: { customerAccount: unmappedAcct, reasonCode: "UNMAPPED_CUSTOMER" },
+    });
+    expect(stored.length).toBeGreaterThanOrEqual(2);
+    expect(stored.every((d) => d.salesNet == null && d.quantity == null && d.sku == null)).toBe(true);
   });
 
   it("searches companies and maps account explicitly with conflict protection", async () => {

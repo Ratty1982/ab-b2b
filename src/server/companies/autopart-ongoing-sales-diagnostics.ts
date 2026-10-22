@@ -10,6 +10,7 @@ import {
   AUTOPART_IMPORT_DIAGNOSTIC_STATUSES,
   emptyDiagnosticCounts,
   historicSkipAggregateMessage,
+  redactIneligibleSalesDiagnostic,
   sourceLabel,
   type AutopartImportDiagnosticCounts,
   type AutopartImportDiagnosticDraft,
@@ -32,7 +33,7 @@ export async function persistImportDiagnostics(
   if (!drafts.length) return;
   const CHUNK = 200;
   for (let i = 0; i < drafts.length; i += CHUNK) {
-    const slice = drafts.slice(i, i + CHUNK);
+    const slice = drafts.slice(i, i + CHUNK).map(redactIneligibleSalesDiagnostic);
     await prisma.autopartImportDiagnostic.createMany({
       data: slice.map((d) => ({
         importRunId,

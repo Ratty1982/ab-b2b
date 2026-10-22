@@ -55,6 +55,10 @@ import {
   persistImportDiagnostics,
 } from "@/server/companies/autopart-ongoing-sales-diagnostics";
 import { run504TrmFulfilmentAfterImport } from "@/server/orders/autopart-504-trm-fulfilment";
+import type { CustomerSalesScope } from "@/domain/customer-sales-import";
+import { accountInCustomerScope } from "@/domain/customer-sales-import";
+import { assessOngoingSalesWrite, type OngoingSalesWriteDecision } from "@/server/companies/ongoing-sales-eligibility";
+import { retainOngoingSalesReport } from "@/server/maintenance/sales-source-archive";
 
 export {
   getOngoingSalesImportRunDetail,
@@ -500,10 +504,9 @@ export async function previewAutopartTrm21qcImport(
           }),
         );
       } else {
-        newLines += 1;
         diagnostics.push(
           makeDiagnostic({
-            status: "INSERTED",
+            status: "SKIPPED",
             reasonCode: "UNMAPPED_CUSTOMER",
             rowNumber: r.lineNumber,
             customerAccount: r.customerAccount,
@@ -514,9 +517,34 @@ export async function previewAutopartTrm21qcImport(
             quantity: r.qty,
             salesNet: r.salesNet,
             isWarning: true,
+            reason: "No uniquely verified Active customer owns this row. No sales document or product line will be stored.",
           }),
         );
       }
+      continue;
+    }
+    const eligibility = await assessOngoingSalesWrite({
+      companyId: mapped.companyId,
+      autopartCode: r.customerAccount,
+    });
+    if (!eligibility.persist) {
+      diagnostics.push(
+        makeDiagnostic({
+          status: "SKIPPED",
+          reasonCode: eligibility.reasonCode,
+          rowNumber: r.lineNumber,
+          customerAccount: r.customerAccount,
+          documentReference: r.documentNumber,
+          documentDate: r.documentDate,
+          sku: r.partNumber,
+          description: r.description,
+          quantity: r.qty,
+          salesNet: r.salesNet,
+          companyId: mapped.companyId,
+          isWarning: true,
+          reason: eligibility.reason,
+        }),
+      );
       continue;
     }
     const found = await prisma.autopartSalesLine.findUnique({
@@ -734,7 +762,12 @@ async function refreshDocumentReconciliation(documentId: string) {
 
 export async function confirmAutopart504Import(
   actorUserId: string | null,
-  raw: { text: string; filename?: string; source?: "MANUAL" | "EMAIL" | "SCHEDULE" },
+  raw: {
+    text: string;
+    filename?: string;
+    source?: "MANUAL" | "EMAIL" | "SCHEDULE";
+    customerScope?: CustomerSalesScope;
+  },
 ) {
   await assertOngoingImportActor(actorUserId);
   if (!isAutopart504Report(raw.text)) {
@@ -750,6 +783,7 @@ export async function confirmAutopart504Import(
       fileHash: hash,
       dryRun: false,
       createdById: actorUserId,
+      companyId: raw.customerScope?.companyId ?? null,
       rowsRead: parsed.rows.length,
       diagnostics: {
         source: raw.source ?? "MANUAL",
@@ -765,9 +799,11 @@ export async function confirmAutopart504Import(
   let updated = 0;
   let skipped = 0;
   let unchanged = 0;
+  let skippedIneligible = 0;
   const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds: string[] = [];
   const identityConflicts: OngoingIdentityConflict[] = [];
+  const eligibilityCache = new Map<string, OngoingSalesWriteDecision>();
   let currentDocument: string | null = null;
 
   try {
@@ -838,13 +874,97 @@ export async function confirmAutopart504Import(
       }
 
       currentDocument = row.documentNumber;
+      if (raw.customerScope) {
+        const scope = raw.customerScope;
+        const orderMatches = Boolean(abOrderId && companyId === scope.companyId);
+        const existingForCustomer =
+          !orderMatches && row.documentNumber
+            ? await prisma.autopartSalesDocument.findFirst({
+                where: {
+                  documentReference: row.documentNumber,
+                  documentType,
+                  companyId: scope.companyId,
+                },
+                select: { id: true },
+              })
+            : null;
+        const otherCustomer = companyId != null && companyId !== scope.companyId;
+        if (otherCustomer || (!orderMatches && !existingForCustomer)) {
+          skipped += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "ERROR",
+              reasonCode: "CUSTOMER_OUT_OF_SCOPE",
+              rowNumber: row.lineNumber,
+              documentReference: row.documentNumber,
+              documentDate: row.documentDate,
+              customerOrderNumber: row.customerOrderNumber || null,
+              abOrderReference: row.abOrderNumber,
+              companyId: scope.companyId,
+              salesNet: row.goods,
+              reason: otherCustomer
+                ? `Document ${row.documentNumber} belongs to another customer and was not imported.`
+                : `Document ${row.documentNumber} is not tied to this customer's AB order or an existing document on this customer.`,
+            }),
+          );
+          continue;
+        }
+        companyId = scope.companyId;
+        if (autopartCustomerCode === "UNKNOWN") {
+          autopartCustomerCode = scope.accountCodes[0]?.trim().toUpperCase() || autopartCustomerCode;
+        }
+      }
+      if (!companyId && row.documentNumber) {
+        const existingOwners = await prisma.autopartSalesDocument.findMany({
+          where: { documentReference: row.documentNumber, documentType, companyId: { not: null } },
+          select: { companyId: true, autopartCustomerCode: true },
+        });
+        const ownerIds = [...new Set(existingOwners.map((doc) => doc.companyId).filter((id): id is string => Boolean(id)))];
+        if (ownerIds.length === 1) {
+          companyId = ownerIds[0] ?? null;
+          const ownerCode = existingOwners.find((doc) => doc.companyId === companyId)?.autopartCustomerCode;
+          if (ownerCode && ownerCode !== "UNKNOWN") autopartCustomerCode = ownerCode;
+        }
+      }
+      const eligibilityKey = `${companyId ?? ""}|${autopartCustomerCode}`;
+      let eligibility = eligibilityCache.get(eligibilityKey);
+      if (!eligibility) {
+        eligibility = await assessOngoingSalesWrite({
+          companyId,
+          autopartCode: autopartCustomerCode === "UNKNOWN" ? null : autopartCustomerCode,
+        });
+        eligibilityCache.set(eligibilityKey, eligibility);
+      }
+      if (!eligibility.persist) {
+        skipped += 1;
+        skippedIneligible += 1;
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "SKIPPED",
+            reasonCode: eligibility.reasonCode,
+            rowNumber: row.lineNumber,
+            documentReference: row.documentNumber,
+            documentDate: row.documentDate,
+            customerOrderNumber: row.customerOrderNumber || null,
+            abOrderReference: row.abOrderNumber,
+            companyId,
+            abOrderId,
+            salesNet: row.goods,
+            isWarning: true,
+            reason: eligibility.reason,
+          }),
+        );
+        continue;
+      }
+      companyId = eligibility.companyId;
+      if (autopartCustomerCode === "UNKNOWN") autopartCustomerCode = eligibility.autopartCode;
       const resolved = await resolveFeedDocument({
         documentReference: row.documentNumber,
         documentType,
         companyId,
         evidence: {
           accounts: autopartCustomerCode !== "UNKNOWN" ? [autopartCustomerCode] : [],
-          authority: abOrderId && companyId ? "ab-order" : "none",
+          authority: abOrderId ? "ab-order" : eligibility.authority,
         },
       });
       if (resolved.decision.action === "reject") {
@@ -873,6 +993,30 @@ export async function confirmAutopart504Import(
       }
 
       const existing = resolved.document;
+      if (
+        raw.customerScope &&
+        existing?.companyId &&
+        existing.companyId !== raw.customerScope.companyId
+      ) {
+        skipped += 1;
+        const detail = `Document ${row.documentNumber} is already stored for another customer. It was not overwritten.`;
+        identityConflicts.push({ documentReference: row.documentNumber, documentType, detail });
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "ERROR",
+            reasonCode: "CUSTOMER_OUT_OF_SCOPE",
+            rowNumber: row.lineNumber,
+            documentReference: row.documentNumber,
+            documentDate: row.documentDate,
+            customerOrderNumber: row.customerOrderNumber || null,
+            abOrderReference: row.abOrderNumber,
+            companyId: raw.customerScope.companyId,
+            salesNet: row.goods,
+            reason: detail,
+          }),
+        );
+        continue;
+      }
       if (resolved.decision.action === "update" && existing) {
         const identical =
           decimalStringsEqual(existing.goodsNet?.toString(), row.goods) &&
@@ -1059,19 +1203,26 @@ export async function confirmAutopart504Import(
       await refreshDocumentReconciliation(id);
     }
 
-    await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-      recordAuditEvent({
-        action: "autopart.504_trm_fulfilment_failed",
-        entityType: "AutopartCustomerImportRun",
-        entityId: run.id,
-        actorUserId: actorUserId ?? null,
-        metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
-      }),
-    );
+    if (!raw.customerScope) {
+      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+        recordAuditEvent({
+          action: "autopart.504_trm_fulfilment_failed",
+          entityType: "AutopartCustomerImportRun",
+          entityId: run.id,
+          actorUserId: actorUserId ?? null,
+          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
+        }),
+      );
+    }
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
     const attention = attentionDiagnostics(identityConflicts);
+    const sourceArchive = retainOngoingSalesReport({
+      kind: "ONGOING_504",
+      filename: raw.filename ?? null,
+      text: raw.text,
+    });
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -1094,14 +1245,17 @@ export async function confirmAutopart504Import(
           abCredits: parsed.abCreditRows.length,
           counts,
           hasRowDiagnostics: true,
+          skippedIneligible,
           identityConflicts,
           attentionRequired: attention.attention.attentionRequired,
           attentionReason: attention.attention.attentionReason,
+          sourceArchiveRetained: sourceArchive.retained,
+          ...(sourceArchive.path ? { sourceArchivePath: sourceArchive.path } : {}),
         },
       },
     });
 
-    if (!attention.attention.attentionRequired || imported + updated + unchanged > 0) {
+    if (imported + updated + unchanged > 0) {
       await prisma.autopartOngoingSalesFeedSettings.update({
         where: { id: "default" },
         data: { lastSuccess504At: new Date() },
@@ -1143,7 +1297,12 @@ export async function confirmAutopart504Import(
 
 export async function confirmAutopartTrm21qcImport(
   actorUserId: string | null,
-  raw: { text: string; filename?: string; source?: "MANUAL" | "EMAIL" | "SCHEDULE" },
+  raw: {
+    text: string;
+    filename?: string;
+    source?: "MANUAL" | "EMAIL" | "SCHEDULE";
+    customerScope?: CustomerSalesScope;
+  },
 ) {
   await assertOngoingImportActor(actorUserId);
   if (!isAutopartTrm21qcReport(raw.text)) {
@@ -1159,6 +1318,7 @@ export async function confirmAutopartTrm21qcImport(
       fileHash: hash,
       dryRun: false,
       createdById: actorUserId,
+      companyId: raw.customerScope?.companyId ?? null,
       rowsRead: parsed.rows.length,
       diagnostics: {
         source: raw.source ?? "MANUAL",
@@ -1176,9 +1336,11 @@ export async function confirmAutopartTrm21qcImport(
   let skipped = 0;
   let unchanged = 0;
   let unmatchedCustomers = 0;
+  let skippedIneligible = 0;
   const diagnosticDrafts: AutopartImportDiagnosticDraft[] = [];
   const touchedDocIds = new Set<string>();
   const identityConflicts: OngoingIdentityConflict[] = [];
+  const eligibilityCache = new Map<string, OngoingSalesWriteDecision>();
   let currentDocument: string | null = null;
 
   try {
@@ -1252,6 +1414,72 @@ export async function confirmAutopartTrm21qcImport(
       }
 
       const documentType: AutopartHistoricDocumentType = group.documentType;
+      if (raw.customerScope) {
+        const scope = raw.customerScope;
+        const outside = lines.filter((line) => !accountInCustomerScope(line.customerAccount, scope));
+        const otherCompany = group.companyId != null && group.companyId !== scope.companyId;
+        if (outside.length > 0 || otherCompany) {
+          skipped += lines.length;
+          const mixed = outside.length > 0 && outside.length < lines.length;
+          for (const line of lines) {
+            diagnosticDrafts.push(
+              makeDiagnostic({
+                status: "ERROR",
+                reasonCode: mixed ? "MIXED_CUSTOMER_DOCUMENT" : "CUSTOMER_OUT_OF_SCOPE",
+                rowNumber: line.lineNumber,
+                customerAccount: line.customerAccount,
+                documentReference: documentNumber,
+                documentDate: line.documentDate,
+                sku: line.partNumber,
+                description: line.description,
+                quantity: line.qty,
+                salesNet: line.salesNet,
+                companyId: scope.companyId,
+                reason: otherCompany
+                  ? `Document ${documentNumber} belongs to another customer and was not imported.`
+                  : mixed
+                    ? `Document ${documentNumber} mixes this customer with another account. No lines were written.`
+                    : `Account ${line.customerAccount || "blank"} is not the verified Autopart account selected for this customer.`,
+              }),
+            );
+          }
+          continue;
+        }
+      }
+      const eligibilityKey = `${raw.customerScope?.companyId ?? group.companyId ?? ""}|${first.customerAccount.toUpperCase()}`;
+      let eligibility = eligibilityCache.get(eligibilityKey);
+      if (!eligibility) {
+        eligibility = await assessOngoingSalesWrite({
+          companyId: raw.customerScope?.companyId ?? group.companyId,
+          autopartCode: first.customerAccount,
+        });
+        eligibilityCache.set(eligibilityKey, eligibility);
+      }
+      if (!eligibility.persist) {
+        skipped += lines.length;
+        skippedIneligible += lines.length;
+        unmatchedCustomers += lines.length;
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "SKIPPED",
+              reasonCode: eligibility.reasonCode,
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              documentDate: line.documentDate,
+              sku: line.partNumber,
+              description: line.description,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId: raw.customerScope?.companyId ?? group.companyId,
+              isWarning: true,
+              reason: eligibility.reason,
+            }),
+          );
+        }
+        continue;
+      }
       const verifiedCustomer = group.authority === "verified-code" || group.authority === "verified-alias";
       const mappedCompanyId = verifiedCustomer ? group.companyId : null;
       const mappedCode = group.canonicalCode;
@@ -1295,6 +1523,28 @@ export async function confirmAutopartTrm21qcImport(
       }
 
       let doc = resolved.document;
+      if (raw.customerScope && doc?.companyId && doc.companyId !== raw.customerScope.companyId) {
+        skipped += lines.length;
+        const detail = `Document ${documentNumber} is already stored for another customer. It was not overwritten.`;
+        identityConflicts.push({ documentReference: documentNumber, documentType, detail });
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "ERROR",
+              reasonCode: "CUSTOMER_OUT_OF_SCOPE",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              sku: line.partNumber,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId: raw.customerScope.companyId,
+              reason: detail,
+            }),
+          );
+        }
+        continue;
+      }
       const authorisedAccounts = new Set(
         [...group.accounts, mappedCode ?? ""].map((account) => account.trim().toUpperCase()).filter(Boolean),
       );
@@ -1326,8 +1576,42 @@ export async function confirmAutopartTrm21qcImport(
         }
         continue;
       }
-      const nextCompanyId =
-        resolved.decision.action === "update" && resolved.decision.companyAssignment === "assign"
+      const historicalSkus = new Set(
+        (
+          await prisma.autopartSalesLine.findMany({
+            where: {
+              companyId: eligibility.companyId,
+              documentType,
+              documentReference: documentNumber,
+              source: "561L",
+            },
+            select: { sku: true },
+          })
+        ).map((line) => line.sku.toUpperCase()),
+      );
+      if (lines.every((line) => historicalSkus.has(line.partNumber.toUpperCase()))) {
+        unchanged += lines.length;
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "UNCHANGED",
+              reasonCode: "ALREADY_IMPORTED",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              sku: line.partNumber,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId: eligibility.companyId,
+              reason: "This product line is already stored from the historical 561L report. It was not imported again.",
+            }),
+          );
+        }
+        continue;
+      }
+      const nextCompanyId = raw.customerScope
+        ? raw.customerScope.companyId
+        : resolved.decision.action === "update" && resolved.decision.companyAssignment === "assign"
           ? mappedCompanyId ?? doc?.companyId ?? null
           : doc?.companyId ?? (resolved.decision.action === "create" ? group.companyId : null);
       const autopartCustomerCode =
@@ -1356,7 +1640,9 @@ export async function confirmAutopartTrm21qcImport(
                   : "ONGOING_TRM21QC",
               importRunId: run.id,
               documentType: doc.documentType !== "UNKNOWN" ? doc.documentType : documentType,
-              ...(!group.companyId ? { reconciliationStatus: "UNMAPPED_CUSTOMER" as const } : {}),
+              ...(!group.companyId && !raw.customerScope
+                ? { reconciliationStatus: "UNMAPPED_CUSTOMER" as const }
+                : {}),
             },
           });
         } catch (error) {
@@ -1406,7 +1692,7 @@ export async function confirmAutopartTrm21qcImport(
               importRunId: run.id,
               has504: false,
               hasTrm21qc: true,
-              reconciliationStatus: group.companyId ? "AWAITING_504" : "UNMAPPED_CUSTOMER",
+              reconciliationStatus: group.companyId || raw.customerScope ? "AWAITING_504" : "UNMAPPED_CUSTOMER",
             },
           });
         } catch (error) {
@@ -1491,6 +1777,24 @@ export async function confirmAutopartTrm21qcImport(
           (sameIdentity && (sameIdentity.documentId == null || sameIdentity.documentId === doc.id)
             ? sameIdentity
             : null);
+        if (historicalSkus.has(line.partNumber.toUpperCase()) || existingLine?.source === "561L") {
+          unchanged += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "UNCHANGED",
+              reasonCode: "ALREADY_IMPORTED",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              sku: line.partNumber,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId,
+              reason: "This product line is already stored from the historical 561L report. It was not imported again.",
+            }),
+          );
+          continue;
+        }
         if (
           existingLine &&
           !incomingLineMayReplace({
@@ -1618,6 +1922,11 @@ export async function confirmAutopartTrm21qcImport(
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
     const attention = attentionDiagnostics(identityConflicts);
+    const sourceArchive = retainOngoingSalesReport({
+      kind: "TRM21QC",
+      filename: raw.filename ?? null,
+      text: raw.text,
+    });
 
     const finished = await prisma.autopartCustomerImportRun.update({
       where: { id: run.id },
@@ -1638,14 +1947,17 @@ export async function confirmAutopartTrm21qcImport(
           documents: parsed.documents.length,
           counts,
           hasRowDiagnostics: true,
+          skippedIneligible,
           identityConflicts,
           attentionRequired: attention.attention.attentionRequired,
           attentionReason: attention.attention.attentionReason,
+          sourceArchiveRetained: sourceArchive.retained,
+          ...(sourceArchive.path ? { sourceArchivePath: sourceArchive.path } : {}),
         },
       },
     });
 
-    if (!attention.attention.attentionRequired || imported + updated + unchanged > 0) {
+    if (imported + updated + unchanged > 0) {
       await prisma.autopartOngoingSalesFeedSettings.update({
         where: { id: "default" },
         data: { lastSuccessTrm21qcAt: new Date() },
@@ -1667,15 +1979,17 @@ export async function confirmAutopartTrm21qcImport(
       },
     });
 
-    await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-      recordAuditEvent({
-        action: "autopart.504_trm_fulfilment_failed",
-        entityType: "AutopartCustomerImportRun",
-        entityId: run.id,
-        actorUserId: actorUserId ?? null,
-        metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
-      }),
-    );
+    if (!raw.customerScope) {
+      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+        recordAuditEvent({
+          action: "autopart.504_trm_fulfilment_failed",
+          entityType: "AutopartCustomerImportRun",
+          entityId: run.id,
+          actorUserId: actorUserId ?? null,
+          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
+        }),
+      );
+    }
 
     return finished;
   } catch (error) {
