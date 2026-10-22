@@ -290,8 +290,14 @@ ACCOUNT,${creditDoc},29/09/2026,14:10,EXAMPLE MOTOR FACTORS,-33.33,-6.66,-39.99,
     expect(after.status).not.toBe("DISPATCHED");
     expect(after.status).toBe("CONFIRMED");
 
-    const inv = await prisma.invoice.findFirst({ where: { externalRef: creditDoc } });
-    expect(inv?.autopartDocumentKind).toBe("CREDIT");
+    const credit = await prisma.autopartSalesDocument.findFirstOrThrow({
+      where: { documentReference: creditDoc, documentType: "CREDIT" },
+    });
+    expect(credit.has504).toBe(true);
+    expect(credit.companyId).toBe(companyId);
+    expect(Number(credit.goodsNet)).toBeCloseTo(-33.33, 2);
+    expect(credit.abOrderId).toBe(creditOrder.id);
+    expect(await prisma.invoice.findFirst({ where: { externalRef: creditDoc } })).toBeNull();
   });
 
   it("awaits companion report without failing", async () => {
