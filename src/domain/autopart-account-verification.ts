@@ -167,7 +167,11 @@ export function assignmentBlockers(
   );
 }
 
-/** Importer authority for a company's primary Autopart ID. A stored timestamp is verified-code. */
+/**
+ * Importer authority for a primary Autopart ID held by one company.
+ * A stored timestamp is verified-code. A code also claimed by another company
+ * is ambiguous and must not use this result to claim or reassign documents.
+ */
 export function ongoingPrimaryAuthority(verifiedAt: string | Date | null | undefined): "verified-code" | "stored-code" {
   return verifiedAt ? "verified-code" : "stored-code";
 }
@@ -365,6 +369,14 @@ export function autopartMappingDisplay(input: {
     };
   }
   const recorded = input.decision === "ALREADY_VERIFIED";
+  if (recorded && input.reason) {
+    return {
+      verified: false,
+      verificationRecorded: true,
+      attention: input.reason,
+      verifiedByLabel: input.verifiedByName ?? "Automatic",
+    };
+  }
   return {
     verified: true,
     verificationRecorded: recorded,

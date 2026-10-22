@@ -15,6 +15,8 @@ import { isAutopart504Report } from "@/domain/autopart-504";
 import { isAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
 import {
   assignmentBlockers,
+  autopartMappingDisplay,
+  classifyCompanyAutopartCode,
   normaliseAssignedAutopartCode,
 } from "@/domain/autopart-account-verification";
 import {
@@ -830,17 +832,29 @@ export async function listCompanyAutopartAccounts(actorUserId: string, companyId
     });
   }
   for (const a of company.autopartAccountAliases) {
+    const foreign = await foreignAutopartClaims(a.alias, companyId);
+    const assessment = classifyCompanyAutopartCode({
+      companyId,
+      code: a.alias,
+      verifiedAt: a.verifiedAt.toISOString(),
+      claims: [{ companyId, kind: "ALIAS" }, ...foreign],
+    });
+    const display = autopartMappingDisplay({
+      decision: assessment.decision,
+      reason: assessment.reason,
+      verifiedByName: a.verifiedBy.name ?? a.verifiedBy.email,
+    });
     accounts.push({
       accountCode: a.alias,
       kind: "ALIAS",
       aliasId: a.id,
-      verified: true,
+      verified: display.verified,
       verifiedAt: a.verifiedAt.toISOString(),
       mappedAt: a.createdAt.toISOString(),
       mappedBy: a.verifiedBy.name ?? a.verifiedBy.email,
       note: a.note,
       source: "Verified account alias",
-      attention: null,
+      attention: display.attention,
     });
   }
   const links = await describeCompanyMasterLinks({

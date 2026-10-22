@@ -44,7 +44,7 @@ import {
   type TrmGroupDecision,
 } from "@/domain/autopart-trm-document-group";
 import { ongoingSalesReportContentHash } from "@/domain/autopart-ongoing-sales-attachment";
-import { ongoingPrimaryAuthority } from "@/domain/autopart-account-verification";
+import { resolveAutopartCodeOwnership } from "@/server/companies/autopart-account-verification";
 import {
   decimalStringsEqual,
   makeDiagnostic,
@@ -97,49 +97,7 @@ type AutopartAccountResolution = {
 };
 
 export async function resolveCompanyByAutopartCode(code: string): Promise<AutopartAccountResolution> {
-  const normalised = code.trim().toUpperCase();
-  if (!normalised) return { companyId: null, code: "", authority: "unresolved" };
-  const direct = await prisma.company.findFirst({
-    where: { autopartCustomerCode: { equals: normalised, mode: "insensitive" } },
-    select: { id: true, autopartCustomerCode: true, autopartCustomerCodeVerifiedAt: true },
-  });
-  if (direct?.autopartCustomerCode) {
-    return {
-      companyId: direct.id,
-      code: direct.autopartCustomerCode,
-      authority: ongoingPrimaryAuthority(direct.autopartCustomerCodeVerifiedAt),
-    };
-  }
-  const alias = await prisma.autopartCustomerAccountAlias.findFirst({
-    where: { alias: normalised },
-    select: { companyId: true, company: { select: { autopartCustomerCode: true } } },
-  });
-  if (alias) {
-    return {
-      companyId: alias.companyId,
-      code: alias.company.autopartCustomerCode ?? normalised,
-      authority: "verified-alias",
-    };
-  }
-  const linked = await prisma.autopartAccount.findMany({
-    where: {
-      sourceSystem: "AUTOPART",
-      accountCode: { equals: normalised, mode: "insensitive" },
-      companyId: { not: null },
-    },
-    select: { companyId: true, company: { select: { autopartCustomerCode: true } } },
-    take: 2,
-  });
-  const owners = new Set(linked.map((row) => row.companyId));
-  if (owners.size > 1) return { companyId: null, code: normalised, authority: "ambiguous" };
-  if (owners.size === 1 && linked[0]?.companyId) {
-    return {
-      companyId: linked[0].companyId,
-      code: linked[0].company?.autopartCustomerCode ?? normalised,
-      authority: "account-link",
-    };
-  }
-  return { companyId: null, code: normalised, authority: "unresolved" };
+  return resolveAutopartCodeOwnership(code);
 }
 
 async function resolveSkuMap(skus: string[]): Promise<Map<string, string>> {
