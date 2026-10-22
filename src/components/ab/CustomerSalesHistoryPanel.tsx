@@ -4,12 +4,14 @@ import {
   acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
   confirmCustomerSalesHistoryFn,
+  listStoredCustomerSalesHistoryFn,
   startCustomerSalesHistoryBaselineFn,
   listCustomerSalesAccountsFn,
   previewCustomerSalesHistoryFn,
 } from "@/server/phase2/fns";
 
 type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesHistoryFn>>, { ok: true }>["data"];
+type StoredHistory = Extract<Awaited<ReturnType<typeof listStoredCustomerSalesHistoryFn>>, { ok: true }>["data"];
 
 export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) {
   const [filename561l, setFilename561l] = useState("");
@@ -17,6 +19,8 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   const [text561l, setText561l] = useState("");
   const [textSlrb, setTextSlrb] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [stored, setStored] = useState<StoredHistory | null>(null);
+  const [storedError, setStoredError] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
   const [historyKind, setHistoryKind] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,6 +30,13 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
     if (accounts.ok) {
       setHistoryStatus(accounts.data.historyStatus);
       setHistoryKind(accounts.data.historyKind);
+    }
+    const storedHistory = await listStoredCustomerSalesHistoryFn({ data: { companyId } });
+    if (storedHistory.ok) {
+      setStored(storedHistory.data);
+      setStoredError(null);
+    } else {
+      setStoredError(storedHistory.error);
     }
   }
 
@@ -178,7 +189,11 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
       </form>
       {preview ? (
         <div className="border-t border-border/70 px-4 py-4">
-          <p className="text-[13px]" role="status">
+          <h4 className="text-[12px] font-bold uppercase tracking-wide">Proposed changes</h4>
+          <p className="mt-1 text-[13px] text-steel">
+            Preview shows proposed changes. Nothing in this table is stored until you import.
+          </p>
+          <p className="mt-2 text-[13px]" role="status">
             Accounts {preview.accountCodes.join(", ")}. Import {preview.counts.import}, ledger{" "}
             {preview.counts.ledger}, duplicate {preview.counts.duplicate}, rejected {preview.counts.rejected}.
             {preview.dateFrom ? ` Dates ${preview.dateFrom} to ${preview.dateTo ?? preview.dateFrom}.` : ""}
@@ -237,16 +252,62 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
                     ? "Valid rows stored. Cutover stays in review"
                     : "Sales history stored for this customer",
                 );
+                setPreview(null);
                 await refreshStatus();
-                const again = await previewCustomerSalesHistoryFn({
-                  data: { companyId, text561l, textSlrb, filename561l, filenameSlrb },
-                });
-                if (again.ok) setPreview(again.data);
               })();
             }}
           >
             Import history for this customer
           </button>
+        </div>
+      ) : null}
+      {storedError ? <p className="border-t border-border/70 px-4 py-3 text-[13px] text-warn">{storedError}</p> : null}
+      {stored && (stored.productLines > 0 || stored.paymentDocuments > 0) ? (
+        <div className="border-t border-border/70 px-4 py-4">
+          <h4 className="text-[12px] font-bold uppercase tracking-wide">Stored records</h4>
+          <p className="mt-1 text-[13px] text-steel">
+            These are the records stored for this customer. Sales Enquiry counts each invoice once.
+            Payments are stored as ledger evidence and are not product sales.
+            {stored.historyStatus === "REVIEW"
+              ? " Rejected rows still need staff acknowledgement before cutover is complete."
+              : ""}
+          </p>
+          <p className="mt-2 text-[13px]" role="status">
+            {stored.productLines} product lines, {stored.datedProductLines} dated, {stored.undatedProductLines}{" "}
+            without an invoice date, {stored.saleDocuments} sale documents, {stored.paymentDocuments} payments.
+            Stored product net {stored.productNet}.
+            {stored.truncated ? ` Showing the first ${stored.rows.length} product lines.` : ""}
+          </p>
+          {stored.rows.length > 0 ? (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-[12px]">
+                <thead className="text-[11px] uppercase tracking-wider text-steel">
+                  <tr>
+                    <th className="py-2 pr-3">Document</th>
+                    <th className="py-2 pr-3">Type</th>
+                    <th className="py-2 pr-3">Date</th>
+                    <th className="py-2 pr-3">Product</th>
+                    <th className="py-2 pr-3">Qty</th>
+                    <th className="py-2 pr-3">Amount</th>
+                    <th className="py-2 pr-3">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stored.rows.map((row, index) => (
+                    <tr key={`${row.document}-${row.sku}-${index}`} className="border-t border-border/60">
+                      <td className="py-2 pr-3 font-mono">{row.document}</td>
+                      <td className="py-2 pr-3">{row.type}</td>
+                      <td className="py-2 pr-3">{row.date ?? "Date unavailable"}</td>
+                      <td className="py-2 pr-3 font-mono">{row.sku}</td>
+                      <td className="num py-2 pr-3">{row.quantity}</td>
+                      <td className="num py-2 pr-3">{row.amount}</td>
+                      <td className="py-2 pr-3">{row.source}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

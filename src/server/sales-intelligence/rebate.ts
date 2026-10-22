@@ -543,7 +543,7 @@ export async function getCustomerRebateAnalysis(actorUserId: string, raw: unknow
     dataSource:
       `${ONGOING_SALES_DATA_SOURCE} Net spend is ongoing invoiced net sales after credits. Rebate eligibility rules are not applied.`,
     disclaimer:
-      "Net spend includes ongoing 504 and TRM21QC invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
+      "Net spend includes per-customer 561L product lines and ongoing TRM21QC invoice and credit lines in the selected period. All history includes lines with no invoice date and does not invent one. Payments are not sales. Rebate eligibility rules are not applied.",
     company,
     period: toRebatePeriodDto(primary),
     summary: {
@@ -934,7 +934,7 @@ export async function getMultiCustomerRebateAnalysis(actorUserId: string, raw: u
     dataSource:
       `${ONGOING_SALES_DATA_SOURCE} Aggregates include only customers in the actor’s Sales Intelligence scope.`,
     disclaimer:
-      "Net spend includes ongoing 504 and TRM21QC invoice and credit activity in the selected period. Rebate eligibility rules are not applied.",
+      "Net spend includes per-customer 561L product lines and ongoing TRM21QC invoice and credit lines in the selected period. All history includes lines with no invoice date and does not invent one. Payments are not sales. Rebate eligibility rules are not applied.",
     period: toRebatePeriodDto(primary),
     summary: {
       customers: rows.length,

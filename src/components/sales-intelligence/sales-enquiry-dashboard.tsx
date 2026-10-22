@@ -500,7 +500,7 @@ export function UnifiedCustomerSalesPanel({
         <p className="mt-1 text-[12px] text-steel">
           Figures are ex VAT, in GBP.
           {data.period.includesUndatedHistory
-            ? " All Time includes ongoing sales, including documents with no invoice date. The monthly chart uses dated invoices only."
+            ? " All Time includes imported 561L product lines and ongoing TRM21QC lines. A line with no invoice date is included here and is not given a date. The monthly chart uses dated invoices only."
             : " Documents without an invoice date are not included in this period."}
         </p>
         <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Reporting period">
@@ -1002,8 +1002,8 @@ function HistoricalReport({
   return (
     <div className="space-y-3">
       <p className="text-[13px] text-steel">
-        Reconciliation covers ongoing 504 and TRM21QC documents. Source records are not changed.
-        Historical 561L and SLRB purchases are not included.
+        Reconciliation covers imported 561L product lines and ongoing 504 and TRM21QC documents.
+        The same invoice is counted once. Payments are not sales. Source records are not changed.
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-md border border-border bg-card p-3">
