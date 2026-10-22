@@ -49,5 +49,12 @@ describe("ongoing sales scope", () => {
         document: { source: "ONGOING_TRM21QC", has504: false, hasTrm21qc: true },
       }),
     ).toBe(false);
+    expect(
+      isHistoricalOnlySalesLine({
+        source: null,
+        document: { source: "561L", has504: false, hasTrm21qc: false },
+      }),
+    ).toBe(false);
+    expect(isHistoricalOnlySalesLine({ source: null, document: null })).toBe(false);
   });
 });

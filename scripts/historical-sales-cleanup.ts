@@ -7,7 +7,9 @@
  * Apply is refused until a tested PostgreSQL restore and a storage backup
  * are attested. This command never deletes. The executable procedure is
  * scripts/historical-sales-cleanup.apply.sql and is run only in a later
- * reviewed session. Deploy and server start do not run either file.
+ * reviewed session. That procedure stays disabled unless the operator sets
+ * ab.historical_cleanup_enabled and the confirmation phrase in the same
+ * psql session. Deploy and server start do not run either file.
  *
  *   bun scripts/historical-sales-cleanup.ts \
  *     --apply \
