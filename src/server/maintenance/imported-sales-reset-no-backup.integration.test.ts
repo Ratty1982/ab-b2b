@@ -68,6 +68,11 @@ describe("imported sales reset without a backup", () => {
       orderStatus: string;
       stockOnHand: number;
       archiveDirectory: string;
+      historicalSources: string;
+      discardedSources: string;
+      discardArchiveDirectory: string;
+      baselineKind: string;
+      zeroHistoryKind: string;
     };
     expect(report.database).toBe(name);
     expect(report.backup).toBe("waived");
@@ -79,5 +84,11 @@ describe("imported sales reset without a backup", () => {
     expect(report.orderStatus).toBe("CONFIRMED");
     expect(report.stockOnHand).toBe(7);
     expect(report.archiveDirectory.startsWith("/tmp/ab-nobackup-archive-")).toBe(true);
-  });
+    expect(report.historicalSources).toBe("archived");
+    expect(report.discardedSources).toBe("discarded");
+    expect(report.discardArchiveDirectory.startsWith("/tmp/ab-nobackup-archive-")).toBe(true);
+    expect(report.discardArchiveDirectory).not.toBe(report.archiveDirectory);
+    expect(report.baselineKind).toBe("PRELAUNCH_HISTORY_DISCARDED");
+    expect(report.zeroHistoryKind).toBe("NO_HISTORICAL_SALES");
+  }, 240_000);
 });

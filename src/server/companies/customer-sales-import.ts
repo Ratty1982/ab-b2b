@@ -151,7 +151,7 @@ export async function listCustomerSalesAccounts(actorUserId: string, companyId: 
       autopartCustomerCode: true,
       autopartCustomerCodeVerifiedAt: true,
       autopartAccountAliases: { select: { alias: true }, orderBy: { alias: "asc" } },
-      salesCutover: { select: { historyStatus: true, historyFrom: true, historyTo: true } },
+      salesCutover: { select: { historyStatus: true, historyFrom: true, historyTo: true, evidence: true } },
     },
   });
   if (!company) throw new AuthError("Customer not found", "NOT_FOUND", 404);
@@ -175,6 +175,13 @@ export async function listCustomerSalesAccounts(actorUserId: string, companyId: 
     effects: CUSTOMER_SALES_IMPORT_EFFECTS,
     status: company.status,
     historyStatus: company.salesCutover?.historyStatus ?? "NOT_STARTED",
+    historyKind:
+      company.salesCutover?.evidence &&
+      typeof company.salesCutover.evidence === "object" &&
+      !Array.isArray(company.salesCutover.evidence) &&
+      typeof (company.salesCutover.evidence as { kind?: unknown }).kind === "string"
+        ? (company.salesCutover.evidence as { kind: string }).kind
+        : null,
     historyFrom: company.salesCutover?.historyFrom?.toISOString().slice(0, 10) ?? null,
     historyTo: company.salesCutover?.historyTo?.toISOString().slice(0, 10) ?? null,
   };

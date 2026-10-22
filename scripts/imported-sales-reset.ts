@@ -25,6 +25,14 @@
  *   AUTOPART_SALES_ARCHIVE_DIR=/data/autopart-imports/sales-reset-archive \
  *   bun scripts/imported-sales-reset.ts --execute --accept-no-backup-risk --allow-production-database
  *
+ * When the original 561L and SLRB files are already gone, discard them instead
+ * of archiving. This is only valid with the no-backup flags above. The audit
+ * report is still written under AUTOPART_SALES_ARCHIVE_DIR. The CSV files are
+ * not copied.
+ *
+ *   AB_RESET_DISCARD_SOURCES_ACK='I ACCEPT PERMANENT DISCARD OF HISTORICAL SALES SOURCES' \
+ *   bun scripts/imported-sales-reset.ts --execute --accept-no-backup-risk --allow-production-database --discard-historical-sources
+ *
  * The Coolify application image has neither Bun nor this script. Build and run
  * docker/imported-sales-reset-runner.Dockerfile instead. See
  * scripts/run-imported-sales-reset-maintenance.sh.
@@ -94,6 +102,7 @@ function formatPlan(
   identity: { database: string | null; host: string | null; port: string | null },
   executeRequested: boolean,
   noBackupRequested: boolean,
+  discardSourcesRequested: boolean,
 ): string {
   const lines = [
     "Pre-launch imported sales reset — dry-run",
@@ -127,8 +136,15 @@ function formatPlan(
   lines.push("", "These counts were read before any deletion.");
   if (noBackupRequested) {
     lines.push(
-      "No-backup mode was requested. Backup and restore checks are skipped only for database automotivebrands, and only after the irreversible-loss acknowledgement. The 561L/SLRB archive is still required.",
+      "No-backup mode was requested. Backup and restore checks are skipped only for database automotivebrands, and only after the irreversible-loss acknowledgement.",
     );
+  }
+  if (discardSourcesRequested) {
+    lines.push(
+      "Historical source discard was requested. Missing 561L and SLRB files are not copied. The audit report is still written to the persistent archive directory. This requires the no-backup acknowledgement and the discard acknowledgement.",
+    );
+  } else if (noBackupRequested) {
+    lines.push("The 561L/SLRB archive is still required.");
   }
   lines.push(
     executeRequested
@@ -154,12 +170,14 @@ async function main() {
   }
   const executeRequested = hasFlag("--execute");
   const noBackupRequested = hasFlag("--accept-no-backup-risk");
+  const discardSourcesRequested = hasFlag("--discard-historical-sources");
   const plan = await planImportedSalesReset();
   const text = formatPlan(
     plan,
     { database, host: described.host, port },
     executeRequested,
     noBackupRequested,
+    discardSourcesRequested,
   );
   const reportPath = argValue("--report");
   if (reportPath) writeFileSync(reportPath, text);
@@ -180,6 +198,8 @@ async function main() {
     allowProductionDatabase: hasFlag("--allow-production-database"),
     acceptNoBackupRisk: noBackupRequested,
     noBackupAcknowledgement: process.env["AB_RESET_NO_BACKUP_ACK"] ?? null,
+    discardHistoricalSources: discardSourcesRequested,
+    discardSourcesAcknowledgement: process.env["AB_RESET_DISCARD_SOURCES_ACK"] ?? null,
   });
   if (!result.ok) {
     console.error(result.reason);

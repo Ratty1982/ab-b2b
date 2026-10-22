@@ -5,6 +5,7 @@ import { historicalProductLineIdentity, ongoingImportAllowsCatchUp, signedHistor
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import { redactIneligibleSalesDiagnostic } from "@/domain/autopart-import-diagnostics";
 import {
+  IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT,
   IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT,
   IMPORTED_SALES_RESET_CONFIRMATION,
   IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
@@ -223,6 +224,43 @@ describe("imported sales reset gates", () => {
         removedAfter: { salesDocuments: 3 },
       }),
     ).toMatch(/salesDocuments/);
+  });
+
+  it("discards missing historical sources only with the no-backup acknowledgement", () => {
+    const base = {
+      executeRequested: true as const,
+      confirmation: IMPORTED_SALES_RESET_CONFIRMATION,
+      targetDatabase: "automotivebrands",
+      actualDatabase: "automotivebrands",
+      backupProof: null,
+      restoreCheckOk: false,
+      allowProductionDatabase: true,
+      acceptNoBackupRisk: true,
+      noBackupAcknowledgement: IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT,
+      discardHistoricalSources: true,
+      discardSourcesAcknowledgement: IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT,
+      now,
+    };
+    expect(evaluateImportedSalesResetGates(base)).toEqual({ ok: true, mode: "execute" });
+    expect(IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT).toBe(
+      "I ACCEPT PERMANENT DISCARD OF HISTORICAL SALES SOURCES",
+    );
+    const wrongAck = evaluateImportedSalesResetGates({ ...base, discardSourcesAcknowledgement: "discard them" });
+    expect(wrongAck.ok).toBe(false);
+    if (!wrongAck.ok) expect(wrongAck.reason).toMatch(/Source files were not skipped/);
+    const withoutNoBackup = evaluateImportedSalesResetGates({
+      ...base,
+      acceptNoBackupRisk: false,
+      backupProof: proof({ sourceDatabase: "automotivebrands" }),
+      restoreCheckOk: true,
+    });
+    expect(withoutNoBackup.ok).toBe(false);
+    if (!withoutNoBackup.ok) expect(withoutNoBackup.reason).toMatch(/only allowed with --accept-no-backup-risk/);
+    const archiveStillRequired = evaluateImportedSalesResetGates({
+      ...base,
+      discardHistoricalSources: false,
+    });
+    expect(archiveStillRequired).toEqual({ ok: true, mode: "execute" });
   });
 
   it("is not referenced by application startup", () => {

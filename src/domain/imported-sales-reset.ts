@@ -23,6 +23,13 @@ export const IMPORTED_SALES_NO_BACKUP_DATABASE = "automotivebrands";
 export const IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT =
   "I ACCEPT IRREVERSIBLE IMPORTED SALES LOSS WITHOUT A BACKUP";
 
+/** Required with --discard-historical-sources. It does not replace the other two phrases. */
+export const IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT =
+  "I ACCEPT PERMANENT DISCARD OF HISTORICAL SALES SOURCES";
+
+/** Cutover evidence when staff start again after the pre-launch discard. Not a zero-history claim. */
+export const PRELAUNCH_HISTORY_DISCARDED = "PRELAUNCH_HISTORY_DISCARDED" as const;
+
 /** Interactive transaction and Postgres statement budget for the delete. */
 export const IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS = 180_000;
 
@@ -61,6 +68,7 @@ export const IMPORTED_SALES_EFFECTS = [
   "Automatic 504/TRM21QC importing is switched off during execute and is left off.",
   "561L and SLRB sources are copied to AUTOPART_SALES_ARCHIVE_DIR before deletion. That directory must be a persistent volume outside the application container. Each copy is checked for existence, size, and SHA-256. A missing or mismatched source stops the reset and deletes nothing.",
   "--accept-no-backup-risk skips only the backup and restore checks, and only for the database automotivebrands. It does not skip the source archive.",
+  "--discard-historical-sources is allowed only with --accept-no-backup-risk. It skips copying missing 561L and SLRB files. The audit report is still written to the persistent archive directory.",
   "504 and TRM21QC originals are not stored in the imported-sales tables. Staff re-upload the original report from the customer workspace. Emailed copies stay in the Autopart mailbox. When the persistent archive is configured, each report is also copied there by content hash.",
   "Dry-run does not delete rows, copy files, or change the feed switch.",
 ] as const;
@@ -73,6 +81,7 @@ export const IMPORTED_SALES_APPROVAL_GATES = [
   "Set AB_RESET_CONFIRM to RESET PRELAUNCH IMPORTED SALES, AB_RESET_TARGET to the database name, and AB_RESET_RESTORE_URL to the restored copy.",
   "Pass --backup-proof for that backup. Production database names automotive_brands, automotivebrands, ab_b2b, and postgres also need --allow-production-database.",
   "A pre-launch run without a backup is separate: --accept-no-backup-risk, --allow-production-database, database automotivebrands, the reset phrase, and AB_RESET_NO_BACKUP_ACK set to the irreversible-loss acknowledgement. The source archive is still required.",
+  "When the original 561L and SLRB files are missing, also pass --discard-historical-sources and set AB_RESET_DISCARD_SOURCES_ACK. That option is refused without --accept-no-backup-risk. It writes the audit report and does not copy the CSV files.",
   "The command refuses to run during deploy, container startup, or a package lifecycle script.",
   "After execute, confirm imported-sales counts are zero, protected counts are unchanged, and the ongoing feed is off.",
   "Rebuild each Active customer from Import Sales History, then catch up 504/TRM21QC. Do not turn automatic importing back on as part of the reset.",
@@ -91,6 +100,9 @@ export type ImportedSalesResetGateInput = {
   /** Skips only the backup proof and restore query. */
   acceptNoBackupRisk?: boolean;
   noBackupAcknowledgement?: string | null;
+  /** Skips copying 561L/SLRB bytes. Allowed only with the no-backup path. */
+  discardHistoricalSources?: boolean;
+  discardSourcesAcknowledgement?: string | null;
   now?: Date;
 };
 
@@ -176,7 +188,23 @@ export function evaluateImportedSalesResetGates(
         reason: "The irreversible data-loss acknowledgement does not match. Backup and restore checks were not skipped.",
       };
     }
+    if (input.discardHistoricalSources === true) {
+      if (input.discardSourcesAcknowledgement !== IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT) {
+        return {
+          ok: false,
+          mode,
+          reason: "The historical-source discard acknowledgement does not match. Source files were not skipped.",
+        };
+      }
+    }
     return { ok: true, mode: "execute" };
+  }
+  if (input.discardHistoricalSources === true) {
+    return {
+      ok: false,
+      mode,
+      reason: "Discarding historical sources is only allowed with --accept-no-backup-risk on database automotivebrands.",
+    };
   }
   if (!input.backupProof) {
     return { ok: false, mode, reason: "A verified backup and test restore are required." };

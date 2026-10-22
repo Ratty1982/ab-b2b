@@ -17,6 +17,7 @@ import {
   type HistoricalDocumentType,
 } from "@/domain/customer-sales-history";
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
+import { PRELAUNCH_HISTORY_DISCARDED } from "@/domain/imported-sales-reset";
 import {
   foreignAutopartClaims,
   resolveAutopartCodeOwnership,
@@ -767,6 +768,12 @@ export async function acknowledgeCustomerSalesHistoryReview(actorUserId: string,
   return { companyId: target.companyId, historyStatus: "COMPLETE" as const };
 }
 
+function evidenceKind(evidence: unknown): string | null {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
+  const kind = (evidence as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : null;
+}
+
 export async function completeCustomerSalesCutoverWithoutHistory(actorUserId: string, companyId: string) {
   await requireHistoryImporter(actorUserId);
   const target = await loadCustomerSalesHistoryTarget(companyId);
@@ -779,6 +786,13 @@ export async function completeCustomerSalesCutoverWithoutHistory(actorUserId: st
     );
   }
   if (existing?.historyStatus === "COMPLETE") {
+    if (evidenceKind(existing.evidence) === PRELAUNCH_HISTORY_DISCARDED) {
+      throw new AuthError(
+        "This account has a new sales baseline after discarded pre-launch history. That is not a record of no historical sales.",
+        "VALIDATION",
+        400,
+      );
+    }
     return { companyId: target.companyId, historyStatus: "COMPLETE" as const, alreadyComplete: true };
   }
   const existingSales = await prisma.autopartSalesDocument.count({ where: { companyId: target.companyId } });
@@ -813,4 +827,80 @@ export async function completeCustomerSalesCutoverWithoutHistory(actorUserId: st
     metadata: { kind: "NO_HISTORICAL_SALES" },
   });
   return { companyId: target.companyId, historyStatus: "COMPLETE" as const, alreadyComplete: false };
+}
+
+/**
+ * Completes cutover after the pre-launch discard. This is not a claim that the
+ * customer never had historical sales.
+ */
+export async function startCustomerSalesHistoryBaseline(actorUserId: string, companyId: string) {
+  await requireHistoryImporter(actorUserId);
+  const target = await loadCustomerSalesHistoryTarget(companyId);
+  const existing = await prisma.customerSalesCutover.findUnique({ where: { companyId: target.companyId } });
+  const kind = evidenceKind(existing?.evidence);
+  if (existing?.historyStatus === "REVIEW") {
+    throw new AuthError(
+      "Historical import has exceptions waiting for review. This is not a new sales baseline.",
+      "VALIDATION",
+      400,
+    );
+  }
+  if (existing?.historyStatus === "COMPLETE" && kind === PRELAUNCH_HISTORY_DISCARDED) {
+    return {
+      companyId: target.companyId,
+      historyStatus: "COMPLETE" as const,
+      alreadyComplete: true,
+      kind: PRELAUNCH_HISTORY_DISCARDED,
+    };
+  }
+  if (existing?.historyStatus === "COMPLETE") {
+    throw new AuthError(
+      kind === "NO_HISTORICAL_SALES"
+        ? "This account is recorded as having no historical sales. That is not a discarded pre-launch baseline."
+        : "Historical sales were already recorded. Do not replace them with a discarded baseline.",
+      "VALIDATION",
+      400,
+    );
+  }
+  const existingSales = await prisma.autopartSalesDocument.count({ where: { companyId: target.companyId } });
+  if (existingSales > 0) {
+    throw new AuthError(
+      "This customer already has imported sales. Import or review that history instead of starting a discarded baseline.",
+      "VALIDATION",
+      400,
+    );
+  }
+  const evidence = {
+    kind: PRELAUNCH_HISTORY_DISCARDED,
+    note: "Pre-launch imported sales history was discarded. This does not mean the customer never had historical sales.",
+  };
+  await prisma.customerSalesCutover.upsert({
+    where: { companyId: target.companyId },
+    create: {
+      companyId: target.companyId,
+      historyStatus: "COMPLETE",
+      completedAt: new Date(),
+      completedById: actorUserId,
+      evidence,
+    },
+    update: {
+      historyStatus: "COMPLETE",
+      completedAt: new Date(),
+      completedById: actorUserId,
+      evidence,
+    },
+  });
+  await recordAuditEvent({
+    action: "autopart.customer_sales_baseline_started",
+    entityType: "Company",
+    entityId: target.companyId,
+    actorUserId,
+    metadata: { kind: PRELAUNCH_HISTORY_DISCARDED },
+  });
+  return {
+    companyId: target.companyId,
+    historyStatus: "COMPLETE" as const,
+    alreadyComplete: false,
+    kind: PRELAUNCH_HISTORY_DISCARDED,
+  };
 }

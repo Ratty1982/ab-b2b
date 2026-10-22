@@ -19,7 +19,11 @@ import {
   importedSalesResetVerificationProblem,
   type BackupProof,
 } from "@/domain/imported-sales-reset";
-import { archiveImportedSalesSources, SalesArchiveError } from "@/server/maintenance/sales-source-archive";
+import {
+  archiveImportedSalesSources,
+  prepareDiscardedSalesResetDirectory,
+  SalesArchiveError,
+} from "@/server/maintenance/sales-source-archive";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -299,6 +303,8 @@ export async function executeImportedSalesReset(input: {
   allowProductionDatabase?: boolean;
   acceptNoBackupRisk?: boolean;
   noBackupAcknowledgement?: string | null;
+  discardHistoricalSources?: boolean;
+  discardSourcesAcknowledgement?: string | null;
   now?: Date;
   actorUserId?: string | null;
 }) {
@@ -317,15 +323,22 @@ export async function executeImportedSalesReset(input: {
     ...(input.noBackupAcknowledgement != null
       ? { noBackupAcknowledgement: input.noBackupAcknowledgement }
       : {}),
+    ...(input.discardHistoricalSources != null
+      ? { discardHistoricalSources: input.discardHistoricalSources }
+      : {}),
+    ...(input.discardSourcesAcknowledgement != null
+      ? { discardSourcesAcknowledgement: input.discardSourcesAcknowledgement }
+      : {}),
     ...(input.now != null ? { now: input.now } : {}),
   });
   if (!gate.ok) return gate;
 
   const db = input.db ?? prisma;
   const before = await planImportedSalesReset(db);
+  const discardSources = input.discardHistoricalSources === true;
   let archive: { directory: string; files: number };
   try {
-    archive = await archiveImportedSalesSources(db);
+    archive = discardSources ? prepareDiscardedSalesResetDirectory() : await archiveImportedSalesSources(db);
   } catch (error) {
     const reason = error instanceof SalesArchiveError || error instanceof Error
       ? error.message
@@ -386,6 +399,7 @@ export async function executeImportedSalesReset(input: {
   const report = {
     mode: "execute" as const,
     backup: input.acceptNoBackupRisk === true ? ("waived" as const) : ("verified" as const),
+    historicalSources: discardSources ? ("discarded" as const) : ("archived" as const),
     database: input.actualDatabase,
     host: input.databaseHost ?? null,
     deleted: deletedOutcome.deleted,
@@ -424,6 +438,7 @@ export async function executeImportedSalesReset(input: {
       database: report.database,
       host: report.host,
       backup: report.backup,
+      historicalSources: report.historicalSources,
       deleted: report.deleted,
       preservedBefore: report.preservedBefore,
       preservedAfter: report.preservedAfter,

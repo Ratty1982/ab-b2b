@@ -209,7 +209,23 @@ docker run --rm \
   --execute --accept-no-backup-risk --allow-production-database
 ```
 
-Read the printed counts before the command continues into deletion. The JSON report after `IMPORTED_SALES_RESET_REPORT` includes the database name, deleted counts, preserved counts, and archive directory. The same JSON is written to `reset-audit.json` in that archive directory. Automatic 504/TRM21QC importing is left off. A failed delete rolls the sales rows back and still leaves importing off.
+When the original 561L and SLRB files are already missing, add the discard acknowledgement and `--discard-historical-sources`. That option is refused unless `--accept-no-backup-risk` is also set, and it is refused for every database other than `automotivebrands`. It deletes the same imported-sales rows, writes `manifest.json` and `reset-audit.json` on the persistent volume, and does not copy the CSV files. The backup-protected command, and the no-backup command above, still stop when a source file is missing.
+
+```bash
+docker run --rm \
+  --network <coolify_network> \
+  -e DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/automotivebrands' \
+  -e AB_RESET_CONFIRM='RESET PRELAUNCH IMPORTED SALES' \
+  -e AB_RESET_TARGET='automotivebrands' \
+  -e AB_RESET_NO_BACKUP_ACK='I ACCEPT IRREVERSIBLE IMPORTED SALES LOSS WITHOUT A BACKUP' \
+  -e AB_RESET_DISCARD_SOURCES_ACK='I ACCEPT PERMANENT DISCARD OF HISTORICAL SALES SOURCES' \
+  -e AUTOPART_SALES_ARCHIVE_DIR=/data/autopart-imports/sales-reset-archive \
+  -v /path/on/host/autopart-imports:/data/autopart-imports \
+  ab-imported-sales-reset-runner \
+  --execute --accept-no-backup-risk --allow-production-database --discard-historical-sources
+```
+
+Read the printed counts before the command continues into deletion. The JSON report after `IMPORTED_SALES_RESET_REPORT` includes the database name, deleted counts, preserved counts, archive directory, and whether historical sources were archived or discarded. The same JSON is written to `reset-audit.json` in that archive directory. Automatic 504/TRM21QC importing is left off. A failed delete rolls the sales rows back and still leaves importing off. After this reset, staff start a new sales baseline for each Active customer. That baseline is not a record that the customer never had historical sales.
 
 The upload handler streams the body. The reverse proxy in front of Nitro must allow that body size and a long read timeout on `POST /api/autopart-imports/history-all`. Set the proxy request body limit to at least 256 MB and avoid buffering the whole body in proxy memory. Preview and commit return after the request is accepted; the multi-minute write continues in the application process.
 

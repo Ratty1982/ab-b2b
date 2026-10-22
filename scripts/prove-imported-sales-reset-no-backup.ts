@@ -4,18 +4,24 @@
  */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { describeDatabaseUrl } from "../src/domain/customer-data-reset";
 import {
+  IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT,
   IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT,
   IMPORTED_SALES_NO_BACKUP_DATABASE,
   IMPORTED_SALES_RESET_CONFIRMATION,
   IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
+  PRELAUNCH_HISTORY_DISCARDED,
   importedSalesResetTransactionOptions,
 } from "../src/domain/imported-sales-reset";
 import { bootstrapRbac } from "../prisma/bootstrap/rbac";
+import {
+  completeCustomerSalesCutoverWithoutHistory,
+  startCustomerSalesHistoryBaseline,
+} from "../src/server/companies/customer-sales-history-import";
 import { deleteImportedSalesAndVerify, planImportedSalesReset } from "../src/server/maintenance/imported-sales-reset";
 
 const SCALE = 20_000;
@@ -58,6 +64,18 @@ function buildRunner() {
   if (built.status !== 0) {
     throw new Error(built.stderr || built.stdout || "Could not build the maintenance runner.");
   }
+}
+
+function containsNamedFile(directory: string, name: string): boolean {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (containsNamedFile(full, name)) return true;
+    } else if (entry.name === name) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function runCli(args: string[], extra: Record<string, string | undefined>) {
@@ -327,6 +345,7 @@ async function main() {
     preservedAfter: Record<string, number>;
     removedAfter: Record<string, number>;
     feedEnabledAfter: boolean;
+    historicalSources: string;
     archiveDirectory: string;
     auditReportPath: string | null;
     deleteTransactionMs: number;
@@ -334,6 +353,9 @@ async function main() {
     transactionTimeoutMs: number;
   };
   if (report.backup !== "waived") throw new Error("Report did not record the backup waiver.");
+  if (report.historicalSources !== "archived") {
+    throw new Error("The no-backup path discarded historical sources without the discard option.");
+  }
   if (report.database !== IMPORTED_SALES_NO_BACKUP_DATABASE) throw new Error("Report database name is wrong.");
   if (!report.host) throw new Error("Report is missing the database host.");
   if (report.feedEnabledAfter !== false) throw new Error("Automatic importing was left on.");
@@ -392,6 +414,183 @@ async function main() {
   if (audit.archiveDirectory !== report.archiveDirectory) throw new Error("Audit archive location is missing.");
   if (report.archiveDirectory.startsWith(root)) throw new Error("Archive is inside the application directory.");
 
+  const missingAgain = await prisma.autopartHistoryAllImport.create({
+    data: {
+      status: "COMMITTED",
+      filename561l: "gone.csv",
+      fileHash561l: historyHash,
+      storagePath561l: `/tmp/missing-561l-discard-${stamp}.csv`,
+    },
+  });
+  const discardedDocument = await prisma.autopartSalesDocument.create({
+    data: {
+      companyId: company.id,
+      autopartCustomerCode: account,
+      documentType: "INVOICE",
+      documentReference: `SSDISC${stamp.slice(0, 6).toUpperCase()}`,
+      source: "561L",
+    },
+  });
+  await prisma.customerSalesCutover.create({
+    data: {
+      companyId: company.id,
+      historyStatus: "COMPLETE",
+      evidence: { kind: "IMPORTED" },
+    },
+  });
+  const stillArchived = runCli(["--execute", "--accept-no-backup-risk", "--allow-production-database"], baseEnv);
+  if (stillArchived.status === 0) throw new Error("No-backup mode deleted sales when a source file was missing.");
+  if ((await prisma.autopartSalesDocument.count({ where: { id: discardedDocument.id } })) !== 1) {
+    throw new Error("A missing source file was deleted without the discard option.");
+  }
+  const wrongDiscard = runCli(
+    ["--execute", "--accept-no-backup-risk", "--allow-production-database", "--discard-historical-sources"],
+    { ...baseEnv, AB_RESET_DISCARD_SOURCES_ACK: "discard the files" },
+  );
+  if (wrongDiscard.status === 0) throw new Error("A wrong historical-source acknowledgement was accepted.");
+  if (!`${wrongDiscard.stderr}`.includes("Source files were not skipped")) {
+    throw new Error(wrongDiscard.stderr || "The discard acknowledgement refusal was not reported.");
+  }
+  if ((await prisma.autopartSalesDocument.count({ where: { id: discardedDocument.id } })) !== 1) {
+    throw new Error("A wrong discard acknowledgement deleted sales.");
+  }
+  const discardWithoutWaiver = runCli(
+    ["--execute", "--allow-production-database", "--discard-historical-sources"],
+    { ...baseEnv, AB_RESET_NO_BACKUP_ACK: undefined, AB_RESET_DISCARD_SOURCES_ACK: IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT },
+  );
+  if (discardWithoutWaiver.status === 0) throw new Error("Discard mode ran without the no-backup option.");
+  if (!`${discardWithoutWaiver.stderr}`.includes("only allowed with --accept-no-backup-risk")) {
+    throw new Error(discardWithoutWaiver.stderr || "Discard mode was not limited to the no-backup path.");
+  }
+
+  const discarded = runCli(
+    ["--execute", "--accept-no-backup-risk", "--allow-production-database", "--discard-historical-sources"],
+    { ...baseEnv, AB_RESET_DISCARD_SOURCES_ACK: IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT },
+  );
+  if (discarded.status !== 0) {
+    throw new Error(discarded.stderr || discarded.stdout || "Discard execute failed.");
+  }
+  const discardMarker = discarded.stdout.indexOf("IMPORTED_SALES_RESET_REPORT");
+  const discardReport = JSON.parse(discarded.stdout.slice(discardMarker + "IMPORTED_SALES_RESET_REPORT".length)) as {
+    historicalSources: string;
+    archiveDirectory: string;
+    archiveFiles: number;
+    auditReportPath: string | null;
+    feedEnabledAfter: boolean;
+    removedAfter: Record<string, number>;
+    preservedBefore: Record<string, number>;
+    preservedAfter: Record<string, number>;
+    database: string | null;
+  };
+  if (discardReport.historicalSources !== "discarded") throw new Error("Discard report did not record discarded sources.");
+  if (discardReport.database !== IMPORTED_SALES_NO_BACKUP_DATABASE) throw new Error("Discard report database is wrong.");
+  if (discardReport.archiveFiles !== 0) throw new Error("Discard mode copied source files.");
+  if (discardReport.feedEnabledAfter !== false) throw new Error("Discard mode left automatic importing on.");
+  if (containsNamedFile(discardReport.archiveDirectory, "561l.bin")) {
+    throw new Error("Discard mode copied a 561L file.");
+  }
+  const discardManifest = JSON.parse(
+    readFileSync(path.join(discardReport.archiveDirectory, "manifest.json"), "utf8"),
+  ) as { sources?: string; files?: number };
+  if (discardManifest.sources !== "discarded" || discardManifest.files !== 0) {
+    throw new Error("Discard manifest did not record that the original files were not copied.");
+  }
+  if (!discardReport.auditReportPath || !existsSync(discardReport.auditReportPath)) {
+    throw new Error("Discard audit report is missing.");
+  }
+  const discardAudit = JSON.parse(readFileSync(discardReport.auditReportPath, "utf8")) as {
+    historicalSources?: string;
+    database?: string;
+  };
+  if (discardAudit.historicalSources !== "discarded") throw new Error("Discard audit did not record discarded sources.");
+  if (discardAudit.database !== IMPORTED_SALES_NO_BACKUP_DATABASE) throw new Error("Discard audit database is missing.");
+  if (discardReport.archiveDirectory.startsWith(root)) throw new Error("Discard archive is inside the application directory.");
+  for (const [name, count] of Object.entries(discardReport.removedAfter)) {
+    if (count !== 0) throw new Error(`Discard left ${count} ${name} rows.`);
+  }
+  for (const [name, count] of Object.entries(discardReport.preservedBefore)) {
+    if (discardReport.preservedAfter[name] !== count) throw new Error(`Discard changed preserved ${name}.`);
+  }
+  if ((await prisma.autopartSalesDocument.count({ where: { id: discardedDocument.id } })) !== 0) {
+    throw new Error("Discard mode left the imported sales document.");
+  }
+  if ((await prisma.autopartHistoryAllImport.count({ where: { id: missingAgain.id } })) !== 0) {
+    throw new Error("Discard mode left the historical import row.");
+  }
+  if ((await prisma.customerSalesCutover.count({ where: { companyId: company.id } })) !== 0) {
+    throw new Error("Discard mode left the previous cutover record.");
+  }
+  if ((await prisma.company.count({ where: { id: company.id } })) !== 1) throw new Error("Discard deleted the company.");
+  if ((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status !== "CONFIRMED") {
+    throw new Error("Discard changed the B2B order.");
+  }
+
+  await prisma.company.update({
+    where: { id: company.id },
+    data: {
+      autopartCustomerCode: account,
+      autopartCustomerCodeVerifiedAt: new Date(),
+      autopartCustomerCodeVerifiedById: admin.id,
+    },
+  });
+  const baseline = await startCustomerSalesHistoryBaseline(admin.id, company.id);
+  if (baseline.kind !== PRELAUNCH_HISTORY_DISCARDED || baseline.alreadyComplete) {
+    throw new Error("The new sales baseline was not recorded as discarded pre-launch history.");
+  }
+  const baselineRow = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: company.id } });
+  const baselineEvidence = baselineRow.evidence as { kind?: string } | null;
+  if (baselineEvidence?.kind !== PRELAUNCH_HISTORY_DISCARDED) {
+    throw new Error("Cutover evidence claims something other than a discarded baseline.");
+  }
+  if (baselineEvidence.kind === "NO_HISTORICAL_SALES") {
+    throw new Error("The discarded baseline was recorded as zero historical sales.");
+  }
+  const repeated = await startCustomerSalesHistoryBaseline(admin.id, company.id);
+  if (!repeated.alreadyComplete || repeated.kind !== PRELAUNCH_HISTORY_DISCARDED) {
+    throw new Error("Repeating the baseline changed the discarded-history record.");
+  }
+  let zeroHistoryOnBaseline = false;
+  try {
+    await completeCustomerSalesCutoverWithoutHistory(admin.id, company.id);
+  } catch (error) {
+    zeroHistoryOnBaseline = error instanceof Error && error.message.includes("not a record of no historical sales");
+    if (!zeroHistoryOnBaseline) throw error;
+  }
+  if (!zeroHistoryOnBaseline) throw new Error("Zero-history overwrote the discarded baseline.");
+
+  const zeroAccount = `Z${account}`;
+  const zeroCompany = await prisma.company.create({
+    data: {
+      name: `Zero history ${stamp}`,
+      status: "ACTIVE",
+      autopartCustomerCode: zeroAccount,
+      autopartCustomerCodeVerifiedAt: new Date(),
+      autopartCustomerCodeVerifiedById: admin.id,
+    },
+  });
+  await prisma.autopartAccount.create({
+    data: {
+      accountCode: zeroAccount,
+      originalName: zeroCompany.name,
+      classification: "TRADE_CANDIDATE",
+      companyId: zeroCompany.id,
+    },
+  });
+  const zeroHistory = await completeCustomerSalesCutoverWithoutHistory(admin.id, zeroCompany.id);
+  const zeroRow = await prisma.customerSalesCutover.findUniqueOrThrow({ where: { companyId: zeroCompany.id } });
+  const zeroEvidence = zeroRow.evidence as { kind?: string } | null;
+  if (zeroHistory.historyStatus !== "COMPLETE" || zeroEvidence?.kind !== "NO_HISTORICAL_SALES") {
+    throw new Error("A genuine zero-history account was not recorded separately.");
+  }
+  let baselineOnZero = false;
+  try {
+    await startCustomerSalesHistoryBaseline(admin.id, zeroCompany.id);
+  } catch (error) {
+    baselineOnZero = error instanceof Error && error.message.includes("not a discarded pre-launch baseline");
+    if (!baselineOnZero) throw error;
+  }
+  if (!baselineOnZero) throw new Error("A zero-history account was overwritten with a discarded baseline.");
+
   console.log(
     JSON.stringify(
       {
@@ -407,6 +606,11 @@ async function main() {
         auditReportPath: report.auditReportPath,
         orderStatus: "CONFIRMED",
         stockOnHand: 7,
+        historicalSources: report.historicalSources,
+        discardedSources: discardReport.historicalSources,
+        discardArchiveDirectory: discardReport.archiveDirectory,
+        baselineKind: baseline.kind,
+        zeroHistoryKind: zeroEvidence?.kind ?? null,
       },
       null,
       2,
