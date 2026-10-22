@@ -6,7 +6,9 @@ import { MapAutopartAccountDrawer } from "@/components/ab/MapAutopartAccountDraw
 import { InstantText } from "@/components/ab/InstantText";
 import { Field, inputClass } from "@/components/ab/Drawer";
 import { ROUTES } from "@/lib/app-nav";
-import { listAutopartAccountMappingWorkspaceFn } from "@/server/phase2/fns";
+import { listAutopartAccountMappingWorkspaceFn, previewAutopartAccountVerificationFn, applyAutopartAccountVerificationFn } from "@/server/phase2/fns";
+import { AUTOPART_ACCOUNT_VERIFICATION_CONFIRMATION } from "@/domain/autopart-account-verification";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/customers/autopart-accounts")({
@@ -28,6 +30,11 @@ function AutopartAccountMappingPage() {
   const [data, setData] = useState<Workspace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mapAccount, setMapAccount] = useState<string | null>(null);
+  const [preview, setPreview] = useState<
+    Extract<Awaited<ReturnType<typeof previewAutopartAccountVerificationFn>>, { ok: true }>["data"] | null
+  >(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [verifying, setVerifying] = useState(false);
 
   const load = useCallback(async () => {
     const res = await listAutopartAccountMappingWorkspaceFn({
@@ -60,6 +67,96 @@ function AutopartAccountMappingPage() {
 
       <div className="space-y-4 px-4 py-4 sm:px-6">
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
+
+        <section className="space-y-3 rounded-md border border-border p-4">
+          <h2 className="font-display text-sm font-semibold uppercase">Verify assigned Autopart IDs</h2>
+          <p className="text-[12px] text-steel">
+            Unique assigned IDs can be recorded as verified. This does not approve trade applications,
+            enable portal access, change pricing or credit, or move invoices, orders, or sales history.
+            It does not run during deployment.
+          </p>
+          <button
+            type="button"
+            className="h-9 rounded-md border border-border px-3 text-[11px] font-semibold uppercase"
+            onClick={() => {
+              void previewAutopartAccountVerificationFn().then((res) => {
+                if (!res.ok) {
+                  toast.error(res.error);
+                  setPreview(null);
+                  return;
+                }
+                setPreview(res.data);
+              });
+            }}
+          >
+            Preview
+          </button>
+          {preview ? (
+            <dl className="grid gap-1 text-[12px] sm:grid-cols-2">
+              <div>Companies with an assigned ID: {preview.companiesWithAssignedIds}</div>
+              <div>Already verified: {preview.alreadyVerified}</div>
+              <div>Eligible for automatic verification: {preview.eligible}</div>
+              <div>Linked 407EXP accounts: {preview.linked407exp}</div>
+              <div>Conflicting or ambiguous IDs: {preview.conflicts}</div>
+              <div>Manual review: {preview.manualReview}</div>
+            </dl>
+          ) : null}
+          {preview && preview.samples.conflicts.length > 0 ? (
+            <div className="text-[12px]">
+              <div className="font-semibold">Conflicting IDs left unchanged</div>
+              <ul className="mt-1 space-y-1 text-steel">
+                {preview.samples.conflicts.map((row, index) => (
+                  <li key={`${row.companyId}-${row.code}-${index}`}>
+                    {row.companyName || row.companyId}: {row.code} — {row.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {preview && preview.samples.manualReview.length > 0 ? (
+            <div className="text-[12px]">
+              <div className="font-semibold">Needs manual review</div>
+              <ul className="mt-1 space-y-1 text-steel">
+                {preview.samples.manualReview.map((row) => (
+                  <li key={`${row.companyId}-${row.code}`}>
+                    {row.companyName || row.companyId}: {row.code} — {row.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <Field label="Confirmation">
+            <input
+              className={inputClass}
+              value={confirmation}
+              onChange={(e) => setConfirmation(e.target.value)}
+              placeholder={AUTOPART_ACCOUNT_VERIFICATION_CONFIRMATION}
+              autoComplete="off"
+            />
+          </Field>
+          <button
+            type="button"
+            disabled={verifying || confirmation !== AUTOPART_ACCOUNT_VERIFICATION_CONFIRMATION}
+            className="h-9 rounded-md bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+            onClick={() => {
+              setVerifying(true);
+              void applyAutopartAccountVerificationFn({ data: { confirmation } }).then((res) => {
+                setVerifying(false);
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
+                toast.success(`Recorded automatic verification for ${res.data.applied} companies`);
+                setConfirmation("");
+                void previewAutopartAccountVerificationFn().then((next) => {
+                  if (next.ok) setPreview(next.data);
+                });
+              });
+            }}
+          >
+            {verifying ? "Recording…" : "Record verification"}
+          </button>
+        </section>
 
         <div className="flex flex-wrap items-end gap-2">
           <Field label="Status">

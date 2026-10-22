@@ -282,7 +282,16 @@ export function AutopartCustomerHistoryPanel({ companyId }: { companyId: string 
           </div>
           <div>
             <dt className="text-steel">Company code verification</dt>
-            <dd>{workspace.company.verified ? "Verified" : "Not verified"}</dd>
+            <dd>
+              {workspace.company.verified
+                ? "Verified"
+                : workspace.company.autopartCustomerCode
+                  ? "Needs review"
+                  : "Not verified"}
+            </dd>
+            {workspace.company.attention ? (
+              <dd className="text-steel">{workspace.company.attention}</dd>
+            ) : null}
           </div>
           <div>
             <dt className="text-steel">Historic purchase data</dt>
