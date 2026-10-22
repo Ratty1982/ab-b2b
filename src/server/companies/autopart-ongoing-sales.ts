@@ -55,6 +55,8 @@ import {
   persistImportDiagnostics,
 } from "@/server/companies/autopart-ongoing-sales-diagnostics";
 import { run504TrmFulfilmentAfterImport } from "@/server/orders/autopart-504-trm-fulfilment";
+import type { CustomerSalesScope } from "@/domain/customer-sales-import";
+import { accountInCustomerScope } from "@/domain/customer-sales-import";
 
 export {
   getOngoingSalesImportRunDetail,
@@ -734,7 +736,12 @@ async function refreshDocumentReconciliation(documentId: string) {
 
 export async function confirmAutopart504Import(
   actorUserId: string | null,
-  raw: { text: string; filename?: string; source?: "MANUAL" | "EMAIL" | "SCHEDULE" },
+  raw: {
+    text: string;
+    filename?: string;
+    source?: "MANUAL" | "EMAIL" | "SCHEDULE";
+    customerScope?: CustomerSalesScope;
+  },
 ) {
   await assertOngoingImportActor(actorUserId);
   if (!isAutopart504Report(raw.text)) {
@@ -750,6 +757,7 @@ export async function confirmAutopart504Import(
       fileHash: hash,
       dryRun: false,
       createdById: actorUserId,
+      companyId: raw.customerScope?.companyId ?? null,
       rowsRead: parsed.rows.length,
       diagnostics: {
         source: raw.source ?? "MANUAL",
@@ -838,6 +846,46 @@ export async function confirmAutopart504Import(
       }
 
       currentDocument = row.documentNumber;
+      if (raw.customerScope) {
+        const scope = raw.customerScope;
+        const orderMatches = Boolean(abOrderId && companyId === scope.companyId);
+        const existingForCustomer =
+          !orderMatches && row.documentNumber
+            ? await prisma.autopartSalesDocument.findFirst({
+                where: {
+                  documentReference: row.documentNumber,
+                  documentType,
+                  companyId: scope.companyId,
+                },
+                select: { id: true },
+              })
+            : null;
+        const otherCustomer = companyId != null && companyId !== scope.companyId;
+        if (otherCustomer || (!orderMatches && !existingForCustomer)) {
+          skipped += 1;
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "ERROR",
+              reasonCode: "CUSTOMER_OUT_OF_SCOPE",
+              rowNumber: row.lineNumber,
+              documentReference: row.documentNumber,
+              documentDate: row.documentDate,
+              customerOrderNumber: row.customerOrderNumber || null,
+              abOrderReference: row.abOrderNumber,
+              companyId: scope.companyId,
+              salesNet: row.goods,
+              reason: otherCustomer
+                ? `Document ${row.documentNumber} belongs to another customer and was not imported.`
+                : `Document ${row.documentNumber} is not tied to this customer's AB order or an existing document on this customer.`,
+            }),
+          );
+          continue;
+        }
+        companyId = scope.companyId;
+        if (autopartCustomerCode === "UNKNOWN") {
+          autopartCustomerCode = scope.accountCodes[0]?.trim().toUpperCase() || autopartCustomerCode;
+        }
+      }
       const resolved = await resolveFeedDocument({
         documentReference: row.documentNumber,
         documentType,
@@ -873,6 +921,30 @@ export async function confirmAutopart504Import(
       }
 
       const existing = resolved.document;
+      if (
+        raw.customerScope &&
+        existing?.companyId &&
+        existing.companyId !== raw.customerScope.companyId
+      ) {
+        skipped += 1;
+        const detail = `Document ${row.documentNumber} is already stored for another customer. It was not overwritten.`;
+        identityConflicts.push({ documentReference: row.documentNumber, documentType, detail });
+        diagnosticDrafts.push(
+          makeDiagnostic({
+            status: "ERROR",
+            reasonCode: "CUSTOMER_OUT_OF_SCOPE",
+            rowNumber: row.lineNumber,
+            documentReference: row.documentNumber,
+            documentDate: row.documentDate,
+            customerOrderNumber: row.customerOrderNumber || null,
+            abOrderReference: row.abOrderNumber,
+            companyId: raw.customerScope.companyId,
+            salesNet: row.goods,
+            reason: detail,
+          }),
+        );
+        continue;
+      }
       if (resolved.decision.action === "update" && existing) {
         const identical =
           decimalStringsEqual(existing.goodsNet?.toString(), row.goods) &&
@@ -1059,15 +1131,17 @@ export async function confirmAutopart504Import(
       await refreshDocumentReconciliation(id);
     }
 
-    await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-      recordAuditEvent({
-        action: "autopart.504_trm_fulfilment_failed",
-        entityType: "AutopartCustomerImportRun",
-        entityId: run.id,
-        actorUserId: actorUserId ?? null,
-        metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
-      }),
-    );
+    if (!raw.customerScope) {
+      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+        recordAuditEvent({
+          action: "autopart.504_trm_fulfilment_failed",
+          entityType: "AutopartCustomerImportRun",
+          entityId: run.id,
+          actorUserId: actorUserId ?? null,
+          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "504" },
+        }),
+      );
+    }
 
     await persistImportDiagnostics(run.id, diagnosticDrafts);
     const counts = countsFromDrafts(diagnosticDrafts);
@@ -1143,7 +1217,12 @@ export async function confirmAutopart504Import(
 
 export async function confirmAutopartTrm21qcImport(
   actorUserId: string | null,
-  raw: { text: string; filename?: string; source?: "MANUAL" | "EMAIL" | "SCHEDULE" },
+  raw: {
+    text: string;
+    filename?: string;
+    source?: "MANUAL" | "EMAIL" | "SCHEDULE";
+    customerScope?: CustomerSalesScope;
+  },
 ) {
   await assertOngoingImportActor(actorUserId);
   if (!isAutopartTrm21qcReport(raw.text)) {
@@ -1159,6 +1238,7 @@ export async function confirmAutopartTrm21qcImport(
       fileHash: hash,
       dryRun: false,
       createdById: actorUserId,
+      companyId: raw.customerScope?.companyId ?? null,
       rowsRead: parsed.rows.length,
       diagnostics: {
         source: raw.source ?? "MANUAL",
@@ -1252,6 +1332,38 @@ export async function confirmAutopartTrm21qcImport(
       }
 
       const documentType: AutopartHistoricDocumentType = group.documentType;
+      if (raw.customerScope) {
+        const scope = raw.customerScope;
+        const outside = lines.filter((line) => !accountInCustomerScope(line.customerAccount, scope));
+        const otherCompany = group.companyId != null && group.companyId !== scope.companyId;
+        if (outside.length > 0 || otherCompany) {
+          skipped += lines.length;
+          const mixed = outside.length > 0 && outside.length < lines.length;
+          for (const line of lines) {
+            diagnosticDrafts.push(
+              makeDiagnostic({
+                status: "ERROR",
+                reasonCode: mixed ? "MIXED_CUSTOMER_DOCUMENT" : "CUSTOMER_OUT_OF_SCOPE",
+                rowNumber: line.lineNumber,
+                customerAccount: line.customerAccount,
+                documentReference: documentNumber,
+                documentDate: line.documentDate,
+                sku: line.partNumber,
+                description: line.description,
+                quantity: line.qty,
+                salesNet: line.salesNet,
+                companyId: scope.companyId,
+                reason: otherCompany
+                  ? `Document ${documentNumber} belongs to another customer and was not imported.`
+                  : mixed
+                    ? `Document ${documentNumber} mixes this customer with another account. No lines were written.`
+                    : `Account ${line.customerAccount || "blank"} is not the verified Autopart account selected for this customer.`,
+              }),
+            );
+          }
+          continue;
+        }
+      }
       const verifiedCustomer = group.authority === "verified-code" || group.authority === "verified-alias";
       const mappedCompanyId = verifiedCustomer ? group.companyId : null;
       const mappedCode = group.canonicalCode;
@@ -1295,6 +1407,28 @@ export async function confirmAutopartTrm21qcImport(
       }
 
       let doc = resolved.document;
+      if (raw.customerScope && doc?.companyId && doc.companyId !== raw.customerScope.companyId) {
+        skipped += lines.length;
+        const detail = `Document ${documentNumber} is already stored for another customer. It was not overwritten.`;
+        identityConflicts.push({ documentReference: documentNumber, documentType, detail });
+        for (const line of lines) {
+          diagnosticDrafts.push(
+            makeDiagnostic({
+              status: "ERROR",
+              reasonCode: "CUSTOMER_OUT_OF_SCOPE",
+              rowNumber: line.lineNumber,
+              customerAccount: line.customerAccount,
+              documentReference: documentNumber,
+              sku: line.partNumber,
+              quantity: line.qty,
+              salesNet: line.salesNet,
+              companyId: raw.customerScope.companyId,
+              reason: detail,
+            }),
+          );
+        }
+        continue;
+      }
       const authorisedAccounts = new Set(
         [...group.accounts, mappedCode ?? ""].map((account) => account.trim().toUpperCase()).filter(Boolean),
       );
@@ -1326,8 +1460,9 @@ export async function confirmAutopartTrm21qcImport(
         }
         continue;
       }
-      const nextCompanyId =
-        resolved.decision.action === "update" && resolved.decision.companyAssignment === "assign"
+      const nextCompanyId = raw.customerScope
+        ? raw.customerScope.companyId
+        : resolved.decision.action === "update" && resolved.decision.companyAssignment === "assign"
           ? mappedCompanyId ?? doc?.companyId ?? null
           : doc?.companyId ?? (resolved.decision.action === "create" ? group.companyId : null);
       const autopartCustomerCode =
@@ -1356,7 +1491,9 @@ export async function confirmAutopartTrm21qcImport(
                   : "ONGOING_TRM21QC",
               importRunId: run.id,
               documentType: doc.documentType !== "UNKNOWN" ? doc.documentType : documentType,
-              ...(!group.companyId ? { reconciliationStatus: "UNMAPPED_CUSTOMER" as const } : {}),
+              ...(!group.companyId && !raw.customerScope
+                ? { reconciliationStatus: "UNMAPPED_CUSTOMER" as const }
+                : {}),
             },
           });
         } catch (error) {
@@ -1406,7 +1543,7 @@ export async function confirmAutopartTrm21qcImport(
               importRunId: run.id,
               has504: false,
               hasTrm21qc: true,
-              reconciliationStatus: group.companyId ? "AWAITING_504" : "UNMAPPED_CUSTOMER",
+              reconciliationStatus: group.companyId || raw.customerScope ? "AWAITING_504" : "UNMAPPED_CUSTOMER",
             },
           });
         } catch (error) {
@@ -1667,15 +1804,17 @@ export async function confirmAutopartTrm21qcImport(
       },
     });
 
-    await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
-      recordAuditEvent({
-        action: "autopart.504_trm_fulfilment_failed",
-        entityType: "AutopartCustomerImportRun",
-        entityId: run.id,
-        actorUserId: actorUserId ?? null,
-        metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
-      }),
-    );
+    if (!raw.customerScope) {
+      await run504TrmFulfilmentAfterImport(actorUserId).catch((err) =>
+        recordAuditEvent({
+          action: "autopart.504_trm_fulfilment_failed",
+          entityType: "AutopartCustomerImportRun",
+          entityId: run.id,
+          actorUserId: actorUserId ?? null,
+          metadata: { error: err instanceof Error ? err.message : "unknown", feed: "TRM21QC" },
+        }),
+      );
+    }
 
     return finished;
   } catch (error) {

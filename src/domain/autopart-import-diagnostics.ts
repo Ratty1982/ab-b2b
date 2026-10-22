@@ -38,6 +38,7 @@ export const AUTOPART_IMPORT_REASON_CODES = [
   "MIXED_CUSTOMER_DOCUMENT",
   "MIXED_DOCUMENT_TYPE",
   "AMBIGUOUS_CUSTOMER_ACCOUNT",
+  "CUSTOMER_OUT_OF_SCOPE",
 ] as const;
 
 export type AutopartImportReasonCode = (typeof AUTOPART_IMPORT_REASON_CODES)[number];
@@ -75,6 +76,8 @@ export const AUTOPART_IMPORT_REASON_LABELS: Record<AutopartImportReasonCode, str
     "This document reference mixes invoice and credit lines. No lines were written.",
   AMBIGUOUS_CUSTOMER_ACCOUNT:
     "This Autopart account is linked to more than one customer. No lines were written.",
+  CUSTOMER_OUT_OF_SCOPE:
+    "This row is not for the verified Autopart account selected on the customer. It was not imported and was not assigned to another customer.",
 };
 
 export type AutopartImportDiagnosticDraft = {

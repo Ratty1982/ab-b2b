@@ -6,6 +6,7 @@ import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
 import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
+import { CustomerSalesImportPanel } from "@/components/ab/CustomerSalesImportPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
@@ -527,6 +528,7 @@ function CustomerWorkspace() {
         {tab === "Autopart" ? (
           <>
             <AutopartMasterAccessPanel companyId={company.id} />
+            <CustomerSalesImportPanel companyId={company.id} />
             <p className="text-[13px] text-steel">
               Historical 561L and SLRB import is retired. Invoices and credits shown to this
               customer come from the ongoing 504 and TRM21QC feeds. Verifying the Autopart ID does
