@@ -90,7 +90,8 @@ async function todayActivityByCompany(
         BOOL_OR(l."documentType" = 'INVOICE') AS "hasInvoice"
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" IN (${Prisma.join(chunk)})
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IN (${Prisma.join(chunk)})
         AND d."companyId" IS NOT NULL
         AND d."documentDate" >= ${dayStart}
         AND d."documentDate" <= ${dayEnd}
@@ -124,7 +125,8 @@ async function invoicePurchaseDatesByCompany(
       SELECT DISTINCT l."companyId" AS "companyId", d."documentDate" AS d
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" IN (${Prisma.join(chunk)})
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IN (${Prisma.join(chunk)})
         AND l."documentType" = 'INVOICE'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" IS NOT NULL
@@ -175,7 +177,8 @@ async function firstTimeSkuPurchasesToday(
         SUM(l."salesNet") AS net
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" IN (${Prisma.join(chunk)})
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IN (${Prisma.join(chunk)})
         AND l."documentType" = 'INVOICE'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" >= ${dayStart}
@@ -184,7 +187,8 @@ async function firstTimeSkuPurchasesToday(
           SELECT 1
           FROM "AutopartSalesLine" p
           INNER JOIN "AutopartSalesDocument" pd ON pd.id = p."documentId"
-          WHERE p."companyId" = l."companyId"
+          WHERE p."source" = 'ONGOING_TRM21QC'
+            AND p."companyId" = l."companyId"
             AND UPPER(p.sku) = UPPER(l.sku)
             AND p."documentType" = 'INVOICE'
             AND pd."companyId" IS NOT NULL
@@ -231,7 +235,8 @@ async function firstTimeBrandPurchasesToday(
         INNER JOIN "ProductVariant" pv ON UPPER(pv.sku) = UPPER(l.sku)
         INNER JOIN "Product" p ON p.id = pv."productId"
         INNER JOIN "Brand" b ON b.id = p."brandId"
-        WHERE l."companyId" IN (${Prisma.join(chunk)})
+        WHERE l."source" = 'ONGOING_TRM21QC'
+          AND l."companyId" IN (${Prisma.join(chunk)})
           AND l."documentType" = 'INVOICE'
           AND d."companyId" IS NOT NULL
           AND d."documentDate" >= ${dayStart}
@@ -243,7 +248,8 @@ async function firstTimeBrandPurchasesToday(
             INNER JOIN "AutopartSalesDocument" pd ON pd.id = p2."documentId"
             INNER JOIN "ProductVariant" pv2 ON UPPER(pv2.sku) = UPPER(p2.sku)
             INNER JOIN "Product" pr2 ON pr2.id = pv2."productId"
-            WHERE p2."companyId" = l."companyId"
+            WHERE p2."source" = 'ONGOING_TRM21QC'
+              AND p2."companyId" = l."companyId"
               AND p2."documentType" = 'INVOICE'
               AND pd."companyId" IS NOT NULL
               AND pd."documentDate" IS NOT NULL

@@ -215,27 +215,17 @@ describe("Autopart customer master import", () => {
     expect(ledger.balanceNote).toMatch(/not the current amount due/);
 
     const invoiceId = await stage("INVOICE_LINES", `${stamp}-561.csv`, invoiceFile());
-    await previewAutopartImport(adminId, { batchId: invoiceId });
-    const invoice = await commit(invoiceId);
-    expect(invoice.status).toBe("COMMITTED");
+    await expect(previewAutopartImport(adminId, { batchId: invoiceId })).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
+    });
+    await expect(confirmAutopartImport(adminId, invoiceId)).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
+    });
     const ledgerId = await stage("LEDGER", `${stamp}-slrb.csv`, ledgerFile());
-    await previewAutopartImport(adminId, { batchId: ledgerId });
-    const ledgerBatch = await commit(ledgerId);
-    expect(ledgerBatch.status).toBe("COMMITTED");
-
-    const issues = await prisma.autopartImportIssue.count({
-      where: { batchId: invoiceId, issueType: "INVALID_MONEY" },
+    await expect(previewAutopartImport(adminId, { batchId: ledgerId })).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
     });
-    expect(issues).toBe(1);
-    expect(await prisma.autopartInvoiceLine.count({ where: { accountCode: tradeCode } })).toBe(2);
-    const matches = await listAutopartDocumentMatches(adminId, tradeCode);
-    expect(
-      matches.items.some((item) => item.status === "MATCHED" && item.lineSalesSum === "15.00"),
-    ).toBe(true);
-    const payments = await prisma.autopartLedgerTransaction.findMany({
-      where: { accountCode: tradeCode, ledgerKind: "PAYMENT" },
-    });
-    expect(payments).toHaveLength(1);
+    expect(await prisma.autopartInvoiceLine.count({ where: { accountCode: tradeCode } })).toBe(0);
 
     const account = await prisma.autopartAccount.findUniqueOrThrow({
       where: { sourceSystem_accountCode: { sourceSystem: "AUTOPART", accountCode: tradeCode } },
@@ -258,21 +248,16 @@ describe("Autopart customer master import", () => {
         isDefault: true,
       },
     });
-    const granted = await setAutopartHistoricalAccess(adminId, {
-      accountId: account.id,
-      enabled: true,
-    });
-    expect(granted.historicalAccessEnabled).toBe(true);
+    await expect(
+      setAutopartHistoricalAccess(adminId, { accountId: account.id, enabled: true }),
+    ).rejects.toMatchObject({ code: "HISTORICAL_IMPORT_RETIRED" });
     expect(await prisma.user.count({ where: { id: tradeId } })).toBe(1);
-
-    const hidden = await getPortalAutopartHistory(tradeId);
-    expect(hidden.enabled).toBe(false);
 
     process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] = "true";
     const own = await getPortalAutopartHistory(tradeId);
-    expect(own.enabled).toBe(true);
-    expect(own.items.every((item) => item.accountCode === tradeCode)).toBe(true);
-    expect(own.total).toBe(2);
+    expect(own.enabled).toBe(false);
+    expect(own.total).toBe(0);
+    process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] = "false";
 
     const otherCompany = await prisma.company.create({
       data: { name: `Other ${stamp}`, status: "ACTIVE" },
@@ -287,11 +272,8 @@ describe("Autopart customer master import", () => {
       },
     });
     const foreign = await getPortalAutopartHistory(otherTradeId);
+    expect(foreign.enabled).toBe(false);
     expect(foreign.total).toBe(0);
-
-    await setAutopartHistoricalAccess(adminId, { accountId: account.id, enabled: false });
-    const revoked = await getPortalAutopartHistory(tradeId);
-    expect(revoked.total).toBe(0);
 
     const other = await prisma.autopartAccount.findUniqueOrThrow({
       where: { sourceSystem_accountCode: { sourceSystem: "AUTOPART", accountCode: otherCode } },
@@ -304,75 +286,29 @@ describe("Autopart customer master import", () => {
     await prisma.company.delete({ where: { id: otherCompany.id } });
   });
 
-  it("keeps a changed invoice reference as a separate line and blocks a changed ledger amount", async () => {
+  it("refuses a new 561L or SLRB batch before any row is written", async () => {
     const code = `${stamp}R`;
-    const invoiceHeader = ".Acct.,Inv & Ln,Part Number,Description,Units,Sales";
-    const originalInvoice = [
-      invoiceHeader,
-      `${code},I/INC${stamp}/1,PART-R,Rotor,2,12.50`,
-    ].join("\n");
-    const invoiceId = await stage("INVOICE_LINES", `${stamp}-inc.csv`, originalInvoice);
-    await previewAutopartImport(adminId, { batchId: invoiceId });
-    const imported = await commit(invoiceId);
-    expect(imported.status).toBe("COMMITTED");
-    expect(imported.importedRows).toBe(1);
-
-    const repeatInvoice = [
-      invoiceHeader,
-      `${code},I/INC${stamp}/1,PART-CHANGED,Rotor renamed,9,99.99`,
-      `${code},I/INC${stamp}/2,PART-NEW,New rotor,1,3.00`,
-    ].join("\n");
-    const repeatId = await stage("INVOICE_LINES", `${stamp}-inc-again.csv`, repeatInvoice);
-    const repeatPreview = await previewAutopartImport(adminId, { batchId: repeatId });
-    expect(repeatPreview.status).toBe("PREVIEWED");
-    const repeated = await commit(repeatId);
-    expect(repeated.status).toBe("COMMITTED");
-    expect(repeated.importedRows).toBe(2);
-    expect(repeated.updatedRows).toBe(0);
-    const lines = await prisma.autopartInvoiceLine.findMany({
-      where: { accountCode: code },
-      orderBy: { partNumber: "asc" },
-    });
-    expect(lines).toHaveLength(3);
-    const kept = lines.find((line) => line.partNumber === "PART-R");
-    expect(kept?.salesAmount.toFixed(2)).toBe("12.50");
-    expect(kept?.quantity.toFixed(3)).toBe("2.000");
-    expect(kept?.description).toBe("Rotor");
-    expect(kept?.importBatchId).toBe(invoiceId);
-    expect(lines.find((line) => line.partNumber === "PART-CHANGED")?.salesAmount.toFixed(2)).toBe(
-      "99.99",
+    const invoiceId = await stage(
+      "INVOICE_LINES",
+      `${stamp}-inc.csv`,
+      `.Acct.,Inv & Ln,Part Number,Description,Units,Sales\n${code},I/INC${stamp}/1,PART-R,Rotor,2,12.50`,
     );
-    expect(lines.find((line) => line.partNumber === "PART-NEW")?.salesAmount.toFixed(2)).toBe("3.00");
-
-    const ledgerHeader = "A/C,Name,Sacct,Type,Ref,Date,Tot Goods,,Tot VAT,,Total,Run Bal";
-    const originalLedger = [
-      ledgerHeader,
-      `${code},Hidden name,,INV,INC${stamp},06 Oct 14,15.00,,3.00,,18.00,18.00`,
-    ].join("\n");
-    const ledgerId = await stage("LEDGER", `${stamp}-inc-slrb.csv`, originalLedger);
-    await previewAutopartImport(adminId, { batchId: ledgerId });
-    const ledgerImported = await commit(ledgerId);
-    expect(ledgerImported.status).toBe("COMMITTED");
-    expect(ledgerImported.importedRows).toBe(1);
-
-    const repeatLedger = [
-      ledgerHeader,
-      `${code},Hidden name,,INV,INC${stamp},06 Oct 14,100.00,,20.00,,120.00,500.00`,
-      `${code},Hidden name,,INV,NEW${stamp},07 Oct 14,4.00,,0.80,,4.80,4.80`,
-    ].join("\n");
-    const ledgerRepeatId = await stage("LEDGER", `${stamp}-inc-slrb-again.csv`, repeatLedger);
-    const ledgerPreview = await previewAutopartImport(adminId, { batchId: ledgerRepeatId });
-    expect(ledgerPreview.status).toBe("UPLOADED");
-    await expect(confirmAutopartImport(adminId, ledgerRepeatId)).rejects.toThrow(/Preview the file/);
-    const ledgerRows = await prisma.autopartLedgerTransaction.findMany({
-      where: { accountCode: code },
+    await expect(previewAutopartImport(adminId, { batchId: invoiceId })).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
     });
-    expect(ledgerRows).toHaveLength(1);
-    expect(ledgerRows[0]?.goodsAmount?.toFixed(2)).toBe("15.00");
-    expect(ledgerRows[0]?.vatAmount?.toFixed(2)).toBe("3.00");
-    expect(ledgerRows[0]?.totalAmount?.toFixed(2)).toBe("18.00");
-    expect(ledgerRows[0]?.runningBalance?.toFixed(2)).toBe("18.00");
-    expect(ledgerRows[0]?.importBatchId).toBe(ledgerId);
+    await expect(confirmAutopartImport(adminId, invoiceId)).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
+    });
+    expect(await prisma.autopartInvoiceLine.count({ where: { accountCode: code } })).toBe(0);
+    const ledgerId = await stage(
+      "LEDGER",
+      `${stamp}-inc-slrb.csv`,
+      `A/C,Name,Sacct,Type,Ref,Date,Tot Goods,,Tot VAT,,Total,Run Bal\n${code},Hidden,,INV,INC${stamp},06 Oct 14,15.00,,3.00,,18.00,18.00`,
+    );
+    await expect(previewAutopartImport(adminId, { batchId: ledgerId })).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
+    });
+    expect(await prisma.autopartLedgerTransaction.count({ where: { accountCode: code } })).toBe(0);
   });
 
   it("stores an upload outside the public tree and can cancel before commit", async () => {

@@ -205,13 +205,10 @@ export function unifiedLinesCte(
     ? Prisma.sql`
       sku_refs AS (
         SELECT l."documentReference" AS ref
-        FROM "AutopartInvoiceLine" l
-        WHERE UPPER(btrim(l."partNumber")) = ${skuKey}
-          AND l."documentReference" IS NOT NULL
-        UNION
-        SELECT l."documentReference" AS ref
         FROM "AutopartSalesLine" l
-        WHERE UPPER(btrim(l."sku")) = ${skuKey}
+        WHERE l."source" = 'ONGOING_TRM21QC'
+          AND UPPER(btrim(l."sku")) = ${skuKey}
+          AND l."documentReference" IS NOT NULL
       ),`
     : Prisma.empty;
   const hFrom = skuKey
@@ -293,6 +290,7 @@ export function unifiedLinesCte(
           ORDER BY l.id
         ) AS repeat_no
       ${hFrom}
+      WHERE FALSE
       ${historicalOverlap}
     ),
     d_raw AS (
@@ -300,6 +298,7 @@ export function unifiedLinesCte(
       FROM "AutopartSalesLine" l
       LEFT JOIN "AutopartSalesDocument" doc ON doc.id = l."documentId"
       WHERE l."companyId" IS NOT NULL
+        AND l."source" = 'ONGOING_TRM21QC'
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         AND ${companyIn(universe, Prisma.sql`l."companyId"`)}
         AND ${dRestrict}
@@ -310,6 +309,7 @@ export function unifiedLinesCte(
       INNER JOIN idmap im ON im.code = UPPER(btrim(l."autopartCustomerCode"))
       LEFT JOIN "AutopartSalesDocument" doc ON doc.id = l."documentId"
       WHERE l."companyId" IS NULL
+        AND l."source" = 'ONGOING_TRM21QC'
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         AND ${companyIn(universe, Prisma.sql`im.company_id`)}
         AND ${dRestrict}
@@ -1889,19 +1889,11 @@ export async function getUnifiedReconciliationQueue(actorUserId: string, raw: un
       SELECT code, COUNT(DISTINCT company_id)::int AS companies FROM idmap_raw GROUP BY code
     ),
     pending AS (
-      SELECT UPPER(btrim(l."accountCode")) AS code, 'HISTORICAL_561L'::text AS source,
-        COUNT(*)::int AS lines, COALESCE(SUM(l."salesAmount"), 0) AS net
-      FROM "AutopartInvoiceLine" l
-      WHERE l."salesMeasure" = 'NET_EX_VAT'
-        AND NOT EXISTS (
-          SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."accountCode")) AND o.companies = 1
-        )
-      GROUP BY 1
-      UNION ALL
-      SELECT UPPER(btrim(l."autopartCustomerCode")), 'DATED_FEED'::text,
-        COUNT(*)::int, COALESCE(SUM(l."salesNet"), 0)
+      SELECT UPPER(btrim(l."autopartCustomerCode")) AS code, 'DATED_FEED'::text AS source,
+        COUNT(*)::int AS lines, COALESCE(SUM(l."salesNet"), 0) AS net
       FROM "AutopartSalesLine" l
       WHERE l."companyId" IS NULL
+        AND l."source" = 'ONGOING_TRM21QC'
         AND NOT EXISTS (
           SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."autopartCustomerCode")) AND o.companies = 1
         )
@@ -2181,11 +2173,12 @@ export async function explainUnifiedReporting(companyId: string, sku: string): P
         WHERE a."sourceSystem" = ${AUTOPART_SOURCE} AND a."companyId" IS NOT NULL
         GROUP BY 1
       )
-      SELECT UPPER(btrim(l."accountCode")) AS code, COUNT(*)::int AS lines
-      FROM "AutopartInvoiceLine" l
-      WHERE l."salesMeasure" = 'NET_EX_VAT'
+      SELECT UPPER(btrim(l."autopartCustomerCode")) AS code, COUNT(*)::int AS lines
+      FROM "AutopartSalesLine" l
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IS NULL
         AND NOT EXISTS (
-          SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."accountCode")) AND o.companies = 1
+          SELECT 1 FROM owners o WHERE o.code = UPPER(btrim(l."autopartCustomerCode")) AND o.companies = 1
         )
       GROUP BY 1
       LIMIT 25

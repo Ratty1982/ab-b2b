@@ -121,9 +121,9 @@ function CustomerList() {
           }}
           className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
         >
-          <option value="">Historical sales</option>
-          <option value="with">With historical sales</option>
-          <option value="without">Without historical sales</option>
+          <option value="">Ongoing sales</option>
+          <option value="with">With ongoing sales</option>
+          <option value="without">Without ongoing sales</option>
         </select>
         <button
           type="button"

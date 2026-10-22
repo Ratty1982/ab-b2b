@@ -185,6 +185,7 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
       ? { companyId: "__none__" }
       : {
           companyId: { in: companyIds },
+          source: "ONGOING_TRM21QC",
           ...(mamFilter
             ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" as const } }
             : {}),
@@ -305,7 +306,8 @@ export async function getCustomerGroupSalesSummary(actorUserId: string, raw: unk
         SELECT 1
         FROM "AutopartSalesLine" l
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-        WHERE l."companyId" IN (${Prisma.join(companyIds)})
+        WHERE l."source" = 'ONGOING_TRM21QC'
+          AND l."companyId" IN (${Prisma.join(companyIds)})
           AND d."documentDate" >= ${businessPeriod.start}
           AND d."documentDate" < ${businessPeriod.endExclusive}
           ${mamFilter ? Prisma.sql`AND UPPER(l."autopartCustomerCode") = ${mamFilter}` : Prisma.empty}
@@ -654,6 +656,7 @@ export async function listCustomerGroupProductLines(actorUserId: string, raw: un
 
   const lineWhere: Prisma.AutopartSalesLineWhereInput = {
     companyId: { in: companyIds },
+    source: "ONGOING_TRM21QC",
     ...(mamFilter
       ? { autopartCustomerCode: { equals: mamFilter, mode: "insensitive" as const } }
       : {}),

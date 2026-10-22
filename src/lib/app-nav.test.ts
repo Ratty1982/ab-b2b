@@ -275,10 +275,10 @@ describe("canonical navigation contract", () => {
     expect(crumbs.map((c) => c.label)).toEqual(["Website", "Homepage"]);
   });
 
-  it("builds Integrations > Autopart > Data Imports breadcrumbs", () => {
+  it("builds Integrations > Autopart > Customer master breadcrumbs", () => {
     const crumbs = breadcrumbsForPath(ROUTES.adminAutopartImports, navCtxFromUser(superAdmin));
-    expect(crumbs.map((c) => c.label)).toEqual(["Integrations", "Autopart", "Data Imports"]);
+    expect(crumbs.map((c) => c.label)).toEqual(["Integrations", "Autopart", "Customer master"]);
     const legacy = breadcrumbsForPath(ROUTES.adminAutopartImportsLegacy, navCtxFromUser(superAdmin));
-    expect(legacy.map((c) => c.label)).toEqual(["Integrations", "Autopart", "Data Imports"]);
+    expect(legacy.map((c) => c.label)).toEqual(["Integrations", "Autopart", "Customer master"]);
   });
 });

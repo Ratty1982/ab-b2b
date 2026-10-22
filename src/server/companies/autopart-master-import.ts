@@ -70,7 +70,7 @@ export function autopartImportMaxBytes(): number {
 }
 
 export function portalAutopartHistoryEnabled(): boolean {
-  return process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] === "true";
+  return false;
 }
 
 function assertInsideRoot(filePath: string): string {
@@ -82,12 +82,23 @@ function assertInsideRoot(filePath: string): string {
   return resolved;
 }
 
+export function assertHistoricalMasterImportRetired(kind: AutopartMasterImportKind): void {
+  if (kind === "INVOICE_LINES" || kind === "LEDGER") {
+    throw new AuthError(
+      "Historical 561L and SLRB imports are retired. Import the 407EXP customer master, then use the ongoing 504 and TRM21QC feeds.",
+      "HISTORICAL_IMPORT_RETIRED",
+      410,
+    );
+  }
+}
+
 export async function saveAutopartUpload(input: {
   actorUserId: string;
   filename: string;
   kind: AutopartMasterImportKind;
   body: ReadableStream<Uint8Array> | null;
 }): Promise<{ batchId: string; fileHash: string; bytes: number }> {
+  assertHistoricalMasterImportRetired(input.kind);
   await requireSystemPermission(input.actorUserId, "autopart.import.manage");
   if (!input.body) throw new AuthError("Upload body is empty", "VALIDATION", 400);
   const safeName = input.filename
@@ -208,6 +219,7 @@ export async function previewAutopartImport(
 ) {
   await requireSystemPermission(actorUserId, "autopart.import.manage");
   const batch = await ownBatch(actorUserId, input.batchId);
+  assertHistoricalMasterImportRetired(batch.kind);
   if (!batch.storagePath)
     throw new AuthError("The upload file is no longer stored", "VALIDATION", 400);
   if (batch.status === "RUNNING" || batch.status === "COMMITTED") {
@@ -399,6 +411,7 @@ async function previewCsv(
 export async function confirmAutopartImport(actorUserId: string, batchId: string) {
   await requireSystemPermission(actorUserId, "autopart.import.manage");
   const batch = await ownBatch(actorUserId, batchId);
+  assertHistoricalMasterImportRetired(batch.kind);
   if (batch.status !== "PREVIEWED" && batch.status !== "FAILED") {
     throw new AuthError("Preview the file before confirming the import", "VALIDATION", 400);
   }
@@ -1563,6 +1576,13 @@ export async function setAutopartHistoricalAccess(
   await requireSystemPermission(actorUserId, "autopart.portal-access.manage");
   const account = await prisma.autopartAccount.findUnique({ where: { id: input.accountId } });
   if (!account) throw new AuthError("Autopart account was not found", "NOT_FOUND", 404);
+  if (input.enabled) {
+    throw new AuthError(
+      "Customer portal history is retired. Ongoing invoices come from 504 and TRM21QC. This does not approve a trade application or enable login.",
+      "HISTORICAL_IMPORT_RETIRED",
+      410,
+    );
+  }
   if (!input.enabled) {
     const revoked = await prisma.autopartAccount.update({
       where: { id: account.id },
@@ -1656,7 +1676,7 @@ export async function getCompanyAutopartMaster(actorUserId: string, companyId: s
     latestBatch: history.latestBatch,
     portalHistoricalAccess: accounts.some((account) => account.historicalAccessEnabled),
     historicalLabel:
-      "Autopart historical records from the global import. Not native B2B orders. Customer portal history is a separate approval.",
+      "407EXP customer master. Historical 561L and SLRB import is retired. Ongoing invoices and credits come from 504 and TRM21QC. Linking an account does not approve portal login.",
   };
 }
 

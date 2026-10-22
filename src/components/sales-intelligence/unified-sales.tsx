@@ -15,6 +15,7 @@ import {
 import { COMPANY_STATUS_LABEL } from "@/domain/company";
 import { formatQuoteDateOnlyUk } from "@/domain/quote";
 import { formatGbp } from "@/domain/sales-intelligence";
+import { ONGOING_SALES_EMPTY } from "@/domain/ongoing-sales-scope";
 import { DATE_UNAVAILABLE } from "@/domain/unified-sales";
 import { formatQuantity } from "@/lib/format-quantity";
 import type { UnifiedCustomerSummary } from "@/server/sales-intelligence/unified-sales";
@@ -99,12 +100,22 @@ function ReportNotice({
 export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
   const { summary, identity, refresh } = figures;
   const complete = summary.certification === "COMPLETE";
+  const noOngoing =
+    summary.lineCount === 0 &&
+    summary.unreconciledLines === 0 &&
+    summary.invoiceCount === 0 &&
+    summary.creditNoteCount === 0;
   return (
     <div className="space-y-3">
-      {complete ? (
+      {noOngoing ? (
+        <p className="rounded-md border border-border px-3 py-2 text-[13px] text-steel">
+          {ONGOING_SALES_EMPTY}
+        </p>
+      ) : complete ? (
         <p className="rounded-md border border-good/30 bg-good/10 px-3 py-2 text-[12px] text-good">
-          Reconciled. Every source agrees, so the combined net is complete. Payments, receipts and
-          ledger balances are not sales and are not included.
+          Reconciled. Ongoing 504 and TRM21QC sources agree, so the combined net is complete.
+          Payments, receipts and ledger balances are not sales and are not included. Historical
+          Autopart purchases are not part of this total.
         </p>
       ) : (
         <div className="rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
@@ -112,22 +123,18 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
           <p className="mt-1">
             {summary.unreconciledLines} line{summary.unreconciledLines === 1 ? "" : "s"} on{" "}
             {summary.unreconciledDocuments} document{summary.unreconciledDocuments === 1 ? "" : "s"}{" "}
-            could not be proven unique and are held back: 561L history{" "}
-            {formatGbp(summary.unreconciledHistoricalNet)}, dated sources{" "}
-            {formatGbp(summary.unreconciledDatedNet)}. No combined total is stated. The certified
-            net excludes them.
+            could not be proven against the 504 header and are held back (
+            {formatGbp(summary.unreconciledDatedNet)}). No combined total is stated. The certified
+            net excludes them. Historical Autopart purchases are not included.
           </p>
         </div>
       )}
+      {noOngoing ? null : (
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SiMetricCard
           label={complete ? "Combined net ex VAT" : "Certified net ex VAT (excl. unreconciled)"}
           value={formatGbp(summary.combinedNet ?? summary.certifiedNet)}
           primary
-        />
-        <SiMetricCard
-          label="Historical sales ex VAT (561L, undated)"
-          value={formatGbp(summary.historicalSales)}
         />
         <SiMetricCard
           label="Dated invoiced sales ex VAT"
@@ -152,6 +159,7 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
           value={`${summary.suppressedDuplicateLines} · ${formatGbp(summary.suppressedDuplicateNet)}`}
         />
       </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 text-[12px]">
         <span className="text-[10px] font-bold uppercase tracking-wide text-steel">
           Account codes

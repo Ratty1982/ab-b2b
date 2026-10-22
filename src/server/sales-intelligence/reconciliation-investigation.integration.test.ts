@@ -175,7 +175,7 @@ beforeAll(async () => {
       descriptionSnapshot: `Synthetic ${skuOil}`,
       units: "1",
       salesNet: "10.00",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
     },
   });
 
@@ -239,24 +239,9 @@ describe("sales reconciliation investigation", () => {
     if (!result.permitted) return;
     const byRef = new Map(result.documents.map((document) => [document.reference, document]));
 
-    const conflict = byRef.get(ref("C1"));
-    expect(conflict?.reasons).toContain("CONFLICTING_OVERLAP");
-    expect(conflict?.actions).toContain("AUTOPART_SOURCE");
-    expect(conflict?.sources.map((source) => source.source).sort()).toEqual([
-      "COMPANY_561L_SLRB",
-      "HISTORICAL_561L",
-    ]);
-    expect(conflict?.difference).toBe("20.00");
-    const historicalLine = conflict?.lines.find((line) => line.source === "HISTORICAL_561L");
-    const importedLine = conflict?.lines.find((line) => line.source === "COMPANY_561L_SLRB");
-    expect(historicalLine).toMatchObject({
-      sku: skuPad.toUpperCase(),
-      qty: "1.000",
-      net: "10.00",
-      invoiceReference: ref("C1"),
-      difference: "-20.00",
-    });
-    expect(importedLine).toMatchObject({ sku: skuPad.toUpperCase(), qty: "2.000", net: "30.00", difference: "20.00" });
+    expect(byRef.get(ref("C1"))).toBeUndefined();
+    expect(byRef.get(ref("R1"))).toBeUndefined();
+    expect(byRef.get(ref("S1"))).toBeUndefined();
 
     const mismatch = byRef.get(ref("M1"));
     expect(mismatch?.reasons).toEqual(["DOCUMENT_GOODS_MISMATCH"]);
@@ -270,20 +255,7 @@ describe("sales reconciliation investigation", () => {
       difference: "15.00",
     });
 
-    const repeated = byRef.get(ref("R1"));
-    expect(repeated?.actions).toEqual(["IMPORT_PROCESSING"]);
-    expect(repeated?.lines).toHaveLength(1);
-    expect(repeated?.lines[0]?.difference).toBe("4.00");
-
-    const shared = byRef.get(ref("S1"));
-    expect(shared?.actions).toEqual(["ACCOUNT_MAPPING"]);
-    expect(shared?.accountCode).toBe(codeShared);
-    expect(shared?.lines[0]?.net).toBe("7.00");
-
-    const credit = result.documents.find((document) => document.documentType === "CREDIT");
-    expect(credit?.reference).toBeNull();
-    expect(credit?.reasons).toContain("NO_DOCUMENT_REFERENCE");
-    expect(credit?.lines[0]?.net).toBe("-3.00");
+    expect(result.documents.find((document) => document.documentType === "CREDIT")).toBeUndefined();
 
     const afterLines = await prisma.autopartInvoiceLine.count({ where: { importBatchId: batchId } });
     const afterDocs = await prisma.autopartSalesDocument.findMany({
@@ -316,7 +288,7 @@ describe("sales reconciliation investigation", () => {
     });
     expect(account.permitted).toBe(true);
     if (!account.permitted) return;
-    expect(account.documents.map((document) => document.reference)).toEqual([ref("S1")]);
+    expect(account.documents).toHaveLength(0);
 
     const historical = await getSalesReconciliationInvestigation(managerId, {
       companyId,
@@ -326,9 +298,7 @@ describe("sales reconciliation investigation", () => {
     });
     expect(historical.permitted).toBe(true);
     if (!historical.permitted) return;
-    expect(historical.documents).toHaveLength(1);
-    expect(historical.documents[0]?.lines.map((line) => line.source)).toEqual(["HISTORICAL_561L"]);
-    expect(historical.documents[0]?.sources.map((source) => source.net).sort()).toEqual(["10.00", "30.00"]);
+    expect(historical.documents).toHaveLength(0);
 
     const credits = await getSalesReconciliationInvestigation(managerId, {
       companyId,
@@ -337,18 +307,17 @@ describe("sales reconciliation investigation", () => {
     });
     expect(credits.permitted).toBe(true);
     if (!credits.permitted) return;
-    expect(credits.documents).toHaveLength(1);
-    expect(credits.documents[0]?.documentType).toBe("CREDIT");
+    expect(credits.documents).toHaveLength(0);
 
     const page = await getSalesReconciliationInvestigation(managerId, { companyId, page: 1, pageSize: 1 });
     expect(page.permitted).toBe(true);
     if (!page.permitted) return;
     expect(page.documents).toHaveLength(1);
-    expect(page.total).toBeGreaterThan(1);
+    expect(page.total).toBe(1);
     const next = await getSalesReconciliationInvestigation(managerId, { companyId, page: 2, pageSize: 1 });
     expect(next.permitted).toBe(true);
     if (!next.permitted) return;
-    expect(next.documents[0]?.reference).not.toBe(page.documents[0]?.reference);
+    expect(next.documents).toHaveLength(0);
 
     const csv = await exportSalesReconciliationCsv(managerId, {
       companyId,

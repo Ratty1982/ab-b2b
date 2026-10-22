@@ -21,16 +21,16 @@
  */
 
 export const DATED_SALES_ENQUIRY_SOURCE =
-  "Dated Sales Enquiry uses Autopart sales documents and lines that have invoice dates, including ongoing 504 and TRM21QC feeds.";
+  "Sales Enquiry uses ongoing TRM21QC product lines and 504 invoice headers. Historical 561L and SLRB purchases are not included. An empty result means no ongoing sales are recorded.";
 
 export const GLOBAL_AUTOPART_SALES_SOURCE =
-  "All Historical Autopart Sales uses undated global 561L invoice lines for Autopart accounts explicitly linked to a CRM company.";
+  "Historical 561L invoice lines are no longer a sales source. This screen does not show imported history and does not treat it as complete.";
 
 export const GLOBAL_AUTOPART_SALES_PERIOD = {
   key: "ALL_AVAILABLE_HISTORY" as const,
-  label: "All Available History",
-  note: "Global 561L invoice lines have no reliable invoice date. This is undated source history. It is not used for last 30 days, this month, last year, year on year, monthly trends, or customer inactivity.",
+  label: "Ongoing sales only",
+  note: "Imported historical purchases are not included. Use Sales Enquiry for ongoing 504 and TRM21QC documents.",
 };
 
 export const HISTORY_OVERLAP_NOTE =
-  "Global 561L lines are not added to dated Sales Enquiry totals. The same commercial invoice can also exist on a dated company import or a 504 feed, and those tables do not share a transaction identity.";
+  "Global 561L lines are not added to Sales Enquiry. Ongoing 504 and TRM21QC rows are the supported sales source.";

@@ -451,7 +451,6 @@ async function buildSnapshot(
             .filter((code) => code.attached)
             .map((code) => code.code)
             .join(", ") || "None verified",
-        "Historical sales ex VAT": summary.historicalSales,
         "Dated invoiced sales ex VAT": summary.datedInvoicedSales,
         "Credits and adjustments": summary.creditsAndAdjustments,
         "Combined net ex VAT":

@@ -313,7 +313,8 @@ beforeAll(async () => {
       documentType: "INVOICE",
       documentReference: `DATED-${stamp}`,
       documentDate: new Date("2026-03-10T12:00:00.000Z"),
-      source: "SLRB",
+      source: "ONGOING_TRM21QC",
+      hasTrm21qc: true,
       importRunId: run.id,
     },
   });
@@ -328,7 +329,7 @@ beforeAll(async () => {
       sku: matchSku,
       units: "1",
       salesNet: "999.00",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
       importRunId: run.id,
     },
   });
@@ -368,38 +369,35 @@ describe("All Historical Autopart Sales", () => {
     const dashboard = await getGlobalAutopartSalesDashboard(adminId, {
       customerGroupId: groupId,
     });
-    expect(dashboard.period.label).toBe("All Available History");
-    expect(dashboard.overlapNote).toMatch(/do not share a transaction identity/);
-    expect(dashboard.summary.netSales).toBe("0.50");
-    expect(dashboard.summary.grossSales).toBe("1.50");
-    expect(dashboard.summary.credits).toBe("-1.00");
-    expect(dashboard.summary.lineCount).toBe(6);
-    expect(dashboard.summary.invoiceCount).toBe(4);
-    expect(dashboard.summary.productCount).toBe(3);
-    expect(dashboard.summary.units).toBe("1.300");
-    expect(dashboard.summary.customersRepresented).toBe(1);
+    expect(dashboard.period.label).toBe("Ongoing sales only");
+    expect(dashboard.overlapNote).toMatch(/not added to Sales Enquiry/);
+    expect(dashboard.summary.netSales).toBe("0.00");
+    expect(dashboard.summary.grossSales).toBe("0.00");
+    expect(dashboard.summary.credits).toBe("0.00");
+    expect(dashboard.summary.lineCount).toBe(0);
+    expect(dashboard.summary.invoiceCount).toBe(0);
+    expect(dashboard.summary.productCount).toBe(0);
+    expect(dashboard.summary.units).toBe("0.000");
+    expect(dashboard.summary.customersRepresented).toBe(0);
     expect(dashboard.summary.customersWithoutLinkedHistory).toBe(1);
 
     const branded = await getGlobalAutopartSalesDashboard(adminId, {
       customerGroupId: groupId,
       brandId,
     });
-    expect(branded.summary.netSales).toBe("1.50");
+    expect(branded.summary.netSales).toBe("0.00");
     expect(branded.summary.credits).toBe("0.00");
-    expect(branded.summary.productCount).toBe(1);
+    expect(branded.summary.productCount).toBe(0);
 
     const customer = await getGlobalCustomerSalesEnquiry(adminId, { companyId: companyAId });
     expect(customer.company.status).toBe("PROSPECT");
     expect(customer.company.linkedAccountCodes).toEqual([codeA1, codeA2]);
-    expect(customer.summary.netSales).toBe("0.50");
-    expect(customer.purchasedSkus).toContain(matchSku);
-    expect(customer.crossSell.items.map((item) => item.sku)).toContain(siblingSku);
+    expect(customer.summary.netSales).toBe("0.00");
+    expect(customer.purchasedSkus).not.toContain(matchSku);
+    expect(customer.crossSell.items.map((item) => item.sku)).not.toContain(siblingSku);
     expect(customer.crossSell.note).toMatch(/stopped buying/);
     const pad = customer.products.items.find((item) => item.sku === matchSku);
-    expect(pad?.inCatalogue).toBe(true);
-    expect(pad?.tradePrice).toBe("12.34");
-    expect(pad?.customerPrice).toBe("7.50");
-    expect(pad?.studleyAvailableQty).toBe(7);
+    expect(pad).toBeUndefined();
 
     const dated = await getCustomerSalesEnquiry(adminId, {
       companyId: companyAId,
@@ -413,8 +411,8 @@ describe("All Historical Autopart Sales", () => {
 
   it("hides other customers, unlinked names, prices, and stock outside the actor's permission", async () => {
     const repProduct = await getGlobalProductSalesEnquiry(repUserId, { sku: matchSku });
-    expect(repProduct.summary.netSales).toBe("1.50");
-    expect(repProduct.customers.items.map((item) => item.companyId)).toEqual([companyAId]);
+    expect(repProduct.summary.netSales).toBe("0.00");
+    expect(repProduct.customers.items).toEqual([]);
     expect(JSON.stringify(repProduct)).not.toContain(`GH Other ${stamp}`);
 
     await expect(getGlobalCustomerSalesEnquiry(repUserId, { companyId: companyBId })).rejects.toBeInstanceOf(
@@ -444,9 +442,9 @@ describe("All Historical Autopart Sales", () => {
 
     const csv = await exportGlobalAutopartSalesCsv(repUserId, { kind: "product", sku: matchSku });
     expect(csv.csv).not.toContain(`GH Other ${stamp}`);
-    expect(csv.csv).toContain(matchSku);
+    expect(csv.csv).not.toContain(matchSku);
     const customerCsv = await exportGlobalAutopartSalesCsv(adminId, { kind: "customer", companyId: companyAId });
-    expect(customerCsv.csv).toContain("'-1.00");
+    expect(customerCsv.csv).not.toContain("'-1.00");
   });
 
   it("creates a follow-up and opportunity from undated history without a stopped-buying claim", async () => {
@@ -457,7 +455,7 @@ describe("All Historical Autopart Sales", () => {
       sku: siblingSku,
       historySource: "global",
     });
-    expect(preview.snapshot.selectedPeriod.label).toBe("All Available History");
+    expect(preview.snapshot.selectedPeriod.label).toBe("Ongoing sales only");
     expect(preview.snapshot.selectedPeriod.from).toBeNull();
     expect(preview.snapshot.sourceReason).toBe("CROSS_SELL");
     expect(preview.title.toLowerCase()).not.toContain("stopped");

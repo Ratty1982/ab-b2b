@@ -51,7 +51,7 @@ Legal pages (privacy / terms) are not yet published in CMS — the consent copy 
 | Field | Owner | Meaning |
 | --- | --- | --- |
 | `TradeApplication.claimedAutopartCustomerCode` | Applicant claim | Evidence for staff. **Never** grants pricing/orders/basket access. |
-| `Company.autopartCustomerCode` + verifiedAt/By | Staff after explicit verify | Authoritative Autopart link for order snapshots / CSV / historic import. |
+| `Company.autopartCustomerCode` + verifiedAt/By | Staff after explicit verify, or an unambiguous assignment | Authoritative Autopart link for order snapshots and CSV export. Verification does not approve portal login. |
 
 On approval, staff may optionally:
 
@@ -64,12 +64,15 @@ Already-approved applications with a claim but no company link show a **Claim no
 
 ### Existing Autopart customer vs new trade customer
 
-| Path | Historic 561L/SLRB |
-| --- | --- |
-| **Existing Autopart customer** | Optional after staff verify — Admin → Customer → Autopart |
-| **New trade customer** | Not required |
+Active trade accounts are linked from the 407EXP customer master when they start using the portal.
 
-Historic Autopart purchases are **not** imported as AB Orders. Credit position (407P100) is not imported or shown in AB. See `docs/autopart-customer-history.md`.
+1. Search the account by Autopart ID or name (Admin → Integrations → Autopart → Customer master, or the customer commercial tab).
+2. Link it to an existing company, or create a prospect when the company does not exist yet. Do not create a second company for an account that is already linked.
+3. When the Autopart ID is unambiguous it can be marked verified. Ambiguous ownership stays in Needs Review. The approved backfill for existing mappings is the separate account-verification change.
+4. Assign price list, payment terms, and sales representative on the commercial tab.
+5. Complete the existing trade approval and login invitation when the customer needs portal access.
+
+Verification does not import historical purchases, approve a trade application, or grant permissions. New customers start with no imported historical purchase history. Ongoing invoices and credits come from 504 and TRM21QC. Credit position (407P100) is not imported or shown in AB. See `docs/autopart-customer-history.md`.
 
 ---
 
