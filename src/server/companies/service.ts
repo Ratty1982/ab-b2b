@@ -125,8 +125,14 @@ export async function listCompaniesForActor(
   if (scope !== "all") {
     where.id = { in: scope.length ? scope : ["__none__"] };
   }
-  const statusScope = resolveCompanyListStatusScope(query);
-  if (statusScope.statuses.length === 1) where.status = statusScope.statuses[0];
+  const statusScope = resolveCompanyListStatusScope({
+    ...(query.q ? { q: query.q } : {}),
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.statusGroup ? { statusGroup: query.statusGroup } : {}),
+    ...(query.statusScope ? { statusScope: query.statusScope } : {}),
+  });
+  const [onlyStatus, ...moreStatuses] = statusScope.statuses;
+  if (onlyStatus && moreStatuses.length === 0) where.status = onlyStatus;
   else if (statusScope.statuses.length > 1) where.status = { in: statusScope.statuses };
   if (query.salesRepId) {
     where.assignments = { some: { salesRepId: query.salesRepId } };
