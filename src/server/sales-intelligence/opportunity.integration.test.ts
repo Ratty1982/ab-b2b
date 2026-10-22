@@ -212,7 +212,7 @@ async function seedInvoice(
         units: l.units,
         salesNet: l.salesNet,
         matchStatus: "MATCHED",
-        source: "561L",
+        source: "ONGOING_TRM21QC",
         importRunId: run.id,
       },
     });
@@ -263,7 +263,7 @@ async function seedCredit(
       units,
       salesNet,
       matchStatus: "MATCHED",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
       importRunId: run.id,
     },
   });
@@ -452,7 +452,7 @@ beforeAll(async () => {
       units: "9",
       salesNet: "90.00",
       matchStatus: "NOT_IN_AB_CATALOGUE",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
       importRunId: runHist.id,
     },
   });

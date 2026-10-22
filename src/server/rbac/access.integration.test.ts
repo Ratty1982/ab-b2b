@@ -1,9 +1,12 @@
 /**
- * Integration tests against the development database.
- * Requires: migrated DB + `bun run db:seed`
+ * Access checks for trade, sales, and admin roles.
+ * Creates its own fixture in the dedicated test database. Does not use production
+ * and does not require `bun run db:seed`.
  */
+import "@/server/testing/use-protect-integration-database";
 import { beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
+import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 
 import { loadAccessProfile, hasPermission } from "@/server/rbac/access";
 import {
@@ -35,13 +38,105 @@ async function companyIdByAccount(accountNumber: string) {
   return c.id;
 }
 
-beforeAll(async () => {
-  const count = await prisma.user.count({
-    where: { email: "trade.buyer@example.invalid" },
+async function ensureUser(
+  email: string,
+  name: string,
+  actorType: "INTERNAL" | "TRADE",
+  roles: string[],
+) {
+  const user = await prisma.user.upsert({
+    where: { email },
+    create: {
+      email,
+      name,
+      status: "ACTIVE",
+      actorType,
+      emailVerified: true,
+    },
+    update: { name, status: "ACTIVE", actorType },
   });
-  if (count === 0) {
-    throw new Error("Seed data missing — run `bun run db:seed` before integration tests");
+  for (const key of roles) {
+    const role = await prisma.role.findUniqueOrThrow({ where: { key } });
+    await prisma.userRole.upsert({
+      where: { userId_roleId: { userId: user.id, roleId: role.id } },
+      create: { userId: user.id, roleId: role.id },
+      update: {},
+    });
   }
+  return user;
+}
+
+async function ensureCompany(accountNumber: string, name: string) {
+  return prisma.company.upsert({
+    where: { accountNumber },
+    create: { accountNumber, name, status: "ACTIVE" },
+    update: { name, status: "ACTIVE" },
+  });
+}
+
+beforeAll(async () => {
+  await bootstrapRbac(prisma);
+  const assigned = await ensureCompany("ABC001", "ABC Motor Factors Ltd");
+  await ensureCompany("XYZ999", "Unassigned Factors Ltd");
+
+  const tradeAdmin = await ensureUser("trade.admin@example.invalid", "Trade admin", "TRADE", []);
+  const tradeBuyer = await ensureUser("trade.buyer@example.invalid", "Trade buyer", "TRADE", []);
+  await ensureUser("marketing@example.invalid", "Marketing", "INTERNAL", ["MARKETING"]);
+  await ensureUser("accounts@example.invalid", "Accounts", "INTERNAL", ["ACCOUNTS"]);
+  await ensureUser("superadmin@example.invalid", "Super admin", "INTERNAL", ["SUPER_ADMIN"]);
+  const salesManager = await ensureUser("sales.manager@example.invalid", "Sales manager", "INTERNAL", [
+    "SALES_MANAGER",
+  ]);
+  const salesRep = await ensureUser("sales.rep@example.invalid", "Sales rep", "INTERNAL", [
+    "SALES_REPRESENTATIVE",
+  ]);
+
+  for (const membership of [
+    { userId: tradeAdmin.id, role: "TRADE_ADMIN" as const },
+    { userId: tradeBuyer.id, role: "TRADE_BUYER" as const },
+  ]) {
+    await prisma.companyUser.upsert({
+      where: { companyId_userId: { companyId: assigned.id, userId: membership.userId } },
+      create: {
+        companyId: assigned.id,
+        userId: membership.userId,
+        role: membership.role,
+        status: "ACTIVE",
+        isDefault: true,
+      },
+      update: { role: membership.role, status: "ACTIVE" },
+    });
+  }
+
+  const managerRep = await prisma.salesRep.upsert({
+    where: { userId: salesManager.id },
+    create: { userId: salesManager.id, code: "RBAC-SM", region: "UK South", active: true },
+    update: { active: true },
+  });
+  const rep = await prisma.salesRep.upsert({
+    where: { userId: salesRep.id },
+    create: {
+      userId: salesRep.id,
+      code: "RBAC-SR",
+      region: "UK South",
+      managerId: managerRep.id,
+      active: true,
+    },
+    update: { managerId: managerRep.id, active: true },
+  });
+  const existingPrimary = await prisma.companyAssignment.findFirst({
+    where: { companyId: assigned.id, isPrimary: true, salesRepId: { not: rep.id } },
+    select: { id: true },
+  });
+  await prisma.companyAssignment.upsert({
+    where: { companyId_salesRepId: { companyId: assigned.id, salesRepId: rep.id } },
+    create: {
+      companyId: assigned.id,
+      salesRepId: rep.id,
+      isPrimary: !existingPrimary,
+    },
+    update: {},
+  });
 });
 
 describe("anonymous / missing user", () => {

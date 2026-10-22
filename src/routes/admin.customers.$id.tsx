@@ -5,7 +5,6 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
-import { AutopartCustomerHistoryPanel } from "@/components/ab/AutopartCustomerHistoryPanel";
 import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
@@ -327,8 +326,7 @@ function CustomerWorkspace() {
             {permissions.canManageUsers && company.status !== "ACTIVE" ? (
               <p className="text-[13px] text-steel">
                 Invite the customer to the trade portal only after the account is Active. Prospects
-                stay internal: historical sales are visible to authorised staff, and no login is
-                sent automatically.
+                stay internal, and no login is sent automatically.
               </p>
             ) : null}
             <WorkspaceList
@@ -529,7 +527,11 @@ function CustomerWorkspace() {
         {tab === "Autopart" ? (
           <>
             <AutopartMasterAccessPanel companyId={company.id} />
-            <AutopartCustomerHistoryPanel companyId={company.id} />
+            <p className="text-[13px] text-steel">
+              Historical 561L and SLRB import is retired. Invoices and credits shown to this
+              customer come from the ongoing 504 and TRM21QC feeds. Verifying the Autopart ID does
+              not import purchase history or approve portal login.
+            </p>
           </>
         ) : null}
 

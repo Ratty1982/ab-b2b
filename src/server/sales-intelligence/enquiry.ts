@@ -1,13 +1,12 @@
 /**
  * Internal Sales Intelligence — Sales Enquiry query layer.
  *
- * Provenance: AutopartSalesLine + AutopartSalesDocument
- * (historic 561L/SLRB + ongoing 504/TRM21QC).
+ * Provenance: ongoing TRM21QC lines and 504 headers on AutopartSalesLine
+ * and AutopartSalesDocument.
  * AB Orders and legacy 504C are intentionally excluded from realised sales metrics
  * so AB-originated orders are not double-counted once Autopart invoices arrive.
  *
- * Undated global AutopartInvoiceLine rows are a separate mode
- * (All Historical Autopart Sales). Do not add them to these period totals.
+ * Historical AutopartInvoiceLine rows are not a sales source and are not searched here.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -15,6 +14,7 @@ import { prisma } from "@/infra/database/client";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
+import { ONGOING_SALES_DATA_SOURCE } from "@/server/sales-intelligence/history-sources";
 export { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import {
   dateOnlyIsoFromDate,
@@ -316,6 +316,7 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
   const historic = await prisma.autopartSalesLine.findMany({
     where: {
       ...lineCompanyFilter(scope),
+      source: "ONGOING_TRM21QC",
       OR: [
         { sku: { contains: q, mode: "insensitive" } },
         { descriptionSnapshot: { contains: q, mode: "insensitive" } },
@@ -364,39 +365,6 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
         categoryName: null,
         inCatalogue: Boolean(row.catalogueVariantId),
         variantId: row.catalogueVariantId,
-      });
-      seen.add(key);
-      if (items.length >= limit) break;
-    }
-  }
-
-  if (items.length < limit) {
-    const globalHistoric = await prisma.autopartInvoiceLine.findMany({
-      where: {
-        salesMeasure: "NET_EX_VAT",
-        account:
-          scope === "all"
-            ? { companyId: { not: null } }
-            : { companyId: { in: scope.length ? scope : ["__none__"] } },
-        OR: [
-          { partNumber: { contains: q, mode: "insensitive" } },
-          { description: { contains: q, mode: "insensitive" } },
-        ],
-      },
-      select: { partNumber: true, description: true },
-      distinct: ["partNumber"],
-      take: limit * 2,
-    });
-    for (const row of globalHistoric) {
-      const key = row.partNumber.trim().toUpperCase();
-      if (seen.has(key)) continue;
-      items.push({
-        sku: row.partNumber.trim(),
-        name: row.description?.trim() || row.partNumber.trim(),
-        brandName: null,
-        categoryName: null,
-        inCatalogue: false,
-        variantId: null,
       });
       seen.add(key);
       if (items.length >= limit) break;
@@ -515,6 +483,7 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l."companyId" = ${input.companyId}
+        AND l."source" = 'ONGOING_TRM21QC'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" >= ${bounds.gte}
         AND d."documentDate" <= ${bounds.lte}
@@ -825,7 +794,7 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
 
   return {
     dataSource:
-      "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included in these totals.",
+      ONGOING_SALES_DATA_SOURCE,
     company: {
       id: company.id,
       name: company.name,
@@ -1114,7 +1083,7 @@ export async function getProductSalesEnquiry(actorUserId: string, raw: unknown) 
 
   return {
     dataSource:
-      "Autopart historic sales (561L + SLRB). AB Orders and 504C are not included in these totals.",
+      ONGOING_SALES_DATA_SOURCE,
     product: {
       sku: variant?.sku ?? input.sku.trim(),
       name: variant?.product.name ?? info?.description ?? historicDesc ?? input.sku.trim(),

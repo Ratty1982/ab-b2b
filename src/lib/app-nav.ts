@@ -688,7 +688,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         children: [
           {
             id: "integrations-autopart-imports",
-            label: "Data Imports",
+            label: "Customer master",
             icon: "file-text",
             to: ROUTES.adminAutopartImports,
             matchPrefixes: [ROUTES.adminAutopartImports, ROUTES.adminAutopartImportsLegacy],

@@ -3940,82 +3940,13 @@ export const declinePortalQuoteFn = createServerFn({ method: "POST" })
     }
   });
 
-export const getCompanyAutopartHistoryWorkspaceFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { companyId: string })
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return {
-        ok: true as const,
-        data: await hist.getCompanyAutopartHistoryWorkspace(userId, data.companyId),
-      };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const listCompanyAutopartInvoiceLinesFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { companyId: string; q?: string; page?: number })
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const history = await import("@/server/companies/autopart-internal-history");
-      return {
-        ok: true as const,
-        data: await history.listCompanyAutopartInvoiceLines(userId, data),
-      };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
 export const verifyAutopartAccountAliasFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
     try {
       const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return { ok: true as const, data: await hist.verifyAutopartAccountAlias(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const previewAutopartHistoryImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return { ok: true as const, data: await hist.previewAutopartHistoryImport(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const confirmAutopartHistoryImportFn = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return { ok: true as const, data: await hist.confirmAutopartHistoryImport(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const getHistoricImportRunStatusFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data as { runId: string })
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const hist = await import("@/server/companies/autopart-history");
-      return {
-        ok: true as const,
-        data: await hist.getHistoricImportRunStatus(userId, data.runId),
-      };
+      const aliases = await import("@/server/companies/autopart-account-alias");
+      return { ok: true as const, data: await aliases.verifyAutopartAccountAlias(userId, data) };
     } catch (e) {
       return toError(e);
     }
@@ -5095,66 +5026,6 @@ export const pollBackorderMailboxNowFn = createServerFn({ method: "POST" }).hand
     return toError(e);
   }
 });
-
-export const getGlobalAutopartSalesDashboardFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const history = await import("@/server/sales-intelligence/global-history");
-      return { ok: true as const, data: await history.getGlobalAutopartSalesDashboard(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const getGlobalCustomerSalesEnquiryFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const history = await import("@/server/sales-intelligence/global-history");
-      return { ok: true as const, data: await history.getGlobalCustomerSalesEnquiry(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const getGlobalProductSalesEnquiryFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const history = await import("@/server/sales-intelligence/global-history");
-      return { ok: true as const, data: await history.getGlobalProductSalesEnquiry(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const searchGlobalAutopartSalesFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const history = await import("@/server/sales-intelligence/global-history");
-      return { ok: true as const, data: await history.searchGlobalAutopartSales(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
-
-export const exportGlobalAutopartSalesCsvFn = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => data)
-  .handler(async ({ data }) => {
-    try {
-      const userId = await requireUserId();
-      const history = await import("@/server/sales-intelligence/global-history");
-      return { ok: true as const, data: await history.exportGlobalAutopartSalesCsv(userId, data) };
-    } catch (e) {
-      return toError(e);
-    }
-  });
 
 export const getUnifiedCustomerHistoryFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)

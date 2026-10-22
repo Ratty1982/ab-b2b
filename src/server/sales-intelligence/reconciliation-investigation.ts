@@ -105,17 +105,11 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
   if (filters.documentType) unifiedParts.push(Prisma.sql`u.doc_type = ${filters.documentType}`);
   const unifiedWhere = Prisma.join(unifiedParts, " AND ");
   const ambiguousGate = includeAmbiguous ? Prisma.sql`TRUE` : Prisma.sql`FALSE`;
-  const accountHistorical = filters.accountCode
-    ? Prisma.sql`AND UPPER(btrim(l."accountCode")) = ${filters.accountCode}`
-    : Prisma.empty;
   const accountDated = filters.accountCode
     ? Prisma.sql`AND UPPER(btrim(l."autopartCustomerCode")) = ${filters.accountCode}`
     : Prisma.empty;
   const accountHeader = filters.accountCode
     ? Prisma.sql`AND UPPER(btrim(d."autopartCustomerCode")) = ${filters.accountCode}`
-    : Prisma.empty;
-  const typeHistorical = filters.documentType
-    ? Prisma.sql`AND (CASE WHEN l."documentType" IN ('INVOICE', 'CREDIT') THEN l."documentType" ELSE 'UNKNOWN' END) = ${filters.documentType}`
     : Prisma.empty;
   const typeDated = filters.documentType
     ? Prisma.sql`AND l."documentType"::text = ${filters.documentType}`
@@ -199,24 +193,6 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
       UNION ALL
       SELECT
         l.id,
-        'HISTORICAL_561L'::text,
-        UPPER(btrim(l."accountCode")),
-        CASE WHEN l."documentType" IN ('INVOICE', 'CREDIT') THEN l."documentType" ELSE 'UNKNOWN' END,
-        NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), ''),
-        UPPER(btrim(l."partNumber")),
-        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."quantity") ELSE l."quantity" END)::numeric(18, 3),
-        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."salesAmount") ELSE l."salesAmount" END)::numeric(18, 2),
-        ${AMBIGUOUS_ACCOUNT_REASON}::text,
-        COALESCE(NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), ''), 'LINE:' || l.id)
-      FROM "AutopartInvoiceLine" l
-      INNER JOIN ambiguous_codes a ON a.code = UPPER(btrim(l."accountCode"))
-      WHERE ${ambiguousGate}
-        AND l."salesMeasure" = 'NET_EX_VAT'
-        ${accountHistorical}
-        ${typeHistorical}
-      UNION ALL
-      SELECT
-        l.id,
         CASE WHEN l."source" = 'ONGOING_TRM21QC' THEN 'TRM21QC_FEED' ELSE 'COMPANY_561L_SLRB' END,
         UPPER(btrim(l."autopartCustomerCode")),
         l."documentType"::text,
@@ -229,6 +205,7 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
       FROM "AutopartSalesLine" l
       INNER JOIN ambiguous_codes a ON a.code = UPPER(btrim(l."autopartCustomerCode"))
       WHERE ${ambiguousGate}
+        AND l."source" = 'ONGOING_TRM21QC'
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         ${accountDated}
         ${typeDated}

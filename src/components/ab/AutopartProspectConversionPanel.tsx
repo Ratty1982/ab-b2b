@@ -180,14 +180,16 @@ export function AutopartProspectConversionPanel() {
               Same name, different CRM code: {summary.sameNameDifferentCode.toLocaleString("en-GB")}
             </li>
             <li>
-              Eligible with 561L history: {summary.eligibleWithInvoiceLines.toLocaleString("en-GB")}
+              Eligible accounts that still have imported invoice lines:{" "}
+              {summary.eligibleWithInvoiceLines.toLocaleString("en-GB")}
             </li>
             <li>
-              Eligible without 561L history:{" "}
+              Eligible accounts without imported invoice lines:{" "}
               {summary.eligibleWithoutInvoiceLines.toLocaleString("en-GB")}
             </li>
             <li>
-              Eligible with SLRB records: {summary.eligibleWithLedger.toLocaleString("en-GB")}
+              Eligible accounts that still have imported ledger rows:{" "}
+              {summary.eligibleWithLedger.toLocaleString("en-GB")}
             </li>
             <li>
               Unmatched invoice codes: {summary.unmatchedInvoiceCodes.toLocaleString("en-GB")}

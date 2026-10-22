@@ -196,7 +196,8 @@ async function netSalesByCompany(
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
         LEFT JOIN "ProductVariant" pv ON UPPER(pv.sku) = UPPER(l.sku)
         LEFT JOIN "Product" p ON p.id = pv."productId"
-        WHERE l."companyId" IN (${Prisma.join(chunk)})
+        WHERE l."source" = 'ONGOING_TRM21QC'
+          AND l."companyId" IN (${Prisma.join(chunk)})
           AND d."companyId" IS NOT NULL
           AND d."documentDate" >= ${bounds.gte}
           AND d."documentDate" <= ${bounds.lte}
@@ -209,6 +210,7 @@ async function netSalesByCompany(
         by: ["companyId"],
         where: {
           companyId: { in: chunk },
+          source: "ONGOING_TRM21QC",
           document: {
             is: {
               companyId: { not: null },
@@ -241,7 +243,8 @@ async function invoiceSkuSetsByCompany(
       SELECT DISTINCT l."companyId" AS "companyId", UPPER(l.sku) AS sku
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" IN (${Prisma.join(chunk)})
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IN (${Prisma.join(chunk)})
         AND l."documentType" = 'INVOICE'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" >= ${bounds.gte}
@@ -272,7 +275,8 @@ async function invoicePurchaseDatesByCompany(
       SELECT DISTINCT l."companyId" AS "companyId", d."documentDate" AS d
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" IN (${Prisma.join(chunk)})
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IN (${Prisma.join(chunk)})
         AND l."documentType" = 'INVOICE'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" IS NOT NULL
@@ -304,7 +308,8 @@ async function productsPurchasedByCompany(
       SELECT l."companyId" AS "companyId", COUNT(DISTINCT UPPER(l.sku))::bigint AS n
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" IN (${Prisma.join(chunk)})
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND l."companyId" IN (${Prisma.join(chunk)})
         AND l."documentType" = 'INVOICE'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" >= ${bounds.gte}

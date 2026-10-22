@@ -76,8 +76,8 @@ export const PRESERVED = [
 
 /**
  * Rows the execute path removes. Ongoing 504/TRM rows are excluded inside these tables.
- * Global invoice lines are the overlapping 561L copy. Removing them leaves one historical
- * source: the next 561L-ALL and SLRB-ALL import, written only onto verified companies.
+ * Global invoice lines are the retired 561L copy. Historical 561L-ALL and SLRB-ALL
+ * imports are no longer a supported way to restore sales.
  */
 export const RESET = [
   { name: "AutopartInvoiceLine", reason: "Global 561L history. This is not the 407EXP customer master and is not rebuilt." },
@@ -95,11 +95,11 @@ export const RESET = [
 
 /** What reporting does after the historical copies are removed. */
 export const REPORTING_EFFECTS = [
-  "Sales Intelligence stops counting global 561L rows when those rows are removed. A customer is counted again only after the 561L-ALL and SLRB-ALL import attaches that verified account.",
-  "Prospects whose history exists only in the global 561L copy lose that history until their Autopart account is verified. The customer record and 407EXP account stay. Their rows wait in the historical review queue and are not a second certified copy.",
-  "Dated Sales Intelligence and portal purchase history read AutopartSalesLine. Historical lines go away. Ongoing TRM21QC lines stay.",
-  "AutopartDocumentMatch is cleared and is not rebuilt. The all-accounts import checks 561L line nets against SLRB goods on the customer document instead.",
-  "Do not confirm a legacy global 561L or SLRB batch after this reset. That would recreate the overlapping copy.",
+  "Sales Intelligence counts ongoing 504 and TRM21QC rows only. Removing global 561L rows does not require another historical import.",
+  "A customer with no ongoing 504 or TRM21QC documents shows an empty sales state. The company, 407EXP account, and verified Autopart ID stay.",
+  "Dated Sales Intelligence and portal purchase history read ongoing AutopartSalesLine rows. Historical lines are excluded.",
+  "AutopartDocumentMatch is a retired historical reconciliation table. Current documents keep their own 504 and TRM checks.",
+  "Do not confirm a legacy global 561L or SLRB batch. Those uploads are refused.",
 ] as const;
 
 /** Explicitly not part of this reset. No replay path is provided. */
@@ -117,9 +117,9 @@ export const RESET_CHECKLIST = [
   "Read the order export report. If a CSV was sent to Autopart, removing the order here does not remove it from Autopart.",
   "Run the tool again with the backup proof, the database name, and the confirmation phrase. It still does nothing during deploy or startup.",
   "Check the audit report. Customer master, staff, products, prices, and daily 504/TRM rows must match the before counts.",
-  "Turn the daily sales schedules back on only after the report is accepted.",
-  "Import the fresh 561L-ALL and SLRB-ALL pair once. Verified accounts are written immediately. Other accounts wait in the review queue until that account is verified.",
-  "Importing the same ALL pair again must not add a second copy of those invoices.",
+  "Turn the daily 504 and TRM21QC schedules back on only after the report is accepted.",
+  "Do not import a 561L-ALL or SLRB-ALL file. Historical sales import is retired.",
+  "New active customers are linked from the 407EXP master and start with no imported historical purchases.",
   "If the result is wrong, restore the tested backup. Do not run a second reset on top of a partial one.",
 ] as const;
 

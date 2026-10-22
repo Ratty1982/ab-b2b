@@ -175,9 +175,9 @@ function AdminCustomers() {
           }}
           className="h-9 rounded-md border border-border bg-surface px-3 text-[13px]"
         >
-          <option value="">Historical sales</option>
-          <option value="with">Customers with historical sales</option>
-          <option value="without">Customers without historical sales</option>
+          <option value="">Ongoing sales</option>
+          <option value="with">Customers with ongoing sales</option>
+          <option value="without">Customers without ongoing sales</option>
         </select>
         <select
           value={salesRepId}

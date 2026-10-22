@@ -1,7 +1,8 @@
 /**
- * All Historical Autopart Sales uses linked AutopartInvoiceLine rows only.
- * Dated Sales Enquiry totals stay on AutopartSalesLine.
+ * Retired global 561L sales must not be returned as a zero dashboard.
+ * Dated Sales Enquiry still reads the ongoing TRM21QC line.
  */
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
@@ -9,13 +10,7 @@ import { parseSalesEnquiryUrlSearch } from "@/domain/sales-intelligence";
 import { AuthError } from "@/server/rbac/guards";
 import { previewSalesIntelligenceFollowUp } from "@/server/sales-intelligence/followup";
 import { getCustomerSalesEnquiry } from "@/server/sales-intelligence/enquiry";
-import {
-  exportGlobalAutopartSalesCsv,
-  getGlobalAutopartSalesDashboard,
-  getGlobalCustomerSalesEnquiry,
-  getGlobalProductSalesEnquiry,
-  searchGlobalAutopartSales,
-} from "@/server/sales-intelligence/global-history";
+import { requireSalesIntelligence } from "@/server/sales-intelligence/global-history";
 import { createCrmOpportunity } from "@/server/crm/opportunities";
 
 const prisma = new PrismaClient();
@@ -313,7 +308,8 @@ beforeAll(async () => {
       documentType: "INVOICE",
       documentReference: `DATED-${stamp}`,
       documentDate: new Date("2026-03-10T12:00:00.000Z"),
-      source: "SLRB",
+      source: "ONGOING_TRM21QC",
+      hasTrm21qc: true,
       importRunId: run.id,
     },
   });
@@ -328,7 +324,7 @@ beforeAll(async () => {
       sku: matchSku,
       units: "1",
       salesNet: "999.00",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
       importRunId: run.id,
     },
   });
@@ -356,50 +352,25 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("All Historical Autopart Sales", () => {
-  it("keeps the dated enquiry URL on dated sales and labels the historical mode", () => {
+describe("retired global Autopart sales", () => {
+  it("ignores a historical sales bookmark and keeps dated Sales Enquiry", () => {
     const dated = parseSalesEnquiryUrlSearch({ period: "LAST_30", mode: "customers" });
     expect(dated.source).toBeUndefined();
     expect(dated.period).toBe("LAST_30");
-    expect(parseSalesEnquiryUrlSearch({ source: "global" }).source).toBe("global");
+    expect(parseSalesEnquiryUrlSearch({ source: "global" }).source).toBeUndefined();
+    const serverFns = readFileSync("src/server/phase2/fns.ts", "utf8");
+    expect(serverFns).not.toContain("getGlobalAutopartSalesDashboardFn");
+    expect(serverFns).not.toContain("exportGlobalAutopartSalesCsvFn");
+    const history = readFileSync("src/server/sales-intelligence/global-history.ts", "utf8");
+    expect(history).not.toContain("AutopartInvoiceLine");
+    expect(history).not.toContain("WHERE FALSE");
   });
 
-  it("sums linked undated invoice lines without ledger, dated feeds, or blank-reference invoices", async () => {
-    const dashboard = await getGlobalAutopartSalesDashboard(adminId, {
-      customerGroupId: groupId,
+  it("counts the ongoing TRM21QC line and does not report the retired invoice lines as zero sales", async () => {
+    const storedHistory = await prisma.autopartInvoiceLine.count({
+      where: { accountCode: { in: [codeA1, codeA2] } },
     });
-    expect(dashboard.period.label).toBe("All Available History");
-    expect(dashboard.overlapNote).toMatch(/do not share a transaction identity/);
-    expect(dashboard.summary.netSales).toBe("0.50");
-    expect(dashboard.summary.grossSales).toBe("1.50");
-    expect(dashboard.summary.credits).toBe("-1.00");
-    expect(dashboard.summary.lineCount).toBe(6);
-    expect(dashboard.summary.invoiceCount).toBe(4);
-    expect(dashboard.summary.productCount).toBe(3);
-    expect(dashboard.summary.units).toBe("1.300");
-    expect(dashboard.summary.customersRepresented).toBe(1);
-    expect(dashboard.summary.customersWithoutLinkedHistory).toBe(1);
-
-    const branded = await getGlobalAutopartSalesDashboard(adminId, {
-      customerGroupId: groupId,
-      brandId,
-    });
-    expect(branded.summary.netSales).toBe("1.50");
-    expect(branded.summary.credits).toBe("0.00");
-    expect(branded.summary.productCount).toBe(1);
-
-    const customer = await getGlobalCustomerSalesEnquiry(adminId, { companyId: companyAId });
-    expect(customer.company.status).toBe("PROSPECT");
-    expect(customer.company.linkedAccountCodes).toEqual([codeA1, codeA2]);
-    expect(customer.summary.netSales).toBe("0.50");
-    expect(customer.purchasedSkus).toContain(matchSku);
-    expect(customer.crossSell.items.map((item) => item.sku)).toContain(siblingSku);
-    expect(customer.crossSell.note).toMatch(/stopped buying/);
-    const pad = customer.products.items.find((item) => item.sku === matchSku);
-    expect(pad?.inCatalogue).toBe(true);
-    expect(pad?.tradePrice).toBe("12.34");
-    expect(pad?.customerPrice).toBe("7.50");
-    expect(pad?.studleyAvailableQty).toBe(7);
+    expect(storedHistory).toBeGreaterThan(0);
 
     const dated = await getCustomerSalesEnquiry(adminId, {
       companyId: companyAId,
@@ -408,48 +379,11 @@ describe("All Historical Autopart Sales", () => {
       to: "2026-03-31",
     });
     expect(dated.summary.netSales).toBe("999.00");
-    expect(customer.summary.netSales).not.toBe(dated.summary.netSales);
+    expect(dated.dataSource).not.toMatch(/561L \+ SLRB/);
+    await expect(requireSalesIntelligence(tradeId)).rejects.toBeInstanceOf(AuthError);
   });
 
-  it("hides other customers, unlinked names, prices, and stock outside the actor's permission", async () => {
-    const repProduct = await getGlobalProductSalesEnquiry(repUserId, { sku: matchSku });
-    expect(repProduct.summary.netSales).toBe("1.50");
-    expect(repProduct.customers.items.map((item) => item.companyId)).toEqual([companyAId]);
-    expect(JSON.stringify(repProduct)).not.toContain(`GH Other ${stamp}`);
-
-    await expect(getGlobalCustomerSalesEnquiry(repUserId, { companyId: companyBId })).rejects.toBeInstanceOf(
-      AuthError,
-    );
-    const restricted = await searchGlobalAutopartSales(repUserId, { q: codeB });
-    expect(restricted.companies).toEqual([]);
-    expect(restricted.account).toEqual({ state: "restricted", accountCode: codeB });
-    expect(JSON.stringify(restricted)).not.toContain(`GH Other ${stamp}`);
-
-    const secret = await searchGlobalAutopartSales(adminId, { q: secretName });
-    expect(secret.companies).toEqual([]);
-    expect(JSON.stringify(secret)).not.toContain(secretName);
-    const secretCode = await searchGlobalAutopartSales(adminId, { q: codeSecret });
-    expect(secretCode.account).toEqual({ state: "unlinked", accountCode: codeSecret });
-    expect(JSON.stringify(secretCode)).not.toContain(secretName);
-    const secretSkuSearch = await searchGlobalAutopartSales(adminId, { q: secretSku });
-    expect(secretSkuSearch.products.some((item) => item.sku === secretSku)).toBe(false);
-
-    const accounts = await getGlobalCustomerSalesEnquiry(accountsId, { companyId: companyAId });
-    expect(accounts.pricingPermitted).toBe(false);
-    expect(accounts.studleyStockPermitted).toBe(false);
-    expect(accounts.products.items.every((item) => item.tradePrice == null && item.studleyAvailableQty == null)).toBe(
-      true,
-    );
-    await expect(getGlobalAutopartSalesDashboard(tradeId, {})).rejects.toBeInstanceOf(AuthError);
-
-    const csv = await exportGlobalAutopartSalesCsv(repUserId, { kind: "product", sku: matchSku });
-    expect(csv.csv).not.toContain(`GH Other ${stamp}`);
-    expect(csv.csv).toContain(matchSku);
-    const customerCsv = await exportGlobalAutopartSalesCsv(adminId, { kind: "customer", companyId: companyAId });
-    expect(customerCsv.csv).toContain("'-1.00");
-  });
-
-  it("creates a follow-up and opportunity from undated history without a stopped-buying claim", async () => {
+  it("creates a follow-up from the ongoing sales snapshot without a stopped-buying claim", async () => {
     const preview = await previewSalesIntelligenceFollowUp(adminId, {
       sourceModule: "SALES_ENQUIRY",
       sourceReason: "CROSS_SELL",
@@ -457,17 +391,18 @@ describe("All Historical Autopart Sales", () => {
       sku: siblingSku,
       historySource: "global",
     });
-    expect(preview.snapshot.selectedPeriod.label).toBe("All Available History");
     expect(preview.snapshot.selectedPeriod.from).toBeNull();
-    expect(preview.snapshot.sourceReason).toBe("CROSS_SELL");
+    expect(preview.snapshot.sourceReason).toBe("CUSTOMER");
     expect(preview.title.toLowerCase()).not.toContain("stopped");
-    expect(preview.snapshot.metrics["Invoice dates"]).toMatch(/Not available/);
+    expect(preview.snapshot.metrics["Dated invoiced sales ex VAT"]).toBe("999.00");
+    expect(preview.snapshot.metrics["Invoice dates"]).toBeUndefined();
+    expect(JSON.stringify(preview.snapshot.metrics)).not.toMatch(/561L/);
 
     const before = await prisma.company.findUniqueOrThrow({ where: { id: companyAId } });
     const opportunity = await createCrmOpportunity(adminId, {
       companyId: companyAId,
-      title: `Historical Autopart sales — GH Prospect ${stamp}`,
-      description: "Undated history. No customer message was sent.",
+      title: `Ongoing sales — GH Prospect ${stamp}`,
+      description: "Ongoing 504 and TRM21QC sales. No customer message was sent.",
     });
     const after = await prisma.company.findUniqueOrThrow({ where: { id: companyAId } });
     expect(after.status).toBe(before.status);

@@ -267,7 +267,7 @@ export function buildForecastConfidenceCopy(input: {
   today?: string;
 }): string {
   if (input.confidence === "UNVERIFIED") {
-    return "Historical sales records are present, but complete sales-data coverage has not yet been verified. Forecasts use the sales records currently available and should be reviewed before purchasing decisions.";
+    return "Sales records are present, but complete sales-data coverage has not yet been verified. Forecasts use the ongoing sales records currently available and should be reviewed before purchasing decisions.";
   }
   const label = FORECAST_CONFIDENCE_LABEL[input.confidence].toLowerCase();
   if (input.coverageDays <= 0) {

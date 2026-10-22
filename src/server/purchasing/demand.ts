@@ -31,7 +31,8 @@ export async function netUnitsForKeys(keys: string[], range: DateOnlyRange): Pro
       SELECT UPPER(l.sku) AS sku, COALESCE(SUM(l.units), 0) AS units
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE d."documentDate" IS NOT NULL
+      WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
         AND d."documentDate" >= ${bounds.gte}
         AND d."documentDate" < ${bounds.lt}
         AND UPPER(l.sku) IN (${Prisma.join(chunk)})
@@ -48,7 +49,8 @@ export async function netUnitsBySku(range: DateOnlyRange): Promise<Map<string, n
     SELECT l.sku AS sku, COALESCE(SUM(l.units), 0) AS units
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
       AND d."documentDate" >= ${bounds.gte}
       AND d."documentDate" < ${bounds.lt}
     GROUP BY l.sku
@@ -63,7 +65,8 @@ export async function lastInvoiceSaleBySku(): Promise<Map<string, string>> {
     SELECT l.sku AS sku, MAX(d."documentDate") AS last_sale
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
       AND d."documentType" = 'INVOICE'
     GROUP BY l.sku
   `);
@@ -93,7 +96,8 @@ export async function demandSourcesForSku(sku: string, range: DateOnlyRange) {
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     LEFT JOIN "Company" c ON c.id = l."companyId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
       AND d."documentDate" >= ${bounds.gte}
       AND d."documentDate" < ${bounds.lt}
       AND UPPER(l.sku) = UPPER(${sku})
@@ -113,7 +117,8 @@ export async function weeklyNetUnitsForSku(sku: string, from: string, to: string
            COALESCE(SUM(l.units), 0) AS units
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
       AND d."documentDate" >= ${bounds.gte}
       AND d."documentDate" < ${bounds.lt}
       AND UPPER(l.sku) = UPPER(${sku})

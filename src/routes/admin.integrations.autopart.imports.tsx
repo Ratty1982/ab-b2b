@@ -1,8 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { PanelHeader } from "@/components/ab/AppShell";
-import { AutopartAllHistoryPanel } from "@/components/ab/AutopartAllHistoryPanel";
-import { AutopartHistoricMatchPanel } from "@/components/ab/AutopartHistoricMatchPanel";
 import { AutopartProspectConversionPanel } from "@/components/ab/AutopartProspectConversionPanel";
 import { StatusBadge } from "@/components/ab/Badges";
 import { Field, inputClass } from "@/components/ab/Drawer";
@@ -13,22 +11,18 @@ import {
   classifyAutopartAccountFn,
   confirmAutopartImportFn,
   createCompanyForAutopartAccountFn,
-  getAutopartHistoricalSummaryFn,
   getAutopartImportBatchFn,
   linkAutopartMasterAccountFn,
   listAutopartImportBatchesFn,
   listAutopartImportIssuesFn,
-  listAutopartInvoiceLinesFn,
-  listAutopartLedgerFn,
   listAutopartMasterAccountsFn,
-  listAutopartReconciliationFn,
   listDuplicateAutopartNamesFn,
   previewAutopartImportFn,
 } from "@/server/companies/autopart-master-fns";
 
 export const Route = createFileRoute("/admin/integrations/autopart/imports")({
   head: () => ({
-    meta: [{ title: "Autopart Data Imports — Automotive Brands Admin" }],
+    meta: [{ title: "Autopart customer master — Automotive Brands Admin" }],
   }),
   component: AutopartImportsPage,
 });
@@ -43,16 +37,6 @@ type Accounts = Extract<
   { ok: true }
 >["data"];
 type Issues = Extract<Awaited<ReturnType<typeof listAutopartImportIssuesFn>>, { ok: true }>["data"];
-type Summary = Extract<
-  Awaited<ReturnType<typeof getAutopartHistoricalSummaryFn>>,
-  { ok: true }
->["data"];
-type Lines = Extract<Awaited<ReturnType<typeof listAutopartInvoiceLinesFn>>, { ok: true }>["data"];
-type Ledger = Extract<Awaited<ReturnType<typeof listAutopartLedgerFn>>, { ok: true }>["data"];
-type Reconciliation = Extract<
-  Awaited<ReturnType<typeof listAutopartReconciliationFn>>,
-  { ok: true }
->["data"];
 type Duplicates = Extract<
   Awaited<ReturnType<typeof listDuplicateAutopartNamesFn>>,
   { ok: true }
@@ -60,8 +44,6 @@ type Duplicates = Extract<
 
 const KINDS = [
   { kind: "CUSTOMER_MASTER", label: "407EXP customer master", accept: ".txt,text/plain" },
-  { kind: "INVOICE_LINES", label: "Legacy global 561L — do not use for the rebuild", accept: ".csv,text/csv" },
-  { kind: "LEDGER", label: "Legacy global SLRB — do not use for the rebuild", accept: ".csv,text/csv" },
 ] as const;
 
 const CLASSIFICATIONS = [
@@ -175,12 +157,7 @@ function AutopartImportsPage() {
   const [accountClass, setAccountClass] = useState<(typeof CLASSIFICATIONS)[number] | "ALL">("ALL");
   const [accountPage, setAccountPage] = useState(1);
   const [issues, setIssues] = useState<Issues | null>(null);
-  const [summary, setSummary] = useState<Summary | null>(null);
   const [duplicates, setDuplicates] = useState<Duplicates | null>(null);
-  const [lines, setLines] = useState<Lines | null>(null);
-  const [ledger, setLedger] = useState<Ledger | null>(null);
-  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
-  const [historyAccount, setHistoryAccount] = useState("");
   const [companyQuery, setCompanyQuery] = useState("");
   const [companyHits, setCompanyHits] = useState<{ id: string; name: string }[]>([]);
   const [linkAccountId, setLinkAccountId] = useState("");
@@ -220,9 +197,6 @@ function AutopartImportsPage() {
 
   useEffect(() => {
     void loadBatches();
-    void getAutopartHistoricalSummaryFn().then((result) => {
-      if (result.ok) setSummary(result.data);
-    });
     void listDuplicateAutopartNamesFn({ data: { page: 1 } }).then((result) => {
       if (result.ok) setDuplicates(result.data);
     });
@@ -327,44 +301,28 @@ function AutopartImportsPage() {
     }
   }
 
-  async function loadHistory() {
-    const accountCode = historyAccount.trim();
-    const [lineResult, ledgerResult, matchResult] = await Promise.all([
-      listAutopartInvoiceLinesFn({ data: accountCode ? { accountCode, page: 1 } : { page: 1 } }),
-      listAutopartLedgerFn({ data: accountCode ? { accountCode, page: 1 } : { page: 1 } }),
-      listAutopartReconciliationFn({ data: accountCode ? { accountCode, page: 1 } : { page: 1 } }),
-    ]);
-    if (!lineResult.ok) setError(lineResult.error);
-    else setLines(lineResult.data);
-    if (!ledgerResult.ok) setLedger(null);
-    else setLedger(ledgerResult.data);
-    if (!matchResult.ok) setError(matchResult.error);
-    else setReconciliation(matchResult.data);
-  }
-
   const diagnostics = diagnosticsOf(batch);
   const fields = batch?.kind === "LEDGER" ? LEDGER_FIELDS : INVOICE_FIELDS;
 
   return (
     <div>
       <PanelHeader
-        title="Data Imports"
-        sub="Internal historical imports. Nothing here creates orders, stock movements, invoices, or customer logins."
+        title="Customer master"
+        sub="Link active trade customers from the 407EXP master. Nothing here creates orders, stock movements, invoices, portal logins, or historical purchases."
         crumbs={[
           { label: "Integrations" },
           { label: "Autopart" },
-          { label: "Data Imports" },
+          { label: "Customer master" },
         ]}
       />
       <div className="space-y-6 px-4 py-4 sm:px-6">
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
         <p className="text-[13px] text-steel">
-          Uploads stay private. Preview does not write historical rows. A database import starts
-          only after the confirmation box is ticked. Historical access stays off. Customer account
-          mapping stays on the CRM customer record.
+          Search an Autopart account by ID or name, then link it to an existing company or create
+          a prospect. An unambiguous Autopart ID can be verified on the customer commercial tab.
+          Verification does not import sales history, approve a trade application, or enable portal
+          login. Historical 561L and SLRB uploads are retired.
         </p>
-        <AutopartHistoricMatchPanel />
-        <AutopartAllHistoryPanel />
         <AutopartProspectConversionPanel />
 
         <section className="grid gap-3 md:grid-cols-3">
@@ -385,21 +343,6 @@ function AutopartImportsPage() {
             </label>
           ))}
         </section>
-
-        {summary ? (
-          <section className="border border-border px-4 py-3 text-[13px]">
-            <h2 className="font-display text-sm font-semibold uppercase">Historical summary</h2>
-            <p className="mt-1 text-steel">{summary.label}</p>
-            <p className="mt-2">
-              Accounts {summary.accounts.toLocaleString("en-GB")} · Product lines{" "}
-              {summary.invoiceLines.toLocaleString("en-GB")} · Committed invoice rows{" "}
-              {summary.committedInvoiceRows.toLocaleString("en-GB")} · Updated existing identities{" "}
-              {summary.updatedInvoiceRows.toLocaleString("en-GB")} · Line sales{" "}
-              {summary.historicalLineSales} ({summary.salesMeasure})
-            </p>
-            <p className="mt-1 text-steel">{summary.countNote}</p>
-          </section>
-        ) : null}
 
         {batch ? (
           <section className="border border-border">
@@ -441,13 +384,11 @@ function AutopartImportsPage() {
                   total.
                 </p>
               ) : null}
-              {batch.status === "COMMITTED" && batch.kind === "INVOICE_LINES" ? (
+              {batch.kind === "INVOICE_LINES" || batch.kind === "LEDGER" ? (
                 <p className="text-steel">
-                  New stored rows {batch.importedRows.toLocaleString("en-GB")} · Updated existing
-                  source identities {batch.updatedRows.toLocaleString("en-GB")} · Accepted rows{" "}
-                  {(batch.importedRows + batch.updatedRows).toLocaleString("en-GB")}. Stored product
-                  lines count unique source identities. Updating an existing identity does not add a
-                  row and does not change the stored sales amount.
+                  This batch is a retired historical sales import. It is shown for audit only and
+                  cannot be extended. Ongoing invoices use the 504 feed and product lines use
+                  TRM21QC.
                 </p>
               ) : null}
               {diagnostics.summary ? (
@@ -792,8 +733,8 @@ function AutopartImportsPage() {
                             Create prospect
                           </button>
                           <p className="text-[11px] text-steel">
-                            Creates a prospect and links this account. Does not approve customer
-                            portal history.
+                            Creates a prospect and links this account. Does not approve portal
+                            login or import historical purchases.
                           </p>
                         </div>
                       )}
@@ -911,96 +852,6 @@ function AutopartImportsPage() {
           </section>
         ) : null}
 
-        <section className="space-y-3">
-          <h2 className="font-display text-sm font-semibold uppercase">
-            History and reconciliation
-          </h2>
-          <div className="flex flex-wrap items-end gap-2">
-            <Field label="Account code">
-              <input
-                className={inputClass}
-                value={historyAccount}
-                onChange={(event) => setHistoryAccount(event.target.value)}
-              />
-            </Field>
-            <button
-              type="button"
-              className="h-10 border border-border px-3 text-[11px] font-semibold uppercase"
-              onClick={() => void loadHistory()}
-            >
-              Load
-            </button>
-            <a
-              className="inline-flex h-10 items-center border border-border px-3 text-[11px] font-semibold uppercase"
-              href={`/api/autopart-imports/reconciliation/csv${historyAccount.trim() ? `?account=${encodeURIComponent(historyAccount.trim())}` : ""}`}
-            >
-              Export reconciliation
-            </a>
-          </div>
-          {reconciliation ? <p className="text-[12px] text-steel">{reconciliation.note}</p> : null}
-          {reconciliation?.statuses.length ? (
-            <p className="text-[12px] text-steel">
-              {reconciliation.statuses.map((item) => `${item.status} ${item.count}`).join(" · ")}
-            </p>
-          ) : null}
-          {lines ? (
-            <div className="overflow-x-auto border border-border">
-              <table className="min-w-full text-left text-[12px]">
-                <thead className="text-[10px] uppercase text-steel">
-                  <tr>
-                    <th className="px-3 py-2">Account</th>
-                    <th className="px-3 py-2">Reference</th>
-                    <th className="px-3 py-2">Part</th>
-                    <th className="px-3 py-2">Qty</th>
-                    <th className="px-3 py-2">Line sales</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.items.map((line) => (
-                    <tr key={line.id} className="border-t border-border/70">
-                      <td className="px-3 py-2 font-mono">{line.accountCode}</td>
-                      <td className="px-3 py-2">{line.rawInvAndLn}</td>
-                      <td className="px-3 py-2">{line.partNumber}</td>
-                      <td className="px-3 py-2">{line.quantity}</td>
-                      <td className="px-3 py-2">{line.salesAmount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-          {ledger ? (
-            <div>
-              <p className="mb-2 text-[12px] text-steel">{ledger.balanceNote}</p>
-              <div className="overflow-x-auto border border-border">
-                <table className="min-w-full text-left text-[12px]">
-                  <thead className="text-[10px] uppercase text-steel">
-                    <tr>
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Reference</th>
-                      <th className="px-3 py-2">Goods</th>
-                      <th className="px-3 py-2">VAT</th>
-                      <th className="px-3 py-2">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ledger.items.map((row) => (
-                      <tr key={row.id} className="border-t border-border/70">
-                        <td className="px-3 py-2">{row.transactionDate ?? "—"}</td>
-                        <td className="px-3 py-2">{row.rawType}</td>
-                        <td className="px-3 py-2">{row.reference}</td>
-                        <td className="px-3 py-2">{row.goodsAmount ?? "—"}</td>
-                        <td className="px-3 py-2">{row.vatAmount ?? "—"}</td>
-                        <td className="px-3 py-2">{row.totalAmount ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
-        </section>
       </div>
     </div>
   );

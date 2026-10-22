@@ -82,7 +82,7 @@ afterEach(() => {
 });
 
 async function product(label: string, trade = 20) {
-  const sku = `CPI-${label}-${stamp}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
+  const sku = `CPI-${label.slice(0, 12)}-${stamp.slice(-6)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
   const saved = await saveProduct(adminId, {
     sku,
     name: `${label} cleaner`,
