@@ -16,6 +16,28 @@ export type { BackupProof };
 
 export const IMPORTED_SALES_RESET_CONFIRMATION = "RESET PRELAUNCH IMPORTED SALES";
 
+/** No-backup mode is refused for every database except this production name. */
+export const IMPORTED_SALES_NO_BACKUP_DATABASE = "automotivebrands";
+
+/** Required with --accept-no-backup-risk. It does not replace the reset confirmation phrase. */
+export const IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT =
+  "I ACCEPT IRREVERSIBLE IMPORTED SALES LOSS WITHOUT A BACKUP";
+
+/** Required with --discard-historical-sources. It does not replace the other two phrases. */
+export const IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT =
+  "I ACCEPT PERMANENT DISCARD OF HISTORICAL SALES SOURCES";
+
+/** Cutover evidence when staff start again after the pre-launch discard. Not a zero-history claim. */
+export const PRELAUNCH_HISTORY_DISCARDED = "PRELAUNCH_HISTORY_DISCARDED" as const;
+
+/** Interactive transaction and Postgres statement budget for the delete. */
+export const IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS = 180_000;
+
+export const importedSalesResetTransactionOptions = {
+  maxWait: 15_000,
+  timeout: IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
+} as const;
+
 export const IMPORTED_SALES_PRESERVED = [
   { name: "Company, Contact, Address, Active customers and prospects", reason: "The customer master stays, including every Active and Prospect company." },
   { name: "AutopartAccount", reason: "407EXP master accounts and customer mappings stay." },
@@ -45,6 +67,8 @@ export const IMPORTED_SALES_EFFECTS = [
   "Customer prices, products, suppliers, warehouse stock, and purchasing settings stay.",
   "Automatic 504/TRM21QC importing is switched off during execute and is left off.",
   "561L and SLRB sources are copied to AUTOPART_SALES_ARCHIVE_DIR before deletion. That directory must be a persistent volume outside the application container. Each copy is checked for existence, size, and SHA-256. A missing or mismatched source stops the reset and deletes nothing.",
+  "--accept-no-backup-risk skips only the backup and restore checks, and only for the database automotivebrands. It does not skip the source archive.",
+  "--discard-historical-sources is allowed only with --accept-no-backup-risk. It skips copying missing 561L and SLRB files. The audit report is still written to the persistent archive directory.",
   "504 and TRM21QC originals are not stored in the imported-sales tables. Staff re-upload the original report from the customer workspace. Emailed copies stay in the Autopart mailbox. When the persistent archive is configured, each report is also copied there by content hash.",
   "Dry-run does not delete rows, copy files, or change the feed switch.",
 ] as const;
@@ -56,6 +80,8 @@ export const IMPORTED_SALES_APPROVAL_GATES = [
   "Run the same command with --execute against the restored copy before production.",
   "Set AB_RESET_CONFIRM to RESET PRELAUNCH IMPORTED SALES, AB_RESET_TARGET to the database name, and AB_RESET_RESTORE_URL to the restored copy.",
   "Pass --backup-proof for that backup. Production database names automotive_brands, automotivebrands, ab_b2b, and postgres also need --allow-production-database.",
+  "A pre-launch run without a backup is separate: --accept-no-backup-risk, --allow-production-database, database automotivebrands, the reset phrase, and AB_RESET_NO_BACKUP_ACK set to the irreversible-loss acknowledgement. The source archive is still required.",
+  "When the original 561L and SLRB files are missing, also pass --discard-historical-sources and set AB_RESET_DISCARD_SOURCES_ACK. That option is refused without --accept-no-backup-risk. It writes the audit report and does not copy the CSV files.",
   "The command refuses to run during deploy, container startup, or a package lifecycle script.",
   "After execute, confirm imported-sales counts are zero, protected counts are unchanged, and the ongoing feed is off.",
   "Rebuild each Active customer from Import Sales History, then catch up 504/TRM21QC. Do not turn automatic importing back on as part of the reset.",
@@ -71,6 +97,12 @@ export type ImportedSalesResetGateInput = {
   duringBootstrap?: boolean;
   /** Required when the connected database is the production name. */
   allowProductionDatabase?: boolean;
+  /** Skips only the backup proof and restore query. */
+  acceptNoBackupRisk?: boolean;
+  noBackupAcknowledgement?: string | null;
+  /** Skips copying 561L/SLRB bytes. Allowed only with the no-backup path. */
+  discardHistoricalSources?: boolean;
+  discardSourcesAcknowledgement?: string | null;
   now?: Date;
 };
 
@@ -141,6 +173,39 @@ export function evaluateImportedSalesResetGates(
       reason: "This database name is treated as production. Pass --allow-production-database only after the backup and restore have been checked.",
     };
   }
+  if (input.acceptNoBackupRisk === true) {
+    if (input.actualDatabase !== IMPORTED_SALES_NO_BACKUP_DATABASE) {
+      return {
+        ok: false,
+        mode,
+        reason: "No-backup mode is only allowed when the connected database is automotivebrands.",
+      };
+    }
+    if (input.noBackupAcknowledgement !== IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT) {
+      return {
+        ok: false,
+        mode,
+        reason: "The irreversible data-loss acknowledgement does not match. Backup and restore checks were not skipped.",
+      };
+    }
+    if (input.discardHistoricalSources === true) {
+      if (input.discardSourcesAcknowledgement !== IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT) {
+        return {
+          ok: false,
+          mode,
+          reason: "The historical-source discard acknowledgement does not match. Source files were not skipped.",
+        };
+      }
+    }
+    return { ok: true, mode: "execute" };
+  }
+  if (input.discardHistoricalSources === true) {
+    return {
+      ok: false,
+      mode,
+      reason: "Discarding historical sources is only allowed with --accept-no-backup-risk on database automotivebrands.",
+    };
+  }
   if (!input.backupProof) {
     return { ok: false, mode, reason: "A verified backup and test restore are required." };
   }
@@ -153,6 +218,22 @@ export function evaluateImportedSalesResetGates(
     return { ok: false, mode, reason: "The restored database did not answer a test query." };
   }
   return { ok: true, mode: "execute" };
+}
+
+export function importedSalesResetVerificationProblem(input: {
+  preservedBefore: Record<string, number>;
+  preservedAfter: Record<string, number>;
+  removedAfter: Record<string, number>;
+}): string | null {
+  for (const [name, before] of Object.entries(input.preservedBefore)) {
+    if (input.preservedAfter[name] !== before) {
+      return `Preserved ${name} changed from ${before} to ${input.preservedAfter[name] ?? "missing"}.`;
+    }
+  }
+  for (const [name, count] of Object.entries(input.removedAfter)) {
+    if (count !== 0) return `Imported sales remain in ${name}: ${count}.`;
+  }
+  return null;
 }
 
 export function salesArchiveDirectory(env: NodeJS.ProcessEnv = process.env): string {

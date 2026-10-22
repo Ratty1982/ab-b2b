@@ -4,6 +4,7 @@ import {
   acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
   confirmCustomerSalesHistoryFn,
+  startCustomerSalesHistoryBaselineFn,
   listCustomerSalesAccountsFn,
   previewCustomerSalesHistoryFn,
 } from "@/server/phase2/fns";
@@ -17,11 +18,15 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   const [textSlrb, setTextSlrb] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
+  const [historyKind, setHistoryKind] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function refreshStatus() {
     const accounts = await listCustomerSalesAccountsFn({ data: { companyId } });
-    if (accounts.ok) setHistoryStatus(accounts.data.historyStatus);
+    if (accounts.ok) {
+      setHistoryStatus(accounts.data.historyStatus);
+      setHistoryKind(accounts.data.historyKind);
+    }
   }
 
   useEffect(() => {
@@ -36,6 +41,11 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
           For this Active customer and its verified Autopart aliases. 561L is product-sales evidence.
           SLRB is ledger and document evidence. Payments are not new sales. Becoming Active does not
           import history. Cutover is {historyStatus === "COMPLETE" ? "complete" : historyStatus === "REVIEW" ? "in review" : "not started"}.
+          {historyKind === "PRELAUNCH_HISTORY_DISCARDED"
+            ? " This is a new sales baseline after the pre-launch discard. It does not mean the customer never had historical sales."
+            : historyKind === "NO_HISTORICAL_SALES"
+              ? " This account is recorded as having no historical sales."
+              : ""}
         </p>
       </div>
       <form
@@ -117,6 +127,30 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
             }}
           >
             No historical sales
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold disabled:opacity-50"
+            onClick={() => {
+              void (async () => {
+                setBusy(true);
+                const result = await startCustomerSalesHistoryBaselineFn({ data: { companyId } });
+                setBusy(false);
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                await refreshStatus();
+                toast.success(
+                  result.data.alreadyComplete
+                    ? "New sales baseline is already recorded"
+                    : "Started a new sales baseline. This does not say the customer never had historical sales",
+                );
+              })();
+            }}
+          >
+            Start new sales baseline
           </button>
           {historyStatus === "REVIEW" ? (
             <button

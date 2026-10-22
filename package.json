@@ -21,7 +21,8 @@
     "db:bootstrap:production": "bun run prisma/bootstrap/run-production.ts",
     "db:studio": "prisma studio",
     "db:seed": "bun run prisma/seed.ts",
-    "start:production": "./scripts/docker-entrypoint.sh"
+    "start:production": "./scripts/docker-entrypoint.sh",
+    "maintenance:imported-sales-reset": "./scripts/run-imported-sales-reset-maintenance.sh"
   },
   "overrides": {
     "rolldown": "1.2.1"

@@ -10,6 +10,7 @@ bun-debug.log*
 
 node_modules
 dist
+scripts/maintenance/*.mjs
 dist-ssr
 .output
 .vinxi

@@ -185,6 +185,33 @@ export async function archiveImportedSalesSources(db: Db = prisma): Promise<{ di
   return { directory: root, files };
 }
 
+/**
+ * Persistent directory for a reset that permanently discards 561L/SLRB bytes.
+ * Writes the manifest only. Does not read or copy the original reports.
+ */
+export function prepareDiscardedSalesResetDirectory(): { directory: string; files: number } {
+  const root = path.join(persistentDirectory(), new Date().toISOString().replace(/[:.]/g, "-"));
+  mkdirSync(root, { recursive: true });
+  const manifestPath = path.join(root, "manifest.json");
+  writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        sources: "discarded",
+        files: 0,
+        note: "Original 561L and SLRB files were not copied. Imported sales history is permanently discarded.",
+      },
+      null,
+      2,
+    ),
+  );
+  const written = JSON.parse(readFileSync(manifestPath, "utf8")) as { sources?: string; files?: number };
+  if (written.sources !== "discarded" || written.files !== 0) {
+    throw new SalesArchiveError("The discard manifest could not be read back. Imported sales were not deleted.");
+  }
+  return { directory: root, files: 0 };
+}
+
 /** Best-effort copy of a 504 or TRM21QC report. Never blocks the import. */
 export function retainOngoingSalesReport(input: {
   kind: "ONGOING_504" | "TRM21QC";

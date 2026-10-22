@@ -333,7 +333,7 @@ async function main() {
   if ((await prisma.autopartSalesLine.count()) !== 0) throw new Error("Imported lines remained.");
   if ((await prisma.autopartCustomerImportRun.count()) !== 0) throw new Error("Import runs remained.");
   if ((await prisma.autopartHistoryAllImport.count()) !== 0) throw new Error("Historical staging remained.");
-  const archivedPath = `${executed.report.archive.directory}/history/${archivedHistory.id}/561l.bin`;
+  const archivedPath = `${executed.report.archiveDirectory}/history/${archivedHistory.id}/561l.bin`;
   if (!existsSync(archivedPath)) throw new Error("Archived 561L file is missing.");
   const archivedBytes = readFileSync(archivedPath);
   if (archivedBytes.length !== historyBody.length) throw new Error("Archived 561L size does not match.");

@@ -1,6 +1,7 @@
 /**
  * Dry-run by default. One-time pre-launch wipe of imported Autopart sales.
  * Does not delete customers, orders, stock, prices, or configuration.
+ * Not run from deploy, migrations, or container startup.
  *
  *   bun scripts/imported-sales-reset.ts
  *
@@ -13,8 +14,30 @@
  *
  * Production names automotive_brands, automotivebrands, ab_b2b, and postgres
  * also require --allow-production-database.
- * Set AUTOPART_SALES_ARCHIVE_DIR to a persistent volume outside the container,
- * for example /data/autopart-imports/sales-reset-archive.
+ *
+ * Pre-launch only, when a backup has been explicitly declined. This skips the
+ * backup and restore checks and nothing else. The database must be
+ * automotivebrands. The source archive is still required.
+ *
+ *   AB_RESET_CONFIRM='RESET PRELAUNCH IMPORTED SALES' \
+ *   AB_RESET_TARGET='automotivebrands' \
+ *   AB_RESET_NO_BACKUP_ACK='I ACCEPT IRREVERSIBLE IMPORTED SALES LOSS WITHOUT A BACKUP' \
+ *   AUTOPART_SALES_ARCHIVE_DIR=/data/autopart-imports/sales-reset-archive \
+ *   bun scripts/imported-sales-reset.ts --execute --accept-no-backup-risk --allow-production-database
+ *
+ * When the original 561L and SLRB files are already gone, discard them instead
+ * of archiving. This is only valid with the no-backup flags above. The audit
+ * report is still written under AUTOPART_SALES_ARCHIVE_DIR. The CSV files are
+ * not copied.
+ *
+ *   AB_RESET_DISCARD_SOURCES_ACK='I ACCEPT PERMANENT DISCARD OF HISTORICAL SALES SOURCES' \
+ *   bun scripts/imported-sales-reset.ts --execute --accept-no-backup-risk --allow-production-database --discard-historical-sources
+ *
+ * The Coolify application image has neither Bun nor this script. Build and run
+ * docker/imported-sales-reset-runner.Dockerfile instead. See
+ * scripts/run-imported-sales-reset-maintenance.sh.
+ *
+ * Set AUTOPART_SALES_ARCHIVE_DIR to a persistent volume outside the container.
  * Execute leaves automatic 504/TRM21QC importing off.
  */
 import { createHash } from "node:crypto";
@@ -74,12 +97,22 @@ async function restoreAnswers(url: string): Promise<boolean> {
   }
 }
 
-function formatPlan(plan: Awaited<ReturnType<typeof planImportedSalesReset>>, database: string | null): string {
+function formatPlan(
+  plan: Awaited<ReturnType<typeof planImportedSalesReset>>,
+  identity: { database: string | null; host: string | null; port: string | null },
+  executeRequested: boolean,
+  noBackupRequested: boolean,
+  discardSourcesRequested: boolean,
+): string {
   const lines = [
     "Pre-launch imported sales reset — dry-run",
-    `Database: ${database ?? "unknown"}`,
+    "Database identity",
+    `- name: ${identity.database ?? "unknown"}`,
+    `- host: ${identity.host ?? "unknown"}`,
+    `- port: ${identity.port ?? "unknown"}`,
     `Automatic 504/TRM21QC importing is currently ${plan.feedEnabled ? "ON" : "OFF"}. Execute switches it OFF and leaves it off.`,
     "",
+    "Before-reset counts",
     "Would stay",
   ];
   for (const [name, count] of Object.entries(plan.counts.preserved)) lines.push(`- ${name}: ${count}`);
@@ -100,7 +133,24 @@ function formatPlan(plan: Awaited<ReturnType<typeof planImportedSalesReset>>, da
   for (const effect of plan.effects) lines.push(`- ${effect}`);
   lines.push("", "Approval gates");
   plan.approvalGates.forEach((gate, index) => lines.push(`${index + 1}. ${gate}`));
-  lines.push("", "This was a dry-run. No rows were deleted.");
+  lines.push("", "These counts were read before any deletion.");
+  if (noBackupRequested) {
+    lines.push(
+      "No-backup mode was requested. Backup and restore checks are skipped only for database automotivebrands, and only after the irreversible-loss acknowledgement.",
+    );
+  }
+  if (discardSourcesRequested) {
+    lines.push(
+      "Historical source discard was requested. Missing 561L and SLRB files are not copied. The audit report is still written to the persistent archive directory. This requires the no-backup acknowledgement and the discard acknowledgement.",
+    );
+  } else if (noBackupRequested) {
+    lines.push("The 561L/SLRB archive is still required.");
+  }
+  lines.push(
+    executeRequested
+      ? "Execution has not started."
+      : "This was a dry-run. No rows were deleted.",
+  );
   return lines.join("\n");
 }
 
@@ -110,30 +160,53 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  const database = databaseNameFromUrl(process.env.DATABASE_URL ?? "") ?? describeDatabaseUrl(process.env.DATABASE_URL ?? "").database;
+  const described = describeDatabaseUrl(process.env.DATABASE_URL ?? "");
+  const database = databaseNameFromUrl(process.env.DATABASE_URL ?? "") ?? described.database;
+  let port: string | null = null;
+  try {
+    port = new URL(process.env.DATABASE_URL ?? "").port || null;
+  } catch {
+    port = null;
+  }
+  const executeRequested = hasFlag("--execute");
+  const noBackupRequested = hasFlag("--accept-no-backup-risk");
+  const discardSourcesRequested = hasFlag("--discard-historical-sources");
   const plan = await planImportedSalesReset();
-  const text = formatPlan(plan, database);
+  const text = formatPlan(
+    plan,
+    { database, host: described.host, port },
+    executeRequested,
+    noBackupRequested,
+    discardSourcesRequested,
+  );
   const reportPath = argValue("--report");
   if (reportPath) writeFileSync(reportPath, text);
   console.log(text);
-  if (!hasFlag("--execute")) return;
+  if (!executeRequested) return;
 
-  const proofPath = argValue("--backup-proof");
-  const restoreUrl = process.env.AB_RESET_RESTORE_URL ?? "";
+  const proofPath = noBackupRequested ? null : argValue("--backup-proof");
+  const restoreUrl = noBackupRequested ? "" : (process.env.AB_RESET_RESTORE_URL ?? "");
+  console.log("Execution starts after the before-reset counts above.");
   const result = await executeImportedSalesReset({
     confirmation: process.env.AB_RESET_CONFIRM ?? null,
     targetDatabase: process.env.AB_RESET_TARGET ?? null,
     actualDatabase: database,
+    databaseHost: described.host,
     backupProof: proofPath ? readProof(proofPath) : null,
     restoreCheckOk: restoreUrl ? await restoreAnswers(restoreUrl) : false,
     duringBootstrap: false,
     allowProductionDatabase: hasFlag("--allow-production-database"),
+    acceptNoBackupRisk: noBackupRequested,
+    noBackupAcknowledgement: process.env["AB_RESET_NO_BACKUP_ACK"] ?? null,
+    discardHistoricalSources: discardSourcesRequested,
+    discardSourcesAcknowledgement: process.env["AB_RESET_DISCARD_SOURCES_ACK"] ?? null,
   });
   if (!result.ok) {
     console.error(result.reason);
     process.exitCode = 2;
     return;
   }
+  console.log("IMPORTED_SALES_RESET_REPORT");
   console.log(JSON.stringify(result.report, null, 2));
 }
 
