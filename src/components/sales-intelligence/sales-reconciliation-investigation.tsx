@@ -4,10 +4,13 @@ import { SiField, SiPager, siControlClassName } from "@/components/sales-intelli
 import { formatGbp } from "@/domain/sales-intelligence";
 import { isRetryCoolingDown, retryAvailableAt, salesEnquiryErrorText } from "@/domain/sales-enquiry-report";
 import {
+  LINE_COMPARISON_VIEW_LABELS,
+  LINE_COMPARISON_VIEWS,
   RECONCILIATION_ACTION_LABELS,
   RECONCILIATION_DOCUMENT_TYPES,
   RECONCILIATION_REASONS,
   RECONCILIATION_SOURCES,
+  type LineComparisonView,
 } from "@/domain/sales-reconciliation";
 import { UNIFIED_SOURCE_LABELS } from "@/domain/unified-sales";
 import { formatQuantity } from "@/lib/format-quantity";
@@ -27,9 +30,16 @@ type Filters = {
   accountCode: string;
   source: string;
   documentType: string;
+  comparison: LineComparisonView;
 };
 
-const EMPTY_FILTERS: Filters = { reason: "", accountCode: "", source: "", documentType: "" };
+const EMPTY_FILTERS: Filters = {
+  reason: "",
+  accountCode: "",
+  source: "",
+  documentType: "",
+  comparison: "DIFFERENCES",
+};
 
 const REASON_OPTIONS: Array<{ value: (typeof RECONCILIATION_REASONS)[number]; label: string }> = [
   { value: "CONFLICTING_OVERLAP", label: "Conflicting sources" },
@@ -83,6 +93,7 @@ export function SalesReconciliationInvestigation({ companyId }: { companyId: str
         accountCode: filters.accountCode || null,
         source: filters.source || null,
         documentType: filters.documentType || null,
+        comparison: filters.comparison,
         page,
         pageSize: 10,
       },
@@ -115,7 +126,7 @@ export function SalesReconciliationInvestigation({ companyId }: { companyId: str
         <div>
           <h3 className="text-[13px] font-semibold">Reconciliation investigation</h3>
           <p className="mt-1 text-[12px] text-steel">
-            Unreconciled invoices and lines, grouped by document reference. Loaded only when you open it.
+            Unreconciled documents, grouped by reference. Differences only is the default, so matching lines stay hidden until you ask for them.
           </p>
         </div>
         <button
@@ -131,6 +142,23 @@ export function SalesReconciliationInvestigation({ companyId }: { companyId: str
         <div className="mt-3 space-y-3">
           <p className="text-[12px] text-steel">{data?.readOnlyNote}</p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <SiField label="Lines">
+              <select
+                className={siControlClassName(filters.comparison !== "DIFFERENCES")}
+                value={filters.comparison}
+                aria-label="Line comparison"
+                onChange={(event) => {
+                  setFilters((current) => ({ ...current, comparison: event.target.value as LineComparisonView }));
+                  setPage(1);
+                }}
+              >
+                {LINE_COMPARISON_VIEWS.map((view) => (
+                  <option key={view} value={view}>
+                    {LINE_COMPARISON_VIEW_LABELS[view]}
+                  </option>
+                ))}
+              </select>
+            </SiField>
             <SiField label="Discrepancy">
               <select
                 className={siControlClassName(Boolean(filters.reason))}
@@ -234,6 +262,7 @@ export function SalesReconciliationInvestigation({ companyId }: { companyId: str
                     accountCode: filters.accountCode || null,
                     source: filters.source || null,
                     documentType: filters.documentType || null,
+                    comparison: filters.comparison,
                   },
                 }).then((result) => {
                   setExporting(false);
@@ -245,12 +274,12 @@ export function SalesReconciliationInvestigation({ companyId }: { companyId: str
                   setExportNote(
                     result.data.truncated
                       ? `Exported ${result.data.rowCount} filtered rows. The file is capped.`
-                      : `Exported ${result.data.rowCount} filtered unreconciled rows.`,
+                      : `Exported ${result.data.rowCount} ${filters.comparison === "DIFFERENCES" ? "discrepancy" : "filtered"} rows.`,
                   );
                 });
               }}
             >
-              Export filtered CSV
+              {filters.comparison === "DIFFERENCES" ? "Export discrepancies" : "Export filtered CSV"}
             </button>
             {exportNote ? <p className="text-[12px] text-steel">{exportNote}</p> : null}
           </div>
@@ -283,62 +312,78 @@ export function SalesReconciliationInvestigation({ companyId }: { companyId: str
                   </li>
                 ))}
               </ul>
-              <dl className="mt-3 grid gap-2 text-[13px] sm:grid-cols-3">
-                <div>
-                  <dt className="text-steel">504 goods total</dt>
-                  <dd className="tabular-nums">{document.goodsNet == null ? "—" : formatGbp(document.goodsNet)}</dd>
-                </div>
-                <div>
-                  <dt className="text-steel">
-                    {document.sources.filter((source) => source.source !== "ONGOING_504").length > 1
-                      ? "All source copies"
-                      : "Product lines"}
-                  </dt>
-                  <dd className="tabular-nums">{formatGbp(document.productLineNet)}</dd>
-                </div>
-                <div>
-                  <dt className="text-steel">Difference</dt>
-                  <dd className="tabular-nums">{document.difference == null ? "—" : formatGbp(document.difference)}</dd>
-                </div>
-              </dl>
-              {document.sources.length > 1 ? (
-                <ul className="mt-2 text-[12px] text-steel">
-                  {document.sources.map((source) => (
-                    <li key={source.source}>
-                      {source.sourceLabel}: {formatQuantity(source.qty)} · {formatGbp(source.net)}
-                    </li>
-                  ))}
+              <div className="mt-3 rounded-md border border-border bg-surface/30 p-3">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-steel">Document summary</p>
+                <ul className="mt-2 space-y-1 text-[13px]">
+                  {document.sources
+                    .filter((source) => source.source !== "ONGOING_504")
+                    .map((source) => (
+                      <li key={source.source} className="flex flex-wrap justify-between gap-2">
+                        <span>{source.sourceLabel}</span>
+                        <span className="tabular-nums">
+                          {source.lineCount} lines · {formatGbp(source.net)}
+                        </span>
+                      </li>
+                    ))}
                 </ul>
-              ) : null}
+                <p className="mt-2 text-[12px] text-steel">Source totals, not certified sales.</p>
+                <p className="mt-2 text-[15px] font-semibold tabular-nums">
+                  Total difference {document.comparison.totalDifference == null ? "—" : formatGbp(document.comparison.totalDifference)}
+                </p>
+                {document.comparison.totalDifferenceSummary ? (
+                  <p className="mt-1 text-[12px] text-steel">{document.comparison.totalDifferenceSummary}</p>
+                ) : null}
+                {document.goodsNet != null ? (
+                  <p className="mt-2 text-[13px]">
+                    504 goods total <span className="tabular-nums">{formatGbp(document.goodsNet)}</span>
+                    {document.difference ? (
+                      <span className="text-steel"> · differs from the product lines by {formatGbp(document.difference)}</span>
+                    ) : null}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-[12px] text-steel">{document.comparison.summary}</p>
+              </div>
               <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[40rem] text-left text-[13px]">
+                <table className="w-full min-w-[48rem] text-left text-[13px]">
                   <thead className="text-[11px] uppercase tracking-wide text-steel">
                     <tr>
+                      <th className="py-1 pr-3 font-medium">Finding</th>
                       <th className="py-1 pr-3 font-medium">SKU</th>
-                      <th className="py-1 pr-3 font-medium">Quantity</th>
-                      <th className="py-1 pr-3 font-medium">Net</th>
-                      <th className="py-1 pr-3 font-medium">Source</th>
-                      <th className="py-1 pr-3 font-medium">Invoice reference</th>
-                      <th className="py-1 font-medium">Difference</th>
+                      <th className="py-1 pr-3 font-medium">Occurrence</th>
+                      <th className="py-1 pr-3 font-medium">Sources</th>
+                      <th className="py-1 pr-3 font-medium">Quantity difference</th>
+                      <th className="py-1 font-medium">Net difference</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {document.lines.map((line) => (
-                      <tr key={`${line.lineId}|${line.source}`} className="border-t border-border">
-                        <td className="py-1.5 pr-3 font-mono">{line.sku || "—"}</td>
-                        <td className="py-1.5 pr-3 tabular-nums">{formatQuantity(line.qty)}</td>
-                        <td className="py-1.5 pr-3 tabular-nums">{formatGbp(line.net)}</td>
-                        <td className="py-1.5 pr-3">{line.sourceLabel}</td>
-                        <td className="py-1.5 pr-3">{line.invoiceReference ?? "No document reference"}</td>
-                        <td className="py-1.5 tabular-nums">{formatGbp(line.difference)}</td>
+                    {document.comparison.rows.map((row) => (
+                      <tr key={row.id} className="border-t border-border align-top">
+                        <td className="py-1.5 pr-3">{row.label}</td>
+                        <td className="py-1.5 pr-3 font-mono">{row.sku || "—"}</td>
+                        <td className="py-1.5 pr-3 tabular-nums">{row.occurrence}</td>
+                        <td className="py-1.5 pr-3">
+                          {row.sources.map((source) => (
+                            <div key={source.source}>
+                              {source.sourceLabel}:{" "}
+                              {source.missing
+                                ? "Missing"
+                                : `${formatQuantity(source.qty)} · ${formatGbp(source.net ?? "0")}`}
+                            </div>
+                          ))}
+                        </td>
+                        <td className="py-1.5 pr-3 tabular-nums">{row.qtyDifference ?? "—"}</td>
+                        <td className="py-1.5 tabular-nums">{row.netDifference == null ? "—" : formatGbp(row.netDifference)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {document.linesTruncated ? (
+              {document.comparison.rows.length === 0 ? (
+                <p className="mt-2 text-[12px] text-steel">No lines in this view. The document summary still shows the source totals.</p>
+              ) : null}
+              {document.comparison.rowsTruncated ? (
                 <p className="mt-2 text-[12px] text-steel">
-                  Showing the first {document.lines.length} of {document.lineCount} matching lines. Export CSV for the filtered set.
+                  Showing the first {document.comparison.rows.length} rows in this view. Export discrepancies for the full filtered set.
                 </p>
               ) : null}
             </article>

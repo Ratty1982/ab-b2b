@@ -18,6 +18,8 @@ const ref = (name: string) => `${stamp}${name}`;
 const skuPad = `RI-PAD-${stamp}`;
 const skuOil = `RI-OIL-${stamp}`;
 const skuBelt = `RI-BLT-${stamp}`;
+const skuBolt = `RI-BOLT-${stamp}`;
+const skuWasher = `RI-WASH-${stamp}`;
 const codeOwn = `${stamp}A`;
 const codeShared = `${stamp}X`;
 
@@ -215,6 +217,50 @@ beforeAll(async () => {
     qty: "1",
     sales: "7.00",
   });
+
+  for (const [index, sku] of [
+    [1, skuBolt],
+    [2, skuBolt],
+    [3, skuBolt],
+    [4, skuWasher],
+  ] as const) {
+    await historical({
+      accountCode: codeOwn,
+      inv: `${stamp}-D1-${index}`,
+      type: "INVOICE",
+      reference: ref("D1"),
+      sku,
+      qty: "1",
+      sales: sku === skuWasher ? "5.00" : "10.00",
+    });
+  }
+  const copies = await prisma.autopartSalesDocument.create({
+    data: {
+      companyId,
+      autopartCustomerCode: codeOwn,
+      documentType: "INVOICE",
+      documentReference: ref("D1"),
+      documentDate: new Date("2026-09-03T12:00:00.000Z"),
+      source: "561L",
+      has504: false,
+      hasTrm21qc: false,
+    },
+  });
+  await prisma.autopartSalesLine.createMany({
+    data: [1, 2].map((lineNumber) => ({
+      companyId,
+      documentId: copies.id,
+      autopartCustomerCode: codeOwn,
+      documentType: "INVOICE" as const,
+      documentReference: ref("D1"),
+      lineNumber,
+      sku: skuBolt,
+      descriptionSnapshot: `Synthetic ${skuBolt}`,
+      units: "1",
+      salesNet: "10.00",
+      source: "561L",
+    })),
+  });
 });
 
 afterAll(async () => {
@@ -247,43 +293,107 @@ describe("sales reconciliation investigation", () => {
       "HISTORICAL_561L",
     ]);
     expect(conflict?.difference).toBe("20.00");
-    const historicalLine = conflict?.lines.find((line) => line.source === "HISTORICAL_561L");
-    const importedLine = conflict?.lines.find((line) => line.source === "COMPANY_561L_SLRB");
-    expect(historicalLine).toMatchObject({
+    expect(conflict?.comparison.view).toBe("DIFFERENCES");
+    expect(conflict?.comparison.totalDifference).toBe("20.00");
+    expect(conflict?.comparison.totalDifferenceSummary).toContain("not certified sales");
+    expect(conflict?.comparison.rows).toHaveLength(1);
+    expect(conflict?.comparison.rows[0]).toMatchObject({
+      kind: "QTY_AND_NET_CHANGED",
       sku: skuPad.toUpperCase(),
+      occurrence: 1,
+      qtyDifference: "-1.000",
+      netDifference: "-20.00",
+    });
+    expect(conflict?.comparison.rows[0]?.sources.find((source) => source.source === "HISTORICAL_561L")).toMatchObject({
       qty: "1.000",
       net: "10.00",
-      invoiceReference: ref("C1"),
-      difference: "-20.00",
+      missing: false,
     });
-    expect(importedLine).toMatchObject({ sku: skuPad.toUpperCase(), qty: "2.000", net: "30.00", difference: "20.00" });
+    expect(conflict?.comparison.rows[0]?.sources.find((source) => source.source === "COMPANY_561L_SLRB")).toMatchObject({
+      qty: "2.000",
+      net: "30.00",
+      missing: false,
+    });
+    expect(conflict?.sources.find((source) => source.source === "HISTORICAL_561L")).toMatchObject({
+      net: "10.00",
+      lineCount: 1,
+    });
+    expect(conflict?.sources.find((source) => source.source === "COMPANY_561L_SLRB")).toMatchObject({
+      net: "30.00",
+      lineCount: 1,
+    });
+
+    const copies = byRef.get(ref("D1"));
+    expect(copies?.comparison.matching).toBe(2);
+    expect(copies?.comparison.missing).toBe(2);
+    expect(copies?.comparison.rows.map((row) => row.kind)).toEqual(["MISSING", "MISSING"]);
+    expect(copies?.comparison.rows.map((row) => row.sku).sort()).toEqual([
+      skuBolt.toUpperCase(),
+      skuWasher.toUpperCase(),
+    ]);
+    expect(copies?.comparison.totalDifference).toBe("15.00");
+    expect(copies?.sources.find((source) => source.source === "HISTORICAL_561L")?.lineCount).toBe(4);
+    expect(copies?.sources.find((source) => source.source === "COMPANY_561L_SLRB")?.lineCount).toBe(2);
+    const allLines = await getSalesReconciliationInvestigation(managerId, {
+      companyId,
+      comparison: "ALL",
+      pageSize: 10,
+    });
+    expect(allLines.permitted).toBe(true);
+    if (!allLines.permitted) return;
+    const shown = allLines.documents.find((document) => document.reference === ref("D1"));
+    expect(
+      shown?.comparison.rows
+        .filter((row) => row.sku === skuBolt.toUpperCase())
+        .map((row) => [row.occurrence, row.kind]),
+    ).toEqual([
+      [1, "MATCH"],
+      [2, "MATCH"],
+      [3, "MISSING"],
+    ]);
+    const duplicates = await getSalesReconciliationInvestigation(managerId, {
+      companyId,
+      comparison: "DUPLICATES",
+      pageSize: 10,
+    });
+    expect(duplicates.permitted).toBe(true);
+    if (!duplicates.permitted) return;
+    expect(
+      duplicates.documents.find((document) => document.reference === ref("D1"))?.comparison.rows,
+    ).toEqual([]);
+    expect(
+      duplicates.documents.find((document) => document.reference === ref("R1"))?.comparison.rows[0]?.kind,
+    ).toBe("REPEATED");
 
     const mismatch = byRef.get(ref("M1"));
     expect(mismatch?.reasons).toEqual(["DOCUMENT_GOODS_MISMATCH"]);
     expect(mismatch?.goodsNet).toBe("25.00");
     expect(mismatch?.productLineNet).toBe("10.00");
     expect(mismatch?.difference).toBe("15.00");
-    expect(mismatch?.lines[0]).toMatchObject({
-      sku: skuOil.toUpperCase(),
-      qty: "1.000",
-      net: "10.00",
-      difference: "15.00",
-    });
+    expect(mismatch?.comparison.rows).toEqual([]);
+    expect(mismatch?.comparison.totalDifference).toBe("15.00");
+    expect(mismatch?.comparison.totalDifferenceSummary).toContain("504 goods total 25.00");
+    expect(mismatch?.comparison.totalDifferenceSummary).toContain("not certified sales");
 
     const repeated = byRef.get(ref("R1"));
     expect(repeated?.actions).toEqual(["IMPORT_PROCESSING"]);
-    expect(repeated?.lines).toHaveLength(1);
-    expect(repeated?.lines[0]?.difference).toBe("4.00");
+    expect(repeated?.comparison.repeated).toBe(1);
+    expect(repeated?.comparison.rows).toHaveLength(1);
+    expect(repeated?.comparison.rows[0]).toMatchObject({
+      kind: "REPEATED",
+      sku: skuBelt.toUpperCase(),
+      netDifference: "4.00",
+    });
 
     const shared = byRef.get(ref("S1"));
     expect(shared?.actions).toEqual(["ACCOUNT_MAPPING"]);
     expect(shared?.accountCode).toBe(codeShared);
-    expect(shared?.lines[0]?.net).toBe("7.00");
+    expect(shared?.comparison.rows[0]).toMatchObject({ kind: "HELD", netDifference: "7.00" });
 
     const credit = result.documents.find((document) => document.documentType === "CREDIT");
     expect(credit?.reference).toBeNull();
     expect(credit?.reasons).toContain("NO_DOCUMENT_REFERENCE");
-    expect(credit?.lines[0]?.net).toBe("-3.00");
+    expect(credit?.comparison.rows[0]).toMatchObject({ kind: "HELD", netDifference: "-3.00" });
 
     const afterLines = await prisma.autopartInvoiceLine.count({ where: { importBatchId: batchId } });
     const afterDocs = await prisma.autopartSalesDocument.findMany({
@@ -326,9 +436,12 @@ describe("sales reconciliation investigation", () => {
     });
     expect(historical.permitted).toBe(true);
     if (!historical.permitted) return;
-    expect(historical.documents).toHaveLength(1);
-    expect(historical.documents[0]?.lines.map((line) => line.source)).toEqual(["HISTORICAL_561L"]);
-    expect(historical.documents[0]?.sources.map((source) => source.net).sort()).toEqual(["10.00", "30.00"]);
+    const historicalConflict = historical.documents.find((document) => document.reference === ref("C1"));
+    expect(historicalConflict?.comparison.rows[0]?.sources.map((source) => source.source).sort()).toEqual([
+      "COMPANY_561L_SLRB",
+      "HISTORICAL_561L",
+    ]);
+    expect(historicalConflict?.sources.map((source) => source.net).sort()).toEqual(["10.00", "30.00"]);
 
     const credits = await getSalesReconciliationInvestigation(managerId, {
       companyId,
@@ -354,16 +467,40 @@ describe("sales reconciliation investigation", () => {
       companyId,
       reason: "DOCUMENT_GOODS_MISMATCH",
     });
+    expect(csv.filename.startsWith("reconciliation-discrepancies-")).toBe(true);
     expect(csv.csv).toContain("Invoice reference");
-    expect(csv.csv).toContain("SKU");
-    expect(csv.csv).toContain("Difference");
+    expect(csv.csv).toContain("Finding");
+    expect(csv.csv).toContain("Total difference");
+    expect(csv.csv).toContain("Document total");
     expect(csv.csv).toContain(ref("M1"));
-    expect(csv.csv).toContain(skuOil.toUpperCase());
     expect(csv.csv).toContain("15.00");
     expect(csv.csv).toContain("Correct Autopart source data");
+    expect(csv.csv).not.toContain(skuOil.toUpperCase());
     expect(csv.csv).not.toContain(ref("C1"));
     expect(csv.csv).not.toContain(ref("S1"));
+    expect(csv.rowCount).toBe(1);
     expect(csv.truncated).toBe(false);
+
+    const differences = await exportSalesReconciliationCsv(managerId, {
+      companyId,
+      reason: "CONFLICTING_OVERLAP",
+      comparison: "DIFFERENCES",
+    });
+    expect(differences.csv).toContain(ref("D1"));
+    expect(differences.csv).toContain("Missing line");
+    expect(differences.csv).toContain(skuBolt.toUpperCase());
+    expect(differences.csv).toContain(skuWasher.toUpperCase());
+    expect(differences.csv).not.toContain("Matching line");
+    const matching = await exportSalesReconciliationCsv(managerId, {
+      companyId,
+      reason: "CONFLICTING_OVERLAP",
+      comparison: "MATCHING",
+    });
+    expect(matching.filename.startsWith("reconciliation-lines-")).toBe(true);
+    expect(matching.csv).toContain("Matching line");
+    expect(matching.csv).toContain(skuBolt.toUpperCase());
+    expect(matching.csv).not.toContain("Missing line");
+    expect(matching.csv).not.toContain(skuWasher.toUpperCase());
     await expect(exportSalesReconciliationCsv(repUserId, { companyId })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
