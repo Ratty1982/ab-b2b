@@ -24,7 +24,7 @@ import {
 } from "@/server/companies/customer-group-sales";
 import { resolveBusinessPeriod } from "@/domain/sales-history-period";
 import { searchSalesIntelligenceCustomers } from "@/server/sales-intelligence/enquiry";
-import { verifyAutopartAccountAlias } from "@/server/companies/autopart-history";
+import { verifyAutopartAccountAlias } from "@/server/companies/autopart-account-alias";
 
 const prisma = new PrismaClient();
 const stamp = Date.now();

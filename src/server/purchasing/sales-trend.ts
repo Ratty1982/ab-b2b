@@ -26,7 +26,8 @@ async function skuMonths(sku: string): Promise<MonthRow[]> {
            COALESCE(SUM(l."salesNet"), 0) AS net
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+      AND d."documentDate" IS NOT NULL
       AND UPPER(l.sku) = ${skuMatchKey(sku)}
     GROUP BY 1
     ORDER BY 1
@@ -42,7 +43,8 @@ async function brandMonths(brandId: string): Promise<MonthRow[]> {
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     INNER JOIN "ProductVariant" v ON UPPER(v.sku) = UPPER(l.sku)
     INNER JOIN "Product" p ON p.id = v."productId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+      AND d."documentDate" IS NOT NULL
       AND p."brandId" = ${brandId}
     GROUP BY 1
     ORDER BY 1
@@ -56,7 +58,8 @@ async function brandSkuCount(brandId: string): Promise<number> {
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     INNER JOIN "ProductVariant" v ON UPPER(v.sku) = UPPER(l.sku)
     INNER JOIN "Product" p ON p.id = v."productId"
-    WHERE d."documentDate" IS NOT NULL
+    WHERE l."source" = 'ONGOING_TRM21QC'
+      AND d."documentDate" IS NOT NULL
       AND p."brandId" = ${brandId}
   `;
   return Number(rows[0]?.skus ?? 0);
@@ -139,7 +142,8 @@ export async function trendDirectionBySku(skus: string[], today = todayLondonDat
              0 AS net
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE d."documentDate" IS NOT NULL
+      WHERE l."source" = 'ONGOING_TRM21QC'
+      AND d."documentDate" IS NOT NULL
         AND UPPER(l.sku) IN (${Prisma.join(chunk)})
       GROUP BY 1, 2
     `;

@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
-import { getCompanyAutopartHistoryWorkspace } from "@/server/companies/autopart-history";
 import {
   listCompanyAutopartInvoiceLines,
   purchaseDataStatus,
@@ -253,30 +252,6 @@ describe("internal CRM Autopart history", () => {
     expect(accounts.every((account) => account.portalEligible === false)).toBe(true);
     expect(await prisma.autopartInvoiceLine.count({ where: { accountCode: primaryCode } })).toBe(4);
 
-    const history = await getCompanyAutopartHistoryWorkspace(adminId, prospectId);
-    expect(history.purchaseDataStatus).toBe("GLOBAL");
-    expect(history.historic.imported).toBe(true);
-    expect(history.historic.netSpend).toBe("1.00");
-    expect(history.globalHistory.restricted).toBe(false);
-    expect(history.globalHistory.mappingStatus).toBe("LINKED");
-    expect(history.globalHistory.source).toBe("GLOBAL_AUTOPART_IMPORT");
-    expect(history.globalHistory.lineCount).toBe(5);
-    expect(history.globalHistory.documentCount).toBe(3);
-    expect(history.globalHistory.productsPurchased).toBe(4);
-    expect(history.globalHistory.netSalesExVat).toBe("19.75");
-    expect(history.globalHistory.salesExVat).toBe("22.75");
-    expect(history.globalHistory.creditsExVat).toBe("-3.00");
-    expect(history.globalHistory.zeroLineCount).toBe(1);
-    expect(history.globalHistory.netQuantity).toBe("6.000");
-    expect(history.globalHistory.purchaseDate).toBeNull();
-    expect(history.globalHistory.nativeOrdersIncluded).toBe(false);
-    expect(history.globalHistory.latestBatch?.filename).toBe(`${stamp}-561.csv`);
-    expect(history.globalHistory.accounts.every((account) => !account.portalHistoricalAccess)).toBe(
-      true,
-    );
-    expect(Number(history.globalHistory.netSalesExVat)).not.toBeCloseTo(999.99, 2);
-    expect(Number(history.globalHistory.netSalesExVat)).not.toBeCloseTo(20.75, 2);
-
     const master = await getCompanyAutopartMaster(adminId, prospectId);
     expect(master.lineCount).toBe(5);
     expect(master.ledgerCount).toBe(1);
@@ -307,7 +282,7 @@ describe("internal CRM Autopart history", () => {
     expect(portalOff.enabled).toBe(false);
     process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] = "true";
     const portalOn = await getPortalAutopartHistory(tradeId);
-    expect(portalOn.enabled).toBe(true);
+    expect(portalOn.enabled).toBe(false);
     expect(portalOn.total).toBe(0);
     process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] = "false";
 
@@ -326,34 +301,23 @@ describe("internal CRM Autopart history", () => {
   });
 
   it("keeps unlinked and unrelated companies empty and blocks sales ledger values", async () => {
-    const unrelated = await getCompanyAutopartHistoryWorkspace(adminId, otherCompanyId);
-    expect(unrelated.purchaseDataStatus).toBe("NOT_IMPORTED");
-    expect(unrelated.globalHistory.lineCount).toBe(0);
-    expect(unrelated.globalHistory.mappingStatus).toBe("UNLINKED");
+    const unrelated = await getCompanyAutopartMaster(adminId, otherCompanyId);
+    expect(unrelated.lineCount).toBe(0);
+    expect(unrelated.mappingStatus).toBe("UNLINKED");
 
-    const codeOnly = await getCompanyAutopartHistoryWorkspace(adminId, codeOnlyCompanyId);
-    expect(codeOnly.globalHistory.lineCount).toBe(0);
-    expect(codeOnly.purchaseDataStatus).toBe("NOT_IMPORTED");
-    expect(codeOnly.company.autopartCustomerCode).toBe(foreignCode);
+    const codeOnly = await getCompanyAutopartMaster(adminId, codeOnlyCompanyId);
+    expect(codeOnly.lineCount).toBe(0);
 
-    const salesHistory = await getCompanyAutopartHistoryWorkspace(salesId, prospectId);
-    expect(salesHistory.globalHistory.lineCount).toBe(5);
-    expect(salesHistory.globalHistory.netSalesExVat).toBe("19.75");
-    expect(salesHistory.globalHistory.ledgerRowCount).toBeNull();
-    const salesPayload = JSON.stringify(salesHistory.globalHistory);
-    expect(salesPayload).not.toContain("runningBalance");
-    expect(salesPayload).not.toContain("goodsAmount");
-    expect(salesPayload).not.toContain("ledgerGoods");
+    const salesHistory = await getCompanyAutopartMaster(salesId, prospectId);
+    expect(salesHistory.lineCount).toBe(5);
+    expect(salesHistory.ledgerCount).toBeNull();
     await expect(listAutopartLedger(salesId, { accountCode: primaryCode })).rejects.toBeInstanceOf(
       AuthError,
     );
-    await expect(
-      getCompanyAutopartHistoryWorkspace(salesId, otherCompanyId),
-    ).rejects.toBeInstanceOf(AuthError);
+    await expect(getCompanyAutopartMaster(salesId, otherCompanyId)).rejects.toBeInstanceOf(AuthError);
 
-    const management = await getCompanyAutopartHistoryWorkspace(managementId, prospectId);
-    expect(management.globalHistory.ledgerRowCount).toBe(1);
-    expect(JSON.stringify(management.globalHistory)).not.toContain("runningBalance");
+    const management = await getCompanyAutopartMaster(managementId, prospectId);
+    expect(management.ledgerCount).toBe(1);
     const ledger = await listAutopartLedger(managementId, { accountCode: primaryCode });
     expect(ledger.balanceNote).toMatch(/not the current amount due/);
     expect(ledger.items.some((item) => item.runningBalance === "0.00")).toBe(true);
@@ -400,19 +364,13 @@ describe("internal CRM Autopart history", () => {
         createdById: adminId,
       },
     });
-    await previewAutopartImport(adminId, { batchId: staged.id });
-    const started = await confirmAutopartImport(adminId, staged.id);
-    expect(started.status).toBe("RUNNING");
-    let committed = started;
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      committed = await getAutopartImportBatch(adminId, staged.id);
-      if (committed.status === "COMMITTED" || committed.status === "FAILED") break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    expect(committed.status).toBe("COMMITTED");
-    expect(committed.importedRows + committed.updatedRows).toBe(201);
-    expect(committed.updatedRows).toBe(1);
-    expect(await prisma.autopartInvoiceLine.count({ where: { accountCode: account } })).toBe(200);
+    await expect(previewAutopartImport(adminId, { batchId: staged.id })).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
+    });
+    await expect(confirmAutopartImport(adminId, staged.id)).rejects.toMatchObject({
+      code: "HISTORICAL_IMPORT_RETIRED",
+    });
+    expect(await prisma.autopartInvoiceLine.count({ where: { accountCode: account } })).toBe(0);
   });
 });
 

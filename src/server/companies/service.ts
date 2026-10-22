@@ -157,10 +157,17 @@ export async function listCompaniesForActor(
   } else if (query.autopartLink === "unlinked") {
     and.push({ autopartAccounts: { none: {} }, autopartCustomerCode: null });
   }
+  const ongoingSales = {
+    OR: [
+      { has504: true },
+      { hasTrm21qc: true },
+      { source: { in: ["ONGOING_504", "ONGOING_TRM21QC", "ONGOING_504_BRIDGE"] } },
+    ],
+  };
   if (query.historicalSales === "with") {
-    and.push({ autopartAccounts: { some: { invoiceLines: { some: {} } } } });
+    and.push({ autopartSalesDocuments: { some: ongoingSales } });
   } else if (query.historicalSales === "without") {
-    and.push({ NOT: { autopartAccounts: { some: { invoiceLines: { some: {} } } } } });
+    and.push({ NOT: { autopartSalesDocuments: { some: ongoingSales } } });
   }
   if (and.length) where.AND = and;
 

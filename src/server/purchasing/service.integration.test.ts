@@ -100,7 +100,7 @@ async function seedSale(sku: string, date: string, units: string, ref: string, t
       units,
       salesNet: type === "CREDIT" ? "-10.00" : "40.00",
       matchStatus: "MATCHED",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
     },
   });
 }

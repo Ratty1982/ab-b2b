@@ -53,7 +53,8 @@ async function saleFacts(brandId: string | null): Promise<SaleFacts> {
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
         INNER JOIN "ProductVariant" v ON UPPER(v.sku) = UPPER(l.sku)
         INNER JOIN "Product" p ON p.id = v."productId"
-        WHERE d."documentDate" IS NOT NULL AND p."brandId" = ${brandId}
+        WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL AND p."brandId" = ${brandId}
       `
     : prisma.$queryRaw<Array<{ earliest: Date | null; latest: Date | null; lines: number; skus: number }>>`
         SELECT MIN(d."documentDate") AS earliest,
@@ -62,7 +63,8 @@ async function saleFacts(brandId: string | null): Promise<SaleFacts> {
                COUNT(DISTINCT UPPER(l.sku))::int AS skus
         FROM "AutopartSalesLine" l
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-        WHERE d."documentDate" IS NOT NULL
+        WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
       `;
   const monthsQuery = brandId
     ? prisma.$queryRaw<Array<{ month: string }>>`
@@ -71,14 +73,16 @@ async function saleFacts(brandId: string | null): Promise<SaleFacts> {
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
         INNER JOIN "ProductVariant" v ON UPPER(v.sku) = UPPER(l.sku)
         INNER JOIN "Product" p ON p.id = v."productId"
-        WHERE d."documentDate" IS NOT NULL AND p."brandId" = ${brandId}
+        WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL AND p."brandId" = ${brandId}
         ORDER BY 1
       `
     : prisma.$queryRaw<Array<{ month: string }>>`
         SELECT DISTINCT to_char(d."documentDate", 'YYYY-MM') AS month
         FROM "AutopartSalesLine" l
         INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-        WHERE d."documentDate" IS NOT NULL
+        WHERE l."source" = 'ONGOING_TRM21QC'
+        AND d."documentDate" IS NOT NULL
         ORDER BY 1
       `;
   const [totals, months] = await Promise.all([brandFilter, monthsQuery]);

@@ -10,7 +10,7 @@ import {
   listPortalPurchaseHistory,
   purchaseHistoryWindowRange,
 } from "@/server/companies/purchase-history";
-import { listPortalHistoricPurchases } from "@/server/companies/autopart-history";
+import { listPortalHistoricPurchases } from "@/server/companies/purchase-history";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
 import { saveProduct } from "@/server/catalogue/service";
 
@@ -115,7 +115,7 @@ async function seedHistoric(companyId: string, code: string) {
         units,
         salesNet,
         matchStatus: "NOT_IN_AB_CATALOGUE",
-        source: "561L",
+        source: "ONGOING_TRM21QC",
         importRunId: run.id,
       },
     });

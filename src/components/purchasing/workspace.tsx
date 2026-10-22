@@ -108,7 +108,7 @@ export function ForecastConfidenceBadge({
 }) {
   const title =
     confidence === "UNVERIFIED" || verified === false
-      ? "Historical sales records are present, but complete sales-data coverage has not yet been verified."
+      ? "Sales records are present, but complete sales-data coverage has not yet been verified."
       : warning ||
         (coverageDays != null
           ? coverageDays <= 0

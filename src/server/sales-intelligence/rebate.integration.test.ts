@@ -111,7 +111,7 @@ async function seedLine(
       units,
       salesNet,
       matchStatus: "NOT_IN_AB_CATALOGUE",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
       importRunId: runId,
     },
   });

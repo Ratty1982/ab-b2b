@@ -415,7 +415,7 @@ describe("CRM + Sales Intelligence follow-up regression", () => {
         units: "12",
         salesNet: "89.52",
         matchStatus: "NOT_IN_AB_CATALOGUE",
-        source: "561L",
+        source: "ONGOING_TRM21QC",
         importRunId: run.id,
       },
     });

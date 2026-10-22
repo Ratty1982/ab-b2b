@@ -17,7 +17,6 @@ import {
   loadUnifiedFinancialCertification,
 } from "@/server/sales-intelligence/unified-sales";
 import { getCompanyCrmWorkspace } from "@/server/crm/customer";
-import { getCompanyAutopartHistoryWorkspace } from "@/server/companies/autopart-history";
 import { confirmAutopartTrm21qcImport } from "@/server/companies/autopart-ongoing-sales";
 import { previewSalesIntelligenceFollowUp } from "@/server/sales-intelligence/followup";
 
@@ -361,7 +360,7 @@ beforeAll(async () => {
     type: "INVOICE",
     ref: ref("Q1"),
     date: "2026-07-01",
-    source: "561L",
+    source: "ONGOING_TRM21QC",
     lines: [{ sku: skuA, qty: "4", net: "40.00" }],
   });
   await historical({
@@ -584,6 +583,19 @@ beforeAll(async () => {
     qty: "1",
     sales: "10.00",
   });
+  await prisma.autopartSalesLine.create({
+    data: {
+      companyId: twinAId,
+      autopartCustomerCode: codeTwinA,
+      documentType: "INVOICE",
+      documentReference: ref("SAME"),
+      lineNumber: 1,
+      sku: skuBrake,
+      units: "1",
+      salesNet: "10.00",
+      source: "ONGOING_TRM21QC",
+    },
+  });
   await historical({
     accountCode: codeTwinB,
     inv: `I/${ref("SAME")}/1`,
@@ -593,6 +605,19 @@ beforeAll(async () => {
     qty: "4",
     sales: "40.00",
   });
+  await prisma.autopartSalesLine.create({
+    data: {
+      companyId: twinBId,
+      autopartCustomerCode: codeTwinB,
+      documentType: "INVOICE",
+      documentReference: ref("SAME"),
+      lineNumber: 1,
+      sku: skuBrake,
+      units: "4",
+      salesNet: "40.00",
+      source: "ONGOING_TRM21QC",
+    },
+  });
   await historical({
     accountCode: codeOrphan,
     inv: `I/${ref("ORPH")}/1`,
@@ -601,6 +626,15 @@ beforeAll(async () => {
     sku: skuBrake,
     qty: "1",
     sales: "123.45",
+  });
+  await dated({
+    companyId: null,
+    code: codeOrphan,
+    type: "INVOICE",
+    ref: ref("ORPH"),
+    date: "2026-06-02",
+    source: "ONGOING_TRM21QC",
+    lines: [{ sku: skuBrake, qty: "1", net: "123.45" }],
   });
 });
 
@@ -615,21 +649,21 @@ describe("unified customer sales", () => {
     const s = lifetime.summary;
     expect(result.company.status).toBe("PROSPECT");
     expect(result.kpis.netSales).toBe(s.certifiedNet);
-    expect(s.historicalSales).toBe("42.00");
-    expect(s.historicalNet).toBe("38.00");
-    expect(s.datedInvoicedSales).toBe("40.00");
-    expect(s.creditsAndAdjustments).toBe("-15.00");
-    expect(s.datedNet).toBe("29.00");
-    expect(s.certifiedNet).toBe("67.00");
-    expect(s.certification).toBe("INCOMPLETE");
-    expect(s.combinedNet).toBeNull();
-    expect(s.unreconciledLines).toBe(3);
-    expect(s.unreconciledHistoricalNet).toBe("22.00");
-    expect(s.unreconciledDatedNet).toBe("16.00");
-    expect(s.suppressedDuplicateLines).toBe(2);
-    expect(s.suppressedDuplicateNet).toBe("20.00");
-    expect(s.invoiceCount).toBe(6);
-    expect(s.creditNoteCount).toBe(2);
+    expect(s.historicalSales).toBe("0.00");
+    expect(s.historicalNet).toBe("0.00");
+    expect(s.datedInvoicedSales).toBe("56.00");
+    expect(s.creditsAndAdjustments).toBe("-11.00");
+    expect(s.datedNet).toBe("45.00");
+    expect(s.certifiedNet).toBe("45.00");
+    expect(s.certification).toBe("COMPLETE");
+    expect(s.combinedNet).toBe("45.00");
+    expect(s.unreconciledLines).toBe(0);
+    expect(s.unreconciledHistoricalNet).toBe("0.00");
+    expect(s.unreconciledDatedNet).toBe("0.00");
+    expect(s.suppressedDuplicateLines).toBe(0);
+    expect(s.suppressedDuplicateNet).toBe("0.00");
+    expect(s.invoiceCount).toBe(4);
+    expect(s.creditNoteCount).toBe(1);
     expect(s.lastDatedInvoice).toBe("2026-09-20");
     expect(result.company.salesperson?.id).toBe(repId);
     const transactions = await listUnifiedCustomerTransactions(adminId, {
@@ -652,9 +686,7 @@ describe("unified customer sales", () => {
     const queue = await getUnifiedReconciliationQueue(adminId, { page: 1, pageSize: 100 });
     expect(queue.permitted).toBe(true);
     if (queue.permitted) {
-      const shared = queue.items.find((item) => item.code === codeShared);
-      expect(shared?.linkedCompanies).toBe(2);
-      expect(shared?.net).toBe("9999999.99");
+      expect(queue.items.find((item) => item.code === codeShared)).toBeUndefined();
     }
   });
 
@@ -676,33 +708,25 @@ describe("unified customer sales", () => {
     const suppressed = tx.items.filter((item) => item.status === "DUPLICATE");
     expect(counted).toHaveLength(2);
     expect(
-      counted.every((item) => item.source === "TRM21QC_FEED" && item.status === "MATCHED"),
+      counted.every((item) => item.source === "TRM21QC_FEED" && item.status === "DATED"),
     ).toBe(true);
-    expect(suppressed).toHaveLength(2);
-    expect(suppressed.every((item) => item.source === "HISTORICAL_561L")).toBe(true);
+    expect(suppressed).toHaveLength(0);
     expect(tx.filteredCountedNet).toBe("20.00");
   });
 
-  it("reports an overlap that does not agree and a repeated 561L row for reconciliation", async () => {
+  it("does not put retired 561L overlaps on the reconciliation queue", async () => {
     const tx = await listUnifiedCustomerTransactions(adminId, {
       companyId: prospectId,
       status: "UNRECONCILED",
     });
-    const reasons = tx.items.map((item) => `${item.reference}:${item.reason}`).sort();
-    expect(reasons).toEqual(
-      [
-        `${ref("I4")}:CONFLICTING_OVERLAP`,
-        `${ref("I4")}:CONFLICTING_OVERLAP`,
-        `${ref("I5")}:REPEATED_SOURCE_ROW`,
-      ].sort(),
-    );
+    expect(tx.items).toHaveLength(0);
   });
 
   it("states a combined total when every overlap reconciles", async () => {
     const result = await loadUnifiedCustomerSummary(cleanId);
     expect(result.summary.certification).toBe("COMPLETE");
-    expect(result.summary.combinedNet).toBe("46.00");
-    expect(result.summary.suppressedDuplicateLines).toBe(1);
+    expect(result.summary.combinedNet).toBe("40.00");
+    expect(result.summary.suppressedDuplicateLines).toBe(0);
   });
 
   it("shows undated 561L rows as date unavailable and keeps them out of date ranges", async () => {
@@ -711,8 +735,7 @@ describe("unified customer sales", () => {
       pageSize: 100,
     });
     const undated = all.items.filter((item) => item.date == null);
-    expect(undated.length).toBeGreaterThan(0);
-    expect(undated.every((item) => item.dateLabel === "Date unavailable")).toBe(true);
+    expect(undated).toHaveLength(0);
     const ranged = await listUnifiedCustomerTransactions(adminId, {
       companyId: prospectId,
       from: "2026-01-01",
@@ -736,7 +759,7 @@ describe("unified customer sales", () => {
       companyId: prospectId,
       accountCode: codeP2,
     });
-    expect(second.items.length).toBe(2);
+    expect(second.items.length).toBe(1);
   });
 
   it("summarises products with confirmed dates only from dated rows", async () => {
@@ -745,24 +768,23 @@ describe("unified customer sales", () => {
       pageSize: 50,
     });
     const a = products.items.find((item) => item.sku.toUpperCase() === skuA.toUpperCase());
-    expect(a?.netSales).toBe("50.00");
+    expect(a?.netSales).toBe("20.00");
     expect(a?.latestConfirmedDate).toBe("2026-09-01");
     const c = products.items.find((item) => item.sku.toUpperCase() === skuC.toUpperCase());
-    expect(c?.latestConfirmedDate).toBeNull();
-    expect(c?.unreconciledLines).toBe(1);
+    expect(c).toBeUndefined();
     const csv = await exportUnifiedCustomerSalesCsv(adminId, {
       kind: "transactions",
       companyId: prospectId,
     });
     expect(csv.truncated).toBe(false);
-    expect(csv.csv).toContain("Date unavailable");
+    expect(csv.csv).not.toContain("Date unavailable");
   });
 
   it("lists authorised customers for a product and respects salesperson scope", async () => {
     const admin = await getUnifiedProductSales(adminId, { sku: skuA, pageSize: 100 });
     const prospect = admin.customers.items.find((item) => item.companyId === prospectId);
     expect(prospect?.status).toBe("PROSPECT");
-    expect(prospect?.netSales).toBe("50.00");
+    expect(prospect?.netSales).toBe("20.00");
     expect(prospect?.salespersonName).toBe(`Rep ${stamp}`);
     expect(prospect?.lastDatedPurchase).toBe("2026-09-01");
     expect(admin.customers.items.some((item) => item.companyId === cleanId)).toBe(true);
@@ -782,8 +804,6 @@ describe("unified customer sales", () => {
     const crm = await getCompanyCrmWorkspace(adminId, { companyId: prospectId });
     expect(crm.unifiedSales.summary).toEqual(lifetime.summary);
     expect(crm.snapshot.historicNetSales).toBe(lifetime.summary.certifiedNet);
-    const admin = await getCompanyAutopartHistoryWorkspace(adminId, prospectId);
-    expect(admin.unifiedSales?.summary).toEqual(lifetime.summary);
     const dashboard = await getUnifiedCustomerSales(adminId, { companyId: prospectId });
     expect(dashboard.period.preset).toBe("THIS_MONTH");
     expect(dashboard.period.includesUndatedHistory).toBe(false);
@@ -793,12 +813,12 @@ describe("unified customer sales", () => {
       companyId: prospectId,
       historySource: "unified",
     });
-    expect(JSON.stringify(followUp)).toContain("67.00");
+    expect(JSON.stringify(followUp)).toContain("45.00");
   });
 
   it("attaches new feed invoices and credits to a prospect once, without activating it", async () => {
     const before = await loadUnifiedCustomerSummary(feedProspectId);
-    expect(before.summary.historicalNet).toBe("30.00");
+    expect(before.summary.historicalNet).toBe("0.00");
     expect(before.summary.datedNet).toBe("0.00");
 
     const invoiceDoc = `SSU${stamp.slice(-6)}`;
@@ -813,7 +833,7 @@ ${codeT},GRP,${invoiceDoc},02/10/2026,${skuA},Synthetic,2,24.00,12.00,12.00,50.0
     });
     const afterInvoice = await loadUnifiedCustomerSummary(feedProspectId);
     expect(afterInvoice.summary.datedInvoicedSales).toBe("24.00");
-    expect(afterInvoice.summary.certifiedNet).toBe("54.00");
+    expect(afterInvoice.summary.certifiedNet).toBe("24.00");
     expect(afterInvoice.summary.lastDatedInvoice).toBe("2026-10-02");
     expect(afterInvoice.refresh.ongoingTrm21qcAt).not.toBeNull();
     const stored = await prisma.autopartSalesLine.findMany({
@@ -831,7 +851,7 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
     });
     const afterCredit = await loadUnifiedCustomerSummary(feedProspectId);
     expect(afterCredit.summary.creditsAndAdjustments).toBe("-12.00");
-    expect(afterCredit.summary.certifiedNet).toBe("42.00");
+    expect(afterCredit.summary.certifiedNet).toBe("12.00");
     const creditRows = await listUnifiedCustomerTransactions(adminId, {
       companyId: feedProspectId,
       type: "CREDIT",
@@ -863,24 +883,24 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
     const result = await getUnifiedCustomerSales(adminId, { companyId: gsfId, period: "ALL" });
     const lifetime = await loadUnifiedCustomerSummary(gsfId);
     const s = lifetime.summary;
-    expect(result.kpis.netSales).toBe("71.00");
+    expect(result.kpis.netSales).toBe("23.00");
     expect(result.company.name).toContain("GSF CARPARTS");
     expect(result.company.status).toBe("ACTIVE");
-    expect(s.historicalSales).toBe("48.00");
+    expect(s.historicalSales).toBe("0.00");
     expect(s.datedInvoicedSales).toBe("27.00");
     expect(s.creditsAndAdjustments).toBe("-4.00");
-    expect(s.certifiedNet).toBe("71.00");
+    expect(s.certifiedNet).toBe("23.00");
     expect(s.certification).toBe("INCOMPLETE");
     expect(s.combinedNet).toBeNull();
-    expect(s.suppressedDuplicateLines).toBe(1);
-    expect(s.suppressedDuplicateNet).toBe("12.00");
-    expect(s.unreconciledHistoricalNet).toBe("21.50");
+    expect(s.suppressedDuplicateLines).toBe(0);
+    expect(s.suppressedDuplicateNet).toBe("0.00");
+    expect(s.unreconciledHistoricalNet).toBe("0.00");
     expect(s.unreconciledDatedNet).toBe("35.00");
     expect(s.lastDatedInvoice).toBe("2026-10-01");
 
     const products = await listUnifiedCustomerProducts(adminId, { companyId: gsfId, pageSize: 50 });
     const brake = products.items.find((item) => item.sku.toUpperCase() === skuBrake.toUpperCase());
-    expect(brake?.netSales).toBe("31.00");
+    expect(brake?.netSales).toBe("11.00");
     expect(brake?.latestConfirmedDate).toBe("2026-10-01");
 
     const overlap = await listUnifiedCustomerTransactions(adminId, {
@@ -899,7 +919,7 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
       q: ref("Q"),
       status: "ALL",
     });
-    expect(separate.items.filter((item) => item.counted)).toHaveLength(2);
+    expect(separate.items.filter((item) => item.counted)).toHaveLength(0);
     expect(separate.items.some((item) => item.reason === "REPEATED_SOURCE_ROW")).toBe(false);
 
     const held = await listUnifiedCustomerTransactions(adminId, {
@@ -908,16 +928,7 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
       pageSize: 50,
     });
     const reasons = held.items.map((item) => item.reason).sort();
-    expect(reasons).toEqual(
-      [
-        "DOCUMENT_GOODS_MISMATCH",
-        "DOCUMENT_GOODS_MISMATCH",
-        "DOCUMENT_GOODS_MISMATCH",
-        "NO_DOCUMENT_REFERENCE",
-        "REPEATED_SOURCE_ROW",
-        "UNKNOWN_DOCUMENT_TYPE",
-      ].sort(),
-    );
+    expect(reasons).toEqual(["DOCUMENT_GOODS_MISMATCH", "DOCUMENT_GOODS_MISMATCH"].sort());
     expect(held.items.find((item) => item.reference === ref("H504"))?.net).toBe("25.00");
     expect(held.items.every((item) => item.net !== "99.00")).toBe(true);
 
@@ -933,21 +944,21 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
       companyId: gsfId,
       historySource: "unified",
     });
-    expect(JSON.stringify(followUp)).toContain("Incomplete — certified 71.00");
+    expect(JSON.stringify(followUp)).toContain("Incomplete — certified 23.00");
     expect(JSON.stringify(followUp)).not.toContain("99.00");
     expect(JSON.stringify(followUp)).not.toContain("25.00");
 
     const report = await loadUnifiedFinancialCertification(gsfId);
-    expect(report.linesExamined).toBe(14);
-    expect(report.certifiedNet).toBe("71.00");
-    expect(report.rawAttachedNet).toBe("114.50");
-    expect(report.duplicateNet).toBe("12.00");
-    expect(report.repeatedRowsExcluded).toBe(1);
-    expect(report.repeatedNetExcluded).toBe("6.00");
-    expect(report.unknownTypeLines).toBe(1);
-    expect(report.unknownTypeNet).toBe("2.50");
-    expect(report.missingReferenceLines).toBe(1);
-    expect(report.missingReferenceNet).toBe("3.00");
+    expect(report.linesExamined).toBe(4);
+    expect(report.certifiedNet).toBe("23.00");
+    expect(report.rawAttachedNet).toBe("33.00");
+    expect(report.duplicateNet).toBe("0.00");
+    expect(report.repeatedRowsExcluded).toBe(0);
+    expect(report.repeatedNetExcluded).toBe("0.00");
+    expect(report.unknownTypeLines).toBe(0);
+    expect(report.unknownTypeNet).toBe("0.00");
+    expect(report.missingReferenceLines).toBe(0);
+    expect(report.missingReferenceNet).toBe("0.00");
     expect(report.headerOnlyDocuments).toBe(1);
     expect(report.headerOnlyNet).toBe("25.00");
     expect(report.unexplainedDiscrepancy).toBe("0.00");
@@ -959,7 +970,7 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
     const result = await loadUnifiedCustomerSummary(pennyId);
     expect(result.summary.certification).toBe("COMPLETE");
     expect(result.summary.combinedNet).toBe("12.00");
-    expect(result.summary.suppressedDuplicateNet).toBe("12.00");
+    expect(result.summary.suppressedDuplicateNet).toBe("0.00");
     expect(result.summary.certifiedNet).toBe("12.00");
   });
 
@@ -983,13 +994,13 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
     expect(orphan?.net).toBe("123.45");
     expect(orphan?.linkedCompanies).toBe(0);
     const gsf = await loadUnifiedCustomerSummary(gsfId);
-    expect(gsf.summary.certifiedNet).toBe("71.00");
+    expect(gsf.summary.certifiedNet).toBe("23.00");
   });
 
   it("keeps undated history out of a dated period and leaves certified totals unchanged", async () => {
     const lifetime = await loadUnifiedCustomerSummary(prospectId);
-    expect(lifetime.summary.certifiedNet).toBe("67.00");
-    expect(lifetime.summary.historicalNet).toBe("38.00");
+    expect(lifetime.summary.certifiedNet).toBe("45.00");
+    expect(lifetime.summary.historicalNet).toBe("0.00");
     const september = await getUnifiedCustomerSales(adminId, {
       companyId: prospectId,
       period: "CUSTOM",
@@ -1010,7 +1021,7 @@ ${codeT},GRP,${creditDoc},03/10/2026,${skuA},Synthetic,-1,-12.00,-6.00,-6.00,50.
     expect(september.kpis.netSales).not.toBe(lifetime.summary.certifiedNet);
     const history = await getUnifiedCustomerHistory(adminId, { companyId: prospectId });
     expect(history.summary).toEqual(lifetime.summary);
-    expect(history.certification.certifiedNet).toBe("67.00");
+    expect(history.certification.certifiedNet).toBe("45.00");
     const dashboard = await getUnifiedCustomerSales(adminId, { companyId: prospectId });
     expect(dashboard.period.preset).toBe("THIS_MONTH");
   });

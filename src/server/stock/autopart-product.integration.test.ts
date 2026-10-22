@@ -95,7 +95,7 @@ async function seedSale(sku: string, date: string, units: string, ref: string) {
       units,
       salesNet: "40.00",
       matchStatus: "MATCHED",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
     },
   });
 }

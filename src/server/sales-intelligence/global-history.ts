@@ -210,7 +210,8 @@ function invoiceFrom(filters: Prisma.Sql): Prisma.Sql {
      AND a."sourceSystem" = ${AUTOPART_SOURCE}
      AND a."companyId" IS NOT NULL
     INNER JOIN "Company" c ON c.id = a."companyId"
-    WHERE l."salesMeasure" = 'NET_EX_VAT'
+    WHERE FALSE
+      AND l."salesMeasure" = 'NET_EX_VAT'
       AND ${filters}
   `;
 }
@@ -563,7 +564,8 @@ async function crossSell(companyId: string, profile: LoadedAccessProfile) {
         ON a."accountCode" = l."accountCode"
        AND a."sourceSystem" = ${AUTOPART_SOURCE}
        AND a."companyId" = ${companyId}
-      WHERE l."salesMeasure" = 'NET_EX_VAT'
+      WHERE FALSE
+        AND l."salesMeasure" = 'NET_EX_VAT'
     )
     SELECT v.sku AS sku, p.name AS name, p.id AS "productId", b.name AS "brandName"
     FROM "ProductVariant" v
@@ -703,7 +705,8 @@ async function queryCustomers(filters: Prisma.Sql, input: Filters) {
           ORDER BY ca."isPrimary" DESC, ca."createdAt" ASC
           LIMIT 1
         ) rep ON TRUE
-        WHERE l."salesMeasure" = 'NET_EX_VAT'
+        WHERE FALSE
+          AND l."salesMeasure" = 'NET_EX_VAT'
           AND ${filters}
         GROUP BY c.id, c.name, c.status, c."autopartCustomerCode", rep.code, rep."salespersonName"
       ) customers
@@ -865,7 +868,8 @@ export async function searchGlobalAutopartSales(actorUserId: string, raw: unknow
         ON a."accountCode" = l."accountCode"
        AND a."sourceSystem" = ${AUTOPART_SOURCE}
        AND a."companyId" IS NOT NULL
-      WHERE ${lineScope}
+      WHERE FALSE
+        AND ${lineScope}
         AND (
           l."partNumber" ILIKE ${pattern} ESCAPE '\\'
           OR COALESCE(l."description", '') ILIKE ${pattern} ESCAPE '\\'

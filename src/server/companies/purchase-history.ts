@@ -1,12 +1,10 @@
 /**
- * Customer portal Purchase History — factual historic Autopart trade-account metrics.
+ * Customer portal Purchase History — ongoing TRM21QC product lines only.
  *
  * Data-source boundary (intentional):
- * - Authoritative metrics come from AutopartSalesLine / AutopartSalesDocument only.
- * - AB Order / OrderItem rows are NOT merged here. Future AB-order inclusion must
- *   use a non-overlapping boundary (e.g. AB orders after last import cutoff, or
- *   explicit source tagging) so the same commercial event is never counted twice
- *   if it later also appears in an Autopart historic import.
+ * - Authoritative metrics come from ongoing AutopartSalesLine / AutopartSalesDocument rows.
+ * - Historical 561L and SLRB lines are not included. An empty result means no ongoing sales.
+ * - AB Order / OrderItem rows are NOT merged here.
  *
  * Credits (CREDIT document type) reduce net units/spend. They never increment
  * purchaseCount (distinct INVOICE document references only).
@@ -294,6 +292,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
 
   const lineWhere: Prisma.AutopartSalesLineWhereInput = {
     companyId: company.id,
+    source: "ONGOING_TRM21QC",
     ...(dateRange
       ? {
           document: {
@@ -339,6 +338,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
       FROM "AutopartSalesLine" l
       LEFT JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l."companyId" = ${company.id}
+        AND l."source" = 'ONGOING_TRM21QC'
         ${dateSql}
       GROUP BY UPPER(TRIM(l.sku))
     `;
@@ -607,6 +607,7 @@ export async function listPortalPurchaseHistory(userId: string, raw: unknown) {
           FROM "AutopartSalesLine" l
           LEFT JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
           WHERE l."companyId" = ${company.id}
+            AND l."source" = 'ONGOING_TRM21QC'
             AND l."documentType" = 'INVOICE'
             AND UPPER(TRIM(l.sku)) IN (${Prisma.join(chunk)})
             ${dateSql}

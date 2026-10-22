@@ -4,7 +4,7 @@ import { auth } from "@/infra/auth";
 import { AuthError } from "@/server/rbac/guards";
 import { saveAutopartUpload } from "@/server/companies/autopart-master-import";
 
-const KINDS = new Set<AutopartMasterImportKind>(["CUSTOMER_MASTER", "INVOICE_LINES", "LEDGER"]);
+const KINDS = new Set<AutopartMasterImportKind>(["CUSTOMER_MASTER"]);
 
 export const Route = createFileRoute("/api/autopart-imports/upload")({
   server: {

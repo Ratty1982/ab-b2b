@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { AuthError } from "@/server/rbac/guards";
-import { getCompanyAutopartHistoryWorkspace } from "@/server/companies/autopart-history";
 import {
   inviteCompanyUser,
   listCompaniesForActor,
@@ -18,6 +17,7 @@ import {
   writeProspectConversionExceptions,
 } from "@/server/companies/autopart-prospect-conversion";
 import {
+  getCompanyAutopartMaster,
   getPortalAutopartHistory,
   listAutopartLedger,
 } from "@/server/companies/autopart-master-import";
@@ -433,30 +433,19 @@ describe("Autopart prospect conversion", () => {
     expect(await prisma.user.count()).toBe(usersBefore);
     expect(await prisma.transactionalEmail.count()).toBe(mailBefore);
 
-    const history = await getCompanyAutopartHistoryWorkspace(salesId, eligibleCompany.id);
-    expect(history.globalHistory.netSalesExVat).toBe("9.00");
-    expect(history.globalHistory.purchaseDate).toBeNull();
-    expect(history.globalHistory.purchaseTrend).toBe("UNAVAILABLE");
-    expect(history.globalHistory.lastPurchase).toBeNull();
-    expect(history.globalHistory.frequentProducts[0]?.partNumber).toBe("P-FREQ");
-    expect(history.globalHistory.frequentProducts[0]?.lineCount).toBe(2);
-    expect(history.globalHistory.ledgerRowCount).toBeNull();
-    expect(JSON.stringify(history.globalHistory)).not.toContain("runningBalance");
-    expect(history.globalHistory.nativeOrdersIncluded).toBe(false);
-    await expect(
-      getCompanyAutopartHistoryWorkspace(otherSalesId, eligibleCompany.id),
-    ).rejects.toBeInstanceOf(AuthError);
+    const history = await getCompanyAutopartMaster(salesId, eligibleCompany.id);
+    expect(history.portalHistoricalAccess).toBe(false);
+    expect(history.ledgerCount).toBeNull();
+    await expect(getCompanyAutopartMaster(otherSalesId, eligibleCompany.id)).rejects.toBeInstanceOf(
+      AuthError,
+    );
     await expect(listAutopartLedger(salesId, { accountCode: eligibleCode })).rejects.toBeInstanceOf(
       AuthError,
     );
     const ledger = await listAutopartLedger(managementId, { accountCode: eligibleCode });
     expect(ledger.balanceNote).toContain("not the current amount due");
-    const managementHistory = await getCompanyAutopartHistoryWorkspace(
-      managementId,
-      eligibleCompany.id,
-    );
-    expect(managementHistory.globalHistory.ledgerRowCount).toBe(1);
-    expect(JSON.stringify(managementHistory.globalHistory)).not.toContain("runningBalance");
+    const managementHistory = await getCompanyAutopartMaster(managementId, eligibleCompany.id);
+    expect(managementHistory.ledgerCount).toBe(1);
 
     const tradeId = await ensureUser(`prospect.trade.${stamp}@example.invalid`, [], "TRADE");
     await prisma.companyUser.create({
@@ -469,7 +458,7 @@ describe("Autopart prospect conversion", () => {
     });
     process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] = "true";
     const portal = await getPortalAutopartHistory(tradeId);
-    expect(portal.enabled).toBe(true);
+    expect(portal.enabled).toBe(false);
     expect(portal.total).toBe(0);
     process.env["AUTOPART_PORTAL_HISTORY_ENABLED"] = "false";
     await expect(
@@ -500,7 +489,7 @@ describe("Autopart prospect conversion", () => {
       page: 1,
       pageSize: 50,
     });
-    expect(withHistory.items.map((item) => item.id)).toContain(eligibleCompany.id);
+    expect(withHistory.items.map((item) => item.id)).not.toContain(eligibleCompany.id);
     const withoutHistory = await listCompaniesForActor(adminId, {
       q: sameName,
       historicalSales: "without",

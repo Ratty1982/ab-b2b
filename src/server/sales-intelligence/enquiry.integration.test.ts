@@ -115,7 +115,7 @@ async function seedLines(companyId: string, code: string) {
         units,
         salesNet,
         matchStatus: "NOT_IN_AB_CATALOGUE",
-        source: "561L",
+        source: "ONGOING_TRM21QC",
         importRunId: run.id,
       },
     });
@@ -266,7 +266,7 @@ beforeAll(async () => {
       units: "4",
       salesNet: "40.00",
       matchStatus: "MATCHED",
-      source: "561L",
+      source: "ONGOING_TRM21QC",
       importRunId: run.id,
     },
   });

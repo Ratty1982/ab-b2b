@@ -48,6 +48,7 @@ function historicLineWhere(args: {
         ? { companyId: args.companyId }
         : {}),
     ...(args.sku ? { sku: args.sku } : {}),
+    source: "ONGOING_TRM21QC",
     document: {
       is: {
         companyId: { not: null },
@@ -146,6 +147,7 @@ export async function summarizeHistoricSalesFromDb(args: {
           AND d."documentDate" >= ${bounds.gte}
           AND d."documentDate" <= ${bounds.lte}
           AND l."documentType" = 'INVOICE'
+          AND l."source" = 'ONGOING_TRM21QC'
           ${skuSql}
         GROUP BY l."companyId", l."documentReference"
       ) t

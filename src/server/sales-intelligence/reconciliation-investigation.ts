@@ -210,7 +210,8 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
         COALESCE(NULLIF(UPPER(btrim(COALESCE(l."documentReference", ''))), ''), 'LINE:' || l.id)
       FROM "AutopartInvoiceLine" l
       INNER JOIN ambiguous_codes a ON a.code = UPPER(btrim(l."accountCode"))
-      WHERE ${ambiguousGate}
+      WHERE FALSE
+        AND ${ambiguousGate}
         AND l."salesMeasure" = 'NET_EX_VAT'
         ${accountHistorical}
         ${typeHistorical}
@@ -229,6 +230,7 @@ function investigationCte(filters: FilterInput): Prisma.Sql {
       FROM "AutopartSalesLine" l
       INNER JOIN ambiguous_codes a ON a.code = UPPER(btrim(l."autopartCustomerCode"))
       WHERE ${ambiguousGate}
+        AND l."source" = 'ONGOING_TRM21QC'
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         ${accountDated}
         ${typeDated}

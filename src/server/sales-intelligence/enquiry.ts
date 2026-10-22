@@ -515,6 +515,7 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l."companyId" = ${input.companyId}
+        AND l."source" = 'ONGOING_TRM21QC'
         AND d."companyId" IS NOT NULL
         AND d."documentDate" >= ${bounds.gte}
         AND d."documentDate" <= ${bounds.lte}
