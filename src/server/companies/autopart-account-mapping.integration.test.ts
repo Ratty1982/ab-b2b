@@ -32,6 +32,7 @@ const unmappedAcct = `UM${String(stamp).slice(-8)}`;
 const skuA = `SKU-MAP-${String(stamp).slice(-6)}`;
 const docMapped = `SSM${String(stamp).slice(-7)}`;
 const docUnmapped = `SSU${String(stamp).slice(-7)}`;
+const docUnmappedCredit = `SSC${String(stamp).slice(-7)}`;
 
 async function ensureUser(
   email: string,
@@ -70,7 +71,7 @@ function sampleTrm() {
   return `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%
 ${account},GRP,${docMapped},29/09/2026,${skuA},Widget A,2,200.00,100.00,100.00,50.000
 ${unmappedAcct},GRP,${docUnmapped},29/09/2026,${skuA},Widget A,1,55.00,20.00,35.00,63.636
-${unmappedAcct},GRP,${docUnmapped},29/09/2026,RETAIL-ONLY-${stamp},Retail Only,-1,-10.00,5.00,-15.00,-150.000
+${unmappedAcct},GRP,${docUnmappedCredit},29/09/2026,RETAIL-ONLY-${stamp},Retail Only,-1,-10.00,5.00,-15.00,-150.000
 `;
 }
 
@@ -147,7 +148,7 @@ describe("autopart account mapping workflow", () => {
     expect(written).toBe(1);
 
     const unmappedLines = await prisma.autopartSalesLine.count({
-      where: { documentReference: docUnmapped, companyId: null },
+      where: { documentReference: { in: [docUnmapped, docUnmappedCredit] }, companyId: null },
     });
     expect(unmappedLines).toBeGreaterThanOrEqual(2);
 
@@ -234,7 +235,7 @@ describe("autopart account mapping workflow", () => {
 
   it("re-upload after mapping attaches previously unmapped lines idempotently", async () => {
     const before = await prisma.autopartSalesLine.count({
-      where: { companyId, documentReference: docUnmapped },
+      where: { companyId, documentReference: { in: [docUnmapped, docUnmappedCredit] } },
     });
     expect(before).toBe(0);
 
@@ -246,7 +247,7 @@ describe("autopart account mapping workflow", () => {
     expect(again.status).toBe("COMMITTED");
 
     const after = await prisma.autopartSalesLine.findMany({
-      where: { companyId, documentReference: docUnmapped },
+      where: { companyId, documentReference: { in: [docUnmapped, docUnmappedCredit] } },
     });
     expect(after.length).toBe(2);
     const credit = after.find((l) => Number(l.units) < 0);
@@ -267,7 +268,7 @@ describe("autopart account mapping workflow", () => {
     });
     expect(unchanged).toBeGreaterThanOrEqual(2);
     const lineCount = await prisma.autopartSalesLine.count({
-      where: { companyId, documentReference: { in: [docMapped, docUnmapped] } },
+      where: { companyId, documentReference: { in: [docMapped, docUnmapped, docUnmappedCredit] } },
     });
     expect(lineCount).toBe(3);
   });

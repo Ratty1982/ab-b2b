@@ -12,6 +12,7 @@ import {
   classifyCompanyAutopartCode,
   classifyLinkedMasterAccount,
   normaliseAssignedAutopartCode,
+  ongoingPrimaryAuthority,
   planAutopartAccountVerification,
   type AutopartVerificationPlan,
   type CodeClaim,
@@ -100,6 +101,43 @@ async function claimsForKey(key: string): Promise<CodeClaim[]> {
       row.companyId ? [{ companyId: row.companyId, kind: "MASTER_LINK" as const }] : [],
     ),
   ];
+}
+
+export async function resolveAutopartCodeOwnership(code: string): Promise<{
+  companyId: string | null;
+  code: string;
+  authority: "verified-code" | "verified-alias" | "stored-code" | "account-link" | "ambiguous" | "unresolved";
+}> {
+  const normalised = normaliseAssignedAutopartCode(code);
+  if (!normalised.valid || !normalised.key) {
+    return { companyId: null, code: normalised.display ?? "", authority: "unresolved" };
+  }
+  const claims = await claimsForKey(normalised.key);
+  const companyIds = [...new Set(claims.map((claim) => claim.companyId))];
+  if (companyIds.length === 0) {
+    return { companyId: null, code: normalised.key, authority: "unresolved" };
+  }
+  if (companyIds.length > 1) {
+    return { companyId: null, code: normalised.key, authority: "ambiguous" };
+  }
+  const companyId = companyIds[0]!;
+  const kinds = new Set(claims.filter((claim) => claim.companyId === companyId).map((claim) => claim.kind));
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { autopartCustomerCode: true, autopartCustomerCodeVerifiedAt: true },
+  });
+  const canonical = company?.autopartCustomerCode ?? normalised.key;
+  if (kinds.has("PRIMARY")) {
+    return {
+      companyId,
+      code: canonical,
+      authority: ongoingPrimaryAuthority(company?.autopartCustomerCodeVerifiedAt),
+    };
+  }
+  if (kinds.has("ALIAS")) {
+    return { companyId, code: canonical, authority: "verified-alias" };
+  }
+  return { companyId, code: canonical, authority: "account-link" };
 }
 
 export async function foreignAutopartClaims(code: string, companyId: string): Promise<CodeClaim[]> {

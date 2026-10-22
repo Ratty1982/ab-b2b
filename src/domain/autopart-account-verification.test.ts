@@ -105,19 +105,47 @@ describe("automatic verification plan", () => {
     expect(plan.conflicts).toBe(2);
   });
 
-  it("preserves a verified timestamp when a later conflict appears", () => {
-    const assessment = classifyCompanyAutopartCode({
-      companyId: "a",
-      code: "DUP01",
-      verifiedAt,
-      claims: [
-        { companyId: "a", kind: "PRIMARY" },
-        { companyId: "b", kind: "PRIMARY" },
-      ],
-    });
-    expect(assessment.decision).toBe("ALREADY_VERIFIED");
-    expect(assessment.preserveVerification).toBe(true);
-    expect(assessment.reason).toMatch(/another company/i);
+  it("shows Needs review for a verified ID that another company also claims", () => {
+    const cases = [
+      {
+        own: "PRIMARY" as const,
+        foreign: "PRIMARY" as const,
+        reason: /already has this Autopart ID/i,
+      },
+      {
+        own: "ALIAS" as const,
+        foreign: "ALIAS" as const,
+        reason: /verified alias/i,
+      },
+      {
+        own: "PRIMARY" as const,
+        foreign: "MASTER_LINK" as const,
+        reason: /407EXP/i,
+      },
+    ];
+    for (const item of cases) {
+      const assessment = classifyCompanyAutopartCode({
+        companyId: "a",
+        code: "DUP01",
+        verifiedAt,
+        claims: [
+          { companyId: "a", kind: item.own },
+          { companyId: "b", kind: item.foreign },
+        ],
+      });
+      expect(assessment.decision).toBe("ALREADY_VERIFIED");
+      expect(assessment.preserveVerification).toBe(true);
+      expect(assessment.reason).toMatch(item.reason);
+      const display = autopartMappingDisplay({
+        decision: assessment.decision,
+        reason: assessment.reason,
+        verifiedByName: "Alex",
+      });
+      expect(display.verified).toBe(false);
+      expect(display.verificationRecorded).toBe(true);
+      expect(display.attention).toMatch(item.reason);
+      expect(display.verifiedByLabel).toBe("Alex");
+    }
   });
 
   it("labels a unique unverified mapping as verified for display", () => {
@@ -141,7 +169,10 @@ describe("automatic verification plan", () => {
       reason: null,
       verifiedByName: null,
     });
+    expect(recorded.verified).toBe(true);
+    expect(recorded.verificationRecorded).toBe(true);
     expect(recorded.verifiedByLabel).toBe("Automatic");
+    expect(recorded.attention).toBeNull();
   });
 
   it("sends an invalid stored ID to manual review and does not verify it", () => {
@@ -230,6 +261,29 @@ describe("verified Autopart IDs and ongoing ownership", () => {
         authority: "verified-code",
       }).allow,
     ).toBe(false);
+  });
+
+  it("does not let an ambiguous account claim an unassigned document or reassign another customer's", () => {
+    const invoice = ongoingDocumentOwnershipAllowsUpdate({
+      documentReference: "SS1",
+      documentType: "INVOICE",
+      documentCompanyId: null,
+      documentAccount: "DUP01",
+      incomingCompanyId: "company-a",
+      accounts: ["DUP01"],
+      authority: "ambiguous",
+    });
+    expect(invoice.allow).toBe(false);
+    const credit = ongoingDocumentOwnershipAllowsUpdate({
+      documentReference: "CR1",
+      documentType: "CREDIT",
+      documentCompanyId: "company-b",
+      documentAccount: "DUP01",
+      incomingCompanyId: "company-a",
+      accounts: ["DUP01"],
+      authority: "ambiguous",
+    });
+    expect(credit.allow).toBe(false);
   });
 });
 
