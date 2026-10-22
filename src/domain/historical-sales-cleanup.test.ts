@@ -48,7 +48,13 @@ describe("historical sales cleanup gates", () => {
     const command = readFileSync("scripts/historical-sales-cleanup.ts", "utf8");
     expect(sql).toContain(HISTORICAL_CLEANUP_CONFIRMATION);
     expect(sql).toContain("current_setting('ab.historical_cleanup_confirm', true)");
+    expect(sql).toContain("current_setting('ab.historical_cleanup_enabled', true)");
+    expect(sql).toContain("IS DISTINCT FROM 'on'");
+    expect(sql).toContain("historical_cleanup_fingerprint");
+    expect(sql).toContain("md5(");
     expect(sql).toContain("RAISE EXCEPTION");
+    const executable = sql.slice(sql.indexOf("BEGIN;"));
+    expect(executable).not.toMatch(/SET\s+ab\.historical_cleanup/);
     expect(sql).not.toContain('DELETE FROM "Company"');
     expect(sql).not.toContain('DELETE FROM "AutopartAccount"');
     expect(sql).not.toContain('DELETE FROM "AutopartCustomerAccountAlias"');
@@ -56,6 +62,12 @@ describe("historical sales cleanup gates", () => {
     expect(sql).toContain('DELETE FROM "AutopartInvoiceLine"');
     expect(sql).toContain("valueMismatchMinor");
     expect(sql).toContain("ONGOING_TRM21QC");
+    const lineDelete = sql.slice(
+      sql.indexOf('DELETE FROM "AutopartSalesLine"'),
+      sql.indexOf('DELETE FROM "AutopartSalesDocument"'),
+    );
+    expect(lineDelete).toContain("line.source IN ('561L', 'SLRB')");
+    expect(lineDelete).not.toContain("source IS NULL");
     expect(command).toContain("scripts/historical-sales-cleanup.apply.sql");
     expect(command).not.toContain("$executeRaw");
     expect(command).not.toContain("readFileSync");

@@ -2,26 +2,36 @@
 --
 -- This file is not a Prisma migration. Deploy, server start, and
 -- `bun scripts/historical-sales-cleanup.ts` do not execute it.
+-- It is disabled unless the operator opts in during the same psql session.
 -- Run it only after:
 --   1. the dry-run report has been read,
 --   2. a PostgreSQL backup has been restored to a different database and queried,
 --   3. the listed historical files have been copied to restricted archive storage.
 --
--- Operator session (psql, ON_ERROR_STOP):
+-- Operator session (psql, ON_ERROR_STOP). Both settings are required.
+-- psql -c and -f are different sessions, so neither flag can be set with -c:
+--   SET ab.historical_cleanup_enabled = 'on';
 --   SET ab.historical_cleanup_confirm = 'ARCHIVE_AND_DELETE_HISTORICAL_SALES';
 --   \i scripts/historical-sales-cleanup.apply.sql
 --
--- The setting must be supplied by the operator. This file does not set it.
--- A mismatch raises an exception and the transaction rolls back.
--- Company, 407EXP accounts, verified aliases, ongoing 504/TRM documents and
--- lines, discrepant 504 documents, customer-master batches, orders, invoices,
--- stock, pricing, products, and audit events are counted before and after.
--- Any change to those counts aborts the transaction.
+-- This file does not set either value. A mismatch raises an exception and
+-- the transaction rolls back. Protected rows are fingerprinted before and
+-- after the deletes. A changed count or a changed fingerprint aborts.
+-- Protected rows include companies, 407EXP accounts, verified aliases,
+-- orders, stock reservations, invoices, prices, products, inventory, audit
+-- events, customer-master batches, ongoing 504/TRM runs and diagnostics,
+-- ongoing documents (including a document that started as 561L or SLRB),
+-- discrepant 504 documents, ongoing TRM21QC lines, and sales lines whose
+-- source is null.
 
 BEGIN;
 
 DO $$
 BEGIN
+  IF current_setting('ab.historical_cleanup_enabled', true) IS DISTINCT FROM 'on' THEN
+    RAISE EXCEPTION
+      'Refusing historical cleanup. It is disabled unless this session sets ab.historical_cleanup_enabled to on. Deploy does not set it.';
+  END IF;
   IF current_setting('ab.historical_cleanup_confirm', true)
        IS DISTINCT FROM 'ARCHIVE_AND_DELETE_HISTORICAL_SALES' THEN
     RAISE EXCEPTION
@@ -29,26 +39,116 @@ BEGIN
   END IF;
 END $$;
 
+CREATE OR REPLACE FUNCTION pg_temp.historical_cleanup_fingerprint()
+RETURNS TABLE (subject text, records bigint, fingerprint text)
+LANGUAGE sql
+STABLE
+AS $fp$
+  SELECT 'Company'::text,
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, name, status::text, "autopartCustomerCode", "autopartCustomerCodeVerifiedAt"::text, "autopartCustomerCodeVerifiedById")), '|' ORDER BY id), ''))
+  FROM "Company"
+  UNION ALL
+  SELECT 'AutopartAccount',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "accountCode", "companyId", classification::text, "portalEligible"::text, "historicalAccessEnabled"::text)), '|' ORDER BY id), ''))
+  FROM "AutopartAccount"
+  UNION ALL
+  SELECT 'AutopartCustomerAccountAlias',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "companyId", alias, "verifiedAt"::text, "verifiedById")), '|' ORDER BY id), ''))
+  FROM "AutopartCustomerAccountAlias"
+  UNION ALL
+  SELECT 'Order',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "orderNumber", "companyId", status::text, subtotal::text, "vatTotal"::text, "grandTotal"::text)), '|' ORDER BY id), ''))
+  FROM "Order"
+  UNION ALL
+  SELECT 'OrderStockReservation',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "orderId", "inventoryId", "variantId", quantity::text, status::text)), '|' ORDER BY id), ''))
+  FROM "OrderStockReservation"
+  UNION ALL
+  SELECT 'Invoice',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "invoiceNumber", "companyId", "orderId", status::text, subtotal::text, "vatTotal"::text, "grandTotal"::text, "externalRef")), '|' ORDER BY id), ''))
+  FROM "Invoice"
+  UNION ALL
+  SELECT 'CustomerPrice',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "companyId", "variantId", "unitPrice"::text)), '|' ORDER BY id), ''))
+  FROM "CustomerPrice"
+  UNION ALL
+  SELECT 'Product',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, slug, name, status::text, "isActive"::text)), '|' ORDER BY id), ''))
+  FROM "Product"
+  UNION ALL
+  SELECT 'Inventory',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "variantId", "warehouseId", "qtyOnHand"::text, "qtyReserved"::text, status::text)), '|' ORDER BY id), ''))
+  FROM "Inventory"
+  UNION ALL
+  SELECT 'AuditEvent',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, action, "entityType", "entityId", "companyId", "actorUserId", "createdAt"::text)), '|' ORDER BY id), ''))
+  FROM "AuditEvent"
+  UNION ALL
+  SELECT 'Customer master batches',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, kind::text, status::text, "fileHash", "totalRows"::text, "importedRows"::text)), '|' ORDER BY id), ''))
+  FROM "AutopartImportBatch"
+  WHERE kind = 'CUSTOMER_MASTER'
+  UNION ALL
+  SELECT 'Ongoing import runs',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, type::text, status::text, "rowsImported"::text, "rowsUpdated"::text, "rowsSkipped"::text, "fileHash")), '|' ORDER BY id), ''))
+  FROM "AutopartCustomerImportRun"
+  WHERE type IN ('ONGOING_504', 'ONGOING_TRM21QC')
+  UNION ALL
+  SELECT 'Ongoing import diagnostics',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', diagnostic.id, diagnostic."importRunId", diagnostic.status::text, diagnostic."reasonCode", diagnostic."documentReference", diagnostic.quantity, diagnostic."salesNet")), '|' ORDER BY diagnostic.id), ''))
+  FROM "AutopartImportDiagnostic" AS diagnostic
+  JOIN "AutopartCustomerImportRun" AS run ON run.id = diagnostic."importRunId"
+  WHERE run.type IN ('ONGOING_504', 'ONGOING_TRM21QC')
+  UNION ALL
+  SELECT 'Ongoing sales documents',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "companyId", source, "has504"::text, "hasTrm21qc"::text, "documentType"::text, "documentReference", "goodsNet"::text, vat::text, "grossTotal"::text, "linesNetSum"::text, "valueMismatchMinor"::text)), '|' ORDER BY id), ''))
+  FROM "AutopartSalesDocument"
+  WHERE "has504" = TRUE
+     OR "hasTrm21qc" = TRUE
+     OR source IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+     OR source IS NULL
+  UNION ALL
+  SELECT 'Discrepant 504 documents',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', id, "companyId", source, "documentReference", "goodsNet"::text, vat::text, "grossTotal"::text, "linesNetSum"::text, "valueMismatchMinor"::text)), '|' ORDER BY id), ''))
+  FROM "AutopartSalesDocument"
+  WHERE "has504" = TRUE
+    AND "valueMismatchMinor" IS NOT NULL
+  UNION ALL
+  SELECT 'Protected sales lines',
+         COUNT(*)::bigint,
+         md5(COALESCE(string_agg(md5(concat_ws('|', line.id, line."companyId", line."documentId", line.source, line."documentType"::text, line."documentReference", line."lineNumber"::text, line.sku, line.units::text, line."salesNet"::text)), '|' ORDER BY line.id), ''))
+  FROM "AutopartSalesLine" AS line
+  WHERE line.source IS NULL
+     OR line.source NOT IN ('561L', 'SLRB')
+     OR EXISTS (
+       SELECT 1
+       FROM "AutopartSalesDocument" AS document
+       WHERE document.id = line."documentId"
+         AND (
+           document."has504" = TRUE
+           OR document."hasTrm21qc" = TRUE
+           OR document.source IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+         )
+     );
+$fp$;
+
 CREATE TEMP TABLE historical_cleanup_guard ON COMMIT DROP AS
-SELECT
-  (SELECT COUNT(*) FROM "Company") AS companies,
-  (SELECT COUNT(*) FROM "AutopartAccount") AS accounts,
-  (SELECT COUNT(*) FROM "AutopartCustomerAccountAlias") AS aliases,
-  (SELECT COUNT(*) FROM "Order") AS orders,
-  (SELECT COUNT(*) FROM "Invoice") AS invoices,
-  (SELECT COUNT(*) FROM "CustomerPrice") AS prices,
-  (SELECT COUNT(*) FROM "Product") AS products,
-  (SELECT COUNT(*) FROM "Inventory") AS inventory,
-  (SELECT COUNT(*) FROM "AuditEvent") AS audit_events,
-  (SELECT COUNT(*) FROM "AutopartImportBatch" WHERE kind = 'CUSTOMER_MASTER') AS customer_master_batches,
-  (SELECT COUNT(*) FROM "AutopartCustomerImportRun" WHERE type IN ('ONGOING_504', 'ONGOING_TRM21QC')) AS ongoing_runs,
-  (SELECT COUNT(*) FROM "AutopartSalesDocument"
-    WHERE "has504" = TRUE
-       OR "hasTrm21qc" = TRUE
-       OR source IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')) AS ongoing_documents,
-  (SELECT COUNT(*) FROM "AutopartSalesDocument"
-    WHERE "has504" = TRUE AND "valueMismatchMinor" IS NOT NULL) AS discrepant_504_documents,
-  (SELECT COUNT(*) FROM "AutopartSalesLine" WHERE source = 'ONGOING_TRM21QC') AS ongoing_lines;
+SELECT * FROM pg_temp.historical_cleanup_fingerprint();
 
 -- Staged history, children before the parent import.
 DELETE FROM "AutopartHistoryStagedLine";
@@ -71,10 +171,11 @@ WHERE issue."batchId" = batch.id
 DELETE FROM "AutopartImportBatch"
 WHERE kind IN ('INVOICE_LINES', 'LEDGER');
 
--- Historical-only product lines. A 561L line on an ongoing document stays.
+-- Positively identified historical lines only. Null source stays.
+-- A 561L or SLRB line on an ongoing document stays, including a document
+-- that was originally imported as history and later accepted by 504 or TRM.
 DELETE FROM "AutopartSalesLine" AS line
-WHERE line.source IS DISTINCT FROM 'ONGOING_TRM21QC'
-  AND (line.source IN ('561L', 'SLRB') OR line.source IS NULL)
+WHERE line.source IN ('561L', 'SLRB')
   AND NOT EXISTS (
     SELECT 1
     FROM "AutopartSalesDocument" AS document
@@ -86,12 +187,19 @@ WHERE line.source IS DISTINCT FROM 'ONGOING_TRM21QC'
       )
   );
 
--- Historical-only documents. Ongoing and discrepant 504 documents stay.
+-- Historical-only documents with no remaining line. A remaining null-source
+-- line keeps its document, because deleting the document would clear that
+-- line's document link. Ongoing and discrepant 504 documents stay.
 DELETE FROM "AutopartSalesDocument" AS document
 WHERE document.source IN ('561L', 'SLRB')
   AND document."has504" = FALSE
   AND document."hasTrm21qc" = FALSE
-  AND document.source NOT IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE');
+  AND document.source NOT IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "AutopartSalesLine" AS line
+    WHERE line."documentId" = document.id
+  );
 
 -- Diagnostics and runs for HISTORY_561L_SLRB only when nothing preserved still points at them.
 DELETE FROM "AutopartImportDiagnostic" AS diagnostic
@@ -116,79 +224,42 @@ WHERE run.type = 'HISTORY_561L_SLRB'
 
 DO $$
 DECLARE
-  guard historical_cleanup_guard%ROWTYPE;
-  companies bigint;
-  accounts bigint;
-  aliases bigint;
-  orders bigint;
-  invoices bigint;
-  prices bigint;
-  products bigint;
-  inventory bigint;
-  audit_events bigint;
-  customer_master_batches bigint;
-  ongoing_runs bigint;
-  ongoing_documents bigint;
-  discrepant_504_documents bigint;
-  ongoing_lines bigint;
+  changed text;
+  before_count bigint;
+  after_count bigint;
 BEGIN
-  SELECT * INTO guard FROM historical_cleanup_guard;
-
-  SELECT COUNT(*) INTO companies FROM "Company";
-  SELECT COUNT(*) INTO accounts FROM "AutopartAccount";
-  SELECT COUNT(*) INTO aliases FROM "AutopartCustomerAccountAlias";
-  SELECT COUNT(*) INTO orders FROM "Order";
-  SELECT COUNT(*) INTO invoices FROM "Invoice";
-  SELECT COUNT(*) INTO prices FROM "CustomerPrice";
-  SELECT COUNT(*) INTO products FROM "Product";
-  SELECT COUNT(*) INTO inventory FROM "Inventory";
-  SELECT COUNT(*) INTO audit_events FROM "AuditEvent";
-  SELECT COUNT(*) INTO customer_master_batches FROM "AutopartImportBatch" WHERE kind = 'CUSTOMER_MASTER';
-  SELECT COUNT(*) INTO ongoing_runs FROM "AutopartCustomerImportRun" WHERE type IN ('ONGOING_504', 'ONGOING_TRM21QC');
-  SELECT COUNT(*) INTO ongoing_documents FROM "AutopartSalesDocument"
-    WHERE "has504" = TRUE
-       OR "hasTrm21qc" = TRUE
-       OR source IN ('ONGOING_504', 'ONGOING_TRM21QC', 'ONGOING_504_BRIDGE');
-  SELECT COUNT(*) INTO discrepant_504_documents FROM "AutopartSalesDocument"
-    WHERE "has504" = TRUE AND "valueMismatchMinor" IS NOT NULL;
-  SELECT COUNT(*) INTO ongoing_lines FROM "AutopartSalesLine" WHERE source = 'ONGOING_TRM21QC';
-
-  IF companies IS DISTINCT FROM guard.companies
-     OR accounts IS DISTINCT FROM guard.accounts
-     OR aliases IS DISTINCT FROM guard.aliases
-     OR orders IS DISTINCT FROM guard.orders
-     OR invoices IS DISTINCT FROM guard.invoices
-     OR prices IS DISTINCT FROM guard.prices
-     OR products IS DISTINCT FROM guard.products
-     OR inventory IS DISTINCT FROM guard.inventory
-     OR audit_events IS DISTINCT FROM guard.audit_events
-     OR customer_master_batches IS DISTINCT FROM guard.customer_master_batches
-     OR ongoing_runs IS DISTINCT FROM guard.ongoing_runs
-     OR ongoing_documents IS DISTINCT FROM guard.ongoing_documents
-     OR discrepant_504_documents IS DISTINCT FROM guard.discrepant_504_documents
-     OR ongoing_lines IS DISTINCT FROM guard.ongoing_lines
-  THEN
+  SELECT COUNT(*) INTO before_count FROM historical_cleanup_guard;
+  SELECT COUNT(*) INTO after_count FROM pg_temp.historical_cleanup_fingerprint();
+  IF before_count IS DISTINCT FROM after_count THEN
     RAISE EXCEPTION
-      'Historical cleanup would change a preserved table. Transaction rolled back. Companies % -> %, accounts % -> %, aliases % -> %, orders % -> %, invoices % -> %, prices % -> %, products % -> %, inventory % -> %, audit % -> %, customer master % -> %, ongoing runs % -> %, ongoing documents % -> %, discrepant 504 % -> %, ongoing lines % -> %.',
-      guard.companies, companies,
-      guard.accounts, accounts,
-      guard.aliases, aliases,
-      guard.orders, orders,
-      guard.invoices, invoices,
-      guard.prices, prices,
-      guard.products, products,
-      guard.inventory, inventory,
-      guard.audit_events, audit_events,
-      guard.customer_master_batches, customer_master_batches,
-      guard.ongoing_runs, ongoing_runs,
-      guard.ongoing_documents, ongoing_documents,
-      guard.discrepant_504_documents, discrepant_504_documents,
-      guard.ongoing_lines, ongoing_lines;
+      'Historical cleanup preservation check changed shape (% subjects before, % after). Transaction rolled back.',
+      before_count, after_count;
   END IF;
 
-  RAISE NOTICE
-    'Historical cleanup preserved companies %, 407EXP accounts %, aliases %, ongoing documents %, discrepant 504 documents %, ongoing lines %.',
-    companies, accounts, aliases, ongoing_documents, discrepant_504_documents, ongoing_lines;
+  SELECT string_agg(
+           format(
+             '%s records %s -> %s fingerprint %s -> %s',
+             before.subject,
+             before.records,
+             after.records,
+             before.fingerprint,
+             after.fingerprint
+           ),
+           '; ' ORDER BY before.subject
+         )
+    INTO changed
+  FROM historical_cleanup_guard AS before
+  JOIN pg_temp.historical_cleanup_fingerprint() AS after USING (subject)
+  WHERE before.records IS DISTINCT FROM after.records
+     OR before.fingerprint IS DISTINCT FROM after.fingerprint;
+
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION
+      'Historical cleanup would change a preserved record. Transaction rolled back. %',
+      changed;
+  END IF;
+
+  RAISE NOTICE 'Historical cleanup preserved % fingerprinted subjects.', before_count;
 END $$;
 
 COMMIT;

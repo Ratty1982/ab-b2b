@@ -20,6 +20,7 @@ Prisma models for the historical tables stay. A migration that dropped them woul
 - Customer pricing, negotiated prices, promotions, orders, sales representatives, and assignments.
 - Ongoing 504 invoice and credit documents, TRM21QC product lines, and their import runs.
 - A document whose original source is 561L or SLRB when `has504` or `hasTrm21qc` is set, or when its source is `ONGOING_504`, `ONGOING_TRM21QC`, or `ONGOING_504_BRIDGE`. A 561L line on that document is kept.
+- Sales lines whose `source` is null. Missing source is not treated as historical origin. A historical document that still has such a line is kept, so the line's document link is not cleared.
 - The ongoing 504 documents with `valueMismatchMinor` set. They are repaired by the separate 504 financial recovery, not by this cleanup.
 - `CUSTOMER_MASTER` import batches.
 
@@ -62,20 +63,15 @@ bun scripts/historical-sales-cleanup.ts \
 
 After the production dry-run has been read, a backup has been restored and queried, and the file archive path has been recorded, a later reviewed session can run:
 
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -c "SET ab.historical_cleanup_confirm = 'ARCHIVE_AND_DELETE_HISTORICAL_SALES';" \
-  -f scripts/historical-sales-cleanup.apply.sql
-```
-
-`psql -c` and `-f` use separate sessions, so set the confirmation in the same session as the file:
+The procedure is disabled by default. Deploy does not set the session flags, and `psql -c` and `-f` are different sessions, so both flags have to be set in the same session as the file:
 
 ```sql
+SET ab.historical_cleanup_enabled = 'on';
 SET ab.historical_cleanup_confirm = 'ARCHIVE_AND_DELETE_HISTORICAL_SALES';
 \i scripts/historical-sales-cleanup.apply.sql
 ```
 
-The script starts a transaction, refuses to continue when the confirmation is missing, deletes historical rows in child-before-parent order, then compares counts of companies, 407EXP accounts, verified aliases, orders, invoices, customer prices, products, inventory, audit events, customer-master batches, ongoing import runs, ongoing 504/TRM documents, discrepant 504 documents, and ongoing TRM21QC lines. A changed count raises an exception and rolls the transaction back.
+The script starts a transaction and refuses to continue unless both settings are present. It deletes positively identified historical rows in child-before-parent order. It does not delete a sales line whose `source` is null. Before and after, it fingerprints protected records: companies, 407EXP accounts, aliases, orders, stock reservations, invoices, prices, products, inventory, audit events, customer-master batches, ongoing import runs and their diagnostics, ongoing 504/TRM documents (including documents originally imported as 561L or SLRB), discrepant 504 documents, and protected sales lines. A changed count or a changed fingerprint raises an exception and rolls the transaction back. A count that stays the same while a protected goods value or company field changes is still a failure.
 
 ## Rows a later approved session may delete
 
@@ -84,8 +80,8 @@ Only after the dry-run has been read and the backup has been tested. The SQL pro
 - `AutopartHistoryStagedLine`, `AutopartHistoryStagedDocument`, `AutopartHistoryReviewAccount`, `AutopartHistorySnapshotGap`, `AutopartHistoryImportLock`, then `AutopartHistoryAllImport`.
 - `AutopartInvoiceLine`, `AutopartLedgerTransaction`, `AutopartDocumentMatch`.
 - `AutopartImportIssue` rows whose batch kind is `INVOICE_LINES` or `LEDGER`, then those batches.
-- `AutopartSalesLine` where `source` is `561L` and the line is not on a document with `has504`, `hasTrm21qc`, or an ongoing source.
-- `AutopartSalesDocument` where `source` is `561L` or `SLRB`, and `has504` is false, and `hasTrm21qc` is false, and `source` is not an ongoing source.
+- `AutopartSalesLine` where `source` is `561L` or `SLRB` and the line is not on a document with `has504`, `hasTrm21qc`, or an ongoing source. Lines with `source` null are not deleted.
+- `AutopartSalesDocument` where `source` is `561L` or `SLRB`, `has504` is false, `hasTrm21qc` is false, the source is not an ongoing source, and no sales line remains on the document.
 - `AutopartCustomerImportRun` where `type` is `HISTORY_561L_SLRB`, after `AutopartImportDiagnostic` rows that are not still referenced by a preserved document or line.
 
 Do not delete `Company`, `AutopartAccount`, `AutopartCustomerAccountAlias`, `CUSTOMER_MASTER` batches, ongoing import runs, or any document with `has504` or `hasTrm21qc`.
@@ -111,8 +107,8 @@ If an approved deletion is wrong, restore the tested PostgreSQL backup and the a
 
 ## Integration order
 
-1. Parser fix and controlled 504 financial recovery (draft PR #46), so the discrepant ongoing 504 documents stay on a repair path.
-2. Unambiguous Autopart account verification (draft PR #47). Rebase it after #46. Do not add a second verification backfill here.
-3. This historical-removal change last. Rebase it onto production after #46 and #47 so verification remains and historical promotion stays removed.
+1. Merge draft PR #46 first. Its only migration retires the 504C feed. It does not delete sales rows.
+2. Merge draft PR #47 second. It has no migration. Leave it based on production so its diff stays the verification change and does not absorb PR #46.
+3. Rebase this branch onto production after both merges, then merge it last. Until then this branch already contains the #46 and #47 commits, so its diff repeats them.
 
-Do not merge, deploy, reset the database, delete production rows, bulk-verify accounts, or change fulfilment settings from this change alone.
+Do not merge, deploy, reset the database, delete production rows, bulk-verify accounts, run financial recovery, or change fulfilment settings from this change alone. Do not execute `scripts/historical-sales-cleanup.apply.sql` as part of review or deployment.

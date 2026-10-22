@@ -319,7 +319,7 @@ export async function planHistoricalSalesCleanup(input?: {
       records: historicalLines,
       amount: null,
       amountLabel: null,
-      note: "Source 561L and not attached to an ongoing document.",
+      note: "Source 561L and not attached to an ongoing document. Lines with a null source are kept.",
     },
     {
       table: "AutopartSalesLine source 561L on an ongoing document",

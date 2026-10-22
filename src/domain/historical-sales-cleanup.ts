@@ -24,7 +24,7 @@ export const REMOVED_WHEN_APPLIED = [
   "AutopartImportBatch kind INVOICE_LINES or LEDGER, and their AutopartImportIssue rows",
   "AutopartHistoryAllImport, AutopartHistoryReviewAccount, AutopartHistoryStagedDocument, AutopartHistoryStagedLine, AutopartHistorySnapshotGap, AutopartHistoryImportLock",
   "AutopartSalesDocument rows whose source is 561L or SLRB and that are not flagged has504 or hasTrm21qc",
-  "AutopartSalesLine rows with source 561L that are not attached to an ongoing document",
+  "AutopartSalesLine rows with source 561L or SLRB that are not attached to an ongoing document. A line whose source is null is kept until its historical origin is positively established",
   "AutopartCustomerImportRun type HISTORY_561L_SLRB and AutopartImportDiagnostic rows that are not still referenced by a preserved document or line",
   "Stored 561L-ALL and SLRB-ALL files listed by those historical batches, after they are copied to the restricted archive",
 ] as const;
