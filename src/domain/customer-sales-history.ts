@@ -24,8 +24,15 @@ export function signedHistoricalMeasure(
 }
 
 /**
- * Same SKU on one invoice is not a duplicate. Identity is the source line number
- * when Autopart sent one, otherwise a fingerprint of the line plus its ordinal.
+ * Product-line identity for historical 561L imports.
+ *
+ * Autopart often repeats the same Inv&Ln suffix (`/1`) across many SKUs on one
+ * credit/invoice. Fingerprints therefore include SKU + signed measures so those
+ * physical lines stay distinct. Byte-identical source rows share one fingerprint
+ * (in-file duplicates). Prefer the Autopart source line number for storage when
+ * free; callers allocate a unique document lineNumber on collision.
+ *
+ * `legacyFingerprints` keeps prior `ln:TYPE|REF|N` keys recognisable on re-import.
  */
 export function historicalProductLineIdentity(input: {
   documentType: string;
@@ -34,14 +41,20 @@ export function historicalProductLineIdentity(input: {
   sourceLineNumber: number | null;
   rawInvAndLn: string | null;
   skuOrdinal: number;
-}): { fingerprint: string; lineNumber: number | null } {
+  units?: string | null;
+  salesNet?: string | null;
+}): { fingerprint: string; lineNumber: number | null; legacyFingerprints: string[] } {
   const type = input.documentType.trim().toUpperCase();
   const reference = input.documentReference.trim().toUpperCase();
   const sku = input.sku.trim().toUpperCase();
+  const units = (input.units ?? "").trim();
+  const salesNet = (input.salesNet ?? "").trim();
   if (input.sourceLineNumber != null && input.sourceLineNumber > 0) {
+    const legacy = `ln:${type}|${reference}|${input.sourceLineNumber}`;
     return {
-      fingerprint: `ln:${type}|${reference}|${input.sourceLineNumber}`,
+      fingerprint: `row:${type}|${reference}|${input.sourceLineNumber}|${sku}|${units}|${salesNet}`,
       lineNumber: input.sourceLineNumber,
+      legacyFingerprints: [legacy],
     };
   }
   const raw = (input.rawInvAndLn ?? "").trim().toUpperCase();
@@ -49,7 +62,24 @@ export function historicalProductLineIdentity(input: {
   return {
     fingerprint: `fp:${type}|${reference}|${raw}|${sku}|${ordinal}`,
     lineNumber: null,
+    legacyFingerprints: [],
   };
+}
+
+/** Fingerprints to match against stored `sourceFingerprint` for one planned line. */
+export function historicalProductLineLookupFingerprints(fingerprint: string): string[] {
+  const primary = fingerprint.trim();
+  if (!primary) return [];
+  const out = [primary];
+  if (primary.startsWith("row:")) {
+    const parts = primary.slice(4).split("|");
+    if (parts.length >= 3 && parts[0] && parts[1] && parts[2]) {
+      out.push(`ln:${parts[0]}|${parts[1]}|${parts[2]}`);
+    }
+  } else if (primary.startsWith("ln:")) {
+    out.push(primary);
+  }
+  return out;
 }
 
 export function ongoingImportAllowsCatchUp(diagnostics: unknown): boolean {
