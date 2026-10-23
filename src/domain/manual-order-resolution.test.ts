@@ -56,6 +56,44 @@ describe("manual order resolution rules", () => {
     expect(reduced.ok).toBe(false);
   });
 
+  it("rejects a repeated line, a missing line, and an unknown line", () => {
+    const two = [
+      { orderItemId: "line-1", qty: 10, despatchedQty: 0 },
+      { orderItemId: "line-2", qty: 4, despatchedQty: 0 },
+    ];
+    const base = {
+      status: "CONFIRMED",
+      resolutionKind: "NONE" as const,
+      storedFingerprint: null,
+      lines: two,
+    };
+    expect(
+      assessManualFulfilment({
+        ...base,
+        requested: [
+          { orderItemId: "line-1", despatchedQty: 2 },
+          { orderItemId: "line-1", despatchedQty: 4 },
+        ],
+      }),
+    ).toEqual({ ok: false, message: "Each order line can be confirmed only once." });
+    expect(
+      assessManualFulfilment({
+        ...base,
+        requested: [{ orderItemId: "line-1", despatchedQty: 2 }],
+      }),
+    ).toEqual({ ok: false, message: "Confirm a fulfilled quantity for every order line." });
+    expect(
+      assessManualFulfilment({
+        ...base,
+        requested: [
+          { orderItemId: "line-1", despatchedQty: 2 },
+          { orderItemId: "line-2", despatchedQty: 0 },
+          { orderItemId: "line-x", despatchedQty: 1 },
+        ],
+      }),
+    ).toEqual({ ok: false, message: "A confirmed line does not belong to this order." });
+  });
+
   it("consumes only the supplied quantity from each line's hold", () => {
     const taken = planReservationConsumption(
       [
@@ -79,6 +117,14 @@ describe("manual order resolution rules", () => {
       [{ orderItemId: "line-1", variantId: "v1", quantity: 8 }],
     );
     expect(untied.get("pool")).toBe(3);
+    const capped = planReservationConsumption(
+      [
+        { id: "a", orderItemId: "line-1", variantId: "v1", quantity: 10 },
+        { id: "b", orderItemId: "line-1", variantId: "v1", quantity: 10 },
+      ],
+      [{ orderItemId: "line-1", variantId: "v1", quantity: 4 }],
+    );
+    expect([...(capped.values())].reduce((sum, quantity) => sum + quantity, 0)).toBe(4);
   });
 
   it("refuses cancelled and already despatched orders", () => {

@@ -219,7 +219,9 @@ describe("manual order resolution", () => {
     });
     expect(again.idempotent).toBe(true);
     expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: partial.order.id } })).toBe(1);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: partial.order.id } })).toBe(1);
     expect((await prisma.inventory.findUniqueOrThrow({ where: { id: partial.inventory.id } })).qtyReserved).toBe(6);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: partial.order.id } })).toBe(2);
 
     const balance = await fulfilOrderManually(adminId, {
       orderId: partial.order.id,
@@ -236,6 +238,27 @@ describe("manual order resolution", () => {
       _sum: { quantity: true },
     });
     expect(consumed._sum.quantity).toBe(10);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: partial.order.id } })).toBe(2);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: partial.order.id } })).toBe(2);
+
+    const completedAgain = await fulfilOrderManually(adminId, {
+      orderId: partial.order.id,
+      reason: "The remaining units were supplied later",
+      invoiceEvidence: "OUTSTANDING",
+      lines: [{ orderItemId: line.id, despatchedQty: 10 }],
+    });
+    expect(completedAgain.idempotent).toBe(true);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: partial.order.id } })).toBe(2);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: partial.order.id } })).toBe(2);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: partial.inventory.id } })).qtyReserved).toBe(0);
+    expect(
+      (
+        await prisma.orderStockReservation.aggregate({
+          where: { orderId: partial.order.id, status: "CONSUMED" },
+          _sum: { quantity: true },
+        })
+      )._sum.quantity,
+    ).toBe(10);
 
     const full = await createOrder(3);
     const fullLine = full.order.items[0]!;
@@ -274,15 +297,63 @@ describe("manual order resolution", () => {
 
     const thin = await createOrder(10);
     await prisma.inventory.update({ where: { id: thin.inventory.id }, data: { qtyReserved: 2 } });
-    await fulfilOrderManually(adminId, {
-      orderId: thin.order.id,
-      reason: "Reserved stock was already short",
-      invoiceEvidence: "OUTSTANDING",
-      lines: [{ orderItemId: thin.order.items[0]!.id, despatchedQty: 4 }],
+    await expect(
+      fulfilOrderManually(adminId, {
+        orderId: thin.order.id,
+        reason: "Reserved stock was already short",
+        invoiceEvidence: "OUTSTANDING",
+        lines: [{ orderItemId: thin.order.items[0]!.id, despatchedQty: 4 }],
+      }),
+    ).rejects.toMatchObject({
+      message: "Reserved stock does not match the active hold. The order was not changed.",
     });
+    const thinAfter = await prisma.order.findUniqueOrThrow({
+      where: { id: thin.order.id },
+      include: { items: true },
+    });
+    expect(thinAfter.status).toBe("CONFIRMED");
+    expect(thinAfter.manualResolutionKind).toBe("NONE");
+    expect(thinAfter.items[0]?.despatchedQty).toBe(0);
+    const thinHold = await prisma.orderStockReservation.findFirstOrThrow({ where: { orderId: thin.order.id } });
+    expect(thinHold.status).toBe("ACTIVE");
+    expect(thinHold.quantity).toBe(10);
     const thinStock = await prisma.inventory.findUniqueOrThrow({ where: { id: thin.inventory.id } });
-    expect(thinStock.qtyReserved).toBe(0);
+    expect(thinStock.qtyReserved).toBe(2);
     expect(thinStock.qtyOnHand).toBe(40);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: thin.order.id } })).toBe(0);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: thin.order.id } })).toBe(0);
+
+    const almost = await createOrder(10);
+    await prisma.inventory.update({ where: { id: almost.inventory.id }, data: { qtyReserved: 4 } });
+    await expect(
+      fulfilOrderManually(adminId, {
+        orderId: almost.order.id,
+        reason: "Reserved stock did not cover the whole hold",
+        invoiceEvidence: "OUTSTANDING",
+        lines: [{ orderItemId: almost.order.items[0]!.id, despatchedQty: 4 }],
+      }),
+    ).rejects.toBeInstanceOf(AuthError);
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: almost.order.id } })).status).toBe("CONFIRMED");
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: almost.inventory.id } })).qtyReserved).toBe(4);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: almost.order.id, status: "ACTIVE" } })).toBe(1);
+
+    const shortClose = await createOrder(5);
+    await prisma.inventory.update({ where: { id: shortClose.inventory.id }, data: { qtyReserved: 1 } });
+    await expect(
+      closeOrderAdministratively(adminId, {
+        orderId: shortClose.order.id,
+        reason: "Cannot close while the reserved balance is short",
+        invoiceEvidence: "UNAVAILABLE",
+      }),
+    ).rejects.toMatchObject({
+      message: "Reserved stock does not match the active hold. The order was not changed.",
+    });
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: shortClose.order.id } })).status).toBe("CONFIRMED");
+    expect(
+      (await prisma.orderStockReservation.findFirstOrThrow({ where: { orderId: shortClose.order.id } })).status,
+    ).toBe("ACTIVE");
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: shortClose.inventory.id } })).qtyReserved).toBe(1);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: shortClose.order.id } })).toBe(0);
   });
 
   it("closes administratively without despatch and releases the reservation", async () => {
@@ -329,6 +400,143 @@ describe("manual order resolution", () => {
         invoiceEvidence: "OUTSTANDING",
       }),
     ).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it("rejects duplicate and missing lines without writing fulfilment", async () => {
+    const { order } = await createTwoLineOrder();
+    const first = order.items.find((item) => item.qty === 5)!;
+    const second = order.items.find((item) => item.qty === 4)!;
+    const other = await createOrder(1);
+
+    await expect(
+      fulfilOrderManually(adminId, {
+        orderId: order.id,
+        reason: "The same line was submitted twice",
+        invoiceEvidence: "OUTSTANDING",
+        lines: [
+          { orderItemId: first.id, despatchedQty: 2 },
+          { orderItemId: first.id, despatchedQty: 5 },
+        ],
+      }),
+    ).rejects.toMatchObject({ message: "Each order line can be confirmed only once." });
+
+    await expect(
+      fulfilOrderManually(adminId, {
+        orderId: order.id,
+        reason: "The second line was left out",
+        invoiceEvidence: "OUTSTANDING",
+        lines: [{ orderItemId: first.id, despatchedQty: 2 }],
+      }),
+    ).rejects.toMatchObject({ message: "Confirm a fulfilled quantity for every order line." });
+
+    await expect(
+      fulfilOrderManually(adminId, {
+        orderId: order.id,
+        reason: "An unknown line was included",
+        invoiceEvidence: "OUTSTANDING",
+        lines: [
+          { orderItemId: first.id, despatchedQty: 2 },
+          { orderItemId: second.id, despatchedQty: 0 },
+          { orderItemId: other.order.items[0]!.id, despatchedQty: 1 },
+        ],
+      }),
+    ).rejects.toMatchObject({ message: "A confirmed line does not belong to this order." });
+
+    const stored = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: { items: true },
+    });
+    expect(stored.status).toBe("CONFIRMED");
+    expect(stored.manualResolutionKind).toBe("NONE");
+    expect(stored.items.every((item) => item.despatchedQty === 0)).toBe(true);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: order.id } })).toBe(0);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: order.id } })).toBe(0);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: order.id, status: "ACTIVE" } })).toBe(2);
+  });
+
+  it("serialises concurrent confirmations so a reservation is consumed once", async () => {
+    const partial = await createOrder(10);
+    const line = partial.order.items[0]!;
+    const request = {
+      orderId: partial.order.id,
+      reason: "Two staff confirmed the same collection",
+      invoiceEvidence: "OUTSTANDING" as const,
+      lines: [{ orderItemId: line.id, despatchedQty: 4 }],
+    };
+    const results = await Promise.all([
+      fulfilOrderManually(adminId, request),
+      fulfilOrderManually(adminId, request),
+    ]);
+    expect(results.filter((result) => result.idempotent)).toHaveLength(1);
+    expect(results.every((result) => result.lines[0]?.despatchedQty === 4)).toBe(true);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: partial.order.id } })).toBe(1);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: partial.order.id } })).toBe(1);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: partial.inventory.id } })).qtyReserved).toBe(6);
+    const consumed = await prisma.orderStockReservation.aggregate({
+      where: { orderId: partial.order.id, status: "CONSUMED" },
+      _sum: { quantity: true },
+    });
+    expect(consumed._sum.quantity).toBe(4);
+
+    const raced = await createOrder(10);
+    const racedLine = raced.order.items[0]!;
+    const fullRequest = {
+      orderId: raced.order.id,
+      reason: "Two staff confirmed the whole order",
+      invoiceEvidence: "UNAVAILABLE" as const,
+      lines: [{ orderItemId: racedLine.id, despatchedQty: 10 }],
+    };
+    const fullResults = await Promise.all([
+      fulfilOrderManually(adminId, fullRequest),
+      fulfilOrderManually(adminId, fullRequest),
+    ]);
+    expect(fullResults.filter((result) => result.idempotent)).toHaveLength(1);
+    expect(fullResults.every((result) => result.status === "DISPATCHED")).toBe(true);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: raced.inventory.id } })).qtyReserved).toBe(0);
+    expect(
+      (
+        await prisma.orderStockReservation.aggregate({
+          where: { orderId: raced.order.id, status: "CONSUMED" },
+          _sum: { quantity: true },
+        })
+      )._sum.quantity,
+    ).toBe(10);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: raced.order.id } })).toBe(1);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: raced.order.id } })).toBe(1);
+
+    const balance = await createOrder(10);
+    const balanceLine = balance.order.items[0]!;
+    await fulfilOrderManually(adminId, {
+      orderId: balance.order.id,
+      reason: "The first part was collected",
+      invoiceEvidence: "OUTSTANDING",
+      lines: [{ orderItemId: balanceLine.id, despatchedQty: 4 }],
+    });
+    const completion = {
+      orderId: balance.order.id,
+      reason: "The balance was collected later",
+      invoiceEvidence: "OUTSTANDING" as const,
+      lines: [{ orderItemId: balanceLine.id, despatchedQty: 10 }],
+    };
+    const completions = await Promise.all([
+      fulfilOrderManually(adminId, completion),
+      fulfilOrderManually(adminId, completion),
+    ]);
+    expect(completions.filter((result) => result.idempotent)).toHaveLength(1);
+    expect(completions.every((result) => result.status === "DISPATCHED" && result.lines[0]?.despatchedQty === 10)).toBe(
+      true,
+    );
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: balance.inventory.id } })).qtyReserved).toBe(0);
+    expect(
+      (
+        await prisma.orderStockReservation.aggregate({
+          where: { orderId: balance.order.id, status: "CONSUMED" },
+          _sum: { quantity: true },
+        })
+      )._sum.quantity,
+    ).toBe(10);
+    expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: balance.order.id } })).toBe(2);
+    expect(await prisma.auditEvent.count({ where: { entityType: "Order", entityId: balance.order.id } })).toBe(2);
   });
 
   it("links a later 504 invoice without repeating despatch", async () => {

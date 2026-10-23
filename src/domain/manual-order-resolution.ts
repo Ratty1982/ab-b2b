@@ -53,12 +53,14 @@ export function assessManualFulfilment(input: {
     return { ok: false, message: "This order cannot be fulfilled manually from its current status." };
   }
 
-  if (input.requested.length !== input.lines.length) {
-    return { ok: false, message: "Confirm a fulfilled quantity for every order line." };
-  }
   const byId = new Map(input.lines.map((line) => [line.orderItemId, line]));
+  const seen = new Set<string>();
   let anyIncrease = false;
   for (const request of input.requested) {
+    if (seen.has(request.orderItemId)) {
+      return { ok: false, message: "Each order line can be confirmed only once." };
+    }
+    seen.add(request.orderItemId);
     const line = byId.get(request.orderItemId);
     if (!line) return { ok: false, message: "A confirmed line does not belong to this order." };
     if (!Number.isInteger(request.despatchedQty) || request.despatchedQty < 0) {
@@ -71,6 +73,9 @@ export function assessManualFulfilment(input: {
       return { ok: false, message: "Fulfilled quantity cannot be reduced." };
     }
     if (request.despatchedQty > line.despatchedQty) anyIncrease = true;
+  }
+  if (seen.size !== input.lines.length) {
+    return { ok: false, message: "Confirm a fulfilled quantity for every order line." };
   }
 
   const fingerprint = manualFulfilmentFingerprint(input.requested);
