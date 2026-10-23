@@ -6,6 +6,7 @@ import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import { redactIneligibleSalesDiagnostic } from "@/domain/autopart-import-diagnostics";
 import {
   IMPORTED_SALES_DISCARD_SOURCES_ACKNOWLEDGEMENT,
+  IMPORTED_SALES_PRESERVED,
   IMPORTED_SALES_NO_BACKUP_ACKNOWLEDGEMENT,
   IMPORTED_SALES_RESET_CONFIRMATION,
   IMPORTED_SALES_RESET_TRANSACTION_TIMEOUT_MS,
@@ -273,5 +274,8 @@ describe("imported sales reset gates", () => {
     expect(entry).not.toContain("accept-no-backup-risk");
     expect(dockerfile).not.toContain("imported-sales-reset");
     expect(server).not.toContain("customer-sales-import");
+    const reset = readFileSync(resolve(root, "src/server/maintenance/imported-sales-reset.ts"), "utf8");
+    expect(reset).not.toContain("customerSalesUpload.deleteMany");
+    expect(IMPORTED_SALES_PRESERVED.some((item) => item.name === "CustomerSalesUpload")).toBe(true);
   });
 });

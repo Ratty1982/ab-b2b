@@ -3,24 +3,26 @@ import { toast } from "sonner";
 import {
   acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
-  confirmCustomerSalesHistoryFn,
-  listStoredCustomerSalesHistoryFn,
+  confirmCustomerSalesHistoryUploadFn,
   startCustomerSalesHistoryBaselineFn,
   listCustomerSalesAccountsFn,
-  previewCustomerSalesHistoryFn,
+  previewCustomerSalesHistoryUploadFn,
 } from "@/server/phase2/fns";
+import {
+  formatBytes,
+  uploadCustomerSalesReport,
+  type SavedCustomerSalesUpload,
+} from "@/components/ab/upload-customer-sales-report";
 
-type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesHistoryFn>>, { ok: true }>["data"];
-type StoredHistory = Extract<Awaited<ReturnType<typeof listStoredCustomerSalesHistoryFn>>, { ok: true }>["data"];
+type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesHistoryUploadFn>>, { ok: true }>["data"];
+type ImportResult = Extract<Awaited<ReturnType<typeof confirmCustomerSalesHistoryUploadFn>>, { ok: true }>["data"];
 
 export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) {
-  const [filename561l, setFilename561l] = useState("");
-  const [filenameSlrb, setFilenameSlrb] = useState("");
-  const [text561l, setText561l] = useState("");
-  const [textSlrb, setTextSlrb] = useState("");
+  const [upload561l, setUpload561l] = useState<SavedCustomerSalesUpload | null>(null);
+  const [uploadSlrb, setUploadSlrb] = useState<SavedCustomerSalesUpload | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [stored, setStored] = useState<StoredHistory | null>(null);
-  const [storedError, setStoredError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
   const [historyKind, setHistoryKind] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -31,18 +33,60 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
       setHistoryStatus(accounts.data.historyStatus);
       setHistoryKind(accounts.data.historyKind);
     }
-    const storedHistory = await listStoredCustomerSalesHistoryFn({ data: { companyId } });
-    if (storedHistory.ok) {
-      setStored(storedHistory.data);
-      setStoredError(null);
-    } else {
-      setStoredError(storedHistory.error);
-    }
   }
 
   useEffect(() => {
     void refreshStatus();
   }, [companyId]);
+
+  async function uploadFile(file: File, role: "HISTORY_561L" | "HISTORY_SLRB") {
+    setPreview(null);
+    setImportResult(null);
+    setBusy(true);
+    setProgress(`Uploading ${file.name}: 0 B of ${formatBytes(file.size)}`);
+    try {
+      const saved = await uploadCustomerSalesReport({
+        file,
+        companyId,
+        role,
+        onProgress: (loaded, total) => {
+          setProgress(`Uploading ${file.name}: ${formatBytes(loaded)} of ${formatBytes(total)}`);
+        },
+      });
+      if (role === "HISTORY_561L") setUpload561l(saved);
+      else setUploadSlrb(saved);
+      setProgress(`${file.name} uploaded (${formatBytes(saved.bytes)}). Preview reads this file and does not create sales.`);
+    } catch (error) {
+      if (role === "HISTORY_561L") setUpload561l(null);
+      else setUploadSlrb(null);
+      setProgress(null);
+      toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPreview(samplePage = 1) {
+    setBusy(true);
+    setProgress("Filtering the uploaded report to this customer's verified accounts…");
+    const result = await previewCustomerSalesHistoryUploadFn({
+      data: {
+        companyId,
+        ...(upload561l ? { upload561lId: upload561l.uploadId } : {}),
+        ...(uploadSlrb ? { uploadSlrbId: uploadSlrb.uploadId } : {}),
+        samplePage,
+        samplePageSize: 25,
+      },
+    });
+    setBusy(false);
+    setProgress(null);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    setPreview(result.data);
+    setImportResult(null);
+  }
 
   return (
     <section className="mb-6 border border-border/80">
@@ -63,18 +107,7 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
         className="grid gap-3 px-4 py-4"
         onSubmit={(event) => {
           event.preventDefault();
-          void (async () => {
-            setBusy(true);
-            const result = await previewCustomerSalesHistoryFn({
-              data: { companyId, text561l, textSlrb, filename561l, filenameSlrb },
-            });
-            setBusy(false);
-            if (!result.ok) {
-              toast.error(result.error);
-              return;
-            }
-            setPreview(result.data);
-          })();
+          void runPreview(1);
         }}
       >
         <label className="grid gap-1 text-[12px] font-semibold">
@@ -85,13 +118,16 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
             className="text-[13px] font-normal"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              setPreview(null);
               if (!file) return;
-              setFilename561l(file.name);
-              void file.text().then(setText561l);
+              void uploadFile(file, "HISTORY_561L");
             }}
           />
         </label>
+        {upload561l ? (
+          <p className="text-[12px] text-steel">
+            {upload561l.filename} stored temporarily, {formatBytes(upload561l.bytes)}.
+          </p>
+        ) : null}
         <label className="grid gap-1 text-[12px] font-semibold">
           SLRB ledger report
           <input
@@ -100,20 +136,28 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
             className="text-[13px] font-normal"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              setPreview(null);
               if (!file) return;
-              setFilenameSlrb(file.name);
-              void file.text().then(setTextSlrb);
+              void uploadFile(file, "HISTORY_SLRB");
             }}
           />
         </label>
+        {uploadSlrb ? (
+          <p className="text-[12px] text-steel">
+            {uploadSlrb.filename} stored temporarily, {formatBytes(uploadSlrb.bytes)}.
+          </p>
+        ) : null}
+        {progress ? (
+          <p className="text-[13px]" role="status">
+            {progress}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"
-            disabled={busy || (!text561l && !textSlrb)}
+            disabled={busy || (!upload561l && !uploadSlrb)}
             className="h-9 rounded-md border border-border px-3 text-[12px] font-semibold disabled:opacity-50"
           >
-            {busy ? "Checking…" : "Preview history"}
+            {busy ? "Working…" : "Preview history"}
           </button>
           <button
             type="button"
@@ -189,16 +233,25 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
       </form>
       {preview ? (
         <div className="border-t border-border/70 px-4 py-4">
-          <h4 className="text-[12px] font-bold uppercase tracking-wide">Proposed changes</h4>
+          <h4 className="text-[12px] font-bold uppercase tracking-wide">Preview</h4>
           <p className="mt-1 text-[13px] text-steel">
-            Preview shows proposed changes. Nothing in this table is stored until you import.
+            Preview shows proposed changes. It does not create sales records. Confirm import writes this
+            uploaded file for the selected customer.
           </p>
           <p className="mt-2 text-[13px]" role="status">
-            Accounts {preview.accountCodes.join(", ")}. Import {preview.counts.import}, ledger{" "}
-            {preview.counts.ledger}, duplicate {preview.counts.duplicate}, rejected {preview.counts.rejected}.
+            Accounts {preview.accountCodes.join(", ")}. Read {preview.rowsRead.toLocaleString("en-GB")} rows,{" "}
+            {preview.matchingRows.toLocaleString("en-GB")} matching,{" "}
+            {preview.otherCustomerRows.toLocaleString("en-GB")} other customers. Import {preview.counts.import}, ledger{" "}
+            {preview.counts.ledger}, duplicate {preview.counts.duplicate}, rejected {preview.counts.rejected}. File size{" "}
+            {formatBytes(preview.byteSize)}.
             {preview.dateFrom ? ` Dates ${preview.dateFrom} to ${preview.dateTo ?? preview.dateFrom}.` : ""}
           </p>
           {preview.message ? <p className="mt-2 text-[13px] text-steel">{preview.message}</p> : null}
+          {preview.sampleTruncated ? (
+            <p className="mt-2 text-[12px] text-steel">
+              The sample is the first matching outcomes. Counts cover the whole file.
+            </p>
+          ) : null}
           {preview.rows.length > 0 ? (
             <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[720px] text-left text-[12px]">
@@ -232,6 +285,29 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
               </table>
             </div>
           ) : null}
+          {preview.samplePages > 1 ? (
+            <div className="mt-3 flex items-center gap-2 text-[12px]">
+              <button
+                type="button"
+                disabled={busy || preview.samplePage <= 1}
+                className="h-8 rounded-md border border-border px-2 disabled:opacity-50"
+                onClick={() => void runPreview(preview.samplePage - 1)}
+              >
+                Previous sample
+              </button>
+              <span>
+                Sample page {preview.samplePage} of {preview.samplePages}
+              </span>
+              <button
+                type="button"
+                disabled={busy || preview.samplePage >= preview.samplePages}
+                className="h-8 rounded-md border border-border px-2 disabled:opacity-50"
+                onClick={() => void runPreview(preview.samplePage + 1)}
+              >
+                Next sample
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             disabled={!preview.canCommit || busy}
@@ -239,75 +315,44 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
             onClick={() => {
               void (async () => {
                 setBusy(true);
-                const result = await confirmCustomerSalesHistoryFn({
-                  data: { companyId, text561l, textSlrb, filename561l, filenameSlrb },
+                setProgress("Confirming import from the stored file…");
+                const result = await confirmCustomerSalesHistoryUploadFn({
+                  data: {
+                    companyId,
+                    ...(upload561l ? { upload561lId: upload561l.uploadId } : {}),
+                    ...(uploadSlrb ? { uploadSlrbId: uploadSlrb.uploadId } : {}),
+                  },
                 });
                 setBusy(false);
+                setProgress(null);
                 if (!result.ok) {
                   toast.error(result.error);
                   return;
                 }
+                setPreview(null);
+                setImportResult(result.data);
                 toast.success(
                   result.data.historyStatus === "REVIEW"
                     ? "Valid rows stored. Cutover stays in review"
                     : "Sales history stored for this customer",
                 );
-                setPreview(null);
                 await refreshStatus();
               })();
             }}
           >
-            Import history for this customer
+            Confirm import
           </button>
         </div>
       ) : null}
-      {storedError ? <p className="border-t border-border/70 px-4 py-3 text-[13px] text-warn">{storedError}</p> : null}
-      {stored && (stored.productLines > 0 || stored.paymentDocuments > 0) ? (
+      {importResult ? (
         <div className="border-t border-border/70 px-4 py-4">
-          <h4 className="text-[12px] font-bold uppercase tracking-wide">Stored records</h4>
-          <p className="mt-1 text-[13px] text-steel">
-            These are the records stored for this customer. Sales Enquiry counts each invoice once.
-            Payments are stored as ledger evidence and are not product sales.
-            {stored.historyStatus === "REVIEW"
-              ? " Rejected rows still need staff acknowledgement before cutover is complete."
-              : ""}
+          <h4 className="text-[12px] font-bold uppercase tracking-wide">Import result</h4>
+          <p className="mt-1 text-[13px]" role="status">
+            Stored {importResult.rowsImported.toLocaleString("en-GB")} rows. Duplicates {importResult.duplicates}. Read{" "}
+            {importResult.rowsRead.toLocaleString("en-GB")} rows, {importResult.otherCustomerRows.toLocaleString("en-GB")}{" "}
+            from other customers were not stored. Cutover {importResult.historyStatus}. File size{" "}
+            {formatBytes(importResult.byteSize)}.
           </p>
-          <p className="mt-2 text-[13px]" role="status">
-            {stored.productLines} product lines, {stored.datedProductLines} dated, {stored.undatedProductLines}{" "}
-            without an invoice date, {stored.saleDocuments} sale documents, {stored.paymentDocuments} payments.
-            Stored product net {stored.productNet}.
-            {stored.truncated ? ` Showing the first ${stored.rows.length} product lines.` : ""}
-          </p>
-          {stored.rows.length > 0 ? (
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-[12px]">
-                <thead className="text-[11px] uppercase tracking-wider text-steel">
-                  <tr>
-                    <th className="py-2 pr-3">Document</th>
-                    <th className="py-2 pr-3">Type</th>
-                    <th className="py-2 pr-3">Date</th>
-                    <th className="py-2 pr-3">Product</th>
-                    <th className="py-2 pr-3">Qty</th>
-                    <th className="py-2 pr-3">Amount</th>
-                    <th className="py-2 pr-3">Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stored.rows.map((row, index) => (
-                    <tr key={`${row.document}-${row.sku}-${index}`} className="border-t border-border/60">
-                      <td className="py-2 pr-3 font-mono">{row.document}</td>
-                      <td className="py-2 pr-3">{row.type}</td>
-                      <td className="py-2 pr-3">{row.date ?? "Date unavailable"}</td>
-                      <td className="py-2 pr-3 font-mono">{row.sku}</td>
-                      <td className="num py-2 pr-3">{row.quantity}</td>
-                      <td className="num py-2 pr-3">{row.amount}</td>
-                      <td className="py-2 pr-3">{row.source}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
         </div>
       ) : null}
     </section>

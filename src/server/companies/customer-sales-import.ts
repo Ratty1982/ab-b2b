@@ -60,7 +60,7 @@ export type CustomerSalesPreview = {
   rowCount: number;
 };
 
-async function requireCustomerSalesImporter(userId: string) {
+export async function requireCustomerSalesImporter(userId: string) {
   const profile = await requireSystemPermission(userId, "orders.view");
   if (!grants(profile, "admin.access", "orders.edit")) {
     throw new AuthError("Not permitted to import customer sales", "FORBIDDEN", 403);
@@ -131,13 +131,15 @@ function emptyCounts(): CustomerSalesPreview["counts"] {
   return { import: 0, update: 0, duplicate: 0, skipped: 0, rejected: 0 };
 }
 
+const sampleLimits = new WeakMap<CustomerSalesPreviewRow[], number>();
+
 function pushRow(
   rows: CustomerSalesPreviewRow[],
   counts: CustomerSalesPreview["counts"],
   row: CustomerSalesPreviewRow,
 ) {
   counts[row.disposition] += 1;
-  if (rows.length < PREVIEW_ROW_LIMIT) rows.push(row);
+  if (rows.length < (sampleLimits.get(rows) ?? PREVIEW_ROW_LIMIT)) rows.push(row);
 }
 
 export async function listCustomerSalesAccounts(actorUserId: string, companyId: string) {
@@ -190,15 +192,17 @@ export async function listCustomerSalesAccounts(actorUserId: string, companyId: 
 export async function previewCustomerSalesImport(
   actorUserId: string,
   input: { companyId: string; accountCode: string; text: string; filename?: string },
+  options?: { bounded?: boolean; sampleLimit?: number },
 ): Promise<CustomerSalesPreview> {
   await requireCustomerSalesImporter(actorUserId);
-  if (input.text.length > MAX_REPORT_CHARS) {
+  if (!options?.bounded && input.text.length > MAX_REPORT_CHARS) {
     throw new AuthError("Report is too large to preview.", "VALIDATION", 400);
   }
   const target = await loadCustomerSalesTarget(input.companyId, input.accountCode);
   const kind = classifyCustomerSalesReport(input.text);
   const counts = emptyCounts();
   const rows: CustomerSalesPreviewRow[] = [];
+  sampleLimits.set(rows, options?.sampleLimit ?? PREVIEW_ROW_LIMIT);
   let message: string | null = null;
   let canCommit = false;
 
@@ -429,8 +433,9 @@ async function preview504(
 export async function confirmCustomerSalesImport(
   actorUserId: string,
   input: { companyId: string; accountCode: string; text: string; filename?: string },
+  options?: { bounded?: boolean },
 ) {
-  const preview = await previewCustomerSalesImport(actorUserId, input);
+  const preview = await previewCustomerSalesImport(actorUserId, input, options);
   if (!preview.canCommit) {
     throw new AuthError(preview.message ?? "This report cannot be imported.", "VALIDATION", 400);
   }

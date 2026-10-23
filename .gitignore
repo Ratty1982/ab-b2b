@@ -42,6 +42,7 @@ package-lock.json
 
 # Private Autopart customer and financial uploads. Never commit these.
 /data/autopart-imports/
+/data/customer-sales-uploads/
 /var/
 *.suo
 *.ntvs*
