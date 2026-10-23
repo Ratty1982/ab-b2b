@@ -11,7 +11,7 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   loadCustomerSalesHistoryTarget,
   prepareCustomerSalesHistory,
-  requireHistoryImporter,
+  requireHistoryImporterForCompany,
   type CustomerSalesHistoryCounts,
 } from "@/server/companies/customer-sales-history-import";
 import {
@@ -22,13 +22,39 @@ import {
 import { streamFilterReport } from "@/server/companies/customer-sales-report-filter";
 
 export const CUSTOMER_SALES_HISTORY_STAGE_BATCH = 1_000;
-const STALE_HEARTBEAT_MS = 120_000;
-const PUBLISH_TIMEOUT_MS = 300_000;
+/** Staging / queued lease. A fresh heartbeat blocks a second worker. */
+export const CUSTOMER_SALES_HISTORY_STALE_HEARTBEAT_MS = 120_000;
+/** Publication can run for PUBLISH_TIMEOUT_MS; do not reclaim sooner. */
+export const CUSTOMER_SALES_HISTORY_PUBLISH_TIMEOUT_MS = 300_000;
+export const CUSTOMER_SALES_HISTORY_PUBLISH_STALE_MS =
+  CUSTOMER_SALES_HISTORY_PUBLISH_TIMEOUT_MS + 30_000;
+export const CUSTOMER_SALES_HISTORY_FINGERPRINT_INDEX =
+  "AutopartSalesLine_company_561l_fingerprint_uidx";
+
+const STALE_HEARTBEAT_MS = CUSTOMER_SALES_HISTORY_STALE_HEARTBEAT_MS;
+const PUBLISH_TIMEOUT_MS = CUSTOMER_SALES_HISTORY_PUBLISH_TIMEOUT_MS;
+const PUBLISH_STALE_MS = CUSTOMER_SALES_HISTORY_PUBLISH_STALE_MS;
 
 const running = new Set<string>();
 const preparedPlans = new Map<string, Awaited<ReturnType<typeof prepareCustomerSalesHistory>>>();
 const reportCache = new Map<string, FilteredReport>();
 const runIds = new Map<string, string>();
+
+/** Test/process-crash helper: drop the in-memory runner reservation without failing the job. */
+export function releaseLocalCustomerSalesHistoryRunner(jobId: string) {
+  running.delete(jobId);
+}
+
+export function localCustomerSalesHistoryRunnerActive(jobId: string) {
+  return running.has(jobId);
+}
+
+class RunnerAbandonedError extends Error {
+  constructor() {
+    super("Import runner abandoned the job without failing it.");
+    this.name = "RunnerAbandonedError";
+  }
+}
 
 type FilteredReport = {
   text561l?: string;
@@ -63,6 +89,7 @@ type StageWork = {
 
 export type CustomerSalesHistoryJobView = {
   jobId: string;
+  companyId: string;
   status: CustomerSalesHistoryJob["status"];
   phase: string;
   rowsProcessed: number;
@@ -83,11 +110,20 @@ export type CustomerSalesHistoryJobView = {
   historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE" | null;
   error: string | null;
   runId: string | null;
+  filename561l: string | null;
+  filenameSlrb: string | null;
+  abandoned: boolean;
+  sourceAvailable: boolean;
+  sourceExpired: boolean;
+  canRetry: boolean;
+  sourceMessage: string | null;
 };
 
 export type CustomerSalesHistoryJobHooks = {
   maxBatches?: number;
   failBeforePublish?: boolean;
+  /** Leave the job in PUBLISHING with a live token, as if the process died mid-publication. */
+  abandonDuringPublish?: boolean;
 };
 
 type HistoryInput = {
@@ -129,9 +165,85 @@ function dayOf(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
 }
 
-function toProgress(job: CustomerSalesHistoryJob, runId: string | null): CustomerSalesHistoryJobView {
+function staleCutoff(status: CustomerSalesHistoryJob["status"]) {
+  return status === "PUBLISHING" ? PUBLISH_STALE_MS : STALE_HEARTBEAT_MS;
+}
+
+export function customerSalesHistoryJobAbandoned(job: {
+  status: CustomerSalesHistoryJob["status"];
+  runnerToken: string | null;
+  heartbeatAt: Date | null;
+}) {
+  if (job.status !== "STAGING" && job.status !== "PUBLISHING") return false;
+  if (!job.runnerToken && !job.heartbeatAt) return true;
+  if (!job.heartbeatAt) return Boolean(job.runnerToken);
+  return Date.now() - job.heartbeatAt.getTime() >= staleCutoff(job.status);
+}
+
+async function inspectJobSource(job: CustomerSalesHistoryJob): Promise<{
+  sourceAvailable: boolean;
+  sourceExpired: boolean;
+  sourceMessage: string | null;
+}> {
+  if (!job.upload561lId && !job.uploadSlrbId) {
+    return { sourceAvailable: true, sourceExpired: false, sourceMessage: null };
+  }
+  const ids = uploadIds(job);
+  const uploads = await prisma.customerSalesUpload.findMany({ where: { id: { in: ids } } });
+  if (uploads.length !== ids.length) {
+    return {
+      sourceAvailable: false,
+      sourceExpired: true,
+      sourceMessage: "The uploaded report is no longer stored. Upload it again.",
+    };
+  }
+  for (const upload of uploads) {
+    if (upload.status === "EXPIRED" || upload.expiresAt.getTime() <= Date.now()) {
+      return {
+        sourceAvailable: false,
+        sourceExpired: true,
+        sourceMessage: "This upload has expired. Upload the report again. No sales records were written.",
+      };
+    }
+    if (!upload.storagePath) {
+      return {
+        sourceAvailable: false,
+        sourceExpired: true,
+        sourceMessage: "The uploaded report is no longer stored. Upload it again.",
+      };
+    }
+    if (job.upload561lId === upload.id && job.sha256561l && upload.sha256 !== job.sha256561l) {
+      return {
+        sourceAvailable: false,
+        sourceExpired: false,
+        sourceMessage: "Uploaded file hash does not match the stored file. No sales records were written.",
+      };
+    }
+    if (job.uploadSlrbId === upload.id && job.sha256Slrb && upload.sha256 !== job.sha256Slrb) {
+      return {
+        sourceAvailable: false,
+        sourceExpired: false,
+        sourceMessage: "Uploaded file hash does not match the stored file. No sales records were written.",
+      };
+    }
+  }
+  return { sourceAvailable: true, sourceExpired: false, sourceMessage: null };
+}
+
+async function toProgress(
+  job: CustomerSalesHistoryJob,
+  runId: string | null,
+  source?: { sourceAvailable: boolean; sourceExpired: boolean; sourceMessage: string | null },
+): Promise<CustomerSalesHistoryJobView> {
+  const inspected = source ?? (await inspectJobSource(job));
+  const abandoned = customerSalesHistoryJobAbandoned(job);
+  const canRetry =
+    (job.status === "FAILED" || abandoned) &&
+    inspected.sourceAvailable &&
+    Boolean(job.upload561lId || job.uploadSlrbId);
   return {
     jobId: job.id,
+    companyId: job.companyId,
     status: job.status,
     phase: job.phase,
     rowsProcessed: job.rowsProcessed,
@@ -150,9 +262,33 @@ function toProgress(job: CustomerSalesHistoryJob, runId: string | null): Custome
     historyFrom: dayOf(job.historyFrom),
     historyTo: dayOf(job.historyTo),
     historyStatus: historyStatusOf(job.historyStatus),
-    error: job.error,
+    error: job.error ?? inspected.sourceMessage,
     runId: runId ?? runIds.get(job.id) ?? null,
+    filename561l: job.filename561l,
+    filenameSlrb: job.filenameSlrb,
+    abandoned,
+    sourceAvailable: inspected.sourceAvailable,
+    sourceExpired: inspected.sourceExpired,
+    canRetry,
+    sourceMessage: inspected.sourceMessage,
   };
+}
+
+export async function reportCustomerSalesHistoryIndexHealth() {
+  const rows = await prisma.$queryRaw<Array<{ indexname: string }>>`
+    SELECT indexname
+    FROM pg_indexes
+    WHERE indexname = ${CUSTOMER_SALES_HISTORY_FINGERPRINT_INDEX}
+  `;
+  const fingerprintIndexPresent = rows.length > 0;
+  if (!fingerprintIndexPresent) {
+    console.error("[ab:history-import]", {
+      event: "HISTORY_FINGERPRINT_INDEX_MISSING",
+      index: CUSTOMER_SALES_HISTORY_FINGERPRINT_INDEX,
+      note: "The unique 561L fingerprint index is absent. Duplicate company fingerprints likely blocked creation; retries may not be fully protected until duplicates are resolved and the index is created.",
+    });
+  }
+  return { fingerprintIndexPresent, indexName: CUSTOMER_SALES_HISTORY_FINGERPRINT_INDEX };
 }
 
 function uploadIds(job: { upload561lId: string | null; uploadSlrbId: string | null }) {
@@ -167,20 +303,149 @@ function sameUploads(
 }
 
 export function scheduleCustomerSalesHistoryJob(jobId: string) {
-  if (running.has(jobId)) return;
+  if (running.has(jobId)) return false;
   running.add(jobId);
   setTimeout(() => {
     void runCustomerSalesHistoryJob(jobId, { reserved: true }).catch((error: unknown) => {
-      console.error("customer sales history job failed", jobId, error);
+      console.error("[ab:history-import]", {
+        event: "HISTORY_JOB_FAILED",
+        jobId,
+        error: error instanceof Error ? error.message : error,
+      });
     });
   }, 0);
+  return true;
+}
+
+/**
+ * Find unfinished history jobs left after a crash or restart and schedule them.
+ * Does not enable mailbox/ongoing imports. FAILED jobs need an explicit staff retry.
+ */
+export async function recoverAbandonedCustomerSalesHistoryJobs(options?: {
+  limit?: number;
+  now?: Date;
+}) {
+  const limit = Math.max(1, Math.min(options?.limit ?? 5, 25));
+  const now = options?.now ?? new Date();
+  const stagingStale = new Date(now.getTime() - STALE_HEARTBEAT_MS);
+  const publishStale = new Date(now.getTime() - PUBLISH_STALE_MS);
+  const jobs = await prisma.customerSalesHistoryJob.findMany({
+    where: {
+      OR: [
+        {
+          status: "QUEUED",
+          OR: [{ runnerToken: null }, { heartbeatAt: null }, { heartbeatAt: { lt: stagingStale } }],
+        },
+        {
+          status: "STAGING",
+          OR: [{ runnerToken: null }, { heartbeatAt: null }, { heartbeatAt: { lt: stagingStale } }],
+        },
+        {
+          status: "PUBLISHING",
+          OR: [{ runnerToken: null }, { heartbeatAt: null }, { heartbeatAt: { lt: publishStale } }],
+        },
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+    select: { id: true, status: true, companyId: true },
+  });
+  const scheduled: string[] = [];
+  for (const job of jobs) {
+    releaseLocalCustomerSalesHistoryRunner(job.id);
+    if (scheduleCustomerSalesHistoryJob(job.id)) {
+      scheduled.push(job.id);
+      console.info("[ab:history-import]", {
+        event: "HISTORY_JOB_RECOVERED",
+        jobId: job.id,
+        companyId: job.companyId,
+        status: job.status,
+      });
+    }
+  }
+  return scheduled;
 }
 
 export async function getCustomerSalesHistoryJob(actorUserId: string, jobId: string) {
-  await requireHistoryImporter(actorUserId);
   const job = await prisma.customerSalesHistoryJob.findUnique({ where: { id: jobId } });
   if (!job) throw new AuthError("Import job was not found.", "NOT_FOUND", 404);
+  await requireHistoryImporterForCompany(actorUserId, job.companyId);
   return toProgress(job, null);
+}
+
+export async function getLatestCustomerSalesHistoryJob(actorUserId: string, companyId: string) {
+  await requireHistoryImporterForCompany(actorUserId, companyId);
+  const active = await prisma.customerSalesHistoryJob.findFirst({
+    where: {
+      companyId,
+      status: { in: ["QUEUED", "STAGING", "PUBLISHING", "FAILED"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (active) return toProgress(active, null);
+  const complete = await prisma.customerSalesHistoryJob.findFirst({
+    where: { companyId, status: "COMPLETE" },
+    orderBy: { createdAt: "desc" },
+  });
+  return complete ? toProgress(complete, null) : null;
+}
+
+export async function retryCustomerSalesHistoryJob(actorUserId: string, jobId: string) {
+  const job = await prisma.customerSalesHistoryJob.findUnique({ where: { id: jobId } });
+  if (!job) throw new AuthError("Import job was not found.", "NOT_FOUND", 404);
+  await requireHistoryImporterForCompany(actorUserId, job.companyId);
+  if (job.status === "COMPLETE") {
+    return toProgress(job, null);
+  }
+  const source = await inspectJobSource(job);
+  if (!source.sourceAvailable) {
+    await prisma.customerSalesHistoryJob.updateMany({
+      where: { id: job.id, status: { not: "COMPLETE" } },
+      data: {
+        status: "FAILED",
+        error: (source.sourceMessage ?? "Upload the report again.").slice(0, 500),
+        runnerToken: null,
+        heartbeatAt: null,
+        completedAt: new Date(),
+      },
+    });
+    const failed = await prisma.customerSalesHistoryJob.findUniqueOrThrow({ where: { id: job.id } });
+    return toProgress(failed, null, source);
+  }
+  const abandoned = customerSalesHistoryJobAbandoned(job);
+  if (
+    (job.status === "QUEUED" || job.status === "STAGING" || job.status === "PUBLISHING") &&
+    !abandoned &&
+    job.runnerToken &&
+    job.heartbeatAt &&
+    Date.now() - job.heartbeatAt.getTime() < staleCutoff(job.status)
+  ) {
+    return toProgress(job, null, source);
+  }
+  if (job.status === "FAILED" || abandoned) {
+    await prisma.customerSalesHistoryJob.updateMany({
+      where: { id: job.id, status: { in: ["FAILED", "STAGING", "PUBLISHING", "QUEUED"] } },
+      data: {
+        status: job.status === "FAILED" ? "FAILED" : job.status,
+        error: null,
+        completedAt: null,
+        runnerToken: null,
+        heartbeatAt: null,
+      },
+    });
+  }
+  const ids = uploadIds(job);
+  if (ids.length) {
+    try {
+      await claimCustomerSalesUploads(ids);
+    } catch (error) {
+      if (job.status === "FAILED" || abandoned) throw error;
+    }
+  }
+  releaseLocalCustomerSalesHistoryRunner(job.id);
+  scheduleCustomerSalesHistoryJob(job.id);
+  const current = await prisma.customerSalesHistoryJob.findUniqueOrThrow({ where: { id: job.id } });
+  return toProgress(current, null, source);
 }
 
 export async function publishPreparedCustomerSalesHistory(args: {
@@ -230,6 +495,7 @@ export async function enqueueCustomerSalesHistoryUpload(
   actorUserId: string,
   input: { companyId: string; upload561lId?: string; uploadSlrbId?: string },
 ) {
+  await requireHistoryImporterForCompany(actorUserId, input.companyId);
   if (!input.upload561lId && !input.uploadSlrbId) {
     throw new AuthError("Choose a 561L report, an SLRB report, or both.", "VALIDATION", 400);
   }
@@ -342,6 +608,42 @@ export async function runCustomerSalesHistoryJob(
   }
 }
 
+async function claimCustomerSalesHistoryJob(jobId: string) {
+  const token = randomUUID();
+  const stagingStale = new Date(Date.now() - STALE_HEARTBEAT_MS);
+  const publishStale = new Date(Date.now() - PUBLISH_STALE_MS);
+  const claimedStaging = await prisma.customerSalesHistoryJob.updateMany({
+    where: {
+      id: jobId,
+      status: { in: ["QUEUED", "STAGING", "FAILED"] },
+      OR: [{ runnerToken: null }, { heartbeatAt: null }, { heartbeatAt: { lt: stagingStale } }],
+    },
+    data: {
+      runnerToken: token,
+      heartbeatAt: new Date(),
+      status: "STAGING",
+      error: null,
+      completedAt: null,
+    },
+  });
+  if (claimedStaging.count === 1) return token;
+  const claimedPublish = await prisma.customerSalesHistoryJob.updateMany({
+    where: {
+      id: jobId,
+      status: "PUBLISHING",
+      OR: [{ runnerToken: null }, { heartbeatAt: null }, { heartbeatAt: { lt: publishStale } }],
+    },
+    data: {
+      runnerToken: token,
+      heartbeatAt: new Date(),
+      status: "STAGING",
+      error: null,
+      completedAt: null,
+    },
+  });
+  return claimedPublish.count === 1 ? token : null;
+}
+
 async function failOwnedJob(jobId: string, token: string, message: string) {
   await prisma.customerSalesHistoryJob.updateMany({
     where: { id: jobId, runnerToken: token, status: { not: "COMPLETE" } },
@@ -362,17 +664,8 @@ async function executeCustomerSalesHistoryJob(jobId: string, hooks?: CustomerSal
   if (!existing) throw new AuthError("Import job was not found.", "NOT_FOUND", 404);
   if (existing.status === "COMPLETE") return toProgress(existing, null);
 
-  const token = randomUUID();
-  const staleBefore = new Date(Date.now() - STALE_HEARTBEAT_MS);
-  const claimed = await prisma.customerSalesHistoryJob.updateMany({
-    where: {
-      id: jobId,
-      status: { in: ["QUEUED", "STAGING", "FAILED", "PUBLISHING"] },
-      OR: [{ runnerToken: null }, { heartbeatAt: { lt: staleBefore } }],
-    },
-    data: { runnerToken: token, heartbeatAt: new Date(), status: "STAGING", error: null, completedAt: null },
-  });
-  if (claimed.count !== 1) {
+  const token = await claimCustomerSalesHistoryJob(jobId);
+  if (!token) {
     const current = await prisma.customerSalesHistoryJob.findUnique({ where: { id: jobId } });
     if (!current) throw new AuthError("Import job was not found.", "NOT_FOUND", 404);
     return toProgress(current, null);
@@ -420,6 +713,7 @@ async function executeCustomerSalesHistoryJob(jobId: string, hooks?: CustomerSal
       });
       const finished = await prisma.customerSalesHistoryJob.findUniqueOrThrow({ where: { id: jobId } });
       await markCustomerSalesUploads(uploadIds(finished), "COMMITTED");
+      await prisma.customerSalesHistoryStage.deleteMany({ where: { jobId } });
       return toProgress(finished, null);
     }
 
@@ -505,11 +799,27 @@ async function executeCustomerSalesHistoryJob(jobId: string, hooks?: CustomerSal
       return toProgress(paused, null);
     }
 
+    if (hooks?.abandonDuringPublish) {
+      await prisma.customerSalesHistoryJob.updateMany({
+        where: { id: jobId, runnerToken: token },
+        data: {
+          status: "PUBLISHING",
+          phase: "PUBLISH",
+          rowsProcessed: total,
+          heartbeatAt: new Date(),
+        },
+      });
+      throw new RunnerAbandonedError();
+    }
+
     const published = await publishStagedHistory(jobId, token, prepared);
     return published;
   } catch (error) {
     const current = await prisma.customerSalesHistoryJob.findUnique({ where: { id: jobId } });
     if (current?.status === "COMPLETE") return toProgress(current, null);
+    if (error instanceof RunnerAbandonedError) {
+      return toProgress(current ?? existing, null);
+    }
     if (current?.runnerToken === token) {
       const message = error instanceof Error ? error.message : "Import failed.";
       await failOwnedJob(jobId, token, message);
@@ -754,25 +1064,36 @@ async function publishStagedHistory(
         SELECT COUNT(*)::bigint AS count FROM inserted
       `);
 
-      if (prepared.planned.documents.some((doc) => doc.source === "SLRB")) {
+      // Fill only NULL financials/dates on existing rows. Drive one indexed update per
+      // SLRB stage document so a large 561L publication cannot seq-scan the document table.
+      const slrbHeaders = await tx.$queryRaw<
+        Array<{
+          documentType: string;
+          documentReference: string;
+          documentDate: Date | null;
+          goodsNet: Prisma.Decimal | null;
+          vat: Prisma.Decimal | null;
+          grossTotal: Prisma.Decimal | null;
+        }>
+      >(Prisma.sql`
+        SELECT "documentType", "documentReference", "documentDate", "goodsNet", "vat", "grossTotal"
+        FROM "CustomerSalesHistoryStage"
+        WHERE "jobId" = ${jobId}
+          AND kind = 'DOCUMENT'
+          AND source = 'SLRB'
+      `);
+      for (const header of slrbHeaders) {
         await tx.$executeRaw(Prisma.sql`
-          UPDATE "AutopartSalesDocument" d
+          UPDATE "AutopartSalesDocument"
           SET
-            "documentDate" = COALESCE(d."documentDate", s."documentDate"),
-            "goodsNet" = COALESCE(d."goodsNet", s."goodsNet"),
-            "vat" = COALESCE(d."vat", s."vat"),
-            "grossTotal" = COALESCE(d."grossTotal", s."grossTotal"),
+            "documentDate" = COALESCE("documentDate", ${header.documentDate}),
+            "goodsNet" = COALESCE("goodsNet", ${header.goodsNet}),
+            "vat" = COALESCE("vat", ${header.vat}),
+            "grossTotal" = COALESCE("grossTotal", ${header.grossTotal}),
             "updatedAt" = CURRENT_TIMESTAMP
-          FROM (
-            SELECT "documentType", "documentReference", "documentDate", "goodsNet", "vat", "grossTotal"
-            FROM "CustomerSalesHistoryStage"
-            WHERE "jobId" = ${jobId}
-              AND kind = 'DOCUMENT'
-              AND source = 'SLRB'
-          ) s
-          WHERE d."companyId" = ${job.companyId}
-            AND d."documentType" = s."documentType"::"AutopartHistoricDocumentType"
-            AND d."documentReference" = s."documentReference"
+          WHERE "companyId" = ${job.companyId}
+            AND "documentType" = ${header.documentType}::"AutopartHistoricDocumentType"
+            AND "documentReference" = ${header.documentReference}
         `);
       }
 
@@ -964,6 +1285,8 @@ async function publishStagedHistory(
           error: null,
         },
       });
+      // Staging is not sales evidence. Drop it once publication has committed its checks.
+      await tx.customerSalesHistoryStage.deleteMany({ where: { jobId } });
       runIds.set(jobId, run.id);
       return { runId: run.id, evidence, imported, companyId: job.companyId };
     },

@@ -11,8 +11,10 @@ import {
   completeCustomerSalesCutoverFn,
   confirmCustomerSalesHistoryUploadFn,
   getCustomerSalesHistoryJobFn,
+  getLatestCustomerSalesHistoryJobFn,
   listStoredCustomerSalesHistoryFn,
   previewCustomerSalesHistoryUploadFn,
+  retryCustomerSalesHistoryJobFn,
   startCustomerSalesHistoryBaselineFn,
 } from "@/server/phase2/fns";
 
@@ -96,9 +98,23 @@ export function AutopartHistoryImport({
   const [saved, setSaved] = useState<string | null>(null);
   const [job, setJob] = useState<HistoryJob | null>(null);
   const finishedJob = useRef<string | null>(null);
+  const restoredJob = useRef<string | null>(null);
   const [filter, setFilter] = useState<RowFilter>("ALL");
   const [page, setPage] = useState(1);
   const [confirm, setConfirm] = useState<"import" | "none" | "baseline" | "review" | null>(null);
+
+  function jobFileNames(current: HistoryJob) {
+    return [productFile?.filename ?? current.filename561l, ledgerFile?.filename ?? current.filenameSlrb]
+      .filter(Boolean)
+      .join(" and ");
+  }
+
+  function savedMessage(current: HistoryJob) {
+    const names = jobFileNames(current) || "Sales history";
+    return current.historyStatus === "REVIEW"
+      ? `${names} saved. New ${current.rowsStored}, already imported ${current.duplicates}. Rejected rows still need review before current sales can be imported.`
+      : `${names} saved. New ${current.rowsStored}, already imported ${current.duplicates}.`;
+  }
 
   async function loadStored() {
     const result = await listStoredCustomerSalesHistoryFn({ data: { companyId } });
@@ -106,10 +122,29 @@ export function AutopartHistoryImport({
   }
 
   useEffect(() => {
+    finishedJob.current = null;
+    restoredJob.current = null;
+    setJob(null);
+    setSaved(null);
     void loadStored();
+    void (async () => {
+      const result = await getLatestCustomerSalesHistoryJobFn({ data: { companyId } });
+      if (!result.ok || !result.data) return;
+      restoredJob.current = result.data.jobId;
+      setJob(result.data);
+      if (result.data.status === "COMPLETE") {
+        finishedJob.current = result.data.jobId;
+        setSaved(savedMessage(result.data));
+      } else if (result.data.status === "FAILED" || result.data.abandoned) {
+        finishedJob.current = result.data.jobId;
+      }
+    })();
   }, [companyId]);
 
-  const jobActive = job != null && (job.status === "QUEUED" || job.status === "STAGING" || job.status === "PUBLISHING");
+  const jobActive =
+    job != null &&
+    !job.abandoned &&
+    (job.status === "QUEUED" || job.status === "STAGING" || job.status === "PUBLISHING");
 
   useEffect(() => {
     if (!jobActive || !job) return;
@@ -120,7 +155,7 @@ export function AutopartHistoryImport({
       })();
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [jobActive, job]);
+  }, [jobActive, job?.jobId]);
 
   useEffect(() => {
     if (!job || finishedJob.current === job.jobId) return;
@@ -130,17 +165,34 @@ export function AutopartHistoryImport({
       toast.error(job.error ?? "Import failed. No completed history was saved.");
       return;
     }
-    const names = [productFile?.filename, ledgerFile?.filename].filter(Boolean).join(" and ");
-    setSaved(
-      job.historyStatus === "REVIEW"
-        ? `${names} saved. New ${job.rowsStored}, already imported ${job.duplicates}. Rejected rows still need review before current sales can be imported.`
-        : `${names} saved. New ${job.rowsStored}, already imported ${job.duplicates}.`,
-    );
+    setSaved(savedMessage(job));
     setPreview(null);
-    toast.success("Sales history saved");
+    if (restoredJob.current !== job.jobId) {
+      toast.success("Sales history saved");
+    }
     void onChanged();
     void loadStored();
   }, [job]);
+
+  async function retryJob() {
+    if (!job?.canRetry) return;
+    setBusy(true);
+    const result = await retryCustomerSalesHistoryJobFn({ data: { jobId: job.jobId } });
+    setBusy(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    finishedJob.current = null;
+    restoredJob.current = null;
+    setJob(result.data);
+    setSaved(null);
+    if (result.data.sourceExpired || !result.data.sourceAvailable) {
+      toast.error(result.data.sourceMessage ?? "Upload the report again.");
+      return;
+    }
+    toast.message("Import resumed. History stays unchanged until the job finishes.");
+  }
 
   async function choose(which: "product" | "ledger", file: File) {
     setPreview(null);
@@ -311,21 +363,42 @@ export function AutopartHistoryImport({
               ? "Import complete. The customer history has been published."
               : job.status === "FAILED"
                 ? "Import failed. The customer history was not published."
-                : `Import ${job.status.toLowerCase()}. ${job.phase === "PUBLISH" ? "Publishing stored rows." : "Reading and staging the report."}`}
+                : job.abandoned
+                  ? "Import abandoned. The previous worker stopped before publication finished."
+                  : `Import ${job.status.toLowerCase()}. ${job.phase === "PUBLISH" ? "Publishing stored rows." : "Reading and staging the report."}`}
           </p>
           <p className="mt-1 text-steel">
             {job.status === "COMPLETE"
               ? "Stored rows are now part of this customer's history."
-              : job.status === "FAILED"
-                ? job.error ?? "No completed history was saved."
-                : "The import continues on this page. Customer history is not complete until this job finishes."}
+              : job.sourceExpired || !job.sourceAvailable
+                ? job.sourceMessage ?? "The uploaded report is no longer available. Upload it again."
+                : job.status === "FAILED"
+                  ? job.error ?? "No completed history was saved."
+                  : job.abandoned
+                    ? "Customer history was not changed. Retry resumes from the saved progress when the file is still available."
+                    : "The import continues on this page. Customer history is not complete until this job finishes."}
           </p>
           <p className="mt-2">
             Processed {job.rowsProcessed.toLocaleString("en-GB")}. Stored {job.rowsStored.toLocaleString("en-GB")}. Duplicates{" "}
             {job.duplicates.toLocaleString("en-GB")}. Rejected {job.rejected.toLocaleString("en-GB")}. Failed{" "}
             {job.failed.toLocaleString("en-GB")}.
           </p>
-          {job.error ? <p className="mt-2 text-steel">{job.error}</p> : null}
+          {job.error && job.status !== "FAILED" ? <p className="mt-2 text-steel">{job.error}</p> : null}
+          {job.canRetry ? (
+            <button
+              type="button"
+              disabled={busy}
+              className="mt-3 h-9 rounded-md bg-primary px-3 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
+              onClick={() => void retryJob()}
+            >
+              {busy ? "Retrying…" : "Retry import"}
+            </button>
+          ) : null}
+          {!job.sourceAvailable && !job.canRetry && (job.status === "FAILED" || job.abandoned) ? (
+            <p className="mt-3 text-steel">
+              {job.sourceMessage ?? "Upload the report again, then start a new import."}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

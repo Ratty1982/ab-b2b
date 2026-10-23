@@ -5,6 +5,8 @@ import {
   completeCustomerSalesCutoverFn,
   confirmCustomerSalesHistoryUploadFn,
   getCustomerSalesHistoryJobFn,
+  getLatestCustomerSalesHistoryJobFn,
+  retryCustomerSalesHistoryJobFn,
   startCustomerSalesHistoryBaselineFn,
   listCustomerSalesAccountsFn,
   previewCustomerSalesHistoryUploadFn,
@@ -26,6 +28,7 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [job, setJob] = useState<ImportResult | null>(null);
   const finishedJob = useRef<string | null>(null);
+  const restoredJob = useRef<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
   const [historyKind, setHistoryKind] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,10 +42,29 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   }
 
   useEffect(() => {
+    finishedJob.current = null;
+    restoredJob.current = null;
+    setJob(null);
+    setImportResult(null);
     void refreshStatus();
+    void (async () => {
+      const result = await getLatestCustomerSalesHistoryJobFn({ data: { companyId } });
+      if (!result.ok || !result.data) return;
+      restoredJob.current = result.data.jobId;
+      setJob(result.data);
+      if (result.data.status === "COMPLETE") {
+        finishedJob.current = result.data.jobId;
+        setImportResult(result.data);
+      } else if (result.data.status === "FAILED" || result.data.abandoned) {
+        finishedJob.current = result.data.jobId;
+      }
+    })();
   }, [companyId]);
 
-  const jobActive = job != null && (job.status === "QUEUED" || job.status === "STAGING" || job.status === "PUBLISHING");
+  const jobActive =
+    job != null &&
+    !job.abandoned &&
+    (job.status === "QUEUED" || job.status === "STAGING" || job.status === "PUBLISHING");
 
   useEffect(() => {
     if (!jobActive || !job) return;
@@ -53,7 +75,7 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
       })();
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [jobActive, job]);
+  }, [jobActive, job?.jobId]);
 
   useEffect(() => {
     if (!job || finishedJob.current === job.jobId) return;
@@ -65,11 +87,13 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
     }
     setImportResult(job);
     setPreview(null);
-    toast.success(
-      job.historyStatus === "REVIEW"
-        ? "Valid rows stored. Cutover stays in review"
-        : "Sales history stored for this customer",
-    );
+    if (restoredJob.current !== job.jobId) {
+      toast.success(
+        job.historyStatus === "REVIEW"
+          ? "Valid rows stored. Cutover stays in review"
+          : "Sales history stored for this customer",
+      );
+    }
     void refreshStatus();
   }, [job]);
 
@@ -374,12 +398,49 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
         </div>
       ) : null}
       {job ? (
-        <p className="border-t border-border/70 px-4 py-3 text-[13px]" role="status">
-          Import {job.status.toLowerCase()}. Processed {job.rowsProcessed.toLocaleString("en-GB")}. Stored{" "}
-          {job.rowsStored.toLocaleString("en-GB")}. Duplicates {job.duplicates.toLocaleString("en-GB")}. Rejected{" "}
-          {job.rejected.toLocaleString("en-GB")}. Failed {job.failed.toLocaleString("en-GB")}. Customer history is not
-          complete until this job finishes.
-        </p>
+        <div className="border-t border-border/70 px-4 py-3 text-[13px]" role="status">
+          <p>
+            {job.status === "COMPLETE"
+              ? "Import complete. The customer history has been published."
+              : job.status === "FAILED"
+                ? "Import failed. The customer history was not published."
+                : job.abandoned
+                  ? "Import abandoned. Retry resumes from the saved progress."
+                  : `Import ${job.status.toLowerCase()}. Customer history is not complete until this job finishes.`}
+          </p>
+          <p className="mt-1 text-steel">
+            Processed {job.rowsProcessed.toLocaleString("en-GB")}. Stored {job.rowsStored.toLocaleString("en-GB")}.
+            Duplicates {job.duplicates.toLocaleString("en-GB")}. Rejected {job.rejected.toLocaleString("en-GB")}. Failed{" "}
+            {job.failed.toLocaleString("en-GB")}.
+          </p>
+          {job.sourceExpired || !job.sourceAvailable ? (
+            <p className="mt-1 text-steel">{job.sourceMessage ?? "Upload the report again."}</p>
+          ) : null}
+          {job.canRetry ? (
+            <button
+              type="button"
+              disabled={busy}
+              className="mt-2 h-8 rounded-md border border-border px-2 text-[12px] font-semibold uppercase disabled:opacity-50"
+              onClick={() => {
+                void (async () => {
+                  setBusy(true);
+                  const result = await retryCustomerSalesHistoryJobFn({ data: { jobId: job.jobId } });
+                  setBusy(false);
+                  if (!result.ok) {
+                    toast.error(result.error);
+                    return;
+                  }
+                  finishedJob.current = null;
+                  restoredJob.current = null;
+                  setJob(result.data);
+                  toast.message("Import resumed. History stays unchanged until the job finishes.");
+                })();
+              }}
+            >
+              Retry import
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {importResult ? (
         <div className="border-t border-border/70 px-4 py-4">

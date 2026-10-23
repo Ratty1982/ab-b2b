@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
-import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
+import { AuthError, requireCompanyAccess, requireSystemPermission } from "@/server/rbac/guards";
 import { grants } from "@/server/rbac/access";
 import { parseAutopart561l } from "@/domain/autopart-561l";
 import { parseAutopartSlrb } from "@/domain/autopart-slrb";
@@ -79,6 +79,13 @@ export async function requireHistoryImporter(userId: string) {
   if (!grants(profile, "admin.access", "orders.edit")) {
     throw new AuthError("Not permitted to import customer sales history", "FORBIDDEN", 403);
   }
+  return profile;
+}
+
+/** Importer role plus access to this specific customer. */
+export async function requireHistoryImporterForCompany(userId: string, companyId: string) {
+  await requireHistoryImporter(userId);
+  await requireCompanyAccess(userId, companyId);
 }
 
 export async function loadCustomerSalesHistoryTarget(companyId: string): Promise<HistoryTarget> {

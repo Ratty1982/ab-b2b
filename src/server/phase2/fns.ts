@@ -3784,6 +3784,30 @@ export const getCustomerSalesHistoryJobFn = createServerFn({ method: "POST" })
     }
   });
 
+export const getLatestCustomerSalesHistoryJobFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const jobs = await import("@/server/companies/customer-sales-history-job");
+      return { ok: true as const, data: await jobs.getLatestCustomerSalesHistoryJob(userId, data.companyId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const retryCustomerSalesHistoryJobFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { jobId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const jobs = await import("@/server/companies/customer-sales-history-job");
+      return { ok: true as const, data: await jobs.retryCustomerSalesHistoryJob(userId, data.jobId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const previewCustomerSalesImportUploadFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>
