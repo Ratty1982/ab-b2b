@@ -85,7 +85,7 @@ function assertInsideRoot(filePath: string): string {
 export function assertHistoricalMasterImportRetired(kind: AutopartMasterImportKind): void {
   if (kind === "INVOICE_LINES" || kind === "LEDGER") {
     throw new AuthError(
-      "Historical 561L and SLRB imports are retired. Import the 407EXP customer master, then use the ongoing 504 and TRM21QC feeds.",
+      "The global 561L and SLRB importer is retired. Import a customer's history from that customer's Autopart tab. Current sales use 504 and TRM21QC.",
       "HISTORICAL_IMPORT_RETIRED",
       410,
     );
@@ -1676,7 +1676,7 @@ export async function getCompanyAutopartMaster(actorUserId: string, companyId: s
     latestBatch: history.latestBatch,
     portalHistoricalAccess: accounts.some((account) => account.historicalAccessEnabled),
     historicalLabel:
-      "407EXP customer master. Historical 561L and SLRB import is retired. Ongoing invoices and credits come from 504 and TRM21QC. Linking an account does not approve portal login.",
+      "407EXP customer master. This list is separate from the verified sales account used for this customer's own history and current sales files. The old global history importer is retired. Per-customer history import remains available. Linking a master account does not import sales or approve portal login.",
   };
 }
 

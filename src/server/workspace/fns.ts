@@ -12,6 +12,11 @@ import {
   listPortalInvoices,
 } from "@/server/companies/customer-workspace-records";
 import { closeOrderAdministratively, fulfilOrderManually } from "@/server/orders/manual-resolution";
+import {
+  getCustomerAutopartWorkspace,
+  listCustomerAutopartImportActivity,
+  listCustomerAutopartImportDetails,
+} from "@/server/companies/customer-autopart-workspace";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -102,6 +107,39 @@ export const fulfilOrderManuallyFn = createServerFn({ method: "POST" })
     try {
       const userId = await requireUserId();
       return { ok: true as const, data: await fulfilOrderManually(userId, data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const getCustomerAutopartWorkspaceFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await getCustomerAutopartWorkspace(userId, data.companyId) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const listCustomerAutopartImportActivityFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await listCustomerAutopartImportActivity(userId, data.companyId) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const listCustomerAutopartImportDetailsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string; runId: string; filter?: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await listCustomerAutopartImportDetails(userId, data) };
     } catch (error) {
       return toError(error);
     }
