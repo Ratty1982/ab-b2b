@@ -181,7 +181,7 @@ async function loadCandidateOrders(orderIds?: string[]) {
     ? { id: { in: orderIds } }
     : {
         status: {
-          in: ["CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "DISPATCHED", "DELIVERED", "CANCELLED", "ON_HOLD"],
+          in: ["CONFIRMED", "PICKING", "PARTIALLY_DESPATCHED", "DISPATCHED", "DELIVERED", "CANCELLED", "ON_HOLD", "ADMINISTRATIVELY_CLOSED"],
         },
       };
 
@@ -374,6 +374,80 @@ async function ensureInvoice(
   }
 }
 
+/**
+ * A manual resolution already recorded despatch or an administrative close.
+ * Later 504/TRM evidence may link the financial document. It must not despatch again,
+ * change quantities, move status, consume stock, or email the customer.
+ */
+async function linkFinancialEvidenceWithoutDespatch(
+  order: { id: string; companyId: string; orderNumber: string },
+  evaluation: OrderFulfilmentEvaluation,
+  actorUserId: string | null,
+): Promise<{ mutated: boolean; emailsQueued: number }> {
+  let linked = 0;
+  await prisma.$transaction(async (tx) => {
+    for (const doc of evaluation.documents) {
+      if (doc.status === "NOT_AB_ORDER" || doc.status === "SKIPPED_BEFORE_FROM") continue;
+      const stored = await tx.autopartSalesDocument.findUnique({
+        where: { id: doc.id },
+        select: { fulfilmentStatus: true },
+      });
+      if (!stored) continue;
+      if (stored.fulfilmentStatus === "FINANCIAL_LINKED" || stored.fulfilmentStatus === "FULFILMENT_APPLIED") {
+        continue;
+      }
+      const invoice = await ensureInvoice(tx, {
+        orderId: order.id,
+        companyId: order.companyId,
+        documentNumber: doc.documentReference,
+        kind: doc.documentType === "CREDIT" ? "CREDIT" : "INVOICE",
+        goodsNet: doc.goodsNet,
+        documentDate: doc.documentDate,
+        customerOrderNumber: order.orderNumber,
+      });
+      await tx.autopartSalesDocument.update({
+        where: { id: doc.id },
+        data: {
+          fulfilmentStatus: "FINANCIAL_LINKED",
+          fulfilmentWarning: "Manual resolution already recorded. Invoice linked without repeating despatch.",
+          fulfilmentAppliedAt: new Date(),
+          abOrderId: order.id,
+          abOrderNumber: order.orderNumber,
+        },
+      });
+      if (invoice) {
+        await recordFulfilmentEvent(tx, {
+          orderId: order.id,
+          kind: "INVOICE_LINKED",
+          summary: `Autopart document ${doc.documentReference} linked after manual resolution. Despatch was not repeated.`,
+          source: "AUTOPART_504_TRM",
+          invoiceId: invoice.id,
+          lineQuantitiesKnown: false,
+          limitation: "Manual resolution is unchanged.",
+        });
+        linked += 1;
+      }
+    }
+    if (linked > 0) {
+      await tx.order.update({
+        where: { id: order.id },
+        data: { invoiceEvidence: "LINKED" },
+      });
+    }
+  });
+  if (linked > 0) {
+    await recordAuditEvent({
+      action: "order.invoice_linked_after_manual_resolution",
+      entityType: "Order",
+      entityId: order.id,
+      actorUserId,
+      companyId: order.companyId,
+      metadata: { documentsLinked: linked, despatchRepeated: false },
+    });
+  }
+  return { mutated: linked > 0, emailsQueued: 0 };
+}
+
 async function applyEvaluation(
   evaluation: OrderFulfilmentEvaluation,
   actorUserId: string | null,
@@ -386,9 +460,14 @@ async function applyEvaluation(
       status: true,
       orderNumber: true,
       archivedAt: true,
+      manualResolutionKind: true,
     },
   });
   if (!order || order.archivedAt) return { mutated: false, emailsQueued: 0 };
+
+  if (order.manualResolutionKind !== "NONE") {
+    return linkFinancialEvidenceWithoutDespatch(order, evaluation, actorUserId);
+  }
 
   if (!evaluation.canApply && !evaluation.overFulfilment && !evaluation.lineMatchReview) {
     for (const doc of evaluation.documents) {
@@ -641,7 +720,7 @@ async function evaluateAll(orderIds?: string[]): Promise<{
     });
     if (related.length === 0) continue;
     const applied = related
-      .filter((d) => d.fulfilmentStatus === "FULFILMENT_APPLIED")
+      .filter((d) => d.fulfilmentStatus === "FULFILMENT_APPLIED" || d.fulfilmentStatus === "FINANCIAL_LINKED")
       .map((d) => d.documentReference);
     evaluations.push(
       evaluateOrder504TrmFulfilment({

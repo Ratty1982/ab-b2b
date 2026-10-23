@@ -505,6 +505,15 @@ function AdminOrdersPage() {
                         {o.containsBackorder ? (
                           <StatusBadge tone="warn">{o.fullyBackordered ? "Full backorder" : "Backorder"}</StatusBadge>
                         ) : null}
+                        {o.manualResolutionKind === "FULFILLED_MANUALLY" ? (
+                          <StatusBadge tone="info">Fulfilled manually</StatusBadge>
+                        ) : null}
+                        {o.manualResolutionKind === "CLOSED_ADMINISTRATIVELY" ? (
+                          <StatusBadge>Closed administratively</StatusBadge>
+                        ) : null}
+                        {o.invoiceEvidence === "OUTSTANDING" || o.invoiceEvidence === "UNAVAILABLE" ? (
+                          <span className="text-[11px] text-steel">Invoice evidence {o.invoiceEvidence.toLowerCase().replaceAll("_", " ")}</span>
+                        ) : null}
                         {o.archivedAt ? (
                           <p className="mt-1 max-w-xs text-[11px] text-steel">
                             Archived {formatDateTime(o.archivedAt)} by {o.archivedByName || "—"}

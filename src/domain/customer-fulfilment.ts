@@ -221,6 +221,14 @@ export function summariseCustomerOrderFulfilment(input: {
       orderStatusBadge = "DESPATCHED";
       orderStatusLabel = "Despatched";
       break;
+    case "ADMINISTRATIVELY_CLOSED":
+      orderStatusBadge = "OTHER";
+      orderStatusLabel = "Closed";
+      break;
+    case "CANCELLED":
+      orderStatusBadge = "OTHER";
+      orderStatusLabel = "Cancelled";
+      break;
     default:
       break;
   }

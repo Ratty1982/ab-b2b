@@ -8,6 +8,7 @@ const LOCKING_FULFILMENT = new Set([
   "INVOICE_LINKED",
   "PART_DESPATCHED",
   "DESPATCHED",
+  "ADMINISTRATIVELY_CLOSED",
 ]);
 
 export type SalesOrderEditAssessment = {
@@ -47,6 +48,12 @@ export function assessSalesOrderEditEligibility(input: {
   }
   if (input.invoiceCount > 0) {
     return { allowed: false, reason: "This order has an invoice and can no longer be edited." };
+  }
+  if (input.status === "ADMINISTRATIVELY_CLOSED" || input.fulfilmentKinds.includes("ADMINISTRATIVELY_CLOSED")) {
+    return {
+      allowed: false,
+      reason: "This order was closed administratively. It was not marked despatched and can no longer be edited.",
+    };
   }
   if (input.fulfilmentKinds.some((kind) => LOCKING_FULFILMENT.has(kind))) {
     return {

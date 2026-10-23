@@ -22,6 +22,7 @@ export async function recordFulfilmentEvent(
       | "INVOICE_LINKED"
       | "PART_DESPATCHED"
       | "DESPATCHED"
+      | "ADMINISTRATIVELY_CLOSED"
       | "NOTE";
     summary: string;
     source:
@@ -67,6 +68,8 @@ export async function applyAuthoritativeLineDespatch(
     source: "MANUAL";
     invoiceId?: string | null;
     summary: string;
+    limitation?: string | null;
+    metadata?: Prisma.InputJsonValue;
   },
 ): Promise<{
   status: "PARTIALLY_DESPATCHED" | "DISPATCHED";
@@ -104,7 +107,8 @@ export async function applyAuthoritativeLineDespatch(
     source: input.source,
     invoiceId: input.invoiceId ?? null,
     lineQuantitiesKnown: true,
-    limitation: null,
+    limitation: input.limitation ?? null,
+    ...(input.metadata != null ? { metadata: input.metadata } : {}),
   });
 
   return { status, fullyComplete };

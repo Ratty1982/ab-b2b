@@ -1,0 +1,117 @@
+/**
+ * Pure rules for staff manual order resolution.
+ * Fulfilment quantities are absolute targets, never invented invoices.
+ */
+
+export const MANUAL_FULFILMENT_STATUSES = [
+  "SUBMITTED",
+  "CONFIRMED",
+  "PICKING",
+  "PARTIALLY_DESPATCHED",
+  "ON_HOLD",
+] as const;
+
+export const MANUAL_TERMINAL_STATUSES = [
+  "DRAFT",
+  "CANCELLED",
+  "DELIVERED",
+  "DISPATCHED",
+  "ADMINISTRATIVELY_CLOSED",
+] as const;
+
+export type ManualResolutionKind = "NONE" | "FULFILLED_MANUALLY" | "CLOSED_ADMINISTRATIVELY";
+export type InvoiceEvidenceChoice = "OUTSTANDING" | "UNAVAILABLE";
+
+export function manualFulfilmentFingerprint(
+  lines: Array<{ orderItemId: string; despatchedQty: number }>,
+): string {
+  return [...lines]
+    .map((line) => `${line.orderItemId}:${line.despatchedQty}`)
+    .sort()
+    .join("|");
+}
+
+export function assessManualFulfilment(input: {
+  status: string;
+  resolutionKind: ManualResolutionKind;
+  storedFingerprint: string | null;
+  lines: Array<{ orderItemId: string; qty: number; despatchedQty: number }>;
+  requested: Array<{ orderItemId: string; despatchedQty: number }>;
+}):
+  | { ok: true; idempotent: boolean; fullyComplete: boolean }
+  | { ok: false; message: string } {
+  if (input.resolutionKind === "CLOSED_ADMINISTRATIVELY" || input.status === "ADMINISTRATIVELY_CLOSED") {
+    return { ok: false, message: "This order was closed administratively. Goods were not recorded as despatched." };
+  }
+  if ((MANUAL_TERMINAL_STATUSES as readonly string[]).includes(input.status) && input.resolutionKind === "NONE") {
+    return { ok: false, message: "This order is already finished and cannot be completed again." };
+  }
+  if (
+    input.resolutionKind === "NONE" &&
+    !(MANUAL_FULFILMENT_STATUSES as readonly string[]).includes(input.status)
+  ) {
+    return { ok: false, message: "This order cannot be fulfilled manually from its current status." };
+  }
+
+  if (input.requested.length !== input.lines.length) {
+    return { ok: false, message: "Confirm a fulfilled quantity for every order line." };
+  }
+  const byId = new Map(input.lines.map((line) => [line.orderItemId, line]));
+  let anyIncrease = false;
+  for (const request of input.requested) {
+    const line = byId.get(request.orderItemId);
+    if (!line) return { ok: false, message: "A confirmed line does not belong to this order." };
+    if (!Number.isInteger(request.despatchedQty) || request.despatchedQty < 0) {
+      return { ok: false, message: "Fulfilled quantities must be whole numbers." };
+    }
+    if (request.despatchedQty > line.qty) {
+      return { ok: false, message: "Fulfilled quantity cannot exceed the ordered quantity." };
+    }
+    if (request.despatchedQty < line.despatchedQty) {
+      return { ok: false, message: "Fulfilled quantity cannot be reduced." };
+    }
+    if (request.despatchedQty > line.despatchedQty) anyIncrease = true;
+  }
+
+  const fingerprint = manualFulfilmentFingerprint(input.requested);
+  if (input.resolutionKind === "FULFILLED_MANUALLY") {
+    if (input.storedFingerprint === fingerprint) {
+      return { ok: true, idempotent: true, fullyComplete: input.lines.every((line) => line.despatchedQty >= line.qty) };
+    }
+    return {
+      ok: false,
+      message: "This order already has a manual fulfilment. Repeating the same quantities changes nothing.",
+    };
+  }
+
+  if (!anyIncrease) {
+    return { ok: false, message: "Enter the fulfilled quantity for at least one line." };
+  }
+  const fullyComplete = input.requested.every((request) => {
+    const line = byId.get(request.orderItemId);
+    return line != null && request.despatchedQty >= line.qty;
+  });
+  return { ok: true, idempotent: false, fullyComplete };
+}
+
+export function assessAdministrativeClose(input: {
+  status: string;
+  resolutionKind: ManualResolutionKind;
+}): { ok: true; idempotent: boolean } | { ok: false; message: string } {
+  if (input.resolutionKind === "CLOSED_ADMINISTRATIVELY" || input.status === "ADMINISTRATIVELY_CLOSED") {
+    return { ok: true, idempotent: true };
+  }
+  if (input.resolutionKind === "FULFILLED_MANUALLY") {
+    return {
+      ok: false,
+      message: "This order was already fulfilled manually. Close is not used to undo that despatch.",
+    };
+  }
+  if ((MANUAL_TERMINAL_STATUSES as readonly string[]).includes(input.status)) {
+    return { ok: false, message: "This order is already finished and cannot be closed again." };
+  }
+  if (!(MANUAL_FULFILMENT_STATUSES as readonly string[]).includes(input.status)) {
+    return { ok: false, message: "This order cannot be closed administratively from its current status." };
+  }
+  return { ok: true, idempotent: false };
+}

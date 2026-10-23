@@ -24,6 +24,8 @@ describe("sales order edit eligibility", () => {
     [{ invoiceCount: 1 }, "invoice"],
     [{ fulfilmentKinds: ["EXPORTED_FOR_PROCESSING"] }, "Fulfilment has started"],
     [{ fulfilmentKinds: ["DESPATCHED"] }, "Fulfilment has started"],
+    [{ fulfilmentKinds: ["ADMINISTRATIVELY_CLOSED"] }, "closed administratively"],
+    [{ status: "ADMINISTRATIVELY_CLOSED" }, "closed administratively"],
     [{ consumedReservationCount: 1 }, "consumed"],
     [{ status: "DISPATCHED" }, "submitted orders"],
     [{ status: "CONFIRMED" }, "submitted orders"],

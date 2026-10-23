@@ -301,6 +301,8 @@ export type AdminOrderListItem = OrderListItemBase & {
   archivedAt: string | null;
   archiveReason: string | null;
   archivedByName: string | null;
+  manualResolutionKind: string;
+  invoiceEvidence: string;
 };
 
 export type AdminOrderDetail = PortalOrderDetail & {
@@ -326,6 +328,11 @@ export type AdminOrderDetail = PortalOrderDetail & {
   archivedByName: string | null;
   autopartFulfilment: AutopartOrderFulfilmentView | null;
   salesOrderEdit: { allowed: boolean; reason: string | null };
+  manualResolutionKind: string;
+  manualResolutionReason: string | null;
+  manualResolvedAt: string | null;
+  manualResolvedByName: string | null;
+  invoiceEvidence: string;
   items: Array<
     PortalOrderDetail["items"][number] & {
       unitPrice: string;
@@ -1939,6 +1946,8 @@ export async function listAdminOrders(
         archivedAt: row.archivedAt?.toISOString() ?? null,
         archiveReason: row.archiveReason,
         archivedByName: row.archivedBy?.name ?? row.archivedBy?.email ?? null,
+        manualResolutionKind: row.manualResolutionKind,
+        invoiceEvidence: row.invoiceEvidence,
       };
     }),
   };
@@ -1958,6 +1967,7 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       autopartExportedBy: { select: { name: true, email: true } },
       autopartExportBatch: { select: { id: true, reference: true, filename: true, createdAt: true } },
       archivedBy: { select: { name: true, email: true } },
+      manualResolvedBy: { select: { name: true, email: true } },
     },
   });
   if (!order || (order.archivedAt && !profile.systemRoles.includes("SUPER_ADMIN"))) {
@@ -2075,6 +2085,11 @@ export async function getAdminOrder(userId: string, orderId: string): Promise<Ad
       limitation: ev.limitation,
     })),
     autopartFulfilment,
+    manualResolutionKind: order.manualResolutionKind,
+    manualResolutionReason: order.manualResolutionReason,
+    manualResolvedAt: order.manualResolvedAt?.toISOString() ?? null,
+    manualResolvedByName: order.manualResolvedBy?.name ?? order.manualResolvedBy?.email ?? null,
+    invoiceEvidence: order.invoiceEvidence,
   };
 }
 
@@ -2245,6 +2260,7 @@ export async function deleteAdminOrder(
       status: true,
       autopartExportStatus: true,
       sourceQuoteId: true,
+      manualResolutionKind: true,
       _count: { select: { invoices: true } },
     },
   });
@@ -2259,9 +2275,14 @@ export async function deleteAdminOrder(
     }
   }
 
-  if (order.status === "DISPATCHED" || order.status === "DELIVERED") {
+  if (
+    order.status === "DISPATCHED" ||
+    order.status === "DELIVERED" ||
+    order.status === "ADMINISTRATIVELY_CLOSED" ||
+    order.manualResolutionKind !== "NONE"
+  ) {
     throw new AuthError(
-      "This order has already been despatched. Stock holds were released at despatch; delete is blocked to preserve fulfilment history.",
+      "This order has a fulfilment or administrative resolution. Delete is blocked so that history is kept.",
       "ORDER_ALREADY_DESPATCHED",
       400,
     );

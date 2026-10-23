@@ -35,8 +35,7 @@ export async function requireTradePortalCompany(userId: string) {
   }
   const membership =
     profile.companyMemberships.find((m) => m.isDefault && m.status === "ACTIVE") ??
-    profile.companyMemberships.find((m) => m.status === "ACTIVE") ??
-    profile.companyMemberships[0];
+    profile.companyMemberships.find((m) => m.status === "ACTIVE");
   if (!membership) {
     throw new AuthError("No company membership for portal", "FORBIDDEN", 403);
   }
