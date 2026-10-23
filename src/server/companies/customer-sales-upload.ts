@@ -15,7 +15,6 @@ import { prisma } from "@/infra/database/client";
 import { autopartImportMaxBytes } from "@/server/companies/autopart-master-import";
 import { AuthError } from "@/server/rbac/guards";
 import {
-  confirmCustomerSalesHistory,
   loadCustomerSalesHistoryTarget,
   previewCustomerSalesHistory,
   requireHistoryImporter,
@@ -214,12 +213,35 @@ export async function saveCustomerSalesUpload(input: {
   }
 }
 
-async function loadUpload(input: {
-  actorUserId: string;
-  uploadId: string;
-  companyId: string;
-  role: CustomerSalesUploadRole;
-}) {
+export async function readVerifiedCustomerSalesUpload(
+  input: {
+    actorUserId: string;
+    uploadId: string;
+    companyId: string;
+    role: CustomerSalesUploadRole;
+  },
+  options?: { allowProcessing?: boolean },
+) {
+  return loadUpload(input, options);
+}
+
+export async function claimCustomerSalesUploads(ids: string[]) {
+  return claimUploads(ids);
+}
+
+export async function markCustomerSalesUploads(ids: string[], status: "COMMITTED" | "FAILED" | "PREVIEWED") {
+  return markUploads(ids, status);
+}
+
+async function loadUpload(
+  input: {
+    actorUserId: string;
+    uploadId: string;
+    companyId: string;
+    role: CustomerSalesUploadRole;
+  },
+  options?: { allowProcessing?: boolean },
+) {
   await requireUploadPermission(input.actorUserId, input.role);
   const upload = await prisma.customerSalesUpload.findUnique({ where: { id: input.uploadId } });
   if (!upload) throw new AuthError("Upload was not found. Choose the report again.", "NOT_FOUND", 404);
@@ -229,7 +251,11 @@ async function loadUpload(input: {
   if (upload.role !== input.role) {
     throw new AuthError("This upload is not the selected report type. No sales records were written.", "VALIDATION", 400);
   }
-  if (upload.status === "PROCESSING" && upload.updatedAt.getTime() > Date.now() - STALE_PROCESSING_MS) {
+  if (
+    !options?.allowProcessing &&
+    upload.status === "PROCESSING" &&
+    upload.updatedAt.getTime() > Date.now() - STALE_PROCESSING_MS
+  ) {
     throw new AuthError(
       "This upload is already being imported. Wait for it to finish, then retry. No extra sales records were written.",
       "VALIDATION",
@@ -352,6 +378,8 @@ export async function previewCustomerSalesHistoryUpload(
     uploadSlrbId?: string;
     samplePage?: number;
     samplePageSize?: number;
+    rejectedPage?: number;
+    rejectedPageSize?: number;
   },
 ): Promise<CustomerSalesHistoryUploadPreview> {
   if (!input.upload561lId && !input.uploadSlrbId) {
@@ -377,7 +405,12 @@ export async function previewCustomerSalesHistoryUpload(
       ...(filtered561l && upload561l ? { text561l: filtered561l.text, filename561l: upload561l.filename } : {}),
       ...(filteredSlrb && uploadSlrb ? { textSlrb: filteredSlrb.text, filenameSlrb: uploadSlrb.filename } : {}),
     },
-    { bounded: true, sampleLimit: PREVIEW_SAMPLE_LIMIT },
+    {
+      bounded: true,
+      sampleLimit: PREVIEW_SAMPLE_LIMIT,
+      ...(input.rejectedPage ? { rejectedPage: input.rejectedPage } : {}),
+      ...(input.rejectedPageSize ? { rejectedPageSize: input.rejectedPageSize } : {}),
+    },
   );
   const rowsRead = (filtered561l?.rowsRead ?? 0) + (filteredSlrb?.rowsRead ?? 0);
   const matchingRows = (filtered561l?.matchingRows ?? 0) + (filteredSlrb?.matchingRows ?? 0);
@@ -411,52 +444,35 @@ export async function confirmCustomerSalesHistoryUpload(
   actorUserId: string,
   input: { companyId: string; upload561lId?: string; uploadSlrbId?: string },
 ) {
-  if (!input.upload561lId && !input.uploadSlrbId) {
-    throw new AuthError("Choose a 561L report, an SLRB report, or both.", "VALIDATION", 400);
+  const jobs = await import("./customer-sales-history-job");
+  const enqueued = await jobs.enqueueCustomerSalesHistoryUpload(actorUserId, input);
+  const progress = await jobs.runCustomerSalesHistoryJob(enqueued.jobId);
+  if (progress.status === "FAILED") {
+    throw new AuthError(progress.error ?? "Import failed. No completed history was saved.", "VALIDATION", 400);
   }
-  const upload561l = input.upload561lId
-    ? await loadUpload({ actorUserId, uploadId: input.upload561lId, companyId: input.companyId, role: "HISTORY_561L" })
-    : null;
-  const uploadSlrb = input.uploadSlrbId
-    ? await loadUpload({ actorUserId, uploadId: input.uploadSlrbId, companyId: input.companyId, role: "HISTORY_SLRB" })
-    : null;
-  const ids = [upload561l?.id, uploadSlrb?.id].filter((id): id is string => Boolean(id));
-  await claimUploads(ids);
-  try {
-    const target = await loadCustomerSalesHistoryTarget(input.companyId);
-    const filtered561l = upload561l
-      ? await streamFilterReport({ filePath: upload561l.storagePath, mode: "HISTORY_561L", accountCodes: target.codes })
-      : null;
-    const filteredSlrb = uploadSlrb
-      ? await streamFilterReport({ filePath: uploadSlrb.storagePath, mode: "HISTORY_SLRB", accountCodes: target.codes })
-      : null;
-    const result = await confirmCustomerSalesHistory(
-      actorUserId,
-      {
-        companyId: input.companyId,
-        ...(filtered561l && upload561l ? { text561l: filtered561l.text, filename561l: upload561l.filename } : {}),
-        ...(filteredSlrb && uploadSlrb ? { textSlrb: filteredSlrb.text, filenameSlrb: uploadSlrb.filename } : {}),
-      },
-      {
-        bounded: true,
-        ...(upload561l ? { sourceSha256561l: upload561l.sha256 } : { sourceSha256561l: null }),
-        ...(uploadSlrb ? { sourceSha256Slrb: uploadSlrb.sha256 } : { sourceSha256Slrb: null }),
-        rowsRead: (filtered561l?.rowsRead ?? 0) + (filteredSlrb?.rowsRead ?? 0),
-        otherCustomerRows: (filtered561l?.otherCustomerRows ?? 0) + (filteredSlrb?.otherCustomerRows ?? 0),
-      },
-    );
-    await markUploads(ids, "COMMITTED");
-    return {
-      ...result,
-      rowsRead: (filtered561l?.rowsRead ?? 0) + (filteredSlrb?.rowsRead ?? 0),
-      matchingRows: (filtered561l?.matchingRows ?? 0) + (filteredSlrb?.matchingRows ?? 0),
-      otherCustomerRows: (filtered561l?.otherCustomerRows ?? 0) + (filteredSlrb?.otherCustomerRows ?? 0),
-      byteSize: (upload561l?.byteSize ?? 0) + (uploadSlrb?.byteSize ?? 0),
-    };
-  } catch (error) {
-    await markUploads(ids, "FAILED");
-    throw error;
+  if (progress.status !== "COMPLETE") {
+    throw new AuthError("Import did not finish. Customer history was not changed.", "VALIDATION", 409);
   }
+  return {
+    runId: progress.runId,
+    rowsImported: progress.rowsStored,
+    duplicates: progress.duplicates,
+    historyFrom: progress.historyFrom,
+    historyTo: progress.historyTo,
+    historyStatus: progress.historyStatus ?? "NOT_STARTED",
+    rowsRead: progress.rowsRead,
+    matchingRows: progress.matchingRows,
+    otherCustomerRows: progress.otherCustomerRows,
+    byteSize: enqueued.byteSize,
+  };
+}
+
+export async function startCustomerSalesHistoryUpload(
+  actorUserId: string,
+  input: { companyId: string; upload561lId?: string; uploadSlrbId?: string },
+) {
+  const jobs = await import("./customer-sales-history-job");
+  return jobs.enqueueAndScheduleCustomerSalesHistoryUpload(actorUserId, input);
 }
 
 export async function previewCustomerSalesImportUpload(

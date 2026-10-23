@@ -3744,6 +3744,8 @@ export const previewCustomerSalesHistoryUploadFn = createServerFn({ method: "POS
         uploadSlrbId?: string;
         samplePage?: number;
         samplePageSize?: number;
+        rejectedPage?: number;
+        rejectedPageSize?: number;
       },
   )
   .handler(async ({ data }) => {
@@ -3764,7 +3766,43 @@ export const confirmCustomerSalesHistoryUploadFn = createServerFn({ method: "POS
     try {
       const userId = await requireUserId();
       const uploads = await import("@/server/companies/customer-sales-upload");
-      return { ok: true as const, data: await uploads.confirmCustomerSalesHistoryUpload(userId, data) };
+      return { ok: true as const, data: await uploads.startCustomerSalesHistoryUpload(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCustomerSalesHistoryJobFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { jobId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const jobs = await import("@/server/companies/customer-sales-history-job");
+      return { ok: true as const, data: await jobs.getCustomerSalesHistoryJob(userId, data.jobId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getLatestCustomerSalesHistoryJobFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const jobs = await import("@/server/companies/customer-sales-history-job");
+      return { ok: true as const, data: await jobs.getLatestCustomerSalesHistoryJob(userId, data.companyId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const retryCustomerSalesHistoryJobFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { jobId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const jobs = await import("@/server/companies/customer-sales-history-job");
+      return { ok: true as const, data: await jobs.retryCustomerSalesHistoryJob(userId, data.jobId) };
     } catch (e) {
       return toError(e);
     }

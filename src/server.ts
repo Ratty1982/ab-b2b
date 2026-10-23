@@ -72,6 +72,16 @@ function ensureStockScheduler() {
         error: error instanceof Error ? error.message : error,
       });
     });
+  // Historical sales confirmation jobs — resumes unfinished work after restart.
+  // Does not enable ongoing mailbox / 504 / TRM21QC automatic importing.
+  void import("./server/companies/customer-sales-history-job-scheduler")
+    .then((mod) => mod.startCustomerSalesHistoryJobScheduler())
+    .catch((error) => {
+      console.error("[ab:history-import]", {
+        event: "HISTORY_JOB_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();
