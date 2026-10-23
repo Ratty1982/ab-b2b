@@ -22,6 +22,7 @@ import {
   isPlausibleAutopartAccountCode,
   normaliseReportLines,
   parseAutopartMoney,
+  parseAutopartQuantity,
   splitAutopartReportCells,
   splitCsvLine,
 } from "@/domain/autopart-report-money";
@@ -192,11 +193,12 @@ export function parseInvAndLn(raw: string | null | undefined): {
 }
 
 function parseUnits(raw: string | null | undefined): number | null {
-  if (raw == null || !String(raw).trim()) return null;
-  const s = String(raw).trim().replace(/,/g, "");
-  const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  return n;
+  return parseAutopartQuantity(raw);
+}
+
+function describeInvalidUnits(raw: string | null | undefined): string {
+  if (raw == null || !String(raw).trim()) return "Invalid units: (blank)";
+  return `Invalid units: ${JSON.stringify(String(raw).trim())}`;
 }
 
 function mapHeader(cells: string[]): {
@@ -428,7 +430,7 @@ function buildDataLine(input: {
       : identity.issue ||
         (!accountCode ? "Missing account (blank Acct field with no carry-forward)" : null) ||
         (!partNumber ? "Missing part number" : null) ||
-        (units == null ? "Invalid units" : null) ||
+        (units == null ? describeInvalidUnits(input.unitsRaw) : null) ||
         (salesNet == null ? "Invalid sales value" : null),
   };
 }

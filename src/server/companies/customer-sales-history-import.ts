@@ -391,7 +391,8 @@ function planHistory(input: {
       }
       const units = signedHistoricalMeasure(documentType, row.units == null ? null : String(row.units), 3);
       const salesNet = signedHistoricalMeasure(documentType, row.salesNet, 2);
-      if (!units || !salesNet) {
+      // Zero is valid. Only reject when quantity or sales could not be read.
+      if (units == null || salesNet == null) {
         remember({
           document: row.documentReference,
           type: documentType,
@@ -401,7 +402,12 @@ function planHistory(input: {
           sku: row.partNumber,
           quantity: row.units == null ? null : String(row.units),
           disposition: "rejected",
-          reason: "Quantity or sales amount is missing.",
+          reason:
+            units == null
+              ? row.units == null
+                ? "Invalid units: (blank)"
+                : `Invalid units: ${JSON.stringify(String(row.units))}`
+              : "Quantity or sales amount is missing.",
         });
         continue;
       }

@@ -3,6 +3,7 @@ import {
   autopartAccountsEqual,
   parseAutopartDateOnly,
   parseAutopartMoney,
+  parseAutopartQuantity,
   splitCsvLine,
 } from "@/domain/autopart-report-money";
 import { moneyToString } from "@/domain/money";
@@ -12,6 +13,16 @@ describe("parseAutopartMoney", () => {
     expect(moneyToString(parseAutopartMoney("£3,494.75")!, 2)).toBe("3494.75");
     expect(moneyToString(parseAutopartMoney("(51.90)")!, 2)).toBe("-51.90");
     expect(moneyToString(parseAutopartMoney("10.00CR")!, 2)).toBe("-10.00");
+    expect(moneyToString(parseAutopartMoney("\u221231.24")!, 2)).toBe("-31.24");
+  });
+});
+
+describe("parseAutopartQuantity", () => {
+  it("parses Autopart credit unit forms and rejects blank cells", () => {
+    expect(parseAutopartQuantity("(1)")).toBe(-1);
+    expect(parseAutopartQuantity("1CR")).toBe(-1);
+    expect(parseAutopartQuantity("-1")).toBe(-1);
+    expect(parseAutopartQuantity("")).toBeNull();
   });
 });
 
