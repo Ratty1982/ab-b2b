@@ -28,6 +28,7 @@ runs migrate, remove it to avoid double-running (harmless but redundant).
 | `AUTH_SECRET` | Yes | ≥ 32 chars; not the repo default |
 | `APP_URL` | Yes | `https://b2b.automotivebrands.co.uk` |
 | `NODE_ENV` | Yes | `production` |
+| `CUSTOMER_SALES_UPLOAD_DIR` | Before customer sales imports | `/data/autopart-imports/customer-sales-uploads` |
 
 Outbound SMTP is **not** configured via Coolify. Use **Admin → Settings → Email**
 (SiteGround host/port/user/password). `AUTH_SECRET` encrypts the stored SMTP password.
@@ -172,6 +173,20 @@ Leave `AUTOPART_PORTAL_HISTORY_ENABLED` unset or `false`. Optional `AUTOPART_IMP
 4. Confirm the directory backup above is running. Restoring PostgreSQL restores hashes and paths only.
 
 Without the mounted volume, files written under the container working directory disappear when the container is replaced.
+
+## Pending customer sales uploads
+
+Per-customer 561L, SLRB, 504, and TRM21QC files are streamed to private storage before preview. Preview does not write sales. Confirm reads that same file again and checks its hash. Files expire after 48 hours. Expired files are deleted from this directory and marked `EXPIRED`. A path outside the directory is rejected.
+
+The production default, when `CUSTOMER_SALES_UPLOAD_DIR` is unset, is `/data/autopart-imports/customer-sales-uploads`. Do not leave pending uploads under `/app/data`. That directory is inside the container and disappears on redeploy.
+
+1. Mount the existing Coolify persistent volume at `/data/autopart-imports`. Do not point it at `public/` or the container working directory.
+2. Set `CUSTOMER_SALES_UPLOAD_DIR=/data/autopart-imports/customer-sales-uploads`.
+3. The container user must be able to create that directory and write files in it. The entrypoint logs a warning when it cannot.
+4. Write a marker file in the directory, replace the container, and confirm the marker is still present.
+5. The reverse proxy must allow a body of at least 256 MB and a long read timeout on `POST /api/customer-sales-uploads`. Do not buffer the whole body in proxy memory.
+
+Automatic 504 and TRM21QC mailbox polling stays off. This directory only holds files a member of staff uploaded.
 
 Run one application replica for this import. The database holds a single lock row. A second import, including a second request for the same import id and a request from another process, waits on that row and is refused while the lock heartbeat is fresh. Each claim increases a fence. A restarted container leaves the import `PROCESSING` until the heartbeat is older than three minutes or the owning process on this host is gone. Recovery marks that import `FAILED` and recoverable, and increases the fence. The old worker cannot keep writing or mark the replacement job complete. Replay the stored files. Do not mark the interrupted import successful.
 

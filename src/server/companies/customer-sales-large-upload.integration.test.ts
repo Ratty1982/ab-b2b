@@ -15,10 +15,12 @@ import { previewCustomerSalesImport } from "@/server/companies/customer-sales-im
 import {
   confirmCustomerSalesHistoryUpload,
   confirmCustomerSalesImportUpload,
+  customerSalesUploadRoot,
   previewCustomerSalesHistoryUpload,
   previewCustomerSalesImportUpload,
   saveCustomerSalesUpload,
 } from "@/server/companies/customer-sales-upload";
+import { getUnifiedCustomerSales } from "@/server/sales-intelligence/unified-sales";
 import { AuthError } from "@/server/rbac/guards";
 
 const prisma = new PrismaClient();
@@ -150,6 +152,22 @@ afterAll(async () => {
 }, 120_000);
 
 describe("large retail sales uploads", () => {
+  it("keeps pending uploads on the persistent directory in production", () => {
+    const previousDir = process.env["CUSTOMER_SALES_UPLOAD_DIR"];
+    const previousNode = process.env["NODE_ENV"];
+    delete process.env["CUSTOMER_SALES_UPLOAD_DIR"];
+    process.env["NODE_ENV"] = "production";
+    try {
+      expect(customerSalesUploadRoot()).toBe("/data/autopart-imports/customer-sales-uploads");
+      expect(customerSalesUploadRoot()).not.toContain("/app/data");
+    } finally {
+      if (previousDir === undefined) delete process.env["CUSTOMER_SALES_UPLOAD_DIR"];
+      else process.env["CUSTOMER_SALES_UPLOAD_DIR"] = previousDir;
+      if (previousNode === undefined) delete process.env["NODE_ENV"];
+      else process.env["NODE_ENV"] = previousNode;
+    }
+  });
+
   it("rejects an inline report above the old limit and an upload above the byte cap", async () => {
     await expect(
       previewCustomerSalesHistory(adminId, { companyId, text561l: "x".repeat(HISTORY_LIMIT + 1) }),
@@ -417,5 +435,10 @@ describe("large retail sales uploads", () => {
     expect(await prisma.autopartSalesDocument.count({ where: { documentReference: "DOCOTH" } })).toBe(0);
     const feed = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
     expect(feed?.enabled ?? false).toBe(feedEnabledBefore);
+    const sales = await getUnifiedCustomerSales(adminId, { companyId, period: "ALL" });
+    expect(Number(sales.kpis.netSales)).toBeCloseTo(40, 2);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId, documentReference: "INVKEEP" } })).toBe(3);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId, documentReference: "TRMKEEP" } })).toBe(1);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId, documentType: "PAYMENT" } })).toBe(0);
   }, 180_000);
 });

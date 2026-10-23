@@ -246,10 +246,16 @@ ${code},GRP,NEW1,20/10/2026,ROTOR,Rotor,1,11.00,4.00,7.00,60.000
       true,
     );
 
-    const panel = readFileSync("src/components/ab/CustomerSalesHistoryPanel.tsx", "utf8");
+    const panel = readFileSync("src/components/ab/autopart/AutopartHistoryImport.tsx", "utf8");
+    const recent = readFileSync("src/components/ab/autopart/AutopartRecentSales.tsx", "utf8");
     expect(panel).toContain("Proposed changes");
     expect(panel).toContain("Stored records");
+    expect(panel).toContain("uploadCustomerSalesReport");
+    expect(panel).not.toContain("previewCustomerSalesHistoryFn");
     expect(panel).not.toContain("Historical 561L and SLRB purchases are not included");
+    expect(panel).not.toContain("separate large-file import");
+    expect(recent).toContain("uploadCustomerSalesReport");
+    expect(recent).not.toContain("previewCustomerSalesImportFn");
   });
 
   it("keeps a reviewed import visible without treating rejected rows as zero history", async () => {

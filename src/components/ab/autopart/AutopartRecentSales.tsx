@@ -1,18 +1,14 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
-import { confirmCustomerSalesImportFn, previewCustomerSalesImportFn } from "@/server/phase2/fns";
+import {
+  formatBytes,
+  uploadCustomerSalesReport,
+  type SavedCustomerSalesUpload,
+} from "@/components/ab/upload-customer-sales-report";
+import { confirmCustomerSalesImportUploadFn, previewCustomerSalesImportUploadFn } from "@/server/phase2/fns";
 
-const STANDARD_IMPORT_BYTES = 8_000_000;
-
-type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesImportFn>>, { ok: true }>["data"];
-type ChosenFile = { name: string; size: number; text: string };
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesImportUploadFn>>, { ok: true }>["data"];
 
 export function AutopartRecentSales({
   companyId,
@@ -34,8 +30,8 @@ export function AutopartRecentSales({
   onChanged: () => Promise<void>;
 }) {
   const [selected, setSelected] = useState(accountCode ?? "");
-  const [file, setFile] = useState<ChosenFile | null>(null);
-  const [reading, setReading] = useState(false);
+  const [file, setFile] = useState<SavedCustomerSalesUpload | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -56,13 +52,23 @@ export function AutopartRecentSales({
   async function choose(next: File) {
     setPreview(null);
     setSaved(null);
-    if (next.size > STANDARD_IMPORT_BYTES) {
-      toast.error(`${next.name} is too large for this screen. Use the separate large-file import. Nothing was uploaded.`);
-      return;
+    setProgress(`Uploading ${next.name}…`);
+    try {
+      const savedUpload = await uploadCustomerSalesReport({
+        file: next,
+        companyId,
+        role: "ONGOING",
+        onProgress: (loaded, total) => {
+          const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+          setProgress(`Uploading ${next.name}… ${percent}%`);
+        },
+      });
+      setFile(savedUpload);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The file could not be uploaded");
+    } finally {
+      setProgress(null);
     }
-    setReading(true);
-    setFile({ name: next.name, size: next.size, text: await next.text() });
-    setReading(false);
   }
 
   const accounts = [
@@ -91,8 +97,8 @@ export function AutopartRecentSales({
             if (!file) return;
             void (async () => {
               setBusy(true);
-              const result = await previewCustomerSalesImportFn({
-                data: { companyId, accountCode: selected, text: file.text, filename: file.name },
+              const result = await previewCustomerSalesImportUploadFn({
+                data: { companyId, accountCode: selected, uploadId: file.uploadId },
               });
               setBusy(false);
               if (!result.ok) {
@@ -129,7 +135,7 @@ export function AutopartRecentSales({
             onDrop={(event) => {
               event.preventDefault();
               const next = event.dataTransfer.files[0];
-              if (next) void choose(next);
+              if (next && !busy) void choose(next);
             }}
           >
             <div className="text-[13px] font-semibold">Invoice report or product-sales report</div>
@@ -147,10 +153,11 @@ export function AutopartRecentSales({
                 }}
               />
             </label>
+            {progress ? <p className="mt-2 text-[12px] text-steel" role="status">{progress}</p> : null}
             {file ? (
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px]">
                 <span>
-                  {file.name} · {formatSize(file.size)}
+                  {file.filename} · {formatBytes(file.bytes)}
                 </span>
                 <button type="button" className="font-semibold uppercase" onClick={() => { setFile(null); setPreview(null); }}>
                   Remove
@@ -158,7 +165,6 @@ export function AutopartRecentSales({
               </div>
             ) : null}
           </div>
-          {reading ? <p className="text-[13px] text-steel">Reading file…</p> : null}
           <button
             type="submit"
             disabled={busy || !file}
@@ -170,11 +176,16 @@ export function AutopartRecentSales({
       ) : null}
       {preview ? (
         <div className="mt-4 border-t border-border pt-4 text-[13px]">
-          <p className="font-semibold" role="status">Preview only. Nothing has been saved.</p>
+          <h4 className="font-semibold">Proposed changes</h4>
+          <p className="mt-1 font-semibold" role="status">Preview only. Nothing has been saved.</p>
           <p className="mt-2">
             {preview.kind === "504" ? "Invoices and credits" : preview.kind === "TRM21QC" ? "Product sales" : "Unrecognised file"}
             {" · "}
             New {preview.counts.import}, updated {preview.counts.update}, duplicates {preview.counts.duplicate}, rejected {preview.counts.rejected}.
+          </p>
+          <p className="mt-2 text-[12px] text-steel">
+            Read {preview.rowsRead.toLocaleString("en-GB")} rows. {preview.otherCustomerRows.toLocaleString("en-GB")} from other customers were left out.
+            File size {formatBytes(preview.byteSize)}.
           </p>
           {preview.message ? <p className="mt-2 text-steel">{preview.message}</p> : null}
           <button
@@ -191,7 +202,7 @@ export function AutopartRecentSales({
       <ConfirmAction
         open={confirmOpen}
         title="Save these recent sales?"
-        description="This stores the previewed invoices or product sales for this customer. It does not email the customer or turn on automatic importing."
+        description="This stores the uploaded file that was previewed. It does not email the customer or turn on automatic importing."
         confirmLabel={busy ? "Saving…" : "Confirm"}
         onOpenChange={(open) => {
           if (!open && !busy) setConfirmOpen(false);
@@ -201,8 +212,8 @@ export function AutopartRecentSales({
           const checked = preview;
           void (async () => {
             setBusy(true);
-            const result = await confirmCustomerSalesImportFn({
-              data: { companyId, accountCode: selected, text: file.text, filename: file.name },
+            const result = await confirmCustomerSalesImportUploadFn({
+              data: { companyId, accountCode: selected, uploadId: checked.uploadId },
             });
             setBusy(false);
             setConfirmOpen(false);
@@ -210,8 +221,9 @@ export function AutopartRecentSales({
               toast.error(result.error);
               return;
             }
+            const savedAt = new Date().toLocaleString("en-GB", { timeZone: "Europe/London" });
             setSaved(
-              `${file.name} saved. New ${result.data.rowsImported}, updated ${result.data.rowsUpdated}, duplicates ${checked.counts.duplicate}, rejected ${checked.counts.rejected}.`,
+              `${file.filename} saved at ${savedAt}. New ${result.data.rowsImported}, updated ${result.data.rowsUpdated}, duplicates ${checked.counts.duplicate}, rejected ${checked.counts.rejected}.`,
             );
             setPreview(null);
             toast.success("Recent sales saved");

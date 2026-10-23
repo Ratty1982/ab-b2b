@@ -90,7 +90,7 @@ export function CustomerAutopartWorkspace({
       : workspace.company.status === "SUSPENDED" || workspace.company.status === "ON_HOLD" || workspace.company.status === "CLOSED"
         ? "warn"
         : "brand";
-  const enquiryHref = `/sales/sales-intelligence?mode=customers&companyId=${encodeURIComponent(companyId)}${
+  const enquiryHref = `/sales/sales-intelligence?mode=customers&period=ALL&companyId=${encodeURIComponent(companyId)}${
     workspace.salesAccount.code ? `&accountCode=${encodeURIComponent(workspace.salesAccount.code)}` : ""
   }`;
   const coverage =

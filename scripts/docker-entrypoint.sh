@@ -43,5 +43,13 @@ echo "[ab:entrypoint] Running production RBAC / system bootstrap…"
 node .output/bootstrap/run-production.mjs
 echo "[ab:entrypoint] System bootstrap complete."
 
+UPLOAD_DIR="${CUSTOMER_SALES_UPLOAD_DIR:-/data/autopart-imports/customer-sales-uploads}"
+if mkdir -p "$UPLOAD_DIR" && touch "$UPLOAD_DIR/.write-check"; then
+  rm -f "$UPLOAD_DIR/.write-check"
+  echo "[ab:entrypoint] Customer sales upload directory ready: $UPLOAD_DIR"
+else
+  echo "[ab:entrypoint] WARNING: customer sales upload directory is not writable: $UPLOAD_DIR" >&2
+fi
+
 echo "[ab:entrypoint] Starting Nitro server…"
 exec node .output/server/index.mjs

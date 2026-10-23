@@ -79,9 +79,91 @@ async function createOrder(qty: number) {
     include: { items: true },
   });
   await prisma.orderStockReservation.create({
-    data: { orderId: order.id, variantId: variant.id, inventoryId: inventory.id, quantity: qty, status: "ACTIVE" },
+    data: {
+      orderId: order.id,
+      orderItemId: order.items[0]!.id,
+      variantId: variant.id,
+      inventoryId: inventory.id,
+      quantity: qty,
+      status: "ACTIVE",
+    },
   });
   return { company, order, inventory, sku };
+}
+
+async function createTwoLineOrder() {
+  const orderNumber = await uniqueAbOrderNumber();
+  const company = await prisma.company.create({ data: { name: `Manual ${orderNumber}`, status: "ACTIVE" } });
+  const warehouse = await prisma.warehouse.upsert({
+    where: { code: "AUTOPART" },
+    create: { code: "AUTOPART", name: "Autopart" },
+    update: {},
+  });
+  const lines = [5, 4] as const;
+  const created = [];
+  for (const [index, qty] of lines.entries()) {
+    const sku = `MAN-${orderNumber.slice(-6)}-${index}`;
+    const brand = await prisma.brand.create({ data: { name: `Brand ${sku}`, slug: `brand-${sku.toLowerCase()}` } });
+    const category = await prisma.category.create({ data: { name: `Cat ${sku}`, slug: `cat-${sku.toLowerCase()}` } });
+    const product = await prisma.product.create({
+      data: {
+        name: `Product ${sku}`,
+        slug: `product-${sku.toLowerCase()}`,
+        brandId: brand.id,
+        categoryId: category.id,
+        status: "ACTIVE",
+        isActive: true,
+        isTradeVisible: true,
+      },
+    });
+    const variant = await prisma.productVariant.create({
+      data: { productId: product.id, sku, isActive: true, tradePrice: 10 },
+    });
+    const inventory = await prisma.inventory.create({
+      data: { variantId: variant.id, warehouseId: warehouse.id, qtyOnHand: 40, qtyReserved: qty, status: "IN_STOCK" },
+    });
+    created.push({ sku, qty, variantId: variant.id, inventoryId: inventory.id });
+  }
+  const order = await prisma.order.create({
+    data: {
+      orderNumber,
+      companyId: company.id,
+      status: "CONFIRMED",
+      subtotal: 9,
+      vatTotal: 0,
+      grandTotal: 9,
+      placedAt: new Date(),
+      items: {
+        create: created.map((line) => ({
+          sku: line.sku,
+          name: "Widget",
+          qty: line.qty,
+          unitPrice: 1,
+          customerUnitPrice: 1,
+          vatRate: 0,
+          lineTotal: line.qty,
+          lineVat: 0,
+          lineGross: line.qty,
+          variantId: line.variantId,
+        })),
+      },
+    },
+    include: { items: true },
+  });
+  for (const line of created) {
+    const item = order.items.find((row) => row.sku === line.sku)!;
+    await prisma.orderStockReservation.create({
+      data: {
+        orderId: order.id,
+        orderItemId: item.id,
+        variantId: line.variantId,
+        inventoryId: line.inventoryId,
+        quantity: line.qty,
+        status: "ACTIVE",
+      },
+    });
+  }
+  return { order, lines: created };
 }
 
 beforeAll(async () => {
@@ -119,9 +201,12 @@ describe("manual order resolution", () => {
     expect(await prisma.transactionalEmail.count({ where: { entityId: partial.order.id } })).toBe(0);
     const stock = await prisma.inventory.findUniqueOrThrow({ where: { id: partial.inventory.id } });
     expect(stock.qtyOnHand).toBe(40);
-    expect(stock.qtyReserved).toBe(0);
-    const reservation = await prisma.orderStockReservation.findFirstOrThrow({ where: { orderId: partial.order.id } });
-    expect(reservation.status).toBe("CONSUMED");
+    expect(stock.qtyReserved).toBe(6);
+    const holds = await prisma.orderStockReservation.findMany({ where: { orderId: partial.order.id }, orderBy: { quantity: "asc" } });
+    expect(holds.map((hold) => ({ status: hold.status, quantity: hold.quantity }))).toEqual([
+      { status: "CONSUMED", quantity: 4 },
+      { status: "ACTIVE", quantity: 6 },
+    ]);
     const events = await prisma.orderFulfilmentEvent.findMany({ where: { orderId: partial.order.id } });
     expect(events.map((event) => event.source)).toEqual(["MANUAL"]);
     expect(events[0]?.kind).toBe("PART_DESPATCHED");
@@ -134,6 +219,23 @@ describe("manual order resolution", () => {
     });
     expect(again.idempotent).toBe(true);
     expect(await prisma.orderFulfilmentEvent.count({ where: { orderId: partial.order.id } })).toBe(1);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: partial.inventory.id } })).qtyReserved).toBe(6);
+
+    const balance = await fulfilOrderManually(adminId, {
+      orderId: partial.order.id,
+      reason: "The remaining units were supplied later",
+      invoiceEvidence: "OUTSTANDING",
+      lines: [{ orderItemId: line.id, despatchedQty: 10 }],
+    });
+    expect(balance.status).toBe("DISPATCHED");
+    expect(balance.lines[0]?.despatchedQty).toBe(10);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: partial.inventory.id } })).qtyReserved).toBe(0);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: partial.order.id, status: "ACTIVE" } })).toBe(0);
+    const consumed = await prisma.orderStockReservation.aggregate({
+      where: { orderId: partial.order.id, status: "CONSUMED" },
+      _sum: { quantity: true },
+    });
+    expect(consumed._sum.quantity).toBe(10);
 
     const full = await createOrder(3);
     const fullLine = full.order.items[0]!;
@@ -145,6 +247,42 @@ describe("manual order resolution", () => {
     });
     expect(done.status).toBe("DISPATCHED");
     expect(await prisma.invoice.count({ where: { orderId: full.order.id } })).toBe(0);
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { id: full.inventory.id } })).qtyReserved).toBe(0);
+    expect(await prisma.orderStockReservation.count({ where: { orderId: full.order.id, status: "ACTIVE" } })).toBe(0);
+  });
+
+  it("keeps the other line reserved and refuses to drive reserved stock negative", async () => {
+    const { order, lines } = await createTwoLineOrder();
+    const first = order.items.find((item) => item.qty === 5)!;
+    const second = order.items.find((item) => item.qty === 4)!;
+    const partial = await fulfilOrderManually(adminId, {
+      orderId: order.id,
+      reason: "Only the first line was collected",
+      invoiceEvidence: "OUTSTANDING",
+      lines: [
+        { orderItemId: first.id, despatchedQty: 2 },
+        { orderItemId: second.id, despatchedQty: 0 },
+      ],
+    });
+    expect(partial.status).toBe("PARTIALLY_DESPATCHED");
+    const firstStock = await prisma.inventory.findUniqueOrThrow({ where: { id: lines[0]!.inventoryId } });
+    const secondStock = await prisma.inventory.findUniqueOrThrow({ where: { id: lines[1]!.inventoryId } });
+    expect(firstStock.qtyReserved).toBe(3);
+    expect(secondStock.qtyReserved).toBe(4);
+    expect(firstStock.qtyOnHand).toBe(40);
+    expect(secondStock.qtyOnHand).toBe(40);
+
+    const thin = await createOrder(10);
+    await prisma.inventory.update({ where: { id: thin.inventory.id }, data: { qtyReserved: 2 } });
+    await fulfilOrderManually(adminId, {
+      orderId: thin.order.id,
+      reason: "Reserved stock was already short",
+      invoiceEvidence: "OUTSTANDING",
+      lines: [{ orderItemId: thin.order.items[0]!.id, despatchedQty: 4 }],
+    });
+    const thinStock = await prisma.inventory.findUniqueOrThrow({ where: { id: thin.inventory.id } });
+    expect(thinStock.qtyReserved).toBe(0);
+    expect(thinStock.qtyOnHand).toBe(40);
   });
 
   it("closes administratively without despatch and releases the reservation", async () => {
@@ -245,6 +383,10 @@ describe("manual order resolution", () => {
     expect(after.status).toBe("PARTIALLY_DESPATCHED");
     expect(after.items[0]?.despatchedQty).toBe(3);
     expect(after.invoiceEvidence).toBe("LINKED");
+    const stillHeld = await prisma.orderStockReservation.findFirstOrThrow({
+      where: { orderId: order.id, status: "ACTIVE" },
+    });
+    expect(stillHeld.quantity).toBe(5);
     expect(after.manualResolutionKind).toBe("FULFILLED_MANUALLY");
     const invoice = await prisma.invoice.findFirst({ where: { orderId: order.id, externalRef: `LATER-${order.orderNumber}` } });
     expect(invoice).toBeTruthy();

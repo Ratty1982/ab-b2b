@@ -68,8 +68,14 @@ export type CustomerSalesImportUploadPreview = CustomerSalesPreview & SamplePage
   uploadId: string;
 };
 
+/** Pending customer reports. Production must not default to the container's ephemeral /app/data tree. */
+export const PERSISTENT_CUSTOMER_SALES_UPLOAD_DIR = "/data/autopart-imports/customer-sales-uploads";
+
 export function customerSalesUploadRoot(): string {
-  return process.env["CUSTOMER_SALES_UPLOAD_DIR"] || path.join(process.cwd(), "data", "customer-sales-uploads");
+  const configured = process.env["CUSTOMER_SALES_UPLOAD_DIR"]?.trim();
+  if (configured) return configured;
+  if (process.env["NODE_ENV"] === "production") return PERSISTENT_CUSTOMER_SALES_UPLOAD_DIR;
+  return path.join(process.cwd(), "data", "customer-sales-uploads");
 }
 
 function assertInsideRoot(filePath: string): string {

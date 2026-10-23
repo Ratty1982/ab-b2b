@@ -59,13 +59,14 @@ describe("customer sales report filter", () => {
     ).rejects.toThrow(/processing limit/);
   });
 
-  it("does not treat a stored upload as Sales Enquiry inclusion", () => {
+  it("counts committed 561L lines and does not read a pending upload", () => {
     const source = readFileSync(
       path.resolve(import.meta.dirname, "../sales-intelligence/unified-sales.ts"),
       "utf8",
     );
     const dated = source.slice(source.indexOf("d_raw AS ("), source.indexOf("all_raw AS"));
     expect(dated).toContain(`l."source" = 'ONGOING_TRM21QC'`);
-    expect(dated).not.toContain("'561L'");
+    expect(dated).toContain("'561L'");
+    expect(source).not.toContain("CustomerSalesUpload");
   });
 });

@@ -78,10 +78,14 @@ export function assessManualFulfilment(input: {
     if (input.storedFingerprint === fingerprint) {
       return { ok: true, idempotent: true, fullyComplete: input.lines.every((line) => line.despatchedQty >= line.qty) };
     }
-    return {
-      ok: false,
-      message: "This order already has a manual fulfilment. Repeating the same quantities changes nothing.",
-    };
+    if (!anyIncrease) {
+      return { ok: false, message: "Fulfilled quantity cannot be reduced." };
+    }
+    const fullyComplete = input.requested.every((request) => {
+      const line = byId.get(request.orderItemId);
+      return line != null && request.despatchedQty >= line.qty;
+    });
+    return { ok: true, idempotent: false, fullyComplete };
   }
 
   if (!anyIncrease) {
@@ -92,6 +96,47 @@ export function assessManualFulfilment(input: {
     return line != null && request.despatchedQty >= line.qty;
   });
   return { ok: true, idempotent: false, fullyComplete };
+}
+
+export type ReservationHold = {
+  id: string;
+  orderItemId: string | null;
+  variantId: string;
+  quantity: number;
+};
+
+export type DespatchDelta = {
+  orderItemId: string;
+  variantId: string | null;
+  quantity: number;
+};
+
+/**
+ * Units to take from each active hold. A hold is used only for its own line,
+ * or for a matching product when the hold was not tied to a line.
+ * The plan never takes more than the hold, and leftover quantity stays active.
+ */
+export function planReservationConsumption(holds: ReservationHold[], deltas: DespatchDelta[]): Map<string, number> {
+  const available = new Map(holds.map((hold) => [hold.id, Math.max(0, hold.quantity)]));
+  const taken = new Map<string, number>();
+  for (const delta of deltas) {
+    let left = Math.max(0, Math.trunc(delta.quantity));
+    if (left === 0) continue;
+    const candidates = holds.filter((hold) => {
+      if (hold.orderItemId) return hold.orderItemId === delta.orderItemId;
+      return delta.variantId != null && hold.variantId === delta.variantId;
+    });
+    for (const hold of candidates) {
+      if (left <= 0) break;
+      const remaining = available.get(hold.id) ?? 0;
+      if (remaining <= 0) continue;
+      const take = Math.min(left, remaining);
+      available.set(hold.id, remaining - take);
+      taken.set(hold.id, (taken.get(hold.id) ?? 0) + take);
+      left -= take;
+    }
+  }
+  return taken;
 }
 
 export function assessAdministrativeClose(input: {

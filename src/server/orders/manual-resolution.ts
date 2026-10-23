@@ -10,6 +10,7 @@ import {
   assessAdministrativeClose,
   assessManualFulfilment,
   manualFulfilmentFingerprint,
+  planReservationConsumption,
   type InvoiceEvidenceChoice,
 } from "@/domain/manual-order-resolution";
 import { applyAuthoritativeLineDespatch, recordFulfilmentEvent } from "@/server/orders/fulfilment";
@@ -54,7 +55,7 @@ async function loadEditableOrder(actorUserId: string, orderId: string) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      items: { select: { id: true, sku: true, qty: true, despatchedQty: true } },
+      items: { select: { id: true, sku: true, qty: true, despatchedQty: true, variantId: true } },
       manualResolvedBy: { select: { name: true, email: true } },
     },
   });
@@ -70,22 +71,63 @@ async function loadEditableOrder(actorUserId: string, orderId: string) {
   return order;
 }
 
-async function consumeActiveReservations(tx: Prisma.TransactionClient, orderId: string) {
+async function decrementReservedStock(tx: Prisma.TransactionClient, inventoryId: string, quantity: number) {
+  if (quantity <= 0) return 0;
+  const stock = await tx.inventory.findUnique({
+    where: { id: inventoryId },
+    select: { qtyReserved: true },
+  });
+  const decrement = Math.min(quantity, Math.max(0, stock?.qtyReserved ?? 0));
+  if (decrement <= 0) return 0;
+  await tx.inventory.update({
+    where: { id: inventoryId },
+    data: { qtyReserved: { decrement } },
+  });
+  return decrement;
+}
+
+async function consumeReservationsForDespatch(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  deltas: Array<{ orderItemId: string; variantId: string | null; quantity: number }>,
+) {
   const reservations = await tx.orderStockReservation.findMany({
     where: { orderId, status: "ACTIVE" },
-    select: { id: true, inventoryId: true, quantity: true },
+    orderBy: { id: "asc" },
+    select: { id: true, orderItemId: true, variantId: true, inventoryId: true, quantity: true },
   });
+  const taken = planReservationConsumption(reservations, deltas);
+  let units = 0;
+  const now = new Date();
   for (const reservation of reservations) {
-    await tx.orderStockReservation.update({
-      where: { id: reservation.id },
-      data: { status: "CONSUMED", consumedAt: new Date() },
-    });
-    await tx.inventory.update({
-      where: { id: reservation.inventoryId },
-      data: { qtyReserved: { decrement: reservation.quantity } },
-    });
+    const take = taken.get(reservation.id) ?? 0;
+    if (take <= 0) continue;
+    units += take;
+    await decrementReservedStock(tx, reservation.inventoryId, take);
+    if (take >= reservation.quantity) {
+      await tx.orderStockReservation.update({
+        where: { id: reservation.id },
+        data: { status: "CONSUMED", consumedAt: now },
+      });
+    } else {
+      await tx.orderStockReservation.update({
+        where: { id: reservation.id },
+        data: { quantity: reservation.quantity - take },
+      });
+      await tx.orderStockReservation.create({
+        data: {
+          orderId,
+          orderItemId: reservation.orderItemId,
+          variantId: reservation.variantId,
+          inventoryId: reservation.inventoryId,
+          quantity: take,
+          status: "CONSUMED",
+          consumedAt: now,
+        },
+      });
+    }
   }
-  return reservations.length;
+  return units;
 }
 
 async function releaseActiveReservations(tx: Prisma.TransactionClient, orderId: string) {
@@ -98,10 +140,7 @@ async function releaseActiveReservations(tx: Prisma.TransactionClient, orderId: 
       where: { id: reservation.id },
       data: { status: "RELEASED", releasedAt: new Date() },
     });
-    await tx.inventory.update({
-      where: { id: reservation.inventoryId },
-      data: { qtyReserved: { decrement: reservation.quantity } },
-    });
+    await decrementReservedStock(tx, reservation.inventoryId, reservation.quantity);
   }
   return reservations.length;
 }
@@ -172,7 +211,13 @@ export async function fulfilOrderManually(actorUserId: string, raw: unknown) {
         manual: true,
       },
     });
-    const reservationsConsumed = await consumeActiveReservations(tx, order.id);
+    const deltas = input.lines.flatMap((request) => {
+      const line = order.items.find((item) => item.id === request.orderItemId);
+      const quantity = request.despatchedQty - (line?.despatchedQty ?? 0);
+      if (!line || quantity <= 0) return [];
+      return [{ orderItemId: line.id, variantId: line.variantId, quantity }];
+    });
+    const reservationsConsumed = await consumeReservationsForDespatch(tx, order.id, deltas);
     const row = await tx.order.update({
       where: { id: order.id },
       data: {

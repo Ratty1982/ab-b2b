@@ -1,47 +1,37 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import {
+  formatBytes,
+  uploadCustomerSalesReport,
+  type SavedCustomerSalesUpload,
+} from "@/components/ab/upload-customer-sales-report";
+import {
   acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
-  confirmCustomerSalesHistoryFn,
-  previewCustomerSalesHistoryFn,
+  confirmCustomerSalesHistoryUploadFn,
+  listStoredCustomerSalesHistoryFn,
+  previewCustomerSalesHistoryUploadFn,
   startCustomerSalesHistoryBaselineFn,
 } from "@/server/phase2/fns";
 
-const STANDARD_IMPORT_BYTES = 8_000_000;
-
-type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesHistoryFn>>, { ok: true }>["data"];
+type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesHistoryUploadFn>>, { ok: true }>["data"];
+type StoredHistory = Extract<Awaited<ReturnType<typeof listStoredCustomerSalesHistoryFn>>, { ok: true }>["data"];
 type RowFilter = "ALL" | "import" | "duplicate" | "rejected" | "ledger";
-
-type ChosenFile = { name: string; size: number; text: string };
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-async function readReport(file: File): Promise<ChosenFile> {
-  if (file.size > STANDARD_IMPORT_BYTES) {
-    throw new Error(
-      `${file.name} is ${formatSize(file.size)}. Files this large use the separate large-file import, which is not on this screen. Nothing was uploaded.`,
-    );
-  }
-  return { name: file.name, size: file.size, text: await file.text() };
-}
 
 function FileSlot({
   label,
   help,
   file,
+  progress,
   disabled,
   onChoose,
   onClear,
 }: {
   label: string;
   help: string;
-  file: ChosenFile | null;
+  file: SavedCustomerSalesUpload | null;
+  progress: string | null;
   disabled: boolean;
   onChoose: (file: File) => void;
   onClear: () => void;
@@ -65,10 +55,11 @@ function FileSlot({
           }}
         />
       </label>
+      {progress ? <p className="mt-2 text-[12px] text-steel">{progress}</p> : null}
       {file ? (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px]">
           <span>
-            {file.name} · {formatSize(file.size)}
+            {file.filename} · {formatBytes(file.bytes)}
           </span>
           <button type="button" className="font-semibold uppercase" onClick={onClear} disabled={disabled}>
             Remove
@@ -94,28 +85,46 @@ export function AutopartHistoryImport({
   historyKind: string | null;
   onChanged: () => Promise<void>;
 }) {
-  const [productFile, setProductFile] = useState<ChosenFile | null>(null);
-  const [ledgerFile, setLedgerFile] = useState<ChosenFile | null>(null);
-  const [reading, setReading] = useState<string | null>(null);
+  const [productFile, setProductFile] = useState<SavedCustomerSalesUpload | null>(null);
+  const [ledgerFile, setLedgerFile] = useState<SavedCustomerSalesUpload | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [stored, setStored] = useState<StoredHistory | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [filter, setFilter] = useState<RowFilter>("ALL");
   const [page, setPage] = useState(1);
   const [confirm, setConfirm] = useState<"import" | "none" | "baseline" | "review" | null>(null);
 
+  async function loadStored() {
+    const result = await listStoredCustomerSalesHistoryFn({ data: { companyId } });
+    if (result.ok) setStored(result.data);
+  }
+
+  useEffect(() => {
+    void loadStored();
+  }, [companyId]);
+
   async function choose(which: "product" | "ledger", file: File) {
-    setReading(file.name);
     setPreview(null);
     setSaved(null);
+    setProgress(`Uploading ${file.name}…`);
     try {
-      const chosen = await readReport(file);
-      if (which === "product") setProductFile(chosen);
-      else setLedgerFile(chosen);
+      const savedUpload = await uploadCustomerSalesReport({
+        file,
+        companyId,
+        role: which === "product" ? "HISTORY_561L" : "HISTORY_SLRB",
+        onProgress: (loaded, total) => {
+          const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+          setProgress(`Uploading ${file.name}… ${percent}%`);
+        },
+      });
+      if (which === "product") setProductFile(savedUpload);
+      else setLedgerFile(savedUpload);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "The file could not be read");
+      toast.error(error instanceof Error ? error.message : "The file could not be uploaded");
     } finally {
-      setReading(null);
+      setProgress(null);
     }
   }
 
@@ -124,17 +133,17 @@ export function AutopartHistoryImport({
     historyStatus === "COMPLETE" &&
     (historyKind === "NO_HISTORICAL_SALES" || historyKind === "PRELAUNCH_HISTORY_DISCARDED");
 
-  async function previewImport() {
+  async function previewImport(samplePage = 1) {
     if (!productFile && !ledgerFile) return;
     setBusy(true);
     setSaved(null);
-    const result = await previewCustomerSalesHistoryFn({
+    const result = await previewCustomerSalesHistoryUploadFn({
       data: {
         companyId,
-        text561l: productFile?.text ?? "",
-        textSlrb: ledgerFile?.text ?? "",
-        filename561l: productFile?.name ?? "",
-        filenameSlrb: ledgerFile?.name ?? "",
+        ...(productFile ? { upload561lId: productFile.uploadId } : {}),
+        ...(ledgerFile ? { uploadSlrbId: ledgerFile.uploadId } : {}),
+        samplePage,
+        samplePageSize: 25,
       },
     });
     setBusy(false);
@@ -148,14 +157,13 @@ export function AutopartHistoryImport({
   }
 
   async function confirmImport() {
+    if (!preview?.upload561lId && !preview?.uploadSlrbId) return;
     setBusy(true);
-    const result = await confirmCustomerSalesHistoryFn({
+    const result = await confirmCustomerSalesHistoryUploadFn({
       data: {
         companyId,
-        text561l: productFile?.text ?? "",
-        textSlrb: ledgerFile?.text ?? "",
-        filename561l: productFile?.name ?? "",
-        filenameSlrb: ledgerFile?.name ?? "",
+        ...(preview.upload561lId ? { upload561lId: preview.upload561lId } : {}),
+        ...(preview.uploadSlrbId ? { uploadSlrbId: preview.uploadSlrbId } : {}),
       },
     });
     setBusy(false);
@@ -164,13 +172,16 @@ export function AutopartHistoryImport({
       toast.error(result.error);
       return;
     }
+    const names = [productFile?.filename, ledgerFile?.filename].filter(Boolean).join(" and ");
     setSaved(
       result.data.historyStatus === "REVIEW"
-        ? `Saved ${result.data.rowsImported} new rows. ${result.data.duplicates} were already imported. Exceptions still need review before current sales can be imported.`
-        : `Saved ${result.data.rowsImported} new rows. ${result.data.duplicates} were already imported.`,
+        ? `${names} saved. New ${result.data.rowsImported}, already imported ${result.data.duplicates}. Rejected rows still need review before current sales can be imported.`
+        : `${names} saved. New ${result.data.rowsImported}, already imported ${result.data.duplicates}.`,
     );
+    setPreview(null);
     toast.success("Sales history saved");
     await onChanged();
+    await loadStored();
   }
 
   const rows = (preview?.rows ?? []).filter((row) => filter === "ALL" || row.disposition === filter);
@@ -192,8 +203,8 @@ export function AutopartHistoryImport({
         <summary className="cursor-pointer font-semibold">How these files are used</summary>
         <p className="mt-2 max-w-3xl">
           The old global history importer is retired. This import belongs only to the verified sales
-          account on this customer. A preview does not save anything. A very large Retail file is handled
-          by the separate large-file import and is refused here so it is not loaded twice.
+          account on this customer. Large Retail files upload here and are filtered to that account.
+          A preview does not save anything. Confirm uses the same uploaded file.
         </p>
       </details>
 
@@ -217,7 +228,6 @@ export function AutopartHistoryImport({
         </div>
       ) : null}
 
-      {reading ? <p className="mt-3 text-[13px] text-steel">Reading {reading}…</p> : null}
       {canImport && !locked && !blocked ? (
         <div
           className="mt-4 grid gap-3 lg:grid-cols-2"
@@ -225,7 +235,7 @@ export function AutopartHistoryImport({
           onDrop={(event) => {
             event.preventDefault();
             const file = event.dataTransfer.files[0];
-            if (!file) return;
+            if (!file || busy) return;
             const ledger = /slrb|ledger/i.test(file.name);
             void choose(ledger ? "ledger" : "product", file);
           }}
@@ -234,6 +244,7 @@ export function AutopartHistoryImport({
             label="Product sales"
             help="The product report of purchases and sales values."
             file={productFile}
+            progress={null}
             disabled={busy}
             onChoose={(file) => void choose("product", file)}
             onClear={() => {
@@ -245,6 +256,7 @@ export function AutopartHistoryImport({
             label="Ledger"
             help="Invoices, credits, and payments. Payments are not additional sales."
             file={ledgerFile}
+            progress={null}
             disabled={busy}
             onChoose={(file) => void choose("ledger", file)}
             onClear={() => {
@@ -255,13 +267,17 @@ export function AutopartHistoryImport({
         </div>
       ) : null}
 
+      {progress && canImport && !locked && !blocked ? (
+        <p className="mt-3 text-[13px] text-steel" role="status">{progress}</p>
+      ) : null}
+
       {canImport && !locked && !blocked ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
             disabled={busy || (!productFile && !ledgerFile)}
             className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
-            onClick={() => void previewImport()}
+            onClick={() => void previewImport(1)}
           >
             {busy ? "Checking…" : "Preview import"}
           </button>
@@ -270,7 +286,8 @@ export function AutopartHistoryImport({
 
       {preview ? (
         <div className="mt-4 border-t border-border pt-4">
-          <p className="text-[13px] font-semibold" role="status">
+          <h4 className="text-[13px] font-semibold">Proposed changes</h4>
+          <p className="mt-1 text-[13px] font-semibold" role="status">
             Preview only. Nothing has been saved.
           </p>
           <dl className="mt-3 grid grid-cols-2 gap-2 text-[13px] sm:grid-cols-5">
@@ -285,6 +302,10 @@ export function AutopartHistoryImport({
               </dd>
             </div>
           </dl>
+          <p className="mt-2 text-[12px] text-steel">
+            Read {preview.rowsRead.toLocaleString("en-GB")} rows. {preview.matchingRows.toLocaleString("en-GB")} belong to this customer.{" "}
+            {preview.otherCustomerRows.toLocaleString("en-GB")} from other customers were left out. File size {formatBytes(preview.byteSize)}.
+          </p>
           {preview.counts.ledger > 0 ? (
             <p className="mt-2 text-[12px] text-steel">{preview.counts.ledger} ledger rows support the documents. They are not extra sales.</p>
           ) : null}
@@ -334,10 +355,21 @@ export function AutopartHistoryImport({
             <p className="mt-3 text-[13px] text-steel">No rows in this filter.</p>
           )}
           <div className="mt-2 flex items-center justify-between text-[12px] text-steel">
-            <span>Page {page} of {pages}. The table shows a sample. The counts above are the full file.</span>
+            <span>
+              Page {page} of {pages}. Sample {preview.samplePage} of {preview.samplePages}. The counts above are the full file.
+            </span>
             <span className="flex gap-2">
               <button type="button" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>Previous</button>
               <button type="button" disabled={page >= pages} onClick={() => setPage((current) => current + 1)}>Next</button>
+              {preview.samplePages > 1 ? (
+                <button
+                  type="button"
+                  disabled={busy || preview.samplePage >= preview.samplePages}
+                  onClick={() => void previewImport(preview.samplePage + 1)}
+                >
+                  Next sample
+                </button>
+              ) : null}
             </span>
           </div>
           <button
@@ -351,6 +383,20 @@ export function AutopartHistoryImport({
         </div>
       ) : null}
       {saved ? <p className="mt-3 text-[13px]" role="status">{saved}</p> : null}
+
+      {stored && (stored.productLines > 0 || stored.paymentDocuments > 0) ? (
+        <div className="mt-4 border-t border-border pt-4">
+          <h4 className="text-[13px] font-semibold">Stored records</h4>
+          <p className="mt-1 text-[13px] text-steel">
+            These are the records stored for this customer. Sales Enquiry counts each invoice once.
+            Payments are stored as ledger evidence and are not product sales.
+          </p>
+          <p className="mt-2 text-[13px]" role="status">
+            {stored.productLines} product lines, {stored.datedProductLines} dated, {stored.undatedProductLines} without an invoice date,{" "}
+            {stored.saleDocuments} sale documents, {stored.paymentDocuments} payments.
+          </p>
+        </div>
+      ) : null}
 
       {!locked && !blocked && historyStatus !== "COMPLETE" && canImport ? (
         <details className="mt-5 border-t border-border pt-4">
@@ -400,8 +446,8 @@ export function AutopartHistoryImport({
               : confirm === "review"
                 ? "Rejected rows stay rejected. Accepting them completes the historical position so current sales can be imported. It does not delete the rejected rows or invent sales."
                 : recorded
-                  ? "This saves the previewed rows. It replaces the current no-history or new-baseline record with imported history. Rejected rows keep the account in review."
-                  : "This saves the previewed rows for this customer. It does not email the customer or turn on automatic importing. Rejected rows must be reviewed before current sales can be imported."
+                  ? "This saves the uploaded file that was previewed. It replaces the current no-history or new-baseline record with imported history. Rejected rows keep the account in review."
+                  : "This saves the uploaded file that was previewed. It does not email the customer or turn on automatic importing. Rejected rows must be reviewed before current sales can be imported."
         }
         confirmLabel={busy ? "Saving…" : "Confirm"}
         onOpenChange={(open) => {
@@ -428,6 +474,7 @@ export function AutopartHistoryImport({
             }
             toast.success("Historical position saved");
             await onChanged();
+            await loadStored();
           })();
         }}
       />
