@@ -309,4 +309,81 @@ ${reviewCode},INV,OK1,01 Oct 26,"£4.00","£0.80","£4.80","£4.80"
     expect(stored.rows[0]?.document).toBe("KEEP");
     expect(stored.rows[0]?.date).toBeNull();
   });
+
+  it("imports Autopart credit unit forms and reduces Sales Enquiry net totals", async () => {
+    const retail = await prisma.company.create({
+      data: { name: `Retail credit units ${stamp}`, status: "ACTIVE" },
+    });
+    extraCompanyIds.push(retail.id);
+    const retailCode = `RA${stamp.slice(0, 8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: retail.id, code: retailCode });
+    const text561l = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${retailCode},I/SS303694/1,SSAMZ,Steel Seal Amazon LISTIN,2,"£62.48"
+${retailCode},C/SC501695/1,SSAMZ,Steel Seal Amazon LISTIN,(1),(31.24)
+${retailCode},C/SC501698/1,SSAMZ-1,Steel Seal Amazon LISTIN,1CR,37.49CR
+${retailCode},C/SC503053/1,SSAMZ,Steel Seal Amazon LISTIN,\u22121,\u221212.00
+${retailCode},C/SC503099/1,SSAMZ,Steel Seal Amazon LISTIN,,(5.00)
+`;
+    const ledger = `A/C,Type,Ref,Date,Tot Goods,Tot VAT,Total,Run Bal
+${retailCode},INV,SS303694,19 Aug 15,"£62.48","£12.50","£74.98","£74.98"
+${retailCode},CRN,SC501695,20 Aug 15,"-£31.24","-£6.25","-£37.49","£37.49"
+${retailCode},CRN,SC501698,21 Aug 15,"-£37.49","-£7.50","-£44.99","-£7.50"
+${retailCode},CRN,SC503053,22 Aug 15,"-£12.00","-£2.40","-£14.40","-£21.90"
+`;
+    const preview = await previewCustomerSalesHistory(adminId, {
+      companyId: retail.id,
+      text561l,
+      textSlrb: ledger,
+      filename561l: "561L-RETAIL.CSV",
+      filenameSlrb: "SLRB-RETAIL.CSV",
+    });
+    expect(preview.counts.productLines).toBe(4);
+    expect(preview.counts.rejected).toBe(1);
+    expect(preview.rejectionGroups.some((group) => group.reason === "Invalid units: (blank)")).toBe(true);
+    expect(preview.rejectedExamples.some((row) => row.document === "SC503099")).toBe(true);
+    expect(preview.rows.some((row) => row.document === "SC501695" && row.disposition === "import")).toBe(true);
+
+    const imported = await confirmCustomerSalesHistory(adminId, {
+      companyId: retail.id,
+      text561l,
+      textSlrb: ledger,
+      filename561l: "561L-RETAIL.CSV",
+      filenameSlrb: "SLRB-RETAIL.CSV",
+    });
+    expect(imported.historyStatus).toBe("REVIEW");
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: retail.id, source: "561L" } })).toBe(4);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: retail.id, documentReference: "SC503099" } })).toBe(
+      0,
+    );
+
+    const credit = await prisma.autopartSalesLine.findFirstOrThrow({
+      where: { companyId: retail.id, documentReference: "SC501695" },
+    });
+    expect(Number(credit.units)).toBe(-1);
+    expect(Number(credit.salesNet)).toBeCloseTo(-31.24, 2);
+
+    const sales = await getUnifiedCustomerSales(adminId, { companyId: retail.id, period: "ALL" });
+    // 62.48 - 31.24 - 37.49 - 12.00 = -18.25
+    expect(sales.kpis.netSales).toBe("-18.25");
+    expect(sales.kpis.creditNoteCount).toBeGreaterThanOrEqual(3);
+    expect(Number(sales.kpis.credits)).toBeLessThan(0);
+
+    const products = await listUnifiedCustomerProducts(adminId, { companyId: retail.id, pageSize: 50 });
+    const ssamz = products.items.find((item) => item.sku.toUpperCase() === "SSAMZ");
+    expect(ssamz).toBeTruthy();
+    // 62.48 - 31.24 - 12.00 = 19.24
+    expect(ssamz?.netSales).toBe("19.24");
+    const ssamz1 = products.items.find((item) => item.sku.toUpperCase() === "SSAMZ-1");
+    expect(ssamz1?.netSales).toBe("-37.49");
+
+    const transactions = await listUnifiedCustomerTransactions(adminId, {
+      companyId: retail.id,
+      status: "COUNTED",
+      pageSize: 50,
+    });
+    expect(transactions.items.some((item) => item.reference === "SC501695" && item.documentType === "CREDIT")).toBe(
+      true,
+    );
+    expect(transactions.items.some((item) => item.reference === "SC503099")).toBe(false);
+  });
 });

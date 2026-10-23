@@ -4,13 +4,19 @@
  */
 import { moneyToString, parseMoney, type Money } from "@/domain/money";
 
-/** Strip currency decoration and parse Autopart monetary fields to Money (4dp scale). */
-export function parseAutopartMoney(raw: string | null | undefined): Money | null {
+/**
+ * Normalise Autopart numeric tokens used for money and Units.
+ * Supports ASCII/Unicode minus, thousands commas, (n) accounting form, and CR/DR.
+ * Returns a plain signed numeric string, or null when the field is blank/malformed.
+ */
+export function normaliseAutopartSignedNumberToken(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   let s = String(raw).trim().replace(/^\uFEFF/, "");
   if (!s) return null;
+  // Unicode minus / figure dash / en dash / em dash → ASCII hyphen-minus
+  s = s.replace(/[\u2212\u2012\u2013\u2014]/g, "-");
   s = s.replace(/£/g, "").replace(/,/g, "").replace(/\s+/g, "");
-  // Accounting negative: (123.45)
+  // Accounting negative: (123.45) / (1)
   if (/^\(.*\)$/.test(s)) {
     s = `-${s.slice(1, -1)}`;
   }
@@ -21,8 +27,25 @@ export function parseAutopartMoney(raw: string | null | undefined): Money | null
   } else if (upper.endsWith("DR")) {
     s = s.slice(0, -2);
   }
-  if (!s || s === "-" || s === "+") return null;
+  if (!s || s === "-" || s === "+" || s === "." || s === "-." || s === "+.") return null;
+  if (!/^[+-]?\d+(\.\d+)?$/.test(s)) return null;
+  return s;
+}
+
+/** Strip currency decoration and parse Autopart monetary fields to Money (4dp scale). */
+export function parseAutopartMoney(raw: string | null | undefined): Money | null {
+  const s = normaliseAutopartSignedNumberToken(raw);
+  if (s == null) return null;
   return parseMoney(s);
+}
+
+/** Parse Autopart Units / quantity fields. Does not invent a value for blank cells. */
+export function parseAutopartQuantity(raw: string | null | undefined): number | null {
+  const s = normaliseAutopartSignedNumberToken(raw);
+  if (s == null) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
 }
 
 export function autopartMoneyToGbp2(value: Money): string {
