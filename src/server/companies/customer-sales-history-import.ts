@@ -13,6 +13,7 @@ import { parseAutopartSlrb } from "@/domain/autopart-slrb";
 import {
   historicalDocumentIsSale,
   historicalProductLineIdentity,
+  historicalProductLineLookupFingerprints,
   signedHistoricalMeasure,
   type HistoricalDocumentType,
 } from "@/domain/customer-sales-history";
@@ -423,6 +424,8 @@ function planHistory(input: {
         sourceLineNumber: hasSourceLine ? row.sourceLineNumber : null,
         rawInvAndLn: row.rawInvAndLn,
         skuOrdinal: ordinal,
+        units,
+        salesNet,
       });
       if (lineKeys.has(identity.fingerprint)) {
         remember({
@@ -584,7 +587,24 @@ async function markExisting(target: HistoryTarget, planned: PlannedCustomerSales
 
   for (const line of planned.lines) {
     const docKey = `${line.documentType}|${line.documentReference}`;
-    const stored = lineByFingerprint.get(line.fingerprint) ?? lineByNumber.get(`${docKey}|${line.lineNumber}`);
+    // Exact fingerprint first; legacy ln: only when measures match (shared /N must not
+    // collapse distinct SKUs onto the one line stored under the old key).
+    let stored = lineByFingerprint.get(line.fingerprint);
+    if (!stored) {
+      for (const key of historicalProductLineLookupFingerprints(line.fingerprint)) {
+        if (key === line.fingerprint) continue;
+        const candidate = lineByFingerprint.get(key);
+        if (
+          candidate &&
+          !valuesConflict(candidate.units, line.units, 3) &&
+          !valuesConflict(candidate.salesNet, line.salesNet, 2)
+        ) {
+          stored = candidate;
+          break;
+        }
+      }
+    }
+    if (!stored) stored = lineByNumber.get(`${docKey}|${line.lineNumber}`);
     if (!stored) continue;
     line.duplicate = true;
     planned.counts.import -= 1;
@@ -624,9 +644,15 @@ async function markExisting(target: HistoryTarget, planned: PlannedCustomerSales
   for (const row of planned.rows) {
     if (row.disposition !== "import" && row.disposition !== "ledger") continue;
     const docKey = `${row.type}|${row.document}`;
-    const lineNumber = row.fingerprint?.startsWith("ln:") ? Number(row.fingerprint.split("|").pop()) : null;
+    const fingerprintKeys = row.fingerprint
+      ? historicalProductLineLookupFingerprints(row.fingerprint)
+      : [];
+    // ln: keys uniquely identified a stored lineNumber. row: keys share Autopart
+    // source lines across SKUs, so only fingerprint membership is safe there.
+    const lineNumber =
+      row.fingerprint?.startsWith("ln:") ? Number(row.fingerprint.split("|").pop()) : null;
     const sameLine = lineNumber != null && lineByNumber.has(`${docKey}|${lineNumber}`);
-    const sameFingerprint = Boolean(row.fingerprint && duplicateFingerprints.has(row.fingerprint));
+    const sameFingerprint = fingerprintKeys.some((key) => duplicateFingerprints.has(key));
     const sameDocument = !row.sku && duplicateDocs.has(docKey);
     if (!sameFingerprint && !sameLine && !sameDocument) continue;
     const conflict = row.sku

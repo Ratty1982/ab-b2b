@@ -45,6 +45,8 @@ describe("historical sales measures", () => {
       sourceLineNumber: 1,
       rawInvAndLn: "I/SS1/1",
       skuOrdinal: 1,
+      units: "2.000",
+      salesNet: "10.00",
     });
     const second = historicalProductLineIdentity({
       documentType: "INVOICE",
@@ -53,10 +55,35 @@ describe("historical sales measures", () => {
       sourceLineNumber: 2,
       rawInvAndLn: "I/SS1/2",
       skuOrdinal: 1,
+      units: "1.000",
+      salesNet: "5.00",
     });
     expect(first.fingerprint).not.toBe(second.fingerprint);
     expect(first.lineNumber).toBe(1);
     expect(second.lineNumber).toBe(2);
+    const sharedLineA = historicalProductLineIdentity({
+      documentType: "CREDIT",
+      documentReference: "SC503053",
+      sku: "HG149-00",
+      sourceLineNumber: 1,
+      rawInvAndLn: "C/SC503053/1",
+      skuOrdinal: 1,
+      units: "-6.000",
+      salesNet: "0.00",
+    });
+    const sharedLineB = historicalProductLineIdentity({
+      documentType: "CREDIT",
+      documentReference: "SC503053",
+      sku: "LUXURY16",
+      sourceLineNumber: 1,
+      rawInvAndLn: "C/SC503053/1",
+      skuOrdinal: 1,
+      units: "-1.000",
+      salesNet: "0.00",
+    });
+    expect(sharedLineA.fingerprint).not.toBe(sharedLineB.fingerprint);
+    expect(sharedLineA.legacyFingerprints).toEqual(["ln:CREDIT|SC503053|1"]);
+    expect(sharedLineB.legacyFingerprints).toEqual(["ln:CREDIT|SC503053|1"]);
     const redacted = redactIneligibleSalesDiagnostic({
       status: "SKIPPED",
       reasonCode: "NOT_ACTIVE",

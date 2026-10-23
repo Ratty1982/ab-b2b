@@ -25,7 +25,8 @@ export const CUSTOMER_SALES_HISTORY_STAGE_BATCH = 1_000;
 /** Staging / queued lease. A fresh heartbeat blocks a second worker. */
 export const CUSTOMER_SALES_HISTORY_STALE_HEARTBEAT_MS = 120_000;
 /** Publication can run for PUBLISH_TIMEOUT_MS; do not reclaim sooner. */
-export const CUSTOMER_SALES_HISTORY_PUBLISH_TIMEOUT_MS = 300_000;
+/** Large 100k+ publishes need headroom on slower CI/dev hosts. */
+export const CUSTOMER_SALES_HISTORY_PUBLISH_TIMEOUT_MS = 600_000;
 export const CUSTOMER_SALES_HISTORY_PUBLISH_STALE_MS =
   CUSTOMER_SALES_HISTORY_PUBLISH_TIMEOUT_MS + 30_000;
 export const CUSTOMER_SALES_HISTORY_FINGERPRINT_INDEX =

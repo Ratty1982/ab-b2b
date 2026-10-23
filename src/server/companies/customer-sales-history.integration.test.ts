@@ -195,6 +195,58 @@ ${account},I/${ref}B/,SS,No line B,4,"£8.00"
     expect(await prisma.autopartSalesLine.count({ where: { companyId, documentReference: `${ref}B`, sku: "SS" } })).toBe(2);
   });
 
+  it("imports Autopart inch-mark descriptions and distinct SKUs that share Inv&Ln /1", async () => {
+    const fresh = await prisma.company.create({
+      data: { name: `Retail Amazon quotes ${stamp}`, status: "ACTIVE" },
+    });
+    const code = `RA${stamp.slice(0, 8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
+    const text = readFileSync(
+      resolve(import.meta.dirname, "../../domain/fixtures/autopart-561l-retail-amazon-quotes.csv"),
+      "utf8",
+    ).replaceAll("RETAIL", code);
+    const preview = await previewCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "561L-RETAIL-quotes.csv",
+    });
+    expect(preview.counts.rejected).toBe(0);
+    expect(preview.counts.duplicate).toBe(1); // exact repeated SS5131 raw row
+    expect(preview.counts.import).toBe(18);
+    expect(preview.rows.some((row) => row.sku === "SWUX68" && row.quantity === "-1.000")).toBe(true);
+    expect(
+      preview.rows.filter((row) => row.document === "SC503053" && row.disposition === "import"),
+    ).toHaveLength(13);
+
+    const imported = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "561L-RETAIL-quotes.csv",
+    });
+    // rowsImported counts product lines + supporting document headers.
+    expect(imported.rowsImported).toBe(24);
+    const sc503053 = await prisma.autopartSalesLine.findMany({
+      where: { companyId: fresh.id, documentReference: "SC503053" },
+      orderBy: { lineNumber: "asc" },
+    });
+    expect(sc503053).toHaveLength(13);
+    expect(new Set(sc503053.map((line) => line.lineNumber)).size).toBe(13);
+    expect(new Set(sc503053.map((line) => line.sourceFingerprint)).size).toBe(13);
+    expect(sc503053.every((line) => Number(line.units) < 0)).toBe(true);
+    const lightning = await prisma.autopartSalesLine.findFirstOrThrow({
+      where: { companyId: fresh.id, documentReference: "SC501695", sku: "SWUX68" },
+    });
+    expect(lightning.descriptionSnapshot).toContain('14"');
+    expect(Number(lightning.salesNet)).toBeCloseTo(-16.66, 2);
+    const again = await confirmCustomerSalesHistory(adminId, { companyId: fresh.id, text561l: text });
+    expect(again.rowsImported).toBe(0);
+
+    await prisma.autopartSalesLine.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.company.delete({ where: { id: fresh.id } });
+  });
+
   it("keeps cutover in review when a row is rejected and does not call that zero history", async () => {
     const fresh = await prisma.company.create({
       data: { name: `Review History ${stamp}`, status: "ACTIVE" },

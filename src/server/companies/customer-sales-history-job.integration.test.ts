@@ -238,8 +238,14 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     expect(finished.status).toBe("COMPLETE");
     expect(finished.historyStatus).toBe("REVIEW");
     const stored = await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, source: "561L" } });
-    expect(stored).toBe(INTERRUPT_LINES + 2);
-    expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "D000001", lineNumber: 1 } })).toBe(1);
+    // productReport lines + D000001/2 PART + D000001/1 PART (distinct SKU on shared /1) + D000002/2 zero.
+    expect(stored).toBe(INTERRUPT_LINES + 3);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "D000001" } })).toBe(3);
+    expect(
+      await prisma.autopartSalesLine.count({
+        where: { companyId: smallCompanyId, documentReference: "D000001", sku: "PART" },
+      }),
+    ).toBe(2);
     expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "D000001", lineNumber: 2 } })).toBe(1);
     expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "BADLINE" } })).toBe(0);
     const zero = await prisma.autopartSalesLine.findFirstOrThrow({
