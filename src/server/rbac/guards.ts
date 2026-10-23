@@ -63,7 +63,12 @@ export async function requireCompanyAccess(
   const profile = await requireAuthenticatedUser(userId);
 
   const membership = profile.companyMemberships.find((m) => m.companyId === companyId);
-  if (membership) return profile;
+  if (membership) {
+    if (membership.status !== "ACTIVE") {
+      throw new AuthError("This customer membership is not active", "COMPANY_MEMBERSHIP_INACTIVE", 403);
+    }
+    return profile;
+  }
 
   if (profile.actorType === "INTERNAL") {
     const allowed = await canAccessCompanyAsSales(profile, companyId);
@@ -82,6 +87,9 @@ export async function requireCompanyPermission(
 
   const membership = profile.companyMemberships.find((m) => m.companyId === companyId);
   if (membership) {
+    if (membership.status !== "ACTIVE") {
+      throw new AuthError("This customer membership is not active", "COMPANY_MEMBERSHIP_INACTIVE", 403);
+    }
     const { TRADE_ROLE_PERMISSIONS } = await import("@/domain/role-permissions");
     const allowed = TRADE_ROLE_PERMISSIONS[membership.role].includes(permission);
     if (!allowed) {
@@ -102,7 +110,10 @@ export async function requireTradePortalAccess(
   userId: string | undefined | null,
 ): Promise<LoadedAccessProfile> {
   const profile = await requireAuthenticatedUser(userId);
-  if (profile.actorType === "TRADE" && profile.companyMemberships.length > 0) {
+  if (
+    profile.actorType === "TRADE" &&
+    profile.companyMemberships.some((membership) => membership.status === "ACTIVE")
+  ) {
     return profile;
   }
   if (profile.actorType === "INTERNAL") {

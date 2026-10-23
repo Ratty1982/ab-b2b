@@ -321,7 +321,7 @@ function AutopartImportsPage() {
           Search an Autopart account by ID or name, then link it to an existing company or create
           a prospect. An unambiguous Autopart ID can be verified on the customer commercial tab.
           Verification does not import sales history, approve a trade application, or enable portal
-          login. Historical 561L and SLRB uploads are retired.
+          login. The old global 561L and SLRB upload is retired. A customer's own history is imported from that customer's Autopart tab.
         </p>
         <AutopartProspectConversionPanel />
 

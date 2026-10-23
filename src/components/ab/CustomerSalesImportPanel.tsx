@@ -2,20 +2,27 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ONGOING_REPORT_RETENTION } from "@/domain/customer-sales-import";
 import {
-  confirmCustomerSalesImportFn,
+  confirmCustomerSalesImportUploadFn,
   listCustomerSalesAccountsFn,
-  previewCustomerSalesImportFn,
+  previewCustomerSalesImportUploadFn,
 } from "@/server/phase2/fns";
+import {
+  formatBytes,
+  uploadCustomerSalesReport,
+  type SavedCustomerSalesUpload,
+} from "@/components/ab/upload-customer-sales-report";
 
 type Accounts = Extract<Awaited<ReturnType<typeof listCustomerSalesAccountsFn>>, { ok: true }>["data"];
-type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesImportFn>>, { ok: true }>["data"];
+type Preview = Extract<Awaited<ReturnType<typeof previewCustomerSalesImportUploadFn>>, { ok: true }>["data"];
+type ImportResult = Extract<Awaited<ReturnType<typeof confirmCustomerSalesImportUploadFn>>, { ok: true }>["data"];
 
 export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
   const [accounts, setAccounts] = useState<Accounts | null>(null);
   const [accountCode, setAccountCode] = useState("");
-  const [filename, setFilename] = useState("");
-  const [text, setText] = useState("");
+  const [upload, setUpload] = useState<SavedCustomerSalesUpload | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -46,6 +53,23 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
     );
   }
 
+  async function runPreview(samplePage = 1) {
+    if (!upload) return;
+    setBusy(true);
+    setProgress(`Filtering ${formatBytes(upload.bytes)} to the selected Autopart account…`);
+    const result = await previewCustomerSalesImportUploadFn({
+      data: { companyId, accountCode, uploadId: upload.uploadId, samplePage, samplePageSize: 25 },
+    });
+    setBusy(false);
+    setProgress(null);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    setPreview(result.data);
+    setImportResult(null);
+  }
+
   return (
     <section className="mb-6 border border-border/80">
       <div className="border-b border-border/70 px-4 py-3">
@@ -68,18 +92,7 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
         className="grid gap-3 px-4 py-4"
         onSubmit={(event) => {
           event.preventDefault();
-          void (async () => {
-            setBusy(true);
-            const result = await previewCustomerSalesImportFn({
-              data: { companyId, accountCode, text, filename },
-            });
-            setBusy(false);
-            if (!result.ok) {
-              toast.error(result.error);
-              return;
-            }
-            setPreview(result.data);
-          })();
+          void runPreview(1);
         }}
       >
         <label className="grid gap-1 text-[12px] font-semibold">
@@ -110,23 +123,56 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
             onChange={(event) => {
               const file = event.target.files?.[0];
               setPreview(null);
+              setImportResult(null);
               if (!file) return;
-              setFilename(file.name);
-              void file.text().then(setText);
+              setBusy(true);
+              setProgress(`Uploading ${file.name}: 0 B of ${formatBytes(file.size)}`);
+              void uploadCustomerSalesReport({
+                file,
+                companyId,
+                role: "ONGOING",
+                onProgress: (loaded, total) => {
+                  setProgress(`Uploading ${file.name}: ${formatBytes(loaded)} of ${formatBytes(total)}`);
+                },
+              })
+                .then((saved) => {
+                  setUpload(saved);
+                  setProgress(`${saved.filename} uploaded (${formatBytes(saved.bytes)}). Preview does not create sales.`);
+                })
+                .catch((error: unknown) => {
+                  setUpload(null);
+                  setProgress(null);
+                  toast.error(error instanceof Error ? error.message : "Upload failed");
+                })
+                .finally(() => setBusy(false));
             }}
           />
         </label>
+        {upload ? (
+          <p className="text-[12px] text-steel">
+            {upload.filename} stored temporarily, {formatBytes(upload.bytes)}.
+          </p>
+        ) : null}
+        {progress ? (
+          <p className="text-[13px]" role="status">
+            {progress}
+          </p>
+        ) : null}
         <button
           type="submit"
-          disabled={busy || !text || !accountCode}
+          disabled={busy || !upload || !accountCode}
           className="h-9 w-fit rounded-md border border-border px-3 text-[12px] font-semibold disabled:opacity-50"
         >
-          {busy ? "Checking…" : "Preview import"}
+          {busy ? "Working…" : "Preview import"}
         </button>
       </form>
       {preview ? (
         <div className="border-t border-border/70 px-4 py-4">
-          <p className="text-[13px]" role="status">
+          <h4 className="text-[12px] font-bold uppercase tracking-wide">Preview</h4>
+          <p className="mt-1 text-[13px] text-steel">
+            Preview shows proposed changes and does not create sales records. Confirm import uses this uploaded file.
+          </p>
+          <p className="mt-2 text-[13px]" role="status">
             {preview.kind === "504"
               ? "504 invoices and credits"
               : preview.kind === "TRM21QC"
@@ -135,9 +181,10 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
             {" for "}
             <span className="font-mono">{preview.accountCode}</span>
             {". "}
-            Import {preview.counts.import}, update {preview.counts.update}, duplicate{" "}
-            {preview.counts.duplicate}, skipped {preview.counts.skipped}, rejected{" "}
-            {preview.counts.rejected}.
+            Read {preview.rowsRead.toLocaleString("en-GB")} rows, {preview.matchingRows.toLocaleString("en-GB")} matching,{" "}
+            {preview.otherCustomerRows.toLocaleString("en-GB")} other customers. Import {preview.counts.import}, update{" "}
+            {preview.counts.update}, duplicate {preview.counts.duplicate}, skipped {preview.counts.skipped}, rejected{" "}
+            {preview.counts.rejected}. File size {formatBytes(preview.byteSize)}.
           </p>
           {preview.message ? <p className="mt-2 text-[13px] text-steel">{preview.message}</p> : null}
           <ul className="mt-2 text-[12px] text-steel">
@@ -174,31 +221,68 @@ export function CustomerSalesImportPanel({ companyId }: { companyId: string }) {
               </table>
             </div>
           ) : null}
+          {preview.samplePages > 1 ? (
+            <div className="mt-3 flex items-center gap-2 text-[12px]">
+              <button
+                type="button"
+                disabled={busy || preview.samplePage <= 1}
+                className="h-8 rounded-md border border-border px-2 disabled:opacity-50"
+                onClick={() => void runPreview(preview.samplePage - 1)}
+              >
+                Previous sample
+              </button>
+              <span>
+                Sample page {preview.samplePage} of {preview.samplePages}
+              </span>
+              <button
+                type="button"
+                disabled={busy || preview.samplePage >= preview.samplePages}
+                className="h-8 rounded-md border border-border px-2 disabled:opacity-50"
+                onClick={() => void runPreview(preview.samplePage + 1)}
+              >
+                Next sample
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             disabled={!preview.canCommit || busy}
             className="mt-3 h-9 rounded-md bg-primary px-3 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
             onClick={() => {
               void (async () => {
+                if (!upload) return;
                 setBusy(true);
-                const result = await confirmCustomerSalesImportFn({
-                  data: { companyId, accountCode, text, filename },
+                setProgress("Confirming import from the stored file…");
+                const result = await confirmCustomerSalesImportUploadFn({
+                  data: { companyId, accountCode, uploadId: upload.uploadId },
                 });
                 setBusy(false);
+                setProgress(null);
                 if (!result.ok) {
                   toast.error(result.error);
                   return;
                 }
+                setPreview(null);
+                setImportResult(result.data);
                 toast.success("Customer sales import stored");
-                const again = await previewCustomerSalesImportFn({
-                  data: { companyId, accountCode, text, filename },
-                });
-                if (again.ok) setPreview(again.data);
+                const refreshed = await listCustomerSalesAccountsFn({ data: { companyId } });
+                if (refreshed.ok) setAccounts(refreshed.data);
               })();
             }}
           >
-            Import for this customer
+            Confirm import
           </button>
+        </div>
+      ) : null}
+      {importResult ? (
+        <div className="border-t border-border/70 px-4 py-4">
+          <h4 className="text-[12px] font-bold uppercase tracking-wide">Import result</h4>
+          <p className="mt-1 text-[13px]" role="status">
+            Stored {importResult.rowsImported.toLocaleString("en-GB")} rows, updated {importResult.rowsUpdated}, skipped{" "}
+            {importResult.rowsSkipped}. Read {importResult.rowsRead.toLocaleString("en-GB")} rows.{" "}
+            {importResult.otherCustomerRows.toLocaleString("en-GB")} other customers were not stored. File size{" "}
+            {formatBytes(importResult.byteSize)}.
+          </p>
         </div>
       ) : null}
     </section>

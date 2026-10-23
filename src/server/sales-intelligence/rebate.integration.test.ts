@@ -8,6 +8,7 @@ import { AuthError } from "@/server/rbac/guards";
 import { saveProduct } from "@/server/catalogue/service";
 import { linkAndVerifyCompanyAutopartCustomerCode } from "@/server/companies/autopart-account";
 import { getCustomerSalesEnquiry } from "@/server/sales-intelligence/enquiry";
+import { getUnifiedCustomerSales } from "@/server/sales-intelligence/unified-sales";
 import {
   exportCustomerRebateDocumentsCsv,
   exportCustomerRebateProductsCsv,
@@ -425,7 +426,7 @@ describe("Rebate / Net Spend Analysis", () => {
     );
   });
 
-  it("All history has no public date bounds and excludes undated like before", async () => {
+  it("All history has no public date bounds and keeps undated lines without a date", async () => {
     const all = await getCustomerRebateAnalysis(adminId, {
       companyId: companyAId,
       period: "ALL",
@@ -435,11 +436,16 @@ describe("Rebate / Net Spend Analysis", () => {
     expect(all.period.to).toBeNull();
     expect(all.period.label).toBe("All history");
     expect(JSON.stringify(all.period)).not.toMatch(/0001-01-01|9999-12-31/);
-    // Same as Jan fixture + no extra undated inclusion
-    expect(Number(all.summary.invoiceSales)).toBeCloseTo(1500, 2);
+    // January fixture plus the undated £99 invoice. The date stays empty.
+    expect(Number(all.summary.invoiceSales)).toBeCloseTo(1599, 2);
     expect(Number(all.summary.credits)).toBeCloseTo(-100, 2);
-    expect(Number(all.summary.netSpend)).toBeCloseTo(1400, 2);
-    expect(all.documents.items.some((d) => d.documentReference === "RB-A-UND")).toBe(false);
+    expect(Number(all.summary.netSpend)).toBeCloseTo(1499, 2);
+    expect(all.documents.items.find((d) => d.documentReference === "RB-A-UND")?.documentDate).toBeNull();
+    const enquiry = await getUnifiedCustomerSales(adminId, {
+      companyId: companyAId,
+      period: "ALL",
+    });
+    expect(all.summary.netSpend).toBe(enquiry.kpis.netSales);
 
     const legacy = await getCustomerRebateAnalysis(adminId, {
       companyId: companyAId,

@@ -21,6 +21,7 @@ import { canOfferDispatchedTestOrderDelete } from "@/domain/delete-dispatched-te
 import { canOfferArchiveTestOrder, canOfferRestoreTestOrder } from "@/domain/archive-test-order";
 import { DeleteDispatchedTestOrderDialog } from "@/components/orders/DeleteDispatchedTestOrderDialog";
 import { ArchiveTestOrderDialog, RestoreTestOrderDialog } from "@/components/orders/ArchiveTestOrderDialog";
+import { ManualOrderResolutionPanel } from "@/components/orders/ManualOrderResolutionPanel";
 
 export const Route = createFileRoute("/admin/orders/$orderId")({
   head: () => ({ meta: [{ title: "Order — Automotive Brands Admin" }] }),
@@ -206,7 +207,9 @@ function AdminOrderDetailPage() {
             ) : null}
             {canDeleteOrders &&
             order.status !== "DISPATCHED" &&
-            order.status !== "DELIVERED" ? (
+            order.status !== "DELIVERED" &&
+            order.status !== "ADMINISTRATIVELY_CLOSED" &&
+            order.manualResolutionKind === "NONE" ? (
               <button
                 type="button"
                 disabled={deleting}
@@ -307,6 +310,11 @@ function AdminOrderDetailPage() {
         </p>
       ) : null}
       <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2">
+        <ManualOrderResolutionPanel
+          order={order}
+          canEdit={canDeleteOrders}
+          onChanged={load}
+        />
         <section className="rounded-lg border border-border p-5">
           <h2 className="font-display text-base font-semibold uppercase">Order summary</h2>
           <dl className="mt-3 space-y-2 text-[13px]">

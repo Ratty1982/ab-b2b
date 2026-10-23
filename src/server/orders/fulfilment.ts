@@ -22,6 +22,7 @@ export async function recordFulfilmentEvent(
       | "INVOICE_LINKED"
       | "PART_DESPATCHED"
       | "DESPATCHED"
+      | "ADMINISTRATIVELY_CLOSED"
       | "NOTE";
     summary: string;
     source:
@@ -67,11 +68,16 @@ export async function applyAuthoritativeLineDespatch(
     source: "MANUAL";
     invoiceId?: string | null;
     summary: string;
+    limitation?: string | null;
+    metadata?: Prisma.InputJsonValue;
   },
 ): Promise<{
   status: "PARTIALLY_DESPATCHED" | "DISPATCHED";
   fullyComplete: boolean;
+  /** Units actually added to each line during this call. */
+  increases: Array<{ orderItemId: string; quantity: number }>;
 }> {
+  const increases: Array<{ orderItemId: string; quantity: number }> = [];
   for (const line of input.lines) {
     const item = await tx.orderItem.findFirst({
       where: { id: line.orderItemId, orderId: input.orderId },
@@ -79,10 +85,12 @@ export async function applyAuthoritativeLineDespatch(
     });
     if (!item) continue;
     const next = Math.min(item.qty, Math.max(item.despatchedQty, Math.trunc(line.despatchedQty)));
+    const increase = next - item.despatchedQty;
     await tx.orderItem.update({
       where: { id: item.id },
       data: { despatchedQty: next },
     });
+    if (increase > 0) increases.push({ orderItemId: item.id, quantity: increase });
   }
 
   const items = await tx.orderItem.findMany({
@@ -104,8 +112,9 @@ export async function applyAuthoritativeLineDespatch(
     source: input.source,
     invoiceId: input.invoiceId ?? null,
     lineQuantitiesKnown: true,
-    limitation: null,
+    limitation: input.limitation ?? null,
+    ...(input.metadata != null ? { metadata: input.metadata } : {}),
   });
 
-  return { status, fullyComplete };
+  return { status, fullyComplete, increases };
 }

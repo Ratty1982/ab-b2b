@@ -38,9 +38,10 @@ export function AutopartMasterAccessPanel({ companyId }: { companyId: string }) 
       </div>
       {data.accounts.length === 0 ? (
         <p className="px-4 py-4 text-[13px] text-steel">
-          No Autopart customer-master account is linked to this company. Search the 407EXP master
-          and link the account from Customer master or the commercial tab. Linking does not import
-          historical purchases or approve portal login.
+          No 407EXP master account is linked. That is separate from a verified sales account, which
+          is enough for this customer's own sales files. Link a master account from Customer master
+          or the commercial tab when the 407EXP record should be attached. Linking does not import
+          purchases or approve portal login.
         </p>
       ) : (
         <ul className="divide-y divide-border/70">

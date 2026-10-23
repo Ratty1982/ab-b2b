@@ -109,11 +109,13 @@ export async function loadAccessProfile(userId: string): Promise<LoadedAccessPro
 
   const companyMemberships = user.companyUsers.map((cu) => {
     const tradeRole = companyRoleToTradeAccess(cu.role);
-    for (const key of TRADE_ROLE_PERMISSIONS[tradeRole]) {
-      // Trade permissions stay company-scoped at enforcement time.
-      // A staff DENY still suppresses the navigation hint for that key.
-      if (deniedPermissions.has(key)) continue;
-      permissions.add(key);
+    if (cu.status === "ACTIVE") {
+      for (const key of TRADE_ROLE_PERMISSIONS[tradeRole]) {
+        // Trade permissions stay company-scoped at enforcement time.
+        // A staff DENY still suppresses the navigation hint for that key.
+        if (deniedPermissions.has(key)) continue;
+        permissions.add(key);
+      }
     }
     return {
       companyId: cu.companyId,
@@ -152,8 +154,8 @@ export function profileToActor(
   const kind = profile.actorType === "INTERNAL" ? "internal_user" : "trade_user";
   const defaultCompany =
     opts?.companyId ??
-    profile.companyMemberships.find((m) => m.isDefault)?.companyId ??
-    profile.companyMemberships[0]?.companyId;
+    profile.companyMemberships.find((m) => m.isDefault && m.status === "ACTIVE")?.companyId ??
+    profile.companyMemberships.find((m) => m.status === "ACTIVE")?.companyId;
 
   const actor: RequestActor = {
     kind,

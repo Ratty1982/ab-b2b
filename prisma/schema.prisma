@@ -204,6 +204,23 @@ enum OrderStatus {
   DELIVERED
   CANCELLED
   ON_HOLD
+  /// Staff closed the order without confirming physical despatch. Not a delivery status.
+  ADMINISTRATIVELY_CLOSED
+}
+
+/// How staff resolved an order when Autopart invoice evidence was missing.
+enum OrderManualResolutionKind {
+  NONE
+  FULFILLED_MANUALLY
+  CLOSED_ADMINISTRATIVELY
+}
+
+/// Whether a financial invoice is on file. Manual resolution never invents one.
+enum OrderInvoiceEvidence {
+  NOT_RECORDED
+  OUTSTANDING
+  UNAVAILABLE
+  LINKED
 }
 
 /// Operational Autopart CSV handoff only — not fulfilment / despatch.
@@ -226,6 +243,8 @@ enum OrderFulfilmentEventKind {
   INVOICE_LINKED
   PART_DESPATCHED
   DESPATCHED
+  /// Closed without recording goods as despatched.
+  ADMINISTRATIVELY_CLOSED
   NOTE
 }
 
@@ -282,6 +301,47 @@ model CustomerSalesCutover {
   completedBy User?   @relation("CustomerSalesCutoverCompleter", fields: [completedById], references: [id], onDelete: SetNull)
 }
 
+/// Temporary private copy of one customer sales report. Not an imported sale.
+enum CustomerSalesUploadRole {
+  HISTORY_561L
+  HISTORY_SLRB
+  ONGOING
+}
+
+enum CustomerSalesUploadStatus {
+  STORED
+  PREVIEWED
+  PROCESSING
+  COMMITTED
+  FAILED
+  EXPIRED
+}
+
+/// Streamed upload for Import Sales History and customer 504/TRM21QC preview.
+/// The reset does not read or delete these rows. Confirm reads the file again.
+model CustomerSalesUpload {
+  id          String                    @id @default(cuid())
+  companyId   String
+  createdById String?
+  role        CustomerSalesUploadRole
+  status      CustomerSalesUploadStatus @default(STORED)
+  filename    String
+  storagePath String
+  byteSize    Int
+  sha256      String
+  /// Verified account selected when an ongoing report was previewed.
+  accountCode String?
+  expiresAt   DateTime
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("CustomerSalesUploadCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, createdAt])
+  @@index([expiresAt, status])
+}
+
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
   /// Ongoing Autopart all-branches 504 document feed.
@@ -327,6 +387,8 @@ enum AutopartDocumentFulfilmentStatus {
   SKIPPED_TERMINAL
   SKIPPED_BEFORE_FROM
   NOT_AB_ORDER
+  /// Invoice or credit linked after a manual resolution. Despatch was not repeated.
+  FINANCIAL_LINKED
 }
 
 enum AutopartCustomerImportStatus {
@@ -569,10 +631,12 @@ model User {
   autopartOrdersExported Order[]        @relation("OrderAutopartExporter")
   ordersArchived         Order[]        @relation("OrderArchivedBy")
   ordersBackorderAcknowledged Order[]   @relation("OrderBackorderAcknowledgedBy")
+  ordersManuallyResolved Order[]        @relation("OrderManualResolver")
   autopartExportBatches  AutopartOrderExportBatch[] @relation("AutopartExportBatchCreator")
   autopart504cImportRuns Autopart504cImportRun[] @relation("Autopart504cImportCreator")
   autopartCustomerImportRuns AutopartCustomerImportRun[] @relation("AutopartCustomerImportCreator")
   salesCutoversCompleted     CustomerSalesCutover[]      @relation("CustomerSalesCutoverCompleter")
+  customerSalesUploads       CustomerSalesUpload[]       @relation("CustomerSalesUploadCreator")
   autopartHistoricalAccessGrants AutopartAccount[] @relation("AutopartHistoricalAccessGrant")
   autopartMasterImportBatches AutopartImportBatch[] @relation("AutopartMasterImportCreator")
   autopartHistoryAllImports AutopartHistoryAllImport[] @relation("AutopartHistoryAllImportCreator")
@@ -836,6 +900,7 @@ model Company {
   autopartAccounts AutopartAccount[]
   autopartHistoryReviews AutopartHistoryReviewAccount[]
   salesCutover CustomerSalesCutover?
+  customerSalesUploads CustomerSalesUpload[]
 
   @@index([status])
   @@index([name])
@@ -2145,6 +2210,14 @@ model Order {
   /// Staff confirmed the customer was told about backordered units. Null when the order had none.
   backorderAcknowledgedAt DateTime?
   backorderAcknowledgedByUserId String?
+  /// Staff resolution when 504/TRM21QC invoice evidence was missing. NONE on ordinary orders.
+  manualResolutionKind OrderManualResolutionKind @default(NONE)
+  manualResolutionReason String?
+  manualResolvedAt DateTime?
+  manualResolvedByUserId String?
+  /// Stable fingerprint of the manual fulfilment quantities. Repeating it is a no-op.
+  manualResolutionFingerprint String?
+  invoiceEvidence OrderInvoiceEvidence @default(NOT_RECORDED)
   /// Idempotency key for the latest commercial edit. The original place key stays on idempotencyKey.
   editIdempotencyKey String? @unique
   createdAt       DateTime    @default(now())
@@ -2153,6 +2226,7 @@ model Order {
   company      Company                 @relation(fields: [companyId], references: [id])
   archivedBy   User?                   @relation("OrderArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
   backorderAcknowledgedBy User?        @relation("OrderBackorderAcknowledgedBy", fields: [backorderAcknowledgedByUserId], references: [id], onDelete: SetNull)
+  manualResolvedBy User?               @relation("OrderManualResolver", fields: [manualResolvedByUserId], references: [id], onDelete: SetNull)
   salesEditDrafts SalesOrderDraft[]    @relation("OrderSalesEdit")
   items        OrderItem[]
   invoices     Invoice[]
@@ -2173,6 +2247,8 @@ model Order {
   @@index([archivedAt])
   @@index([backorderAcknowledgedByUserId])
   @@index([fulfilmentChoice])
+  @@index([manualResolutionKind])
+  @@index([manualResolvedByUserId])
 }
 
 enum SalesOrderDraftStatus {

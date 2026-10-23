@@ -29,7 +29,7 @@ import {
   emptyToNull,
   type CompanyStatusKey,
 } from "@/domain/company";
-import { generateInviteToken, inviteUserSchema } from "@/domain/invitation";
+import { companyMembershipUpdateSchema, generateInviteToken, inviteUserSchema } from "@/domain/invitation";
 
 function companySelect() {
   return {
@@ -319,6 +319,7 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
               email: true,
               name: true,
               status: true,
+              emailVerified: true,
               lastLoginAt: true,
               createdAt: true,
             },
@@ -385,6 +386,7 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
       : null,
     permissions: {
       canEdit: grants(profile, "companies.edit", "admin.access"),
+      canEditContacts: grants(profile, "contacts.edit", "admin.access"),
       canDelete:
         grants(profile, "companies.delete", "admin.access"),
       canManageUsers:
@@ -401,20 +403,29 @@ export async function getCompanyWorkspace(actorUserId: string, companyId: string
       createdAt: a.createdAt.toISOString(),
       updatedAt: a.updatedAt.toISOString(),
     })),
-    users: company.users.map((cu) => ({
-      id: cu.id,
-      role: cu.role,
-      status: cu.status,
-      isDefault: cu.isDefault,
-      createdAt: cu.createdAt.toISOString(),
-      user: {
-        id: cu.user.id,
-        email: cu.user.email,
-        name: cu.user.name,
-        status: cu.user.status,
-        lastLoginAt: cu.user.lastLoginAt?.toISOString() ?? null,
-      },
-    })),
+    users: await Promise.all(
+      company.users.map(async (cu) => {
+        const otherCompanyCount = await prisma.companyUser.count({
+          where: { userId: cu.userId, NOT: { companyId } },
+        });
+        return {
+          id: cu.id,
+          role: cu.role,
+          status: cu.status,
+          isDefault: cu.isDefault,
+          otherCompanyCount,
+          createdAt: cu.createdAt.toISOString(),
+          user: {
+            id: cu.user.id,
+            email: cu.user.email,
+            name: cu.user.name,
+            status: cu.user.status,
+            emailVerified: cu.user.emailVerified,
+            lastLoginAt: cu.user.lastLoginAt?.toISOString() ?? null,
+          },
+        };
+      }),
+    ),
     invitations: company.invitations.map((inv) => ({
       id: inv.id,
       email: inv.email,
@@ -1216,6 +1227,104 @@ export async function revokeCompanyUserInvitation(actorUserId: string, raw: unkn
     after: { email: invitation.email, status: "REVOKED" },
   });
   return { id: invitation.id, status: "REVOKED" as const };
+}
+
+/**
+ * Change this customer's portal membership only.
+ * Login email, display name, sessions, and other company memberships stay as they are.
+ */
+export async function updateCompanyMembership(actorUserId: string, raw: unknown) {
+  await requireSystemPermission(actorUserId, "companies.manage_users");
+  const input = companyMembershipUpdateSchema.parse(raw);
+  await requireCompanyAccess(actorUserId, input.companyId);
+
+  const membership = await prisma.companyUser.findFirst({
+    where: { id: input.membershipId, companyId: input.companyId },
+    include: {
+      user: { select: { id: true, email: true, name: true, status: true, actorType: true, emailVerified: true } },
+      company: { select: { status: true } },
+    },
+  });
+  if (!membership) throw new AuthError("Portal user was not found for this customer", "NOT_FOUND", 404);
+  if (membership.user.actorType !== "TRADE") {
+    throw new AuthError(
+      "Internal staff access cannot be changed from a customer portal role",
+      "VALIDATION",
+      400,
+    );
+  }
+  if (input.status === "ACTIVE" && membership.company.status !== "ACTIVE") {
+    throw new AuthError(
+      "Reactivate portal access only after this customer account is Active",
+      "VALIDATION",
+      400,
+    );
+  }
+  if (membership.status === "INVITED" && input.status) {
+    throw new AuthError(
+      "Pending invitations are resent or revoked. Membership status changes after the person activates.",
+      "VALIDATION",
+      400,
+    );
+  }
+
+  const nextRole = input.role ?? membership.role;
+  const nextStatus = input.status ?? membership.status;
+  if (nextRole === membership.role && nextStatus === membership.status) {
+    return {
+      id: membership.id,
+      role: membership.role,
+      status: membership.status,
+      unchanged: true as const,
+    };
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.companyUser.update({
+      where: { id: membership.id },
+      data: { role: nextRole, status: nextStatus },
+    });
+    if (input.role && input.role !== membership.role) {
+      await tx.userInvitation.updateMany({
+        where: { companyId: input.companyId, userId: membership.userId, status: "PENDING" },
+        data: { role: input.role },
+      });
+    }
+    await tx.activity.create({
+      data: {
+        companyId: input.companyId,
+        userId: actorUserId,
+        type: "SYSTEM",
+        subject: "Portal user updated",
+        body: `${membership.user.email}: role ${membership.role} → ${nextRole}; membership ${membership.status} → ${nextStatus}`,
+        metadata: {
+          action: "company.user_membership_updated",
+          membershipId: membership.id,
+          userId: membership.userId,
+        },
+      },
+    });
+    return row;
+  });
+
+  await recordAuditEvent({
+    action: "company.user_membership_updated",
+    entityType: "CompanyUser",
+    entityId: membership.id,
+    actorUserId,
+    companyId: input.companyId,
+    before: { role: membership.role, status: membership.status, email: membership.user.email },
+    after: { role: updated.role, status: updated.status, email: membership.user.email },
+  });
+
+  return {
+    id: updated.id,
+    role: updated.role,
+    status: updated.status,
+    email: membership.user.email,
+    loginStatus: membership.user.status,
+    unchanged: false as const,
+  };
 }
 
 export async function listCompanyActivity(actorUserId: string, companyId: string, limit = 40) {

@@ -3702,6 +3702,18 @@ export const previewCustomerSalesHistoryFn = createServerFn({ method: "POST" })
     }
   });
 
+export const listStoredCustomerSalesHistoryFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as { companyId: string })
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const history = await import("@/server/companies/customer-sales-history-import");
+      return { ok: true as const, data: await history.listStoredCustomerSalesHistory(userId, data.companyId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const confirmCustomerSalesHistoryFn = createServerFn({ method: "POST" })
   .inputValidator(
     (data: unknown) =>
@@ -3718,6 +3730,70 @@ export const confirmCustomerSalesHistoryFn = createServerFn({ method: "POST" })
       const userId = await requireUserId();
       const history = await import("@/server/companies/customer-sales-history-import");
       return { ok: true as const, data: await history.confirmCustomerSalesHistory(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewCustomerSalesHistoryUploadFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as {
+        companyId: string;
+        upload561lId?: string;
+        uploadSlrbId?: string;
+        samplePage?: number;
+        samplePageSize?: number;
+      },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const uploads = await import("@/server/companies/customer-sales-upload");
+      return { ok: true as const, data: await uploads.previewCustomerSalesHistoryUpload(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmCustomerSalesHistoryUploadFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { companyId: string; upload561lId?: string; uploadSlrbId?: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const uploads = await import("@/server/companies/customer-sales-upload");
+      return { ok: true as const, data: await uploads.confirmCustomerSalesHistoryUpload(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const previewCustomerSalesImportUploadFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) =>
+      data as { companyId: string; accountCode: string; uploadId: string; samplePage?: number; samplePageSize?: number },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const uploads = await import("@/server/companies/customer-sales-upload");
+      return { ok: true as const, data: await uploads.previewCustomerSalesImportUpload(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const confirmCustomerSalesImportUploadFn = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: unknown) => data as { companyId: string; accountCode: string; uploadId: string },
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const uploads = await import("@/server/companies/customer-sales-upload");
+      return { ok: true as const, data: await uploads.confirmCustomerSalesImportUpload(userId, data) };
     } catch (e) {
       return toError(e);
     }

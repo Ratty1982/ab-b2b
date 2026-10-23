@@ -26,6 +26,7 @@ export const AUTOPART_DOCUMENT_FULFILMENT_STATUSES = [
   "SKIPPED_TERMINAL",
   "SKIPPED_BEFORE_FROM",
   "NOT_AB_ORDER",
+  "FINANCIAL_LINKED",
 ] as const;
 export type AutopartDocumentFulfilmentStatus =
   (typeof AUTOPART_DOCUMENT_FULFILMENT_STATUSES)[number];

@@ -14,6 +14,7 @@ export type CustomerOrderLifecycle =
   | "CANCELLED"
   | "ON_HOLD"
   | "DELIVERED"
+  | "ADMIN_CLOSED"
   | "OTHER";
 
 export type CustomerOrderStatusOpts = {
@@ -46,6 +47,8 @@ export function customerOrderLifecycle(
       return "CANCELLED";
     case "ON_HOLD":
       return "ON_HOLD";
+    case "ADMINISTRATIVELY_CLOSED":
+      return "ADMIN_CLOSED";
     default:
       return "OTHER";
   }
@@ -74,6 +77,8 @@ export function customerOrderStatusLabel(
       return "Cancelled";
     case "ON_HOLD":
       return "On hold";
+    case "ADMIN_CLOSED":
+      return "Closed";
     default:
       return status;
   }
@@ -101,6 +106,8 @@ export function customerOrderStatusTone(
       return "bad";
     case "ON_HOLD":
       return "warn";
+    case "ADMIN_CLOSED":
+      return "neutral";
     default:
       return "neutral";
   }

@@ -1,5 +1,5 @@
 /**
- * Sales reporting reads ongoing 504 / TRM21QC rows only.
+ * Sales Enquiry counts linked 561L product lines and ongoing TRM21QC lines.
  * A document that started as 561L or SLRB and was later accepted by the live
  * feed stays, because has504 / hasTrm21qc marks it as operational.
  * Historical-only rows are not treated as a complete purchase history.
@@ -14,7 +14,7 @@ export const ONGOING_DOCUMENT_SOURCES = [
 export const ONGOING_LINE_SOURCE = "ONGOING_TRM21QC";
 
 export const ONGOING_SALES_EMPTY =
-  "No ongoing 504 or TRM21QC sales are recorded for this customer. Historical Autopart purchases are not included.";
+  "No imported 561L product lines or ongoing TRM21QC sales are recorded for this customer.";
 
 export type SalesDocumentScope = {
   source: string | null | undefined;

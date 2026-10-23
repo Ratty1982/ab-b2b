@@ -42,6 +42,7 @@ import { Route as AdminRolesRouteImport } from './routes/admin.roles'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminVersionUpdatesRouteImport } from './routes/admin.version-updates'
 import { Route as ApiBuildRouteImport } from './routes/api/build'
+import { Route as ApiCustomerSalesUploadsRouteImport } from './routes/api/customer-sales-uploads'
 import { Route as BrandsIndexRouteImport } from './routes/brands.index'
 import { Route as BrandsSlugRouteImport } from './routes/brands.$slug'
 import { Route as CrmIndexRouteImport } from './routes/crm.index'
@@ -305,6 +306,11 @@ const AdminVersionUpdatesRoute = AdminVersionUpdatesRouteImport.update({
 const ApiBuildRoute = ApiBuildRouteImport.update({
   id: '/api/build',
   path: '/api/build',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCustomerSalesUploadsRoute = ApiCustomerSalesUploadsRouteImport.update({
+  id: '/api/customer-sales-uploads',
+  path: '/api/customer-sales-uploads',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BrandsIndexRoute = BrandsIndexRouteImport.update({
@@ -854,6 +860,7 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/version-updates': typeof AdminVersionUpdatesRouteWithChildren
   '/api/build': typeof ApiBuildRoute
+  '/api/customer-sales-uploads': typeof ApiCustomerSalesUploadsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
@@ -977,6 +984,7 @@ export interface FileRoutesByTo {
   '/admin/roles': typeof AdminRolesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/api/build': typeof ApiBuildRoute
+  '/api/customer-sales-uploads': typeof ApiCustomerSalesUploadsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
@@ -1104,6 +1112,7 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/version-updates': typeof AdminVersionUpdatesRouteWithChildren
   '/api/build': typeof ApiBuildRoute
+  '/api/customer-sales-uploads': typeof ApiCustomerSalesUploadsRoute
   '/brands/$slug': typeof BrandsSlugRoute
   '/crm/activities': typeof CrmActivitiesRoute
   '/crm/applications': typeof CrmApplicationsRoute
@@ -1239,6 +1248,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/version-updates'
     | '/api/build'
+    | '/api/customer-sales-uploads'
     | '/brands/$slug'
     | '/crm/activities'
     | '/crm/applications'
@@ -1362,6 +1372,7 @@ export interface FileRouteTypes {
     | '/admin/roles'
     | '/admin/settings'
     | '/api/build'
+    | '/api/customer-sales-uploads'
     | '/brands/$slug'
     | '/crm/activities'
     | '/crm/applications'
@@ -1488,6 +1499,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/version-updates'
     | '/api/build'
+    | '/api/customer-sales-uploads'
     | '/brands/$slug'
     | '/crm/activities'
     | '/crm/applications'
@@ -1611,6 +1623,7 @@ export interface RootRouteChildren {
   TradeSolutionsRoute: typeof TradeSolutionsRoute
   WhyAutomotiveBrandsRoute: typeof WhyAutomotiveBrandsRoute
   ApiBuildRoute: typeof ApiBuildRoute
+  ApiCustomerSalesUploadsRoute: typeof ApiCustomerSalesUploadsRoute
   BrandsSlugRoute: typeof BrandsSlugRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
   BrandsIndexRoute: typeof BrandsIndexRoute
@@ -1857,6 +1870,13 @@ declare module '@tanstack/react-router' {
       path: '/api/build'
       fullPath: '/api/build'
       preLoaderRoute: typeof ApiBuildRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/customer-sales-uploads': {
+      id: '/api/customer-sales-uploads'
+      path: '/api/customer-sales-uploads'
+      fullPath: '/api/customer-sales-uploads'
+      preLoaderRoute: typeof ApiCustomerSalesUploadsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/brands/': {
@@ -2944,6 +2964,7 @@ const rootRouteChildren: RootRouteChildren = {
   TradeSolutionsRoute: TradeSolutionsRoute,
   WhyAutomotiveBrandsRoute: WhyAutomotiveBrandsRoute,
   ApiBuildRoute: ApiBuildRoute,
+  ApiCustomerSalesUploadsRoute: ApiCustomerSalesUploadsRoute,
   BrandsSlugRoute: BrandsSlugRoute,
   ProductsSkuRoute: ProductsSkuRoute,
   BrandsIndexRoute: BrandsIndexRoute,

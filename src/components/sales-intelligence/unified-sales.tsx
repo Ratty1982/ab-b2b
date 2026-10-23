@@ -113,9 +113,8 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
         </p>
       ) : complete ? (
         <p className="rounded-md border border-good/30 bg-good/10 px-3 py-2 text-[12px] text-good">
-          Reconciled. Ongoing 504 and TRM21QC sources agree, so the combined net is complete.
-          Payments, receipts and ledger balances are not sales and are not included. Historical
-          Autopart purchases are not part of this total.
+          Reconciled. Imported 561L product lines and ongoing TRM21QC lines agree, or only one
+          of those sources is present. Payments, receipts and ledger balances are not sales.
         </p>
       ) : (
         <div className="rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
@@ -123,9 +122,9 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
           <p className="mt-1">
             {summary.unreconciledLines} line{summary.unreconciledLines === 1 ? "" : "s"} on{" "}
             {summary.unreconciledDocuments} document{summary.unreconciledDocuments === 1 ? "" : "s"}{" "}
-            could not be proven against the 504 header and are held back (
+            could not be proven against the other source or the 504 header and are held back (
             {formatGbp(summary.unreconciledDatedNet)}). No combined total is stated. The certified
-            net excludes them. Historical Autopart purchases are not included.
+            net excludes them. Payments are not sales.
           </p>
         </div>
       )}

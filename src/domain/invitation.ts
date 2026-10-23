@@ -8,6 +8,17 @@ export const COMPANY_USER_ROLES = [
   "TRADE_READ_ONLY",
 ] as const;
 
+export const companyMembershipUpdateSchema = z
+  .object({
+    companyId: z.string().cuid(),
+    membershipId: z.string().cuid(),
+    role: z.enum(COMPANY_USER_ROLES).optional(),
+    status: z.enum(["ACTIVE", "DISABLED"]).optional(),
+  })
+  .refine((value) => value.role !== undefined || value.status !== undefined, {
+    message: "Choose a role or a membership status",
+  });
+
 export const inviteUserSchema = z.object({
   companyId: z.string().cuid(),
   email: z.string().trim().email().max(320),

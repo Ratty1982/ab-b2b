@@ -5,11 +5,11 @@ import { StatusBadge } from "@/components/ab/Badges";
 import { Drawer, Field, inputClass } from "@/components/ab/Drawer";
 import { ConfirmAction } from "@/components/pricing/ConfirmAction";
 import { CommercialAuditList } from "@/components/pricing/CommercialAuditList";
-import { AutopartMasterAccessPanel } from "@/components/ab/AutopartMasterAccessPanel";
-import { CustomerSalesHistoryPanel } from "@/components/ab/CustomerSalesHistoryPanel";
-import { CustomerSalesImportPanel } from "@/components/ab/CustomerSalesImportPanel";
+import { CustomerAutopartWorkspace } from "@/components/ab/autopart/CustomerAutopartWorkspace";
 import { ValidityBadge } from "@/components/pricing/ValidityBadge";
 import { CustomerPriceImportPanel } from "@/components/pricing/CustomerPriceImportPanel";
+import { CustomerStatusPanel } from "@/components/ab/CustomerStatusPanel";
+import { CustomerCommercialRegister } from "@/components/ab/CustomerCommercialRegister";
 import { COMPANY_STATUSES, COMPANY_STATUS_LABEL, TAX_STATUSES } from "@/domain/company";
 import {
   companyPriceListLabel,
@@ -21,6 +21,7 @@ import { useSession } from "@/lib/session";
 import {
   createAddressFn,
   createContactFn,
+  updateContactFn,
   clearCompanyAutopartCustomerCodeFn,
   deleteCompanyFn,
   deleteCustomerPriceFn,
@@ -42,6 +43,7 @@ import {
   upsertCustomerPriceFn,
   verifyCompanyAutopartCustomerCodeFn,
 } from "@/server/phase2/fns";
+import { updateCompanyMembershipFn } from "@/server/workspace/fns";
 import { cn } from "@/lib/utils";
 import { InstantText } from "@/components/ab/InstantText";
 import { formatDate, formatOrDash } from "@/lib/datetime";
@@ -88,6 +90,8 @@ function CustomerWorkspace() {
     Array<{ id: string; code: string; name: string }>
   >([]);
   const [contactOpen, setContactOpen] = useState(false);
+  const [editingContact, setEditingContact] = useState<ContactDraft | null>(null);
+  const [managingUser, setManagingUser] = useState<PortalUserDraft | null>(null);
   const [addressOpen, setAddressOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -199,6 +203,11 @@ function CustomerWorkspace() {
       <div className="p-4 sm:p-6">
         {tab === "Overview" ? (
           <div className="grid gap-6 lg:grid-cols-2">
+            <CustomerStatusPanel
+              company={company}
+              canEdit={Boolean(permissions.canEdit)}
+              onChanged={reload}
+            />
             <section className="border border-border bg-surface/40 p-5">
               <h2 className="font-display text-lg uppercase">Company details</h2>
               <dl className="mt-4 grid gap-3 text-[13px]">
@@ -297,22 +306,32 @@ function CustomerWorkspace() {
             actionLabel="Add contact"
             onAction={() => setContactOpen(true)}
           >
-            {contacts.map((c: {
-              id: string;
-              firstName: string;
-              lastName: string;
-              jobTitle: string | null;
-              email: string | null;
-              isPrimary: boolean;
-              isPurchasing: boolean;
-              isAccounts: boolean;
-            }) => (
+            {contacts.map((c: ContactDraft) => (
               <li key={c.id} className="border border-border bg-surface/40 p-4">
-                <div className="font-semibold">
-                  {c.firstName} {c.lastName}
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold">
+                      {c.firstName} {c.lastName}
+                    </div>
+                    <div className="text-[12px] text-steel">{c.jobTitle || "—"}</div>
+                  </div>
+                  {permissions.canEditContacts ? (
+                    <button
+                      type="button"
+                      data-contact-action="edit"
+                      onClick={() => setEditingContact(c)}
+                      className="h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                 </div>
-                <div className="text-[12px] text-steel">{c.jobTitle}</div>
-                <div className="mt-2 text-[13px]">{c.email}</div>
+                <dl className="mt-3 grid gap-1 text-[13px] sm:grid-cols-2">
+                  <div>{c.email || "No email"}</div>
+                  <div>{c.phone || "No phone"}</div>
+                  <div>{c.mobile || "No mobile"}</div>
+                </dl>
+                {c.notes ? <p className="mt-2 text-[13px] text-steel">{c.notes}</p> : null}
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {c.isPrimary ? <StatusBadge tone="brand">Primary</StatusBadge> : null}
                   {c.isPurchasing ? <StatusBadge>Purchasing</StatusBadge> : null}
@@ -341,17 +360,7 @@ function CustomerWorkspace() {
                   }
                 : {})}
             >
-              {users.map((u: {
-                id: string;
-                role: string;
-                status: string;
-                user: {
-                  name: string | null;
-                  email: string;
-                  status?: string;
-                  lastLoginAt: string | null;
-                };
-              }) => (
+              {users.map((u: PortalUserDraft) => (
                 <li key={u.id} className="border border-border bg-surface/40 p-4">
                   <div className="font-semibold">{u.user.name ?? u.user.email}</div>
                   <div className="text-[12px] text-steel">{u.user.email}</div>
@@ -361,7 +370,18 @@ function CustomerWorkspace() {
                     <span className="text-steel">
                       Last login <InstantText value={u.user.lastLoginAt} variant="audit" />
                     </span>
+                    <span className="text-steel">Login {u.user.status ?? "—"}</span>
                   </div>
+                  {permissions.canManageUsers ? (
+                    <button
+                      type="button"
+                      data-user-action="manage"
+                      className="mt-3 h-9 rounded-md border border-border px-3 text-[11px] font-bold uppercase hover:border-steel"
+                      onClick={() => setManagingUser(u)}
+                    >
+                      Edit / Manage
+                    </button>
+                  ) : null}
                   {company.status === "ACTIVE" &&
                   (u.status === "INVITED" || u.user.status === "INVITED") ? (
                     <button
@@ -527,16 +547,7 @@ function CustomerWorkspace() {
         ) : null}
 
         {tab === "Autopart" ? (
-          <>
-            <AutopartMasterAccessPanel companyId={company.id} />
-            <CustomerSalesHistoryPanel companyId={company.id} />
-            <CustomerSalesImportPanel companyId={company.id} />
-            <p className="text-[13px] text-steel">
-              Import Sales History stores 561L product lines and SLRB ledger evidence for this
-              Active customer only. Ongoing 504 and TRM21QC sales start after that cutover.
-              Verifying the Autopart ID does not import history or approve portal login.
-            </p>
-          </>
+          <CustomerAutopartWorkspace companyId={company.id} onOpenOverview={() => setTab("Overview")} />
         ) : null}
 
         {tab === "Activity" ? (
@@ -559,25 +570,33 @@ function CustomerWorkspace() {
         ) : null}
 
         {tab === "Documents" || tab === "Orders" || tab === "Quotes" || tab === "Invoices" ? (
-          <div className="rounded-md border border-dashed border-border px-6 py-12 text-center text-sm text-steel">
-            {tab} will be available in a later phase.
-            {tab === "Documents" ? (
-              <div className="mt-2">
-                <Link to={ROUTES.adminApplications} className="text-primary hover:underline">
-                  Related trade applications
-                </Link>
-              </div>
-            ) : null}
-          </div>
+          <CustomerCommercialRegister companyId={company.id} tab={tab} />
         ) : null}
       </div>
 
-      {contactOpen ? (
+      {contactOpen || editingContact ? (
         <ContactDrawer
           companyId={company.id}
-          onClose={() => setContactOpen(false)}
+          contact={editingContact}
+          onClose={() => {
+            setContactOpen(false);
+            setEditingContact(null);
+          }}
           onSaved={async () => {
             setContactOpen(false);
+            setEditingContact(null);
+            await reload();
+          }}
+        />
+      ) : null}
+      {managingUser ? (
+        <PortalUserDrawer
+          companyId={company.id}
+          companyStatus={company.status}
+          user={managingUser}
+          onClose={() => setManagingUser(null)}
+          onSaved={async () => {
+            setManagingUser(null);
             await reload();
           }}
         />
@@ -1279,45 +1298,85 @@ function AutopartAccountEditor({
   );
 }
 
+type ContactDraft = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  jobTitle: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  notes: string | null;
+  isPrimary: boolean;
+  isPurchasing: boolean;
+  isAccounts: boolean;
+};
+
+type PortalUserDraft = {
+  id: string;
+  role: string;
+  status: string;
+  otherCompanyCount?: number;
+  user: {
+    name: string | null;
+    email: string;
+    status?: string;
+    emailVerified?: boolean;
+    lastLoginAt: string | null;
+  };
+};
+
 function ContactDrawer({
   companyId,
+  contact,
   onClose,
   onSaved,
 }: {
   companyId: string;
+  contact: ContactDraft | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
-  const [isPrimary, setIsPrimary] = useState(false);
-  const [isPurchasing, setIsPurchasing] = useState(false);
-  const [isAccounts, setIsAccounts] = useState(false);
+  const [firstName, setFirstName] = useState(contact?.firstName ?? "");
+  const [lastName, setLastName] = useState(contact?.lastName ?? "");
+  const [email, setEmail] = useState(contact?.email ?? "");
+  const [phone, setPhone] = useState(contact?.phone ?? "");
+  const [mobile, setMobile] = useState(contact?.mobile ?? "");
+  const [notes, setNotes] = useState(contact?.notes ?? "");
+  const [jobTitle, setJobTitle] = useState(contact?.jobTitle ?? "");
+  const [isPrimary, setIsPrimary] = useState(contact?.isPrimary ?? false);
+  const [isPurchasing, setIsPurchasing] = useState(contact?.isPurchasing ?? false);
+  const [isAccounts, setIsAccounts] = useState(contact?.isAccounts ?? false);
+  const [saving, setSaving] = useState(false);
 
   return (
-    <Drawer open title="Add contact" onClose={onClose}>
+    <Drawer open title={contact ? "Edit contact" : "Add contact"} onClose={onClose}>
       <form
         className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           void (async () => {
-            const r = await createContactFn({
-              data: {
-                companyId,
-                firstName,
-                lastName,
-                email: email || null,
-                jobTitle: jobTitle || null,
-                isPrimary,
-                isPurchasing,
-                isAccounts,
-              },
-            });
+            setSaving(true);
+            const payload = {
+              companyId,
+              firstName,
+              lastName,
+              email: email || null,
+              phone: phone || null,
+              mobile: mobile || null,
+              notes: notes || null,
+              jobTitle: jobTitle || null,
+              isPrimary,
+              isPurchasing,
+              isAccounts,
+            };
+            const r = contact
+              ? await updateContactFn({ data: { ...payload, id: contact.id } })
+              : await createContactFn({ data: payload });
+            setSaving(false);
             if (!r.ok) toast.error(r.error);
             else {
-              toast.success("Contact added");
+              toast.success(contact ? "Contact saved" : "Contact added");
               await onSaved();
             }
           })();
@@ -1329,11 +1388,20 @@ function ContactDrawer({
         <Field label="Last name">
           <input required value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />
         </Field>
+        <Field label="Job title">
+          <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputClass} />
+        </Field>
         <Field label="Email">
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
         </Field>
-        <Field label="Job title">
-          <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputClass} />
+        <Field label="Phone">
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Mobile">
+          <input value={mobile} onChange={(e) => setMobile(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label="Notes">
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} rows={3} />
         </Field>
         <label className="flex items-center gap-2 text-[13px]">
           <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} />
@@ -1341,15 +1409,134 @@ function ContactDrawer({
         </label>
         <label className="flex items-center gap-2 text-[13px]">
           <input type="checkbox" checked={isPurchasing} onChange={(e) => setIsPurchasing(e.target.checked)} />
-          Purchasing
+          Purchasing contact
         </label>
         <label className="flex items-center gap-2 text-[13px]">
           <input type="checkbox" checked={isAccounts} onChange={(e) => setIsAccounts(e.target.checked)} />
-          Accounts
+          Accounts contact
         </label>
-        <button type="submit" className="h-11 rounded-md bg-primary text-[13px] font-bold uppercase text-primary-foreground">
-          Save contact
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" disabled={saving} className="h-11 rounded-md bg-primary px-4 text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-60">
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button type="button" onClick={onClose} className="h-11 rounded-md border border-border px-4 text-[13px] font-bold uppercase">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Drawer>
+  );
+}
+
+function PortalUserDrawer({
+  companyId,
+  companyStatus,
+  user,
+  onClose,
+  onSaved,
+}: {
+  companyId: string;
+  companyStatus: string;
+  user: PortalUserDraft;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [role, setRole] = useState(user.role);
+  const [status, setStatus] = useState(user.status);
+  const [saving, setSaving] = useState(false);
+  const invited = user.status === "INVITED" || user.user.status === "INVITED";
+
+  return (
+    <Drawer open title="Manage portal user" sub={user.user.email} onClose={onClose}>
+      <form
+        className="grid gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void (async () => {
+            setSaving(true);
+            const result = await updateCompanyMembershipFn({
+              data: {
+                companyId,
+                membershipId: user.id,
+                role,
+                ...(invited ? {} : { status }),
+              },
+            });
+            setSaving(false);
+            if (!result.ok) {
+              toast.error(result.error);
+              return;
+            }
+            toast.success(result.data.unchanged ? "No changes to save" : "Portal user updated");
+            await onSaved();
+          })();
+        }}
+      >
+        <p className="text-[12px] text-steel">
+          Login email stays {user.user.email}. Email changes need a verified process, so this screen
+          leaves the login address read-only. The display name is also left unchanged because it
+          belongs to the person, including any other customer accounts
+          {user.otherCompanyCount ? ` (${user.otherCompanyCount} other)` : ""}.
+        </p>
+        <Field label="Display name">
+          <input value={user.user.name ?? ""} readOnly className={inputClass} />
+        </Field>
+        <Field label="Login email">
+          <input value={user.user.email} readOnly className={inputClass} />
+        </Field>
+        <div className="text-[12px] text-steel">
+          Login status {user.user.status ?? "—"} · Email {user.user.emailVerified ? "verified" : "not verified"} · Last login{" "}
+          <InstantText value={user.user.lastLoginAt} variant="audit" /> · Membership {user.status}
+        </div>
+        <Field label="Role at this customer">
+          <select value={role} onChange={(event) => setRole(event.target.value)} className={inputClass}>
+            <option value="TRADE_ADMIN">Trade admin</option>
+            <option value="TRADE_BUYER">Buyer</option>
+            <option value="TRADE_ACCOUNTS">Accounts</option>
+            <option value="TRADE_READ_ONLY">Read only</option>
+          </select>
+        </Field>
+        {invited ? (
+          <p className="text-[12px] text-steel">
+            This invitation is still pending. Resend or revoke it below. Activation is only available
+            while the customer account is Active.
+          </p>
+        ) : (
+          <Field label="Membership at this customer">
+            <select value={status} onChange={(event) => setStatus(event.target.value)} className={inputClass}>
+              <option value="ACTIVE">Active</option>
+              <option value="DISABLED">Suspended</option>
+            </select>
+          </Field>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" disabled={saving} className="h-11 rounded-md bg-primary px-4 text-[13px] font-bold uppercase text-primary-foreground disabled:opacity-60">
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button type="button" onClick={onClose} className="h-11 rounded-md border border-border px-4 text-[13px] font-bold uppercase">
+            Cancel
+          </button>
+        </div>
+        {companyStatus === "ACTIVE" && invited ? (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="h-10 rounded-md border border-border px-3 text-[11px] font-bold uppercase"
+              onClick={() => {
+                void (async () => {
+                  const result = await inviteCompanyUserFn({ data: { companyId, email: user.user.email, role } });
+                  if (!result.ok) toast.error(result.error);
+                  else {
+                    toast.success(result.data.emailSent ? "Invitation resent" : "Invitation updated");
+                    await onSaved();
+                  }
+                })();
+              }}
+            >
+              Resend invitation
+            </button>
+          </div>
+        ) : null}
       </form>
     </Drawer>
   );
