@@ -342,6 +342,92 @@ model CustomerSalesUpload {
   @@index([expiresAt, status])
 }
 
+enum CustomerSalesHistoryJobStatus {
+  QUEUED
+  STAGING
+  PUBLISHING
+  COMPLETE
+  FAILED
+}
+
+/// Durable history confirmation. Live sales and the customer cutover stay unchanged
+/// until publication commits.
+model CustomerSalesHistoryJob {
+  id                   String                         @id @default(cuid())
+  companyId            String
+  status               CustomerSalesHistoryJobStatus  @default(QUEUED)
+  /// PLAN, STAGING, or PUBLISH. Publication is a separate committed step.
+  phase                String                         @default("PLAN")
+  upload561lId         String?
+  uploadSlrbId         String?
+  sha256561l           String?
+  sha256Slrb           String?
+  filename561l         String?
+  filenameSlrb         String?
+  actorUserId          String
+  runnerToken          String?
+  heartbeatAt          DateTime?
+  stageCursor          Int                            @default(0)
+  rowsProcessed        Int                            @default(0)
+  rowsStaged           Int                            @default(0)
+  rowsStored           Int                            @default(0)
+  duplicates           Int                            @default(0)
+  rejected             Int                            @default(0)
+  failed               Int                            @default(0)
+  productLines         Int                            @default(0)
+  supportingDocuments  Int                            @default(0)
+  ledgerRows           Int                            @default(0)
+  rowsRead             Int                            @default(0)
+  otherCustomerRows    Int                            @default(0)
+  /// Set when this job was given an uploaded-file row count. Inline pastes leave this false.
+  countedFileRows      Boolean                        @default(false)
+  historyFrom          DateTime?
+  historyTo            DateTime?
+  historyStatus        String?
+  error                String?
+  createdAt            DateTime                       @default(now())
+  updatedAt            DateTime                       @updatedAt
+  completedAt          DateTime?
+
+  company Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  stages  CustomerSalesHistoryStage[]
+
+  @@index([companyId, status])
+  @@index([upload561lId])
+  @@index([uploadSlrbId])
+}
+
+/// Rows waiting to be published for one history job. Not sales evidence.
+model CustomerSalesHistoryStage {
+  jobId             String
+  seq               Int
+  kind              String
+  duplicate         Boolean  @default(false)
+  documentType      String
+  documentReference String
+  lineNumber        Int      @default(0)
+  fingerprint       String   @default("")
+  accountCode       String
+  sku               String?
+  description       String?
+  units             Decimal? @db.Decimal(12, 3)
+  salesNet          Decimal? @db.Decimal(12, 2)
+  goodsNet          Decimal? @db.Decimal(12, 2)
+  vat               Decimal? @db.Decimal(12, 2)
+  grossTotal        Decimal? @db.Decimal(12, 2)
+  documentDate      DateTime?
+  rawInvAndLn       String?
+  source            String
+  matchedVariantId  String?
+  matchStatus       String?
+
+  job CustomerSalesHistoryJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@id([jobId, seq])
+  @@unique([jobId, kind, documentType, documentReference, lineNumber, fingerprint])
+  @@index([jobId, kind])
+}
+
 enum AutopartCustomerImportType {
   HISTORY_561L_SLRB
   /// Ongoing Autopart all-branches 504 document feed.
@@ -901,6 +987,7 @@ model Company {
   autopartHistoryReviews AutopartHistoryReviewAccount[]
   salesCutover CustomerSalesCutover?
   customerSalesUploads CustomerSalesUpload[]
+  salesHistoryJobs CustomerSalesHistoryJob[]
 
   @@index([status])
   @@index([name])

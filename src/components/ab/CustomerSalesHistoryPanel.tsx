@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   acknowledgeCustomerSalesHistoryFn,
   completeCustomerSalesCutoverFn,
   confirmCustomerSalesHistoryUploadFn,
+  getCustomerSalesHistoryJobFn,
   startCustomerSalesHistoryBaselineFn,
   listCustomerSalesAccountsFn,
   previewCustomerSalesHistoryUploadFn,
@@ -23,6 +24,8 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   const [progress, setProgress] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [job, setJob] = useState<ImportResult | null>(null);
+  const finishedJob = useRef<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<string>("NOT_STARTED");
   const [historyKind, setHistoryKind] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,6 +41,37 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
   useEffect(() => {
     void refreshStatus();
   }, [companyId]);
+
+  const jobActive = job != null && (job.status === "QUEUED" || job.status === "STAGING" || job.status === "PUBLISHING");
+
+  useEffect(() => {
+    if (!jobActive || !job) return;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        const result = await getCustomerSalesHistoryJobFn({ data: { jobId: job.jobId } });
+        if (result.ok) setJob(result.data);
+      })();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [jobActive, job]);
+
+  useEffect(() => {
+    if (!job || finishedJob.current === job.jobId) return;
+    if (job.status !== "COMPLETE" && job.status !== "FAILED") return;
+    finishedJob.current = job.jobId;
+    if (job.status === "FAILED") {
+      toast.error(job.error ?? "Import failed. No completed history was saved.");
+      return;
+    }
+    setImportResult(job);
+    setPreview(null);
+    toast.success(
+      job.historyStatus === "REVIEW"
+        ? "Valid rows stored. Cutover stays in review"
+        : "Sales history stored for this customer",
+    );
+    void refreshStatus();
+  }, [job]);
 
   async function uploadFile(file: File, role: "HISTORY_561L" | "HISTORY_SLRB") {
     setPreview(null);
@@ -310,7 +344,7 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
           ) : null}
           <button
             type="button"
-            disabled={!preview.canCommit || busy}
+            disabled={!preview.canCommit || busy || jobActive}
             className="mt-3 h-9 rounded-md bg-primary px-3 text-[12px] font-bold uppercase text-primary-foreground disabled:opacity-50"
             onClick={() => {
               void (async () => {
@@ -329,14 +363,9 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
                   toast.error(result.error);
                   return;
                 }
-                setPreview(null);
-                setImportResult(result.data);
-                toast.success(
-                  result.data.historyStatus === "REVIEW"
-                    ? "Valid rows stored. Cutover stays in review"
-                    : "Sales history stored for this customer",
-                );
-                await refreshStatus();
+                finishedJob.current = null;
+                setJob(result.data);
+                toast.message("Import started. History stays unchanged until the job finishes.");
               })();
             }}
           >
@@ -344,14 +373,21 @@ export function CustomerSalesHistoryPanel({ companyId }: { companyId: string }) 
           </button>
         </div>
       ) : null}
+      {job ? (
+        <p className="border-t border-border/70 px-4 py-3 text-[13px]" role="status">
+          Import {job.status.toLowerCase()}. Processed {job.rowsProcessed.toLocaleString("en-GB")}. Stored{" "}
+          {job.rowsStored.toLocaleString("en-GB")}. Duplicates {job.duplicates.toLocaleString("en-GB")}. Rejected{" "}
+          {job.rejected.toLocaleString("en-GB")}. Failed {job.failed.toLocaleString("en-GB")}. Customer history is not
+          complete until this job finishes.
+        </p>
+      ) : null}
       {importResult ? (
         <div className="border-t border-border/70 px-4 py-4">
           <h4 className="text-[12px] font-bold uppercase tracking-wide">Import result</h4>
           <p className="mt-1 text-[13px]" role="status">
             Stored {importResult.rowsImported.toLocaleString("en-GB")} rows. Duplicates {importResult.duplicates}. Read{" "}
             {importResult.rowsRead.toLocaleString("en-GB")} rows, {importResult.otherCustomerRows.toLocaleString("en-GB")}{" "}
-            from other customers were not stored. Cutover {importResult.historyStatus}. File size{" "}
-            {formatBytes(importResult.byteSize)}.
+            from other customers were not stored. Cutover {importResult.historyStatus ?? "unchanged"}.
           </p>
         </div>
       ) : null}
