@@ -490,9 +490,9 @@ export async function previewCustomerSalesHistory(
     companyName: target.companyName,
     accountCodes: target.codes,
     message: hasExceptions
-      ? "These reports contain rejected, malformed, or unowned rows. Valid rows can be stored. Cutover stays in review until a member of staff accepts the exceptions. This is not a zero-history account."
+      ? "Preview shows proposed changes. Nothing is stored until you import. These reports contain rejected, malformed, or unowned rows. Valid rows can be stored. Cutover stays in review until a member of staff accepts the exceptions. This is not a zero-history account."
       : canCommit
-        ? null
+        ? "Preview shows proposed changes. Nothing is stored until you import."
         : "Nothing new in these reports belongs to this customer's verified accounts.",
     counts: planned.counts,
     rows: planned.rows,
@@ -514,6 +514,78 @@ export async function previewCustomerSalesHistory(
     },
   });
   return preview;
+}
+
+const STORED_HISTORY_ROW_LIMIT = 100;
+
+export async function listStoredCustomerSalesHistory(actorUserId: string, companyId: string) {
+  await requireHistoryImporter(actorUserId);
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { id: true },
+  });
+  if (!company) throw new AuthError("Customer not found", "NOT_FOUND", 404);
+  const where = { companyId: company.id, source: "561L" as const };
+  const [productLines, datedProductLines, paymentDocuments, saleDocuments, net, rows, cutover] =
+    await Promise.all([
+      prisma.autopartSalesLine.count({ where }),
+      prisma.autopartSalesLine.count({
+        where: { ...where, document: { is: { documentDate: { not: null } } } },
+      }),
+      prisma.autopartSalesDocument.count({
+        where: { companyId: company.id, documentType: "PAYMENT" },
+      }),
+      prisma.autopartSalesDocument.count({
+        where: {
+          companyId: company.id,
+          source: { in: ["561L", "SLRB"] },
+          documentType: { in: ["INVOICE", "CREDIT"] },
+        },
+      }),
+      prisma.autopartSalesLine.aggregate({
+        where: { ...where, documentType: { in: ["INVOICE", "CREDIT"] } },
+        _sum: { salesNet: true },
+      }),
+      prisma.autopartSalesLine.findMany({
+        where,
+        orderBy: [{ documentReference: "asc" }, { lineNumber: "asc" }],
+        take: STORED_HISTORY_ROW_LIMIT,
+        select: {
+          documentReference: true,
+          documentType: true,
+          sku: true,
+          units: true,
+          salesNet: true,
+          source: true,
+          document: { select: { documentDate: true } },
+        },
+      }),
+      prisma.customerSalesCutover.findUnique({
+        where: { companyId: company.id },
+        select: { historyStatus: true },
+      }),
+    ]);
+  return {
+    kind: "stored" as const,
+    companyId: company.id,
+    historyStatus: cutover?.historyStatus ?? "NOT_STARTED",
+    productLines,
+    datedProductLines,
+    undatedProductLines: productLines - datedProductLines,
+    saleDocuments,
+    paymentDocuments,
+    productNet: net._sum.salesNet?.toString() ?? "0",
+    truncated: productLines > rows.length,
+    rows: rows.map((row) => ({
+      document: row.documentReference,
+      type: row.documentType,
+      date: row.document?.documentDate?.toISOString().slice(0, 10) ?? null,
+      sku: row.sku,
+      quantity: row.units.toString(),
+      amount: row.salesNet.toString(),
+      source: row.source,
+    })),
+  };
 }
 
 export async function confirmCustomerSalesHistory(

@@ -200,8 +200,9 @@ export type RebatePeriodPreset =
   | "CUSTOM";
 
 /**
- * Internal query window that preserves historic “all dated documents” semantics
- * (excludes null documentDate via Prisma gte/lte). Never expose in UI/CSV/URL.
+ * Internal query window for All history. Counted product lines include undated
+ * rows for this sentinel and do not invent a date. A normal date bound still
+ * omits null document dates. Never expose in UI/CSV/URL.
  */
 export const ALL_DATED_HISTORY_QUERY_RANGE: DateOnlyRange = {
   from: "0001-01-01",

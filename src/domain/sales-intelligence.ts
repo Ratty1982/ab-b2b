@@ -1,8 +1,8 @@
 /**
  * Sales Intelligence — domain definitions for internal Sales Enquiry.
  *
- * Source of truth for invoiced sales: ongoing 504 headers and TRM21QC lines.
- * Historical 561L and SLRB purchases are not included. AB Orders and retired
+ * Source of truth for invoiced sales: per-customer 561L product lines and
+ * ongoing TRM21QC lines. SLRB payments are not sales. AB Orders and retired
  * 504C feeds are excluded from Invoice Sales / Credits / Net Sales.
  */
 

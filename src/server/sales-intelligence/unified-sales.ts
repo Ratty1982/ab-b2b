@@ -8,14 +8,15 @@
  *    AutopartAccount. A mapping timestamp with no staff verifier does not attach that history.
  *    Codes linked to more than one company are excluded and listed for reconciliation.
  *    Names are never used.
- * 2. Lines: global 561L AutopartInvoiceLine rows (undated) for linked codes, plus dated
- *    AutopartSalesLine rows (per-company 561L/SLRB import and the TRM21QC feed) for the company,
- *    including feed lines still waiting for a company whose exact code is now linked.
+ * 2. Lines: per-customer AutopartSalesLine rows with source 561L, plus ongoing TRM21QC
+ *    lines for the company, including feed lines still waiting for a company whose exact
+ *    code is now linked. The document date is the linked sales-document date (usually
+ *    from SLRB). A null date stays null. Retired global AutopartInvoiceLine rows are not read.
  * 3. Overlap: lines are grouped per company + document reference and source. When a reference
- *    appears in more than one source (global 561L, company 561L/SLRB import, TRM21QC feed), one copy
- *    is counted — TRM21QC, then company import, then global 561L — and the others are suppressed,
- *    only when every source agrees on every line (type, SKU, signed qty, signed net). Otherwise all
- *    copies are UNRECONCILED and stay out of certified totals.
+ *    appears in both the company 561L import and the TRM21QC feed, one copy is counted —
+ *    TRM21QC, then the company import — and the other is suppressed, only when every source
+ *    agrees on every line (type, SKU, signed qty, signed net). Otherwise all copies are
+ *    UNRECONCILED and stay out of certified totals. SLRB payments are not product lines.
  * 4. Repeated identical 561L rows (same account, Inv & Ln, part, qty and sales) beyond the first
  *    are UNRECONCILED, so a repeated export row can never add sales. A different Inv & Ln, part,
  *    quantity or amount is a separate line and stays counted.
@@ -23,7 +24,8 @@
  *    differs from the counted lines by more than 1p, or a header with no lines, is UNRECONCILED.
  *
  * SLRB ledger rows (payments, receipts, balances) and native B2B orders are never read here.
- * Dated Sales Intelligence modules keep using dated rows only; undated 561L never reaches them.
+ * Bounded periods omit lines with no document date. All Time and All history keep those
+ * lines and do not invent a date.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -206,7 +208,10 @@ export function unifiedLinesCte(
       sku_refs AS (
         SELECT l."documentReference" AS ref
         FROM "AutopartSalesLine" l
-        WHERE l."source" = 'ONGOING_TRM21QC'
+        WHERE (
+            l."source" = 'ONGOING_TRM21QC'
+            OR (l."source" = '561L' AND l."companyId" IS NOT NULL)
+          )
           AND UPPER(btrim(l."sku")) = ${skuKey}
           AND l."documentReference" IS NOT NULL
       ),`
@@ -298,7 +303,7 @@ export function unifiedLinesCte(
       FROM "AutopartSalesLine" l
       LEFT JOIN "AutopartSalesDocument" doc ON doc.id = l."documentId"
       WHERE l."companyId" IS NOT NULL
-        AND l."source" = 'ONGOING_TRM21QC'
+        AND l."source" IN ('ONGOING_TRM21QC', '561L')
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         AND ${companyIn(universe, Prisma.sql`l."companyId"`)}
         AND ${dRestrict}
@@ -388,9 +393,17 @@ export function unifiedLinesCte(
           WHEN r.source = 'HISTORICAL_561L' AND (r.doc_ref IS NULL OR r.doc_type = 'UNKNOWN') THEN 'UNRECONCILED'
           WHEN gf.hold AND (r.doc_ref IS NULL OR ds.sources = 1 OR ds.signatures = 1) THEN 'UNRECONCILED'
           WHEN r.doc_ref IS NULL OR ds.sources = 1 THEN
-            CASE WHEN r.source = 'HISTORICAL_561L' THEN 'HISTORICAL' ELSE 'DATED' END
+            CASE
+              WHEN r.source = 'HISTORICAL_561L' THEN 'HISTORICAL'
+              WHEN r.source = 'COMPANY_561L_SLRB' AND r.doc_date IS NULL THEN 'HISTORICAL'
+              ELSE 'DATED'
+            END
           WHEN ds.signatures = 1 THEN
-            CASE WHEN r.source = ds.preferred THEN 'MATCHED' ELSE 'DUPLICATE' END
+            CASE
+              WHEN r.source <> ds.preferred THEN 'DUPLICATE'
+              WHEN r.source = 'COMPANY_561L_SLRB' AND r.doc_date IS NULL THEN 'HISTORICAL'
+              ELSE 'MATCHED'
+            END
           ELSE 'UNRECONCILED'
         END AS status,
         CASE
@@ -784,10 +797,10 @@ export async function loadUnifiedIdentity(companyId: string): Promise<UnifiedIde
         ? "Linked to more than one CRM company. Held for reconciliation and not counted."
         : !entry.mappingVerified
           ? (mapping.attention ??
-            "This Autopart ID needs review. Historic 561L lines are not attached.")
+            "This Autopart ID needs review.")
           : entry.attached
             ? null
-            : "Assigned Autopart ID is verified for this company. Historic 561L lines are not included.";
+            : "Assigned Autopart ID is verified for this company.";
     }
   }
   return [...byCode.values()].sort((a, b) => a.code.localeCompare(b.code));
@@ -1217,7 +1230,7 @@ function txWhere(input: TxInput): { where: Prisma.Sql; contradiction: boolean } 
   });
   switch (input.status ?? "COUNTED") {
     case "COUNTED":
-      parts.push(Prisma.sql`u.status <> 'DUPLICATE'`);
+      parts.push(COUNTED);
       break;
     case "UNRECONCILED":
       parts.push(Prisma.sql`u.status = 'UNRECONCILED'`);
@@ -1517,10 +1530,7 @@ async function queryProductHistory(
   }
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 25;
-  const parts: Prisma.Sql[] = [
-    Prisma.sql`u.company_id = ${input.companyId}`,
-    Prisma.sql`u.status <> 'DUPLICATE'`,
-  ];
+  const parts: Prisma.Sql[] = [Prisma.sql`u.company_id = ${input.companyId}`];
   const window = periodWindow(input);
   if (window) {
     parts.push(Prisma.sql`u.doc_date >= ${window.from} AND u.doc_date < ${window.toExclusive}`);
@@ -1560,6 +1570,7 @@ async function queryProductHistory(
       FROM ${source === "temp" ? Prisma.sql`unified_report_lines u` : Prisma.sql`u`}
       WHERE ${where}
       GROUP BY u.sku
+      HAVING COUNT(*) FILTER (WHERE ${COUNTED}) > 0
     )
     SELECT
       totals.total,

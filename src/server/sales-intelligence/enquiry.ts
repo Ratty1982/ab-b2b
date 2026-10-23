@@ -1,12 +1,13 @@
 /**
  * Internal Sales Intelligence — Sales Enquiry query layer.
  *
- * Provenance: ongoing TRM21QC lines and 504 headers on AutopartSalesLine
- * and AutopartSalesDocument.
+ * Provenance: per-customer 561L product lines and ongoing TRM21QC lines on
+ * AutopartSalesLine, dated from the linked sales document when a date exists.
  * AB Orders and legacy 504C are intentionally excluded from realised sales metrics
  * so AB-originated orders are not double-counted once Autopart invoices arrive.
  *
- * Historical AutopartInvoiceLine rows are not a sales source and are not searched here.
+ * Retired global AutopartInvoiceLine rows are not a sales source and are not searched here.
+ * SLRB payments are not product sales.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -15,6 +16,7 @@ import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import { ONGOING_SALES_DATA_SOURCE } from "@/server/sales-intelligence/history-sources";
+import { countedSalesLinesCte } from "@/server/sales-intelligence/counted-sales-lines";
 export { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
 import {
   dateOnlyIsoFromDate,
@@ -316,7 +318,7 @@ export async function searchSalesIntelligenceProducts(actorUserId: string, raw: 
   const historic = await prisma.autopartSalesLine.findMany({
     where: {
       ...lineCompanyFilter(scope),
-      source: "ONGOING_TRM21QC",
+      source: { in: ["561L", "ONGOING_TRM21QC"] },
       OR: [
         { sku: { contains: q, mode: "insensitive" } },
         { descriptionSnapshot: { contains: q, mode: "insensitive" } },
@@ -458,7 +460,6 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
       companyId: input.companyId,
       range: primary,
     });
-    const bounds = documentDatePrismaBounds(primary);
     const skuRows = await prisma.$queryRaw<
       Array<{
         sku: string;
@@ -471,23 +472,18 @@ export async function getCustomerSalesEnquiry(actorUserId: string, raw: unknown)
         last_purchased: Date | null;
       }>
     >`
+      ${countedSalesLinesCte({ companyId: input.companyId, range: primary })}
       SELECT
-        MIN(l.sku) AS sku,
-        MAX(l."descriptionSnapshot") AS desc,
-        COALESCE(SUM(l.units), 0) AS units,
-        COALESCE(SUM(CASE WHEN l."documentType" = 'INVOICE' THEN l."salesNet" ELSE 0 END), 0) AS invoice_sales,
-        COALESCE(SUM(CASE WHEN l."documentType" = 'CREDIT' THEN l."salesNet" ELSE 0 END), 0) AS credits,
-        COALESCE(SUM(l."salesNet"), 0) AS net_sales,
-        COUNT(DISTINCT CASE WHEN l."documentType" = 'INVOICE' THEN l."documentReference" END) AS purchase_count,
-        MAX(CASE WHEN l."documentType" = 'INVOICE' THEN d."documentDate" END) AS last_purchased
-      FROM "AutopartSalesLine" l
-      INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
-      WHERE l."companyId" = ${input.companyId}
-        AND l."source" = 'ONGOING_TRM21QC'
-        AND d."companyId" IS NOT NULL
-        AND d."documentDate" >= ${bounds.gte}
-        AND d."documentDate" <= ${bounds.lte}
-      GROUP BY UPPER(TRIM(l.sku))
+        MIN(sku) AS sku,
+        MAX(description) AS desc,
+        COALESCE(SUM(units), 0) AS units,
+        COALESCE(SUM(CASE WHEN doc_type = 'INVOICE' THEN sales_net ELSE 0 END), 0) AS invoice_sales,
+        COALESCE(SUM(CASE WHEN doc_type = 'CREDIT' THEN sales_net ELSE 0 END), 0) AS credits,
+        COALESCE(SUM(sales_net), 0) AS net_sales,
+        COUNT(DISTINCT CASE WHEN doc_type = 'INVOICE' THEN document_reference END) AS purchase_count,
+        MAX(CASE WHEN doc_type = 'INVOICE' THEN doc_date END) AS last_purchased
+      FROM counted_sales_lines
+      GROUP BY sku_key
     `;
     bySku = new Map();
     for (const row of skuRows) {
