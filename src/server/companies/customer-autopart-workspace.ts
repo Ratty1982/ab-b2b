@@ -12,6 +12,11 @@ import {
   type CustomerAutopartStage,
 } from "@/domain/customer-autopart-workspace";
 import { foreignAutopartClaims, resolveAutopartCodeOwnership } from "@/server/companies/autopart-account-verification";
+import {
+  customerTouchedImportRun,
+  listCustomerTouchedOngoingImportRunIds,
+  loadCustomerOngoingSalesActivity,
+} from "@/server/companies/customer-ongoing-sales-activity";
 import { AuthError, requireCompanyAccess } from "@/server/rbac/guards";
 import { grants } from "@/server/rbac/access";
 
@@ -42,16 +47,31 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
 
   const canViewMaster = profile.permissions.has("autopart.customer.view");
   const canImport = grants(profile, "admin.access", "orders.edit");
-  const [
-    masterAccounts,
-    feed,
-    latestHistory,
-    latest504,
-    latestTrm21qc,
-    outstandingIssueRun,
-    productLineCount,
-    documentCount,
-  ] = await Promise.all([
+  const code = company.autopartCustomerCode?.trim() || null;
+  const verified = Boolean(code && company.autopartCustomerCodeVerifiedAt);
+  let ownershipAmbiguous = false;
+  let ownershipNote: string | null = null;
+  if (code) {
+    const ownership = await resolveAutopartCodeOwnership(code);
+    const foreign = await foreignAutopartClaims(code, company.id);
+    if (
+      ownership.authority === "ambiguous" ||
+      (ownership.companyId && ownership.companyId !== company.id) ||
+      foreign.length > 0
+    ) {
+      ownershipAmbiguous = true;
+      ownershipNote =
+        "This Autopart account is also connected to another customer. Resolve that before importing sales.";
+    } else if (!verified) {
+      ownershipNote = "An account code is saved, but it has not been verified for this customer.";
+    }
+  }
+
+  const storedHistory = company.salesCutover?.historyStatus ?? "NOT_STARTED";
+  const kind = historyKind(company.salesCutover?.evidence ?? null);
+  const historyTo = company.salesCutover?.historyTo?.toISOString().slice(0, 10) ?? null;
+
+  const [masterAccounts, feed, latestHistory, ongoing, productLineCount, documentCount] = await Promise.all([
     canViewMaster
       ? prisma.autopartAccount.findMany({
           where: { companyId },
@@ -75,72 +95,24 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
       orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
       select: { completedAt: true, createdAt: true },
     }),
-    prisma.autopartCustomerImportRun.findFirst({
-      where: { companyId, type: "ONGOING_504", status: "COMMITTED", dryRun: false },
-      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-      select: { completedAt: true, createdAt: true },
-    }),
-    prisma.autopartCustomerImportRun.findFirst({
-      where: { companyId, type: "ONGOING_TRM21QC", status: "COMMITTED", dryRun: false },
-      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-      select: { completedAt: true, createdAt: true },
-    }),
-    prisma.autopartCustomerImportRun.findFirst({
-      where: {
-        companyId,
-        type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] },
-        status: { in: ["FAILED", "BLOCKED"] },
-        dryRun: false,
-      },
-      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-      select: {
-        type: true,
-        status: true,
-        filename: true,
-        completedAt: true,
-        createdAt: true,
-        issues: true,
-      },
+    loadCustomerOngoingSalesActivity(companyId, {
+      companyStatus: company.status,
+      historyStatus: storedHistory,
+      verified,
+      ownershipAmbiguous,
     }),
     prisma.autopartSalesLine.count({ where: { companyId } }),
     prisma.autopartSalesDocument.count({ where: { companyId } }),
   ]);
 
-  const code = company.autopartCustomerCode?.trim() || null;
-  const verified = Boolean(code && company.autopartCustomerCodeVerifiedAt);
-  let ownershipAmbiguous = false;
-  let ownershipNote: string | null = null;
-  if (code) {
-    const ownership = await resolveAutopartCodeOwnership(code);
-    const foreign = await foreignAutopartClaims(code, company.id);
-    if (ownership.authority === "ambiguous" || (ownership.companyId && ownership.companyId !== company.id) || foreign.length > 0) {
-      ownershipAmbiguous = true;
-      ownershipNote = "This Autopart account is also connected to another customer. Resolve that before importing sales.";
-    } else if (!verified) {
-      ownershipNote = "An account code is saved, but it has not been verified for this customer.";
-    }
-  }
-
-  const storedHistory = company.salesCutover?.historyStatus ?? "NOT_STARTED";
-  const kind = historyKind(company.salesCutover?.evidence ?? null);
-  const outstandingImportIssues = Boolean(outstandingIssueRun);
   const stageInput = {
     companyStatus: company.status,
     verified,
     hasAccountCode: Boolean(code),
     ownershipAmbiguous,
     historyStatus: storedHistory,
-    outstandingImportIssues,
+    outstandingImportIssues: ongoing.hasOutstandingIssues,
   };
-  const historyTo = company.salesCutover?.historyTo?.toISOString().slice(0, 10) ?? null;
-  // Customer-scoped only — global feed success must not look like this customer's refresh.
-  const latest504At = (latest504?.completedAt ?? latest504?.createdAt)?.toISOString() ?? null;
-  const latestTrm21qcAt = (latestTrm21qc?.completedAt ?? latestTrm21qc?.createdAt)?.toISOString() ?? null;
-  const outstandingIssueNote = outstandingIssueRun
-    ? `${outstandingIssueRun.type === "ONGOING_504" ? "504" : "TRM21QC"} import ${
-        outstandingIssueRun.status === "BLOCKED" ? "blocked" : "failed"
-      }${outstandingIssueRun.filename ? ` (${outstandingIssueRun.filename})` : ""}.`
-    : null;
 
   return {
     company: {
@@ -181,16 +153,14 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
     },
     ongoing: {
       pollingEnabled: Boolean(feed?.enabled),
-      latest504At,
-      latestTrm21qcAt,
-      /** @deprecated Prefer latest504At / latestTrm21qcAt — not a setup completeness signal. */
-      latestImportAt: latest504At && latestTrm21qcAt
-        ? latest504At > latestTrm21qcAt
-          ? latest504At
-          : latestTrm21qcAt
-        : latest504At ?? latestTrm21qcAt,
-      outstandingIssue: outstandingIssueNote,
-      hasOutstandingIssues: outstandingImportIssues,
+      latest504At: ongoing.latest504At,
+      latestTrm21qcAt: ongoing.latestTrm21qcAt,
+      latestImportAt: ongoing.latestImportAt,
+      companionStatus: ongoing.companionStatus,
+      companionNote: ongoing.companionNote,
+      outstandingIssue: ongoing.outstandingIssue,
+      hasOutstandingIssues: ongoing.hasOutstandingIssues,
+      issueKind: ongoing.issueKind,
     },
     coverage: {
       productLineCount,
@@ -205,10 +175,10 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
 
 export async function listCustomerAutopartImportActivity(actorUserId: string, companyId: string) {
   await requireCompanyAccess(actorUserId, companyId);
+  const runIds = await listCustomerTouchedOngoingImportRunIds(companyId, 20);
+  if (runIds.length === 0) return { items: [] };
   const runs = await prisma.autopartCustomerImportRun.findMany({
-    where: { companyId, dryRun: false, status: { in: [...ACTIVITY_STATUSES] } },
-    orderBy: { createdAt: "desc" },
-    take: 20,
+    where: { id: { in: runIds }, dryRun: false, status: { in: [...ACTIVITY_STATUSES] } },
     select: {
       id: true,
       type: true,
@@ -224,8 +194,10 @@ export async function listCustomerAutopartImportActivity(actorUserId: string, co
       createdBy: { select: { name: true, email: true } },
     },
   });
+  const byId = new Map(runs.map((run) => [run.id, run]));
+  const ordered = runIds.map((id) => byId.get(id)).filter((run): run is NonNullable<typeof run> => Boolean(run));
   return {
-    items: runs.map((run) => ({
+    items: ordered.map((run) => ({
       id: run.id,
       type: run.type,
       status: run.status,
@@ -246,24 +218,36 @@ export async function listCustomerAutopartImportDetails(
 ) {
   await requireCompanyAccess(actorUserId, raw.companyId);
   const run = await prisma.autopartCustomerImportRun.findFirst({
-    where: { id: raw.runId, companyId: raw.companyId },
-    select: { id: true, type: true, status: true, issues: true, filename: true },
+    where: { id: raw.runId },
+    select: { id: true, type: true, status: true, issues: true, filename: true, companyId: true },
   });
   if (!run) throw new AuthError("Import not found", "NOT_FOUND", 404);
+  const touched =
+    run.companyId === raw.companyId || (await customerTouchedImportRun(raw.companyId, run.id));
+  if (!touched) throw new AuthError("Import not found", "NOT_FOUND", 404);
 
   const filter = (raw.filter ?? "ALL").toUpperCase();
-  const where: Prisma.AutopartImportDiagnosticWhereInput = { importRunId: run.id };
-  if (filter === "REJECTED" || filter === "ERRORS") where.status = "ERROR";
-  else if (filter === "SKIPPED" || filter === "DUPLICATE") where.status = "SKIPPED";
-  else if (filter === "NEW" || filter === "INSERTED") where.status = "INSERTED";
-  else if (filter === "UPDATED") where.status = "UPDATED";
+  // Customer-scoped runs show all diagnostics. Multi-customer poll runs only show
+  // rows attributed to this company so unrelated accounts are not mixed in.
+  const detailWhere: Prisma.AutopartImportDiagnosticWhereInput =
+    run.companyId === raw.companyId
+      ? { importRunId: run.id }
+      : { importRunId: run.id, companyId: raw.companyId };
+  if (filter === "REJECTED" || filter === "ERRORS") detailWhere.status = "ERROR";
+  else if (filter === "SKIPPED" || filter === "DUPLICATE") detailWhere.status = "SKIPPED";
+  else if (filter === "NEW" || filter === "INSERTED") detailWhere.status = "INSERTED";
+  else if (filter === "UPDATED") detailWhere.status = "UPDATED";
 
-  const total = await prisma.autopartImportDiagnostic.count({ where: { importRunId: run.id } });
+  const totalScope: Prisma.AutopartImportDiagnosticWhereInput =
+    run.companyId === raw.companyId
+      ? { importRunId: run.id }
+      : { importRunId: run.id, companyId: raw.companyId };
+  const total = await prisma.autopartImportDiagnostic.count({ where: totalScope });
   const items =
     total === 0
       ? []
       : await prisma.autopartImportDiagnostic.findMany({
-          where,
+          where: detailWhere,
           orderBy: [{ rowNumber: "asc" }, { createdAt: "asc" }],
           take: 50,
           select: {

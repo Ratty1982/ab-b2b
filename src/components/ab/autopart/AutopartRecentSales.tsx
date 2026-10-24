@@ -20,6 +20,7 @@ export function AutopartRecentSales({
   verified,
   automaticImportEnabled = false,
   outstandingIssue = null,
+  companionNote = null,
   onChanged,
 }: {
   companyId: string;
@@ -31,6 +32,7 @@ export function AutopartRecentSales({
   verified: boolean;
   automaticImportEnabled?: boolean;
   outstandingIssue?: string | null;
+  companionNote?: string | null;
   onChanged: () => Promise<void>;
 }) {
   const [selected, setSelected] = useState(accountCode ?? "");
@@ -93,6 +95,7 @@ export function AutopartRecentSales({
         <span className="font-semibold">{automaticImportEnabled ? "enabled" : "disabled"}</span>
         {outstandingIssue ? `. Outstanding issue: ${outstandingIssue}` : "."}
       </p>
+      {companionNote ? <p className="mt-2 text-[13px] text-steel">{companionNote}</p> : null}
       {accountCode ? (
         <p className="mt-3 text-[13px]">
           Verified account <span className="font-mono font-semibold">{selected || accountCode}</span>

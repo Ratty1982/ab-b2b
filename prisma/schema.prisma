@@ -2995,6 +2995,8 @@ model AutopartImportDiagnostic {
   @@index([importRunId, customerAccount])
   @@index([importRunId, sku])
   @@index([importRunId, isWarning])
+  /// Customer Autopart workspace outstanding-issue lookup (partial; see migration).
+  @@index([companyId, createdAt])
 }
 
 // ─── Autopart customer master and bulk historical exports ───────────────────

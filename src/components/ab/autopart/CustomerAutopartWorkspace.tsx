@@ -158,6 +158,9 @@ export function CustomerAutopartWorkspace({
             <dd>{workspace.ongoing.outstandingIssue ?? "None"}</dd>
           </div>
         </dl>
+        {workspace.ongoing.companionNote ? (
+          <p className="mt-3 text-[13px] text-steel">{workspace.ongoing.companionNote}</p>
+        ) : null}
         <p className="mt-3 max-w-3xl text-[12px] text-steel">
           The verified sales account is the code used for this customer's files. The 407EXP master is a
           separate customer-list link. One can be present without the other. Historical coverage dates
@@ -240,6 +243,7 @@ export function CustomerAutopartWorkspace({
         verified={workspace.salesAccount.verified}
         automaticImportEnabled={workspace.ongoing.pollingEnabled || workspace.automaticImportEnabled}
         outstandingIssue={workspace.ongoing.outstandingIssue}
+        companionNote={workspace.ongoing.companionNote}
         onChanged={reload}
       />
 

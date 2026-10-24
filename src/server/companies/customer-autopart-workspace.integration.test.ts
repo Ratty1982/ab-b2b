@@ -117,5 +117,96 @@ describe("customer Autopart workspace", () => {
     expect(snapshot.ongoing.latest504At).toBeNull();
     expect(snapshot.ongoing.latestTrm21qcAt).toBeNull();
     expect(snapshot.ongoing.hasOutstandingIssues).toBe(false);
+    expect(snapshot.ongoing.companionStatus).toBe("awaiting_both");
+    expect(snapshot.ongoing.companionNote).toMatch(/Awaiting first 504 and TRM21QC/i);
+  });
+
+  it("reads latest 504/TRM from diagnostics on company-null poll runs", async () => {
+    const adminId = await ensureUser(`autopart.workspace.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
+    const company = await prisma.company.create({
+      data: {
+        name: `Autopart poll dates ${stamp}`,
+        status: "ACTIVE",
+        autopartCustomerCode: `POL${String(stamp).slice(-6)}`,
+        autopartCustomerCodeVerifiedAt: new Date(),
+        salesCutover: {
+          create: {
+            historyStatus: "COMPLETE",
+            evidence: { kind: "NO_HISTORICAL_SALES" },
+          },
+        },
+      },
+    });
+    const at504 = new Date("2026-10-20T08:00:00.000Z");
+    const atTrm = new Date("2026-10-21T09:30:00.000Z");
+    const run504 = await prisma.autopartCustomerImportRun.create({
+      data: {
+        companyId: null,
+        type: "ONGOING_504",
+        status: "COMMITTED",
+        dryRun: false,
+        filename: "504-poll.csv",
+        completedAt: at504,
+        createdAt: at504,
+      },
+    });
+    const runTrm = await prisma.autopartCustomerImportRun.create({
+      data: {
+        companyId: null,
+        type: "ONGOING_TRM21QC",
+        status: "COMMITTED",
+        dryRun: false,
+        filename: "TRM21QC-poll.csv",
+        completedAt: atTrm,
+        createdAt: atTrm,
+      },
+    });
+    await prisma.autopartImportDiagnostic.createMany({
+      data: [
+        {
+          importRunId: run504.id,
+          companyId: company.id,
+          status: "INSERTED",
+          reasonCode: "INSERTED",
+          reason: "New financial row created.",
+          isWarning: false,
+        },
+        {
+          importRunId: runTrm.id,
+          companyId: company.id,
+          status: "UPDATED",
+          reasonCode: "UPDATED",
+          reason: "Existing financial row enriched.",
+          isWarning: false,
+        },
+      ],
+    });
+    const foreign = await prisma.company.create({
+      data: { name: `Foreign poll ${stamp}`, status: "ACTIVE" },
+    });
+    await prisma.autopartImportDiagnostic.create({
+      data: {
+        importRunId: run504.id,
+        companyId: foreign.id,
+        status: "INSERTED",
+        reasonCode: "INSERTED",
+        reason: "Other customer row.",
+        isWarning: false,
+      },
+    });
+
+    const snapshot = await getCustomerAutopartWorkspace(adminId, company.id);
+    expect(snapshot.ongoing.latest504At).toBe(at504.toISOString());
+    expect(snapshot.ongoing.latestTrm21qcAt).toBe(atTrm.toISOString());
+    expect(snapshot.ongoing.companionStatus).toBe("ready");
+    expect(snapshot.ongoing.hasOutstandingIssues).toBe(false);
+    expect(snapshot.primaryAction).toBe("view-enquiry");
+
+    const details = await listCustomerAutopartImportDetails(adminId, {
+      companyId: company.id,
+      runId: run504.id,
+    });
+    expect(details.items).toHaveLength(1);
+    expect(details.items[0]?.reasonCode).toBe("INSERTED");
   });
 });
