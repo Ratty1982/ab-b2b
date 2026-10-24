@@ -3,12 +3,17 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseAutopart561l } from "@/domain/autopart-561l";
 import {
+  EXACT_REPEATED_SOURCE_ROW_REASON,
   historicalProductLineIdentity,
   historicalProductLineLookupFingerprints,
 } from "@/domain/customer-sales-history";
 
 const fixture = readFileSync(
   resolve(import.meta.dirname, "fixtures/autopart-561l-retail-amazon-quotes.csv"),
+  "utf8",
+);
+const exactRepeatFixture = readFileSync(
+  resolve(import.meta.dirname, "fixtures/autopart-561l-exact-repeated-credits.csv"),
   "utf8",
 );
 
@@ -96,6 +101,31 @@ describe("Retail Amazon 561L CSV quoting and line identity", () => {
     expect(a.fingerprint).toBe(b.fingerprint);
     expect(historicalProductLineLookupFingerprints(a.fingerprint)).toContain(
       "ln:CREDIT|SC503509|1",
+    );
+    expect(EXACT_REPEATED_SOURCE_ROW_REASON).toMatch(/does not distinguish a separate return/i);
+  });
+
+  it("parses committed exact-repeated zero-value credit rows without inventing identities", () => {
+    const result = parseAutopart561l(exactRepeatFixture);
+    expect(result.malformedRows).toBe(0);
+    expect(result.lines).toHaveLength(7);
+    const fingerprints = result.lines.map((row) =>
+      historicalProductLineIdentity({
+        documentType: row.documentType,
+        documentReference: row.documentReference!,
+        sku: row.partNumber!,
+        sourceLineNumber: row.sourceLineNumber,
+        rawInvAndLn: row.rawInvAndLn,
+        skuOrdinal: 1,
+        units: row.units == null ? null : String(row.units),
+        salesNet: row.salesNet,
+      }).fingerprint,
+    );
+    // 3× SWRB4 + 2× SS5131 collapse; SUM-002 and invoice remain distinct → 4 unique.
+    expect(new Set(fingerprints).size).toBe(4);
+    expect(result.lines.filter((row) => row.partNumber === "SWRB4")).toHaveLength(3);
+    expect(result.lines.every((row) => row.documentType === "INVOICE" || Number(row.salesNet) === 0)).toBe(
+      true,
     );
   });
 

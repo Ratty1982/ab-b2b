@@ -66,6 +66,13 @@ export function historicalProductLineIdentity(input: {
   };
 }
 
+/**
+ * Exact byte-identical 561L rows cannot be told apart as separate returns.
+ * Report them as exceptions; do not invent extra transaction identities.
+ */
+export const EXACT_REPEATED_SOURCE_ROW_REASON =
+  "Exact repeated source row with the same document, SKU, quantity and sales. Autopart does not distinguish a separate return.";
+
 /** Fingerprints to match against stored `sourceFingerprint` for one planned line. */
 export function historicalProductLineLookupFingerprints(fingerprint: string): string[] {
   const primary = fingerprint.trim();
@@ -80,6 +87,28 @@ export function historicalProductLineLookupFingerprints(fingerprint: string): st
     out.push(primary);
   }
   return out;
+}
+
+/** Autopart source line preference encoded in `row:` / legacy `ln:` fingerprints. */
+export function preferredHistoricalLineNumber(fingerprint: string): number | null {
+  const primary = fingerprint.trim();
+  if (primary.startsWith("row:")) {
+    const token = primary.slice(4).split("|")[2];
+    const value = token != null ? Number(token) : NaN;
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  if (primary.startsWith("ln:")) {
+    const value = Number(primary.split("|").pop());
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  return null;
+}
+
+export function historicalProductLineSkuFromFingerprint(fingerprint: string): string | null {
+  const primary = fingerprint.trim();
+  if (!primary.startsWith("row:")) return null;
+  const sku = primary.slice(4).split("|")[3];
+  return sku ? sku.trim().toUpperCase() : null;
 }
 
 export function ongoingImportAllowsCatchUp(diagnostics: unknown): boolean {

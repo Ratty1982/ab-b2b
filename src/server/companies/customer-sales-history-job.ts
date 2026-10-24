@@ -1136,15 +1136,9 @@ async function publishStagedHistory(
             ON d."companyId" = ${job.companyId}
            AND d."documentType" = s."documentType"::"AutopartHistoricDocumentType"
            AND d."documentReference" = s."documentReference"
+          -- Skip only when the same product fingerprint is already stored. A colliding
+          -- lineNumber for a different SKU must not silently drop the staged row.
           WHERE NOT EXISTS (
-              SELECT 1
-              FROM "AutopartSalesLine" l
-              WHERE l."companyId" = ${job.companyId}
-                AND l."documentType" = s."documentType"::"AutopartHistoricDocumentType"
-                AND l."documentReference" = s."documentReference"
-                AND l."lineNumber" = s."lineNumber"
-            )
-            AND NOT EXISTS (
               SELECT 1
               FROM "AutopartSalesLine" l
               WHERE l."companyId" = ${job.companyId}
@@ -1172,6 +1166,8 @@ async function publishStagedHistory(
               AND d."documentReference" = s."documentReference"
           )
       `);
+      // A staged product is present only when fingerprint or full product identity matches.
+      // Sharing a lineNumber with a different SKU is not proof the intended row was stored.
       const missingLines = await tx.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         SELECT COUNT(*)::bigint AS count
         FROM "CustomerSalesHistoryStage" s
@@ -1182,22 +1178,25 @@ async function publishStagedHistory(
             SELECT 1
             FROM "AutopartSalesLine" l
             WHERE l."companyId" = ${job.companyId}
-              AND l."documentType" = s."documentType"::"AutopartHistoricDocumentType"
-              AND l."documentReference" = s."documentReference"
-              AND l."lineNumber" = s."lineNumber"
+              AND l."source" = '561L'
+              AND l."sourceFingerprint" = s.fingerprint
+              AND s.fingerprint <> ''
           )
           AND NOT EXISTS (
             SELECT 1
             FROM "AutopartSalesLine" l
             WHERE l."companyId" = ${job.companyId}
-              AND l."source" = '561L'
-              AND l."sourceFingerprint" = s.fingerprint
-              AND s.fingerprint <> ''
+              AND l."documentType" = s."documentType"::"AutopartHistoricDocumentType"
+              AND l."documentReference" = s."documentReference"
+              AND l."lineNumber" = s."lineNumber"
+              AND UPPER(btrim(l.sku)) = UPPER(btrim(s.sku))
+              AND l.units = s.units
+              AND l."salesNet" = s."salesNet"
           )
       `);
       if (countFrom(missingDocs) > 0 || countFrom(missingLines) > 0) {
         throw new Error(
-          "Publication did not store every staged row. The import was rolled back and the customer cutover was not changed.",
+          "Publication did not store every staged product line with a matching source fingerprint or product identity. The import was rolled back and the customer cutover was not changed.",
         );
       }
 

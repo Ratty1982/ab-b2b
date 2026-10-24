@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { historicalProductLineIdentity, ongoingImportAllowsCatchUp, signedHistoricalMeasure } from "@/domain/customer-sales-history";
+import {
+  EXACT_REPEATED_SOURCE_ROW_REASON,
+  historicalProductLineIdentity,
+  historicalProductLineSkuFromFingerprint,
+  ongoingImportAllowsCatchUp,
+  preferredHistoricalLineNumber,
+  signedHistoricalMeasure,
+} from "@/domain/customer-sales-history";
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import { redactIneligibleSalesDiagnostic } from "@/domain/autopart-import-diagnostics";
 import {
@@ -84,6 +91,9 @@ describe("historical sales measures", () => {
     expect(sharedLineA.fingerprint).not.toBe(sharedLineB.fingerprint);
     expect(sharedLineA.legacyFingerprints).toEqual(["ln:CREDIT|SC503053|1"]);
     expect(sharedLineB.legacyFingerprints).toEqual(["ln:CREDIT|SC503053|1"]);
+    expect(preferredHistoricalLineNumber(sharedLineA.fingerprint)).toBe(1);
+    expect(historicalProductLineSkuFromFingerprint(sharedLineA.fingerprint)).toBe("HG149-00");
+    expect(EXACT_REPEATED_SOURCE_ROW_REASON).toMatch(/does not distinguish a separate return/i);
     const redacted = redactIneligibleSalesDiagnostic({
       status: "SKIPPED",
       reasonCode: "NOT_ACTIVE",

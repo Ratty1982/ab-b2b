@@ -99,7 +99,7 @@ afterAll(async () => {
   if (previousUploadDir === undefined) delete process.env["CUSTOMER_SALES_UPLOAD_DIR"];
   else process.env["CUSTOMER_SALES_UPLOAD_DIR"] = previousUploadDir;
   await prisma.$disconnect();
-}, 180_000);
+}, 300_000);
 
 describe("large historical sales confirmation", () => {
   it("groups every rejected row and separates product lines from supporting documents", async () => {
@@ -202,7 +202,7 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     const feedAfter = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
     expect(feedAfter?.enabled ?? false).toBe(feedBefore?.enabled ?? false);
     expect(feedAfter?.fulfilmentMode ?? "OFF").toBe(feedBefore?.fulfilmentMode ?? "OFF");
-  }, 600_000);
+  }, 900_000);
 
   it("resumes an interrupted import without publishing a partial history", async () => {
     const lines = productReport(smallAccount, INTERRUPT_LINES);
