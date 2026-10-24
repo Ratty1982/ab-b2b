@@ -11,8 +11,11 @@ import { grants } from "@/server/rbac/access";
 import { parseAutopart561l } from "@/domain/autopart-561l";
 import { parseAutopartSlrb } from "@/domain/autopart-slrb";
 import {
+  EXACT_REPEATED_SOURCE_ROW_REASON,
   historicalDocumentIsSale,
   historicalProductLineIdentity,
+  historicalProductLineLookupFingerprints,
+  preferredHistoricalLineNumber,
   signedHistoricalMeasure,
   type HistoricalDocumentType,
 } from "@/domain/customer-sales-history";
@@ -423,6 +426,8 @@ function planHistory(input: {
         sourceLineNumber: hasSourceLine ? row.sourceLineNumber : null,
         rawInvAndLn: row.rawInvAndLn,
         skuOrdinal: ordinal,
+        units,
+        salesNet,
       });
       if (lineKeys.has(identity.fingerprint)) {
         remember({
@@ -433,8 +438,8 @@ function planHistory(input: {
           amount: salesNet,
           sku: row.partNumber,
           quantity: units,
-          disposition: "duplicate",
-          reason: "This source line is already in the selected report.",
+          disposition: "rejected",
+          reason: EXACT_REPEATED_SOURCE_ROW_REASON,
           fingerprint: identity.fingerprint,
         });
         continue;
@@ -514,6 +519,16 @@ function sameCalendarDay(stored: Date | null | undefined, incoming: string | nul
   return stored.toISOString().slice(0, 10) === incoming;
 }
 
+type StoredHistoryLine = {
+  documentType: string;
+  documentReference: string;
+  lineNumber: number;
+  sku: string;
+  sourceFingerprint: string | null;
+  units: { toString(): string };
+  salesNet: { toString(): string };
+};
+
 async function loadStoredHistory(companyId: string, refs: string[]) {
   const storedDocs: {
     documentType: string;
@@ -523,14 +538,7 @@ async function loadStoredHistory(companyId: string, refs: string[]) {
     vat: { toString(): string } | null;
     grossTotal: { toString(): string } | null;
   }[] = [];
-  const storedLines: {
-    documentType: string;
-    documentReference: string;
-    lineNumber: number;
-    sourceFingerprint: string | null;
-    units: { toString(): string };
-    salesNet: { toString(): string };
-  }[] = [];
+  const storedLines: StoredHistoryLine[] = [];
   for (let index = 0; index < refs.length; index += STORED_LOOKUP_CHUNK) {
     const chunk = refs.slice(index, index + STORED_LOOKUP_CHUNK);
     storedDocs.push(
@@ -553,6 +561,7 @@ async function loadStoredHistory(companyId: string, refs: string[]) {
           documentType: true,
           documentReference: true,
           lineNumber: true,
+          sku: true,
           sourceFingerprint: true,
           units: true,
           salesNet: true,
@@ -561,6 +570,44 @@ async function loadStoredHistory(companyId: string, refs: string[]) {
     );
   }
   return { storedDocs, storedLines };
+}
+
+function measuresMatch(
+  stored: Pick<StoredHistoryLine, "units" | "salesNet">,
+  line: Pick<PlannedLine, "units" | "salesNet">,
+): boolean {
+  return !valuesConflict(stored.units, line.units, 3) && !valuesConflict(stored.salesNet, line.salesNet, 2);
+}
+
+/** Match only by product identity — never by allocated lineNumber alone. */
+function findStoredProductLine(
+  line: PlannedLine,
+  lineByFingerprint: Map<string, StoredHistoryLine>,
+): StoredHistoryLine | undefined {
+  const exact = lineByFingerprint.get(line.fingerprint);
+  if (exact) return exact;
+  const sku = line.sku.trim().toUpperCase();
+  for (const key of historicalProductLineLookupFingerprints(line.fingerprint)) {
+    if (key === line.fingerprint) continue;
+    const candidate = lineByFingerprint.get(key);
+    if (!candidate) continue;
+    // Legacy ln: keys omit SKU; require the stored product to be the same SKU and measures.
+    if (candidate.sku.trim().toUpperCase() !== sku) continue;
+    if (!measuresMatch(candidate, line)) continue;
+    return candidate;
+  }
+  return undefined;
+}
+
+function allocateLineNumber(used: Set<number>, preferred: number | null): number {
+  if (preferred && preferred > 0 && !used.has(preferred)) {
+    used.add(preferred);
+    return preferred;
+  }
+  let next = 1;
+  while (used.has(next)) next += 1;
+  used.add(next);
+  return next;
 }
 
 async function markExisting(target: HistoryTarget, planned: PlannedCustomerSalesHistory) {
@@ -574,31 +621,56 @@ async function markExisting(target: HistoryTarget, planned: PlannedCustomerSales
       .filter((line) => line.sourceFingerprint)
       .map((line) => [line.sourceFingerprint as string, line]),
   );
-  const lineByNumber = new Map(
-    storedLines.map((line) => [`${line.documentType}|${line.documentReference}|${line.lineNumber}`, line]),
-  );
+  const reservedLineNumbers = new Map<string, Set<number>>();
+  for (const stored of storedLines) {
+    const docKey = `${stored.documentType}|${stored.documentReference}`;
+    const used = reservedLineNumbers.get(docKey) ?? new Set<number>();
+    used.add(stored.lineNumber);
+    reservedLineNumbers.set(docKey, used);
+  }
   const duplicateFingerprints = new Set<string>();
   const conflictFingerprints = new Set<string>();
   const duplicateDocs = new Set<string>();
   const conflictDocs = new Set<string>();
 
   for (const line of planned.lines) {
-    const docKey = `${line.documentType}|${line.documentReference}`;
-    const stored = lineByFingerprint.get(line.fingerprint) ?? lineByNumber.get(`${docKey}|${line.lineNumber}`);
+    const stored = findStoredProductLine(line, lineByFingerprint);
     if (!stored) continue;
     line.duplicate = true;
+    // Keep the stored document line identity; do not reassign on re-import.
+    line.lineNumber = stored.lineNumber;
     planned.counts.import -= 1;
     planned.counts.productLines -= 1;
     planned.counts.duplicate += 1;
     duplicateFingerprints.add(line.fingerprint);
-    const conflict =
-      valuesConflict(stored.units, line.units, 3) || valuesConflict(stored.salesNet, line.salesNet, 2);
+    const conflict = !measuresMatch(stored, line) || stored.sku.trim().toUpperCase() !== line.sku.trim().toUpperCase();
     if (conflict) {
       line.valueConflict = true;
       planned.counts.failed += 1;
       conflictFingerprints.add(line.fingerprint);
     }
   }
+
+  // New rows must not take lineNumbers already stored for other products on the document.
+  const usedLineNumbers = new Map<string, Set<number>>();
+  for (const [docKey, reserved] of reservedLineNumbers) {
+    usedLineNumbers.set(docKey, new Set(reserved));
+  }
+  for (const line of planned.lines) {
+    if (!line.duplicate) continue;
+    const docKey = `${line.documentType}|${line.documentReference}`;
+    const used = usedLineNumbers.get(docKey) ?? new Set<number>();
+    used.add(line.lineNumber);
+    usedLineNumbers.set(docKey, used);
+  }
+  for (const line of planned.lines) {
+    if (line.duplicate) continue;
+    const docKey = `${line.documentType}|${line.documentReference}`;
+    const used = usedLineNumbers.get(docKey) ?? new Set<number>();
+    usedLineNumbers.set(docKey, used);
+    line.lineNumber = allocateLineNumber(used, preferredHistoricalLineNumber(line.fingerprint));
+  }
+
   for (const doc of planned.documents) {
     const key = `${doc.documentType}|${doc.documentReference}`;
     const stored = docByKey.get(key);
@@ -624,11 +696,13 @@ async function markExisting(target: HistoryTarget, planned: PlannedCustomerSales
   for (const row of planned.rows) {
     if (row.disposition !== "import" && row.disposition !== "ledger") continue;
     const docKey = `${row.type}|${row.document}`;
-    const lineNumber = row.fingerprint?.startsWith("ln:") ? Number(row.fingerprint.split("|").pop()) : null;
-    const sameLine = lineNumber != null && lineByNumber.has(`${docKey}|${lineNumber}`);
-    const sameFingerprint = Boolean(row.fingerprint && duplicateFingerprints.has(row.fingerprint));
+    const fingerprintKeys = row.fingerprint
+      ? historicalProductLineLookupFingerprints(row.fingerprint)
+      : [];
+    // Product identity only — a shared Autopart /N or remapped lineNumber is not proof.
+    const sameFingerprint = fingerprintKeys.some((key) => duplicateFingerprints.has(key));
     const sameDocument = !row.sku && duplicateDocs.has(docKey);
-    if (!sameFingerprint && !sameLine && !sameDocument) continue;
+    if (!sameFingerprint && !sameDocument) continue;
     const conflict = row.sku
       ? Boolean(row.fingerprint && conflictFingerprints.has(row.fingerprint))
       : conflictDocs.has(docKey);

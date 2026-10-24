@@ -173,7 +173,16 @@ export function extractAutopartAccountCode(raw: string | null | undefined): stri
   return token;
 }
 
-/** Minimal CSV line splitter — respects double-quoted fields. */
+/**
+ * Minimal CSV line splitter for Autopart report exports.
+ *
+ * Autopart CSV is not strict RFC-4180:
+ * - Mid-field inch marks appear unescaped (`14" Lightning White Glos`)
+ * - Trailing inch marks appear as `""` immediately before the field comma
+ *   (`Master Wheel Trims 14"",…`) — treated as one `"` of data then close
+ * - Interior `""` before more text still means a literal quote (RFC escape)
+ * - A lone `"` closes the field only when followed by comma / EOL
+ */
 export function splitCsvLine(line: string): string[] {
   const out: string[] = [];
   let cur = "";
@@ -182,11 +191,25 @@ export function splitCsvLine(line: string): string[] {
     const ch = line[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (line[i + 1] === '"') {
+        const next = line[i + 1];
+        if (next === '"') {
+          const afterPair = line[i + 2];
           cur += '"';
           i++;
-        } else {
+          // Autopart trailing inch: ..."",nextField  → data " then end field.
+          if (
+            afterPair === undefined ||
+            afterPair === "," ||
+            afterPair === "\r" ||
+            afterPair === "\n"
+          ) {
+            inQuotes = false;
+          }
+        } else if (next === undefined || next === "," || next === "\r" || next === "\n") {
           inQuotes = false;
+        } else {
+          // Autopart embeds raw " (inch marks) inside quoted descriptions.
+          cur += '"';
         }
       } else {
         cur += ch;

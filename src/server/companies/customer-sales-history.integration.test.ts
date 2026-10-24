@@ -15,6 +15,7 @@ import {
 } from "@/server/companies/customer-sales-history-import";
 import { listCustomerSalesAccounts } from "@/server/companies/customer-sales-import";
 import { confirmAutopartTrm21qcImport } from "@/server/companies/autopart-ongoing-sales";
+import { EXACT_REPEATED_SOURCE_ROW_REASON } from "@/domain/customer-sales-history";
 import { AuthError } from "@/server/rbac/guards";
 
 const prisma = new PrismaClient();
@@ -193,6 +194,255 @@ ${account},I/${ref}B/,SS,No line B,4,"£8.00"
     expect(again.rowsImported).toBe(0);
     expect(await prisma.autopartSalesLine.count({ where: { companyId, documentReference: ref, sku: "SS" } })).toBe(2);
     expect(await prisma.autopartSalesLine.count({ where: { companyId, documentReference: `${ref}B`, sku: "SS" } })).toBe(2);
+  });
+
+  it("imports Autopart inch-mark descriptions and distinct SKUs that share Inv&Ln /1", async () => {
+    const fresh = await prisma.company.create({
+      data: { name: `Retail Amazon quotes ${stamp}`, status: "ACTIVE" },
+    });
+    const code = `RA${stamp.slice(0, 8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
+    const text = readFileSync(
+      resolve(import.meta.dirname, "../../domain/fixtures/autopart-561l-retail-amazon-quotes.csv"),
+      "utf8",
+    ).replaceAll("RETAIL", code);
+    const preview = await previewCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "561L-RETAIL-quotes.csv",
+    });
+    expect(preview.counts.rejected).toBe(1);
+    expect(preview.rejectionGroups.some((group) => group.reason === EXACT_REPEATED_SOURCE_ROW_REASON)).toBe(
+      true,
+    );
+    expect(preview.counts.duplicate).toBe(0);
+    expect(preview.counts.import).toBe(18);
+    expect(preview.rows.some((row) => row.sku === "SWUX68" && row.quantity === "-1.000")).toBe(true);
+    expect(
+      preview.rows.filter((row) => row.document === "SC503053" && row.disposition === "import"),
+    ).toHaveLength(13);
+
+    const imported = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "561L-RETAIL-quotes.csv",
+    });
+    // rowsImported counts product lines + supporting document headers.
+    expect(imported.rowsImported).toBe(24);
+    expect(imported.historyStatus).toBe("REVIEW");
+    const sc503053 = await prisma.autopartSalesLine.findMany({
+      where: { companyId: fresh.id, documentReference: "SC503053" },
+      orderBy: { lineNumber: "asc" },
+    });
+    expect(sc503053).toHaveLength(13);
+    expect(new Set(sc503053.map((line) => line.lineNumber)).size).toBe(13);
+    expect(new Set(sc503053.map((line) => line.sourceFingerprint)).size).toBe(13);
+    expect(sc503053.every((line) => Number(line.units) < 0)).toBe(true);
+    const lightning = await prisma.autopartSalesLine.findFirstOrThrow({
+      where: { companyId: fresh.id, documentReference: "SC501695", sku: "SWUX68" },
+    });
+    expect(lightning.descriptionSnapshot).toContain('14"');
+    expect(Number(lightning.salesNet)).toBeCloseTo(-16.66, 2);
+    const again = await confirmCustomerSalesHistory(adminId, { companyId: fresh.id, text561l: text });
+    expect(again.rowsImported).toBe(0);
+
+    await prisma.autopartSalesLine.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.company.delete({ where: { id: fresh.id } });
+  });
+
+  it("rejects exact repeated zero-value credit rows without inventing separate returns", async () => {
+    const fresh = await prisma.company.create({
+      data: { name: `Exact repeats ${stamp}`, status: "ACTIVE" },
+    });
+    const code = `XR${stamp.slice(0, 8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
+    const text = readFileSync(
+      resolve(import.meta.dirname, "../../domain/fixtures/autopart-561l-exact-repeated-credits.csv"),
+      "utf8",
+    ).replaceAll("RETAIL", code);
+    const preview = await previewCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "exact-repeats.csv",
+    });
+    expect(preview.counts.rejected).toBe(3); // 2 extra SWRB4 + 1 extra SS5131
+    expect(preview.counts.import).toBe(4);
+    expect(preview.rejectionGroups).toEqual([
+      { reason: EXACT_REPEATED_SOURCE_ROW_REASON, count: 3 },
+    ]);
+    const imported = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "exact-repeats.csv",
+    });
+    expect(imported.historyStatus).toBe("REVIEW");
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: fresh.id } })).toBe(4);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: fresh.id, sku: "SWRB4" } })).toBe(1);
+    const again = await confirmCustomerSalesHistory(adminId, { companyId: fresh.id, text561l: text });
+    expect(again.rowsImported).toBe(0);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: fresh.id } })).toBe(4);
+
+    await prisma.autopartSalesLine.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.company.delete({ where: { id: fresh.id } });
+  });
+
+  it("matches legacy ln: fingerprints only for the same SKU and keeps later shared-/1 SKUs", async () => {
+    const fresh = await prisma.company.create({
+      data: { name: `Legacy ln match ${stamp}`, status: "ACTIVE" },
+    });
+    const code = `LG${stamp.slice(0, 8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
+    const ref = `SCLEG${stamp.slice(0, 5).toUpperCase()}`;
+    const document = await prisma.autopartSalesDocument.create({
+      data: {
+        companyId: fresh.id,
+        autopartCustomerCode: code,
+        documentType: "CREDIT",
+        documentReference: ref,
+        source: "561L",
+      },
+    });
+    await prisma.autopartSalesLine.create({
+      data: {
+        companyId: fresh.id,
+        documentId: document.id,
+        autopartCustomerCode: code,
+        documentType: "CREDIT",
+        documentReference: ref,
+        lineNumber: 1,
+        sku: "HG149-00",
+        descriptionSnapshot: "Stoplock Professional",
+        units: "-6.000",
+        salesNet: "0.00",
+        sourceFingerprint: `ln:CREDIT|${ref}|1`,
+        source: "561L",
+        matchStatus: "NOT_IN_AB_CATALOGUE",
+      },
+    });
+
+    const text = `".Acct.","Inv & Ln","Part Number","Description","Units","Sales"
+"${code}","C/${ref}/1","HG149-00","Stoplock Professional","-6","0.00"
+"${code}","C/${ref}/1","LUXURY16","Wheel Trim Luxury 16"" Bo","-1","0.00"
+"${code}","C/${ref}/1","DYNAMIC14","Dynamic 14"" Wheel Trims","-1","0.00"
+`;
+    const preview = await previewCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "legacy-shared-line.csv",
+    });
+    expect(preview.counts.duplicate).toBe(1);
+    expect(preview.counts.import).toBe(2);
+    expect(preview.rows.find((row) => row.sku === "HG149-00")?.disposition).toBe("duplicate");
+    expect(preview.rows.find((row) => row.sku === "LUXURY16")?.disposition).toBe("import");
+    expect(preview.rows.find((row) => row.sku === "DYNAMIC14")?.disposition).toBe("import");
+
+    const imported = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: text,
+      filename561l: "legacy-shared-line.csv",
+    });
+    expect(imported.rowsImported).toBe(2);
+    const lines = await prisma.autopartSalesLine.findMany({
+      where: { companyId: fresh.id, documentReference: ref },
+      orderBy: { lineNumber: "asc" },
+    });
+    expect(lines).toHaveLength(3);
+    expect(lines.find((line) => line.sku === "HG149-00")?.lineNumber).toBe(1);
+    expect(lines.find((line) => line.sku === "HG149-00")?.sourceFingerprint).toBe(`ln:CREDIT|${ref}|1`);
+    expect(new Set(lines.map((line) => line.lineNumber)).size).toBe(3);
+    expect(lines.map((line) => line.sku).sort()).toEqual(["DYNAMIC14", "HG149-00", "LUXURY16"]);
+
+    await prisma.autopartSalesLine.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.company.delete({ where: { id: fresh.id } });
+  });
+
+  it("imports additional rows from a fuller or reordered file without lineNumber collisions", async () => {
+    const fresh = await prisma.company.create({
+      data: { name: `Reorder history ${stamp}`, status: "ACTIVE" },
+    });
+    const code = `RO${stamp.slice(0, 8).toUpperCase()}`;
+    await linkAndVerifyCompanyAutopartCustomerCode(adminId, { companyId: fresh.id, code });
+    const ref = `SSORD${stamp.slice(0, 5).toUpperCase()}`;
+    const partial = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${code},I/${ref}/1,SKU-B,Second product,2,"£20.00"
+`;
+    const first = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: partial,
+      filename561l: "partial.csv",
+    });
+    expect(first.rowsImported).toBe(2); // document + line
+    const storedB = await prisma.autopartSalesLine.findFirstOrThrow({
+      where: { companyId: fresh.id, documentReference: ref, sku: "SKU-B" },
+    });
+    expect(storedB.lineNumber).toBe(1);
+
+    const fuller = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${code},I/${ref}/1,SKU-A,First product,1,"£10.00"
+${code},I/${ref}/1,SKU-B,Second product,2,"£20.00"
+${code},I/${ref}/1,SKU-C,Third product,3,"£30.00"
+`;
+    const preview = await previewCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: fuller,
+      filename561l: "fuller.csv",
+    });
+    expect(preview.counts.duplicate).toBe(1);
+    expect(preview.counts.import).toBe(2);
+    expect(preview.rows.find((row) => row.sku === "SKU-B")?.disposition).toBe("duplicate");
+    expect(preview.rows.find((row) => row.sku === "SKU-A")?.disposition).toBe("import");
+    expect(preview.rows.find((row) => row.sku === "SKU-C")?.disposition).toBe("import");
+
+    const second = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: fuller,
+      filename561l: "fuller.csv",
+    });
+    expect(second.rowsImported).toBe(2);
+    const afterFuller = await prisma.autopartSalesLine.findMany({
+      where: { companyId: fresh.id, documentReference: ref },
+      orderBy: { sku: "asc" },
+    });
+    expect(afterFuller).toHaveLength(3);
+    expect(afterFuller.find((line) => line.sku === "SKU-B")?.lineNumber).toBe(1);
+    expect(new Set(afterFuller.map((line) => line.lineNumber)).size).toBe(3);
+
+    const reordered = `Acct.,Inv & Ln,Part Number,Description,Units,Sales
+${code},I/${ref}/1,SKU-C,Third product,3,"£30.00"
+${code},I/${ref}/1,SKU-A,First product,1,"£10.00"
+${code},I/${ref}/1,SKU-B,Second product,2,"£20.00"
+`;
+    const reorderPreview = await previewCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: reordered,
+      filename561l: "reordered.csv",
+    });
+    expect(reorderPreview.counts.import).toBe(0);
+    expect(reorderPreview.counts.duplicate).toBe(3);
+    const again = await confirmCustomerSalesHistory(adminId, {
+      companyId: fresh.id,
+      text561l: reordered,
+      filename561l: "reordered.csv",
+    });
+    expect(again.rowsImported).toBe(0);
+    const afterReorder = await prisma.autopartSalesLine.findMany({
+      where: { companyId: fresh.id, documentReference: ref },
+    });
+    expect(afterReorder).toHaveLength(3);
+    expect(afterReorder.find((line) => line.sku === "SKU-B")?.lineNumber).toBe(1);
+    expect(afterReorder.find((line) => line.sku === "SKU-A")?.sourceFingerprint).toContain("SKU-A");
+    expect(afterReorder.find((line) => line.sku === "SKU-C")?.sourceFingerprint).toContain("SKU-C");
+
+    await prisma.autopartSalesLine.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.autopartSalesDocument.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.customerSalesCutover.deleteMany({ where: { companyId: fresh.id } });
+    await prisma.company.delete({ where: { id: fresh.id } });
   });
 
   it("keeps cutover in review when a row is rejected and does not call that zero history", async () => {

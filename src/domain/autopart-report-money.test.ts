@@ -48,4 +48,40 @@ describe("splitCsvLine", () => {
   it("respects quotes and CRLF-safe cells", () => {
     expect(splitCsvLine('A,"£1,234.56",B')).toEqual(["A", "£1,234.56", "B"]);
   });
+
+  it("keeps Autopart unescaped inch marks inside quoted descriptions", () => {
+    expect(
+      splitCsvLine(
+        `"RETAIL","C/SC501695/1","SWUX68","14" Lightning White Glos","-1","-16.66"`,
+      ),
+    ).toEqual([
+      "RETAIL",
+      "C/SC501695/1",
+      "SWUX68",
+      '14" Lightning White Glos',
+      "-1",
+      "-16.66",
+    ]);
+    expect(
+      splitCsvLine(`"RETAIL","C/SC503053/1","COVERXL","CAR COVER "XL" 530x175x1","-1","0.00"`),
+    ).toEqual([
+      "RETAIL",
+      "C/SC503053/1",
+      "COVERXL",
+      'CAR COVER "XL" 530x175x1',
+      "-1",
+      "0.00",
+    ]);
+    expect(
+      splitCsvLine(`"RETAIL","C/SC503115/1","GTXCARBON16","GTX Carbon 16"","-1","0.00"`),
+    ).toEqual([
+      "RETAIL",
+      "C/SC503115/1",
+      "GTXCARBON16",
+      'GTX Carbon 16"',
+      "-1",
+      "0.00",
+    ]);
+    expect(splitCsvLine('A,"foo ""bar"" baz",B')).toEqual(["A", 'foo "bar" baz', "B"]);
+  });
 });

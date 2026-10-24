@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { historicalProductLineIdentity, ongoingImportAllowsCatchUp, signedHistoricalMeasure } from "@/domain/customer-sales-history";
+import {
+  EXACT_REPEATED_SOURCE_ROW_REASON,
+  historicalProductLineIdentity,
+  historicalProductLineSkuFromFingerprint,
+  ongoingImportAllowsCatchUp,
+  preferredHistoricalLineNumber,
+  signedHistoricalMeasure,
+} from "@/domain/customer-sales-history";
 import { classifyCustomerSalesReport } from "@/domain/customer-sales-import";
 import { redactIneligibleSalesDiagnostic } from "@/domain/autopart-import-diagnostics";
 import {
@@ -45,6 +52,8 @@ describe("historical sales measures", () => {
       sourceLineNumber: 1,
       rawInvAndLn: "I/SS1/1",
       skuOrdinal: 1,
+      units: "2.000",
+      salesNet: "10.00",
     });
     const second = historicalProductLineIdentity({
       documentType: "INVOICE",
@@ -53,10 +62,38 @@ describe("historical sales measures", () => {
       sourceLineNumber: 2,
       rawInvAndLn: "I/SS1/2",
       skuOrdinal: 1,
+      units: "1.000",
+      salesNet: "5.00",
     });
     expect(first.fingerprint).not.toBe(second.fingerprint);
     expect(first.lineNumber).toBe(1);
     expect(second.lineNumber).toBe(2);
+    const sharedLineA = historicalProductLineIdentity({
+      documentType: "CREDIT",
+      documentReference: "SC503053",
+      sku: "HG149-00",
+      sourceLineNumber: 1,
+      rawInvAndLn: "C/SC503053/1",
+      skuOrdinal: 1,
+      units: "-6.000",
+      salesNet: "0.00",
+    });
+    const sharedLineB = historicalProductLineIdentity({
+      documentType: "CREDIT",
+      documentReference: "SC503053",
+      sku: "LUXURY16",
+      sourceLineNumber: 1,
+      rawInvAndLn: "C/SC503053/1",
+      skuOrdinal: 1,
+      units: "-1.000",
+      salesNet: "0.00",
+    });
+    expect(sharedLineA.fingerprint).not.toBe(sharedLineB.fingerprint);
+    expect(sharedLineA.legacyFingerprints).toEqual(["ln:CREDIT|SC503053|1"]);
+    expect(sharedLineB.legacyFingerprints).toEqual(["ln:CREDIT|SC503053|1"]);
+    expect(preferredHistoricalLineNumber(sharedLineA.fingerprint)).toBe(1);
+    expect(historicalProductLineSkuFromFingerprint(sharedLineA.fingerprint)).toBe("HG149-00");
+    expect(EXACT_REPEATED_SOURCE_ROW_REASON).toMatch(/does not distinguish a separate return/i);
     const redacted = redactIneligibleSalesDiagnostic({
       status: "SKIPPED",
       reasonCode: "NOT_ACTIVE",

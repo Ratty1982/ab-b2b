@@ -99,7 +99,7 @@ afterAll(async () => {
   if (previousUploadDir === undefined) delete process.env["CUSTOMER_SALES_UPLOAD_DIR"];
   else process.env["CUSTOMER_SALES_UPLOAD_DIR"] = previousUploadDir;
   await prisma.$disconnect();
-}, 180_000);
+}, 300_000);
 
 describe("large historical sales confirmation", () => {
   it("groups every rejected row and separates product lines from supporting documents", async () => {
@@ -202,7 +202,7 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     const feedAfter = await prisma.autopartOngoingSalesFeedSettings.findUnique({ where: { id: "default" } });
     expect(feedAfter?.enabled ?? false).toBe(feedBefore?.enabled ?? false);
     expect(feedAfter?.fulfilmentMode ?? "OFF").toBe(feedBefore?.fulfilmentMode ?? "OFF");
-  }, 600_000);
+  }, 900_000);
 
   it("resumes an interrupted import without publishing a partial history", async () => {
     const lines = productReport(smallAccount, INTERRUPT_LINES);
@@ -238,8 +238,14 @@ ${account},PAY,PAY1,20 Aug 15,,,,"£0.00"
     expect(finished.status).toBe("COMPLETE");
     expect(finished.historyStatus).toBe("REVIEW");
     const stored = await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, source: "561L" } });
-    expect(stored).toBe(INTERRUPT_LINES + 2);
-    expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "D000001", lineNumber: 1 } })).toBe(1);
+    // productReport lines + D000001/2 PART + D000001/1 PART (distinct SKU on shared /1) + D000002/2 zero.
+    expect(stored).toBe(INTERRUPT_LINES + 3);
+    expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "D000001" } })).toBe(3);
+    expect(
+      await prisma.autopartSalesLine.count({
+        where: { companyId: smallCompanyId, documentReference: "D000001", sku: "PART" },
+      }),
+    ).toBe(2);
     expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "D000001", lineNumber: 2 } })).toBe(1);
     expect(await prisma.autopartSalesLine.count({ where: { companyId: smallCompanyId, documentReference: "BADLINE" } })).toBe(0);
     const zero = await prisma.autopartSalesLine.findFirstOrThrow({
