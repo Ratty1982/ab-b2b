@@ -64,7 +64,7 @@ describe("customer Autopart workspace", () => {
     expect(snapshot.coverage.productLineCount).toBe(0);
   });
 
-  it("keeps exception review ahead of current sales and scopes import details", async () => {
+  it("keeps exception review ahead of automatic updates and scopes import details", async () => {
     const adminId = await ensureUser(`autopart.workspace.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
     const other = await prisma.company.create({
       data: {
@@ -77,6 +77,7 @@ describe("customer Autopart workspace", () => {
     });
     const snapshot = await getCustomerAutopartWorkspace(adminId, other.id);
     expect(snapshot.primaryAction).toBe("review-exceptions");
+    expect(snapshot.stages.find((stage) => stage.id === "current")?.label).toBe("Automatic sales updates");
     expect(snapshot.stages.find((stage) => stage.id === "current")?.state).toBe("NOT_STARTED");
     const run = await prisma.autopartCustomerImportRun.create({
       data: { companyId: other.id, type: "ONGOING_504", status: "COMMITTED", dryRun: false, filename: "recent.txt" },
@@ -88,5 +89,33 @@ describe("customer Autopart workspace", () => {
     const details = await listCustomerAutopartImportDetails(adminId, { companyId: other.id, runId: run.id });
     expect(details.hasRowDiagnostics).toBe(false);
     expect(details.storedIssue).toBeNull();
+  });
+
+  it("treats completed history as setup complete without a 504/TRM21QC run", async () => {
+    const adminId = await ensureUser(`autopart.workspace.${stamp}@example.invalid`, ["SUPER_ADMIN"]);
+    const company = await prisma.company.create({
+      data: {
+        name: `Autopart complete ${stamp}`,
+        status: "ACTIVE",
+        autopartCustomerCode: `CMP${String(stamp).slice(-6)}`,
+        autopartCustomerCodeVerifiedAt: new Date(),
+        salesCutover: {
+          create: {
+            historyStatus: "COMPLETE",
+            historyFrom: new Date("2014-10-06T12:00:00.000Z"),
+            historyTo: new Date("2024-06-30T12:00:00.000Z"),
+            evidence: { kind: "561L_SLRB" },
+          },
+        },
+      },
+    });
+    const snapshot = await getCustomerAutopartWorkspace(adminId, company.id);
+    expect(snapshot.primaryAction).toBe("view-enquiry");
+    expect(snapshot.stages.find((stage) => stage.id === "current")?.state).toBe("COMPLETE");
+    expect(snapshot.stages.find((stage) => stage.id === "enquiry")?.state).toBe("COMPLETE");
+    expect(snapshot.history.coveredThrough).toBe("2024-06-30");
+    expect(snapshot.ongoing.latest504At).toBeNull();
+    expect(snapshot.ongoing.latestTrm21qcAt).toBeNull();
+    expect(snapshot.ongoing.hasOutstandingIssues).toBe(false);
   });
 });

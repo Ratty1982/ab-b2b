@@ -42,52 +42,69 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
 
   const canViewMaster = profile.permissions.has("autopart.customer.view");
   const canImport = grants(profile, "admin.access", "orders.edit");
-  const [masterAccounts, feed, latestHistory, latestOngoing, ongoingImportCount, productLineCount, documentCount] =
-    await Promise.all([
-      canViewMaster
-        ? prisma.autopartAccount.findMany({
-            where: { companyId },
-            orderBy: { accountCode: "asc" },
-            select: {
-              id: true,
-              accountCode: true,
-              originalName: true,
-              areaCode: true,
-              repCode: true,
-              classification: true,
-            },
-          })
-        : Promise.resolve([]),
-      prisma.autopartOngoingSalesFeedSettings.findUnique({
-        where: { id: "default" },
-        select: { enabled: true },
-      }),
-      prisma.autopartCustomerImportRun.findFirst({
-        where: { companyId, type: "HISTORY_561L_SLRB", status: "COMMITTED", dryRun: false },
-        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-        select: { completedAt: true, createdAt: true },
-      }),
-      prisma.autopartCustomerImportRun.findFirst({
-        where: {
-          companyId,
-          type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] },
-          status: "COMMITTED",
-          dryRun: false,
-        },
-        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
-        select: { completedAt: true, createdAt: true },
-      }),
-      prisma.autopartCustomerImportRun.count({
-        where: {
-          companyId,
-          type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] },
-          status: "COMMITTED",
-          dryRun: false,
-        },
-      }),
-      prisma.autopartSalesLine.count({ where: { companyId } }),
-      prisma.autopartSalesDocument.count({ where: { companyId } }),
-    ]);
+  const [
+    masterAccounts,
+    feed,
+    latestHistory,
+    latest504,
+    latestTrm21qc,
+    outstandingIssueRun,
+    productLineCount,
+    documentCount,
+  ] = await Promise.all([
+    canViewMaster
+      ? prisma.autopartAccount.findMany({
+          where: { companyId },
+          orderBy: { accountCode: "asc" },
+          select: {
+            id: true,
+            accountCode: true,
+            originalName: true,
+            areaCode: true,
+            repCode: true,
+            classification: true,
+          },
+        })
+      : Promise.resolve([]),
+    prisma.autopartOngoingSalesFeedSettings.findUnique({
+      where: { id: "default" },
+      select: { enabled: true },
+    }),
+    prisma.autopartCustomerImportRun.findFirst({
+      where: { companyId, type: "HISTORY_561L_SLRB", status: "COMMITTED", dryRun: false },
+      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+      select: { completedAt: true, createdAt: true },
+    }),
+    prisma.autopartCustomerImportRun.findFirst({
+      where: { companyId, type: "ONGOING_504", status: "COMMITTED", dryRun: false },
+      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+      select: { completedAt: true, createdAt: true },
+    }),
+    prisma.autopartCustomerImportRun.findFirst({
+      where: { companyId, type: "ONGOING_TRM21QC", status: "COMMITTED", dryRun: false },
+      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+      select: { completedAt: true, createdAt: true },
+    }),
+    prisma.autopartCustomerImportRun.findFirst({
+      where: {
+        companyId,
+        type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] },
+        status: { in: ["FAILED", "BLOCKED"] },
+        dryRun: false,
+      },
+      orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        type: true,
+        status: true,
+        filename: true,
+        completedAt: true,
+        createdAt: true,
+        issues: true,
+      },
+    }),
+    prisma.autopartSalesLine.count({ where: { companyId } }),
+    prisma.autopartSalesDocument.count({ where: { companyId } }),
+  ]);
 
   const code = company.autopartCustomerCode?.trim() || null;
   const verified = Boolean(code && company.autopartCustomerCodeVerifiedAt);
@@ -106,14 +123,24 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
 
   const storedHistory = company.salesCutover?.historyStatus ?? "NOT_STARTED";
   const kind = historyKind(company.salesCutover?.evidence ?? null);
+  const outstandingImportIssues = Boolean(outstandingIssueRun);
   const stageInput = {
     companyStatus: company.status,
     verified,
     hasAccountCode: Boolean(code),
     ownershipAmbiguous,
     historyStatus: storedHistory,
-    ongoingImportCount,
+    outstandingImportIssues,
   };
+  const historyTo = company.salesCutover?.historyTo?.toISOString().slice(0, 10) ?? null;
+  // Customer-scoped only — global feed success must not look like this customer's refresh.
+  const latest504At = (latest504?.completedAt ?? latest504?.createdAt)?.toISOString() ?? null;
+  const latestTrm21qcAt = (latestTrm21qc?.completedAt ?? latestTrm21qc?.createdAt)?.toISOString() ?? null;
+  const outstandingIssueNote = outstandingIssueRun
+    ? `${outstandingIssueRun.type === "ONGOING_504" ? "504" : "TRM21QC"} import ${
+        outstandingIssueRun.status === "BLOCKED" ? "blocked" : "failed"
+      }${outstandingIssueRun.filename ? ` (${outstandingIssueRun.filename})` : ""}.`
+    : null;
 
   return {
     company: {
@@ -147,13 +174,23 @@ export async function getCustomerAutopartWorkspace(actorUserId: string, companyI
       kind,
       label: historicalSalesStatusLabel({ historyStatus: storedHistory, historyKind: kind }),
       from: company.salesCutover?.historyFrom?.toISOString().slice(0, 10) ?? null,
-      to: company.salesCutover?.historyTo?.toISOString().slice(0, 10) ?? null,
+      to: historyTo,
+      coveredThrough: historyTo,
       completedAt: company.salesCutover?.completedAt?.toISOString() ?? null,
       latestImportAt: (latestHistory?.completedAt ?? latestHistory?.createdAt)?.toISOString() ?? null,
     },
     ongoing: {
-      latestImportAt: (latestOngoing?.completedAt ?? latestOngoing?.createdAt)?.toISOString() ?? null,
-      committedCount: ongoingImportCount,
+      pollingEnabled: Boolean(feed?.enabled),
+      latest504At,
+      latestTrm21qcAt,
+      /** @deprecated Prefer latest504At / latestTrm21qcAt — not a setup completeness signal. */
+      latestImportAt: latest504At && latestTrm21qcAt
+        ? latest504At > latestTrm21qcAt
+          ? latest504At
+          : latestTrm21qcAt
+        : latest504At ?? latestTrm21qcAt,
+      outstandingIssue: outstandingIssueNote,
+      hasOutstandingIssues: outstandingImportIssues,
     },
     coverage: {
       productLineCount,

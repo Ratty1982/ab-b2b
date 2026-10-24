@@ -18,6 +18,8 @@ export function AutopartRecentSales({
   historyStatus,
   companyStatus,
   verified,
+  automaticImportEnabled = false,
+  outstandingIssue = null,
   onChanged,
 }: {
   companyId: string;
@@ -27,6 +29,8 @@ export function AutopartRecentSales({
   historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
   companyStatus: string;
   verified: boolean;
+  automaticImportEnabled?: boolean;
+  outstandingIssue?: string | null;
   onChanged: () => Promise<void>;
 }) {
   const [selected, setSelected] = useState(accountCode ?? "");
@@ -40,13 +44,13 @@ export function AutopartRecentSales({
   const ready = verified && companyStatus === "ACTIVE" && historyStatus === "COMPLETE" && Boolean(selected);
   const blocked =
     !verified
-      ? "Verify the sales account before importing current sales."
+      ? "Verify the sales account before using a catch-up file."
       : companyStatus !== "ACTIVE"
-        ? "Current sales are imported only for an Active customer."
+        ? "Catch-up imports are available only for an Active customer."
         : historyStatus === "REVIEW"
-          ? "Current sales stay closed until the historical exceptions are reviewed."
+          ? "Catch-up imports stay closed until the historical exceptions are reviewed."
           : historyStatus !== "COMPLETE"
-            ? "Record the historical position before importing current sales."
+            ? "Finish historical sales setup before using a catch-up file."
             : null;
 
   async function choose(next: File) {
@@ -78,10 +82,16 @@ export function AutopartRecentSales({
 
   return (
     <section id="autopart-current" className="rounded-lg border border-border p-4 sm:p-5">
-      <h3 className="font-display text-base font-semibold uppercase">Import recent sales</h3>
+      <h3 className="font-display text-base font-semibold uppercase">Automatic sales updates</h3>
       <p className="mt-2 max-w-3xl text-[13px] text-steel">
-        Invoice and credit reports, or product-sales reports, for the verified account shown here.
-        Automatic mailbox collection stays off.
+        After historical 561L and SLRB setup is complete, scheduled 504 and TRM21QC feeds keep this
+        customer's sales up to date automatically. Manual upload is optional recovery or catch-up only —
+        it is not a required setup step.
+      </p>
+      <p className="mt-2 text-[13px]">
+        Automatic polling is{" "}
+        <span className="font-semibold">{automaticImportEnabled ? "enabled" : "disabled"}</span>
+        {outstandingIssue ? `. Outstanding issue: ${outstandingIssue}` : "."}
       </p>
       {accountCode ? (
         <p className="mt-3 text-[13px]">
@@ -138,7 +148,7 @@ export function AutopartRecentSales({
               if (next && !busy) void choose(next);
             }}
           >
-            <div className="text-[13px] font-semibold">Invoice report or product-sales report</div>
+            <div className="text-[13px] font-semibold">Optional catch-up: invoice report or product-sales report</div>
             <label className="mt-3 flex cursor-pointer flex-col gap-1 rounded-md bg-surface/40 px-3 py-4 text-[13px]">
               <span className="font-semibold">Drop a file here, or choose a file</span>
               <span className="text-[12px] text-steel">CSV or text export</span>
@@ -201,8 +211,8 @@ export function AutopartRecentSales({
       {saved ? <p className="mt-3 text-[13px]" role="status">{saved}</p> : null}
       <ConfirmAction
         open={confirmOpen}
-        title="Save these recent sales?"
-        description="This stores the uploaded file that was previewed. It does not email the customer or turn on automatic importing."
+        title="Save this catch-up import?"
+        description="This stores the uploaded file that was previewed for recovery or catch-up. It does not email the customer. Automatic mailbox polling is controlled separately."
         confirmLabel={busy ? "Saving…" : "Confirm"}
         onOpenChange={(open) => {
           if (!open && !busy) setConfirmOpen(false);
@@ -226,7 +236,7 @@ export function AutopartRecentSales({
               `${file.filename} saved at ${savedAt}. New ${result.data.rowsImported}, updated ${result.data.rowsUpdated}, duplicates ${checked.counts.duplicate}, rejected ${checked.counts.rejected}.`,
             );
             setPreview(null);
-            toast.success("Recent sales saved");
+            toast.success("Catch-up import saved");
             await onChanged();
           })();
         }}

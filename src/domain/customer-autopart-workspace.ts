@@ -1,6 +1,10 @@
 /**
  * Staff-facing Autopart workspace state.
  * Stages come from stored customer, cutover, and import records.
+ *
+ * Historical setup ends when the customer is Active, the Autopart account is
+ * verified, history cutover is COMPLETE, and exceptions are resolved. Ongoing
+ * 504/TRM21QC feeds maintain sales after that — they are not a mandatory setup step.
  */
 
 export type AutopartStageState = "COMPLETE" | "ACTION_REQUIRED" | "UNDER_REVIEW" | "NOT_STARTED";
@@ -21,7 +25,8 @@ export type CustomerAutopartStageInput = {
   hasAccountCode: boolean;
   ownershipAmbiguous: boolean;
   historyStatus: "NOT_STARTED" | "REVIEW" | "COMPLETE";
-  ongoingImportCount: number;
+  /** Failed or blocked ongoing 504/TRM21QC runs that need staff attention. */
+  outstandingImportIssues?: boolean;
 };
 
 export type CustomerAutopartStage = {
@@ -34,7 +39,7 @@ const STAGE_LABEL: Record<AutopartStageId, string> = {
   verify: "Verify the Autopart account",
   history: "Establish historical sales",
   exceptions: "Resolve import exceptions",
-  current: "Import current sales",
+  current: "Automatic sales updates",
   enquiry: "View Sales Enquiry",
 };
 
@@ -64,15 +69,16 @@ export function customerAutopartStages(input: CustomerAutopartStageInput): Custo
         ? "COMPLETE"
         : "NOT_STARTED";
 
+  // Ready once historical cutover is complete. Missing individual 504/TRM runs are
+  // not action required — only genuine outstanding import failures are.
   const current: AutopartStageState =
     input.historyStatus !== "COMPLETE" || input.companyStatus !== "ACTIVE"
       ? "NOT_STARTED"
-      : input.ongoingImportCount > 0
-        ? "COMPLETE"
-        : "ACTION_REQUIRED";
+      : input.outstandingImportIssues
+        ? "ACTION_REQUIRED"
+        : "COMPLETE";
 
-  const enquiry: AutopartStageState =
-    input.historyStatus === "COMPLETE" || input.ongoingImportCount > 0 ? "COMPLETE" : "NOT_STARTED";
+  const enquiry: AutopartStageState = input.historyStatus === "COMPLETE" ? "COMPLETE" : "NOT_STARTED";
 
   const states: Record<AutopartStageId, AutopartStageState> = {
     verify,
@@ -93,7 +99,6 @@ export function customerAutopartPrimaryAction(input: CustomerAutopartStageInput)
   if (input.companyStatus !== "ACTIVE") return "activate";
   if (input.historyStatus === "REVIEW") return "review-exceptions";
   if (input.historyStatus === "NOT_STARTED") return "import-history";
-  if (input.ongoingImportCount === 0) return "import-current";
   return "view-enquiry";
 }
 
@@ -121,7 +126,7 @@ export function autopartPrimaryActionLabel(action: AutopartPrimaryAction): strin
     case "review-exceptions":
       return "Review exceptions";
     case "import-current":
-      return "Import current sales";
+      return "Optional file catch-up";
     case "view-enquiry":
       return "View Sales Enquiry";
   }

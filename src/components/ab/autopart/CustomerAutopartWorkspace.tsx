@@ -123,21 +123,45 @@ export function CustomerAutopartWorkspace({
             value={workspace.master.restricted ? "Hidden" : workspace.master.linked ? "Linked" : "Not linked"}
           />
           <SummaryItem label="Historical sales" value={workspace.history.label} />
-          <SummaryItem label="Automatic import" value={workspace.automaticImportEnabled ? "On" : "Off"} />
+          <SummaryItem
+            label="Historical sales covered through"
+            value={workspace.history.coveredThrough ?? workspace.history.to ?? "—"}
+          />
         </dl>
-        <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+        <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryItem
+            label="Automatic polling"
+            value={workspace.ongoing.pollingEnabled || workspace.automaticImportEnabled ? "Enabled" : "Disabled"}
+          />
           <div className="text-[13px]">
-            <dt className="text-steel">Latest historical import</dt>
-            <dd><InstantText value={workspace.history.latestImportAt} variant="audit" /></dd>
+            <dt className="text-steel">Latest successful 504</dt>
+            <dd>
+              {workspace.ongoing.latest504At ? (
+                <InstantText value={workspace.ongoing.latest504At} variant="audit" />
+              ) : (
+                "None yet"
+              )}
+            </dd>
           </div>
           <div className="text-[13px]">
-            <dt className="text-steel">Latest current-sales import</dt>
-            <dd><InstantText value={workspace.ongoing.latestImportAt} variant="audit" /></dd>
+            <dt className="text-steel">Latest successful TRM21QC</dt>
+            <dd>
+              {workspace.ongoing.latestTrm21qcAt ? (
+                <InstantText value={workspace.ongoing.latestTrm21qcAt} variant="audit" />
+              ) : (
+                "None yet"
+              )}
+            </dd>
+          </div>
+          <div className="text-[13px]">
+            <dt className="text-steel">Outstanding import issues</dt>
+            <dd>{workspace.ongoing.outstandingIssue ?? "None"}</dd>
           </div>
         </dl>
         <p className="mt-3 max-w-3xl text-[12px] text-steel">
           The verified sales account is the code used for this customer's files. The 407EXP master is a
-          separate customer-list link. One can be present without the other.
+          separate customer-list link. One can be present without the other. Historical coverage dates
+          are not the same as ongoing 504/TRM21QC freshness.
           {workspace.salesAccount.ownershipNote ? ` ${workspace.salesAccount.ownershipNote}` : ""}
         </p>
       </section>
@@ -145,26 +169,37 @@ export function CustomerAutopartWorkspace({
       <section className="rounded-lg border border-border p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-display text-base uppercase">Sales setup</h2>
-          {workspace.primaryAction === "activate" ? (
-            <button type="button" className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground" onClick={onOpenOverview}>
-              {autopartPrimaryActionLabel(workspace.primaryAction)}
-            </button>
-          ) : workspace.primaryAction === "view-enquiry" ? (
-            <a href={enquiryHref} className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground">
-              {autopartPrimaryActionLabel(workspace.primaryAction)}
-            </a>
-          ) : (
-            <button
-              type="button"
-              className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
-              onClick={() => {
-                if (workspace.primaryAction === "verify") setAccountsOpen(true);
-                scrollToAction(workspace.primaryAction);
-              }}
-            >
-              {autopartPrimaryActionLabel(workspace.primaryAction)}
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {workspace.primaryAction === "activate" ? (
+              <button type="button" className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground" onClick={onOpenOverview}>
+                {autopartPrimaryActionLabel(workspace.primaryAction)}
+              </button>
+            ) : workspace.primaryAction === "view-enquiry" ? (
+              <>
+                <a href={enquiryHref} className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground">
+                  {autopartPrimaryActionLabel(workspace.primaryAction)}
+                </a>
+                <button
+                  type="button"
+                  className="h-10 rounded-md border border-border px-4 text-[12px] font-bold uppercase"
+                  onClick={() => scrollToAction("import-current")}
+                >
+                  {autopartPrimaryActionLabel("import-current")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="h-10 rounded-md bg-primary px-4 text-[12px] font-bold uppercase text-primary-foreground"
+                onClick={() => {
+                  if (workspace.primaryAction === "verify") setAccountsOpen(true);
+                  scrollToAction(workspace.primaryAction);
+                }}
+              >
+                {autopartPrimaryActionLabel(workspace.primaryAction)}
+              </button>
+            )}
+          </div>
         </div>
         <ol className="mt-4 grid gap-2 lg:grid-cols-5">
           {workspace.stages.map((stage, index) => (
@@ -203,6 +238,8 @@ export function CustomerAutopartWorkspace({
         historyStatus={workspace.history.status}
         companyStatus={workspace.company.status}
         verified={workspace.salesAccount.verified}
+        automaticImportEnabled={workspace.ongoing.pollingEnabled || workspace.automaticImportEnabled}
+        outstandingIssue={workspace.ongoing.outstandingIssue}
         onChanged={reload}
       />
 
