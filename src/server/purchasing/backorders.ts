@@ -47,6 +47,7 @@ import {
   autopartConditionLabel,
   type BackorderConditionFilter,
 } from "@/domain/autopart-product-condition";
+import { backorderLinesCsv, backorderMovementCsv } from "@/server/purchasing/backorder-csv";
 
 const listInput = z.object({
   movement: z.enum(AUTOPART_216V_MOVEMENTS).optional().nullable(),
@@ -86,12 +87,6 @@ function money(value: { toString(): string } | number | null | undefined): strin
   if (value == null) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(2) : null;
-}
-
-function csvCell(value: string | number | null | undefined): string {
-  const s = value == null ? "" : String(value);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
 }
 
 type ProductInclude = {
@@ -905,123 +900,36 @@ export async function getBackorderLineDetail(actorUserId: string, lineId: string
   };
 }
 
-function movementCsv(movement: Autopart216vMovement, rows: BackorderMovementRowView[]) {
-  const header = [
-    "Movement",
-    "Status",
-    "Order No",
-    "Customer Account",
-    "Customer",
-    "Customer Order Ref",
-    "SKU",
-    "Description",
-    "Previous Qty",
-    "Current Qty",
-    "Change",
-    "Unit Value",
-    "Previous Value",
-    "Current Value",
-    "First Seen",
-    movement === "CLEARED" ? "Cleared At" : "Last Changed",
-    "Avail",
-    "Incoming",
-    "Stock Position",
-    "Product Type",
-    ...(movement === "CLEARED"
-      ? ["Current Condition Code", "Current Product Condition"]
-      : ["Condition Code", "Condition"]),
-  ];
-  const csv = [
-    header.join(","),
-    ...rows.map((r) =>
-      [
-        csvCell(AUTOPART_216V_MOVEMENT_LABEL[movement]),
-        csvCell(r.statusLabel),
-        csvCell(r.orderNumber),
-        csvCell(r.customerAccount),
-        csvCell(r.customerName),
-        csvCell(r.customerOrderRef),
-        csvCell(r.sku),
-        csvCell(r.description),
-        r.previousQty ?? "",
-        r.currentQty ?? "",
-        r.changeQty ?? "",
-        r.unitValue ?? "",
-        r.previousValue ?? "",
-        r.currentValue ?? "",
-        csvCell(r.firstSeenAt.slice(0, 10)),
-        csvCell((r.clearedAt ?? r.lastChangedAt).slice(0, 10)),
-        r.availQty ?? "",
-        r.incomingQty ?? "",
-        csvCell(r.positionLabel ?? ""),
-        csvCell(r.productKindLabel),
-        csvCell(r.conditionCode ?? ""),
-        csvCell(r.conditionCode ? (r.conditionLabel ?? "") : ""),
-      ].join(","),
-    ),
-  ].join("\n");
-  return {
-    filename: `autopart-216v-backorders-${movement.toLowerCase()}.csv`,
-    csv,
-    mime: "text/csv;charset=utf-8",
-  };
-}
-
 export async function exportBackordersCsv(actorUserId: string, raw: unknown = {}) {
   await requireBackorderView(actorUserId);
   const input = listInput.parse(raw ?? {});
   const snapshot = await loadLatestSnapshot();
   if (input.movement) {
     const movementRows = snapshot
-      ? (await buildMovementRows(snapshot, enrichLines(snapshot.lines as unknown as LineRow[]), input.movement, input, new Date())).rows
+      ? (
+          await buildMovementRows(
+            snapshot,
+            enrichLines(snapshot.lines as unknown as LineRow[]),
+            input.movement,
+            input,
+            new Date(),
+          )
+        ).rows
       : [];
-    return movementCsv(input.movement, movementRows);
+    return {
+      filename: `autopart-216v-backorders-${input.movement.toLowerCase()}.csv`,
+      csv: backorderMovementCsv(input.movement, movementRows),
+      mime: "text/csv;charset=utf-8",
+    };
   }
-  const rows = snapshot ? applyFilters(enrichLines(snapshot.lines as unknown as LineRow[]), input) : [];
-  const header = [
-    "Status",
-    "First Seen",
-    "Order No",
-    "Customer Account",
-    "Customer",
-    "Customer Order Ref",
-    "SKU",
-    "Description",
-    "Outstanding Qty",
-    "Unit Value",
-    "Outstanding Value",
-    "Avail",
-    "Incoming",
-    "Stock Position",
-    "Product Type",
-    "Condition Code",
-    "Condition",
-  ];
-  const csv = [
-    header.join(","),
-    ...rows.map((r) =>
-      [
-        csvCell(r.statusLabel),
-        csvCell(r.firstSeenAt.slice(0, 10)),
-        csvCell(r.orderNumber),
-        csvCell(r.customerAccount),
-        csvCell(r.customerName),
-        csvCell(r.customerOrderRef),
-        csvCell(r.sku),
-        csvCell(r.description),
-        r.outstandingQty,
-        r.unitValue ?? "",
-        r.outstandingValue ?? "",
-        r.availQty ?? "",
-        r.incomingQty ?? "",
-        csvCell(r.positionLabel),
-        csvCell(r.productKindLabel),
-        csvCell(r.conditionCode ?? ""),
-        csvCell(r.conditionCode ? (r.conditionLabel ?? "") : ""),
-      ].join(","),
-    ),
-  ].join("\n");
-  return { filename: "autopart-216v-backorders.csv", csv, mime: "text/csv;charset=utf-8" };
+  const rows = snapshot
+    ? applyFilters(enrichLines(snapshot.lines as unknown as LineRow[]), input)
+    : [];
+  return {
+    filename: "autopart-216v-backorders.csv",
+    csv: backorderLinesCsv(rows),
+    mime: "text/csv;charset=utf-8",
+  };
 }
 
 export async function getBackorderFeedSettings(actorUserId: string) {

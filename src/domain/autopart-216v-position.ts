@@ -27,6 +27,13 @@ export const AUTOPART_216V_STOCK_POSITION_LABEL: Record<Autopart216vStockPositio
   PRODUCT_NOT_IN_CURRENT_STOCK_FEED: "PRODUCT NOT IN CURRENT STOCK FEED",
 };
 
+/** On-screen stock badge. STOCK AVAILABLE is a review prompt, not a reservation. */
+export function autopart216vPositionHeadline(position: Autopart216vStockPosition): string {
+  if (position === "STOCK_AVAILABLE") return "STOCK AVAILABLE — REVIEW";
+  if (position === "NO_STOCK_NO_INCOMING") return "NO STOCK / NO INCOMING";
+  return AUTOPART_216V_STOCK_POSITION_LABEL[position];
+}
+
 export type Autopart216vSkuCover = {
   position: Autopart216vStockPosition;
   outstandingQty: number;
