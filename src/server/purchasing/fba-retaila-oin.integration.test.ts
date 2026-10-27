@@ -28,6 +28,30 @@ const otherDoc = `SS${stamp}9`;
 const foreignDoc = `OIN${stamp}8`;
 const overlap = `OIN${stamp}5`;
 const ledgerOnly = `OIN${stamp}6`;
+const splitOnce = `OIN${stamp}S1`;
+const splitConflict = `OIN${stamp}S2`;
+const splitGoods = `OIN${stamp}S3`;
+const notMerged = `OIN${stamp}S4`;
+const foreignCoded = `OIN${stamp}S5`;
+const twoOwners = `OIN${stamp}S6`;
+const ledgerOverlapSplit = `OIN${stamp}S7`;
+const ledgerRetaila = `OIN${stamp}L1`;
+const ledgerOther = `OIN${stamp}L2`;
+const ledgerBlank = `OIN${stamp}L3`;
+const ledgerShadow = `OIN${stamp}L4`;
+const identityRefs = [
+  splitOnce,
+  splitConflict,
+  splitGoods,
+  notMerged,
+  foreignCoded,
+  twoOwners,
+  ledgerOverlapSplit,
+  ledgerRetaila,
+  ledgerOther,
+  ledgerBlank,
+  ledgerShadow,
+];
 const skuOnce = `RA${stamp}A`;
 const skuFix = `RA${stamp}B`;
 const skuNet = `RA${stamp}C`;
@@ -36,6 +60,17 @@ const skuForeign = `RA${stamp}E`;
 const skuOverlap = `RA${stamp}F`;
 const skuLedger = `RA${stamp}G`;
 const skuCase = `RA${stamp}H`;
+const skuSplitOnce = `RA${stamp}I`;
+const skuSplitConflict = `RA${stamp}J`;
+const skuSplitGoods = `RA${stamp}K`;
+const skuNotMerged = `RA${stamp}L`;
+const skuForeignCoded = `RA${stamp}M`;
+const skuTwoOwners = `RA${stamp}N`;
+const skuLedgerOverlap = `RA${stamp}S`;
+const skuLedgerRetaila = `RA${stamp}O`;
+const skuLedgerOther = `RA${stamp}P`;
+const skuLedgerBlank = `RA${stamp}Q`;
+const skuLedgerShadow = `RA${stamp}R`;
 const adminEmail = `fba-retaila-${stamp.toLowerCase()}@example.test`;
 const deniedEmail = `fba-denied-${stamp.toLowerCase()}@example.test`;
 const viewerEmail = `fba-view-${stamp.toLowerCase()}@example.test`;
@@ -46,6 +81,7 @@ describe("RETAILA OIN forecast history", () => {
   let viewerId = "";
   let retailaId = "";
   let otherId = "";
+  let retailaTwoId = "";
   let previousSettings: {
     leadTimeDays: number;
     targetCoverWeeks: { toString(): string };
@@ -144,13 +180,21 @@ describe("RETAILA OIN forecast history", () => {
 
   afterAll(async () => {
     await prisma.fbaReplenishmentDocument.deleteMany({
-      where: { documentReference: { in: [overlap, ledgerOnly] } },
+      where: {
+        documentReference: {
+          in: [overlap, ledgerOnly, ledgerOverlapSplit, ledgerRetaila, ledgerOther, ledgerBlank, ledgerShadow],
+        },
+      },
     });
     await prisma.autopartSalesLine.deleteMany({
-      where: { documentReference: { in: [once, conflict, invoice, credit, otherDoc, foreignDoc] } },
+      where: {
+        documentReference: { in: [once, conflict, invoice, credit, otherDoc, foreignDoc, ...identityRefs] },
+      },
     });
     await prisma.autopartSalesDocument.deleteMany({
-      where: { documentReference: { in: [once, conflict, invoice, credit, otherDoc, foreignDoc] } },
+      where: {
+        documentReference: { in: [once, conflict, invoice, credit, otherDoc, foreignDoc, ...identityRefs] },
+      },
     });
     await prisma.fbaAmazonSalesImport.deleteMany({
       where: { filename: { startsWith: `amazon-retaila-${stamp}` } },
@@ -161,7 +205,9 @@ describe("RETAILA OIN forecast history", () => {
     await prisma.autopartProduct.deleteMany({
       where: { sku: skuCase },
     });
-    await prisma.company.deleteMany({ where: { id: { in: [retailaId, otherId] } } });
+    await prisma.company.deleteMany({
+      where: { id: { in: [retailaId, otherId, retailaTwoId].filter((id) => id.length > 0) } },
+    });
     await prisma.user.deleteMany({ where: { id: { in: [adminId, deniedId, viewerId] } } });
     await prisma.role.deleteMany({ where: { key: { in: [`fba-view-${stamp}`, `fba-denied-${stamp}`] } } });
     if (previousSettings) {
@@ -451,6 +497,388 @@ describe("RETAILA OIN forecast history", () => {
     expect(untouched?.forecast.suggestedSendQty).toBeNull();
     expect(untouched?.forecast.weeklyRate).toBeNull();
   });
+
+  it("counts one invoice across company links and keeps other ledger accounts out", async () => {
+    const posted = new Date(`${today}T12:00:00.000Z`);
+    const ledgerDate = new Date(`${today}T00:00:00.000Z`);
+    retailaTwoId = (
+      await prisma.company.create({
+        data: {
+          name: `Retail Amazon two ${stamp}`,
+          status: "ACTIVE",
+          autopartCustomerCode: `RETAILA2${stamp}`,
+          autopartCustomerCodeVerifiedAt: new Date(),
+        },
+      })
+    ).id;
+    await prisma.autopartCustomerAccountAlias.create({
+      data: { companyId: retailaTwoId, alias: "RETAILA", verifiedById: adminId },
+    });
+
+    async function document(input: {
+      companyId: string | null;
+      account: string;
+      reference: string;
+      goods?: string;
+      has504?: boolean;
+      ongoing?: boolean;
+    }) {
+      const ongoing = input.ongoing ?? false;
+      return prisma.autopartSalesDocument.create({
+        data: {
+          companyId: input.companyId,
+          autopartCustomerCode: input.account,
+          documentType: "INVOICE",
+          documentReference: input.reference,
+          documentDate: posted,
+          ...(input.goods != null ? { goodsNet: input.goods } : {}),
+          has504: input.has504 ?? false,
+          hasTrm21qc: ongoing,
+          source: ongoing || input.has504 ? "ONGOING_504" : "561L",
+        },
+      });
+    }
+    async function line(input: {
+      documentId: string;
+      companyId: string | null;
+      account: string;
+      reference: string;
+      sku: string;
+      units: number;
+      salesNet: string;
+      source: "561L" | "ONGOING_TRM21QC";
+    }) {
+      await prisma.autopartSalesLine.create({
+        data: {
+          documentId: input.documentId,
+          companyId: input.companyId,
+          autopartCustomerCode: input.account,
+          documentType: "INVOICE",
+          documentReference: input.reference,
+          lineNumber: 1,
+          sku: input.sku,
+          units: input.units,
+          salesNet: input.salesNet,
+          source: input.source,
+        },
+      });
+    }
+    async function ledger(input: { reference: string; account: string; sku: string; qty: number }) {
+      const saved = await prisma.fbaReplenishmentDocument.create({
+        data: {
+          documentReference: input.reference,
+          documentType: "INVOICE",
+          documentDate: ledgerDate,
+          customerAccount: input.account,
+        },
+      });
+      await prisma.fbaReplenishmentLine.create({
+        data: {
+          documentId: saved.id,
+          lineKey: `ledger-${stamp}-${input.reference}`,
+          sku: input.sku,
+          matchKey: skuMatchKey(input.sku),
+          qty: input.qty,
+        },
+      });
+    }
+
+    const onceMapped = await document({
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: splitOnce,
+    });
+    const onceOpen = await document({
+      companyId: null,
+      account: "RETAILA",
+      reference: splitOnce,
+      goods: "40.00",
+      has504: true,
+      ongoing: true,
+    });
+    await line({
+      documentId: onceMapped.id,
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: splitOnce,
+      sku: skuSplitOnce,
+      units: 4,
+      salesNet: "40.00",
+      source: "561L",
+    });
+    await line({
+      documentId: onceOpen.id,
+      companyId: null,
+      account: "RETAILA",
+      reference: splitOnce,
+      sku: skuSplitOnce,
+      units: 4,
+      salesNet: "40.00",
+      source: "ONGOING_TRM21QC",
+    });
+
+    const conflictMapped = await document({
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: splitConflict,
+    });
+    const conflictOpen = await document({
+      companyId: null,
+      account: "RETAILA",
+      reference: splitConflict,
+      ongoing: true,
+    });
+    await line({
+      documentId: conflictMapped.id,
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: splitConflict,
+      sku: skuSplitConflict,
+      units: 2,
+      salesNet: "20.00",
+      source: "561L",
+    });
+    await line({
+      documentId: conflictOpen.id,
+      companyId: null,
+      account: "RETAILA",
+      reference: splitConflict,
+      sku: skuSplitConflict,
+      units: 3,
+      salesNet: "30.00",
+      source: "ONGOING_TRM21QC",
+    });
+
+    const goodsMapped = await document({
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: splitGoods,
+    });
+    const goodsOpen = await document({
+      companyId: null,
+      account: "RETAILA",
+      reference: splitGoods,
+      goods: "99.00",
+      has504: true,
+      ongoing: true,
+    });
+    await line({
+      documentId: goodsMapped.id,
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: splitGoods,
+      sku: skuSplitGoods,
+      units: 4,
+      salesNet: "40.00",
+      source: "561L",
+    });
+    await line({
+      documentId: goodsOpen.id,
+      companyId: null,
+      account: "RETAILA",
+      reference: splitGoods,
+      sku: skuSplitGoods,
+      units: 4,
+      salesNet: "40.00",
+      source: "ONGOING_TRM21QC",
+    });
+
+    const kept = await document({ companyId: retailaId, account: "RETAILA", reference: notMerged });
+    const stranger = await document({
+      companyId: otherId,
+      account: "RETAILA",
+      reference: notMerged,
+      ongoing: true,
+    });
+    await line({
+      documentId: kept.id,
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: notMerged,
+      sku: skuNotMerged,
+      units: 4,
+      salesNet: "40.00",
+      source: "561L",
+    });
+    await line({
+      documentId: stranger.id,
+      companyId: otherId,
+      account: "RETAILA",
+      reference: notMerged,
+      sku: skuNotMerged,
+      units: 9,
+      salesNet: "90.00",
+      source: "ONGOING_TRM21QC",
+    });
+
+    const codedOnly = await document({
+      companyId: otherId,
+      account: "RETAILA",
+      reference: foreignCoded,
+      ongoing: true,
+    });
+    await line({
+      documentId: codedOnly.id,
+      companyId: otherId,
+      account: "RETAILA",
+      reference: foreignCoded,
+      sku: skuForeignCoded,
+      units: 11,
+      salesNet: "110.00",
+      source: "561L",
+    });
+
+    const firstOwner = await document({
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: twoOwners,
+    });
+    const secondOwner = await document({
+      companyId: retailaTwoId,
+      account: "RETAILA",
+      reference: twoOwners,
+      ongoing: true,
+    });
+    await line({
+      documentId: firstOwner.id,
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: twoOwners,
+      sku: skuTwoOwners,
+      units: 4,
+      salesNet: "40.00",
+      source: "561L",
+    });
+    await line({
+      documentId: secondOwner.id,
+      companyId: retailaTwoId,
+      account: "RETAILA",
+      reference: twoOwners,
+      sku: skuTwoOwners,
+      units: 4,
+      salesNet: "40.00",
+      source: "ONGOING_TRM21QC",
+    });
+
+    const overlapDoc = await document({
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: ledgerOverlapSplit,
+      ongoing: true,
+    });
+    await line({
+      documentId: overlapDoc.id,
+      companyId: retailaId,
+      account: "RETAILA",
+      reference: ledgerOverlapSplit,
+      sku: skuLedgerOverlap,
+      units: 4,
+      salesNet: "40.00",
+      source: "561L",
+    });
+    await ledger({ reference: ledgerOverlapSplit, account: "RETAILA", sku: skuLedgerOverlap, qty: 9 });
+    await ledger({ reference: ledgerRetaila, account: "RETAILA", sku: skuLedgerRetaila, qty: 6 });
+    await ledger({ reference: ledgerOther, account: `OTHER${stamp}`, sku: skuLedgerOther, qty: 8 });
+    await ledger({ reference: ledgerBlank, account: "", sku: skuLedgerBlank, qty: 7 });
+    const shadowDoc = await document({
+      companyId: otherId,
+      account: `OTHER${stamp}`,
+      reference: ledgerShadow,
+      ongoing: true,
+    });
+    await line({
+      documentId: shadowDoc.id,
+      companyId: otherId,
+      account: `OTHER${stamp}`,
+      reference: ledgerShadow,
+      sku: skuLedgerShadow,
+      units: 5,
+      salesNet: "50.00",
+      source: "ONGOING_TRM21QC",
+    });
+    await ledger({ reference: ledgerShadow, account: "RETAILA", sku: skuLedgerShadow, qty: 5 });
+
+    const workspace = await getFbaForecastWorkspace(adminId, { q: stamp });
+    const units = (sku: string) =>
+      workspace.rows.find((row) => row.matchKey === skuMatchKey(sku))?.oinUnits90 ?? null;
+    const skuDocuments = async (sku: string) =>
+      (await getFbaForecastSku(adminId, { matchKey: skuMatchKey(sku) })).documents;
+
+    const onceDocuments = await skuDocuments(skuSplitOnce);
+    expect(onceDocuments).toHaveLength(1);
+    expect(onceDocuments[0]?.status).toBe("COUNTED");
+    expect(onceDocuments[0]?.source).toBe("ONGOING_TRM21QC");
+    expect(onceDocuments[0]?.units).toBe(4);
+    expect(onceDocuments[0]?.lines).toHaveLength(1);
+    expect(units(skuSplitOnce)).toBe(4);
+
+    const conflictDocuments = await skuDocuments(skuSplitConflict);
+    expect(conflictDocuments.map((item) => item.status)).toContain("SOURCE_CONFLICT");
+    expect(conflictDocuments.every((item) => item.units === 0)).toBe(true);
+    expect(units(skuSplitConflict)).toBeNull();
+
+    const goodsDocuments = await skuDocuments(skuSplitGoods);
+    expect(goodsDocuments.map((item) => item.status)).toContain("GOODS_MISMATCH");
+    expect(goodsDocuments.every((item) => item.units === 0)).toBe(true);
+    expect(units(skuSplitGoods)).toBeNull();
+
+    const keptDocuments = await skuDocuments(skuNotMerged);
+    const keptRow = keptDocuments.find((item) => item.status === "COUNTED");
+    expect(keptRow?.units).toBe(4);
+    expect(keptRow?.lines.reduce((sum, item) => sum + item.units, 0)).toBe(4);
+    expect(units(skuNotMerged)).toBe(4);
+
+    const foreignDocuments = await skuDocuments(skuForeignCoded);
+    expect(foreignDocuments).toHaveLength(1);
+    expect(foreignDocuments[0]?.status).toBe("AMBIGUOUS_OWNER");
+    expect(foreignDocuments[0]?.units).toBe(0);
+    expect(units(skuForeignCoded)).toBeNull();
+
+    const ownerDocuments = await skuDocuments(skuTwoOwners);
+    expect(ownerDocuments.map((item) => item.status)).toContain("AMBIGUOUS_OWNER");
+    expect(ownerDocuments.every((item) => item.units === 0)).toBe(true);
+    expect(units(skuTwoOwners)).toBeNull();
+
+    const overlapDocuments = await skuDocuments(skuLedgerOverlap);
+    expect(overlapDocuments.find((item) => item.status === "COUNTED")?.units).toBe(4);
+    expect(overlapDocuments.some((item) => item.status === "LEDGER_ONLY" || item.status === "LEDGER_REVIEW")).toBe(
+      false,
+    );
+    expect(units(skuLedgerOverlap)).toBe(4);
+
+    const retailaLedger = await skuDocuments(skuLedgerRetaila);
+    expect(retailaLedger).toHaveLength(1);
+    expect(retailaLedger[0]?.status).toBe("LEDGER_ONLY");
+    expect(retailaLedger[0]?.units).toBe(6);
+    expect(units(skuLedgerRetaila)).toBe(6);
+
+    expect(await skuDocuments(skuLedgerOther)).toEqual([]);
+    expect(units(skuLedgerOther)).toBeNull();
+
+    const blankLedger = await skuDocuments(skuLedgerBlank);
+    expect(blankLedger).toHaveLength(1);
+    expect(blankLedger[0]?.status).toBe("LEDGER_REVIEW");
+    expect(blankLedger[0]?.units).toBe(0);
+    expect(units(skuLedgerBlank)).toBeNull();
+
+    const shadowLedger = await skuDocuments(skuLedgerShadow);
+    expect(shadowLedger).toHaveLength(1);
+    expect(shadowLedger[0]?.status).toBe("LEDGER_REVIEW");
+    expect(shadowLedger[0]?.units).toBe(0);
+    expect(units(skuLedgerShadow)).toBeNull();
+
+    const firstPage = await getFbaOinHistory(adminId, { page: 1 });
+    const history = [...firstPage.documents];
+    const pageCount = Math.min(20, Math.ceil(firstPage.total / firstPage.pageSize));
+    for (let page = 2; page <= pageCount; page += 1) {
+      history.push(...(await getFbaOinHistory(adminId, { page })).documents);
+    }
+    const references = history.map((item) => item.documentReference);
+    expect(references).not.toContain(ledgerOther);
+    const blankHistory = history.find((item) => item.documentReference === ledgerBlank);
+    expect(blankHistory?.status).toBe("LEDGER_REVIEW");
+    expect(blankHistory?.units).toBe(0);
+  }, 60_000);
 
   it("keeps shipment quantities on Amazon sales and whole cases", async () => {
     const expected = projectFbaShipment({

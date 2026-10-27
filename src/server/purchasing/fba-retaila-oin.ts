@@ -11,7 +11,7 @@ import { prisma } from "@/infra/database/client";
 
 export const RETAILA_AUTOPART_ACCOUNT = "RETAILA";
 
-export type RetailaOinIssueCode = "SOURCE_CONFLICT" | "GOODS_MISMATCH";
+export type RetailaOinIssueCode = "SOURCE_CONFLICT" | "GOODS_MISMATCH" | "AMBIGUOUS_OWNER";
 
 export type RetailaOinHealth = {
   account: string;
@@ -38,42 +38,108 @@ export type RetailaOinHistoryDocument = {
   documentType: string;
   documentDate: string | null;
   source: string;
-  status: "COUNTED" | RetailaOinIssueCode | "LEDGER_ONLY";
+  status: "COUNTED" | RetailaOinIssueCode | "LEDGER_ONLY" | "LEDGER_REVIEW";
   units: number;
   lines: RetailaOinHistoryLine[];
 };
 
-function retailaAccountSql(account: Prisma.Sql, companyId: Prisma.Sql): Prisma.Sql {
+/** Account is RETAILA, or the code/alias of the company already proven as a RETAILA owner. */
+function provenRetailaAccountSql(account: Prisma.Sql, companyId: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
-    ${account} = ${RETAILA_AUTOPART_ACCOUNT}
-    OR UPPER(btrim(${account})) = ${RETAILA_AUTOPART_ACCOUNT}
-    OR EXISTS (
+    (
+      UPPER(btrim(${account})) = ${RETAILA_AUTOPART_ACCOUNT}
+      OR EXISTS (
+        SELECT 1
+        FROM retaila_owners owner_company
+        WHERE owner_company.id = ${companyId}
+          AND (
+            UPPER(btrim(${account})) = owner_company.code
+            OR EXISTS (
+              SELECT 1
+              FROM "AutopartCustomerAccountAlias" alias_row
+              WHERE alias_row."companyId" = owner_company.id
+                AND alias_row.alias = UPPER(btrim(${account}))
+            )
+          )
+      )
+    )
+    AND NOT EXISTS (
       SELECT 1
-      FROM "AutopartCustomerAccountAlias" a
-      INNER JOIN "Company" c ON c.id = a."companyId"
-      WHERE ${companyId} = c.id
-        AND c."autopartCustomerCodeVerifiedAt" IS NOT NULL
-        AND UPPER(btrim(c."autopartCustomerCode")) = ${RETAILA_AUTOPART_ACCOUNT}
-        AND a.alias = UPPER(btrim(${account}))
+      FROM "Company" foreign_company
+      WHERE foreign_company.id = ${companyId}
+        AND foreign_company."autopartCustomerCodeVerifiedAt" IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM retaila_owners owner_company WHERE owner_company.id = foreign_company.id
+        )
     )
   )`;
 }
 
-/** WITH clause ending in counted_oin_lines, issue_oin_documents and scoped_oin_lines. */
+function ledgerRetailaAccountSql(account: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(
+    UPPER(btrim(${account})) = ${RETAILA_AUTOPART_ACCOUNT}
+    OR EXISTS (
+      SELECT 1
+      FROM retaila_owners owner_company
+      WHERE UPPER(btrim(${account})) = owner_company.code
+        OR EXISTS (
+          SELECT 1
+          FROM "AutopartCustomerAccountAlias" alias_row
+          WHERE alias_row."companyId" = owner_company.id
+            AND alias_row.alias = UPPER(btrim(${account}))
+        )
+    )
+  )`;
+}
+
+/**
+ * WITH clause ending in counted, issue, scoped, proven ledger and review ledger rows.
+ * One verified RETAILA owner on a document is shared by mapped and unmapped copies.
+ * More than one owner, or a RETAILA code on a different verified customer, is not counted.
+ */
 function retailaOinWith(): Prisma.Sql {
-  const lineAccount = retailaAccountSql(
+  const lineAccount = provenRetailaAccountSql(
     Prisma.sql`l."autopartCustomerCode"`,
     Prisma.sql`l."companyId"`,
   );
-  const documentAccount = retailaAccountSql(
+  const headerAccount = provenRetailaAccountSql(
+    Prisma.sql`h."autopartCustomerCode"`,
+    Prisma.sql`h."companyId"`,
+  );
+  const goodsAccount = provenRetailaAccountSql(
     Prisma.sql`d."autopartCustomerCode"`,
     Prisma.sql`d."companyId"`,
   );
+  const ledgerAccount = ledgerRetailaAccountSql(Prisma.sql`d."customerAccount"`);
+  const foreignDocument = Prisma.sql`EXISTS (
+    SELECT 1
+    FROM "AutopartSalesDocument" foreign_document
+    WHERE UPPER(btrim(foreign_document."documentReference")) = UPPER(btrim(d."documentReference"))
+      AND foreign_document."documentType"::text = d."documentType"
+      AND NOT ${provenRetailaAccountSql(
+        Prisma.sql`foreign_document."autopartCustomerCode"`,
+        Prisma.sql`foreign_document."companyId"`,
+      )}
+  )`;
   return Prisma.sql`
-    WITH scoped_oin_lines AS (
+    WITH retaila_owners AS (
+      SELECT c.id, UPPER(btrim(c."autopartCustomerCode")) AS code
+      FROM "Company" c
+      WHERE c."autopartCustomerCodeVerifiedAt" IS NOT NULL
+        AND (
+          UPPER(btrim(c."autopartCustomerCode")) = ${RETAILA_AUTOPART_ACCOUNT}
+          OR EXISTS (
+            SELECT 1
+            FROM "AutopartCustomerAccountAlias" alias_row
+            WHERE alias_row."companyId" = c.id
+              AND alias_row.alias = ${RETAILA_AUTOPART_ACCOUNT}
+          )
+        )
+    ),
+    candidate_lines AS (
       SELECT
         l.id,
-        COALESCE(l."companyId", 'account:' || UPPER(btrim(l."autopartCustomerCode"))) AS company_key,
+        l."companyId" AS company_id,
         UPPER(btrim(l."autopartCustomerCode")) AS account_code,
         l.sku,
         UPPER(btrim(l.sku)) AS sku_key,
@@ -83,13 +149,94 @@ function retailaOinWith(): Prisma.Sql {
         l.source,
         d."documentDate" AS doc_date,
         (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l.units) ELSE l.units END)::numeric(18, 3) AS signed_qty,
-        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."salesNet") ELSE l."salesNet" END)::numeric(18, 2) AS signed_net
+        (CASE WHEN l."documentType" = 'CREDIT' THEN -ABS(l."salesNet") ELSE l."salesNet" END)::numeric(18, 2) AS signed_net,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM "Company" foreign_company
+            WHERE foreign_company.id = l."companyId"
+              AND foreign_company."autopartCustomerCodeVerifiedAt" IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM retaila_owners owner_company WHERE owner_company.id = foreign_company.id
+              )
+          )
+          AND UPPER(btrim(l."autopartCustomerCode")) = ${RETAILA_AUTOPART_ACCOUNT}
+            THEN 'foreign'
+          WHEN ${lineAccount} THEN 'proven'
+          ELSE 'other'
+        END AS link_state
       FROM "AutopartSalesLine" l
       LEFT JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l.source IN ('561L', 'ONGOING_TRM21QC')
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
         AND UPPER(btrim(l."documentReference")) ~ '^OIN[A-Z0-9]+$'
-        AND ${lineAccount}
+    ),
+    doc_owners AS (
+      SELECT owners.doc_ref, owners.owner_id
+      FROM (
+        SELECT c.doc_ref, c.company_id AS owner_id
+        FROM candidate_lines c
+        INNER JOIN retaila_owners owner_company ON owner_company.id = c.company_id
+        WHERE c.link_state = 'proven'
+        UNION
+        SELECT UPPER(btrim(h."documentReference")) AS doc_ref, h."companyId" AS owner_id
+        FROM "AutopartSalesDocument" h
+        INNER JOIN retaila_owners owner_company ON owner_company.id = h."companyId"
+        WHERE h."has504" = TRUE
+          AND UPPER(btrim(h."documentReference")) ~ '^OIN[A-Z0-9]+$'
+          AND ${headerAccount}
+      ) owners
+      WHERE owners.doc_ref IS NOT NULL
+        AND owners.owner_id IS NOT NULL
+    ),
+    doc_identity AS (
+      SELECT doc_ref, COUNT(DISTINCT owner_id)::int AS owner_n, MIN(owner_id) AS owner_id
+      FROM doc_owners
+      GROUP BY doc_ref
+    ),
+    scoped_oin_lines AS (
+      SELECT
+        c.id,
+        CASE
+          WHEN COALESCE(ident.owner_n, 0) > 1 THEN 'ambiguous:' || c.doc_ref
+          WHEN COALESCE(ident.owner_n, 0) = 1 THEN ident.owner_id
+          ELSE 'account:' || ${RETAILA_AUTOPART_ACCOUNT}
+        END AS company_key,
+        c.account_code,
+        c.sku,
+        c.sku_key,
+        c.description,
+        c.doc_type,
+        c.doc_ref,
+        c.source,
+        c.doc_date,
+        c.signed_qty,
+        c.signed_net
+      FROM candidate_lines c
+      LEFT JOIN doc_identity ident ON ident.doc_ref = c.doc_ref
+      WHERE c.link_state = 'proven'
+      UNION ALL
+      SELECT
+        c.id,
+        'ambiguous:' || c.doc_ref AS company_key,
+        c.account_code,
+        c.sku,
+        c.sku_key,
+        c.description,
+        c.doc_type,
+        c.doc_ref,
+        c.source,
+        c.doc_date,
+        c.signed_qty,
+        c.signed_net
+      FROM candidate_lines c
+      WHERE c.link_state = 'foreign'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM candidate_lines proven_line
+          WHERE proven_line.doc_ref = c.doc_ref
+            AND proven_line.link_state = 'proven'
+        )
     ),
     source_doc AS (
       SELECT company_key, doc_ref, source,
@@ -120,14 +267,19 @@ function retailaOinWith(): Prisma.Sql {
       SELECT h.company_key, h.doc_ref
       FROM (
         SELECT
-          COALESCE(d."companyId", 'account:' || UPPER(btrim(d."autopartCustomerCode"))) AS company_key,
+          CASE
+            WHEN COALESCE(ident.owner_n, 0) > 1 THEN 'ambiguous:' || UPPER(btrim(d."documentReference"))
+            WHEN COALESCE(ident.owner_n, 0) = 1 THEN ident.owner_id
+            ELSE 'account:' || ${RETAILA_AUTOPART_ACCOUNT}
+          END AS company_key,
           UPPER(btrim(d."documentReference")) AS doc_ref,
           d."documentType"::text AS doc_type,
           d."goodsNet"::numeric(18, 2) AS goods_net
         FROM "AutopartSalesDocument" d
+        LEFT JOIN doc_identity ident ON ident.doc_ref = UPPER(btrim(d."documentReference"))
         WHERE d."has504" = TRUE
           AND UPPER(btrim(d."documentReference")) ~ '^OIN[A-Z0-9]+$'
-          AND ${documentAccount}
+          AND ${goodsAccount}
       ) h
       LEFT JOIN preferred_lines pl
         ON pl.company_key = h.company_key AND pl.doc_ref = h.doc_ref AND pl.doc_type = h.doc_type
@@ -137,11 +289,13 @@ function retailaOinWith(): Prisma.Sql {
     issue_oin_documents AS (
       SELECT ds.company_key, ds.doc_ref,
         CASE
+          WHEN ds.company_key LIKE 'ambiguous:%' THEN 'AMBIGUOUS_OWNER'
           WHEN ds.sources > 1 AND ds.signatures > 1 THEN 'SOURCE_CONFLICT'
           ELSE 'GOODS_MISMATCH'
         END AS issue
       FROM doc_status ds
-      WHERE (ds.sources > 1 AND ds.signatures > 1)
+      WHERE ds.company_key LIKE 'ambiguous:%'
+         OR (ds.sources > 1 AND ds.signatures > 1)
          OR EXISTS (
            SELECT 1 FROM goods_hold g
            WHERE g.company_key = ds.company_key AND g.doc_ref = ds.doc_ref
@@ -151,11 +305,37 @@ function retailaOinWith(): Prisma.Sql {
       SELECT p.*
       FROM scoped_oin_lines p
       INNER JOIN doc_status ds ON ds.company_key = p.company_key AND ds.doc_ref = p.doc_ref
-      WHERE (ds.sources = 1 OR (ds.signatures = 1 AND p.source = ds.preferred))
+      WHERE ds.company_key NOT LIKE 'ambiguous:%'
+        AND (ds.sources = 1 OR (ds.signatures = 1 AND p.source = ds.preferred))
         AND NOT EXISTS (
           SELECT 1 FROM goods_hold g
           WHERE g.company_key = p.company_key AND g.doc_ref = p.doc_ref
         )
+    ),
+    proven_ledger AS (
+      SELECT d.id, d."documentReference", d."documentType", d."documentDate"
+      FROM "FbaReplenishmentDocument" d
+      WHERE ${ledgerAccount}
+        AND NOT EXISTS (
+          SELECT 1 FROM scoped_oin_lines s
+          WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
+            AND s.doc_type = d."documentType"
+        )
+        AND NOT ${foreignDocument}
+    ),
+    review_ledger AS (
+      SELECT d.id, d."documentReference", d."documentType", d."documentDate"
+      FROM "FbaReplenishmentDocument" d
+      WHERE (
+          btrim(d."customerAccount") = ''
+          OR (${ledgerAccount} AND ${foreignDocument})
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM scoped_oin_lines s
+          WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
+            AND s.doc_type = d."documentType"
+        )
+        AND NOT EXISTS (SELECT 1 FROM proven_ledger proven WHERE proven.id = d.id)
     )
   `;
 }
@@ -188,15 +368,10 @@ export async function loadRetailaOinUnits(range: {
     ledger_window AS (
       SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku, SUM(l.qty) AS units
       FROM "FbaReplenishmentLine" l
-      INNER JOIN "FbaReplenishmentDocument" d ON d.id = l."documentId"
+      INNER JOIN proven_ledger d ON d.id = l."documentId"
       WHERE l."supersededAt" IS NULL
         AND d."documentDate" >= ${range.from}
         AND d."documentDate" < ${range.toExclusive}
-        AND NOT EXISTS (
-          SELECT 1 FROM scoped_oin_lines s
-          WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
-            AND s.doc_type = d."documentType"
-        )
       GROUP BY l."matchKey"
     )
     SELECT "matchKey", MAX(sku) AS sku, SUM(units) AS units
@@ -232,17 +407,7 @@ export async function loadRetailaOinHealth(): Promise<RetailaOinHealth> {
       (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines WHERE source = 'ONGOING_TRM21QC') AS "ongoingDocuments",
       (SELECT COUNT(*)::int FROM issue_oin_documents) AS issues,
       (SELECT COUNT(*)::int FROM counted_oin_lines WHERE doc_date IS NULL) AS "undatedLines",
-      (
-        SELECT COUNT(*)::int FROM (
-          SELECT d.id
-          FROM "FbaReplenishmentDocument" d
-          WHERE NOT EXISTS (
-            SELECT 1 FROM scoped_oin_lines s
-            WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
-              AND s.doc_type = d."documentType"
-          )
-        ) ledger_only
-      ) AS "ledgerOnlyDocuments"
+      (SELECT COUNT(*)::int FROM proven_ledger) AS "ledgerOnlyDocuments"
   `;
   const row = rows[0];
   const documents = row?.documents ?? 0;
@@ -282,14 +447,8 @@ export async function listRetailaOinHistory(input: {
       SELECT (
         (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines)
         + (SELECT COUNT(DISTINCT doc_ref)::int FROM issue_oin_documents)
-        + (
-          SELECT COUNT(*)::int FROM "FbaReplenishmentDocument" d
-          WHERE NOT EXISTS (
-            SELECT 1 FROM scoped_oin_lines s
-            WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
-              AND s.doc_type = d."documentType"
-          )
-        )
+        + (SELECT COUNT(*)::int FROM proven_ledger)
+        + (SELECT COUNT(*)::int FROM review_ledger)
       ) AS total
     `,
     prisma.$queryRaw<
@@ -320,13 +479,13 @@ export async function listRetailaOinHistory(input: {
         UNION ALL
         SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
           COALESCE(SUM(l.qty), 0)
-        FROM "FbaReplenishmentDocument" d
+        FROM proven_ledger d
         LEFT JOIN "FbaReplenishmentLine" l ON l."documentId" = d.id AND l."supersededAt" IS NULL
-        WHERE NOT EXISTS (
-          SELECT 1 FROM scoped_oin_lines s
-          WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
-            AND s.doc_type = d."documentType"
-        )
+        GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
+        UNION ALL
+        SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_REVIEW',
+          0::numeric
+        FROM review_ledger d
         GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
       )
       SELECT * FROM docs
@@ -357,14 +516,15 @@ export async function listRetailaOinHistory(input: {
         UNION ALL
         SELECT UPPER(btrim(d."documentReference")), l.sku, l.description, l.qty, 'LEDGER'
         FROM "FbaReplenishmentLine" l
-        INNER JOIN "FbaReplenishmentDocument" d ON d.id = l."documentId"
+        INNER JOIN proven_ledger d ON d.id = l."documentId"
         WHERE l."supersededAt" IS NULL
           AND UPPER(btrim(d."documentReference")) IN (${Prisma.join(refs)})
-          AND NOT EXISTS (
-            SELECT 1 FROM scoped_oin_lines s
-            WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
-              AND s.doc_type = d."documentType"
-          )
+        UNION ALL
+        SELECT UPPER(btrim(d."documentReference")), l.sku, l.description, l.qty, 'LEDGER'
+        FROM "FbaReplenishmentLine" l
+        INNER JOIN review_ledger d ON d.id = l."documentId"
+        WHERE l."supersededAt" IS NULL
+          AND UPPER(btrim(d."documentReference")) IN (${Prisma.join(refs)})
       `
     : [];
   const byRef = new Map<string, RetailaOinHistoryLine[]>();
@@ -421,14 +581,16 @@ export async function listRetailaOinLinesForSku(
     SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
       l.sku, l.description, l.qty
     FROM "FbaReplenishmentLine" l
-    INNER JOIN "FbaReplenishmentDocument" d ON d.id = l."documentId"
+    INNER JOIN proven_ledger d ON d.id = l."documentId"
     WHERE l."supersededAt" IS NULL
       AND l."matchKey" = ${matchKey}
-      AND NOT EXISTS (
-        SELECT 1 FROM scoped_oin_lines s
-        WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
-          AND s.doc_type = d."documentType"
-      )
+    UNION ALL
+    SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_REVIEW',
+      l.sku, l.description, 0::numeric
+    FROM "FbaReplenishmentLine" l
+    INNER JOIN review_ledger d ON d.id = l."documentId"
+    WHERE l."supersededAt" IS NULL
+      AND l."matchKey" = ${matchKey}
     ORDER BY "documentDate" DESC NULLS LAST, "documentReference"
   `;
   const grouped = new Map<string, RetailaOinHistoryDocument>();
