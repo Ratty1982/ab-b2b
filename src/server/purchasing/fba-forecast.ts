@@ -33,6 +33,13 @@ import { skuMatchKey } from "@/domain/stock";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingSection } from "@/server/rbac/guards";
 import { recordAuditEvent } from "@/server/audit/record";
+import {
+  listRetailaOinHistory,
+  listRetailaOinLinesForSku,
+  loadRetailaOinHealth,
+  loadRetailaOinUnits,
+  type RetailaOinHistoryDocument,
+} from "@/server/purchasing/fba-retaila-oin";
 
 const PAGE_SIZE = 50;
 
@@ -445,13 +452,18 @@ const listInput = z.object({
     .enum(["SEND_NOW", "SEND_SOON", "HEALTHY", "OVERSTOCKED", "INSUFFICIENT_DATA"])
     .optional()
     .nullable(),
+  brand: z.string().trim().max(80).optional().nullable(),
+  sort: z.enum(["priority", "cover", "velocity", "suggested"]).optional().nullable(),
   page: z.number().int().positive().optional().nullable(),
+  exportAll: z.boolean().optional().nullable(),
 });
 
 type SkuBucket = {
   matchKey: string;
   sku: string;
   description: string | null;
+  brand: string | null;
+  sourceImportedAt: string | null;
   fbaAvailable: number | null;
   fbaStockKnown: boolean;
   fbaStockStale: boolean;
@@ -473,21 +485,14 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     caseMultiple: settingsRow?.caseMultiple ?? null,
     overstockCoverWeeks: num(settingsRow?.overstockCoverWeeks ?? 16),
   };
-  const [salesImport, fbaImport, overrides, overlap] = await Promise.all([
+  const [salesImport, fbaImport, overrides, oinHealth] = await Promise.all([
     prisma.fbaAmazonSalesImport.findFirst({ orderBy: { importedAt: "desc" } }),
     prisma.autopartFbaStockImport.findFirst({
       orderBy: { importedAt: "desc" },
       select: { importedAt: true, fileName: true },
     }),
     prisma.fbaSkuForecastOverride.findMany(),
-    prisma.$queryRaw<Array<{ documents: number }>>(Prisma.sql`
-      SELECT COUNT(*)::int AS documents
-      FROM "FbaReplenishmentDocument" f
-      WHERE EXISTS (
-        SELECT 1 FROM "AutopartSalesDocument" s
-        WHERE UPPER(s."documentReference") = f."documentReference"
-      )
-    `),
+    loadRetailaOinHealth(),
   ]);
   const stale = fbaStockIsStale(fbaImport?.importedAt ?? null);
   const ranges = {
@@ -541,27 +546,26 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         studley: number | null;
         present: boolean;
         sourceImportedAt: Date | null;
+        brand: string | null;
       }>
     >(Prisma.sql`
       SELECT p."matchKey" AS "matchKey", p.sku AS sku, p.description AS description,
              loc."availableQty" AS fba,
              loc."sourceImportedAt" AS "sourceImportedAt",
              CASE WHEN p."presentInLatestFeed" THEN p."availQty" ELSE NULL END AS studley,
-             p."presentInLatestFeed" AS present
+             p."presentInLatestFeed" AS present,
+             b.name AS brand
       FROM "AutopartLocationStock" loc
       INNER JOIN "AutopartProduct" p ON p.id = loc."autopartProductId"
+      LEFT JOIN "ProductVariant" v ON v.id = p."catalogueVariantId"
+      LEFT JOIN "Product" pr ON pr.id = v."productId"
+      LEFT JOIN "Brand" b ON b.id = pr."brandId"
       WHERE loc."locationCode" = ${FBA_LOCATION_CODE}
     `),
-    prisma.$queryRaw<Array<{ matchKey: string; sku: string; units: Prisma.Decimal }>>(Prisma.sql`
-      SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku, COALESCE(SUM(l.qty), 0) AS units
-      FROM "FbaReplenishmentLine" l
-      INNER JOIN "FbaReplenishmentDocument" d ON d.id = l."documentId"
-      WHERE l."supersededAt" IS NULL
-        AND d."documentDate" IS NOT NULL
-        AND d."documentDate" >= ${asDate(ranges.d90.from)}
-        AND d."documentDate" < ${addDaysIsoSafe(ranges.d90.to)}
-      GROUP BY l."matchKey"
-    `),
+    loadRetailaOinUnits({
+      from: asDate(ranges.d90.from)!,
+      toExclusive: addDaysIsoSafe(ranges.d90.to),
+    }),
     salesImport
       ? prisma.$queryRaw<
           Array<{
@@ -610,6 +614,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       matchKey,
       sku,
       description,
+      brand: null,
+      sourceImportedAt: null,
       fbaAvailable: null,
       fbaStockKnown: false,
       fbaStockStale: true,
@@ -624,12 +630,14 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   for (const row of fbaRows) {
     const item = bucket(row.matchKey, row.sku, row.description);
     const sourceImportedAt = row.sourceImportedAt ? new Date(row.sourceImportedAt) : null;
+    item.brand = row.brand;
+    item.sourceImportedAt = sourceImportedAt ? sourceImportedAt.toISOString() : null;
     item.fbaAvailable = row.fba;
     item.fbaStockKnown = true;
     item.fbaStockStale = !fbaLocationQtyIsVerified(sourceImportedAt);
     item.studleyAvailable = row.present ? row.studley : null;
   }
-  for (const row of oinRows) bucket(row.matchKey, row.sku).oinUnits90 = num(row.units);
+  for (const row of oinRows) bucket(row.matchKey, row.sku).oinUnits90 = row.units;
   for (const row of amazonRows) {
     bucket(row.matchKey, row.sku).amazon = {
       d7: num(row.d7),
@@ -642,8 +650,9 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
 
   const overrideByKey = new Map(overrides.map((row) => [row.matchKey, row]));
   const q = input.q?.trim().toLowerCase() ?? "";
+  const brandFilter = input.brand?.trim() || null;
   let unverifiedFbaSkus = 0;
-  const rows = [...buckets.values()]
+  const forecastRows = [...buckets.values()]
     .map((item) => {
       if (item.fbaStockKnown && item.fbaStockStale) unverifiedFbaSkus += 1;
       const override = overrideByKey.get(item.matchKey);
@@ -673,22 +682,32 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
           d365: windows.d365 ? (item.amazon?.d365 ?? 0) : null,
         },
       };
-    })
+    });
+  const summary = {
+    sendNow: forecastRows.filter((row) => row.forecast.recommendation === "SEND_NOW").length,
+    sendSoon: forecastRows.filter((row) => row.forecast.recommendation === "SEND_SOON").length,
+    healthy: forecastRows.filter((row) => row.forecast.recommendation === "HEALTHY").length,
+    dataIssues: forecastRows.filter((row) => row.forecast.recommendation === "INSUFFICIENT_DATA")
+      .length,
+    overstocked: forecastRows.filter((row) => row.forecast.recommendation === "OVERSTOCKED").length,
+  };
+  const brands = [...new Set(forecastRows.map((row) => row.brand).filter((brand): brand is string => Boolean(brand)))].sort(
+    (a, b) => a.localeCompare(b),
+  );
+  const rows = forecastRows
     .filter((row) => {
-      if (input.recommendation && row.forecast.recommendation !== input.recommendation)
-        return false;
+      if (input.recommendation && row.forecast.recommendation !== input.recommendation) return false;
+      if (brandFilter === "__unbranded" && row.brand) return false;
+      if (brandFilter && brandFilter !== "__unbranded" && row.brand !== brandFilter) return false;
       if (!q) return true;
       return (
         row.sku.toLowerCase().includes(q) ||
         row.matchKey.toLowerCase().includes(q) ||
-        (row.description ?? "").toLowerCase().includes(q)
+        (row.description ?? "").toLowerCase().includes(q) ||
+        (row.brand ?? "").toLowerCase().includes(q)
       );
     })
-    .sort(
-      (a, b) =>
-        recommendationRank(a.forecast.recommendation) -
-          recommendationRank(b.forecast.recommendation) || a.sku.localeCompare(b.sku),
-    );
+    .sort((a, b) => compareForecastRows(a, b, input.sort ?? "priority"));
 
   const page = input.page ?? 1;
   const start = (page - 1) * PAGE_SIZE;
@@ -720,19 +739,24 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
           windows,
         }
       : null,
+    summary,
+    brands,
+    oin: oinHealth,
     canManage: hasPermission(profile, "purchasing.fba_forecast.manage"),
     settings,
-    overlapDocuments: overlap[0]?.documents ?? 0,
+    overlapDocuments: oinHealth.ledgerOnlyDocuments,
     unmatchedCount: unmatched.length,
     unmatchedSkus: unmatched.slice(0, 50).map((row) => row.matchKey),
     latestExceptions: (latestRun?.exceptions as OinException[] | null)?.slice(0, 20) ?? [],
     total: rows.length,
     page,
-    pageSize: PAGE_SIZE,
-    rows: rows.slice(start, start + PAGE_SIZE).map((row) => ({
+    pageSize: input.exportAll ? rows.length || PAGE_SIZE : PAGE_SIZE,
+    rows: (input.exportAll ? rows : rows.slice(start, start + PAGE_SIZE)).map((row) => ({
       matchKey: row.matchKey,
       sku: row.sku,
       description: row.description,
+      brand: row.brand,
+      sourceImportedAt: row.sourceImportedAt,
       fbaAvailable: row.fbaAvailable,
       studleyAvailable: row.studleyAvailable,
       confirmedInbound: row.inbound,
@@ -744,12 +768,99 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   };
 }
 
+function csvCell(value: string | number | null | undefined): string {
+  const text = value == null ? "" : String(value);
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
+  const data = await getFbaForecastWorkspace(actorUserId, { ...(raw as object), exportAll: true, page: 1 });
+  const header = [
+    "SKU",
+    "Description",
+    "Brand",
+    "FBA stock",
+    "Sold 30d",
+    "Weeks cover",
+    "Studley stock",
+    "Suggested send",
+    "Dispatchable",
+    "Buy shortfall",
+    "Status",
+  ];
+  const lines = data.rows.map((row) =>
+    [
+      row.sku,
+      row.description,
+      row.brand,
+      row.fbaAvailable,
+      row.amazonUnits.d30,
+      row.forecast.coverWeeks,
+      row.studleyAvailable,
+      row.forecast.suggestedSendQty,
+      row.forecast.dispatchableQty,
+      row.forecast.studleyShortfallQty,
+      row.forecast.recommendationLabel,
+    ]
+      .map((value) => csvCell(value))
+      .join(","),
+  );
+  return {
+    filename: `amazon-fba-forecast-${data.today}.csv`,
+    csv: [header.join(","), ...lines].join("\n"),
+    rows: data.rows.length,
+  };
+}
+
+export async function getFbaOinHistory(actorUserId: string, raw: unknown) {
+  await requireView(actorUserId);
+  const input = z
+    .object({ page: z.number().int().positive().optional().nullable() })
+    .parse(raw ?? {});
+  const page = input.page ?? 1;
+  const history = await listRetailaOinHistory({ page, pageSize: PAGE_SIZE });
+  return { ...history, page, pageSize: PAGE_SIZE };
+}
+
+export async function getFbaForecastSku(actorUserId: string, raw: unknown) {
+  await requireView(actorUserId);
+  const input = z.object({ matchKey: z.string().trim().min(1).max(80) }).parse(raw ?? {});
+  const documents: RetailaOinHistoryDocument[] = await listRetailaOinLinesForSku(
+    input.matchKey.trim().toUpperCase(),
+  );
+  return { matchKey: input.matchKey.trim().toUpperCase(), documents };
+}
+
 function recommendationRank(value: string): number {
   if (value === "SEND_NOW") return 0;
   if (value === "SEND_SOON") return 1;
   if (value === "INSUFFICIENT_DATA") return 2;
   if (value === "HEALTHY") return 3;
   return 4;
+}
+
+function compareForecastRows(
+  a: { sku: string; forecast: FbaForecastResult },
+  b: { sku: string; forecast: FbaForecastResult },
+  sort: "priority" | "cover" | "velocity" | "suggested",
+): number {
+  if (sort === "cover") {
+    const left = a.forecast.coverWeeks ?? Number.POSITIVE_INFINITY;
+    const right = b.forecast.coverWeeks ?? Number.POSITIVE_INFINITY;
+    if (left !== right) return left - right;
+  } else if (sort === "velocity") {
+    const left = a.forecast.weeklyRate ?? Number.NEGATIVE_INFINITY;
+    const right = b.forecast.weeklyRate ?? Number.NEGATIVE_INFINITY;
+    if (left !== right) return right - left;
+  } else if (sort === "suggested") {
+    const left = a.forecast.suggestedSendQty ?? Number.NEGATIVE_INFINITY;
+    const right = b.forecast.suggestedSendQty ?? Number.NEGATIVE_INFINITY;
+    if (left !== right) return right - left;
+  } else if (recommendationRank(a.forecast.recommendation) !== recommendationRank(b.forecast.recommendation)) {
+    return recommendationRank(a.forecast.recommendation) - recommendationRank(b.forecast.recommendation);
+  }
+  return a.sku.localeCompare(b.sku);
 }
 
 function addDaysIsoSafe(iso: string): Date {
