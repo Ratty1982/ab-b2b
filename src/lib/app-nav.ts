@@ -100,6 +100,7 @@ export const ROUTES = {
   purchasing: "/purchasing",
   purchasingStock: "/purchasing/stock",
   purchasingForecast: "/purchasing/forecast",
+  purchasingFbaForecast: "/purchasing/fba-forecast",
   purchasingForecastSku: (sku: string) => `/purchasing/forecast/${encodeURIComponent(sku)}` as const,
   purchasingPlanner: "/purchasing/planner",
   purchasingBackorders: "/purchasing/backorders",
@@ -464,6 +465,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         to: ROUTES.purchasingForecast,
         matchPrefixes: [ROUTES.purchasingForecast],
         permission: ["purchasing.forecast.view", "purchasing.forecast.manage"],
+        implemented: true,
+      },
+      {
+        id: "purchasing-fba-forecast",
+        label: "FBA Forecast",
+        icon: "store",
+        to: ROUTES.purchasingFbaForecast,
+        matchPrefixes: [ROUTES.purchasingFbaForecast],
+        permission: ["purchasing.fba_forecast.view", "purchasing.fba_forecast.manage"],
         implemented: true,
       },
       {

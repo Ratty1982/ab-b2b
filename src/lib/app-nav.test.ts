@@ -125,6 +125,7 @@ describe("canonical navigation contract", () => {
       "purchasing-dashboard",
       "purchasing-stock",
       "purchasing-forecast",
+      "purchasing-fba-forecast",
       "purchasing-planner",
       "purchasing-backorders",
       "purchasing-overstock",
@@ -212,6 +213,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-stock");
     expect(ids).not.toContain("purchasing-forecast");
+    expect(ids).not.toContain("purchasing-fba-forecast");
     expect(ids).not.toContain("integrations-autopart-imports");
     expect(ids).not.toContain("cost-intelligence");
     expect(ids).not.toContain("users");

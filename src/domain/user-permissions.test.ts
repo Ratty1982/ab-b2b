@@ -126,6 +126,7 @@ describe("user permission overrides", () => {
     ]);
     expect(applied.effective.has("purchasing.view")).toBe(true);
     expect(applied.effective.has("purchasing.forecast.view")).toBe(true);
+    expect(applied.effective.has("purchasing.fba_forecast.view")).toBe(true);
     expect(applied.effective.has("purchasing.stock.view")).toBe(false);
     expect(applied.effective.has("purchasing.manage")).toBe(false);
     expect(treePermissionKeys().filter((key) => key === "purchasing.stock.view")).toHaveLength(1);
@@ -137,6 +138,7 @@ describe("user permission overrides", () => {
     ]);
     expect(applied.effective.has("purchasing.stock.view")).toBe(false);
     expect(applied.effective.has("purchasing.forecast.view")).toBe(false);
+    expect(applied.effective.has("purchasing.fba_forecast.view")).toBe(false);
   });
 
   it("merges selected overrides and leaves the rest untouched", () => {

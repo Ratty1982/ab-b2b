@@ -1,6 +1,7 @@
 /**
  * Monthly sales trends from AutopartSalesLine.
  * FBA stock and FBA report usage are not read.
+ * OIN replenishment documents are excluded from the same purchasing view.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -27,6 +28,7 @@ async function skuMonths(sku: string): Promise<MonthRow[]> {
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+      AND UPPER(d."documentReference") NOT LIKE 'OIN%'
       AND d."documentDate" IS NOT NULL
       AND UPPER(l.sku) = ${skuMatchKey(sku)}
     GROUP BY 1
@@ -44,6 +46,7 @@ async function brandMonths(brandId: string): Promise<MonthRow[]> {
     INNER JOIN "ProductVariant" v ON UPPER(v.sku) = UPPER(l.sku)
     INNER JOIN "Product" p ON p.id = v."productId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+      AND UPPER(d."documentReference") NOT LIKE 'OIN%'
       AND d."documentDate" IS NOT NULL
       AND p."brandId" = ${brandId}
     GROUP BY 1
@@ -59,6 +62,7 @@ async function brandSkuCount(brandId: string): Promise<number> {
     INNER JOIN "ProductVariant" v ON UPPER(v.sku) = UPPER(l.sku)
     INNER JOIN "Product" p ON p.id = v."productId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+      AND UPPER(d."documentReference") NOT LIKE 'OIN%'
       AND d."documentDate" IS NOT NULL
       AND p."brandId" = ${brandId}
   `;
@@ -143,6 +147,7 @@ export async function trendDirectionBySku(skus: string[], today = todayLondonDat
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l."source" = 'ONGOING_TRM21QC'
+      AND UPPER(d."documentReference") NOT LIKE 'OIN%'
       AND d."documentDate" IS NOT NULL
         AND UPPER(l.sku) IN (${Prisma.join(chunk)})
       GROUP BY 1, 2

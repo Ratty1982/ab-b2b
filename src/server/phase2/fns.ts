@@ -4873,6 +4873,78 @@ export const listFbaStockImportsFn = createServerFn({ method: "GET" }).handler(a
   }
 });
 
+export const getFbaForecastWorkspaceFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.getFbaForecastWorkspace(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const importOinReplenishmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.importOinReplenishment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const importFbaAmazonSalesFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.importFbaAmazonSales(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const updateFbaForecastSettingsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.updateFbaForecastSettings(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveFbaInboundShipmentFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.saveFbaInboundShipment(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const saveFbaSkuOverrideFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.saveFbaSkuOverride(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const previewSalesHistoryCoverageFn = createServerFn({ method: "GET" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {
