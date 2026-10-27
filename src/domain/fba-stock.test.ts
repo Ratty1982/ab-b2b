@@ -9,6 +9,7 @@ import {
   fbaIssuesCsv,
   fbaMatchingEquation,
   fbaRowsReadEquation,
+  fbaLocationQtyIsVerified,
   fbaStockIsStale,
   planFbaSnapshot,
   presentFbaDiagnosticText,
@@ -292,6 +293,16 @@ describe("FBA snapshot planning", () => {
     expect(fbaStockIsStale(new Date("2026-10-01T12:00:00.000Z"), now)).toBe(false);
     expect(fbaStockIsStale(new Date("2026-09-01T12:00:00.000Z"), now)).toBe(true);
     expect(fbaStockIsStale(null, now)).toBe(false);
+  });
+
+  it("does not treat a fresh partial import as verifying an omitted SKU", () => {
+    const now = new Date("2026-10-27T12:00:00.000Z");
+    const freshPartialImport = new Date("2026-10-27T09:00:00.000Z");
+    const omittedSku = new Date("2026-08-01T09:00:00.000Z");
+    expect(fbaStockIsStale(freshPartialImport, now)).toBe(false);
+    expect(fbaLocationQtyIsVerified(freshPartialImport, now)).toBe(true);
+    expect(fbaLocationQtyIsVerified(omittedSku, now)).toBe(false);
+    expect(fbaLocationQtyIsVerified(null, now)).toBe(false);
   });
 });
 

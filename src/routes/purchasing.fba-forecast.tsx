@@ -95,6 +95,7 @@ function FbaForecastPage() {
   const [reportTrm, setReportTrm] = useState<{ name: string; text: string } | null>(null);
   const [salesFile, setSalesFile] = useState<{ name: string; text: string } | null>(null);
   const [completeDaily, setCompleteDaily] = useState(false);
+  const [fbaOnlyAttested, setFbaOnlyAttested] = useState(false);
   const [lead, setLead] = useState("14");
   const [cover, setCover] = useState("6");
   const [safety, setSafety] = useState("0");
@@ -185,12 +186,22 @@ function FbaForecastPage() {
           OIN invoice does not put stock in transit. Only a confirmed in-transit shipment counts as
           inbound, and received stock is left in the FBA snapshot so it is not counted twice.
         </p>
+        <p>
+          Each FBA quantity is verified from that SKU&apos;s own OPTIMUS timestamp. A partial upload
+          refreshes only the SKUs in the file. Stock older than {data?.staleAfterDays ?? 14} days,
+          or with no timestamp, is not sellable inventory for a shipment.
+        </p>
+        {data && data.unverifiedFbaSkus > 0 ? (
+          <p className="font-medium text-warn">
+            {data.unverifiedFbaSkus.toLocaleString("en-GB")} SKU
+            {data.unverifiedFbaSkus === 1 ? "" : "s"} have a stale or missing OPTIMUS timestamp, so
+            no shipment is suggested for them.
+          </p>
+        ) : null}
         {data?.stale ? (
           <p className="font-medium text-warn">
-            The OPTIMUS snapshot is older than {data.staleAfterDays} days
-            {data.fbaImportedAt ? ` (imported ${ukDate(data.fbaImportedAt.slice(0, 10))})` : ""}. It
-            is not treated as freshly verified sellable inventory, so shipment quantities stay
-            blank.
+            The latest OPTIMUS file is older than {data.staleAfterDays} days
+            {data.fbaImportedAt ? ` (imported ${ukDate(data.fbaImportedAt.slice(0, 10))})` : ""}.
           </p>
         ) : null}
         {data && !data.sales ? (
@@ -199,8 +210,12 @@ function FbaForecastPage() {
         {data?.sales && !data.sales.windows.d30 ? (
           <p>
             The latest Amazon file ({data.sales.filename}, {data.sales.coverageFrom ?? "unknown"} to{" "}
-            {data.sales.coverageTo ?? "unknown"}) does not cover the last 30 days as a complete
-            daily extract. No weekly rate is estimated.
+            {data.sales.coverageTo ?? "unknown"}, scope {data.sales.fulfilmentScope || "unset"})
+            does not support the last 30 days as complete FBA sell-through. No weekly rate is
+            estimated.
+            {data.sales.coverageHasGaps
+              ? " Days inside the declared range have no row, and omitted days were not declared as zero FBA sales."
+              : ""}
           </p>
         ) : null}
         {data && data.overlapDocuments > 0 ? (
@@ -287,7 +302,12 @@ function FbaForecastPage() {
               void run(
                 () =>
                   importFbaAmazonSalesFn({
-                    data: { text: salesFile.text, filename: salesFile.name, completeDaily },
+                    data: {
+                      text: salesFile.text,
+                      filename: salesFile.name,
+                      completeDaily,
+                      fbaOnlyAttested,
+                    },
                   }),
                 "Amazon UK sales extract stored. Earlier extracts are not added to this one.",
               );
@@ -297,9 +317,10 @@ function FbaForecastPage() {
               Amazon UK sales
             </h2>
             <p className="text-[12px] text-steel">
-              Columns: sku, date, units_sold. Optional units_credited and marketplace. OIN documents
-              and 504/TRM reports are rejected. Leave the complete-day box clear unless every
-              SKU-day in the range is present; a missing SKU then counts as zero.
+              The first rows must declare coverage_from, coverage_to, extracted_on and
+              fulfilment_scope FBA. Then sku, date, units_sold and fulfilment_channel AFN or FBA. An
+              MFN or FBM row rejects the file. Coverage is not taken from the first and last sale. A
+              gap is incomplete unless zeros_omitted is yes. This is not an Amazon API feed.
             </p>
             <input
               className={controlClass}
@@ -314,10 +335,18 @@ function FbaForecastPage() {
             <label className="flex items-center gap-2 text-[13px]">
               <input
                 type="checkbox"
+                checked={fbaOnlyAttested}
+                onChange={(event) => setFbaOnlyAttested(event.target.checked)}
+              />
+              I attest this file is Amazon FBA UK only. Merchant-fulfilled orders are not included.
+            </label>
+            <label className="flex items-center gap-2 text-[13px]">
+              <input
+                type="checkbox"
                 checked={completeDaily}
                 onChange={(event) => setCompleteDaily(event.target.checked)}
               />
-              This file is a complete daily extract for its date range
+              I attest the declared coverage is a complete FBA extract for that range
             </label>
             <button className={primaryBtnClass} type="submit" disabled={busy}>
               Import Amazon sales

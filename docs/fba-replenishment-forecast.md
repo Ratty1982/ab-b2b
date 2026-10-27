@@ -4,13 +4,13 @@ Architecture audit and the first safe phase. This does not change financial invo
 
 ## What the current system can already support
 
-| Need                      | Source today                                                                          | Reliable for a shipment quantity?                                                                                                           |
-| ------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| FBA UK on-hand            | OPTIMUS branch via manual 231PO3NEW, stored on `AutopartLocationStock` location `FBA` | Yes, while the latest import is under 14 days old. Older stock is shown and marked stale. It is not treated as verified sellable inventory. |
-| Studley warehouse         | `AutopartProduct.availQty` when `presentInLatestFeed`                                 | Yes, as a separate balance. It is not added to FBA.                                                                                         |
-| OIN replenishment history | 504 headers joined to TRM21QC lines on the parsed document number                     | Only after a paired upload into the FBA ledger. The mailbox poller does not copy them.                                                      |
-| Amazon consumer sales     | Not in this database                                                                  | No. Until a complete Amazon UK CSV is imported, the forecast is Insufficient Data.                                                          |
-| Confirmed inbound         | No carrier or Amazon inbound feed                                                     | Only a staff status of `CONFIRMED_IN_TRANSIT`. An OIN invoice is not in transit.                                                            |
+| Need                      | Source today                                                                          | Reliable for a shipment quantity?                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| FBA UK on-hand            | OPTIMUS branch via manual 231PO3NEW, stored on `AutopartLocationStock` location `FBA` | Yes, only while that SKU's own `sourceImportedAt` is under 14 days old. A later partial file does not refresh SKUs it omits.       |
+| Studley warehouse         | `AutopartProduct.availQty` when `presentInLatestFeed`                                 | Yes, as a separate balance. It is not added to FBA.                                                                                |
+| OIN replenishment history | 504 headers joined to TRM21QC lines on the parsed document number                     | Only after a paired upload into the FBA ledger. The mailbox poller does not copy them.                                             |
+| Amazon consumer sales     | Not in this database                                                                  | No. A declared complete FBA UK extract is required. MFN/FBM rows are rejected. Gaps are not inferred from the first and last sale. |
+| Confirmed inbound         | No carrier or Amazon inbound feed                                                     | Only a staff status of `CONFIRMED_IN_TRANSIT`. An OIN invoice is not in transit.                                                   |
 
 `OIN02573006 Oct 26` in a day-end 504 file is document `OIN025730` plus date `06 Oct 26`. The document column is 9 characters. Matching uses that parsed document number, equal to the TRM21QC document.
 
@@ -30,7 +30,11 @@ Historical 561L/SLRB lines stay customer sales history. They are not retargeted 
 
 This repository does not integrate with AlphaOps, and this phase does not add a connection, shared database, or copy of Amazon credentials. There is no Amazon order, return, or marketplace feed here. The 231PO3NEW usage columns are not interpreted as sell-through.
 
-The alternative is a manual Amazon UK CSV: `sku`, `date`, `units_sold`, optional `units_credited` and `marketplace`. Files that are 504/TRM reports, or that contain an OIN document reference, are rejected. The latest import is the current extract. Imports are not summed. A SKU absent from a file marked as a complete daily extract counts as zero for a covered window. Without that flag, or when the file does not cover the window, the window is blank and no weekly rate is invented.
+The alternative is a manual Amazon UK CSV. The first rows declare `coverage_from`, `coverage_to`, `extracted_on` and `fulfilment_scope` of FBA or AFN, plus optional `complete` and `zeros_omitted`. SKU rows then need `sku`, `date`, `units_sold` and `fulfilment_channel` of AFN or FBA. Optional columns are `units_credited` and `marketplace`. Coverage is the declared range, not the earliest and latest sale date.
+
+An MFN, FBM or blank channel rejects the whole file, so those units are not stored. A file with no channel column is a normalized FBA-only extract and is stored only when the operator attests that every row is Amazon FBA. That attestation is not an Amazon API check.
+
+A checkbox does not make an extract complete. Completeness requires the file to say `complete=yes`, the operator to attest both FBA-only scope and completeness, and either a row on every declared day or `zeros_omitted=yes`. A sparse file whose only sales are the range endpoints stays incomplete, and the forecast stays Insufficient Data. The latest import is the current extract. Imports are not summed. A SKU absent from a complete extract counts as zero for a covered window.
 
 ## Forecast
 
@@ -50,7 +54,7 @@ Nothing on this page creates an order, deducts stock, or publishes a shipment.
 
 Tables: `FbaReplenishmentImport`, `FbaReplenishmentDocument`, `FbaReplenishmentLine`, `FbaAmazonSalesImport`, `FbaAmazonSalesLine`, `FbaInboundShipment`, `FbaForecastSettings`, `FbaSkuForecastOverride`.
 
-The same 504+TRM byte pair hashes once and is rejected as a duplicate. Documents upsert on `(documentReference, documentType)`. Lines upsert on `(documentId, lineKey)` where the line key is the TRM source fingerprint. A later file does not delete historical lines that it omits.
+The same 504+TRM byte pair hashes once and is rejected as a duplicate. Documents upsert on `(documentReference, documentType)`. The line key is the TRM fingerprint, which changes when quantity or price changes. A revised file supersedes the previous active line for that SKU and keeps the old row with `supersededAt` for audit. Cadence sums only active lines. A SKU that is not in the revised file is left as it was. Two different fingerprints for the same SKU in one file are ambiguous: that SKU is not changed. The replacement runs in one serializable transaction.
 
 Exceptions kept with the import: duplicate OIN header, orphan TRM line, header with no product lines, credit correction, TRM net versus 504 goods beyond £0.01, and a duplicate line fingerprint.
 

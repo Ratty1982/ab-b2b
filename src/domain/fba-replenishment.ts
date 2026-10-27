@@ -263,7 +263,8 @@ export type OinExceptionCode =
   | "NO_PRODUCT_LINES"
   | "CREDIT_CORRECTION"
   | "MISMATCHED_INVOICE_VALUE"
-  | "DUPLICATE_LINE";
+  | "DUPLICATE_LINE"
+  | "AMBIGUOUS_LINE";
 
 export type OinException = {
   code: OinExceptionCode;
@@ -399,20 +400,104 @@ export function buildOinReplenishmentBatch(input: {
   return { documents, exceptions };
 }
 
-/** A complete daily extract covers a window when it starts early enough and is not stale. */
+/**
+ * Effective completeness. A checkbox, or min/max sale dates, is not enough.
+ * Gaps stay incomplete unless the file declares that omitted days are zero FBA sales.
+ */
+export function amazonExtractIsComplete(input: {
+  declaredComplete: boolean;
+  operatorAttestedComplete: boolean;
+  fbaOnlyAttested: boolean;
+  fulfilmentScope: string;
+  coverageHasGaps: boolean;
+  zerosOmitted: boolean;
+}): boolean {
+  if (!input.declaredComplete || !input.operatorAttestedComplete || !input.fbaOnlyAttested)
+    return false;
+  if (input.fulfilmentScope !== "FBA") return false;
+  if (input.coverageHasGaps && !input.zerosOmitted) return false;
+  return true;
+}
+
+/** A normalized file with no fulfilment column is stored only after an explicit FBA-only attestation. */
+export function rejectUnprovenFbaSales(input: {
+  normalizedFbaOnly: boolean;
+  fbaOnlyAttested: boolean;
+}): string | null {
+  if (input.normalizedFbaOnly && !input.fbaOnlyAttested) {
+    return "This file has no fulfilment_channel column. Attest that every row is Amazon FBA (AFN), or add the column. MFN and FBM rows are rejected and are not stored.";
+  }
+  return null;
+}
+
+/** A complete FBA extract covers a window when its declared range, scope and extraction date support it. */
 export function amazonWindowSupported(input: {
   completeDaily: boolean;
+  fulfilmentScope: string | null;
   coverageFrom: string | null;
   coverageTo: string | null;
+  extractedOn: string | null;
   windowFrom: string;
   windowTo: string;
   today: string;
 }): boolean {
-  if (!input.completeDaily || !input.coverageFrom || !input.coverageTo) return false;
+  if (!input.completeDaily || !input.coverageFrom || !input.coverageTo || !input.extractedOn)
+    return false;
+  if (input.fulfilmentScope !== "FBA") return false;
+  if (input.extractedOn < input.coverageTo || input.extractedOn > input.today) return false;
   if (input.coverageFrom > input.windowFrom) return false;
   if (input.coverageTo >= input.windowTo) return true;
   const latestClosed = addDaysIso(input.today, -1);
   return input.coverageTo >= latestClosed && input.coverageTo >= addDaysIso(input.windowTo, -1);
+}
+
+export type OinActiveLine = { id: string; lineKey: string; matchKey: string };
+
+export type OinIncomingLine = {
+  lineKey: string;
+  matchKey: string;
+  sku: string;
+  description: string | null;
+  qty: string;
+  salesNet: string | null;
+};
+
+/**
+ * Replace lines for SKUs present in a revised document. Other SKUs on the document stay.
+ * Two different line identities for one SKU in the same file are ambiguous and change nothing.
+ */
+export function reconcileOinDocumentLines(input: {
+  documentReference: string;
+  existing: OinActiveLine[];
+  incoming: OinIncomingLine[];
+}): { upsert: OinIncomingLine[]; supersedeIds: string[]; exceptions: OinException[] } {
+  const bySku = new Map<string, OinIncomingLine[]>();
+  for (const line of input.incoming) {
+    const list = bySku.get(line.matchKey) ?? [];
+    list.push(line);
+    bySku.set(line.matchKey, list);
+  }
+  const upsert: OinIncomingLine[] = [];
+  const supersedeIds: string[] = [];
+  const exceptions: OinException[] = [];
+  for (const [matchKey, lines] of bySku) {
+    const distinct = new Map(lines.map((line) => [line.lineKey, line]));
+    if (distinct.size > 1) {
+      exceptions.push({
+        code: "AMBIGUOUS_LINE",
+        documentReference: input.documentReference,
+        message: `${input.documentReference} has more than one TRM line for ${matchKey} in this file. Stored lines for that SKU were left unchanged.`,
+      });
+      continue;
+    }
+    const next = [...distinct.values()][0]!;
+    upsert.push(next);
+    for (const existing of input.existing) {
+      if (existing.matchKey === matchKey && existing.lineKey !== next.lineKey)
+        supersedeIds.push(existing.id);
+    }
+  }
+  return { upsert, supersedeIds, exceptions };
 }
 
 /** Provisional OIN dispatch cadence. Never a substitute for Amazon sell-through. */

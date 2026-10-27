@@ -4,14 +4,35 @@ import { buildAutopart504DayEndFixture } from "@/domain/autopart-504-dayend-fixt
 import { parseAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
 import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
+  amazonExtractIsComplete,
+  amazonWindowSupported,
   buildOinReplenishmentBatch,
   eligibleFbaInboundQty,
-  amazonWindowSupported,
   isOinReplenishmentReference,
   projectFbaShipment,
   provisionalReplenishmentWeekly,
+  reconcileOinDocumentLines,
+  rejectUnprovenFbaSales,
   roundUpToCaseMultiple,
 } from "@/domain/fba-replenishment";
+
+function fbaSales(input: {
+  from: string;
+  to: string;
+  extracted: string;
+  complete?: string;
+  zeros?: string;
+  scope?: string;
+  header?: string;
+  rows: string[];
+}): string {
+  return [
+    "coverage_from,coverage_to,extracted_on,fulfilment_scope,complete,zeros_omitted",
+    `${input.from},${input.to},${input.extracted},${input.scope ?? "FBA"},${input.complete ?? "yes"},${input.zeros ?? "no"}`,
+    input.header ?? "sku,date,units_sold,units_credited,marketplace,fulfilment_channel",
+    ...input.rows,
+  ].join("\n");
+}
 
 const base = {
   fbaAvailable: 20,
@@ -41,13 +62,24 @@ describe("OIN identification", () => {
 
   it("keeps OIN out of Amazon sales files and dedupes a repeated day", () => {
     const rejected = parseFbaAmazonSalesCsv(
-      "sku,date,units_sold,document\nPM1,2026-10-01,4,OIN025730\n",
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        header: "sku,date,units_sold,document,fulfilment_channel",
+        rows: ["PM1,2026-10-01,4,OIN025730,AFN"],
+      }),
     );
     expect(rejected.ok).toBe(false);
     const report = parseFbaAmazonSalesCsv(buildAutopart504DayEndFixture());
     expect(report.ok).toBe(false);
     const sales = parseFbaAmazonSalesCsv(
-      "sku,date,units_sold,units_credited\nPM1,2026-10-01,4,1\nPM1,01/10/2026,2,0\n",
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        rows: ["PM1,2026-10-01,4,1,AMAZON_UK,AFN", "PM1,01/10/2026,2,0,AMAZON_UK,FBA"],
+      }),
     );
     expect(sales.ok).toBe(true);
     if (sales.ok) {
@@ -55,7 +87,72 @@ describe("OIN identification", () => {
       expect(sales.rows[0]?.unitsSold).toBe(6);
       expect(sales.rows[0]?.unitsCredited).toBe(1);
       expect(sales.mergedDuplicateDays).toBe(1);
+      expect(sales.coverageFrom).toBe("2026-10-01");
     }
+  });
+
+  it("rejects MFN and FBM rows so they cannot become FBA demand", () => {
+    const mfn = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        rows: ["PM1,2026-10-01,4,0,AMAZON_UK,MFN", "PM2,2026-10-01,9,0,AMAZON_UK,AFN"],
+      }),
+    );
+    expect(mfn.ok).toBe(false);
+    const fbm = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        rows: ["PM1,2026-10-01,4,0,AMAZON_UK,FBM"],
+      }),
+    );
+    expect(fbm.ok).toBe(false);
+    const bare = parseFbaAmazonSalesCsv("sku,date,units_sold\nPM1,2026-10-01,4\n");
+    expect(bare.ok).toBe(false);
+    expect(rejectUnprovenFbaSales({ normalizedFbaOnly: true, fbaOnlyAttested: false })).toMatch(
+      /FBA/,
+    );
+    expect(rejectUnprovenFbaSales({ normalizedFbaOnly: true, fbaOnlyAttested: true })).toBeNull();
+  });
+
+  it("does not treat endpoint sales as a complete 30-day extract", () => {
+    const sparse = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-09-28",
+        to: "2026-10-27",
+        extracted: "2026-10-27",
+        complete: "yes",
+        zeros: "no",
+        rows: ["PM1,2026-09-28,2,0,AMAZON_UK,AFN", "PM1,2026-10-27,2,0,AMAZON_UK,AFN"],
+      }),
+    );
+    expect(sparse.ok).toBe(true);
+    if (!sparse.ok) return;
+    expect(sparse.coverageHasGaps).toBe(true);
+    expect(sparse.coverageFrom).toBe("2026-09-28");
+    expect(sparse.coverageTo).toBe("2026-10-27");
+    expect(
+      amazonExtractIsComplete({
+        declaredComplete: sparse.declaredComplete,
+        operatorAttestedComplete: true,
+        fbaOnlyAttested: true,
+        fulfilmentScope: sparse.fulfilmentScope,
+        coverageHasGaps: sparse.coverageHasGaps,
+        zerosOmitted: sparse.zerosOmitted,
+      }),
+    ).toBe(false);
+    const attestedGaps = amazonExtractIsComplete({
+      declaredComplete: true,
+      operatorAttestedComplete: true,
+      fbaOnlyAttested: true,
+      fulfilmentScope: "FBA",
+      coverageHasGaps: true,
+      zerosOmitted: true,
+    });
+    expect(attestedGaps).toBe(true);
   });
 });
 
@@ -143,8 +240,10 @@ ACCOUNT,SS100001,01/10/2026,11:00,Motor Factor,10.00,2.00,12.00,WR,PO1
     expect(
       amazonWindowSupported({
         completeDaily: true,
+        fulfilmentScope: "FBA",
         coverageFrom: "2025-01-01",
         coverageTo: "2026-10-26",
+        extractedOn: "2026-10-26",
         windowFrom: "2026-09-27",
         windowTo: "2026-10-27",
         today: "2026-10-27",
@@ -153,13 +252,75 @@ ACCOUNT,SS100001,01/10/2026,11:00,Motor Factor,10.00,2.00,12.00,WR,PO1
     expect(
       amazonWindowSupported({
         completeDaily: false,
+        fulfilmentScope: "FBA",
         coverageFrom: "2025-01-01",
         coverageTo: "2026-10-27",
+        extractedOn: "2026-10-27",
         windowFrom: "2026-09-27",
         windowTo: "2026-10-27",
         today: "2026-10-27",
       }),
     ).toBe(false);
+    expect(
+      amazonWindowSupported({
+        completeDaily: true,
+        fulfilmentScope: "MFN",
+        coverageFrom: "2025-01-01",
+        coverageTo: "2026-10-27",
+        extractedOn: "2026-10-27",
+        windowFrom: "2026-09-27",
+        windowTo: "2026-10-27",
+        today: "2026-10-27",
+      }),
+    ).toBe(false);
+  });
+
+  it("replaces an amended OIN line and leaves an unrelated line", () => {
+    const plan = reconcileOinDocumentLines({
+      documentReference: "OIN100001",
+      existing: [
+        { id: "old", lineKey: "fp-2", matchKey: "PM1" },
+        { id: "keep", lineKey: "fp-b", matchKey: "PM2" },
+      ],
+      incoming: [
+        {
+          lineKey: "fp-3",
+          matchKey: "PM1",
+          sku: "PM1",
+          description: "Disc",
+          qty: "3",
+          salesNet: "30.00",
+        },
+      ],
+    });
+    expect(plan.supersedeIds).toEqual(["old"]);
+    expect(plan.upsert.map((line) => line.qty)).toEqual(["3"]);
+    expect(plan.exceptions).toHaveLength(0);
+    const ambiguous = reconcileOinDocumentLines({
+      documentReference: "OIN100001",
+      existing: [{ id: "old", lineKey: "fp-2", matchKey: "PM1" }],
+      incoming: [
+        {
+          lineKey: "fp-2",
+          matchKey: "PM1",
+          sku: "PM1",
+          description: null,
+          qty: "2",
+          salesNet: "20",
+        },
+        {
+          lineKey: "fp-9",
+          matchKey: "PM1",
+          sku: "PM1",
+          description: null,
+          qty: "9",
+          salesNet: "90",
+        },
+      ],
+    });
+    expect(ambiguous.supersedeIds).toEqual([]);
+    expect(ambiguous.upsert).toEqual([]);
+    expect(ambiguous.exceptions.some((item) => item.code === "AMBIGUOUS_LINE")).toBe(true);
   });
 
   it("rounds zero and exact multiples without adding a case", () => {

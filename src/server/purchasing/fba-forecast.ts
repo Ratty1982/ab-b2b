@@ -11,14 +11,22 @@ import { parseAutopart504Report } from "@/domain/autopart-504";
 import { parseAutopartTrm21qcReport } from "@/domain/autopart-trm21qc";
 import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
+  amazonExtractIsComplete,
   amazonWindowSupported,
   buildOinReplenishmentBatch,
   projectFbaShipment,
   provisionalReplenishmentWeekly,
+  reconcileOinDocumentLines,
+  rejectUnprovenFbaSales,
   type FbaForecastResult,
   type OinException,
 } from "@/domain/fba-replenishment";
-import { FBA_LOCATION_CODE, FBA_STOCK_STALE_AFTER_DAYS, fbaStockIsStale } from "@/domain/fba-stock";
+import {
+  FBA_LOCATION_CODE,
+  FBA_STOCK_STALE_AFTER_DAYS,
+  fbaLocationQtyIsVerified,
+  fbaStockIsStale,
+} from "@/domain/fba-stock";
 import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { skuMatchKey } from "@/domain/stock";
 import { hasPermission } from "@/server/rbac/access";
@@ -93,92 +101,140 @@ export async function importOinReplenishment(actorUserId: string, raw: unknown) 
       documentCount: existing.documentCount,
       lineCount: existing.lineCount,
       exceptionCount: existing.exceptionCount,
+      supersededLines: 0,
+      exceptions: [] as OinException[],
     };
   }
-  const created = await prisma.$transaction(async (tx) => {
-    const run = await tx.fbaReplenishmentImport.create({
-      data: {
-        filename504: input.filename504,
-        filenameTrm: input.filenameTrm,
-        fileHash,
-        actorUserId,
-        documentCount: batch.documents.length,
-        lineCount: batch.documents.reduce((sum, doc) => sum + doc.lines.length, 0),
-        exceptionCount: batch.exceptions.length,
-        exceptions: batch.exceptions as unknown as Prisma.InputJsonValue,
-      },
-    });
-    for (const doc of batch.documents) {
-      const saved = await tx.fbaReplenishmentDocument.upsert({
-        where: {
-          documentReference_documentType: {
-            documentReference: doc.documentReference,
-            documentType: doc.documentType,
-          },
-        },
-        create: {
-          importId: run.id,
-          documentReference: doc.documentReference,
-          documentType: doc.documentType,
-          documentDate: asDate(doc.documentDate),
-          customerAccount: doc.customerAccount,
-          customerName: doc.customerName,
-          goodsNet: doc.goodsNet,
-          sourceFileHash: fileHash,
-        },
-        update: {
-          importId: run.id,
-          documentDate: asDate(doc.documentDate),
-          customerAccount: doc.customerAccount,
-          customerName: doc.customerName,
-          goodsNet: doc.goodsNet,
-          sourceFileHash: fileHash,
+  const created = await prisma.$transaction(
+    async (tx) => {
+      const run = await tx.fbaReplenishmentImport.create({
+        data: {
+          filename504: input.filename504,
+          filenameTrm: input.filenameTrm,
+          fileHash,
+          actorUserId,
+          documentCount: batch.documents.length,
+          lineCount: 0,
+          exceptionCount: batch.exceptions.length,
+          exceptions: batch.exceptions as unknown as Prisma.InputJsonValue,
         },
       });
-      for (const line of doc.lines) {
-        await tx.fbaReplenishmentLine.upsert({
-          where: { documentId_lineKey: { documentId: saved.id, lineKey: line.lineKey } },
+      const extraExceptions: OinException[] = [];
+      let activeLines = 0;
+      let supersededLines = 0;
+      const replacedAt = new Date();
+      for (const doc of batch.documents) {
+        const saved = await tx.fbaReplenishmentDocument.upsert({
+          where: {
+            documentReference_documentType: {
+              documentReference: doc.documentReference,
+              documentType: doc.documentType,
+            },
+          },
           create: {
-            documentId: saved.id,
-            lineKey: line.lineKey,
-            sku: line.sku,
-            matchKey: skuMatchKey(line.sku),
-            description: line.description,
-            qty: line.qty,
-            salesNet: line.salesNet,
+            importId: run.id,
+            documentReference: doc.documentReference,
+            documentType: doc.documentType,
+            documentDate: asDate(doc.documentDate),
+            customerAccount: doc.customerAccount,
+            customerName: doc.customerName,
+            goodsNet: doc.goodsNet,
+            sourceFileHash: fileHash,
           },
           update: {
-            sku: line.sku,
+            importId: run.id,
+            documentDate: asDate(doc.documentDate),
+            customerAccount: doc.customerAccount,
+            customerName: doc.customerName,
+            goodsNet: doc.goodsNet,
+            sourceFileHash: fileHash,
+          },
+        });
+        const existing = await tx.fbaReplenishmentLine.findMany({
+          where: { documentId: saved.id, supersededAt: null },
+          select: { id: true, lineKey: true, matchKey: true },
+        });
+        const plan = reconcileOinDocumentLines({
+          documentReference: doc.documentReference,
+          existing,
+          incoming: doc.lines.map((line) => ({
+            lineKey: line.lineKey,
             matchKey: skuMatchKey(line.sku),
+            sku: line.sku,
             description: line.description,
             qty: line.qty,
             salesNet: line.salesNet,
-          },
+          })),
         });
+        extraExceptions.push(...plan.exceptions);
+        if (plan.supersedeIds.length) {
+          await tx.fbaReplenishmentLine.updateMany({
+            where: { id: { in: plan.supersedeIds } },
+            data: { supersededAt: replacedAt, supersededByImportId: run.id },
+          });
+          supersededLines += plan.supersedeIds.length;
+        }
+        for (const line of plan.upsert) {
+          activeLines += 1;
+          await tx.fbaReplenishmentLine.upsert({
+            where: { documentId_lineKey: { documentId: saved.id, lineKey: line.lineKey } },
+            create: {
+              documentId: saved.id,
+              lineKey: line.lineKey,
+              sku: line.sku,
+              matchKey: line.matchKey,
+              description: line.description,
+              qty: line.qty,
+              salesNet: line.salesNet,
+            },
+            update: {
+              sku: line.sku,
+              matchKey: line.matchKey,
+              description: line.description,
+              qty: line.qty,
+              salesNet: line.salesNet,
+              supersededAt: null,
+              supersededByImportId: null,
+            },
+          });
+        }
       }
-    }
-    return run;
-  });
+      const exceptions = [...batch.exceptions, ...extraExceptions];
+      return tx.fbaReplenishmentImport
+        .update({
+          where: { id: run.id },
+          data: {
+            lineCount: activeLines,
+            exceptionCount: exceptions.length,
+            exceptions: exceptions as unknown as Prisma.InputJsonValue,
+          },
+        })
+        .then((saved) => ({ saved, exceptions, supersededLines }));
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
   await recordAuditEvent({
     action: "fba.replenishment.import",
     entityType: "FbaReplenishmentImport",
-    entityId: created.id,
+    entityId: created.saved.id,
     actorUserId,
     metadata: {
-      documents: created.documentCount,
-      lines: created.lineCount,
-      exceptions: created.exceptionCount,
+      documents: created.saved.documentCount,
+      lines: created.saved.lineCount,
+      exceptions: created.saved.exceptionCount,
+      supersededLines: created.supersededLines,
       filename504: input.filename504,
       filenameTrm: input.filenameTrm,
     },
   });
   return {
     duplicate: false,
-    importId: created.id,
-    documentCount: created.documentCount,
-    lineCount: created.lineCount,
-    exceptionCount: created.exceptionCount,
-    exceptions: batch.exceptions.slice(0, 50),
+    importId: created.saved.id,
+    documentCount: created.saved.documentCount,
+    lineCount: created.saved.lineCount,
+    exceptionCount: created.saved.exceptionCount,
+    supersededLines: created.supersededLines,
+    exceptions: created.exceptions.slice(0, 50),
   };
 }
 
@@ -186,6 +242,7 @@ const salesInput = z.object({
   text: z.string().min(1).max(12_000_000),
   filename: z.string().min(1).max(240),
   completeDaily: z.boolean(),
+  fbaOnlyAttested: z.boolean(),
 });
 
 export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
@@ -193,6 +250,19 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
   const input = salesInput.parse(raw);
   const parsed = parseFbaAmazonSalesCsv(input.text);
   if (!parsed.ok) throw new AuthError(parsed.error, "FBA_SALES_REJECTED", 400);
+  const unproven = rejectUnprovenFbaSales({
+    normalizedFbaOnly: parsed.normalizedFbaOnly,
+    fbaOnlyAttested: input.fbaOnlyAttested,
+  });
+  if (unproven) throw new AuthError(unproven, "FBA_SALES_REJECTED", 400);
+  const completeDaily = amazonExtractIsComplete({
+    declaredComplete: parsed.declaredComplete,
+    operatorAttestedComplete: input.completeDaily,
+    fbaOnlyAttested: input.fbaOnlyAttested,
+    fulfilmentScope: parsed.fulfilmentScope,
+    coverageHasGaps: parsed.coverageHasGaps,
+    zerosOmitted: parsed.zerosOmitted,
+  });
   const fileHash = createHash("sha256").update(input.text.replace(/\r\n/g, "\n")).digest("hex");
   const existing = await prisma.fbaAmazonSalesImport.findUnique({ where: { fileHash } });
   if (existing) return { duplicate: true, importId: existing.id, rowCount: existing.rowCount };
@@ -201,7 +271,13 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
       filename: input.filename,
       fileHash,
       actorUserId,
-      completeDaily: input.completeDaily,
+      completeDaily,
+      fulfilmentScope: parsed.fulfilmentScope,
+      extractedOn: asDate(parsed.extractedOn),
+      declaredComplete: parsed.declaredComplete,
+      fbaOnlyAttested: input.fbaOnlyAttested,
+      zerosOmitted: parsed.zerosOmitted,
+      coverageHasGaps: parsed.coverageHasGaps,
       coverageFrom: asDate(parsed.coverageFrom),
       coverageTo: asDate(parsed.coverageTo),
       rowCount: parsed.rows.length,
@@ -224,9 +300,14 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
     actorUserId,
     metadata: {
       rows: created.rowCount,
-      completeDaily: input.completeDaily,
+      completeDaily,
+      fulfilmentScope: parsed.fulfilmentScope,
       coverageFrom: parsed.coverageFrom,
       coverageTo: parsed.coverageTo,
+      extractedOn: parsed.extractedOn,
+      coverageHasGaps: parsed.coverageHasGaps,
+      zerosOmitted: parsed.zerosOmitted,
+      normalizedFbaOnly: parsed.normalizedFbaOnly,
       mergedDuplicateDays: parsed.mergedDuplicateDays,
     },
   });
@@ -234,8 +315,10 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
     duplicate: false,
     importId: created.id,
     rowCount: created.rowCount,
+    completeDaily,
     coverageFrom: parsed.coverageFrom,
     coverageTo: parsed.coverageTo,
+    coverageHasGaps: parsed.coverageHasGaps,
   };
 }
 
@@ -359,6 +442,7 @@ type SkuBucket = {
   description: string | null;
   fbaAvailable: number | null;
   fbaStockKnown: boolean;
+  fbaStockStale: boolean;
   studleyAvailable: number | null;
   inbound: number;
   oinUnits90: number;
@@ -402,38 +486,36 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   };
   const coverageFrom = dateOnly(salesImport?.coverageFrom);
   const coverageTo = dateOnly(salesImport?.coverageTo);
+  const extractedOn = dateOnly(salesImport?.extractedOn);
+  const fulfilmentScope = salesImport?.fulfilmentScope || null;
+  const windowBase = {
+    completeDaily: Boolean(salesImport?.completeDaily),
+    fulfilmentScope,
+    coverageFrom,
+    coverageTo,
+    extractedOn,
+    today,
+  };
   const windows = {
     d7: amazonWindowSupported({
-      completeDaily: Boolean(salesImport?.completeDaily),
-      coverageFrom,
-      coverageTo,
+      ...windowBase,
       windowFrom: ranges.d7.from,
       windowTo: ranges.d7.to,
-      today,
     }),
     d30: amazonWindowSupported({
-      completeDaily: Boolean(salesImport?.completeDaily),
-      coverageFrom,
-      coverageTo,
+      ...windowBase,
       windowFrom: ranges.d30.from,
       windowTo: ranges.d30.to,
-      today,
     }),
     d90: amazonWindowSupported({
-      completeDaily: Boolean(salesImport?.completeDaily),
-      coverageFrom,
-      coverageTo,
+      ...windowBase,
       windowFrom: ranges.d90.from,
       windowTo: ranges.d90.to,
-      today,
     }),
     d365: amazonWindowSupported({
-      completeDaily: Boolean(salesImport?.completeDaily),
-      coverageFrom,
-      coverageTo,
+      ...windowBase,
       windowFrom: ranges.d365.from,
       windowTo: ranges.d365.to,
-      today,
     }),
   };
   const [fbaRows, oinRows, amazonRows, inboundRows, unmatched] = await Promise.all([
@@ -445,10 +527,12 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         fba: number;
         studley: number | null;
         present: boolean;
+        sourceImportedAt: Date | null;
       }>
     >(Prisma.sql`
       SELECT p."matchKey" AS "matchKey", p.sku AS sku, p.description AS description,
              loc."availableQty" AS fba,
+             loc."sourceImportedAt" AS "sourceImportedAt",
              CASE WHEN p."presentInLatestFeed" THEN p."availQty" ELSE NULL END AS studley,
              p."presentInLatestFeed" AS present
       FROM "AutopartLocationStock" loc
@@ -459,7 +543,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku, COALESCE(SUM(l.qty), 0) AS units
       FROM "FbaReplenishmentLine" l
       INNER JOIN "FbaReplenishmentDocument" d ON d.id = l."documentId"
-      WHERE d."documentDate" IS NOT NULL
+      WHERE l."supersededAt" IS NULL
+        AND d."documentDate" IS NOT NULL
         AND d."documentDate" >= ${asDate(ranges.d90.from)}
         AND d."documentDate" < ${addDaysIsoSafe(ranges.d90.to)}
       GROUP BY l."matchKey"
@@ -496,7 +581,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       SELECT DISTINCT l."matchKey" AS "matchKey"
       FROM "FbaReplenishmentLine" l
       LEFT JOIN "AutopartProduct" p ON p."matchKey" = l."matchKey"
-      WHERE p.id IS NULL
+      WHERE l."supersededAt" IS NULL
+        AND p.id IS NULL
     `),
   ]);
 
@@ -513,6 +599,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       description,
       fbaAvailable: null,
       fbaStockKnown: false,
+      fbaStockStale: true,
       studleyAvailable: null,
       inbound: 0,
       oinUnits90: 0,
@@ -523,8 +610,10 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   }
   for (const row of fbaRows) {
     const item = bucket(row.matchKey, row.sku, row.description);
+    const sourceImportedAt = row.sourceImportedAt ? new Date(row.sourceImportedAt) : null;
     item.fbaAvailable = row.fba;
     item.fbaStockKnown = true;
+    item.fbaStockStale = !fbaLocationQtyIsVerified(sourceImportedAt);
     item.studleyAvailable = row.present ? row.studley : null;
   }
   for (const row of oinRows) bucket(row.matchKey, row.sku).oinUnits90 = num(row.units);
@@ -540,13 +629,15 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
 
   const overrideByKey = new Map(overrides.map((row) => [row.matchKey, row]));
   const q = input.q?.trim().toLowerCase() ?? "";
+  let unverifiedFbaSkus = 0;
   const rows = [...buckets.values()]
     .map((item) => {
+      if (item.fbaStockKnown && item.fbaStockStale) unverifiedFbaSkus += 1;
       const override = overrideByKey.get(item.matchKey);
       const forecast: FbaForecastResult = projectFbaShipment({
         fbaAvailable: item.fbaAvailable,
         fbaStockKnown: item.fbaStockKnown,
-        fbaStockStale: stale,
+        fbaStockStale: item.fbaStockStale,
         studleyAvailable: item.studleyAvailable,
         confirmedInboundQty: item.inbound,
         salesSupported: windows.d30,
@@ -595,6 +686,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     today,
     stale,
     staleAfterDays: FBA_STOCK_STALE_AFTER_DAYS,
+    unverifiedFbaSkus,
     fbaImportedAt: fbaImport?.importedAt.toISOString() ?? null,
     fbaFileName: fbaImport?.fileName ?? null,
     sales: salesImport
@@ -602,6 +694,12 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
           filename: salesImport.filename,
           importedAt: salesImport.importedAt.toISOString(),
           completeDaily: salesImport.completeDaily,
+          fulfilmentScope: salesImport.fulfilmentScope,
+          extractedOn,
+          declaredComplete: salesImport.declaredComplete,
+          fbaOnlyAttested: salesImport.fbaOnlyAttested,
+          zerosOmitted: salesImport.zerosOmitted,
+          coverageHasGaps: salesImport.coverageHasGaps,
           coverageFrom,
           coverageTo,
           windows,
