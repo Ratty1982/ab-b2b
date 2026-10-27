@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Boxes,
   ClipboardList,
+  Download,
   Settings,
   Users,
 } from "lucide-react";
@@ -319,15 +320,28 @@ function BackordersPage() {
         sub="Current Autopart 216V outstanding position. Avail and Incoming come from 231PO3NEW and are not reservations."
         crumbs={[{ label: "Purchasing", to: ROUTES.purchasing }, { label: "Backorders" }]}
         actions={
-          <button
-            type="button"
-            className={btnClass}
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Open backorder settings"
-          >
-            <Settings className="mr-2 size-3.5" aria-hidden />
-            Backorder Settings
-          </button>
+          <>
+            <button
+              type="button"
+              className={btnClass}
+              disabled={exporting || !data?.current}
+              onClick={() => void exportCsv()}
+              aria-label="Export backorders CSV"
+              title="Download the current filtered backorders with every field shown on the lines"
+            >
+              <Download className="mr-2 size-3.5" aria-hidden />
+              {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+            <button
+              type="button"
+              className={btnClass}
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open backorder settings"
+            >
+              <Settings className="mr-2 size-3.5" aria-hidden />
+              Backorder Settings
+            </button>
+          </>
         }
       />
       {notice ? <ImportNoticeBanner notice={notice} /> : null}
@@ -1012,6 +1026,9 @@ function SettingsBody({
       </section>
       <section>
         <h3 className="font-display text-base font-semibold uppercase">Export</h3>
+        <p className="mt-1 text-[12px] text-steel">
+          Downloads the current filters, including search, with every field shown on the lines. Descriptions and order references are not cut off.
+        </p>
         <button type="button" className={`${btnClass} mt-3`} disabled={exporting} onClick={onExport}>
           {exporting ? "Exporting…" : "Export current view CSV"}
         </button>

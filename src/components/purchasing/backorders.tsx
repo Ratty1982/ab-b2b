@@ -10,6 +10,7 @@ import {
 import {
   AUTOPART_216V_CHANGE_STATUS_LABEL,
   AUTOPART_216V_STOCK_POSITION_LABEL,
+  autopart216vPositionHeadline,
   type Autopart216vStockPosition,
 } from "@/domain/autopart-216v-position";
 import {
@@ -205,7 +206,5 @@ export function backorderFilterIgnoredByMovement(
 }
 
 export function stockPositionHeadline(position: Autopart216vStockPosition): string {
-  if (position === "STOCK_AVAILABLE") return "STOCK AVAILABLE — REVIEW";
-  if (position === "NO_STOCK_NO_INCOMING") return "NO STOCK / NO INCOMING";
-  return AUTOPART_216V_STOCK_POSITION_LABEL[position];
+  return autopart216vPositionHeadline(position);
 }

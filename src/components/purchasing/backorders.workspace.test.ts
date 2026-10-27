@@ -18,6 +18,8 @@ describe("backorder workspace UX structure", () => {
     expect(src).toContain('aria-label="Open backorder settings"');
     expect(src).toContain("Automatic import");
     expect(src).toContain("Export current view CSV");
+    expect(src).toContain('aria-label="Export backorders CSV"');
+    expect(src).toContain("every field shown on the lines");
     expect(src).toContain("function SettingsBody");
     expect(src).toContain("Upload 216V");
     expect(src).toContain("Poll mailbox");
