@@ -1,5 +1,7 @@
 /**
  * Purchasing demand from AutopartSalesLine — grouped SQL, never per-SKU N+1.
+ * OIN document references are Amazon FBA replenishment, not B2B customer demand,
+ * and are excluded so a later mapped internal account cannot inflate the forecast.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
@@ -32,6 +34,7 @@ export async function netUnitsForKeys(keys: string[], range: DateOnlyRange): Pro
       FROM "AutopartSalesLine" l
       INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l."source" = 'ONGOING_TRM21QC'
+        AND UPPER(d."documentReference") NOT LIKE 'OIN%'
         AND d."documentDate" IS NOT NULL
         AND d."documentDate" >= ${bounds.gte}
         AND d."documentDate" < ${bounds.lt}
@@ -50,6 +53,7 @@ export async function netUnitsBySku(range: DateOnlyRange): Promise<Map<string, n
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+        AND UPPER(d."documentReference") NOT LIKE 'OIN%'
         AND d."documentDate" IS NOT NULL
       AND d."documentDate" >= ${bounds.gte}
       AND d."documentDate" < ${bounds.lt}
@@ -66,6 +70,7 @@ export async function lastInvoiceSaleBySku(): Promise<Map<string, string>> {
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+        AND UPPER(d."documentReference") NOT LIKE 'OIN%'
         AND d."documentDate" IS NOT NULL
       AND d."documentType" = 'INVOICE'
     GROUP BY l.sku
@@ -97,6 +102,7 @@ export async function demandSourcesForSku(sku: string, range: DateOnlyRange) {
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     LEFT JOIN "Company" c ON c.id = l."companyId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+        AND UPPER(d."documentReference") NOT LIKE 'OIN%'
         AND d."documentDate" IS NOT NULL
       AND d."documentDate" >= ${bounds.gte}
       AND d."documentDate" < ${bounds.lt}
@@ -118,6 +124,7 @@ export async function weeklyNetUnitsForSku(sku: string, from: string, to: string
     FROM "AutopartSalesLine" l
     INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
     WHERE l."source" = 'ONGOING_TRM21QC'
+        AND UPPER(d."documentReference") NOT LIKE 'OIN%'
         AND d."documentDate" IS NOT NULL
       AND d."documentDate" >= ${bounds.gte}
       AND d."documentDate" < ${bounds.lt}

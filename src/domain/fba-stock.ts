@@ -717,3 +717,13 @@ export function fbaStockIsStale(importedAt: Date | null, now = new Date()): bool
   const ageMs = now.getTime() - importedAt.getTime();
   return ageMs > FBA_STOCK_STALE_AFTER_DAYS * 24 * 60 * 60 * 1000;
 }
+
+/**
+ * A location quantity is verified only from that row's sourceImportedAt.
+ * A later partial OPTIMUS file refreshes the SKUs it contains and leaves omitted rows untouched.
+ * A missing timestamp is not verified.
+ */
+export function fbaLocationQtyIsVerified(sourceImportedAt: Date | null, now = new Date()): boolean {
+  if (!sourceImportedAt || Number.isNaN(sourceImportedAt.getTime())) return false;
+  return !fbaStockIsStale(sourceImportedAt, now);
+}

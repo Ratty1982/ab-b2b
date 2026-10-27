@@ -69,6 +69,7 @@ import { Route as ProductsIndexRouteImport } from './routes/products.index'
 import { Route as ProductsSkuRouteImport } from './routes/products.$sku'
 import { Route as PurchasingIndexRouteImport } from './routes/purchasing.index'
 import { Route as PurchasingBackordersRouteImport } from './routes/purchasing.backorders'
+import { Route as PurchasingFbaForecastRouteImport } from './routes/purchasing.fba-forecast'
 import { Route as PurchasingForecastRouteImport } from './routes/purchasing.forecast'
 import { Route as PurchasingOverstockRouteImport } from './routes/purchasing.overstock'
 import { Route as PurchasingPlannerRouteImport } from './routes/purchasing.planner'
@@ -441,6 +442,11 @@ const PurchasingIndexRoute = PurchasingIndexRouteImport.update({
 const PurchasingBackordersRoute = PurchasingBackordersRouteImport.update({
   id: '/backorders',
   path: '/backorders',
+  getParentRoute: () => PurchasingRoute,
+} as any)
+const PurchasingFbaForecastRoute = PurchasingFbaForecastRouteImport.update({
+  id: '/fba-forecast',
+  path: '/fba-forecast',
   getParentRoute: () => PurchasingRoute,
 } as any)
 const PurchasingForecastRoute = PurchasingForecastRouteImport.update({
@@ -882,6 +888,7 @@ export interface FileRoutesByFullPath {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/purchasing/backorders': typeof PurchasingBackordersRoute
+  '/purchasing/fba-forecast': typeof PurchasingFbaForecastRoute
   '/purchasing/forecast': typeof PurchasingForecastRouteWithChildren
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
@@ -1004,6 +1011,7 @@ export interface FileRoutesByTo {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/purchasing/backorders': typeof PurchasingBackordersRoute
+  '/purchasing/fba-forecast': typeof PurchasingFbaForecastRoute
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
   '/purchasing/stock': typeof PurchasingStockRoute
@@ -1134,6 +1142,7 @@ export interface FileRoutesById {
   '/portal/users': typeof PortalUsersRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/purchasing/backorders': typeof PurchasingBackordersRoute
+  '/purchasing/fba-forecast': typeof PurchasingFbaForecastRoute
   '/purchasing/forecast': typeof PurchasingForecastRouteWithChildren
   '/purchasing/overstock': typeof PurchasingOverstockRoute
   '/purchasing/planner': typeof PurchasingPlannerRoute
@@ -1270,6 +1279,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/purchasing/backorders'
+    | '/purchasing/fba-forecast'
     | '/purchasing/forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
@@ -1392,6 +1402,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/purchasing/backorders'
+    | '/purchasing/fba-forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
     | '/purchasing/stock'
@@ -1521,6 +1532,7 @@ export interface FileRouteTypes {
     | '/portal/users'
     | '/products/$sku'
     | '/purchasing/backorders'
+    | '/purchasing/fba-forecast'
     | '/purchasing/forecast'
     | '/purchasing/overstock'
     | '/purchasing/planner'
@@ -2059,6 +2071,13 @@ declare module '@tanstack/react-router' {
       path: '/backorders'
       fullPath: '/purchasing/backorders'
       preLoaderRoute: typeof PurchasingBackordersRouteImport
+      parentRoute: typeof PurchasingRoute
+    }
+    '/purchasing/fba-forecast': {
+      id: '/purchasing/fba-forecast'
+      path: '/fba-forecast'
+      fullPath: '/purchasing/fba-forecast'
+      preLoaderRoute: typeof PurchasingFbaForecastRouteImport
       parentRoute: typeof PurchasingRoute
     }
     '/purchasing/forecast': {
@@ -2862,6 +2881,7 @@ const PurchasingSuppliersRouteWithChildren =
 
 interface PurchasingRouteChildren {
   PurchasingBackordersRoute: typeof PurchasingBackordersRoute
+  PurchasingFbaForecastRoute: typeof PurchasingFbaForecastRoute
   PurchasingForecastRoute: typeof PurchasingForecastRouteWithChildren
   PurchasingOverstockRoute: typeof PurchasingOverstockRoute
   PurchasingPlannerRoute: typeof PurchasingPlannerRoute
@@ -2872,6 +2892,7 @@ interface PurchasingRouteChildren {
 
 const PurchasingRouteChildren: PurchasingRouteChildren = {
   PurchasingBackordersRoute: PurchasingBackordersRoute,
+  PurchasingFbaForecastRoute: PurchasingFbaForecastRoute,
   PurchasingForecastRoute: PurchasingForecastRouteWithChildren,
   PurchasingOverstockRoute: PurchasingOverstockRoute,
   PurchasingPlannerRoute: PurchasingPlannerRoute,

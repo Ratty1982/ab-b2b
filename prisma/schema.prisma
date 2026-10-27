@@ -1622,6 +1622,157 @@ model AutopartFbaStockImport {
   @@index([actorUserId])
 }
 
+/// OIN replenishment ledger. Not an AutopartSalesDocument and not B2B demand.
+model FbaReplenishmentImport {
+  id             String   @id @default(cuid())
+  filename504    String
+  filenameTrm    String
+  fileHash       String   @unique
+  actorUserId    String?
+  importedAt     DateTime @default(now())
+  documentCount  Int      @default(0)
+  lineCount      Int      @default(0)
+  exceptionCount Int      @default(0)
+  exceptions     Json
+  createdAt      DateTime @default(now())
+
+  documents FbaReplenishmentDocument[]
+  supersededLines FbaReplenishmentLine[] @relation("FbaLineSupersededBy")
+
+  @@index([importedAt])
+}
+
+model FbaReplenishmentDocument {
+  id                 String    @id @default(cuid())
+  importId           String?
+  documentReference  String
+  documentType       String
+  documentDate       DateTime? @db.Date
+  customerAccount    String    @default("")
+  customerName       String    @default("")
+  goodsNet           Decimal?  @db.Decimal(12, 2)
+  sourceFileHash     String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  import FbaReplenishmentImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  lines  FbaReplenishmentLine[]
+
+  @@unique([documentReference, documentType])
+  @@index([documentDate])
+  @@index([importId])
+}
+
+model FbaReplenishmentLine {
+  id          String   @id @default(cuid())
+  documentId  String
+  lineKey     String
+  sku         String
+  matchKey    String
+  description String?
+  qty         Decimal  @db.Decimal(14, 4)
+  salesNet    Decimal? @db.Decimal(12, 2)
+  /// Set when a later 504/TRM pair replaces this line. Inactive lines stay for audit and are excluded from cadence.
+  supersededAt         DateTime?
+  supersededByImportId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  document FbaReplenishmentDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  supersededByImport FbaReplenishmentImport? @relation("FbaLineSupersededBy", fields: [supersededByImportId], references: [id], onDelete: SetNull)
+
+  @@unique([documentId, lineKey])
+  @@index([matchKey])
+  @@index([supersededAt])
+}
+
+/// One uploaded Amazon UK sell-through extract. Later extracts do not sum with earlier ones.
+model FbaAmazonSalesImport {
+  id            String    @id @default(cuid())
+  filename      String
+  fileHash      String    @unique
+  actorUserId   String?
+  importedAt    DateTime  @default(now())
+  /// Empty until a file proves AMAZON_UK. A missing marketplace is not stored as UK.
+  marketplace   String    @default("")
+  completeDaily Boolean   @default(false)
+  /// FBA only. Empty until a file declares fulfilment_scope FBA or AFN.
+  fulfilmentScope   String    @default("")
+  extractedOn       DateTime? @db.Date
+  declaredComplete  Boolean   @default(false)
+  fbaOnlyAttested   Boolean   @default(false)
+  /// True when the operator attested a file that has no per-row marketplace column.
+  ukMarketplaceAttested Boolean @default(false)
+  /// True when UK scope came from marketplace_scope metadata rather than a marketplace column.
+  normalizedUkOnly  Boolean   @default(false)
+  zerosOmitted      Boolean   @default(false)
+  coverageHasGaps   Boolean   @default(false)
+  coverageFrom  DateTime? @db.Date
+  coverageTo    DateTime? @db.Date
+  rowCount      Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  lines FbaAmazonSalesLine[]
+
+  @@index([importedAt])
+}
+
+model FbaAmazonSalesLine {
+  id             String   @id @default(cuid())
+  importId       String
+  matchKey       String
+  sku            String
+  saleDate       DateTime @db.Date
+  unitsSold      Decimal  @db.Decimal(14, 4)
+  unitsCredited  Decimal  @db.Decimal(14, 4)
+  marketplace    String
+  createdAt      DateTime @default(now())
+
+  import FbaAmazonSalesImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, matchKey, saleDate, marketplace])
+  @@index([matchKey, saleDate])
+}
+
+/// Staff-confirmed FBA inbound. PLANNED and RECEIVED do not count as eligible inbound.
+model FbaInboundShipment {
+  id              String   @id @default(cuid())
+  reference       String
+  matchKey        String
+  sku             String
+  qty             Int
+  status          String
+  note            String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([reference, matchKey])
+  @@index([matchKey, status])
+}
+
+model FbaForecastSettings {
+  id                  String   @id @default("default")
+  leadTimeDays        Int      @default(14)
+  targetCoverWeeks    Decimal  @default(6) @db.Decimal(6, 2)
+  safetyStockQty      Int      @default(0)
+  caseMultiple        Int?
+  overstockCoverWeeks Decimal  @default(16) @db.Decimal(6, 2)
+  updatedByUserId     String?
+  updatedAt           DateTime @updatedAt
+}
+
+model FbaSkuForecastOverride {
+  id               String   @id @default(cuid())
+  matchKey         String   @unique
+  leadTimeDays     Int?
+  targetCoverWeeks Decimal? @db.Decimal(6, 2)
+  safetyStockQty   Int?
+  caseMultiple     Int?
+  updatedByUserId  String?
+  updatedAt        DateTime @updatedAt
+}
+
 /// Per-SKU purchasing params for external Autopart products (no ProductVariant).
 model AutopartProductPurchasingSettings {
   id                String   @id @default(cuid())
