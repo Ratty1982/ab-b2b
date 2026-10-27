@@ -13,6 +13,8 @@ import {
   provisionalReplenishmentWeekly,
   reconcileOinDocumentLines,
   rejectUnprovenFbaSales,
+  rejectUnprovenUkMarketplace,
+  roundDownToCaseMultiple,
   roundUpToCaseMultiple,
 } from "@/domain/fba-replenishment";
 
@@ -23,12 +25,33 @@ function fbaSales(input: {
   complete?: string;
   zeros?: string;
   scope?: string;
+  marketplaceScope?: string;
   header?: string;
   rows: string[];
 }): string {
+  const metaHeader = [
+    "coverage_from",
+    "coverage_to",
+    "extracted_on",
+    "fulfilment_scope",
+    "complete",
+    "zeros_omitted",
+  ];
+  const metaValue = [
+    input.from,
+    input.to,
+    input.extracted,
+    input.scope ?? "FBA",
+    input.complete ?? "yes",
+    input.zeros ?? "no",
+  ];
+  if (input.marketplaceScope !== undefined) {
+    metaHeader.push("marketplace_scope");
+    metaValue.push(input.marketplaceScope);
+  }
   return [
-    "coverage_from,coverage_to,extracted_on,fulfilment_scope,complete,zeros_omitted",
-    `${input.from},${input.to},${input.extracted},${input.scope ?? "FBA"},${input.complete ?? "yes"},${input.zeros ?? "no"}`,
+    metaHeader.join(","),
+    metaValue.join(","),
     input.header ?? "sku,date,units_sold,units_credited,marketplace,fulfilment_channel",
     ...input.rows,
   ].join("\n");
@@ -118,6 +141,90 @@ describe("OIN identification", () => {
     expect(rejectUnprovenFbaSales({ normalizedFbaOnly: true, fbaOnlyAttested: true })).toBeNull();
   });
 
+  it("keeps Amazon UK demand and rejects a missing or German marketplace", () => {
+    const uk = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        rows: ["PM1,2026-10-01,4,0,AMAZON_UK,AFN", "PM2,2026-10-01,1,0,Amazon.co.uk,AFN"],
+      }),
+    );
+    expect(uk.ok).toBe(true);
+    if (uk.ok) {
+      expect(uk.rows.every((row) => row.marketplace === "AMAZON_UK")).toBe(true);
+      expect(uk.normalizedUkOnly).toBe(false);
+      expect(uk.marketplaceScope).toBe("AMAZON_UK");
+    }
+    const missing = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        header: "sku,date,units_sold,units_credited,fulfilment_channel",
+        rows: ["PM1,2026-10-01,4,0,AFN"],
+      }),
+    );
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error).toMatch(/not treated as Amazon UK/);
+    const blank = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        rows: ["PM1,2026-10-01,4,0,,AFN"],
+      }),
+    );
+    expect(blank.ok).toBe(false);
+    if (!blank.ok) expect(blank.error).toMatch(/blank/);
+    const de = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        rows: ["PM1,2026-10-01,4,0,AMAZON_UK,AFN", "PM2,2026-10-01,9,0,AMAZON_DE,AFN"],
+      }),
+    );
+    expect(de.ok).toBe(false);
+    if (!de.ok) expect(de.error).toMatch(/AMAZON_DE/);
+    const deScope = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        marketplaceScope: "AMAZON_DE",
+        header: "sku,date,units_sold,fulfilment_channel",
+        rows: ["PM1,2026-10-01,4,AFN"],
+      }),
+    );
+    expect(deScope.ok).toBe(false);
+    if (!deScope.ok) expect(deScope.error).toMatch(/AMAZON_DE/);
+    const normalized = parseFbaAmazonSalesCsv(
+      fbaSales({
+        from: "2026-10-01",
+        to: "2026-10-01",
+        extracted: "2026-10-01",
+        marketplaceScope: "AMAZON_UK",
+        header: "sku,date,units_sold,fulfilment_channel",
+        rows: ["PM1,2026-10-01,4,AFN"],
+      }),
+    );
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.normalizedUkOnly).toBe(true);
+      expect(normalized.rows[0]?.marketplace).toBe("AMAZON_UK");
+    }
+    expect(
+      rejectUnprovenUkMarketplace({ normalizedUkOnly: true, ukMarketplaceAttested: false }),
+    ).toMatch(/Amazon UK/);
+    expect(
+      rejectUnprovenUkMarketplace({ normalizedUkOnly: true, ukMarketplaceAttested: true }),
+    ).toBeNull();
+    expect(
+      rejectUnprovenUkMarketplace({ normalizedUkOnly: false, ukMarketplaceAttested: false }),
+    ).toBeNull();
+  });
+
   it("does not treat endpoint sales as a complete 30-day extract", () => {
     const sparse = parseFbaAmazonSalesCsv(
       fbaSales({
@@ -203,8 +310,45 @@ describe("FBA shipment forecast", () => {
       confirmedInboundQty: 0,
     });
     expect(result.suggestedSendQty).toBeGreaterThan(1);
-    expect(result.dispatchableQty).toBe(1);
+    expect(result.dispatchableQty).toBe(0);
+    expect(result.looseStudleyQty).toBe(1);
     expect(result.studleyShortfallQty).toBe(result.suggestedSendQty! - 1);
+  });
+
+  it("does not dispatch a partial case when Studley is below one case", () => {
+    const result = projectFbaShipment({
+      ...base,
+      leadTimeDays: 14,
+      targetCoverWeeks: 6,
+      safetyStockQty: 0,
+      fbaAvailable: 44,
+      confirmedInboundQty: 0,
+      caseMultiple: 12,
+      studleyAvailable: 7,
+    });
+    expect(result.suggestedSendQty).toBe(12);
+    expect(result.dispatchableQty).toBe(0);
+    expect(result.looseStudleyQty).toBe(7);
+    expect(result.studleyShortfallQty).toBe(5);
+  });
+
+  it("rounds a Studley remainder down and keeps the buy shortfall", () => {
+    const result = projectFbaShipment({
+      ...base,
+      leadTimeDays: 14,
+      targetCoverWeeks: 6,
+      safetyStockQty: 0,
+      fbaAvailable: 44,
+      confirmedInboundQty: 0,
+      caseMultiple: 4,
+      studleyAvailable: 7,
+    });
+    expect(result.suggestedSendQty).toBe(12);
+    expect(result.dispatchableQty).toBe(4);
+    expect(result.looseStudleyQty).toBe(3);
+    expect(result.studleyShortfallQty).toBe(5);
+    expect(roundDownToCaseMultiple(7, 12)).toBe(0);
+    expect(roundDownToCaseMultiple(7, 4)).toBe(4);
   });
 
   it("keeps OIN cadence separate from the shipment quantity", () => {
@@ -241,6 +385,7 @@ ACCOUNT,SS100001,01/10/2026,11:00,Motor Factor,10.00,2.00,12.00,WR,PO1
       amazonWindowSupported({
         completeDaily: true,
         fulfilmentScope: "FBA",
+        marketplace: "AMAZON_UK",
         coverageFrom: "2025-01-01",
         coverageTo: "2026-10-26",
         extractedOn: "2026-10-26",
@@ -253,6 +398,7 @@ ACCOUNT,SS100001,01/10/2026,11:00,Motor Factor,10.00,2.00,12.00,WR,PO1
       amazonWindowSupported({
         completeDaily: false,
         fulfilmentScope: "FBA",
+        marketplace: "AMAZON_UK",
         coverageFrom: "2025-01-01",
         coverageTo: "2026-10-27",
         extractedOn: "2026-10-27",
@@ -265,6 +411,20 @@ ACCOUNT,SS100001,01/10/2026,11:00,Motor Factor,10.00,2.00,12.00,WR,PO1
       amazonWindowSupported({
         completeDaily: true,
         fulfilmentScope: "MFN",
+        marketplace: "AMAZON_UK",
+        coverageFrom: "2025-01-01",
+        coverageTo: "2026-10-27",
+        extractedOn: "2026-10-27",
+        windowFrom: "2026-09-27",
+        windowTo: "2026-10-27",
+        today: "2026-10-27",
+      }),
+    ).toBe(false);
+    expect(
+      amazonWindowSupported({
+        completeDaily: true,
+        fulfilmentScope: "FBA",
+        marketplace: "AMAZON_DE",
         coverageFrom: "2025-01-01",
         coverageTo: "2026-10-27",
         extractedOn: "2026-10-27",

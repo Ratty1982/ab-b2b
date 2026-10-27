@@ -1693,13 +1693,18 @@ model FbaAmazonSalesImport {
   fileHash      String    @unique
   actorUserId   String?
   importedAt    DateTime  @default(now())
-  marketplace   String    @default("AMAZON_UK")
+  /// Empty until a file proves AMAZON_UK. A missing marketplace is not stored as UK.
+  marketplace   String    @default("")
   completeDaily Boolean   @default(false)
   /// FBA only. Empty until a file declares fulfilment_scope FBA or AFN.
   fulfilmentScope   String    @default("")
   extractedOn       DateTime? @db.Date
   declaredComplete  Boolean   @default(false)
   fbaOnlyAttested   Boolean   @default(false)
+  /// True when the operator attested a file that has no per-row marketplace column.
+  ukMarketplaceAttested Boolean @default(false)
+  /// True when UK scope came from marketplace_scope metadata rather than a marketplace column.
+  normalizedUkOnly  Boolean   @default(false)
   zerosOmitted      Boolean   @default(false)
   coverageHasGaps   Boolean   @default(false)
   coverageFrom  DateTime? @db.Date

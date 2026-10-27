@@ -237,6 +237,54 @@ describe("FBA replenishment ledger", () => {
         fbaOnlyAttested: false,
       }),
     ).rejects.toThrow(/fulfilment_channel/);
+    const unscoped = [
+      "coverage_from,coverage_to,extracted_on,fulfilment_scope,complete,zeros_omitted",
+      `${today},${today},${today},FBA,yes,no`,
+      "sku,date,units_sold,units_credited,fulfilment_channel",
+      `${freshSku},${today},4,0,AFN`,
+    ].join("\n");
+    await expect(
+      importFbaAmazonSales(actorUserId, {
+        text: unscoped,
+        filename: `amazon-${stamp}-unscoped.csv`,
+        completeDaily: true,
+        fbaOnlyAttested: true,
+        ukMarketplaceAttested: true,
+      }),
+    ).rejects.toThrow(/not treated as Amazon UK/);
+    const german = salesCsv({
+      from: today,
+      to: today,
+      extracted: today,
+      complete: "yes",
+      zeros: "no",
+      rows: [`${freshSku},${today},4,0,AMAZON_DE,AFN`],
+    });
+    await expect(
+      importFbaAmazonSales(actorUserId, {
+        text: german,
+        filename: `amazon-${stamp}-de.csv`,
+        completeDaily: true,
+        fbaOnlyAttested: true,
+        ukMarketplaceAttested: true,
+      }),
+    ).rejects.toThrow(/AMAZON_DE/);
+    const normalizedUk = [
+      "coverage_from,coverage_to,extracted_on,fulfilment_scope,complete,zeros_omitted," +
+        "marketplace_scope",
+      `${today},${today},${today},FBA,yes,no,AMAZON_UK`,
+      "sku,date,units_sold,units_credited,fulfilment_channel",
+      `${freshSku},${today},4,0,AFN`,
+    ].join("\n");
+    await expect(
+      importFbaAmazonSales(actorUserId, {
+        text: normalizedUk,
+        filename: `amazon-${stamp}-uk-scope.csv`,
+        completeDaily: true,
+        fbaOnlyAttested: true,
+        ukMarketplaceAttested: false,
+      }),
+    ).rejects.toThrow(/Amazon UK/);
     expect(
       await prisma.fbaAmazonSalesLine.count({ where: { sku: { in: [freshSku, staleSku] } } }),
     ).toBe(0);
@@ -367,7 +415,9 @@ describe("FBA replenishment ledger", () => {
     expect(fresh?.amazonUnits.d30).toBe(30);
     expect(fresh?.forecast.suggestedSendQty).toBe(48);
     expect(fresh?.forecast.recommendation).toBe("SEND_NOW");
-    expect(fresh?.forecast.dispatchableQty).toBe(5);
+    expect(fresh?.forecast.dispatchableQty).toBe(4);
+    expect(fresh?.forecast.looseStudleyQty).toBe(1);
+    expect(fresh?.forecast.studleyShortfallQty).toBe(43);
     expect(stale?.forecast.recommendation).toBe("INSUFFICIENT_DATA");
     expect(stale?.forecast.suggestedSendQty).toBeNull();
     expect(stale?.forecast.fbaStockVerified).toBe(false);

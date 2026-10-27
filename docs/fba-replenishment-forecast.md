@@ -9,7 +9,7 @@ Architecture audit and the first safe phase. This does not change financial invo
 | FBA UK on-hand            | OPTIMUS branch via manual 231PO3NEW, stored on `AutopartLocationStock` location `FBA` | Yes, only while that SKU's own `sourceImportedAt` is under 14 days old. A later partial file does not refresh SKUs it omits.       |
 | Studley warehouse         | `AutopartProduct.availQty` when `presentInLatestFeed`                                 | Yes, as a separate balance. It is not added to FBA.                                                                                |
 | OIN replenishment history | 504 headers joined to TRM21QC lines on the parsed document number                     | Only after a paired upload into the FBA ledger. The mailbox poller does not copy them.                                             |
-| Amazon consumer sales     | Not in this database                                                                  | No. A declared complete FBA UK extract is required. MFN/FBM rows are rejected. Gaps are not inferred from the first and last sale. |
+| Amazon consumer sales     | Not in this database                                                                  | No. A declared complete FBA extract is required, and marketplace must be Amazon UK. MFN/FBM and other markets are rejected. Gaps are not inferred from the first and last sale. |
 | Confirmed inbound         | No carrier or Amazon inbound feed                                                     | Only a staff status of `CONFIRMED_IN_TRANSIT`. An OIN invoice is not in transit.                                                   |
 
 `OIN02573006 Oct 26` in a day-end 504 file is document `OIN025730` plus date `06 Oct 26`. The document column is 9 characters. Matching uses that parsed document number, equal to the TRM21QC document.
@@ -30,7 +30,9 @@ Historical 561L/SLRB lines stay customer sales history. They are not retargeted 
 
 This repository does not integrate with AlphaOps, and this phase does not add a connection, shared database, or copy of Amazon credentials. There is no Amazon order, return, or marketplace feed here. The 231PO3NEW usage columns are not interpreted as sell-through.
 
-The alternative is a manual Amazon UK CSV. The first rows declare `coverage_from`, `coverage_to`, `extracted_on` and `fulfilment_scope` of FBA or AFN, plus optional `complete` and `zeros_omitted`. SKU rows then need `sku`, `date`, `units_sold` and `fulfilment_channel` of AFN or FBA. Optional columns are `units_credited` and `marketplace`. Coverage is the declared range, not the earliest and latest sale date.
+The alternative is a manual Amazon UK CSV. The first rows declare `coverage_from`, `coverage_to`, `extracted_on` and `fulfilment_scope` of FBA or AFN, plus optional `complete`, `zeros_omitted` and `marketplace_scope`. SKU rows then need `sku`, `date`, `units_sold` and `fulfilment_channel` of AFN or FBA. `units_credited` is optional. Coverage is the declared range, not the earliest and latest sale date.
+
+UK scope is explicit. Every row must say `AMAZON_UK` (or `Amazon.co.uk`), or the metadata must say `marketplace_scope` of `AMAZON_UK`. A file with no marketplace column and no UK scope is rejected. A blank cell is not filled in as UK. `AMAZON_DE` and any other market reject the file, so those units are not stored. A normalized extract that declares `marketplace_scope=AMAZON_UK` but has no marketplace column is stored only when the operator attests that every row is Amazon UK.
 
 An MFN, FBM or blank channel rejects the whole file, so those units are not stored. A file with no channel column is a normalized FBA-only extract and is stored only when the operator attests that every row is Amazon FBA. That attestation is not an Amazon API check.
 
@@ -44,7 +46,7 @@ Projected required stock = demand during lead time + target weeks of cover after
 
 Suggested send = `max(0, required − FBA available − confirmed inbound)`, rounded up to the case multiple.
 
-Studley shortfall = `max(0, suggested − Studley)`. Dispatchable is the minimum of suggested and Studley. Unknown Studley (not on the current warehouse feed) leaves dispatchable blank. The shortfall is a purchasing requirement, not a suggested dispatch of stock that is not there.
+Studley shortfall = `max(0, suggested − Studley)`, the units still to buy. Dispatchable is the minimum of suggested and Studley, then rounded down to a complete case. Studley of 7 against a case of 12 dispatches 0, and the 7 stay as loose stock that is not a shipment. Studley of 7 against a case of 4 dispatches 4, leaves 3 loose, and the buy shortfall is still the 5 units needed to reach the suggested quantity. Unknown Studley (not on the current warehouse feed) leaves dispatchable blank. The shortfall is a purchasing requirement, not a suggested dispatch of stock that is not there.
 
 Recommendations: Send Now, Send Soon, Healthy, Overstocked, Insufficient Data. Missing sales, missing FBA stock, or a stale OPTIMUS snapshot is Insufficient Data and the suggested quantity is blank. Confidence is Medium when 30-day sales and fresh FBA stock both exist, otherwise None. The 7-, 90- and 365-day figures are comparisons only.
 
@@ -60,7 +62,7 @@ Exceptions kept with the import: duplicate OIN header, orphan TRM line, header w
 
 Permissions `purchasing.fba_forecast.view` and `purchasing.fba_forecast.manage` are implied by the purchasing and stock-forecast permissions. Imports and setting changes are audited. File hashes are not written into audit metadata.
 
-Migration `20261027190000_fba_replenishment_forecast` is in the repository and is not applied by this change.
+Migrations `20261027190000_fba_replenishment_forecast`, `20261027223000_fba_forecast_provenance` and `20261027235000_fba_marketplace_scope` are in the repository. They are not applied to production by this change.
 
 ## Later, not in this phase
 

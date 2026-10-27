@@ -1,7 +1,8 @@
 /**
  * Manual Amazon UK FBA sell-through CSV.
  * Coverage comes from declared metadata, not the first and last sale dates.
- * MFN and FBM rows reject the file. OIN replenishment is not consumer sales.
+ * MFN and FBM rows reject the file. A missing marketplace is not treated as UK.
+ * OIN replenishment is not consumer sales.
  */
 
 import { isAutopart504Report } from "@/domain/autopart-504";
@@ -28,9 +29,11 @@ export type FbaAmazonSalesParse =
       coverageTo: string;
       extractedOn: string;
       fulfilmentScope: "FBA";
+      marketplaceScope: "AMAZON_UK";
       declaredComplete: boolean;
       zerosOmitted: boolean;
       normalizedFbaOnly: boolean;
+      normalizedUkOnly: boolean;
       coverageHasGaps: boolean;
       mergedDuplicateDays: number;
     }
@@ -104,6 +107,17 @@ function channelLabel(raw: string): string {
     .replace(/[\s-]+/g, "_");
 }
 
+/** Explicit UK marketplace labels. Other markets, including a blank cell, are not UK. */
+function ukMarketplace(raw: string): "AMAZON_UK" | null {
+  const value = raw
+    .trim()
+    .toUpperCase()
+    .replace(/[\s.-]+/g, "_")
+    .replace(/_+/g, "_");
+  if (value === "AMAZON_UK" || value === "AMAZON_CO_UK") return "AMAZON_UK";
+  return null;
+}
+
 export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
   const source = text.replace(/^\uFEFF/, "").trim();
   if (!source) return { ok: false, error: "The Amazon sales file is empty." };
@@ -159,6 +173,20 @@ export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
       error: `fulfilment_scope is ${scope || "blank"}. Only an FBA or AFN extract can be imported. MFN and FBM are not FBA sell-through.`,
     };
   }
+  const marketScopeAt = headerIndex(metadataHeaders, ["marketplace_scope", "market_scope"]);
+  let declaredMarketplace: "AMAZON_UK" | null = null;
+  if (marketScopeAt >= 0) {
+    declaredMarketplace = ukMarketplace(meta[marketScopeAt] ?? "");
+    if (!declaredMarketplace) {
+      const raw = (meta[marketScopeAt] ?? "").trim() || "blank";
+      return {
+        ok: false,
+        error:
+          `marketplace_scope is ${raw}. This forecast is Amazon UK only. ` +
+          "Another marketplace is not imported as UK demand.",
+      };
+    }
+  }
   const completeAt = headerIndex(metadataHeaders, ["complete", "complete_daily"]);
   const zerosAt = headerIndex(metadataHeaders, ["zeros_omitted", "zero_days_omitted"]);
   const declaredComplete = completeAt >= 0 && yes(meta[completeAt]);
@@ -189,6 +217,15 @@ export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
     };
   }
   const normalizedFbaOnly = channelAt < 0;
+  const normalizedUkOnly = marketAt < 0;
+  if (normalizedUkOnly && declaredMarketplace !== "AMAZON_UK") {
+    return {
+      ok: false,
+      error:
+        "This file has no marketplace column and no marketplace_scope of AMAZON_UK. " +
+        "An unscoped extract is not treated as Amazon UK.",
+    };
+  }
   const merged = new Map<string, FbaAmazonSalesRow>();
   let mergedDuplicateDays = 0;
   for (let i = 3; i < lines.length; i += 1) {
@@ -223,12 +260,22 @@ export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
         error: `Row ${i + 1} date ${saleDate} is outside the declared coverage ${coverageFrom} to ${coverageTo}.`,
       };
     }
-    const marketplace = (marketAt >= 0 ? cells[marketAt] : "")?.trim().toUpperCase() || "AMAZON_UK";
-    if (marketplace !== "AMAZON_UK") {
-      return {
-        ok: false,
-        error: `Row ${i + 1} is marketplace ${marketplace}. This forecast is Amazon UK only.`,
-      };
+    let marketplace: "AMAZON_UK";
+    if (normalizedUkOnly) {
+      marketplace = "AMAZON_UK";
+    } else {
+      const rawMarket = (cells[marketAt] ?? "").trim();
+      const parsedMarket = ukMarketplace(rawMarket);
+      if (!parsedMarket) {
+        return {
+          ok: false,
+          error:
+            `Row ${i + 1} marketplace is ${rawMarket || "blank"}. ` +
+            "This forecast is Amazon UK only and does not default " +
+            "a missing or other marketplace to UK. The file was not stored.",
+        };
+      }
+      marketplace = parsedMarket;
     }
     const matchKey = skuMatchKey(sku);
     const key = `${matchKey}|${saleDate}|${marketplace}`;
@@ -260,9 +307,11 @@ export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
     coverageTo,
     extractedOn,
     fulfilmentScope: "FBA",
+    marketplaceScope: "AMAZON_UK",
     declaredComplete,
     zerosOmitted,
     normalizedFbaOnly,
+    normalizedUkOnly,
     coverageHasGaps,
     mergedDuplicateDays,
   };

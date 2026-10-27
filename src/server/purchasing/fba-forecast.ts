@@ -18,6 +18,7 @@ import {
   provisionalReplenishmentWeekly,
   reconcileOinDocumentLines,
   rejectUnprovenFbaSales,
+  rejectUnprovenUkMarketplace,
   type FbaForecastResult,
   type OinException,
 } from "@/domain/fba-replenishment";
@@ -243,6 +244,7 @@ const salesInput = z.object({
   filename: z.string().min(1).max(240),
   completeDaily: z.boolean(),
   fbaOnlyAttested: z.boolean(),
+  ukMarketplaceAttested: z.boolean().default(false),
 });
 
 export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
@@ -255,6 +257,11 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
     fbaOnlyAttested: input.fbaOnlyAttested,
   });
   if (unproven) throw new AuthError(unproven, "FBA_SALES_REJECTED", 400);
+  const unprovenMarket = rejectUnprovenUkMarketplace({
+    normalizedUkOnly: parsed.normalizedUkOnly,
+    ukMarketplaceAttested: input.ukMarketplaceAttested,
+  });
+  if (unprovenMarket) throw new AuthError(unprovenMarket, "FBA_SALES_REJECTED", 400);
   const completeDaily = amazonExtractIsComplete({
     declaredComplete: parsed.declaredComplete,
     operatorAttestedComplete: input.completeDaily,
@@ -272,10 +279,13 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
       fileHash,
       actorUserId,
       completeDaily,
+      marketplace: parsed.marketplaceScope,
       fulfilmentScope: parsed.fulfilmentScope,
       extractedOn: asDate(parsed.extractedOn),
       declaredComplete: parsed.declaredComplete,
       fbaOnlyAttested: input.fbaOnlyAttested,
+      ukMarketplaceAttested: input.ukMarketplaceAttested,
+      normalizedUkOnly: parsed.normalizedUkOnly,
       zerosOmitted: parsed.zerosOmitted,
       coverageHasGaps: parsed.coverageHasGaps,
       coverageFrom: asDate(parsed.coverageFrom),
@@ -302,6 +312,8 @@ export async function importFbaAmazonSales(actorUserId: string, raw: unknown) {
       rows: created.rowCount,
       completeDaily,
       fulfilmentScope: parsed.fulfilmentScope,
+      marketplace: parsed.marketplaceScope,
+      normalizedUkOnly: parsed.normalizedUkOnly,
       coverageFrom: parsed.coverageFrom,
       coverageTo: parsed.coverageTo,
       extractedOn: parsed.extractedOn,
@@ -491,6 +503,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   const windowBase = {
     completeDaily: Boolean(salesImport?.completeDaily),
     fulfilmentScope,
+    marketplace: salesImport?.marketplace || null,
     coverageFrom,
     coverageTo,
     extractedOn,
@@ -695,6 +708,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
           importedAt: salesImport.importedAt.toISOString(),
           completeDaily: salesImport.completeDaily,
           fulfilmentScope: salesImport.fulfilmentScope,
+          marketplace: salesImport.marketplace,
+          normalizedUkOnly: salesImport.normalizedUkOnly,
           extractedOn,
           declaredComplete: salesImport.declaredComplete,
           fbaOnlyAttested: salesImport.fbaOnlyAttested,

@@ -59,6 +59,14 @@ export function roundUpToCaseMultiple(qty: number, multiple: number | null): num
   return Math.ceil(whole / multiple) * multiple;
 }
 
+/** Whole cases that can actually leave the warehouse. A remainder is not a shipment. */
+export function roundDownToCaseMultiple(qty: number, multiple: number | null): number {
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  const whole = Math.floor(qty);
+  if (multiple == null || !Number.isFinite(multiple) || multiple <= 1) return whole;
+  return Math.floor(whole / multiple) * multiple;
+}
+
 export type FbaForecastInput = {
   /** Null when OPTIMUS has never been imported for this SKU. */
   fbaAvailable: number | null;
@@ -90,6 +98,8 @@ export type FbaForecastResult = {
   rawSendQty: number | null;
   suggestedSendQty: number | null;
   dispatchableQty: number | null;
+  /** Studley units below one full case. They stay in the warehouse and are not a shipment. */
+  looseStudleyQty: number | null;
   studleyShortfallQty: number | null;
   coverWeeks: number | null;
   stockoutDate: string | null;
@@ -109,6 +119,7 @@ function insufficient(reason: string, assumptions: string[]): FbaForecastResult 
     rawSendQty: null,
     suggestedSendQty: null,
     dispatchableQty: null,
+    looseStudleyQty: null,
     studleyShortfallQty: null,
     coverWeeks: null,
     stockoutDate: null,
@@ -183,18 +194,41 @@ export function projectFbaShipment(input: FbaForecastInput): FbaForecastResult {
   assumptions.push(
     `Send = max(0, required − FBA available ${input.fbaAvailable} − confirmed inbound ${inbound}) = ${round1(raw)}, then rounded up to the case multiple.`,
   );
+  if (input.caseMultiple != null && input.caseMultiple > 1) {
+    assumptions.push(
+      `Shipments use complete cases of ${input.caseMultiple}. ` +
+        "Dispatchable stock is rounded down to that multiple. Units left over are not dispatch-ready.",
+    );
+  }
 
   const studley = input.studleyAvailable;
-  const dispatchable = studley == null ? null : Math.min(suggested, Math.max(0, studley));
-  const shortfall = studley == null ? null : Math.max(0, suggested - Math.max(0, studley));
-  if (studley == null) {
+  const onHand = studley == null || !Number.isFinite(studley) ? null : Math.max(0, studley);
+  const capped = onHand == null ? null : Math.min(suggested, onHand);
+  const dispatchable =
+    capped == null ? null : roundDownToCaseMultiple(capped, input.caseMultiple);
+  const loose =
+    capped == null || dispatchable == null
+      ? null
+      : Math.round((capped - dispatchable) * 1000) / 1000;
+  const shortfall = onHand == null ? null : Math.max(0, suggested - onHand);
+  if (onHand == null) {
     assumptions.push(
       "Studley stock is not on the current warehouse feed, so dispatchable quantity is unknown.",
     );
-  } else if (shortfall != null && shortfall > 0) {
-    assumptions.push(
-      `Studley can cover ${dispatchable} of ${suggested}. The remaining ${shortfall} is a purchasing requirement, not a shipment.`,
-    );
+  } else {
+    if (loose != null && loose > 0) {
+      assumptions.push(
+        `Studley has ${onHand} against suggested ${suggested}. ` +
+          `${dispatchable} can ship as complete cases. ` +
+          `${loose} is loose stock and is not dispatch-ready.`,
+      );
+    }
+    if (shortfall != null && shortfall > 0) {
+      assumptions.push(
+        `Buying ${shortfall} more reaches the suggested ${suggested}. ` +
+          "That shortfall is a purchasing requirement, not a shipment.",
+      );
+    }
   }
 
   const coverWeeks = weeklyRate > 0 ? round1(input.fbaAvailable / weeklyRate) : null;
@@ -249,6 +283,7 @@ export function projectFbaShipment(input: FbaForecastInput): FbaForecastResult {
     rawSendQty: Math.ceil(raw),
     suggestedSendQty: suggested,
     dispatchableQty: dispatchable,
+    looseStudleyQty: loose,
     studleyShortfallQty: shortfall,
     coverWeeks,
     stockoutDate,
@@ -430,10 +465,26 @@ export function rejectUnprovenFbaSales(input: {
   return null;
 }
 
+/** A file with no marketplace column is stored only after an explicit Amazon UK attestation. */
+export function rejectUnprovenUkMarketplace(input: {
+  normalizedUkOnly: boolean;
+  ukMarketplaceAttested: boolean;
+}): string | null {
+  if (input.normalizedUkOnly && !input.ukMarketplaceAttested) {
+    return (
+      "This file has no marketplace column. " +
+      "Attest that every row is Amazon UK, or add a marketplace column. " +
+      "Other marketplaces are not stored as UK demand."
+    );
+  }
+  return null;
+}
+
 /** A complete FBA extract covers a window when its declared range, scope and extraction date support it. */
 export function amazonWindowSupported(input: {
   completeDaily: boolean;
   fulfilmentScope: string | null;
+  marketplace: string | null;
   coverageFrom: string | null;
   coverageTo: string | null;
   extractedOn: string | null;
@@ -444,6 +495,7 @@ export function amazonWindowSupported(input: {
   if (!input.completeDaily || !input.coverageFrom || !input.coverageTo || !input.extractedOn)
     return false;
   if (input.fulfilmentScope !== "FBA") return false;
+  if (input.marketplace !== "AMAZON_UK") return false;
   if (input.extractedOn < input.coverageTo || input.extractedOn > input.today) return false;
   if (input.coverageFrom > input.windowFrom) return false;
   if (input.coverageTo >= input.windowTo) return true;

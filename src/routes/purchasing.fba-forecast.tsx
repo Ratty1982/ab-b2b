@@ -96,6 +96,7 @@ function FbaForecastPage() {
   const [salesFile, setSalesFile] = useState<{ name: string; text: string } | null>(null);
   const [completeDaily, setCompleteDaily] = useState(false);
   const [fbaOnlyAttested, setFbaOnlyAttested] = useState(false);
+  const [ukMarketplaceAttested, setUkMarketplaceAttested] = useState(false);
   const [lead, setLead] = useState("14");
   const [cover, setCover] = useState("6");
   const [safety, setSafety] = useState("0");
@@ -210,9 +211,9 @@ function FbaForecastPage() {
         {data?.sales && !data.sales.windows.d30 ? (
           <p>
             The latest Amazon file ({data.sales.filename}, {data.sales.coverageFrom ?? "unknown"} to{" "}
-            {data.sales.coverageTo ?? "unknown"}, scope {data.sales.fulfilmentScope || "unset"})
-            does not support the last 30 days as complete FBA sell-through. No weekly rate is
-            estimated.
+            {data.sales.coverageTo ?? "unknown"}, scope {data.sales.fulfilmentScope || "unset"},
+            marketplace {data.sales.marketplace || "unset"}) does not support the last 30 days as
+            complete Amazon UK FBA sell-through. No weekly rate is estimated.
             {data.sales.coverageHasGaps
               ? " Days inside the declared range have no row, and omitted days were not declared as zero FBA sales."
               : ""}
@@ -307,6 +308,7 @@ function FbaForecastPage() {
                       filename: salesFile.name,
                       completeDaily,
                       fbaOnlyAttested,
+                      ukMarketplaceAttested,
                     },
                   }),
                 "Amazon UK sales extract stored. Earlier extracts are not added to this one.",
@@ -319,8 +321,11 @@ function FbaForecastPage() {
             <p className="text-[12px] text-steel">
               The first rows must declare coverage_from, coverage_to, extracted_on and
               fulfilment_scope FBA. Then sku, date, units_sold and fulfilment_channel AFN or FBA. An
-              MFN or FBM row rejects the file. Coverage is not taken from the first and last sale. A
-              gap is incomplete unless zeros_omitted is yes. This is not an Amazon API feed.
+              MFN or FBM row rejects the file. Each row needs marketplace AMAZON_UK, or the metadata
+              must say marketplace_scope AMAZON_UK. A missing marketplace is not treated as UK, and
+              another market such as AMAZON_DE is rejected. Coverage is not taken from the first and
+              last sale. A gap is incomplete unless zeros_omitted is yes. This is not an Amazon API
+              feed.
             </p>
             <input
               className={controlClass}
@@ -338,7 +343,16 @@ function FbaForecastPage() {
                 checked={fbaOnlyAttested}
                 onChange={(event) => setFbaOnlyAttested(event.target.checked)}
               />
-              I attest this file is Amazon FBA UK only. Merchant-fulfilled orders are not included.
+              I attest every row is Amazon FBA (AFN). Merchant-fulfilled orders are not included.
+            </label>
+            <label className="flex items-center gap-2 text-[13px]">
+              <input
+                type="checkbox"
+                checked={ukMarketplaceAttested}
+                onChange={(event) => setUkMarketplaceAttested(event.target.checked)}
+              />
+              I attest this extract is Amazon UK only. Required when the file has no marketplace
+              column.
             </label>
             <label className="flex items-center gap-2 text-[13px]">
               <input
@@ -615,7 +629,12 @@ function FbaForecastPage() {
                   <th className="px-3 py-2">Stockout</th>
                   <th className="px-3 py-2">Next send</th>
                   <th className="px-3 py-2">Suggested</th>
-                  <th className="px-3 py-2">Dispatchable</th>
+                  <th
+                    className="px-3 py-2"
+                    title="Whole cases only. Units below one case are not dispatch-ready."
+                  >
+                    Dispatchable
+                  </th>
                   <th className="px-3 py-2">Buy shortfall</th>
                   <th className="px-3 py-2">Recommendation</th>
                 </tr>
@@ -650,7 +669,17 @@ function FbaForecastPage() {
                     <td className="px-3 py-2">{ukDate(row.forecast.stockoutDate)}</td>
                     <td className="px-3 py-2">{ukDate(row.forecast.nextSendDate)}</td>
                     <td className="px-3 py-2">{qty(row.forecast.suggestedSendQty)}</td>
-                    <td className="px-3 py-2">{qty(row.forecast.dispatchableQty)}</td>
+                    <td
+                      className="px-3 py-2"
+                      title="Whole cases only. Units below one case are not dispatch-ready."
+                    >
+                      {qty(row.forecast.dispatchableQty)}
+                      {row.forecast.looseStudleyQty ? (
+                        <div className="text-[11px] text-steel">
+                          {qty(row.forecast.looseStudleyQty)} loose, not a shipment
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2">{qty(row.forecast.studleyShortfallQty)}</td>
                     <td className="px-3 py-2">
                       <StatusBadge tone={tone(row.forecast.recommendation)}>
