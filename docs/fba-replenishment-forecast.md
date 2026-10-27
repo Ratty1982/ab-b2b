@@ -18,7 +18,9 @@ Architecture audit and the first safe phase. This does not change financial invo
 
 Ongoing 504/TRM writes go through `assessOngoingSalesWrite`. A header and its lines are stored on `AutopartSalesDocument` only when the Autopart account is an Active company, the account is uniquely verified, and sales cutover is complete. Otherwise the outcome is `UNMAPPED_CUSTOMER`, `NOT_ACTIVE`, or `HISTORY_CUTOVER_INCOMPLETE`, and nothing is persisted.
 
-An Amazon or internal account that is not an Active B2B customer therefore leaves no OIN row to reconstruct. Changing cutover or financial ownership to capture those movements is out of scope. The FBA ledger is a separate, idempotent store filled by a manual upload of the same 504 and TRM21QC pair. It does not hook the poller.
+An Amazon or internal account that is not an Active B2B customer therefore leaves no OIN row to reconstruct. Changing cutover or financial ownership to capture those movements is out of scope. The FBA ledger remains for older manual uploads. It does not hook the poller.
+
+RETAILA OIN history is read from `AutopartSalesDocument` and `AutopartSalesLine`. That includes historic 561L lines and ongoing TRM21QC lines whose account code is `RETAILA`, or a verified alias of the verified RETAILA company. Document references must match `OIN` plus letters and digits. Sales Enquiry reconciliation applies: when both sources describe the same invoice and the lines agree, the ongoing copy is kept; when they disagree, or the 504 goods value does not match, neither copy is added to the cadence. Credits use a negative quantity. A manual ledger document is added only when that reference is not already in the RETAILA sales history. Non-OIN RETAILA invoices and other customer accounts are excluded. These quantities stay replenishment history. They are not Amazon consumer sales.
 
 Historical 561L/SLRB lines stay customer sales history. They are not retargeted as Amazon sell-through. If an OIN reference is already on `AutopartSalesDocument`, the workspace counts that overlap and leaves the financial row in place.
 

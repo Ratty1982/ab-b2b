@@ -469,7 +469,7 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
       },
       {
         id: "purchasing-fba-forecast",
-        label: "FBA Forecast",
+        label: "Amazon FBA",
         icon: "store",
         to: ROUTES.purchasingFbaForecast,
         matchPrefixes: [ROUTES.purchasingFbaForecast],
