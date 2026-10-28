@@ -5,8 +5,58 @@ export type FbaSalesActivity = (typeof FBA_SALES_ACTIVITIES)[number];
 export const FBA_FORECAST_SORTS = ["priority", "cover", "velocity", "suggested", "sales"] as const;
 export type FbaForecastSort = (typeof FBA_FORECAST_SORTS)[number];
 
+/** Verified Amazon FBA extract vs explicit RETAILA planning proxy. Omitted means verified FBA. */
+export const FBA_PLANNING_MODES = ["fba", "retaila"] as const;
+export type FbaPlanningModeSearch = (typeof FBA_PLANNING_MODES)[number];
+
+export const FBA_FOCUS_FILTERS = [
+  "low_cover",
+  "no_fba",
+  "no_studley",
+  "shortfall",
+  "unavailable",
+  "needs_review",
+] as const;
+export type FbaFocusFilter = (typeof FBA_FOCUS_FILTERS)[number];
+
+/** Matches the Overview “Needs review” card: send actions, shortfalls, or unavailable. */
+export function rowNeedsReview(row: {
+  forecast: {
+    recommendation: string;
+    studleyShortfallQty: number | null;
+  };
+}): boolean {
+  return (
+    row.forecast.recommendation === "SEND_NOW" ||
+    row.forecast.recommendation === "SEND_SOON" ||
+    row.forecast.recommendation === "INSUFFICIENT_DATA" ||
+    (row.forecast.studleyShortfallQty != null && row.forecast.studleyShortfallQty > 0)
+  );
+}
+
 export function isFbaSalesActivity(value: unknown): value is FbaSalesActivity {
   return value === "365" || value === "90" || value === "30" || value === "all";
+}
+
+export function isFbaPlanningMode(value: unknown): value is FbaPlanningModeSearch {
+  return value === "fba" || value === "retaila";
+}
+
+export function isFbaFocusFilter(value: unknown): value is FbaFocusFilter {
+  return (
+    value === "low_cover" ||
+    value === "no_fba" ||
+    value === "no_studley" ||
+    value === "shortfall" ||
+    value === "unavailable" ||
+    value === "needs_review"
+  );
+}
+
+export function planningModeSearchValue(
+  mode: FbaPlanningModeSearch,
+): "retaila" | undefined {
+  return mode === "fba" ? undefined : mode;
 }
 
 /** A missing or 365-day choice stays out of the URL. Shorter windows and the full catalogue are stored. */

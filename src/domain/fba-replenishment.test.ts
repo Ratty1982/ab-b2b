@@ -67,7 +67,8 @@ const base = {
   studleyAvailable: 100,
   confirmedInboundQty: 0,
   salesSupported: true,
-  amazonNetUnits30: 30,
+  demandNetUnits30: 30,
+  demandSource: "AMAZON_UK_FBA_CSV" as const,
   leadTimeDays: 14,
   targetCoverWeeks: 4,
   safetyStockQty: 2,
@@ -268,8 +269,14 @@ describe("OIN identification", () => {
 
 describe("FBA shipment forecast", () => {
   it("does not invent a weekly rate when Amazon sales are missing", () => {
-    const result = projectFbaShipment({ ...base, salesSupported: false, amazonNetUnits30: 90 });
+    const result = projectFbaShipment({
+      ...base,
+      salesSupported: false,
+      demandNetUnits30: 90,
+      demandSource: "NONE",
+    });
     expect(result.recommendation).toBe("INSUFFICIENT_DATA");
+    expect(result.blocker).toBe("DEMAND_SOURCE_UNVERIFIED");
     expect(result.weeklyRate).toBeNull();
     expect(result.suggestedSendQty).toBeNull();
   });
@@ -277,6 +284,7 @@ describe("FBA shipment forecast", () => {
   it("does not treat stale OPTIMUS stock as verified sellable inventory", () => {
     const result = projectFbaShipment({ ...base, fbaStockStale: true, fbaAvailable: 0 });
     expect(result.recommendation).toBe("INSUFFICIENT_DATA");
+    expect(result.blocker).toBe("STALE_FBA_STOCK");
     expect(result.fbaStockVerified).toBe(false);
     expect(result.suggestedSendQty).toBeNull();
   });
@@ -361,7 +369,8 @@ describe("FBA shipment forecast", () => {
       studleyAvailable: 70,
       confirmedInboundQty: 10,
       salesSupported: true,
-      amazonNetUnits30: 90,
+      demandNetUnits30: 90,
+      demandSource: "AMAZON_UK_FBA_CSV",
       leadTimeDays: 14,
       targetCoverWeeks: 6,
       safetyStockQty: 0,
@@ -370,26 +379,35 @@ describe("FBA shipment forecast", () => {
     });
     expect(averageWeeklySales(90)).toBe(21);
     expect(result.weeklyRate).toBe(21);
+    expect(result.dailyRate).toBe(3);
     expect(result.projectedRequiredQty).toBe(168);
     expect(result.suggestedSendQty).toBe(108);
     expect(result.dispatchableQty).toBe(70);
     expect(result.studleyShortfallQty).toBe(38);
     expect(result.recommendation).not.toBe("INSUFFICIENT_DATA");
+    expect(result.planningEstimate).toBe(false);
+    expect(result.coverBasis).toBe("verified_amazon");
   });
 
   it("does not treat RETAILA invoices as proven FBA UK demand or add them to an Amazon extract", () => {
     expect(RETAILA_OIN_PROVEN_AS_FBA_UK).toBe(false);
     const blocked = selectFbaDemand({
+      plan: "fba",
       amazonWindowSupported: false,
       amazonNetUnits30: null,
       retailaNetUnits30: 90,
+      retailaPlanningApproved: false,
+      retailaReportingComplete: false,
+      retailaInvoicesAvailable: true,
     });
     expect(blocked.source).toBe("NONE");
     expect(blocked.netUnits30).toBeNull();
+    expect(blocked.blocker).toBe("DEMAND_SOURCE_UNVERIFIED");
     const fromOin = projectFbaShipment({
       ...base,
       salesSupported: blocked.salesSupported,
-      amazonNetUnits30: blocked.netUnits30,
+      demandNetUnits30: blocked.netUnits30,
+      demandSource: blocked.source,
       fbaAvailable: 50,
       confirmedInboundQty: 10,
       studleyAvailable: 70,
@@ -397,13 +415,97 @@ describe("FBA shipment forecast", () => {
     expect(fromOin.recommendation).toBe("INSUFFICIENT_DATA");
     expect(fromOin.suggestedSendQty).toBeNull();
     const chosen = selectFbaDemand({
+      plan: "fba",
       amazonWindowSupported: true,
       amazonNetUnits30: 10,
       retailaNetUnits30: 90,
+      retailaPlanningApproved: false,
+      retailaReportingComplete: false,
+      retailaInvoicesAvailable: true,
     });
     expect(chosen.source).toBe("AMAZON_UK_FBA_CSV");
     expect(chosen.netUnits30).toBe(10);
     expect(chosen.reason).toMatch(/not added/);
+  });
+
+  it("uses approved RETAILA sales only as an explicit planning proxy", () => {
+    const locked = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: 90,
+      retailaPlanningApproved: false,
+      retailaReportingComplete: true,
+      retailaInvoicesAvailable: true,
+    });
+    expect(locked.source).toBe("NONE");
+    expect(locked.blocker).toBe("PLANNING_NOT_APPROVED");
+    const incomplete = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: 90,
+      retailaPlanningApproved: true,
+      retailaReportingComplete: false,
+      retailaReportingReason: "Missing import days",
+      retailaInvoicesAvailable: true,
+    });
+    expect(incomplete.blocker).toBe("RETAILA_REPORTING_INCOMPLETE");
+    expect(incomplete.salesSupported).toBe(false);
+    const failedInvoices = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: null,
+      retailaPlanningApproved: true,
+      retailaReportingComplete: true,
+      retailaInvoicesAvailable: false,
+    });
+    expect(failedInvoices.source).toBe("NONE");
+    expect(failedInvoices.netUnits30).toBeNull();
+    expect(failedInvoices.blocker).toBe("RETAILA_SALES_UNKNOWN");
+    expect(failedInvoices.reason).toMatch(/not treated as zero/i);
+    const zeroSales = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: null,
+      retailaPlanningApproved: true,
+      retailaReportingComplete: true,
+      retailaInvoicesAvailable: true,
+    });
+    expect(zeroSales.source).toBe("RETAILA_PLANNING");
+    expect(zeroSales.netUnits30).toBe(0);
+    expect(zeroSales.blocker).toBeNull();
+    const proxy = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: true,
+      amazonNetUnits30: 10,
+      retailaNetUnits30: 90,
+      retailaPlanningApproved: true,
+      retailaReportingComplete: true,
+      retailaInvoicesAvailable: true,
+    });
+    expect(proxy.source).toBe("RETAILA_PLANNING");
+    expect(proxy.netUnits30).toBe(90);
+    const planned = projectFbaShipment({
+      ...base,
+      salesSupported: true,
+      demandNetUnits30: 90,
+      demandSource: "RETAILA_PLANNING",
+      fbaAvailable: 50,
+      confirmedInboundQty: 10,
+      studleyAvailable: 70,
+      leadTimeDays: 14,
+      targetCoverWeeks: 6,
+      safetyStockQty: 0,
+      caseMultiple: 1,
+    });
+    expect(planned.planningEstimate).toBe(true);
+    expect(planned.coverBasis).toBe("retaila_planning");
+    expect(planned.suggestedSendQty).toBe(108);
+    expect(planned.confidence).toBe("LOW");
+    expect(planned.reason).toMatch(/planning estimate|RETAILA/i);
   });
 
   it("keeps OIN customer sales separate from the shipment quantity", () => {

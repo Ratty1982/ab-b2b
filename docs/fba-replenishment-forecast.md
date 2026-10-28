@@ -28,12 +28,22 @@ An OIN invoice is a sale to the customer account on the document. It is not a re
 
 It is also not proven Amazon UK FBA sell-through. `AutopartSalesDocument` and `AutopartSalesLine` have no marketplace column and no Amazon fulfilment channel. `fulfilmentStatus` is Autopart order matching (`WAITING_FOR_504`, `FULFILMENT_APPLIED`, and the other document states). The account code `RETAILA` does not supply that proof.
 
-The shipment formula therefore uses one source:
+The page exposes two explicit modes (`plan` search parameter; omitted means verified FBA):
 
-1. The latest Amazon sales extract, only when it declares marketplace `AMAZON_UK`, fulfilment `FBA`, and complete coverage for the last 30 days. A SKU missing from that complete extract is zero for the covered window.
-2. Otherwise no shipment is suggested. Verified RETAILA quantities for 7, 30, 60, 90 and 365 days stay on the row, with weekly sales `net 30 / 30 × 7`. Dividing FBA stock by that weekly rate is an unverified illustrative comparison. It is not Amazon FBA cover and it is not used for a shipment. Amazon FBA cover comes only from the extract above. The recommendation stays Insufficient Data.
+1. **Verified FBA forecast** — the latest Amazon sales extract, only when it declares marketplace `AMAZON_UK`, fulfilment `FBA`, and complete coverage for the last 30 days. A SKU missing from that complete extract is zero for the covered window. Without that extract, no shipment is suggested. Verified RETAILA quantities stay visible, with weekly sales `net 30 / 30 × 7`. Dividing FBA stock by that weekly rate is an unverified illustrative comparison. It is not Amazon FBA cover and it is not used for a shipment.
+2. **RETAILA sales-based planning** — an explicitly labelled planning proxy. A Super Admin must record a business justification in Settings before recommendations unlock. Approval is **global for all eligible RETAILA SKUs** (`ALL_ELIGIBLE_RETAILA_SKUS`); free text does not restrict products. Approve/disable and the audit row commit in one Prisma transaction via `recordAuditEventInTransaction`. Outputs are planning estimates, never claimed as verified Amazon UK FBA sell-through. Until approved, sales and illustrative cover stay visible and actionable shipment recommendations stay locked (`PLANNING_NOT_APPROVED`).
 
-RETAILA units are never added to Amazon units, and the page does not switch between them for overlapping days. `RETAILA_OIN_PROVEN_AS_FBA_UK` stays false until a stored marketplace and fulfilment channel exist.
+Planning also requires verified Autopart **504 + TRM21QC** import coverage for Autopart working days in the last 30 days (excluding today). Invoice document dates alone do not prove feed completeness. Incomplete or stale reporting blocks recommendations with `RETAILA_REPORTING_INCOMPLETE` while historical sales stay visible. When coverage is verified, a SKU with no RETAILA invoices is treated as zero planning demand.
+
+Unavailable forecasts use actionable blockers such as `DEMAND_SOURCE_UNVERIFIED`, `PLANNING_NOT_APPROVED`, `RETAILA_REPORTING_INCOMPLETE`, `RETAILA_SALES_UNKNOWN`, `MISSING_FBA_STOCK`, `STALE_FBA_STOCK`, and `SETTINGS_INCOMPLETE`. Products with RETAILA sales are not classified as missing sales when the blocker is a missing Amazon extract.
+
+### Diagnosis of “Forecast Unavailable” with RETAILA sales present
+
+When staff see a large Unavailable count (for example ~39 SKUs with RETAILA history and no covered Amazon UK extract), the dominant blocker is almost always **demand source not verified**, not missing customer sales. Separate counts are returned in `summary.blockers`. Stale or missing OPTIMUS FBA snapshots, incomplete RETAILA coverage for a SKU, and unapproved RETAILA planning are counted separately. Do not treat the Unavailable total as a sales-data failure.
+
+RETAILA units are never added to Amazon units, and the page never combines the two sources for overlapping days. `RETAILA_OIN_PROVEN_AS_FBA_UK` stays false until a stored marketplace and fulfilment channel exist.
+
+Migration `20261028220000_fba_retaila_planning_approval` stores the Super Admin approval fields on `FbaForecastSettings`.
 
 The RETAILA read runs in its own transaction with `statement_timeout` of 8 seconds, set locally so the pooled connection is not left restricted. If that read fails or times out, the forecast still returns FBA and Studley stock. The page shows the error and a Retry button instead of waiting forever. OIN History and a product's invoices load only when that tab or product is opened.
 
@@ -61,7 +71,7 @@ A checkbox does not make an extract complete. Completeness requires the file to 
 
 ## Forecast
 
-Demand is the 30-day net from the one selected source above (sold minus credited), and only when that source covers the window. Weekly rate = `max(0, net 30) × 7/30`. Returns above sales become zero demand, not a negative shipment. RETAILA customer sales use the same weekly display, and they do not feed this rate.
+Demand is the 30-day net from the active mode’s selected source (sold minus credited), and only when that source covers the window. Weekly rate = `max(0, net 30) × 7/30`. Returns above sales become zero demand, not a negative shipment. In verified FBA mode, RETAILA customer sales use the same weekly display for context and do not feed the rate. In approved RETAILA planning mode, that weekly rate is the planning proxy and every suggested quantity is labelled a planning estimate.
 
 Projected required stock = demand during lead time + target weeks of cover after arrival + safety stock.
 
@@ -72,6 +82,10 @@ Studley shortfall = `max(0, suggested − Studley)`, the units still to buy. Dis
 Recommendations: Send Now, Send Soon, Healthy, Overstocked, Insufficient Data. Missing sales, missing FBA stock, or a stale OPTIMUS snapshot is Insufficient Data and the suggested quantity is blank. Confidence is Medium when 30-day sales and fresh FBA stock both exist, otherwise None. The 7-, 90- and 365-day figures are comparisons only.
 
 Nothing on this page creates an order, deducts stock, or publishes a shipment.
+
+## Data & Imports workspace
+
+Amazon FBA → **Data & Imports** is the central place to upload OPTIMUS / 231PO3NEW FBA UK stock (`FbaStockImportPanel` via `previewFbaStockImportFn` / `importFbaStockFn` / `listFbaStockImportsFn`), import the Amazon UK sales CSV, record confirmed inbound, and review source freshness. Stock Forecast keeps a read-only FBA/Studley view and links here for uploads. A successful FBA stock import refreshes the Overview and freshness figures. Autopart 231PO3NEW calculations and Studley processing are unchanged.
 
 ## Ledger and safety
 

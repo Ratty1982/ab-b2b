@@ -23,22 +23,29 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  FbaStockPlanningOverview,
+  type PlanningRow,
+  type StockPlanningSearch,
+} from "@/components/purchasing/fba-stock-planning-overview";
 import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
-  defaultFbaForecastSort,
-  salesActivitySearchValue,
-  type FbaForecastSort,
+  isFbaFocusFilter,
   type FbaSalesActivity,
 } from "@/domain/fba-forecast-search";
 import {
+  FBA_FORECAST_BLOCKER_LABEL,
+  FBA_FORECAST_BLOCKERS,
   FBA_INBOUND_STATUSES,
   FBA_RECOMMENDATIONS,
-  FBA_RECOMMENDATION_LABEL,
+  type FbaForecastBlocker,
   type FbaInboundStatus,
   type FbaRecommendation,
 } from "@/domain/fba-replenishment";
 import { guardStaffPage } from "@/lib/guard-staff-page";
 import {
+  approveRetailaPlanningFn,
+  disableRetailaPlanningFn,
   exportFbaForecastCsvFn,
   getFbaForecastSkuFn,
   getFbaForecastWorkspaceFn,
@@ -53,21 +60,13 @@ const TABS = ["overview", "history", "imports", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const SORTS = ["priority", "cover", "velocity", "suggested", "sales"] as const;
 type Sort = (typeof SORTS)[number];
-const SALES_ACTIVITIES = ["365", "90", "30", "all"] as const;
 
 const HISTORY_WINDOWS = [30, 90, 180, 365] as const;
 type HistoryWindow = (typeof HISTORY_WINDOWS)[number];
 const LOAD_TIMEOUT_MS = 15_000;
 
-type Search = {
-  q?: string | undefined;
-  page?: number | undefined;
-  recommendation?: FbaRecommendation | undefined;
-  brand?: string | undefined;
-  sort?: Sort | undefined;
-  sold?: "90" | "30" | "all" | undefined;
+type Search = StockPlanningSearch & {
   tab?: Tab | undefined;
-  sku?: string | undefined;
   days?: HistoryWindow | undefined;
 };
 
@@ -88,6 +87,13 @@ function parseSearch(raw: Record<string, unknown>): Search {
   if (SORTS.some((item) => item === sort)) out.sort = sort as Sort;
   const sold = raw["sold"];
   if (sold === "90" || sold === "30" || sold === "all") out.sold = sold;
+  if (raw["plan"] === "retaila") out.plan = "retaila";
+  const focus = raw["focus"];
+  if (isFbaFocusFilter(focus)) out.focus = focus;
+  const blocker = raw["blocker"];
+  if (FBA_FORECAST_BLOCKERS.some((item) => item === blocker)) {
+    out.blocker = blocker as FbaForecastBlocker;
+  }
   const tab = raw["tab"];
   if (TABS.some((item) => item === tab)) out.tab = tab as Tab;
   const sku = raw["sku"];
@@ -123,10 +129,10 @@ export const Route = createFileRoute("/purchasing/fba-forecast")({
   validateSearch: (raw: Record<string, unknown>) => parseSearch(raw),
   head: () => ({
     meta: [
-      { title: "Amazon FBA Forecast — Purchasing — Automotive Brands" },
+      { title: "Amazon FBA Stock Planning — Purchasing — Automotive Brands" },
       {
         name: "description",
-        content: "What to send to Amazon FBA UK, how much, and when.",
+        content: "Monitor customer sales, stock cover and replenishment requirements.",
       },
     ],
   }),
@@ -144,12 +150,6 @@ function tone(recommendation: FbaRecommendation): Tone {
   if (recommendation === "HEALTHY") return "good";
   if (recommendation === "OVERSTOCKED") return "info";
   return "neutral";
-}
-
-function rowAccent(recommendation: FbaRecommendation): string {
-  if (recommendation === "SEND_NOW") return "border-l-4 border-l-destructive";
-  if (recommendation === "SEND_SOON") return "border-l-4 border-l-warn";
-  return "border-l-4 border-l-transparent";
 }
 
 function FbaForecastPage() {
@@ -195,6 +195,7 @@ function FbaForecastPage() {
     safetyStockQty: "",
     caseMultiple: "",
   });
+  const [retailaJustification, setRetailaJustification] = useState("");
 
   function patch(next: Partial<Search>) {
     void navigate({ search: { ...search, ...next } });
@@ -215,6 +216,9 @@ function FbaForecastPage() {
           brand: search.brand,
           sort: search.sort,
           sold: search.sold ?? "365",
+          plan: search.plan ?? "fba",
+          focus: search.focus,
+          blocker: search.blocker,
         },
       }),
     )
@@ -235,6 +239,7 @@ function FbaForecastPage() {
             : String(result.data.settings.caseMultiple),
         );
         setOverstock(String(result.data.settings.overstockCoverWeeks));
+        setRetailaJustification(result.data.retailaPlanning.justification ?? "");
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
@@ -256,6 +261,9 @@ function FbaForecastPage() {
     search.brand,
     search.sort,
     search.sold,
+    search.plan,
+    search.focus,
+    search.blocker,
     reload,
   ]);
 
@@ -350,8 +358,8 @@ function FbaForecastPage() {
   return (
     <>
       <PanelHeader
-        title="Amazon FBA Forecast"
-        sub="Know what to replenish, when to send it and how much stock is available."
+        title="Amazon FBA Stock Planning"
+        sub="Monitor customer sales, stock cover and replenishment requirements."
         crumbs={[{ label: "Purchasing" }, { label: "Amazon FBA" }]}
         actions={
           <>
@@ -423,7 +431,7 @@ function FbaForecastPage() {
         ))}
       </nav>
       {tab === "overview" ? (
-        <Overview
+        <FbaStockPlanningOverview
           data={data}
           loading={workspaceLoading}
           q={q}
@@ -442,6 +450,9 @@ function FbaForecastPage() {
                 brand: search.brand,
                 sort: search.sort,
                 sold: search.sold ?? "365",
+                plan: search.plan ?? "fba",
+                focus: search.focus,
+                blocker: search.blocker,
               },
             }).then((result) => {
               if (!result.ok) {
@@ -533,6 +544,10 @@ function FbaForecastPage() {
         <SettingsPanel
           busy={busy}
           canManage={data.canManage}
+          canApprove={data.canApproveRetailaPlanning}
+          retailaPlanning={data.retailaPlanning}
+          retailaJustification={retailaJustification}
+          setRetailaJustification={setRetailaJustification}
           lead={lead}
           cover={cover}
           safety={safety}
@@ -557,6 +572,23 @@ function FbaForecastPage() {
                   },
                 }),
               "Forecast settings saved.",
+            );
+          }}
+          onApproveRetaila={() => {
+            void run(
+              () =>
+                approveRetailaPlanningFn({
+                  data: {
+                    justification: retailaJustification.trim(),
+                  },
+                }),
+              "RETAILA planning mode approved. Recommendations stay estimates until Amazon sell-through is verified separately.",
+            );
+          }}
+          onDisableRetaila={() => {
+            void run(
+              () => disableRetailaPlanningFn({ data: {} }),
+              "RETAILA planning mode disabled. Verified Amazon FBA mode remains available.",
             );
           }}
         />
@@ -639,7 +671,7 @@ function DataStatus({ data }: { data: Data }) {
         body={
           data.salesActivityUnavailable
             ? "RETAILA customer sales could not be loaded, so sold-product counts are hidden. This is not zero sales."
-            : `${data.summary.forecastUnavailable.toLocaleString("en-GB")} products in ${salesScopeLabel(data.salesActivity)} have no shipment figure. A missing Amazon UK FBA extract is not a product-data error. RETAILA invoices stay customer sales.`
+            : `${data.summary.forecastUnavailable.toLocaleString("en-GB")} products in ${salesScopeLabel(data.salesActivity)} need a demand source, stock snapshot, or approval before a recommendation is shown. Missing Amazon UK FBA proof is not missing RETAILA sales.`
         }
       />
       {data.oin.warning ? (
@@ -667,368 +699,53 @@ function salesScopeLabel(activity: FbaSalesActivity): string {
   return `products sold in the last ${activity} days`;
 }
 
-function activeSort(search: Search): FbaForecastSort {
-  if (search.sort) return search.sort;
-  return defaultFbaForecastSort(search.sold ?? "365");
+function coverBasisCopy(basis: Row["coverBasis"]): string {
+  if (basis === "verified_amazon") return "Verified Amazon FBA";
+  if (basis === "retaila_planning") return "RETAILA planning estimate";
+  if (basis === "illustrative") return "Illustrative (unverified)";
+  return "Not available";
 }
 
-function Overview({
-  data,
-  loading,
-  q,
-  setQ,
-  search,
-  patch,
-  onOpen,
-  onExport,
+function SalesSpark({
+  d7,
+  d30,
+  d90,
+  d365,
 }: {
-  data: Data | null;
-  loading: boolean;
-  q: string;
-  setQ: (value: string) => void;
-  search: Search;
-  patch: (next: Partial<Search>) => void;
-  onOpen: (row: Row) => void;
-  onExport: () => void;
+  d7: number | null;
+  d30: number | null;
+  d90: number | null;
+  d365: number | null;
 }) {
-  const activity: FbaSalesActivity = search.sold ?? "365";
-  const countsHidden = Boolean(data?.salesActivityUnavailable);
-  const resultsReady = Boolean(data) && !loading;
-  const count = (value: number | undefined) =>
-    resultsReady && !countsHidden ? String(value ?? 0) : "—";
+  const points = [
+    { label: "7d", value: d7 },
+    { label: "30d", value: d30 },
+    { label: "90d", value: d90 },
+    { label: "365d", value: d365 },
+  ];
+  const max = Math.max(0, ...points.map((point) => point.value ?? 0));
   return (
-    <>
-      <p className="px-4 pt-4 text-[12px] text-steel sm:px-6">
-        {loading
-          ? "Loading products for the selected sales activity…"
-          : countsHidden
-            ? "Sales activity could not be checked. Counts stay blank so a failed read is not shown as zero sales."
-            : activity === "all"
-              ? "Counts include every stock product, including products with no RETAILA sales."
-              : `Counts are limited to products with a verified RETAILA invoice in the last ${activity} days.`}
-      </p>
-      <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 xl:grid-cols-4">
-        <SummaryCard
-          label="Send Now"
-          value={count(data?.summary.sendNow)}
-          hint="Needs a shipment now"
-          active={search.recommendation === "SEND_NOW"}
-          onClick={() => patch({ recommendation: "SEND_NOW", page: undefined, tab: undefined })}
-        />
-        <SummaryCard
-          label="Send Soon"
-          value={count(data?.summary.sendSoon)}
-          hint="Replenish shortly"
-          active={search.recommendation === "SEND_SOON"}
-          onClick={() => patch({ recommendation: "SEND_SOON", page: undefined, tab: undefined })}
-        />
-        <SummaryCard
-          label="Healthy Stock"
-          value={count(data?.summary.healthy)}
-          hint="Cover is adequate"
-          active={search.recommendation === "HEALTHY"}
-          onClick={() => patch({ recommendation: "HEALTHY", page: undefined, tab: undefined })}
-        />
-        <SummaryCard
-          label="Forecast Unavailable"
-          value={count(data?.summary.forecastUnavailable)}
-          hint="No covered Amazon UK FBA extract, or stock is missing"
-          active={search.recommendation === "INSUFFICIENT_DATA"}
-          onClick={() =>
-            patch({ recommendation: "INSUFFICIENT_DATA", page: undefined, tab: undefined })
-          }
-        />
+    <div className="border border-border bg-surface/40 p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
+        Customer sales trend
       </div>
-      <form
-        className="grid gap-2 border-y border-border/70 px-4 py-3 sm:px-6 md:grid-cols-[minmax(12rem,1fr)_14rem_11rem_11rem_11rem_auto_auto]"
-        onSubmit={(event) => {
-          event.preventDefault();
-          patch({ q: q.trim() || undefined, page: undefined });
-        }}
-      >
-        <input
-          className={controlClass}
-          placeholder="Search SKU or description"
-          aria-label="Search SKU or description"
-          value={q}
-          onChange={(event) => setQ(event.target.value)}
-        />
-        <select
-          className={controlClass}
-          aria-label="Sales activity"
-          value={activity}
-          onChange={(event) => {
-            const next = event.target.value as FbaSalesActivity;
-            patch({ sold: salesActivitySearchValue(next), page: undefined });
-          }}
-        >
-          {SALES_ACTIVITIES.map((item) => (
-            <option key={item} value={item}>
-              {item === "all" ? "All products" : `Sold in last ${item} days`}
-            </option>
-          ))}
-        </select>
-        <select
-          className={controlClass}
-          aria-label="Recommendation"
-          value={search.recommendation ?? ""}
-          onChange={(event) =>
-            patch({
-              recommendation: (event.target.value || undefined) as FbaRecommendation | undefined,
-              page: undefined,
-            })
-          }
-        >
-          <option value="">All statuses</option>
-          {FBA_RECOMMENDATIONS.map((item) => (
-            <option key={item} value={item}>
-              {item === "INSUFFICIENT_DATA"
-                ? "Forecast unavailable"
-                : FBA_RECOMMENDATION_LABEL[item]}
-            </option>
-          ))}
-        </select>
-        <select
-          className={controlClass}
-          aria-label="Brand"
-          value={search.brand ?? ""}
-          onChange={(event) => patch({ brand: event.target.value || undefined, page: undefined })}
-        >
-          <option value="">All brands</option>
-          <option value="__unbranded">Unbranded</option>
-          {data?.brands.map((brand) => (
-            <option key={brand} value={brand}>
-              {brand}
-            </option>
-          ))}
-        </select>
-        <select
-          className={controlClass}
-          aria-label="Sort"
-          value={activeSort(search)}
-          onChange={(event) => {
-            const next = event.target.value as Sort;
-            const implicit = defaultFbaForecastSort(activity);
-            patch({ sort: next === implicit ? undefined : next, page: undefined });
-          }}
-        >
-          <option value="sales">Customer sales</option>
-          <option value="priority">Priority</option>
-          <option value="cover">Weeks cover</option>
-          <option value="velocity">Sales velocity</option>
-          <option value="suggested">Suggested quantity</option>
-        </select>
-        <button className={btnClass} type="submit">
-          Search
-        </button>
-        <button
-          className={btnClass}
-          type="button"
-          onClick={onExport}
-          disabled={!resultsReady || countsHidden}
-        >
-          Export
-        </button>
-      </form>
-      {loading ? <LoadingState label="Loading forecast…" /> : null}
-      {data?.salesActivityUnavailable ? (
-        <div className="space-y-3 px-4 py-6 sm:px-6">
-          <EmptyState
-            title="Sales data unavailable"
-            body="RETAILA customer sales could not be loaded, so products sold in this period are not listed. This is not a report of zero sales. Retry the sales read, or view every stock product."
-          />
-          <button
-            className={btnClass}
-            type="button"
-            onClick={() => patch({ sold: "all", page: undefined })}
-          >
-            View all stock products
-          </button>
-        </div>
-      ) : null}
-      {data && !data.salesActivityUnavailable && data.rows.length === 0 ? (
-        <div className="space-y-3 px-4 py-6 sm:px-6">
-          <EmptyState
-            title={
-              activity === "all" || search.q || search.brand || search.recommendation
-                ? "Nothing matches"
-                : "No sales in this period"
-            }
-            body={
-              activity === "all"
-                ? "No products match these filters. Clear the search, or import OPTIMUS FBA stock and a covered Amazon UK FBA sales file before a shipment can be suggested."
-                : search.q || search.brand || search.recommendation
-                  ? `No product sold in the last ${activity} days matches these filters. Clear the search or choose a wider period.`
-                  : `No product has a verified RETAILA invoice in the last ${activity} days. Choose a wider period, or view all products.`
-            }
-          />
-          {activity !== "all" ? (
-            <button
-              className={btnClass}
-              type="button"
-              onClick={() => patch({ sold: "all", page: undefined })}
-            >
-              View all products
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {data && !data.salesActivityUnavailable && data.rows.length > 0 ? (
-        <>
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full min-w-[72rem] text-left text-[14px]">
-              <thead className="bg-secondary/40 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
-                <tr>
-                  <th className="px-4 py-3">Product / SKU</th>
-                  <th className="px-3 py-3">FBA stock</th>
-                  <th className="px-3 py-3">Sales 7d</th>
-                  <th className="px-3 py-3">Sales 30d</th>
-                  <th className="px-3 py-3">Sales 90d</th>
-                  <th className="px-3 py-3">Weekly sales</th>
-                  <th
-                    className="px-3 py-3"
-                    title="Weeks of cover from the Amazon UK FBA extract. Blank when that extract does not cover this SKU."
-                  >
-                    FBA cover
-                  </th>
-                  <th
-                    className="px-3 py-3"
-                    title="Unverified comparison of current FBA stock with RETAILA weekly customer sales. Not Amazon consumption and not used for a shipment."
-                  >
-                    Illustrative cover
-                  </th>
-                  <th className="px-3 py-3">Studley</th>
-                  <th className="px-3 py-3">Inbound</th>
-                  <th className="px-3 py-3">Suggested</th>
-                  <th className="px-3 py-3">Dispatch</th>
-                  <th className="px-3 py-3">Shortfall</th>
-                  <th className="px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((row) => (
-                  <tr
-                    key={row.matchKey}
-                    className={`cursor-pointer border-t border-border/70 hover:bg-secondary/30 ${rowAccent(row.forecast.recommendation)}`}
-                    onClick={() => onOpen(row)}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-mono text-[13px]">{row.sku}</div>
-                      <div className="max-w-[16rem] text-[12px] text-steel">{row.description}</div>
-                    </td>
-                    <td className="px-3 py-3">{qty(row.fbaAvailable)}</td>
-                    <td className="px-3 py-3">{qty(row.customerSales.d7)}</td>
-                    <td className="px-3 py-3">{qty(row.customerSales.d30)}</td>
-                    <td className="px-3 py-3">{qty(row.customerSales.d90)}</td>
-                    <td className="px-3 py-3">{rate(row.customerWeekly)}</td>
-                    <td className="px-3 py-3">
-                      {row.forecast.coverWeeks == null
-                        ? "—"
-                        : `${row.forecast.coverWeeks.toFixed(1)}`}
-                    </td>
-                    <td className="px-3 py-3">
-                      {row.customerCoverWeeks == null ? "—" : row.customerCoverWeeks.toFixed(1)}
-                    </td>
-                    <td className="px-3 py-3">{qty(row.studleyAvailable)}</td>
-                    <td className="px-3 py-3">{qty(row.confirmedInbound)}</td>
-                    <td className="px-3 py-3">{qty(row.forecast.suggestedSendQty)}</td>
-                    <td className="px-3 py-3">{qty(row.forecast.dispatchableQty)}</td>
-                    <td className="px-3 py-3">{qty(row.forecast.studleyShortfallQty)}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge tone={tone(row.forecast.recommendation)}>
-                        {row.forecast.recommendationLabel}
-                      </StatusBadge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="px-4 pt-3 text-[12px] text-steel md:hidden">
-            FBA cover comes from the Amazon UK FBA extract. Illustrative cover compares FBA stock
-            with RETAILA weekly customer sales and is not used for a shipment.
-          </p>
-          <div className="space-y-3 px-4 py-4 md:hidden">
-            {data.rows.map((row) => (
-              <button
-                key={row.matchKey}
-                type="button"
-                className={`block w-full border border-border bg-surface/40 p-3 text-left ${rowAccent(row.forecast.recommendation)}`}
-                onClick={() => onOpen(row)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-mono text-[13px]">{row.sku}</div>
-                    <div className="text-[12px] text-steel">{row.description}</div>
-                  </div>
-                  <StatusBadge tone={tone(row.forecast.recommendation)}>
-                    {row.forecast.recommendationLabel}
-                  </StatusBadge>
-                </div>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
-                  <Fact label="FBA" value={qty(row.fbaAvailable)} />
-                  <Fact label="Sales 30d" value={qty(row.customerSales.d30)} />
-                  <Fact label="Weekly sales" value={rate(row.customerWeekly)} />
-                  <Fact
-                    label="FBA cover"
-                    value={
-                      row.forecast.coverWeeks == null
-                        ? "—"
-                        : `${row.forecast.coverWeeks.toFixed(1)} wks`
-                    }
-                  />
-                  <Fact
-                    label="Illustrative cover"
-                    value={
-                      row.customerCoverWeeks == null
-                        ? "—"
-                        : `${row.customerCoverWeeks.toFixed(1)} wks`
-                    }
-                  />
-                  <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
-                </dl>
-              </button>
-            ))}
-          </div>
-          <div className="px-4 pb-6 sm:px-6">
-            <Pager
-              page={data.page}
-              pageSize={data.pageSize}
-              total={data.total}
-              onPage={(page) => patch({ page: page > 1 ? page : undefined })}
-            />
-          </div>
-        </>
-      ) : null}
-    </>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  hint,
-  active,
-  onClick,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`border p-4 text-left ${active ? "border-primary bg-primary/10" : "border-border bg-surface/60"}`}
-    >
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">
-        {label}
+      <div className="mt-3 flex h-16 items-end gap-2">
+        {points.map((point) => {
+          const height =
+            point.value == null || max <= 0 ? 4 : Math.max(6, Math.round((point.value / max) * 56));
+          return (
+            <div key={point.label} className="flex flex-1 flex-col items-center gap-1">
+              <div
+                className="w-full bg-primary/70"
+                style={{ height }}
+                title={point.value == null ? "No figure" : String(point.value)}
+              />
+              <span className="text-[10px] text-steel">{point.label}</span>
+            </div>
+          );
+        })}
       </div>
-      <div className="mt-1 font-display text-2xl font-semibold">{value}</div>
-      <div className="mt-1 text-[12px] text-steel">{hint}</div>
-    </button>
+    </div>
   );
 }
 
@@ -1181,7 +898,35 @@ function ImportsPanel(props: {
 }) {
   const { data, inbound, setInbound } = props;
   return (
-    <div className="grid gap-6 px-4 py-4 sm:px-6 xl:grid-cols-2">
+    <div className="space-y-6 px-4 py-4 sm:px-6">
+      <section className="space-y-3 border border-border p-4" data-fba-stock-upload>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg">FBA UK Stock Upload</h2>
+            <p className="mt-1 text-[13px] text-steel">
+              Central place to import OPTIMUS 231PO3NEW Amazon FBA UK stock. This updates FBA
+              availability used by stock planning. Studley warehouse stock is unchanged.
+            </p>
+          </div>
+          <dl className="grid min-w-[14rem] gap-1 text-[12px] text-steel sm:text-right">
+            <div>
+              <dt className="inline font-semibold uppercase tracking-[0.12em]">Latest file · </dt>
+              <dd className="inline">{data.fbaFileName ?? "None"}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold uppercase tracking-[0.12em]">Imported · </dt>
+              <dd className="inline">{ukDate(data.fbaImportedAt?.slice(0, 10))}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold uppercase tracking-[0.12em]">Stale SKUs · </dt>
+              <dd className="inline">{data.unverifiedFbaSkus.toLocaleString("en-GB")}</dd>
+            </div>
+          </dl>
+        </div>
+        <FbaStockImportPanel canManage={data.canManage} onImported={props.onImported} />
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-2">
       <section className="space-y-3 border border-border p-4">
         <h2 className="font-display text-lg">Amazon UK sales</h2>
         <p className="text-[13px] text-steel">
@@ -1249,15 +994,22 @@ function ImportsPanel(props: {
         </button>
       </section>
       <section className="space-y-3 border border-border p-4">
-        <h2 className="font-display text-lg">FBA stock freshness</h2>
+        <h2 className="font-display text-lg">Source & import status</h2>
         <p className="text-[13px] text-steel">
           {data.fbaFileName
-            ? `${data.fbaFileName} was imported ${ukDate(data.fbaImportedAt?.slice(0, 10))}. ${data.unverifiedFbaSkus.toLocaleString("en-GB")} SKUs are not fresh enough to ship against.`
+            ? `FBA stock file ${data.fbaFileName} was imported ${ukDate(data.fbaImportedAt?.slice(0, 10))}. ${data.unverifiedFbaSkus.toLocaleString("en-GB")} SKUs are older than ${data.staleAfterDays} days.`
             : "No OPTIMUS FBA snapshot is stored. A partial file does not refresh SKUs it leaves out."}
         </p>
-        <FbaStockImportPanel canManage={data.canManage} onImported={props.onImported} />
+        <p className="text-[13px] text-steel">
+          {data.sales
+            ? `Amazon UK extract ${data.sales.filename} covers ${ukDate(data.sales.coverageFrom)} to ${ukDate(data.sales.coverageTo)}.`
+            : "No covered Amazon UK FBA sales extract is stored."}
+        </p>
+        <p className="text-[13px] text-steel">{data.retailaReporting.reason}</p>
       </section>
-      <section className="space-y-3 border border-border p-4 xl:col-span-2">
+      </div>
+
+      <section className="space-y-3 border border-border p-4">
         <h2 className="font-display text-lg">Confirmed inbound</h2>
         <p className="text-[13px] text-steel">
           Only stock confirmed in transit reduces the suggested send. An OIN invoice is not in
@@ -1318,56 +1070,6 @@ function ImportsPanel(props: {
   );
 }
 
-function SettingsPanel(props: {
-  busy: boolean;
-  canManage: boolean;
-  lead: string;
-  cover: string;
-  safety: string;
-  multiple: string;
-  overstock: string;
-  setLead: (value: string) => void;
-  setCover: (value: string) => void;
-  setSafety: (value: string) => void;
-  setMultiple: (value: string) => void;
-  setOverstock: (value: string) => void;
-  onSave: () => void;
-}) {
-  return (
-    <form
-      className="max-w-3xl space-y-4 px-4 py-4 sm:px-6"
-      onSubmit={(event) => {
-        event.preventDefault();
-        props.onSave();
-      }}
-    >
-      <p className="text-[13px] text-steel">
-        These defaults apply to every SKU. Open a product to set its own lead time, cover, safety
-        stock or case multiple.
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Lead time (days)" value={props.lead} onChange={props.setLead} />
-        <Field label="Target cover (weeks)" value={props.cover} onChange={props.setCover} />
-        <Field label="Safety units" value={props.safety} onChange={props.setSafety} />
-        <Field
-          label="Case multiple"
-          value={props.multiple}
-          onChange={props.setMultiple}
-          placeholder="No case rule"
-        />
-        <Field
-          label="Overstock threshold (weeks)"
-          value={props.overstock}
-          onChange={props.setOverstock}
-        />
-      </div>
-      <button className={primaryBtnClass} type="submit" disabled={props.busy || !props.canManage}>
-        Save settings
-      </button>
-    </form>
-  );
-}
-
 function Field({
   label,
   value,
@@ -1389,6 +1091,126 @@ function Field({
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
+  );
+}
+
+function SettingsPanel(props: {
+  busy: boolean;
+  canManage: boolean;
+  canApprove: boolean;
+  retailaPlanning: Data["retailaPlanning"];
+  retailaJustification: string;
+  setRetailaJustification: (value: string) => void;
+  lead: string;
+  cover: string;
+  safety: string;
+  multiple: string;
+  overstock: string;
+  setLead: (value: string) => void;
+  setCover: (value: string) => void;
+  setSafety: (value: string) => void;
+  setMultiple: (value: string) => void;
+  setOverstock: (value: string) => void;
+  onSave: () => void;
+  onApproveRetaila: () => void;
+  onDisableRetaila: () => void;
+}) {
+  return (
+    <div className="max-w-3xl space-y-8 px-4 py-4 sm:px-6">
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          props.onSave();
+        }}
+      >
+        <p className="text-[13px] text-steel">
+          These defaults apply to every SKU. Open a product to set its own lead time, cover, safety
+          stock or case multiple.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Lead time (days)" value={props.lead} onChange={props.setLead} />
+          <Field label="Target cover (weeks)" value={props.cover} onChange={props.setCover} />
+          <Field label="Safety units" value={props.safety} onChange={props.setSafety} />
+          <Field
+            label="Case multiple"
+            value={props.multiple}
+            onChange={props.setMultiple}
+            placeholder="No case rule"
+          />
+          <Field
+            label="Overstock threshold (weeks)"
+            value={props.overstock}
+            onChange={props.setOverstock}
+          />
+        </div>
+        <button className={primaryBtnClass} type="submit" disabled={props.busy || !props.canManage}>
+          Save settings
+        </button>
+      </form>
+
+      <section className="space-y-3 border border-border bg-surface/40 p-4">
+        <h3 className="font-display text-lg font-semibold">RETAILA sales-based planning</h3>
+        <p className="text-[13px] text-steel">
+          RETAILA OIN invoices are customer sales, not verified Amazon UK FBA sell-through. A Super
+          Admin must record the business relationship before this mode can produce planning
+          estimates. Approval is global for every eligible RETAILA SKU — it does not filter brands or
+          products. Approval does not create orders, shipments, purchases or stock movements.
+          Planning still requires verified Autopart 504/TRM reporting coverage for the window.
+        </p>
+        {props.retailaPlanning.enabled ? (
+          <div className="space-y-1 border border-border bg-background/40 px-3 py-2 text-[13px]">
+            <p>Status: approved planning proxy</p>
+            <p>Scope policy: all eligible RETAILA SKUs</p>
+            <p>Approved at: {ukDate(props.retailaPlanning.approvedAt?.slice(0, 10))}</p>
+            <p className="font-mono text-[12px]">
+              Approver: {props.retailaPlanning.approvedByUserId ?? "—"}
+            </p>
+            <p>Justification: {props.retailaPlanning.justification ?? "—"}</p>
+          </div>
+        ) : (
+          <p className="text-[13px] text-steel">
+            Status: locked. Sales and illustrative cover remain visible; shipment recommendations
+            stay disabled in RETAILA mode.
+          </p>
+        )}
+        <label className="block text-[13px]">
+          Business justification
+          <textarea
+            className={`${controlClass} mt-1 min-h-24 w-full`}
+            value={props.retailaJustification}
+            onChange={(event) => props.setRetailaJustification(event.target.value)}
+            placeholder="Explain why RETAILA invoice demand should plan FBA stock for all eligible RETAILA SKUs."
+            disabled={!props.canApprove || props.busy}
+          />
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={primaryBtnClass}
+            disabled={
+              props.busy ||
+              !props.canApprove ||
+              props.retailaJustification.trim().length < 20
+            }
+            onClick={props.onApproveRetaila}
+          >
+            {props.retailaPlanning.enabled ? "Update approval" : "Approve RETAILA planning"}
+          </button>
+          <button
+            type="button"
+            className={btnClass}
+            disabled={props.busy || !props.canApprove || !props.retailaPlanning.enabled}
+            onClick={props.onDisableRetaila}
+          >
+            Disable planning mode
+          </button>
+        </div>
+        {!props.canApprove ? (
+          <p className="text-[12px] text-steel">Only a Super Admin can approve or disable this mode.</p>
+        ) : null}
+      </section>
+    </div>
   );
 }
 
@@ -1430,47 +1252,71 @@ function SkuDrawer({
   return (
     <div className="space-y-5 pr-6">
       <SheetHeader>
-        <SheetTitle className="font-mono">{row.sku}</SheetTitle>
-        <SheetDescription>{row.description || "No description stored"}</SheetDescription>
+        <SheetTitle>{row.description || row.sku}</SheetTitle>
+        <SheetDescription className="font-mono">{row.sku}</SheetDescription>
       </SheetHeader>
-      <StatusBadge tone={tone(row.forecast.recommendation)}>
-        {row.forecast.recommendationLabel}
-      </StatusBadge>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge tone={tone(row.forecast.recommendation)}>
+          {row.forecast.blocker
+            ? FBA_FORECAST_BLOCKER_LABEL[row.forecast.blocker]
+            : row.forecast.recommendationLabel}
+        </StatusBadge>
+        {row.forecast.planningEstimate ? (
+          <StatusBadge tone="info">Planning estimate</StatusBadge>
+        ) : null}
+      </div>
       <p className="text-[13px]">{row.forecast.reason}</p>
+      {row.forecast.blocker ? (
+        <p className="border border-border bg-surface/50 px-3 py-2 text-[13px] text-steel">
+          {FBA_FORECAST_BLOCKER_LABEL[row.forecast.blocker]}. Resolve this before treating a
+          quantity as an operational shipment recommendation.
+        </p>
+      ) : null}
+      <SalesSpark
+        d7={row.customerSales.d7}
+        d30={row.customerSales.d30}
+        d90={row.customerSales.d90}
+        d365={row.customerSales.d365}
+      />
       <dl className="grid grid-cols-2 gap-3 text-[13px]">
         <Fact label="Demand source" value={row.demand.label} />
+        <Fact label="Cover basis" value={coverBasisCopy(row.coverBasis)} />
         <Fact label="FBA UK" value={qty(row.fbaAvailable)} />
         <Fact label="FBA updated" value={ukDate(row.sourceImportedAt?.slice(0, 10))} />
         <Fact label="Studley" value={qty(row.studleyAvailable)} />
+        <Fact label="Confirmed inbound" value={qty(row.confirmedInbound)} />
         <Fact label="RETAILA sales 7d" value={qty(row.customerSales.d7)} />
         <Fact label="RETAILA sales 30d" value={qty(row.customerSales.d30)} />
         <Fact label="RETAILA sales 60d" value={qty(row.customerSales.d60)} />
         <Fact label="RETAILA sales 90d" value={qty(row.customerSales.d90)} />
         <Fact label="RETAILA sales 365d" value={qty(row.customerSales.d365)} />
-        <Fact label="Weekly customer sales" value={rate(row.customerWeekly)} />
+        <Fact label="Avg daily (30d)" value={rate(row.customerDaily)} />
+        <Fact label="Avg weekly (30d)" value={rate(row.customerWeekly)} />
         <Fact label="Amazon UK FBA 30d" value={qty(row.amazonUnits.d30)} />
         <Fact
-          label="Amazon FBA cover"
+          label="Active cover"
           value={
-            row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`
+            row.activeCoverWeeks == null ? "—" : `${row.activeCoverWeeks.toFixed(1)} wks`
           }
         />
         <Fact
           label="Illustrative cover"
           value={row.customerCoverWeeks == null ? "—" : `${row.customerCoverWeeks.toFixed(1)} wks`}
         />
-        <Fact label="Recommendation velocity" value={rate(row.forecast.weeklyRate)} />
+        <Fact label="Planning velocity" value={rate(row.forecast.weeklyRate)} />
         <Fact label="Confidence" value={row.forecast.confidence} />
-        <Fact label="Stockout" value={ukDate(row.forecast.stockoutDate)} />
-        <Fact label="Next dispatch" value={ukDate(row.forecast.nextSendDate)} />
-        <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
-        <Fact label="Dispatchable cases" value={qty(row.forecast.dispatchableQty)} />
-        <Fact label="Confirmed inbound" value={qty(row.confirmedInbound)} />
-        <Fact label="Purchasing shortfall" value={qty(row.forecast.studleyShortfallQty)} />
+        <Fact label="Est. stockout" value={ukDate(row.forecast.stockoutDate)} />
+        <Fact label="Suggested review" value={ukDate(row.forecast.nextSendDate)} />
+        <Fact
+          label={row.forecast.planningEstimate ? "Est. replenishment" : "Suggested"}
+          value={qty(row.forecast.suggestedSendQty)}
+        />
+        <Fact label="Available to dispatch" value={qty(row.forecast.dispatchableQty)} />
+        <Fact label="Warehouse shortfall" value={qty(row.forecast.studleyShortfallQty)} />
       </dl>
       <p className="text-[12px] text-steel">
         Illustrative cover divides current FBA stock by RETAILA weekly customer sales. It is not
-        verified Amazon FBA cover and it is not used for the suggested quantity.
+        verified Amazon FBA cover. RETAILA units are never combined with Amazon extract units.
       </p>
       {row.forecast.looseStudleyQty ? (
         <p className="text-[13px] text-steel">

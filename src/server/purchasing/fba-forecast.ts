@@ -13,18 +13,29 @@ import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
   amazonExtractIsComplete,
   amazonWindowSupported,
+  averageDailySales,
   averageWeeklySales,
   buildOinReplenishmentBatch,
+  FBA_FORECAST_BLOCKERS,
   projectFbaShipment,
   selectFbaDemand,
   stockCoverWeeks,
   reconcileOinDocumentLines,
   rejectUnprovenFbaSales,
   rejectUnprovenUkMarketplace,
+  RETAILA_PLANNING_SCOPE_POLICY,
+  type FbaCoverBasis,
   type FbaDemandDecision,
+  type FbaForecastBlocker,
   type FbaForecastResult,
   type OinException,
 } from "@/domain/fba-replenishment";
+import {
+  assessRetailaReportingCoverage,
+  retailaCompletedDaysWindow,
+  RETAILA_REPORTING_WINDOW_DAYS,
+  type RetailaImportDayMark,
+} from "@/domain/fba-retaila-reporting-coverage";
 import {
   FBA_LOCATION_CODE,
   FBA_STOCK_STALE_AFTER_DAYS,
@@ -34,15 +45,21 @@ import {
 import {
   compareCustomerSalesRows,
   defaultFbaForecastSort,
+  isFbaFocusFilter,
+  isFbaPlanningMode,
   isFbaSalesActivity,
+  rowNeedsReview,
+  type FbaFocusFilter,
   type FbaForecastSort,
+  type FbaPlanningModeSearch,
   type FbaSalesActivity,
 } from "@/domain/fba-forecast-search";
 import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { skuMatchKey } from "@/domain/stock";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingSection } from "@/server/rbac/guards";
-import { recordAuditEvent } from "@/server/audit/record";
+import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
+import type { AuditEventInput } from "@/server/audit/types";
 import {
   FBA_FORECAST_DISABLED_MESSAGE,
   fbaForecastReportingDisabled,
@@ -95,6 +112,18 @@ async function requireManage(actorUserId: string) {
   const profile = await requirePurchasingSection(actorUserId, "purchasing.fba_forecast.manage");
   if (!hasPermission(profile, "purchasing.fba_forecast.manage")) {
     throw new AuthError("Purchasing access required", "PURCHASING_FORBIDDEN", 403);
+  }
+  return profile;
+}
+
+async function requireSuperAdmin(actorUserId: string) {
+  const profile = await requireManage(actorUserId);
+  if (!profile.systemRoles.includes("SUPER_ADMIN")) {
+    throw new AuthError(
+      "Only a Super Admin can approve or disable RETAILA sales-based planning.",
+      "PURCHASING_FORBIDDEN",
+      403,
+    );
   }
   return profile;
 }
@@ -400,6 +429,169 @@ export async function updateFbaForecastSettings(actorUserId: string, raw: unknow
   };
 }
 
+const retailaPlanningInput = z.object({
+  justification: z.string().trim().min(20).max(2000),
+});
+
+type RetailaPlanningAuditWriter = (
+  tx: Prisma.TransactionClient,
+  input: AuditEventInput,
+) => Promise<void>;
+
+let retailaPlanningAuditWriter: RetailaPlanningAuditWriter = recordAuditEventInTransaction;
+
+/** Test-only hook so audit persistence failures can prove transactional rollback. */
+export function setRetailaPlanningAuditWriterForTests(
+  writer: RetailaPlanningAuditWriter | null,
+): void {
+  retailaPlanningAuditWriter = writer ?? recordAuditEventInTransaction;
+}
+
+export async function approveRetailaPlanning(actorUserId: string, raw: unknown) {
+  assertFbaForecastReportingEnabled();
+  await requireSuperAdmin(actorUserId);
+  const input = retailaPlanningInput.parse(raw);
+  const now = new Date();
+  const before = await prisma.fbaForecastSettings.findUnique({ where: { id: "default" } });
+  const saved = await prisma.$transaction(async (tx) => {
+    const row = await tx.fbaForecastSettings.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        retailaPlanningEnabled: true,
+        retailaPlanningJustification: input.justification,
+        retailaPlanningScope: RETAILA_PLANNING_SCOPE_POLICY,
+        retailaPlanningApprovedByUserId: actorUserId,
+        retailaPlanningApprovedAt: now,
+        retailaPlanningDisabledByUserId: null,
+        retailaPlanningDisabledAt: null,
+        updatedByUserId: actorUserId,
+      },
+      update: {
+        retailaPlanningEnabled: true,
+        retailaPlanningJustification: input.justification,
+        retailaPlanningScope: RETAILA_PLANNING_SCOPE_POLICY,
+        retailaPlanningApprovedByUserId: actorUserId,
+        retailaPlanningApprovedAt: now,
+        retailaPlanningDisabledByUserId: null,
+        retailaPlanningDisabledAt: null,
+        updatedByUserId: actorUserId,
+      },
+    });
+    await retailaPlanningAuditWriter(tx, {
+      action: "fba.retaila_planning.approve",
+      entityType: "FbaForecastSettings",
+      entityId: row.id,
+      actorUserId,
+      before: before
+        ? {
+            enabled: before.retailaPlanningEnabled,
+            scopePolicy: before.retailaPlanningScope,
+            approvedByUserId: before.retailaPlanningApprovedByUserId,
+            approvedAt: before.retailaPlanningApprovedAt?.toISOString() ?? null,
+          }
+        : null,
+      after: {
+        enabled: true,
+        justification: input.justification,
+        scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+        approvedByUserId: actorUserId,
+        approvedAt: now.toISOString(),
+      },
+    });
+    return row;
+  });
+  return retailaPlanningState(saved);
+}
+
+export async function disableRetailaPlanning(actorUserId: string) {
+  assertFbaForecastReportingEnabled();
+  await requireSuperAdmin(actorUserId);
+  const now = new Date();
+  const before = await prisma.fbaForecastSettings.findUnique({ where: { id: "default" } });
+  const saved = await prisma.$transaction(async (tx) => {
+    const row = await tx.fbaForecastSettings.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        retailaPlanningEnabled: false,
+        retailaPlanningScope: RETAILA_PLANNING_SCOPE_POLICY,
+        retailaPlanningDisabledByUserId: actorUserId,
+        retailaPlanningDisabledAt: now,
+        updatedByUserId: actorUserId,
+      },
+      update: {
+        retailaPlanningEnabled: false,
+        retailaPlanningDisabledByUserId: actorUserId,
+        retailaPlanningDisabledAt: now,
+        updatedByUserId: actorUserId,
+      },
+    });
+    await retailaPlanningAuditWriter(tx, {
+      action: "fba.retaila_planning.disable",
+      entityType: "FbaForecastSettings",
+      entityId: row.id,
+      actorUserId,
+      before: before
+        ? {
+            enabled: before.retailaPlanningEnabled,
+            scopePolicy: before.retailaPlanningScope,
+            approvedByUserId: before.retailaPlanningApprovedByUserId,
+            approvedAt: before.retailaPlanningApprovedAt?.toISOString() ?? null,
+          }
+        : null,
+      after: {
+        enabled: false,
+        scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+        disabledByUserId: actorUserId,
+        disabledAt: now.toISOString(),
+      },
+    });
+    return row;
+  });
+  return retailaPlanningState(saved);
+}
+
+function retailaPlanningState(row: {
+  retailaPlanningEnabled: boolean;
+  retailaPlanningJustification: string | null;
+  retailaPlanningScope: string | null;
+  retailaPlanningApprovedByUserId: string | null;
+  retailaPlanningApprovedAt: Date | null;
+  retailaPlanningDisabledByUserId: string | null;
+  retailaPlanningDisabledAt: Date | null;
+}) {
+  return {
+    enabled: row.retailaPlanningEnabled,
+    justification: row.retailaPlanningJustification,
+    /** Always global for eligible RETAILA SKUs — free text does not filter products. */
+    scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+    scope: RETAILA_PLANNING_SCOPE_POLICY,
+    approvedByUserId: row.retailaPlanningApprovedByUserId,
+    approvedAt: row.retailaPlanningApprovedAt?.toISOString() ?? null,
+    disabledByUserId: row.retailaPlanningDisabledByUserId,
+    disabledAt: row.retailaPlanningDisabledAt?.toISOString() ?? null,
+  };
+}
+
+async function loadRetailaReportingCoverage(today: string) {
+  const { from: windowFrom } = retailaCompletedDaysWindow(today, RETAILA_REPORTING_WINDOW_DAYS);
+  const fromInstant = new Date(`${windowFrom}T00:00:00.000Z`);
+  const runs = await prisma.autopartCustomerImportRun.findMany({
+    where: {
+      status: "COMMITTED",
+      type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] },
+      OR: [{ completedAt: { gte: fromInstant } }, { createdAt: { gte: fromInstant } }],
+    },
+    select: { type: true, completedAt: true, createdAt: true },
+  });
+  const marks: RetailaImportDayMark[] = runs.map((run) => ({
+    type: run.type as "ONGOING_504" | "ONGOING_TRM21QC",
+    londonDay: todayLondonDateOnly(run.completedAt ?? run.createdAt),
+  }));
+  return assessRetailaReportingCoverage({ marks, today });
+}
+
 const inboundInput = z.object({
   reference: z.string().trim().min(1).max(80),
   sku: z.string().trim().min(1).max(80),
@@ -482,6 +674,12 @@ const listInput = z.object({
   brand: z.string().trim().max(80).optional().nullable(),
   sort: z.enum(["priority", "cover", "velocity", "suggested", "sales"]).optional().nullable(),
   sold: z.enum(["365", "90", "30", "all"]).optional().nullable(),
+  plan: z.enum(["fba", "retaila"]).optional().nullable(),
+  focus: z
+    .enum(["low_cover", "no_fba", "no_studley", "shortfall", "unavailable", "needs_review"])
+    .optional()
+    .nullable(),
+  blocker: z.enum(FBA_FORECAST_BLOCKERS).optional().nullable(),
   page: z.number().int().positive().optional().nullable(),
   exportAll: z.boolean().optional().nullable(),
 });
@@ -499,6 +697,8 @@ type SkuBucket = {
   inbound: number;
   oinUnits90: number | null;
   customerSales: RetailaSalesWindows;
+  /** Planning demand for 30 completed days ending yesterday. Null until OIN succeeds. */
+  planningNet30: number | null;
   sold: RetailaSalesActivity;
   amazon: { d7: number; d30: number; d60: number; d90: number; d365: number } | null;
 };
@@ -526,13 +726,32 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     caseMultiple: settingsRow?.caseMultiple ?? null,
     overstockCoverWeeks: num(settingsRow?.overstockCoverWeeks ?? 16),
   };
-  const [salesImport, fbaImport, overrides] = await Promise.all([
+  const retailaPlanning = settingsRow
+    ? retailaPlanningState(settingsRow)
+    : {
+        enabled: false,
+        justification: null,
+        scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+        scope: RETAILA_PLANNING_SCOPE_POLICY,
+        approvedByUserId: null,
+        approvedAt: null,
+        disabledByUserId: null,
+        disabledAt: null,
+      };
+  const planningMode: FbaPlanningModeSearch = isFbaPlanningMode(input.plan) ? input.plan : "fba";
+  const focusFilter: FbaFocusFilter | null = isFbaFocusFilter(input.focus) ? input.focus : null;
+  const blockerFilter: FbaForecastBlocker | null =
+    input.blocker && (FBA_FORECAST_BLOCKERS as readonly string[]).includes(input.blocker)
+      ? input.blocker
+      : null;
+  const [salesImport, fbaImport, overrides, retailaReporting] = await Promise.all([
     prisma.fbaAmazonSalesImport.findFirst({ orderBy: { importedAt: "desc" } }),
     prisma.autopartFbaStockImport.findFirst({
       orderBy: { importedAt: "desc" },
       select: { importedAt: true, fileName: true },
     }),
     prisma.fbaSkuForecastOverride.findMany(),
+    loadRetailaReportingCoverage(today),
   ]);
   const stale = fbaStockIsStale(fbaImport?.importedAt ?? null);
   const ranges = {
@@ -646,7 +865,9 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         AND p.id IS NULL
     `),
   ]);
+  // Display / sold flags include today. Planning demand uses completed days ending yesterday.
   const oinRange = retailaOinRange(today, 365);
+  const planningWindow = retailaCompletedDaysWindow(today, RETAILA_REPORTING_WINDOW_DAYS);
   let oinHealth: RetailaOinHealth = {
     account: "RETAILA",
     days: oinRange.days,
@@ -664,6 +885,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     matchKey: string;
     sku: string;
     windows: RetailaSalesWindows;
+    planningNet30: number | null;
     sold: RetailaSalesActivity;
   }> = [];
   let oinUnavailable: string | null = null;
@@ -674,6 +896,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       matchKey: row.matchKey,
       sku: row.sku,
       windows: row.windows,
+      planningNet30: row.planningNet30,
       sold: row.sold,
     }));
   } catch (error) {
@@ -683,6 +906,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         ? error.message
         : "RETAILA customer sales are unavailable. Amazon FBA and Studley stock are still shown.";
   }
+  const retailaInvoicesAvailable = oinUnavailable == null;
 
   const buckets = new Map<string, SkuBucket>();
   function bucket(matchKey: string, sku: string, description: string | null = null): SkuBucket {
@@ -704,6 +928,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       inbound: 0,
       oinUnits90: null,
       customerSales: { ...EMPTY_CUSTOMER_SALES },
+      planningNet30: null,
       sold: { ...EMPTY_SOLD },
       amazon: null,
     };
@@ -723,6 +948,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   for (const row of oinRows) {
     const item = bucket(row.matchKey, row.sku);
     item.customerSales = row.windows;
+    item.planningNet30 = row.planningNet30;
     item.sold = row.sold;
     item.oinUnits90 = row.windows.d90;
   }
@@ -745,19 +971,27 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     if (item.fbaStockKnown && item.fbaStockStale) unverifiedFbaSkus += 1;
     const override = overrideByKey.get(item.matchKey);
     const demand: FbaDemandDecision = selectFbaDemand({
+      plan: planningMode,
       amazonWindowSupported: windows.d30,
       amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
-      retailaNetUnits30: item.customerSales.d30,
+      // Planning demand uses completed days ending yesterday (matches coverage).
+      // Display windows stay today-inclusive for sales history.
+      retailaNetUnits30: item.planningNet30,
+      retailaPlanningApproved: retailaPlanning.enabled,
+      retailaReportingComplete: retailaReporting.planningAllowed,
+      retailaReportingReason: retailaReporting.reason,
+      retailaInvoicesAvailable,
     });
     const customerWeekly = averageWeeklySales(item.customerSales.d30);
-    const forecast: FbaForecastResult = projectFbaShipment({
+    const projected: FbaForecastResult = projectFbaShipment({
       fbaAvailable: item.fbaAvailable,
       fbaStockKnown: item.fbaStockKnown,
       fbaStockStale: item.fbaStockStale,
       studleyAvailable: item.studleyAvailable,
       confirmedInboundQty: item.inbound,
       salesSupported: demand.salesSupported,
-      amazonNetUnits30: demand.netUnits30,
+      demandNetUnits30: demand.netUnits30,
+      demandSource: demand.source,
       leadTimeDays: override?.leadTimeDays ?? settings.leadTimeDays,
       targetCoverWeeks: num(override?.targetCoverWeeks ?? settings.targetCoverWeeks),
       safetyStockQty: override?.safetyStockQty ?? settings.safetyStockQty,
@@ -765,13 +999,33 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       overstockCoverWeeks: settings.overstockCoverWeeks,
       today,
     });
+    const forecast: FbaForecastResult =
+      demand.blocker != null && projected.recommendation === "INSUFFICIENT_DATA"
+        ? {
+            ...projected,
+            blocker: demand.blocker,
+            reason: demand.reason,
+            demandSource: demand.source,
+          }
+        : projected;
+    const activeCoverWeeks =
+      forecast.coverWeeks ?? stockCoverWeeks(item.fbaAvailable, customerWeekly);
+    const coverBasis: FbaCoverBasis =
+      forecast.coverBasis !== "none"
+        ? forecast.coverBasis
+        : customerWeekly != null && item.fbaAvailable != null
+          ? "illustrative"
+          : "none";
     return {
       ...item,
       forecast,
       demand,
       customerWeekly,
-      // Illustrative only. projectFbaShipment above does not receive this figure.
+      customerDaily: averageDailySales(item.customerSales.d30),
+      // Illustrative only when verified/planning cover is absent.
       customerCoverWeeks: stockCoverWeeks(item.fbaAvailable, customerWeekly),
+      activeCoverWeeks,
+      coverBasis,
       oinWeekly: customerWeekly,
       amazonUnits: {
         d7: windows.d7 ? (item.amazon?.d7 ?? 0) : null,
@@ -788,6 +1042,15 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   const activityRows = salesActivityUnavailable
     ? []
     : forecastRows.filter((row) => productSoldIn(row.sold, salesActivity));
+  const leadWeeks = settings.leadTimeDays / 7;
+  const blockerCounts = Object.fromEntries(FBA_FORECAST_BLOCKERS.map((code) => [code, 0])) as Record<
+    FbaForecastBlocker,
+    number
+  >;
+  for (const row of activityRows) {
+    if (row.forecast.blocker) blockerCounts[row.forecast.blocker] += 1;
+  }
+  const sales30Total = activityRows.reduce((sum, row) => sum + (row.customerSales.d30 ?? 0), 0);
   const summary = {
     sendNow: activityRows.filter((row) => row.forecast.recommendation === "SEND_NOW").length,
     sendSoon: activityRows.filter((row) => row.forecast.recommendation === "SEND_SOON").length,
@@ -797,6 +1060,13 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     ).length,
     overstocked: activityRows.filter((row) => row.forecast.recommendation === "OVERSTOCKED").length,
     productCount: activityRows.length,
+    productsWithSales: activityRows.filter((row) => row.sold.d365).length,
+    customerSales30: Math.round(sales30Total * 1000) / 1000,
+    lowCover: activityRows.filter(
+      (row) => row.activeCoverWeeks != null && row.activeCoverWeeks <= leadWeeks,
+    ).length,
+    needsReview: activityRows.filter((row) => rowNeedsReview(row)).length,
+    blockers: blockerCounts,
   };
   const brands = [
     ...new Set(
@@ -810,6 +1080,21 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         return false;
       if (brandFilter === "__unbranded" && row.brand) return false;
       if (brandFilter && brandFilter !== "__unbranded" && row.brand !== brandFilter) return false;
+      if (blockerFilter && row.forecast.blocker !== blockerFilter) return false;
+      if (focusFilter === "low_cover") {
+        if (row.activeCoverWeeks == null || row.activeCoverWeeks > leadWeeks) return false;
+      } else if (focusFilter === "no_fba") {
+        if (row.fbaAvailable != null && row.fbaAvailable > 0) return false;
+      } else if (focusFilter === "no_studley") {
+        if (row.studleyAvailable != null && row.studleyAvailable > 0) return false;
+      } else if (focusFilter === "shortfall") {
+        if (row.forecast.studleyShortfallQty == null || row.forecast.studleyShortfallQty <= 0)
+          return false;
+      } else if (focusFilter === "unavailable") {
+        if (row.forecast.recommendation !== "INSUFFICIENT_DATA") return false;
+      } else if (focusFilter === "needs_review") {
+        if (!rowNeedsReview(row)) return false;
+      }
       if (!q) return true;
       return (
         row.sku.toLowerCase().includes(q) ||
@@ -822,9 +1107,16 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
 
   const page = input.page ?? 1;
   const start = (page - 1) * PAGE_SIZE;
-  const latestRun = await prisma.fbaReplenishmentImport.findFirst({
-    orderBy: { importedAt: "desc" },
-  });
+  const [latestRun, studleyFeed] = await Promise.all([
+    prisma.fbaReplenishmentImport.findFirst({
+      orderBy: { importedAt: "desc" },
+    }),
+    prisma.autopartProduct.findFirst({
+      where: { presentInLatestFeed: true, sourceUpdatedAt: { not: null } },
+      orderBy: { sourceUpdatedAt: "desc" },
+      select: { sourceUpdatedAt: true },
+    }),
+  ]);
   return {
     today,
     stale,
@@ -832,6 +1124,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     unverifiedFbaSkus,
     fbaImportedAt: fbaImport?.importedAt.toISOString() ?? null,
     fbaFileName: fbaImport?.fileName ?? null,
+    studleyFeedAt: studleyFeed?.sourceUpdatedAt?.toISOString() ?? null,
     sales: salesImport
       ? {
           filename: salesImport.filename,
@@ -853,6 +1146,27 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     summary,
     salesActivity,
     salesActivityUnavailable,
+    planningMode,
+    retailaPlanning,
+    retailaReporting: {
+      complete: retailaReporting.complete,
+      stale: retailaReporting.stale,
+      planningAllowed: retailaReporting.planningAllowed,
+      missingWeekdays: retailaReporting.missingWeekdays,
+      last504Day: retailaReporting.last504Day,
+      lastTrmDay: retailaReporting.lastTrmDay,
+      windowFrom: retailaReporting.windowFrom,
+      windowTo: retailaReporting.windowTo,
+      reason: retailaReporting.reason,
+    },
+    planningWindow: {
+      from: planningWindow.from,
+      to: planningWindow.to,
+      days: planningWindow.days,
+      label: `${planningWindow.days} completed days ending ${planningWindow.to}`,
+    },
+    retailaInvoicesAvailable,
+    canApproveRetailaPlanning: profile.systemRoles.includes("SUPER_ADMIN"),
     brands,
     oin: oinHealth,
     oinUnavailable,
@@ -878,8 +1192,16 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       oinWeekly: row.oinWeekly,
       customerSales: row.customerSales,
       customerWeekly: row.customerWeekly,
+      customerDaily: row.customerDaily,
       customerCoverWeeks: row.customerCoverWeeks,
-      demand: { source: row.demand.source, label: row.demand.label, reason: row.demand.reason },
+      activeCoverWeeks: row.activeCoverWeeks,
+      coverBasis: row.coverBasis,
+      demand: {
+        source: row.demand.source,
+        label: row.demand.label,
+        reason: row.demand.reason,
+        blocker: row.demand.blocker,
+      },
       amazonUnits: row.amazonUnits,
       forecast: row.forecast,
     })),
@@ -904,6 +1226,12 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
         "RETAILA customer sales are unavailable, so this export was not created. It is not a file of zero sales.",
     );
   }
+  if (data.planningMode === "retaila" && !data.retailaInvoicesAvailable) {
+    throw new ForecastQueryError(
+      data.oinUnavailable ??
+        "RETAILA invoices are unavailable, so a RETAILA planning export was not created. Missing sales are not exported as zero demand.",
+    );
+  }
   const header = [
     "SKU",
     "Description",
@@ -914,18 +1242,23 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
     "RETAILA sales 60d",
     "RETAILA sales 90d",
     "RETAILA sales 365d",
+    "Daily customer sales",
     "Weekly customer sales",
+    "Active weeks cover",
+    "Cover basis",
     "Illustrative cover from RETAILA sales (unverified, not a shipment)",
     "Amazon UK FBA sales 30d",
-    "Amazon FBA weeks cover",
     "Studley stock",
     "Confirmed inbound",
     "Suggested replenishment",
+    "Planning estimate",
     "Dispatchable",
     "Studley shortfall",
     "Recommendation",
+    "Unavailable reason",
     "Confidence",
     "Demand source",
+    "Planning mode",
   ];
   const lines = data.rows.map((row) =>
     [
@@ -938,24 +1271,29 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
       row.customerSales.d60,
       row.customerSales.d90,
       row.customerSales.d365,
+      row.customerDaily,
       row.customerWeekly,
+      row.activeCoverWeeks,
+      row.coverBasis,
       row.customerCoverWeeks,
       row.amazonUnits.d30,
-      row.forecast.coverWeeks,
       row.studleyAvailable,
       row.confirmedInbound,
       row.forecast.suggestedSendQty,
+      row.forecast.planningEstimate ? "yes" : "no",
       row.forecast.dispatchableQty,
       row.forecast.studleyShortfallQty,
       row.forecast.recommendationLabel,
+      row.forecast.blocker ?? "",
       row.forecast.confidence,
       row.demand.label,
+      data.planningMode,
     ]
       .map((value) => csvCell(value))
       .join(","),
   );
   return {
-    filename: `amazon-fba-forecast-${data.today}.csv`,
+    filename: `amazon-fba-stock-planning-${data.today}.csv`,
     csv: [header.join(","), ...lines].join("\n"),
     rows: data.rows.length,
   };

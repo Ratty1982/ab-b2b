@@ -8,7 +8,7 @@
  * Amazon UK sell-through: the rows have no marketplace or fulfilment channel.
  */
 import { Prisma } from "@prisma/client";
-import { addDaysIso, lastNDaysRange } from "@/domain/sales-history-period";
+import { addDaysIso, lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { prisma } from "@/infra/database/client";
 
 export const RETAILA_AUTOPART_ACCOUNT = "RETAILA";
@@ -63,6 +63,12 @@ export type RetailaSkuSales = {
   units: number | null;
   windows: RetailaSalesWindows;
   /**
+   * Net units for the FBA planning window: 30 completed calendar days ending yesterday.
+   * Null when that window is wider than the scanned range. Zero when reconciliation
+   * succeeded and the SKU has no dated invoices in the window.
+   */
+  planningNet30: number | null;
+  /**
    * True when a counted positive invoice falls in that window.
    * A later credit does not remove the flag. A credit with no invoice does not set it.
    * A window wider than this scan is false: the rows were not read, so the flag is not a claim of zero sales.
@@ -103,6 +109,35 @@ function datedWindowSum(
 ): Prisma.Sql {
   if (!cutoff) return Prisma.sql`NULL::numeric`;
   return Prisma.sql`COALESCE(SUM(${qtySql}) FILTER (WHERE ${dateSql} >= ${cutoff} AND ${dateSql} < ${range.toExclusive}), 0)`;
+}
+
+/** Sum dated quantities for an explicit half-open window inside the scan. */
+function datedWindowSumBounded(
+  from: Date | null,
+  toExclusive: Date,
+  dateSql: Prisma.Sql,
+  qtySql: Prisma.Sql,
+): Prisma.Sql {
+  if (!from) return Prisma.sql`NULL::numeric`;
+  return Prisma.sql`COALESCE(SUM(${qtySql}) FILTER (WHERE ${dateSql} >= ${from} AND ${dateSql} < ${toExclusive}), 0)`;
+}
+
+/**
+ * 30 completed days ending yesterday, when that span sits inside the scanned range.
+ * Used for RETAILA planning demand so coverage evidence and invoice quantities match.
+ */
+export function retailaPlanningDemandBounds(
+  range: RetailaOinRange,
+  todayIso: string,
+  days = 30,
+): { from: Date; toExclusive: Date } | null {
+  const to = addDaysIso(todayIso, -1);
+  const from = addDaysIso(to, -(days - 1));
+  const fromDate = new Date(`${from}T00:00:00.000Z`);
+  const toExclusive = new Date(`${addDaysIso(to, 1)}T00:00:00.000Z`);
+  if (fromDate.getTime() < range.from.getTime()) return null;
+  if (toExclusive.getTime() > range.toExclusive.getTime()) return null;
+  return { from: fromDate, toExclusive };
 }
 
 /**
@@ -174,6 +209,23 @@ export function retailaOinRange(todayIso: string, days: unknown): RetailaOinRang
     days: window,
     from: new Date(`${span.from}T00:00:00.000Z`),
     toExclusive: new Date(`${addDaysIso(span.to, 1)}T00:00:00.000Z`),
+  };
+}
+
+/**
+ * Inclusive completed calendar days ending yesterday (Europe/London).
+ * Used by FBA stock planning so demand and 504/TRM coverage share one window
+ * that does not require today's evening report. History tabs keep {@link retailaOinRange}.
+ */
+export function retailaOinCompletedRange(todayIso: string, days: unknown): RetailaOinRange {
+  const window = retailaWindowDays(days);
+  const to = addDaysIso(todayIso, -1);
+  const from = addDaysIso(to, -(window - 1));
+  return {
+    days: window,
+    from: new Date(`${from}T00:00:00.000Z`),
+    // Exclusive end is start of today → last included civil day is yesterday.
+    toExclusive: new Date(`${todayIso}T00:00:00.000Z`),
   };
 }
 
@@ -631,11 +683,20 @@ function skuWindow(cutoff: Date | null, range: RetailaOinRange): Prisma.Sql {
   return Prisma.sql`CASE WHEN bool_or(doc_date IS NOT NULL) THEN ${datedWindowSum(cutoff, range, Prisma.sql`doc_date`, Prisma.sql`signed_qty`)} ELSE NULL END`;
 }
 
+function skuPlanningWindow(
+  bounds: { from: Date; toExclusive: Date } | null,
+): Prisma.Sql {
+  if (!bounds) return Prisma.sql`NULL::numeric`;
+  return Prisma.sql`CASE WHEN bool_or(doc_date IS NOT NULL) THEN ${datedWindowSumBounded(bounds.from, bounds.toExclusive, Prisma.sql`doc_date`, Prisma.sql`signed_qty`)} ELSE NULL END`;
+}
+
 async function readRetailaOinReport(
   range: RetailaOinRange,
   db: ForecastDb,
 ): Promise<{ health: RetailaOinHealth; units: RetailaSkuSales[] }> {
   const cuts = salesWindowCutoffs(range);
+  const planningBounds = retailaPlanningDemandBounds(range, todayLondonDateOnly(), 30);
+  const ledgerQty = signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`);
   const rows = await db.$queryRaw<
     Array<{
       section: string;
@@ -647,6 +708,7 @@ async function readRetailaOinReport(
       d60: Prisma.Decimal | null;
       d90: Prisma.Decimal | null;
       d365: Prisma.Decimal | null;
+      planning30: Prisma.Decimal | null;
       sold30: boolean | null;
       sold90: boolean | null;
       sold365: boolean | null;
@@ -669,6 +731,7 @@ async function readRetailaOinReport(
         ${skuWindow(cuts.d60, range)} AS d60,
         ${skuWindow(cuts.d90, range)} AS d90,
         ${skuWindow(cuts.d365, range)} AS d365,
+        ${skuPlanningWindow(planningBounds)} AS planning30,
         ${positiveInvoiceInWindow(cuts.d30, range, Prisma.sql`doc_date`, Prisma.sql`doc_type`, Prisma.sql`signed_qty`)} AS sold30,
         ${positiveInvoiceInWindow(cuts.d90, range, Prisma.sql`doc_date`, Prisma.sql`doc_type`, Prisma.sql`signed_qty`)} AS sold90,
         ${positiveInvoiceInWindow(cuts.d365, range, Prisma.sql`doc_date`, Prisma.sql`doc_type`, Prisma.sql`signed_qty`)} AS sold365
@@ -677,15 +740,16 @@ async function readRetailaOinReport(
     ),
     ledger_totals AS (
       SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku,
-        COALESCE(SUM(${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}), 0) AS units,
-        ${datedWindowSum(cuts.d7, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d7,
-        ${datedWindowSum(cuts.d30, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d30,
-        ${datedWindowSum(cuts.d60, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d60,
-        ${datedWindowSum(cuts.d90, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d90,
-        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d365,
-        ${positiveInvoiceInWindow(cuts.d30, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS sold30,
-        ${positiveInvoiceInWindow(cuts.d90, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS sold90,
-        ${positiveInvoiceInWindow(cuts.d365, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS sold365
+        COALESCE(SUM(${ledgerQty}), 0) AS units,
+        ${datedWindowSum(cuts.d7, range, Prisma.sql`d."documentDate"`, ledgerQty)} AS d7,
+        ${datedWindowSum(cuts.d30, range, Prisma.sql`d."documentDate"`, ledgerQty)} AS d30,
+        ${datedWindowSum(cuts.d60, range, Prisma.sql`d."documentDate"`, ledgerQty)} AS d60,
+        ${datedWindowSum(cuts.d90, range, Prisma.sql`d."documentDate"`, ledgerQty)} AS d90,
+        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, ledgerQty)} AS d365,
+        ${datedWindowSumBounded(planningBounds?.from ?? null, planningBounds?.toExclusive ?? range.toExclusive, Prisma.sql`d."documentDate"`, ledgerQty)} AS planning30,
+        ${positiveInvoiceInWindow(cuts.d30, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, ledgerQty)} AS sold30,
+        ${positiveInvoiceInWindow(cuts.d90, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, ledgerQty)} AS sold90,
+        ${positiveInvoiceInWindow(cuts.d365, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, ledgerQty)} AS sold365
       FROM "FbaReplenishmentLine" l
       INNER JOIN proven_ledger d ON d.id = l."documentId"
       WHERE l."supersededAt" IS NULL
@@ -693,6 +757,7 @@ async function readRetailaOinReport(
     )
     SELECT 'sku'::text AS section, "matchKey", MAX(sku) AS sku,
       SUM(units) AS units, SUM(d7) AS d7, SUM(d30) AS d30, SUM(d60) AS d60, SUM(d90) AS d90, SUM(d365) AS d365,
+      SUM(planning30) AS planning30,
       BOOL_OR(sold30) AS sold30, BOOL_OR(sold90) AS sold90, BOOL_OR(sold365) AS sold365,
       NULL::int AS documents, NULL::int AS lines, NULL::date AS latest,
       NULL::int AS "historicDocuments", NULL::int AS "ongoingDocuments",
@@ -705,7 +770,7 @@ async function readRetailaOinReport(
     GROUP BY "matchKey"
     UNION ALL
     SELECT 'health'::text, NULL::text, NULL::text, NULL::numeric,
-      NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric,
+      NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric,
       NULL::boolean, NULL::boolean, NULL::boolean,
       (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines),
       (SELECT COUNT(*)::int FROM counted_oin_lines),
@@ -732,6 +797,7 @@ async function readRetailaOinReport(
           d90: row.d90 == null ? null : num(row.d90),
           d365: row.d365 == null ? null : num(row.d365),
         },
+        planningNet30: row.planning30 == null ? null : num(row.planning30),
         sold: {
           d30: row.sold30 === true,
           d90: row.sold90 === true,

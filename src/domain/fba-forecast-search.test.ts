@@ -3,6 +3,9 @@ import {
   compareCustomerSalesRows,
   compareSalesNetDesc,
   defaultFbaForecastSort,
+  isFbaFocusFilter,
+  isFbaPlanningMode,
+  planningModeSearchValue,
   salesActivitySearchValue,
   type CustomerSalesSortRow,
 } from "@/domain/fba-forecast-search";
@@ -20,6 +23,18 @@ describe("FBA forecast sales activity search", () => {
     expect(defaultFbaForecastSort("90")).toBe("sales");
     expect(defaultFbaForecastSort("30")).toBe("sales");
     expect(defaultFbaForecastSort("all")).toBe("priority");
+  });
+
+  it("keeps verified FBA as the default plan and stores RETAILA planning in the URL", () => {
+    expect(isFbaPlanningMode("fba")).toBe(true);
+    expect(isFbaPlanningMode("retaila")).toBe(true);
+    expect(isFbaPlanningMode("amazon")).toBe(false);
+    expect(planningModeSearchValue("fba")).toBeUndefined();
+    expect(planningModeSearchValue("retaila")).toBe("retaila");
+    expect(isFbaFocusFilter("low_cover")).toBe(true);
+    expect(isFbaFocusFilter("unavailable")).toBe(true);
+    expect(isFbaFocusFilter("needs_review")).toBe(true);
+    expect(isFbaFocusFilter("missing")).toBe(false);
   });
 });
 
