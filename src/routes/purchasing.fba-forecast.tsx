@@ -740,8 +740,13 @@ function Overview({
                   <th className="px-3 py-3">Sales 7d</th>
                   <th className="px-3 py-3">Sales 30d</th>
                   <th className="px-3 py-3">Sales 90d</th>
-                  <th className="px-3 py-3">Weekly</th>
-                  <th className="px-3 py-3">Cover</th>
+                  <th className="px-3 py-3">Weekly sales</th>
+                  <th className="px-3 py-3" title="Weeks of cover from the Amazon UK FBA extract. Blank when that extract does not cover this SKU.">
+                    FBA cover
+                  </th>
+                  <th className="px-3 py-3" title="Unverified comparison of current FBA stock with RETAILA weekly customer sales. Not Amazon consumption and not used for a shipment.">
+                    Illustrative cover
+                  </th>
                   <th className="px-3 py-3">Studley</th>
                   <th className="px-3 py-3">Inbound</th>
                   <th className="px-3 py-3">Suggested</th>
@@ -769,6 +774,9 @@ function Overview({
                     <td className="px-3 py-3">
                       {row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)}`}
                     </td>
+                    <td className="px-3 py-3">
+                      {row.customerCoverWeeks == null ? "—" : row.customerCoverWeeks.toFixed(1)}
+                    </td>
                     <td className="px-3 py-3">{qty(row.studleyAvailable)}</td>
                     <td className="px-3 py-3">{qty(row.confirmedInbound)}</td>
                     <td className="px-3 py-3">{qty(row.forecast.suggestedSendQty)}</td>
@@ -784,6 +792,10 @@ function Overview({
               </tbody>
             </table>
           </div>
+          <p className="px-4 pt-3 text-[12px] text-steel md:hidden">
+            FBA cover comes from the Amazon UK FBA extract. Illustrative cover compares FBA stock with
+            RETAILA weekly customer sales and is not used for a shipment.
+          </p>
           <div className="space-y-3 px-4 py-4 md:hidden">
             {data.rows.map((row) => (
               <button
@@ -804,10 +816,14 @@ function Overview({
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
                   <Fact label="FBA" value={qty(row.fbaAvailable)} />
                   <Fact label="Sales 30d" value={qty(row.customerSales.d30)} />
-                  <Fact label="Weekly" value={rate(row.customerWeekly)} />
+                  <Fact label="Weekly sales" value={rate(row.customerWeekly)} />
                   <Fact
-                    label="Cover"
+                    label="FBA cover"
                     value={row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`}
+                  />
+                  <Fact
+                    label="Illustrative cover"
+                    value={row.customerCoverWeeks == null ? "—" : `${row.customerCoverWeeks.toFixed(1)} wks`}
                   />
                   <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
                 </dl>
@@ -1234,11 +1250,11 @@ function SkuDrawer({
         <Fact label="RETAILA sales 90d" value={qty(row.customerSales.d90)} />
         <Fact label="RETAILA sales 365d" value={qty(row.customerSales.d365)} />
         <Fact label="Weekly customer sales" value={rate(row.customerWeekly)} />
-        <Fact label="Cover from RETAILA sales" value={row.customerCoverWeeks == null ? "—" : row.customerCoverWeeks.toFixed(1)} />
-        <Fact label="Amazon UK 30d" value={qty(row.amazonUnits.d30)} />
+        <Fact label="Amazon UK FBA 30d" value={qty(row.amazonUnits.d30)} />
+        <Fact label="Amazon FBA cover" value={row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`} />
+        <Fact label="Illustrative cover" value={row.customerCoverWeeks == null ? "—" : `${row.customerCoverWeeks.toFixed(1)} wks`} />
         <Fact label="Recommendation velocity" value={rate(row.forecast.weeklyRate)} />
         <Fact label="Confidence" value={row.forecast.confidence} />
-        <Fact label="FBA weeks cover" value={row.forecast.coverWeeks == null ? "—" : row.forecast.coverWeeks.toFixed(1)} />
         <Fact label="Stockout" value={ukDate(row.forecast.stockoutDate)} />
         <Fact label="Next dispatch" value={ukDate(row.forecast.nextSendDate)} />
         <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
@@ -1246,6 +1262,10 @@ function SkuDrawer({
         <Fact label="Confirmed inbound" value={qty(row.confirmedInbound)} />
         <Fact label="Purchasing shortfall" value={qty(row.forecast.studleyShortfallQty)} />
       </dl>
+      <p className="text-[12px] text-steel">
+        Illustrative cover divides current FBA stock by RETAILA weekly customer sales. It is not
+        verified Amazon FBA cover and it is not used for the suggested quantity.
+      </p>
       {row.forecast.looseStudleyQty ? (
         <p className="text-[13px] text-steel">
           {qty(row.forecast.looseStudleyQty)} Studley units are loose and are not a shipment.

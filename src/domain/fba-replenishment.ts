@@ -626,7 +626,10 @@ export function averageWeeklySales(netUnits30: number | null): number | null {
   return Math.round((netUnits30 / 30) * 7 * 10) / 10;
 }
 
-/** Informational cover. A non-positive weekly rate has no cover figure. */
+/**
+ * Unverified comparison of stock against a weekly rate. Dividing FBA stock by
+ * RETAILA customer sales is not Amazon FBA cover and must not feed a shipment.
+ */
 export function stockCoverWeeks(stock: number | null, weekly: number | null): number | null {
   if (stock == null || weekly == null || !Number.isFinite(stock) || weekly <= 0) return null;
   return Math.round((stock / weekly) * 10) / 10;

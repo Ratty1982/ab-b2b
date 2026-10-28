@@ -746,6 +746,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         forecast,
         demand,
         customerWeekly,
+        // Illustrative only. projectFbaShipment above does not receive this figure.
         customerCoverWeeks: stockCoverWeeks(item.fbaAvailable, customerWeekly),
         oinWeekly: customerWeekly,
         amazonUnits: {
@@ -866,9 +867,9 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
     "RETAILA sales 90d",
     "RETAILA sales 365d",
     "Weekly customer sales",
-    "Cover from RETAILA sales",
+    "Illustrative cover from RETAILA sales (unverified, not a shipment)",
     "Amazon UK FBA sales 30d",
-    "FBA weeks cover",
+    "Amazon FBA weeks cover",
     "Studley stock",
     "Confirmed inbound",
     "Suggested replenishment",

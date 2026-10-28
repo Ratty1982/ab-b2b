@@ -31,7 +31,7 @@ It is also not proven Amazon UK FBA sell-through. `AutopartSalesDocument` and `A
 The shipment formula therefore uses one source:
 
 1. The latest Amazon sales extract, only when it declares marketplace `AMAZON_UK`, fulfilment `FBA`, and complete coverage for the last 30 days. A SKU missing from that complete extract is zero for the covered window.
-2. Otherwise no shipment is suggested. Verified RETAILA quantities for 7, 30, 60, 90 and 365 days stay on the row, with weekly sales `net 30 / 30 × 7` and an informational cover, and the recommendation stays Insufficient Data.
+2. Otherwise no shipment is suggested. Verified RETAILA quantities for 7, 30, 60, 90 and 365 days stay on the row, with weekly sales `net 30 / 30 × 7`. Dividing FBA stock by that weekly rate is an unverified illustrative comparison. It is not Amazon FBA cover and it is not used for a shipment. Amazon FBA cover comes only from the extract above. The recommendation stays Insufficient Data.
 
 RETAILA units are never added to Amazon units, and the page does not switch between them for overlapping days. `RETAILA_OIN_PROVEN_AS_FBA_UK` stays false until a stored marketplace and fulfilment channel exist.
 

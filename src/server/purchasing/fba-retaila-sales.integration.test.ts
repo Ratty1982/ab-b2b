@@ -10,7 +10,12 @@ import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { skuMatchKey } from "@/domain/stock";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { getFbaForecastWorkspace } from "@/server/purchasing/fba-forecast";
-import { loadRetailaOinReport, retailaOinRange } from "@/server/purchasing/fba-retaila-oin";
+import {
+  listRetailaOinHistory,
+  listRetailaOinLinesForSku,
+  loadRetailaOinReport,
+  retailaOinRange,
+} from "@/server/purchasing/fba-retaila-oin";
 
 const prisma = new PrismaClient();
 const stamp = `S${Date.now().toString(36).toUpperCase()}`;
@@ -208,6 +213,9 @@ describe("RETAILA OIN customer sales windows", () => {
   }, 60_000);
 
   afterAll(async () => {
+    await prisma.fbaReplenishmentDocument.deleteMany({
+      where: { documentReference: { in: [`OIN${stamp}LI`, `OIN${stamp}LP`, `OIN${stamp}LN`, `OIN${stamp}LC`] } },
+    });
     await prisma.autopartSalesLine.deleteMany({ where: { id: { startsWith: stamp } } });
     await prisma.autopartSalesDocument.deleteMany({ where: { id: { startsWith: stamp } } });
     await prisma.autopartCustomerAccountAlias.deleteMany({ where: { companyId: retailaId } });
@@ -239,6 +247,90 @@ describe("RETAILA OIN customer sales windows", () => {
     expect(row?.forecast.recommendation).toBe("INSUFFICIENT_DATA");
     expect(row?.forecast.suggestedSendQty).toBeNull();
     expect(row?.amazonUnits.d30).toBeNull();
+    expect(row?.forecast.coverWeeks).toBeNull();
+  }, 30_000);
+
+  it("signs a manual-ledger credit once when the stored quantity is positive or already negative", async () => {
+    const day = new Date(`${today}T00:00:00.000Z`);
+    async function ledger(reference: string, type: "INVOICE" | "CREDIT", sku: string, qty: number) {
+      const saved = await prisma.fbaReplenishmentDocument.create({
+        data: {
+          documentReference: reference,
+          documentType: type,
+          documentDate: day,
+          customerAccount: "RETAILA",
+        },
+      });
+      await prisma.fbaReplenishmentLine.create({
+        data: {
+          documentId: saved.id,
+          lineKey: reference,
+          sku,
+          matchKey: skuMatchKey(sku),
+          qty,
+        },
+      });
+    }
+    await ledger(`OIN${stamp}LI`, "INVOICE", `LINV${stamp}`, 6);
+    await ledger(`OIN${stamp}LP`, "CREDIT", `LPOS${stamp}`, 4);
+    await ledger(`OIN${stamp}LN`, "CREDIT", `LNEG${stamp}`, -3);
+    const bothRef = `OIN${stamp}B`;
+    const bothDoc = await prisma.autopartSalesDocument.create({
+      data: {
+        id: `${stamp}-both`,
+        companyId: retailaId,
+        autopartCustomerCode: "RETAILA",
+        documentType: "INVOICE",
+        documentReference: bothRef,
+        documentDate: at(0),
+        has504: false,
+        hasTrm21qc: false,
+        source: "561L",
+      },
+    });
+    await prisma.autopartSalesLine.create({
+      data: {
+        id: `${stamp}-both-line`,
+        documentId: bothDoc.id,
+        companyId: retailaId,
+        autopartCustomerCode: "RETAILA",
+        documentType: "INVOICE",
+        documentReference: bothRef,
+        lineNumber: 1,
+        sku: `BOTH${stamp}`,
+        units: 10,
+        salesNet: "10.00",
+        source: "561L",
+      },
+    });
+    await ledger(`OIN${stamp}LC`, "CREDIT", `BOTH${stamp}`, 2);
+
+    const range = retailaOinRange(today, 90);
+    const report = await loadRetailaOinReport(range);
+    expect(report.units.find((row) => row.matchKey === skuMatchKey(`LINV${stamp}`))?.windows.d30).toBe(6);
+    expect(report.units.find((row) => row.matchKey === skuMatchKey(`LPOS${stamp}`))?.windows.d30).toBe(-4);
+    expect(report.units.find((row) => row.matchKey === skuMatchKey(`LNEG${stamp}`))?.windows.d30).toBe(-3);
+    expect(report.units.find((row) => row.matchKey === skuMatchKey(`BOTH${stamp}`))?.windows.d30).toBe(8);
+
+    const history = await listRetailaOinHistory({ range, page: 1, pageSize: 50, q: stamp, sort: "reference" });
+    const positive = history.documents.find((item) => item.documentReference === `OIN${stamp}LP`);
+    expect(positive?.status).toBe("LEDGER_ONLY");
+    expect(positive?.units).toBe(-4);
+    expect(positive?.lines[0]?.units).toBe(-4);
+    const negative = history.documents.find((item) => item.documentReference === `OIN${stamp}LN`);
+    expect(negative?.units).toBe(-3);
+    expect(negative?.lines[0]?.units).toBe(-3);
+    const invoice = history.documents.find((item) => item.documentReference === `OIN${stamp}LI`);
+    expect(invoice?.units).toBe(6);
+    expect(invoice?.lines[0]?.units).toBe(6);
+
+    const positiveSku = await listRetailaOinLinesForSku(skuMatchKey(`LPOS${stamp}`), range);
+    expect(positiveSku[0]?.status).toBe("LEDGER_ONLY");
+    expect(positiveSku[0]?.units).toBe(-4);
+    expect(positiveSku[0]?.lines[0]?.units).toBe(-4);
+    const negativeSku = await listRetailaOinLinesForSku(skuMatchKey(`LNEG${stamp}`), range);
+    expect(negativeSku[0]?.units).toBe(-3);
+    expect(negativeSku[0]?.lines[0]?.units).toBe(-3);
   }, 30_000);
 });
 

@@ -88,6 +88,15 @@ function datedWindowSum(cutoff: Date | null, range: RetailaOinRange, dateSql: Pr
   return Prisma.sql`COALESCE(SUM(${qtySql}) FILTER (WHERE ${dateSql} >= ${cutoff} AND ${dateSql} < ${range.toExclusive}), 0)`;
 }
 
+/**
+ * Read-time sign for a manual ledger line. Credits always reduce sales, including
+ * a quantity that was already stored as negative. Invoice quantities keep their sign.
+ * Stored rows are not updated.
+ */
+function signedLedgerQty(documentType: Prisma.Sql, qty: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(CASE WHEN ${documentType} = 'CREDIT' THEN -ABS(${qty}) ELSE ${qty} END)`;
+}
+
 export type RetailaOinHistoryLine = {
   sku: string;
   description: string | null;
@@ -614,12 +623,12 @@ async function readRetailaOinReport(
     ),
     ledger_totals AS (
       SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku,
-        COALESCE(SUM(l.qty), 0) AS units,
-        ${datedWindowSum(cuts.d7, range, Prisma.sql`d."documentDate"`, Prisma.sql`l.qty`)} AS d7,
-        ${datedWindowSum(cuts.d30, range, Prisma.sql`d."documentDate"`, Prisma.sql`l.qty`)} AS d30,
-        ${datedWindowSum(cuts.d60, range, Prisma.sql`d."documentDate"`, Prisma.sql`l.qty`)} AS d60,
-        ${datedWindowSum(cuts.d90, range, Prisma.sql`d."documentDate"`, Prisma.sql`l.qty`)} AS d90,
-        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, Prisma.sql`l.qty`)} AS d365
+        COALESCE(SUM(${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}), 0) AS units,
+        ${datedWindowSum(cuts.d7, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d7,
+        ${datedWindowSum(cuts.d30, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d30,
+        ${datedWindowSum(cuts.d60, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d60,
+        ${datedWindowSum(cuts.d90, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d90,
+        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d365
       FROM "FbaReplenishmentLine" l
       INNER JOIN proven_ledger d ON d.id = l."documentId"
       WHERE l."supersededAt" IS NULL
@@ -753,7 +762,7 @@ export async function listRetailaOinHistory(input: {
       GROUP BY i.doc_ref, i.issue
       UNION ALL
       SELECT UPPER(btrim(d."documentReference")), d.id, d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
-        COALESCE(SUM(l.qty), 0)
+        COALESCE(SUM(${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}), 0)
       FROM proven_ledger d
       LEFT JOIN "FbaReplenishmentLine" l ON l."documentId" = d.id AND l."supersededAt" IS NULL
       GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
@@ -797,7 +806,10 @@ export async function listRetailaOinHistory(input: {
             AND paged.status NOT IN ('COUNTED', 'LEDGER_ONLY', 'LEDGER_REVIEW')
           UNION ALL
           SELECT l.sku, l.description,
-            CASE WHEN paged.status = 'LEDGER_REVIEW' THEN 0::numeric ELSE l.qty END,
+            CASE
+              WHEN paged.status = 'LEDGER_REVIEW' THEN 0::numeric
+              ELSE ${signedLedgerQty(Prisma.sql`paged.doc_type`, Prisma.sql`l.qty`)}
+            END,
             'LEDGER'
           FROM "FbaReplenishmentLine" l
           WHERE l."documentId" = paged.ledger_id
@@ -868,7 +880,7 @@ export async function listRetailaOinLinesForSku(
     WHERE s.sku_key = ${matchKey}
     UNION ALL
     SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
-      l.sku, l.description, l.qty
+      l.sku, l.description, ${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}
     FROM "FbaReplenishmentLine" l
     INNER JOIN proven_ledger d ON d.id = l."documentId"
     WHERE l."supersededAt" IS NULL
