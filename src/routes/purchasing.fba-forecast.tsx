@@ -48,6 +48,10 @@ type Tab = (typeof TABS)[number];
 const SORTS = ["priority", "cover", "velocity", "suggested"] as const;
 type Sort = (typeof SORTS)[number];
 
+const HISTORY_WINDOWS = [30, 90, 180, 365] as const;
+type HistoryWindow = (typeof HISTORY_WINDOWS)[number];
+const LOAD_TIMEOUT_MS = 15_000;
+
 type Search = {
   q?: string | undefined;
   page?: number | undefined;
@@ -56,6 +60,7 @@ type Search = {
   sort?: Sort | undefined;
   tab?: Tab | undefined;
   sku?: string | undefined;
+  days?: HistoryWindow | undefined;
 };
 
 function parseSearch(raw: Record<string, unknown>): Search {
@@ -77,7 +82,28 @@ function parseSearch(raw: Record<string, unknown>): Search {
   if (TABS.some((item) => item === tab)) out.tab = tab as Tab;
   const sku = raw["sku"];
   if (typeof sku === "string" && sku) out.sku = sku;
+  const daysRaw = raw["days"];
+  const days = typeof daysRaw === "number" ? daysRaw : Number(daysRaw);
+  if (HISTORY_WINDOWS.some((item) => item === days) && days !== 90) out.days = days as HistoryWindow;
   return out;
+}
+
+function settle<T>(request: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("The report is taking too long. Retry in a moment."));
+    }, LOAD_TIMEOUT_MS);
+    request.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error("The FBA forecast could not be loaded."));
+      },
+    );
+  });
 }
 
 export const Route = createFileRoute("/purchasing/fba-forecast")({
@@ -122,6 +148,12 @@ function FbaForecastPage() {
   const [data, setData] = useState<Data | null>(null);
   const [history, setHistory] = useState<History | null>(null);
   const [detail, setDetail] = useState<SkuDetail | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(true);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [q, setQ] = useState(search.q ?? "");
@@ -159,31 +191,41 @@ function FbaForecastPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void getFbaForecastWorkspaceFn({
-      data: {
-        q: search.q,
-        page: search.page,
-        recommendation: search.recommendation,
-        brand: search.brand,
-        sort: search.sort,
-      },
-    }).then((result) => {
-      if (cancelled) return;
-      if (!result.ok) {
-        setError(result.error ?? "The FBA forecast could not be loaded.");
-        setData(null);
-        return;
-      }
-      setError(null);
-      setData(result.data);
-      setLead(String(result.data.settings.leadTimeDays));
-      setCover(String(result.data.settings.targetCoverWeeks));
-      setSafety(String(result.data.settings.safetyStockQty));
-      setMultiple(
-        result.data.settings.caseMultiple == null ? "" : String(result.data.settings.caseMultiple),
-      );
-      setOverstock(String(result.data.settings.overstockCoverWeeks));
-    });
+    setWorkspaceLoading(true);
+    setWorkspaceError(null);
+    void settle(
+      getFbaForecastWorkspaceFn({
+        data: {
+          q: search.q,
+          page: search.page,
+          recommendation: search.recommendation,
+          brand: search.brand,
+          sort: search.sort,
+        },
+      }),
+    )
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.ok) {
+          setWorkspaceError(result.error ?? "The FBA forecast could not be loaded.");
+          return;
+        }
+        setData(result.data);
+        setLead(String(result.data.settings.leadTimeDays));
+        setCover(String(result.data.settings.targetCoverWeeks));
+        setSafety(String(result.data.settings.safetyStockQty));
+        setMultiple(
+          result.data.settings.caseMultiple == null ? "" : String(result.data.settings.caseMultiple),
+        );
+        setOverstock(String(result.data.settings.overstockCoverWeeks));
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setWorkspaceError(caught instanceof Error ? caught.message : "The FBA forecast could not be loaded.");
+      })
+      .finally(() => {
+        if (!cancelled) setWorkspaceLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -192,25 +234,59 @@ function FbaForecastPage() {
   useEffect(() => {
     if (tab !== "history") return;
     let cancelled = false;
-    void getFbaOinHistoryFn({ data: { page: search.page } }).then((result) => {
-      if (cancelled) return;
-      if (result.ok) setHistory(result.data);
-    });
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setHistory(null);
+    void settle(getFbaOinHistoryFn({ data: { page: search.page, days: search.days ?? 90, q: search.q } }))
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.ok) {
+          setHistoryError(result.error ?? "RETAILA OIN history could not be loaded.");
+          return;
+        }
+        setHistory(result.data);
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setHistoryError(caught instanceof Error ? caught.message : "RETAILA OIN history could not be loaded.");
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [tab, search.page, reload]);
+  }, [tab, search.page, search.days, search.q, reload]);
 
   useEffect(() => {
     if (!search.sku) {
       setDetail(null);
+      setDetailError(null);
+      setDetailLoading(false);
       return;
     }
     let cancelled = false;
-    void getFbaForecastSkuFn({ data: { matchKey: search.sku } }).then((result) => {
-      if (cancelled) return;
-      if (result.ok) setDetail(result.data);
-    });
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetail(null);
+    void settle(getFbaForecastSkuFn({ data: { matchKey: search.sku, days: 90 } }))
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.ok) {
+          setDetailError(result.error ?? "RETAILA invoices for this product could not be loaded.");
+          return;
+        }
+        setDetail(result.data);
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setDetailError(
+          caught instanceof Error ? caught.message : "RETAILA invoices for this product could not be loaded.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -220,14 +296,19 @@ function FbaForecastPage() {
     setBusy(true);
     setNotice(null);
     setError(null);
-    const result = await action();
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error ?? "The FBA forecast action failed.");
-      return;
+    try {
+      const result = await action();
+      if (!result.ok) {
+        setError(result.error ?? "The FBA forecast action failed.");
+        return;
+      }
+      setNotice(done);
+      setReload((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The FBA forecast action failed.");
+    } finally {
+      setBusy(false);
     }
-    setNotice(done);
-    setReload((value) => value + 1);
   }
 
   const selected = data?.rows.find((row) => row.matchKey === search.sku) ?? null;
@@ -257,6 +338,22 @@ function FbaForecastPage() {
           <ErrorState message={error} />
         </div>
       ) : null}
+      {workspaceError ? (
+        <div className="space-y-2 px-4 py-3 sm:px-6">
+          <ErrorState message={workspaceError} />
+          <button className={btnClass} type="button" onClick={() => setReload((value) => value + 1)}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {data?.oinUnavailable ? (
+        <div className="space-y-2 px-4 py-3 sm:px-6">
+          <ErrorState message={data.oinUnavailable} />
+          <button className={btnClass} type="button" onClick={() => setReload((value) => value + 1)}>
+            Retry RETAILA history
+          </button>
+        </div>
+      ) : null}
       {statusOpen && data ? <DataStatus data={data} /> : null}
       <nav className="flex gap-1 overflow-x-auto border-b border-border/70 px-4 py-3 sm:px-6">
         {(
@@ -280,6 +377,7 @@ function FbaForecastPage() {
       {tab === "overview" ? (
         <Overview
           data={data}
+          loading={workspaceLoading}
           q={q}
           setQ={setQ}
           search={search}
@@ -310,9 +408,14 @@ function FbaForecastPage() {
       {tab === "history" ? (
         <HistoryPanel
           history={history}
+          loading={historyLoading}
+          error={historyError}
+          days={search.days ?? 90}
           warning={data?.oin.warning ?? null}
           exceptions={data?.latestExceptions ?? []}
           onPage={(page) => patch({ page: page > 1 ? page : undefined })}
+          onDays={(days) => patch({ days: days === 90 ? undefined : days, page: undefined })}
+          onRetry={() => setReload((value) => value + 1)}
         />
       ) : null}
       {tab === "imports" && data ? (
@@ -415,6 +518,9 @@ function FbaForecastPage() {
             <SkuDrawer
               row={selected}
               detail={detail}
+              detailLoading={detailLoading}
+              detailError={detailError}
+              onRetryDetail={() => setReload((value) => value + 1)}
               canManage={Boolean(data?.canManage)}
               busy={busy}
               override={override}
@@ -462,9 +568,11 @@ function DataStatus({ data }: { data: Data }) {
       <StatusBlock
         title="RETAILA OIN history"
         body={
-          data.oin.documents
-            ? `${data.oin.documents.toLocaleString("en-GB")} invoices, latest ${ukDate(data.oin.latestDocumentDate)}. ${data.oin.historicDocuments.toLocaleString("en-GB")} from 561L and ${data.oin.ongoingDocuments.toLocaleString("en-GB")} from TRM21QC.`
-            : "No RETAILA OIN invoices are stored yet."
+          data.oinUnavailable
+            ? "RETAILA history is unavailable. FBA and Studley stock on this page are still current."
+            : data.oin.documents
+              ? `${data.oin.documents.toLocaleString("en-GB")} invoices in the last ${data.oin.days} days, latest ${ukDate(data.oin.latestDocumentDate)}. ${data.oin.historicDocuments.toLocaleString("en-GB")} from 561L and ${data.oin.ongoingDocuments.toLocaleString("en-GB")} from TRM21QC.`
+              : `No RETAILA OIN invoices in the last ${data.oin.days} days.`
         }
       />
       <StatusBlock
@@ -499,6 +607,7 @@ function StatusBlock({ title, body }: { title: string; body: string }) {
 
 function Overview({
   data,
+  loading,
   q,
   setQ,
   search,
@@ -507,6 +616,7 @@ function Overview({
   onExport,
 }: {
   data: Data | null;
+  loading: boolean;
   q: string;
   setQ: (value: string) => void;
   search: Search;
@@ -612,7 +722,7 @@ function Overview({
           Export
         </button>
       </form>
-      {!data ? <LoadingState label="Loading replenishment…" /> : null}
+      {loading && !data ? <LoadingState label="Loading replenishment…" /> : null}
       {data && data.rows.length === 0 ? (
         <EmptyState
           title="Nothing matches"
@@ -742,28 +852,61 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function HistoryPanel({
   history,
+  loading,
+  error,
+  days,
   warning,
   exceptions,
   onPage,
+  onDays,
+  onRetry,
 }: {
   history: History | null;
+  loading: boolean;
+  error: string | null;
+  days: HistoryWindow;
   warning: string | null;
   exceptions: Data["latestExceptions"];
   onPage: (page: number) => void;
+  onDays: (days: HistoryWindow) => void;
+  onRetry: () => void;
 }) {
   return (
     <div className="space-y-4 px-4 py-4 sm:px-6">
       <p className="max-w-3xl text-[13px] text-steel">
         These are RETAILA invoices already stored from 561L history and the ongoing 504/TRM feed.
-        They show what was replenished. They are not Amazon shopper sales, and an invoice is not a
+        The list defaults to the last 90 days. They are not Amazon shopper sales, and an invoice is not a
         shipment in transit.
       </p>
+      <label className="block max-w-xs text-[13px]">
+        Period
+        <select
+          className={`${controlClass} mt-1 w-full`}
+          aria-label="OIN history period"
+          value={String(days)}
+          onChange={(event) => onDays(Number(event.target.value) as HistoryWindow)}
+        >
+          {HISTORY_WINDOWS.map((window) => (
+            <option key={window} value={window}>
+              Last {window} days
+            </option>
+          ))}
+        </select>
+      </label>
       {warning ? <p className="border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] text-warn">{warning}</p> : null}
-      {!history ? <LoadingState label="Loading RETAILA OIN history…" /> : null}
+      {error ? (
+        <div className="space-y-2">
+          <ErrorState message={error} />
+          <button className={btnClass} type="button" onClick={onRetry}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {loading && !history ? <LoadingState label="Loading RETAILA OIN history…" /> : null}
       {history && history.documents.length === 0 ? (
         <EmptyState
           title="No RETAILA OIN history"
-          body="Nothing beginning with OIN is stored for Autopart account RETAILA. Do not upload the same 504 and TRM files here."
+          body="Nothing beginning with OIN is stored for Autopart account RETAILA in this period. Do not upload the same 504 and TRM files here."
         />
       ) : null}
       {history && history.documents.length > 0 ? (
@@ -1027,6 +1170,9 @@ function Field({
 function SkuDrawer({
   row,
   detail,
+  detailLoading,
+  detailError,
+  onRetryDetail,
   canManage,
   busy,
   override,
@@ -1035,6 +1181,9 @@ function SkuDrawer({
 }: {
   row: Row;
   detail: SkuDetail | null;
+  detailLoading: boolean;
+  detailError: string | null;
+  onRetryDetail: () => void;
   canManage: boolean;
   busy: boolean;
   override: {
@@ -1094,9 +1243,18 @@ function SkuDrawer({
       </details>
       <section>
         <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em]">RETAILA OIN invoices</h3>
-        {!detail ? <p className="mt-2 text-[13px] text-steel">Loading invoices…</p> : null}
+        <p className="mt-1 text-[12px] text-steel">Last 90 days. Stock balances above are the current snapshot.</p>
+        {detailLoading && !detail ? <p className="mt-2 text-[13px] text-steel">Loading invoices…</p> : null}
+        {detailError ? (
+          <div className="mt-2 space-y-2">
+            <ErrorState message={detailError} />
+            <button className={btnClass} type="button" onClick={onRetryDetail}>
+              Retry
+            </button>
+          </div>
+        ) : null}
         {detail && detail.documents.length === 0 ? (
-          <p className="mt-2 text-[13px] text-steel">No RETAILA OIN lines for this SKU.</p>
+          <p className="mt-2 text-[13px] text-steel">No RETAILA OIN lines for this SKU in the last 90 days.</p>
         ) : null}
         <ul className="mt-2 space-y-2 text-[13px]">
           {detail?.documents.map((document) => (

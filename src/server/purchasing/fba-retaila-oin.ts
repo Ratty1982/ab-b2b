@@ -1,20 +1,35 @@
 /**
- * RETAILA OIN replenishment read from Autopart sales.
- * 561L and ongoing TRM21QC lines for the same invoice are counted once,
- * using the Sales Enquiry rule: keep the ongoing copy when the lines agree,
- * and count neither copy when they disagree or the 504 goods value does not match.
- * A manual FBA ledger row is used only when that document is not already here.
+ * RETAILA OIN replenishment for the Amazon FBA forecast.
+ * The date window and RETAILA account are applied before reconciliation, so a
+ * dashboard request does not read every customer's historic sales lines.
+ * 561L and ongoing TRM21QC copies of one invoice in that window are counted once.
+ * A manual ledger row is used only for a proven RETAILA account in the same window.
  * These quantities are replenishment history, not Amazon consumer sales.
  */
 import { Prisma } from "@prisma/client";
+import { addDaysIso, lastNDaysRange } from "@/domain/sales-history-period";
 import { prisma } from "@/infra/database/client";
 
 export const RETAILA_AUTOPART_ACCOUNT = "RETAILA";
+export const RETAILA_OIN_WINDOW_DAYS = [30, 90, 180, 365] as const;
+export type RetailaOinWindowDays = (typeof RETAILA_OIN_WINDOW_DAYS)[number];
+export const DEFAULT_RETAILA_OIN_WINDOW_DAYS: RetailaOinWindowDays = 90;
+/** Production budget. The statement is cancelled locally so the pooled connection stays usable. */
+export const RETAILA_OIN_STATEMENT_TIMEOUT = "8s";
+export const RETAILA_OIN_QUERY_BUDGET_MS = 8_000;
 
 export type RetailaOinIssueCode = "SOURCE_CONFLICT" | "GOODS_MISMATCH" | "AMBIGUOUS_OWNER";
+export type RetailaOinHistorySort = "date" | "reference" | "units";
+
+export type RetailaOinRange = {
+  from: Date;
+  toExclusive: Date;
+  days: RetailaOinWindowDays;
+};
 
 export type RetailaOinHealth = {
   account: string;
+  days: RetailaOinWindowDays;
   documents: number;
   lines: number;
   latestDocumentDate: string | null;
@@ -42,6 +57,55 @@ export type RetailaOinHistoryDocument = {
   units: number;
   lines: RetailaOinHistoryLine[];
 };
+
+export class ForecastQueryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ForecastQueryError";
+  }
+}
+
+export function retailaWindowDays(value: unknown): RetailaOinWindowDays {
+  const days = typeof value === "number" ? value : Number(value);
+  return RETAILA_OIN_WINDOW_DAYS.some((item) => item === days) ? (days as RetailaOinWindowDays) : DEFAULT_RETAILA_OIN_WINDOW_DAYS;
+}
+
+export function retailaOinRange(todayIso: string, days: unknown): RetailaOinRange {
+  const window = retailaWindowDays(days);
+  const span = lastNDaysRange(todayIso, window);
+  return {
+    days: window,
+    from: new Date(`${span.from}T00:00:00.000Z`),
+    toExclusive: new Date(`${addDaysIso(span.to, 1)}T00:00:00.000Z`),
+  };
+}
+
+type ForecastDb = Prisma.TransactionClient | typeof prisma;
+
+export async function withForecastQuery<T>(run: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT set_config('statement_timeout', ${RETAILA_OIN_STATEMENT_TIMEOUT}, true)`;
+        return run(tx);
+      },
+      { maxWait: 2_000, timeout: 12_000 },
+    );
+  } catch (error) {
+    if (error instanceof ForecastQueryError) throw error;
+    const message = error instanceof Error ? error.message : "";
+    if (
+      /statement timeout|canceling statement|Unable to start a transaction|Timed out fetching a new connection|Transaction already closed|expired transaction/i.test(
+        message,
+      )
+    ) {
+      throw new ForecastQueryError(
+        "RETAILA replenishment history took too long and was stopped. Amazon FBA and Studley stock are unchanged. Retry in a moment.",
+      );
+    }
+    throw error;
+  }
+}
 
 /** Account is RETAILA, or the code/alias of the company already proven as a RETAILA owner. */
 function provenRetailaAccountSql(account: Prisma.Sql, companyId: Prisma.Sql): Prisma.Sql {
@@ -93,11 +157,11 @@ function ledgerRetailaAccountSql(account: Prisma.Sql): Prisma.Sql {
 }
 
 /**
- * WITH clause ending in counted, issue, scoped, proven ledger and review ledger rows.
- * One verified RETAILA owner on a document is shared by mapped and unmapped copies.
- * More than one owner, or a RETAILA code on a different verified customer, is not counted.
+ * Reconciliation for one date window.
+ * window_refs is the only entry point: dated RETAILA OIN documents, then the
+ * lines of those references (both sources, including a copy with no company link).
  */
-function retailaOinWith(): Prisma.Sql {
+function retailaOinWith(range: RetailaOinRange, matchKey?: string): Prisma.Sql {
   const lineAccount = provenRetailaAccountSql(
     Prisma.sql`l."autopartCustomerCode"`,
     Prisma.sql`l."companyId"`,
@@ -114,13 +178,30 @@ function retailaOinWith(): Prisma.Sql {
   const foreignDocument = Prisma.sql`EXISTS (
     SELECT 1
     FROM "AutopartSalesDocument" foreign_document
-    WHERE UPPER(btrim(foreign_document."documentReference")) = UPPER(btrim(d."documentReference"))
+    WHERE foreign_document."documentReference" = d."documentReference"
       AND foreign_document."documentType"::text = d."documentType"
       AND NOT ${provenRetailaAccountSql(
         Prisma.sql`foreign_document."autopartCustomerCode"`,
         Prisma.sql`foreign_document."companyId"`,
       )}
   )`;
+  const documentSku = matchKey
+    ? Prisma.sql`AND EXISTS (
+        SELECT 1 FROM "AutopartSalesLine" sku_hit
+        WHERE sku_hit."documentId" = d.id
+          AND UPPER(btrim(sku_hit.sku)) = ${matchKey}
+          AND sku_hit.source IN ('561L', 'ONGOING_TRM21QC')
+      )`
+    : Prisma.empty;
+  const lineSku = matchKey ? Prisma.sql`AND UPPER(btrim(l.sku)) = ${matchKey}` : Prisma.empty;
+  const ledgerSku = matchKey
+    ? Prisma.sql`AND EXISTS (
+        SELECT 1 FROM "FbaReplenishmentLine" ledger_hit
+        WHERE ledger_hit."documentId" = d.id
+          AND ledger_hit."supersededAt" IS NULL
+          AND ledger_hit."matchKey" = ${matchKey}
+      )`
+    : Prisma.empty;
   return Prisma.sql`
     WITH retaila_owners AS (
       SELECT c.id, UPPER(btrim(c."autopartCustomerCode")) AS code
@@ -135,6 +216,47 @@ function retailaOinWith(): Prisma.Sql {
               AND alias_row.alias = ${RETAILA_AUTOPART_ACCOUNT}
           )
         )
+    ),
+    window_refs AS MATERIALIZED (
+      SELECT DISTINCT btrim(d."documentReference") AS stored_ref
+      FROM "AutopartSalesDocument" d
+      WHERE d."documentDate" >= ${range.from}
+        AND d."documentDate" < ${range.toExclusive}
+        AND d."documentReference" LIKE 'OIN%'
+        AND d."documentReference" ~ '^OIN[A-Z0-9]+$'
+        AND d."autopartCustomerCode" = ${RETAILA_AUTOPART_ACCOUNT}
+        ${documentSku}
+      UNION
+      SELECT DISTINCT btrim(d."documentReference") AS stored_ref
+      FROM "AutopartSalesDocument" d
+      WHERE d."documentDate" >= ${range.from}
+        AND d."documentDate" < ${range.toExclusive}
+        AND d."documentReference" LIKE 'OIN%'
+        AND d."documentReference" ~ '^OIN[A-Z0-9]+$'
+        AND d."companyId" IN (SELECT id FROM retaila_owners)
+        ${documentSku}
+      UNION
+      SELECT DISTINCT btrim(l."documentReference") AS stored_ref
+      FROM "AutopartSalesLine" l
+      INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+      WHERE l."autopartCustomerCode" = ${RETAILA_AUTOPART_ACCOUNT}
+        AND l."documentReference" LIKE 'OIN%'
+        AND l.source IN ('561L', 'ONGOING_TRM21QC')
+        AND l."documentReference" ~ '^OIN[A-Z0-9]+$'
+        AND d."documentDate" >= ${range.from}
+        AND d."documentDate" < ${range.toExclusive}
+        ${lineSku}
+      UNION
+      SELECT DISTINCT btrim(l."documentReference") AS stored_ref
+      FROM "AutopartSalesLine" l
+      INNER JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
+      WHERE l."companyId" IN (SELECT id FROM retaila_owners)
+        AND l."documentReference" LIKE 'OIN%'
+        AND l.source IN ('561L', 'ONGOING_TRM21QC')
+        AND l."documentReference" ~ '^OIN[A-Z0-9]+$'
+        AND d."documentDate" >= ${range.from}
+        AND d."documentDate" < ${range.toExclusive}
+        ${lineSku}
     ),
     candidate_lines AS (
       SELECT
@@ -165,11 +287,11 @@ function retailaOinWith(): Prisma.Sql {
           WHEN ${lineAccount} THEN 'proven'
           ELSE 'other'
         END AS link_state
-      FROM "AutopartSalesLine" l
+      FROM window_refs w
+      INNER JOIN "AutopartSalesLine" l ON l."documentReference" = w.stored_ref
       LEFT JOIN "AutopartSalesDocument" d ON d.id = l."documentId"
       WHERE l.source IN ('561L', 'ONGOING_TRM21QC')
         AND l."documentType" IN ('INVOICE', 'CREDIT', 'UNKNOWN')
-        AND UPPER(btrim(l."documentReference")) ~ '^OIN[A-Z0-9]+$'
     ),
     doc_owners AS (
       SELECT owners.doc_ref, owners.owner_id
@@ -183,7 +305,7 @@ function retailaOinWith(): Prisma.Sql {
         FROM "AutopartSalesDocument" h
         INNER JOIN retaila_owners owner_company ON owner_company.id = h."companyId"
         WHERE h."has504" = TRUE
-          AND UPPER(btrim(h."documentReference")) ~ '^OIN[A-Z0-9]+$'
+          AND h."documentReference" IN (SELECT stored_ref FROM window_refs)
           AND ${headerAccount}
       ) owners
       WHERE owners.doc_ref IS NOT NULL
@@ -194,7 +316,7 @@ function retailaOinWith(): Prisma.Sql {
       FROM doc_owners
       GROUP BY doc_ref
     ),
-    scoped_oin_lines AS (
+    scoped_oin_lines AS MATERIALIZED (
       SELECT
         c.id,
         CASE
@@ -278,7 +400,7 @@ function retailaOinWith(): Prisma.Sql {
         FROM "AutopartSalesDocument" d
         LEFT JOIN doc_identity ident ON ident.doc_ref = UPPER(btrim(d."documentReference"))
         WHERE d."has504" = TRUE
-          AND UPPER(btrim(d."documentReference")) ~ '^OIN[A-Z0-9]+$'
+          AND d."documentReference" IN (SELECT stored_ref FROM window_refs)
           AND ${goodsAccount}
       ) h
       LEFT JOIN preferred_lines pl
@@ -301,7 +423,7 @@ function retailaOinWith(): Prisma.Sql {
            WHERE g.company_key = ds.company_key AND g.doc_ref = ds.doc_ref
          )
     ),
-    counted_oin_lines AS (
+    counted_oin_lines AS MATERIALIZED (
       SELECT p.*
       FROM scoped_oin_lines p
       INNER JOIN doc_status ds ON ds.company_key = p.company_key AND ds.doc_ref = p.doc_ref
@@ -315,7 +437,10 @@ function retailaOinWith(): Prisma.Sql {
     proven_ledger AS (
       SELECT d.id, d."documentReference", d."documentType", d."documentDate"
       FROM "FbaReplenishmentDocument" d
-      WHERE ${ledgerAccount}
+      WHERE d."documentDate" >= ${range.from}
+        AND d."documentDate" < ${range.toExclusive}
+        AND ${ledgerAccount}
+        ${ledgerSku}
         AND NOT EXISTS (
           SELECT 1 FROM scoped_oin_lines s
           WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
@@ -326,10 +451,13 @@ function retailaOinWith(): Prisma.Sql {
     review_ledger AS (
       SELECT d.id, d."documentReference", d."documentType", d."documentDate"
       FROM "FbaReplenishmentDocument" d
-      WHERE (
+      WHERE d."documentDate" >= ${range.from}
+        AND d."documentDate" < ${range.toExclusive}
+        AND (
           btrim(d."customerAccount") = ''
           OR (${ledgerAccount} AND ${foreignDocument})
         )
+        ${ledgerSku}
         AND NOT EXISTS (
           SELECT 1 FROM scoped_oin_lines s
           WHERE s.doc_ref = UPPER(btrim(d."documentReference"))
@@ -346,84 +474,36 @@ function num(value: { toString(): string } | number | string | null | undefined)
   return Number.isFinite(n) ? n : 0;
 }
 
-function dateOnly(value: Date | null | undefined): string | null {
+function dateOnly(value: Date | string | null | undefined): string | null {
   if (!value) return null;
+  if (typeof value === "string") return value.slice(0, 10);
   return value.toISOString().slice(0, 10);
 }
 
-export async function loadRetailaOinUnits(range: {
-  from: Date;
-  toExclusive: Date;
-}): Promise<Array<{ matchKey: string; sku: string; units: number }>> {
-  const rows = await prisma.$queryRaw<
-    Array<{ matchKey: string; sku: string; units: Prisma.Decimal }>
-  >`
-    ${retailaOinWith()}
-    , counted_window AS (
-      SELECT sku_key AS "matchKey", MAX(sku) AS sku, SUM(signed_qty) AS units
-      FROM counted_oin_lines
-      WHERE doc_date >= ${range.from} AND doc_date < ${range.toExclusive}
-      GROUP BY sku_key
-    ),
-    ledger_window AS (
-      SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku, SUM(l.qty) AS units
-      FROM "FbaReplenishmentLine" l
-      INNER JOIN proven_ledger d ON d.id = l."documentId"
-      WHERE l."supersededAt" IS NULL
-        AND d."documentDate" >= ${range.from}
-        AND d."documentDate" < ${range.toExclusive}
-      GROUP BY l."matchKey"
-    )
-    SELECT "matchKey", MAX(sku) AS sku, SUM(units) AS units
-    FROM (
-      SELECT * FROM counted_window
-      UNION ALL
-      SELECT * FROM ledger_window
-    ) combined
-    GROUP BY "matchKey"
-  `;
-  return rows.map((row) => ({ matchKey: row.matchKey, sku: row.sku, units: num(row.units) }));
-}
-
-export async function loadRetailaOinHealth(): Promise<RetailaOinHealth> {
-  const rows = await prisma.$queryRaw<
-    Array<{
-      documents: number;
-      lines: number;
-      latest: Date | null;
-      historicDocuments: number;
-      ongoingDocuments: number;
-      issues: number;
-      undatedLines: number;
-      ledgerOnlyDocuments: number;
-    }>
-  >`
-    ${retailaOinWith()}
-    SELECT
-      (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines) AS documents,
-      (SELECT COUNT(*)::int FROM counted_oin_lines) AS lines,
-      (SELECT MAX(doc_date) FROM counted_oin_lines) AS latest,
-      (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines WHERE source = '561L') AS "historicDocuments",
-      (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines WHERE source = 'ONGOING_TRM21QC') AS "ongoingDocuments",
-      (SELECT COUNT(*)::int FROM issue_oin_documents) AS issues,
-      (SELECT COUNT(*)::int FROM counted_oin_lines WHERE doc_date IS NULL) AS "undatedLines",
-      (SELECT COUNT(*)::int FROM proven_ledger) AS "ledgerOnlyDocuments"
-  `;
-  const row = rows[0];
+function healthFrom(range: RetailaOinRange, row: {
+  documents: number | null;
+  lines: number | null;
+  latest: Date | null;
+  historicDocuments: number | null;
+  ongoingDocuments: number | null;
+  issues: number | null;
+  undatedLines: number | null;
+  ledgerOnlyDocuments: number | null;
+} | undefined): RetailaOinHealth {
   const documents = row?.documents ?? 0;
   const issueCount = row?.issues ?? 0;
   let warning: string | null = null;
   if (documents === 0 && issueCount === 0) {
-    warning =
-      "No RETAILA OIN invoices are in the Autopart sales history. Replenishment history stays empty until those invoices are stored there. This page does not ask for the same 504 and TRM files again.";
+    warning = `No RETAILA OIN invoices are in the last ${range.days} days of Autopart sales history. Replenishment history stays empty until those invoices are stored there. This page does not ask for the same 504 and TRM files again.`;
   } else if (issueCount > 0) {
-    warning = `${issueCount.toLocaleString("en-GB")} RETAILA OIN document${issueCount === 1 ? "" : "s"} need review. Those quantities are left out so a correction is not counted twice.`;
+    warning = `${issueCount.toLocaleString("en-GB")} RETAILA OIN document${issueCount === 1 ? "" : "s"} in the last ${range.days} days need review. Those quantities are left out so a correction is not counted twice.`;
   } else if ((row?.undatedLines ?? 0) > 0) {
     warning =
-      "Some RETAILA OIN lines have no document date, so they are shown in history and left out of the 90-day cadence.";
+      "Some RETAILA OIN lines in this window have no document date, so they are shown in history and left out of the cadence.";
   }
   return {
     account: RETAILA_AUTOPART_ACCOUNT,
+    days: range.days,
     documents,
     lines: row?.lines ?? 0,
     latestDocumentDate: dateOnly(row?.latest),
@@ -436,126 +516,245 @@ export async function loadRetailaOinHealth(): Promise<RetailaOinHealth> {
   };
 }
 
+export async function loadRetailaOinReport(
+  range: RetailaOinRange,
+): Promise<{ health: RetailaOinHealth; units: Array<{ matchKey: string; sku: string; units: number }> }> {
+  return withForecastQuery((db) => readRetailaOinReport(range, db));
+}
+
+async function readRetailaOinReport(
+  range: RetailaOinRange,
+  db: ForecastDb,
+): Promise<{ health: RetailaOinHealth; units: Array<{ matchKey: string; sku: string; units: number }> }> {
+  const rows = await db.$queryRaw<
+    Array<{
+      section: string;
+      matchKey: string | null;
+      sku: string | null;
+      units: Prisma.Decimal | null;
+      documents: number | null;
+      lines: number | null;
+      latest: Date | null;
+      historicDocuments: number | null;
+      ongoingDocuments: number | null;
+      issues: number | null;
+      undatedLines: number | null;
+      ledgerOnlyDocuments: number | null;
+    }>
+  >`
+    ${retailaOinWith(range)}
+    , sku_totals AS (
+      SELECT sku_key AS "matchKey", MAX(sku) AS sku, SUM(signed_qty) AS units
+      FROM counted_oin_lines
+      GROUP BY sku_key
+    ),
+    ledger_totals AS (
+      SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku, SUM(l.qty) AS units
+      FROM "FbaReplenishmentLine" l
+      INNER JOIN proven_ledger d ON d.id = l."documentId"
+      WHERE l."supersededAt" IS NULL
+      GROUP BY l."matchKey"
+    )
+    SELECT 'sku'::text AS section, "matchKey", MAX(sku) AS sku, SUM(units) AS units,
+      NULL::int AS documents, NULL::int AS lines, NULL::date AS latest,
+      NULL::int AS "historicDocuments", NULL::int AS "ongoingDocuments",
+      NULL::int AS issues, NULL::int AS "undatedLines", NULL::int AS "ledgerOnlyDocuments"
+    FROM (
+      SELECT * FROM sku_totals
+      UNION ALL
+      SELECT * FROM ledger_totals
+    ) combined
+    GROUP BY "matchKey"
+    UNION ALL
+    SELECT 'health'::text, NULL::text, NULL::text, NULL::numeric,
+      (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines),
+      (SELECT COUNT(*)::int FROM counted_oin_lines),
+      (SELECT MAX(doc_date) FROM counted_oin_lines),
+      (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines WHERE source = '561L'),
+      (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines WHERE source = 'ONGOING_TRM21QC'),
+      (SELECT COUNT(*)::int FROM issue_oin_documents),
+      (SELECT COUNT(*)::int FROM counted_oin_lines WHERE doc_date IS NULL),
+      (SELECT COUNT(*)::int FROM proven_ledger)
+  `;
+  const healthRow = rows.find((row) => row.section === "health");
+  return {
+    health: healthFrom(range, healthRow),
+    units: rows
+      .filter((row) => row.section === "sku" && row.matchKey)
+      .map((row) => ({ matchKey: row.matchKey ?? "", sku: row.sku ?? "", units: num(row.units) })),
+  };
+}
+
+export async function explainRetailaOinReport(range: RetailaOinRange): Promise<string> {
+  const rows = await prisma.$queryRaw<Array<{ "QUERY PLAN": string }>>`
+    EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+    ${retailaOinWith(range)}
+    SELECT sku_key AS "matchKey", SUM(signed_qty) AS units
+    FROM counted_oin_lines
+    GROUP BY sku_key
+  `;
+  return rows.map((row) => row["QUERY PLAN"]).join("\n");
+}
+
+function likeTerm(value: string): string {
+  return `%${value.replace(/[\\%_]/g, "").slice(0, 40)}%`;
+}
+
 export async function listRetailaOinHistory(input: {
+  range: RetailaOinRange;
   page: number;
   pageSize: number;
+  q?: string | null;
+  sort?: RetailaOinHistorySort | null;
 }): Promise<{ total: number; documents: RetailaOinHistoryDocument[] }> {
-  const offset = (input.page - 1) * input.pageSize;
-  const [countRows, documents] = await Promise.all([
-    prisma.$queryRaw<Array<{ total: number }>>`
-      ${retailaOinWith()}
-      SELECT (
-        (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines)
-        + (SELECT COUNT(DISTINCT doc_ref)::int FROM issue_oin_documents)
-        + (SELECT COUNT(*)::int FROM proven_ledger)
-        + (SELECT COUNT(*)::int FROM review_ledger)
-      ) AS total
-    `,
-    prisma.$queryRaw<
-      Array<{
-        documentReference: string;
-        documentType: string;
-        documentDate: Date | null;
-        source: string;
-        status: string;
-        units: Prisma.Decimal;
-      }>
-    >`
-      ${retailaOinWith()}
-      , docs AS (
-        SELECT doc_ref AS "documentReference",
-          MIN(doc_type) AS "documentType",
-          MIN(doc_date) AS "documentDate",
-          CASE WHEN bool_or(source = 'ONGOING_TRM21QC') THEN 'ONGOING_TRM21QC' ELSE '561L' END AS source,
-          'COUNTED' AS status,
-          SUM(signed_qty) AS units
-        FROM counted_oin_lines
-        GROUP BY doc_ref
-        UNION ALL
-        SELECT i.doc_ref, MIN(s.doc_type), MIN(s.doc_date), 'BOTH', i.issue, 0::numeric
-        FROM issue_oin_documents i
-        INNER JOIN scoped_oin_lines s ON s.company_key = i.company_key AND s.doc_ref = i.doc_ref
-        GROUP BY i.doc_ref, i.issue
-        UNION ALL
-        SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
-          COALESCE(SUM(l.qty), 0)
-        FROM proven_ledger d
-        LEFT JOIN "FbaReplenishmentLine" l ON l."documentId" = d.id AND l."supersededAt" IS NULL
-        GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
-        UNION ALL
-        SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_REVIEW',
-          0::numeric
-        FROM review_ledger d
-        GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
-      )
+  const page = Math.max(1, input.page);
+  const pageSize = Math.min(50, Math.max(1, input.pageSize));
+  const offset = (page - 1) * pageSize;
+  const q = input.q?.trim().toUpperCase() ?? "";
+  const sort = input.sort === "reference" || input.sort === "units" ? input.sort : "date";
+  const orderSql =
+    sort === "reference"
+      ? Prisma.sql`"documentReference" ASC, "documentDate" DESC NULLS LAST`
+      : sort === "units"
+        ? Prisma.sql`units DESC, "documentDate" DESC NULLS LAST, "documentReference" ASC`
+        : Prisma.sql`"documentDate" DESC NULLS LAST, "documentReference" ASC`;
+  const filterSql = q
+    ? Prisma.sql`(
+        docs.doc_ref LIKE ${likeTerm(q)}
+        OR EXISTS (
+          SELECT 1 FROM scoped_oin_lines s
+          WHERE s.doc_ref = docs.doc_ref AND (s.sku_key LIKE ${likeTerm(q)} OR s.sku LIKE ${likeTerm(q)})
+        )
+        OR EXISTS (
+          SELECT 1 FROM "FbaReplenishmentLine" ledger_line
+          WHERE ledger_line."documentId" = docs.ledger_id
+            AND ledger_line."supersededAt" IS NULL
+            AND ledger_line."matchKey" LIKE ${likeTerm(q)}
+        )
+      )`
+    : Prisma.sql`TRUE`;
+  const rows = await withForecastQuery((db) => db.$queryRaw<
+    Array<{
+      documentReference: string;
+      documentType: string;
+      documentDate: Date | null;
+      source: string;
+      status: string;
+      units: Prisma.Decimal;
+      total: number;
+      lines: unknown;
+    }>
+  >`
+    ${retailaOinWith(input.range)}
+    , docs AS (
+      SELECT doc_ref,
+        NULL::text AS ledger_id,
+        MIN(doc_type) AS doc_type,
+        MIN(doc_date) AS doc_date,
+        CASE WHEN bool_or(source = 'ONGOING_TRM21QC') THEN 'ONGOING_TRM21QC' ELSE '561L' END AS source,
+        'COUNTED'::text AS status,
+        SUM(signed_qty) AS units
+      FROM counted_oin_lines
+      GROUP BY doc_ref
+      UNION ALL
+      SELECT i.doc_ref, NULL::text, MIN(s.doc_type), MIN(s.doc_date), 'BOTH', i.issue, 0::numeric
+      FROM issue_oin_documents i
+      INNER JOIN scoped_oin_lines s ON s.company_key = i.company_key AND s.doc_ref = i.doc_ref
+      GROUP BY i.doc_ref, i.issue
+      UNION ALL
+      SELECT UPPER(btrim(d."documentReference")), d.id, d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
+        COALESCE(SUM(l.qty), 0)
+      FROM proven_ledger d
+      LEFT JOIN "FbaReplenishmentLine" l ON l."documentId" = d.id AND l."supersededAt" IS NULL
+      GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
+      UNION ALL
+      SELECT UPPER(btrim(d."documentReference")), d.id, d."documentType", d."documentDate", 'LEDGER', 'LEDGER_REVIEW',
+        0::numeric
+      FROM review_ledger d
+      GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
+    ),
+    filtered AS (
       SELECT * FROM docs
-      ORDER BY "documentDate" DESC NULLS LAST, "documentReference"
-      LIMIT ${input.pageSize} OFFSET ${offset}
-    `,
-  ]);
-  const refs = documents.map((row) => row.documentReference);
-  const lines = refs.length
-    ? await prisma.$queryRaw<
-        Array<{
-          documentReference: string;
-          sku: string;
-          description: string | null;
-          units: Prisma.Decimal;
-          source: string;
-        }>
-      >`
-        ${retailaOinWith()}
-        SELECT doc_ref AS "documentReference", sku, description, signed_qty AS units, source
-        FROM counted_oin_lines
-        WHERE doc_ref IN (${Prisma.join(refs)})
-        UNION ALL
-        SELECT s.doc_ref, s.sku, s.description, s.signed_qty, s.source
-        FROM scoped_oin_lines s
-        INNER JOIN issue_oin_documents i ON i.company_key = s.company_key AND i.doc_ref = s.doc_ref
-        WHERE s.doc_ref IN (${Prisma.join(refs)})
-        UNION ALL
-        SELECT UPPER(btrim(d."documentReference")), l.sku, l.description, l.qty, 'LEDGER'
-        FROM "FbaReplenishmentLine" l
-        INNER JOIN proven_ledger d ON d.id = l."documentId"
-        WHERE l."supersededAt" IS NULL
-          AND UPPER(btrim(d."documentReference")) IN (${Prisma.join(refs)})
-        UNION ALL
-        SELECT UPPER(btrim(d."documentReference")), l.sku, l.description, l.qty, 'LEDGER'
-        FROM "FbaReplenishmentLine" l
-        INNER JOIN review_ledger d ON d.id = l."documentId"
-        WHERE l."supersededAt" IS NULL
-          AND UPPER(btrim(d."documentReference")) IN (${Prisma.join(refs)})
-      `
-    : [];
-  const byRef = new Map<string, RetailaOinHistoryLine[]>();
-  for (const line of lines) {
-    const list = byRef.get(line.documentReference) ?? [];
-    list.push({
-      sku: line.sku,
-      description: line.description,
-      units: num(line.units),
-      source: line.source,
-    });
-    byRef.set(line.documentReference, list);
-  }
+      WHERE ${filterSql}
+    ),
+    paged AS (
+      SELECT filtered.*, COUNT(*) OVER ()::int AS total
+      FROM filtered
+    )
+    SELECT
+      paged.doc_ref AS "documentReference",
+      paged.doc_type AS "documentType",
+      paged.doc_date AS "documentDate",
+      paged.source,
+      paged.status,
+      paged.units,
+      paged.total,
+      COALESCE((
+        SELECT json_agg(json_build_object(
+          'sku', line.sku,
+          'description', line.description,
+          'units', line.units,
+          'source', line.source
+        ) ORDER BY line.sku, line.source)
+        FROM (
+          SELECT c.sku, c.description, c.signed_qty AS units, c.source
+          FROM counted_oin_lines c
+          WHERE c.doc_ref = paged.doc_ref AND paged.status = 'COUNTED'
+          UNION ALL
+          SELECT s.sku, s.description, s.signed_qty, s.source
+          FROM scoped_oin_lines s
+          WHERE s.doc_ref = paged.doc_ref
+            AND paged.status NOT IN ('COUNTED', 'LEDGER_ONLY', 'LEDGER_REVIEW')
+          UNION ALL
+          SELECT l.sku, l.description,
+            CASE WHEN paged.status = 'LEDGER_REVIEW' THEN 0::numeric ELSE l.qty END,
+            'LEDGER'
+          FROM "FbaReplenishmentLine" l
+          WHERE l."documentId" = paged.ledger_id
+            AND l."supersededAt" IS NULL
+            AND paged.status IN ('LEDGER_ONLY', 'LEDGER_REVIEW')
+        ) line
+      ), '[]'::json) AS lines
+    FROM paged
+    ORDER BY ${orderSql}
+    LIMIT ${pageSize} OFFSET ${offset}
+  `);
   return {
-    total: countRows[0]?.total ?? 0,
-    documents: documents.map((row) => ({
+    total: rows[0]?.total ?? 0,
+    documents: rows.map((row) => ({
       documentReference: row.documentReference,
       documentType: row.documentType,
       documentDate: dateOnly(row.documentDate),
       source: row.source,
       status: row.status as RetailaOinHistoryDocument["status"],
       units: num(row.units),
-      lines: byRef.get(row.documentReference) ?? [],
+      lines: parseLines(row.lines),
     })),
   };
 }
 
+function parseLines(value: unknown): RetailaOinHistoryLine[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const line = item as { sku?: unknown; description?: unknown; units?: unknown; source?: unknown };
+    if (typeof line.sku !== "string") return [];
+    return [
+      {
+        sku: line.sku,
+        description: typeof line.description === "string" ? line.description : null,
+        units: num(typeof line.units === "number" || typeof line.units === "string" ? line.units : 0),
+        source: typeof line.source === "string" ? line.source : "",
+      },
+    ];
+  });
+}
+
 export async function listRetailaOinLinesForSku(
   matchKey: string,
+  range: RetailaOinRange,
 ): Promise<RetailaOinHistoryDocument[]> {
-  const rows = await prisma.$queryRaw<
+  const rows = await withForecastQuery((db) => db.$queryRaw<
     Array<{
       documentReference: string;
       documentType: string;
@@ -567,7 +766,7 @@ export async function listRetailaOinLinesForSku(
       units: Prisma.Decimal;
     }>
   >`
-    ${retailaOinWith()}
+    ${retailaOinWith(range, matchKey)}
     SELECT doc_ref AS "documentReference", doc_type AS "documentType", doc_date AS "documentDate",
       source, 'COUNTED' AS status, sku, description, signed_qty AS units
     FROM counted_oin_lines
@@ -592,7 +791,8 @@ export async function listRetailaOinLinesForSku(
     WHERE l."supersededAt" IS NULL
       AND l."matchKey" = ${matchKey}
     ORDER BY "documentDate" DESC NULLS LAST, "documentReference"
-  `;
+    LIMIT 100
+  `);
   const grouped = new Map<string, RetailaOinHistoryDocument>();
   for (const row of rows) {
     const key = `${row.status}|${row.documentReference}`;
