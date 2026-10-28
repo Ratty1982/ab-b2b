@@ -50,12 +50,24 @@ export type RetailaSalesWindows = {
   d365: number | null;
 };
 
+export type RetailaSalesActivity = {
+  d30: boolean;
+  d90: boolean;
+  d365: boolean;
+};
+
 export type RetailaSkuSales = {
   matchKey: string;
   sku: string;
   /** Dated units inside the requested range. Null when every counted line is undated. */
   units: number | null;
   windows: RetailaSalesWindows;
+  /**
+   * True when a counted positive invoice falls in that window.
+   * A later credit does not remove the flag. A credit with no invoice does not set it.
+   * A window wider than this scan is false: the rows were not read, so the flag is not a claim of zero sales.
+   */
+  sold: RetailaSalesActivity;
 };
 
 /** Start of an inner window, or null when that window is wider than the rows already scanned. */
@@ -83,9 +95,36 @@ function salesWindowCutoffs(range: RetailaOinRange): {
 }
 
 /** Sum dated quantities in one window. A window wider than the scan stays null. */
-function datedWindowSum(cutoff: Date | null, range: RetailaOinRange, dateSql: Prisma.Sql, qtySql: Prisma.Sql): Prisma.Sql {
+function datedWindowSum(
+  cutoff: Date | null,
+  range: RetailaOinRange,
+  dateSql: Prisma.Sql,
+  qtySql: Prisma.Sql,
+): Prisma.Sql {
   if (!cutoff) return Prisma.sql`NULL::numeric`;
   return Prisma.sql`COALESCE(SUM(${qtySql}) FILTER (WHERE ${dateSql} >= ${cutoff} AND ${dateSql} < ${range.toExclusive}), 0)`;
+}
+
+/**
+ * A counted invoice with a positive quantity inside the window.
+ * Net units are not used: a sale that was later credited still counts, and a credit alone does not.
+ * A window wider than the scan is false because those invoices were not read.
+ */
+function positiveInvoiceInWindow(
+  cutoff: Date | null,
+  range: RetailaOinRange,
+  dateSql: Prisma.Sql,
+  typeSql: Prisma.Sql,
+  qtySql: Prisma.Sql,
+): Prisma.Sql {
+  if (!cutoff) return Prisma.sql`FALSE`;
+  return Prisma.sql`COALESCE(BOOL_OR(
+    ${typeSql} = 'INVOICE'
+    AND ${qtySql} > 0
+    AND ${dateSql} IS NOT NULL
+    AND ${dateSql} >= ${cutoff}
+    AND ${dateSql} < ${range.toExclusive}
+  ), FALSE)`;
 }
 
 /**
@@ -123,7 +162,9 @@ export class ForecastQueryError extends Error {
 
 export function retailaWindowDays(value: unknown): RetailaOinWindowDays {
   const days = typeof value === "number" ? value : Number(value);
-  return RETAILA_OIN_WINDOW_DAYS.some((item) => item === days) ? (days as RetailaOinWindowDays) : DEFAULT_RETAILA_OIN_WINDOW_DAYS;
+  return RETAILA_OIN_WINDOW_DAYS.some((item) => item === days)
+    ? (days as RetailaOinWindowDays)
+    : DEFAULT_RETAILA_OIN_WINDOW_DAYS;
 }
 
 export function retailaOinRange(todayIso: string, days: unknown): RetailaOinRange {
@@ -138,7 +179,9 @@ export function retailaOinRange(todayIso: string, days: unknown): RetailaOinRang
 
 type ForecastDb = Prisma.TransactionClient | typeof prisma;
 
-export async function withForecastQuery<T>(run: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+export async function withForecastQuery<T>(
+  run: (db: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
   try {
     return await prisma.$transaction(
       async (tx) => {
@@ -536,16 +579,21 @@ function dateOnly(value: Date | string | null | undefined): string | null {
   return value.toISOString().slice(0, 10);
 }
 
-function healthFrom(range: RetailaOinRange, row: {
-  documents: number | null;
-  lines: number | null;
-  latest: Date | null;
-  historicDocuments: number | null;
-  ongoingDocuments: number | null;
-  issues: number | null;
-  undatedLines: number | null;
-  ledgerOnlyDocuments: number | null;
-} | undefined): RetailaOinHealth {
+function healthFrom(
+  range: RetailaOinRange,
+  row:
+    | {
+        documents: number | null;
+        lines: number | null;
+        latest: Date | null;
+        historicDocuments: number | null;
+        ongoingDocuments: number | null;
+        issues: number | null;
+        undatedLines: number | null;
+        ledgerOnlyDocuments: number | null;
+      }
+    | undefined,
+): RetailaOinHealth {
   const documents = row?.documents ?? 0;
   const issueCount = row?.issues ?? 0;
   let warning: string | null = null;
@@ -599,6 +647,9 @@ async function readRetailaOinReport(
       d60: Prisma.Decimal | null;
       d90: Prisma.Decimal | null;
       d365: Prisma.Decimal | null;
+      sold30: boolean | null;
+      sold90: boolean | null;
+      sold365: boolean | null;
       documents: number | null;
       lines: number | null;
       latest: Date | null;
@@ -617,7 +668,10 @@ async function readRetailaOinReport(
         ${skuWindow(cuts.d30, range)} AS d30,
         ${skuWindow(cuts.d60, range)} AS d60,
         ${skuWindow(cuts.d90, range)} AS d90,
-        ${skuWindow(cuts.d365, range)} AS d365
+        ${skuWindow(cuts.d365, range)} AS d365,
+        ${positiveInvoiceInWindow(cuts.d30, range, Prisma.sql`doc_date`, Prisma.sql`doc_type`, Prisma.sql`signed_qty`)} AS sold30,
+        ${positiveInvoiceInWindow(cuts.d90, range, Prisma.sql`doc_date`, Prisma.sql`doc_type`, Prisma.sql`signed_qty`)} AS sold90,
+        ${positiveInvoiceInWindow(cuts.d365, range, Prisma.sql`doc_date`, Prisma.sql`doc_type`, Prisma.sql`signed_qty`)} AS sold365
       FROM counted_oin_lines
       GROUP BY sku_key
     ),
@@ -628,7 +682,10 @@ async function readRetailaOinReport(
         ${datedWindowSum(cuts.d30, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d30,
         ${datedWindowSum(cuts.d60, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d60,
         ${datedWindowSum(cuts.d90, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d90,
-        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d365
+        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d365,
+        ${positiveInvoiceInWindow(cuts.d30, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS sold30,
+        ${positiveInvoiceInWindow(cuts.d90, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS sold90,
+        ${positiveInvoiceInWindow(cuts.d365, range, Prisma.sql`d."documentDate"`, Prisma.sql`d."documentType"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS sold365
       FROM "FbaReplenishmentLine" l
       INNER JOIN proven_ledger d ON d.id = l."documentId"
       WHERE l."supersededAt" IS NULL
@@ -636,6 +693,7 @@ async function readRetailaOinReport(
     )
     SELECT 'sku'::text AS section, "matchKey", MAX(sku) AS sku,
       SUM(units) AS units, SUM(d7) AS d7, SUM(d30) AS d30, SUM(d60) AS d60, SUM(d90) AS d90, SUM(d365) AS d365,
+      BOOL_OR(sold30) AS sold30, BOOL_OR(sold90) AS sold90, BOOL_OR(sold365) AS sold365,
       NULL::int AS documents, NULL::int AS lines, NULL::date AS latest,
       NULL::int AS "historicDocuments", NULL::int AS "ongoingDocuments",
       NULL::int AS issues, NULL::int AS "undatedLines", NULL::int AS "ledgerOnlyDocuments"
@@ -648,6 +706,7 @@ async function readRetailaOinReport(
     UNION ALL
     SELECT 'health'::text, NULL::text, NULL::text, NULL::numeric,
       NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric,
+      NULL::boolean, NULL::boolean, NULL::boolean,
       (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines),
       (SELECT COUNT(*)::int FROM counted_oin_lines),
       (SELECT MAX(doc_date) FROM counted_oin_lines),
@@ -672,6 +731,11 @@ async function readRetailaOinReport(
           d60: row.d60 == null ? null : num(row.d60),
           d90: row.d90 == null ? null : num(row.d90),
           d365: row.d365 == null ? null : num(row.d365),
+        },
+        sold: {
+          d30: row.sold30 === true,
+          d90: row.sold90 === true,
+          d365: row.sold365 === true,
         },
       })),
   };
@@ -732,18 +796,19 @@ export async function listRetailaOinHistory(input: {
         )
       )`
     : Prisma.sql`TRUE`;
-  const rows = await withForecastQuery((db) => db.$queryRaw<
-    Array<{
-      documentReference: string;
-      documentType: string;
-      documentDate: Date | null;
-      source: string;
-      status: string;
-      units: Prisma.Decimal;
-      total: number;
-      lines: unknown;
-    }>
-  >`
+  const rows = await withForecastQuery(
+    (db) => db.$queryRaw<
+      Array<{
+        documentReference: string;
+        documentType: string;
+        documentDate: Date | null;
+        source: string;
+        status: string;
+        units: Prisma.Decimal;
+        total: number;
+        lines: unknown;
+      }>
+    >`
     ${retailaOinWith(input.range)}
     , docs AS (
       SELECT doc_ref,
@@ -820,7 +885,8 @@ export async function listRetailaOinHistory(input: {
     FROM paged
     ORDER BY ${orderSql}
     LIMIT ${pageSize} OFFSET ${offset}
-  `);
+  `,
+  );
   return {
     total: rows[0]?.total ?? 0,
     documents: rows.map((row) => ({
@@ -839,13 +905,20 @@ function parseLines(value: unknown): RetailaOinHistoryLine[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
-    const line = item as { sku?: unknown; description?: unknown; units?: unknown; source?: unknown };
+    const line = item as {
+      sku?: unknown;
+      description?: unknown;
+      units?: unknown;
+      source?: unknown;
+    };
     if (typeof line.sku !== "string") return [];
     return [
       {
         sku: line.sku,
         description: typeof line.description === "string" ? line.description : null,
-        units: num(typeof line.units === "number" || typeof line.units === "string" ? line.units : 0),
+        units: num(
+          typeof line.units === "number" || typeof line.units === "string" ? line.units : 0,
+        ),
         source: typeof line.source === "string" ? line.source : "",
       },
     ];
@@ -856,18 +929,19 @@ export async function listRetailaOinLinesForSku(
   matchKey: string,
   range: RetailaOinRange,
 ): Promise<RetailaOinHistoryDocument[]> {
-  const rows = await withForecastQuery((db) => db.$queryRaw<
-    Array<{
-      documentReference: string;
-      documentType: string;
-      documentDate: Date | null;
-      source: string;
-      status: string;
-      sku: string;
-      description: string | null;
-      units: Prisma.Decimal;
-    }>
-  >`
+  const rows = await withForecastQuery(
+    (db) => db.$queryRaw<
+      Array<{
+        documentReference: string;
+        documentType: string;
+        documentDate: Date | null;
+        source: string;
+        status: string;
+        sku: string;
+        description: string | null;
+        units: Prisma.Decimal;
+      }>
+    >`
     ${retailaOinWith(range, matchKey)}
     SELECT doc_ref AS "documentReference", doc_type AS "documentType", doc_date AS "documentDate",
       source, 'COUNTED' AS status, sku, description, signed_qty AS units
@@ -894,7 +968,8 @@ export async function listRetailaOinLinesForSku(
       AND l."matchKey" = ${matchKey}
     ORDER BY "documentDate" DESC NULLS LAST, "documentReference"
     LIMIT 100
-  `);
+  `,
+  );
   const grouped = new Map<string, RetailaOinHistoryDocument>();
   for (const row of rows) {
     const key = `${row.status}|${row.documentReference}`;
