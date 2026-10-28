@@ -31,9 +31,11 @@ It is also not proven Amazon UK FBA sell-through. `AutopartSalesDocument` and `A
 The page exposes two explicit modes (`plan` search parameter; omitted means verified FBA):
 
 1. **Verified FBA forecast** — the latest Amazon sales extract, only when it declares marketplace `AMAZON_UK`, fulfilment `FBA`, and complete coverage for the last 30 days. A SKU missing from that complete extract is zero for the covered window. Without that extract, no shipment is suggested. Verified RETAILA quantities stay visible, with weekly sales `net 30 / 30 × 7`. Dividing FBA stock by that weekly rate is an unverified illustrative comparison. It is not Amazon FBA cover and it is not used for a shipment.
-2. **RETAILA sales-based planning** — an explicitly labelled planning proxy. A Super Admin must record justification and scope in Settings before recommendations unlock. Approval is audited (`fba.retaila_planning.approve` / `fba.retaila_planning.disable`) and can be disabled. Outputs are planning estimates, never claimed as verified Amazon UK FBA sell-through. Until approved, sales and illustrative cover stay visible and actionable shipment recommendations stay locked (`PLANNING_NOT_APPROVED`).
+2. **RETAILA sales-based planning** — an explicitly labelled planning proxy. A Super Admin must record a business justification in Settings before recommendations unlock. Approval is **global for all eligible RETAILA SKUs** (`ALL_ELIGIBLE_RETAILA_SKUS`); free text does not restrict products. Approve/disable and the audit row commit in one Prisma transaction via `recordAuditEventInTransaction`. Outputs are planning estimates, never claimed as verified Amazon UK FBA sell-through. Until approved, sales and illustrative cover stay visible and actionable shipment recommendations stay locked (`PLANNING_NOT_APPROVED`).
 
-Unavailable forecasts use actionable blockers such as `DEMAND_SOURCE_UNVERIFIED`, `PLANNING_NOT_APPROVED`, `RETAILA_SALES_UNKNOWN`, `MISSING_FBA_STOCK`, `STALE_FBA_STOCK`, and `SETTINGS_INCOMPLETE`. Products with RETAILA sales are not classified as missing sales when the blocker is a missing Amazon extract.
+Planning also requires verified Autopart **504 + TRM21QC** import coverage for Autopart working days in the last 30 days (excluding today). Invoice document dates alone do not prove feed completeness. Incomplete or stale reporting blocks recommendations with `RETAILA_REPORTING_INCOMPLETE` while historical sales stay visible. When coverage is verified, a SKU with no RETAILA invoices is treated as zero planning demand.
+
+Unavailable forecasts use actionable blockers such as `DEMAND_SOURCE_UNVERIFIED`, `PLANNING_NOT_APPROVED`, `RETAILA_REPORTING_INCOMPLETE`, `RETAILA_SALES_UNKNOWN`, `MISSING_FBA_STOCK`, `STALE_FBA_STOCK`, and `SETTINGS_INCOMPLETE`. Products with RETAILA sales are not classified as missing sales when the blocker is a missing Amazon extract.
 
 ### Diagnosis of “Forecast Unavailable” with RETAILA sales present
 
@@ -80,6 +82,10 @@ Studley shortfall = `max(0, suggested − Studley)`, the units still to buy. Dis
 Recommendations: Send Now, Send Soon, Healthy, Overstocked, Insufficient Data. Missing sales, missing FBA stock, or a stale OPTIMUS snapshot is Insufficient Data and the suggested quantity is blank. Confidence is Medium when 30-day sales and fresh FBA stock both exist, otherwise None. The 7-, 90- and 365-day figures are comparisons only.
 
 Nothing on this page creates an order, deducts stock, or publishes a shipment.
+
+## Data & Imports workspace
+
+Amazon FBA → **Data & Imports** is the central place to upload OPTIMUS / 231PO3NEW FBA UK stock (`FbaStockImportPanel` via `previewFbaStockImportFn` / `importFbaStockFn` / `listFbaStockImportsFn`), import the Amazon UK sales CSV, record confirmed inbound, and review source freshness. Stock Forecast keeps a read-only FBA/Studley view and links here for uploads. A successful FBA stock import refreshes the Overview and freshness figures. Autopart 231PO3NEW calculations and Studley processing are unchanged.
 
 ## Ledger and safety
 

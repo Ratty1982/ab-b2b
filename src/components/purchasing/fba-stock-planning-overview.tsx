@@ -59,9 +59,21 @@ type Workspace = {
   retailaPlanning: {
     enabled: boolean;
     justification: string | null;
+    scopePolicy: string;
     scope: string | null;
     approvedAt: string | null;
     approvedByUserId: string | null;
+  };
+  retailaReporting: {
+    complete: boolean;
+    stale: boolean;
+    planningAllowed: boolean;
+    missingWeekdays: string[];
+    last504Day: string | null;
+    lastTrmDay: string | null;
+    windowFrom: string;
+    windowTo: string;
+    reason: string;
   };
   canApproveRetailaPlanning: boolean;
   brands: string[];
@@ -138,6 +150,7 @@ const FOCUS_OPTIONS: Array<{ value: "" | FbaFocusFilter; label: string }> = [
   { value: "no_studley", label: "No Studley stock" },
   { value: "shortfall", label: "Purchasing shortfall" },
   { value: "unavailable", label: "Forecast unavailable" },
+  { value: "needs_review", label: "Needs review" },
 ];
 
 function tone(recommendation: FbaRecommendation): Tone {
@@ -264,13 +277,18 @@ export function FbaStockPlanningOverview({
           {plan === "fba"
             ? "Uses a covered Amazon UK FBA sales extract only. RETAILA invoices stay visible and are never added to that extract."
             : data?.retailaPlanning.enabled
-              ? "Uses verified RETAILA customer sales as an approved planning proxy. Outputs are estimates, not verified Amazon UK FBA sell-through."
+              ? "Uses verified RETAILA customer sales as an approved planning proxy for all eligible RETAILA SKUs. Outputs are estimates, not verified Amazon UK FBA sell-through."
               : "RETAILA sales and illustrative cover stay visible. Shipment recommendations stay locked until a Super Admin records the business relationship."}
         </p>
         {plan === "retaila" && data && !data.retailaPlanning.enabled ? (
           <p className="border border-border bg-surface/50 px-3 py-2 text-[13px] text-steel">
-            Planning mode is not approved. Open Settings to record justification and scope if you are
-            a Super Admin.
+            Planning mode is not approved. Open Settings to record the business justification if you
+            are a Super Admin. Approval applies globally to every eligible RETAILA SKU.
+          </p>
+        ) : null}
+        {plan === "retaila" && data?.retailaPlanning.enabled && data.retailaReporting ? (
+          <p className="border border-border bg-surface/50 px-3 py-2 text-[13px] text-steel">
+            {data.retailaReporting.reason}
           </p>
         ) : null}
       </div>
@@ -362,10 +380,11 @@ export function FbaStockPlanningOverview({
           label="Needs review"
           value={count(data?.summary.needsReview)}
           hint="Send actions, shortfalls, or unavailable forecasts"
-          active={search.focus === "unavailable"}
+          active={search.focus === "needs_review"}
           onClick={() =>
             patch({
-              focus: search.focus === "unavailable" ? undefined : "unavailable",
+              focus: search.focus === "needs_review" ? undefined : "needs_review",
+              blocker: undefined,
               page: undefined,
             })
           }

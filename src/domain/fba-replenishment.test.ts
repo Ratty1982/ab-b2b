@@ -397,6 +397,7 @@ describe("FBA shipment forecast", () => {
       amazonNetUnits30: null,
       retailaNetUnits30: 90,
       retailaPlanningApproved: false,
+      retailaReportingComplete: false,
     });
     expect(blocked.source).toBe("NONE");
     expect(blocked.netUnits30).toBeNull();
@@ -418,6 +419,7 @@ describe("FBA shipment forecast", () => {
       amazonNetUnits30: 10,
       retailaNetUnits30: 90,
       retailaPlanningApproved: false,
+      retailaReportingComplete: false,
     });
     expect(chosen.source).toBe("AMAZON_UK_FBA_CSV");
     expect(chosen.netUnits30).toBe(10);
@@ -431,23 +433,39 @@ describe("FBA shipment forecast", () => {
       amazonNetUnits30: null,
       retailaNetUnits30: 90,
       retailaPlanningApproved: false,
+      retailaReportingComplete: true,
     });
     expect(locked.source).toBe("NONE");
     expect(locked.blocker).toBe("PLANNING_NOT_APPROVED");
-    const unknown = selectFbaDemand({
+    const incomplete = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: 90,
+      retailaPlanningApproved: true,
+      retailaReportingComplete: false,
+      retailaReportingReason: "Missing import days",
+    });
+    expect(incomplete.blocker).toBe("RETAILA_REPORTING_INCOMPLETE");
+    expect(incomplete.salesSupported).toBe(false);
+    const zeroSales = selectFbaDemand({
       plan: "retaila",
       amazonWindowSupported: false,
       amazonNetUnits30: null,
       retailaNetUnits30: null,
       retailaPlanningApproved: true,
+      retailaReportingComplete: true,
     });
-    expect(unknown.blocker).toBe("RETAILA_SALES_UNKNOWN");
+    expect(zeroSales.source).toBe("RETAILA_PLANNING");
+    expect(zeroSales.netUnits30).toBe(0);
+    expect(zeroSales.blocker).toBeNull();
     const proxy = selectFbaDemand({
       plan: "retaila",
       amazonWindowSupported: true,
       amazonNetUnits30: 10,
       retailaNetUnits30: 90,
       retailaPlanningApproved: true,
+      retailaReportingComplete: true,
     });
     expect(proxy.source).toBe("RETAILA_PLANNING");
     expect(proxy.netUnits30).toBe(90);

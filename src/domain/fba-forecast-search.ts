@@ -15,8 +15,24 @@ export const FBA_FOCUS_FILTERS = [
   "no_studley",
   "shortfall",
   "unavailable",
+  "needs_review",
 ] as const;
 export type FbaFocusFilter = (typeof FBA_FOCUS_FILTERS)[number];
+
+/** Matches the Overview “Needs review” card: send actions, shortfalls, or unavailable. */
+export function rowNeedsReview(row: {
+  forecast: {
+    recommendation: string;
+    studleyShortfallQty: number | null;
+  };
+}): boolean {
+  return (
+    row.forecast.recommendation === "SEND_NOW" ||
+    row.forecast.recommendation === "SEND_SOON" ||
+    row.forecast.recommendation === "INSUFFICIENT_DATA" ||
+    (row.forecast.studleyShortfallQty != null && row.forecast.studleyShortfallQty > 0)
+  );
+}
 
 export function isFbaSalesActivity(value: unknown): value is FbaSalesActivity {
   return value === "365" || value === "90" || value === "30" || value === "all";
@@ -32,7 +48,8 @@ export function isFbaFocusFilter(value: unknown): value is FbaFocusFilter {
     value === "no_fba" ||
     value === "no_studley" ||
     value === "shortfall" ||
-    value === "unavailable"
+    value === "unavailable" ||
+    value === "needs_review"
   );
 }
 

@@ -77,6 +77,7 @@ export function roundDownToCaseMultiple(qty: number, multiple: number | null): n
 export const FBA_FORECAST_BLOCKERS = [
   "DEMAND_SOURCE_UNVERIFIED",
   "PLANNING_NOT_APPROVED",
+  "RETAILA_REPORTING_INCOMPLETE",
   "RETAILA_SALES_UNKNOWN",
   "MISSING_FBA_STOCK",
   "STALE_FBA_STOCK",
@@ -87,11 +88,16 @@ export type FbaForecastBlocker = (typeof FBA_FORECAST_BLOCKERS)[number];
 export const FBA_FORECAST_BLOCKER_LABEL: Record<FbaForecastBlocker, string> = {
   DEMAND_SOURCE_UNVERIFIED: "Demand source not verified",
   PLANNING_NOT_APPROVED: "RETAILA planning not approved",
-  RETAILA_SALES_UNKNOWN: "Sales coverage incomplete",
+  RETAILA_REPORTING_INCOMPLETE: "RETAILA reporting coverage incomplete",
+  RETAILA_SALES_UNKNOWN: "Sales figure unavailable",
   MISSING_FBA_STOCK: "FBA stock missing",
   STALE_FBA_STOCK: "FBA stock snapshot stale",
   SETTINGS_INCOMPLETE: "Forecast settings incomplete",
 };
+
+/** Approval always applies to every eligible RETAILA SKU. Free text does not restrict products. */
+export const RETAILA_PLANNING_SCOPE_POLICY = "ALL_ELIGIBLE_RETAILA_SKUS" as const;
+export type RetailaPlanningScopePolicy = typeof RETAILA_PLANNING_SCOPE_POLICY;
 
 export type FbaCoverBasis = "verified_amazon" | "retaila_planning" | "illustrative" | "none";
 
@@ -658,7 +664,8 @@ export type FbaDemandDecision = {
 /**
  * One source, never a sum.
  * Verified FBA mode uses the Amazon UK FBA extract only when coverage, marketplace and fulfilment are proven.
- * RETAILA planning mode uses verified customer sales only after Super Admin approval of the business relationship.
+ * RETAILA planning mode uses verified customer sales only after Super Admin approval of the business relationship
+ * and only when Autopart 504/TRM reporting coverage for the window is verified.
  */
 export function selectFbaDemand(input: {
   plan: FbaPlanningMode;
@@ -666,6 +673,9 @@ export function selectFbaDemand(input: {
   amazonNetUnits30: number | null;
   retailaNetUnits30: number | null;
   retailaPlanningApproved: boolean;
+  /** Successful daily 504+TRM import coverage for the planning window. */
+  retailaReportingComplete: boolean;
+  retailaReportingReason?: string;
 }): FbaDemandDecision {
   if (input.plan === "fba") {
     if (input.amazonWindowSupported) {
@@ -700,28 +710,33 @@ export function selectFbaDemand(input: {
       netUnits30: null,
       label: "RETAILA planning locked",
       reason:
-        "A Super Admin must record the business relationship between RETAILA invoice sales and FBA stock before this planning mode can produce recommendations. Sales and illustrative cover stay visible.",
+        "A Super Admin must record the business relationship between RETAILA invoice sales and FBA stock before this planning mode can produce recommendations. Approval applies to all eligible RETAILA SKUs. Sales and illustrative cover stay visible.",
       blocker: "PLANNING_NOT_APPROVED",
     };
   }
-  if (input.retailaNetUnits30 == null) {
+  if (!input.retailaReportingComplete) {
     return {
       source: "NONE",
       salesSupported: false,
       netUnits30: null,
-      label: "RETAILA sales unknown",
+      label: "RETAILA reporting incomplete",
       reason:
-        "No verified RETAILA customer-sales figure covers the last 30 days for this SKU. A missing sales row is not treated as zero demand.",
-      blocker: "RETAILA_SALES_UNKNOWN",
+        input.retailaReportingReason ??
+        "Successful Autopart 504 and TRM21QC imports do not cover the planning window. Invoice dates alone do not prove feed completeness. Historical sales stay visible.",
+      blocker: "RETAILA_REPORTING_INCOMPLETE",
     };
   }
+  // With verified reporting coverage, a SKU absent from RETAILA invoices is zero for the window.
+  const units = input.retailaNetUnits30 ?? 0;
   return {
     source: "RETAILA_PLANNING",
     salesSupported: true,
-    netUnits30: input.retailaNetUnits30,
+    netUnits30: units,
     label: "RETAILA customer sales (planning proxy)",
     reason:
-      "RETAILA invoice sales are used as an explicitly approved planning proxy. They are not proven Amazon UK FBA sell-through and are not combined with an Amazon extract.",
+      input.retailaNetUnits30 == null
+        ? "Autopart reporting covers the window and this SKU has no RETAILA invoices in the last 30 days, so planning demand is zero. This is not verified Amazon UK FBA sell-through."
+        : "RETAILA invoice sales are used as an explicitly approved planning proxy for all eligible RETAILA SKUs. They are not proven Amazon UK FBA sell-through and are not combined with an Amazon extract.",
     blocker: null,
   };
 }

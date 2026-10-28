@@ -23,12 +23,17 @@ import {
   reconcileOinDocumentLines,
   rejectUnprovenFbaSales,
   rejectUnprovenUkMarketplace,
+  RETAILA_PLANNING_SCOPE_POLICY,
   type FbaCoverBasis,
   type FbaDemandDecision,
   type FbaForecastBlocker,
   type FbaForecastResult,
   type OinException,
 } from "@/domain/fba-replenishment";
+import {
+  assessRetailaReportingCoverage,
+  type RetailaImportDayMark,
+} from "@/domain/fba-retaila-reporting-coverage";
 import {
   FBA_LOCATION_CODE,
   FBA_STOCK_STALE_AFTER_DAYS,
@@ -41,6 +46,7 @@ import {
   isFbaFocusFilter,
   isFbaPlanningMode,
   isFbaSalesActivity,
+  rowNeedsReview,
   type FbaFocusFilter,
   type FbaForecastSort,
   type FbaPlanningModeSearch,
@@ -50,7 +56,8 @@ import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-peri
 import { skuMatchKey } from "@/domain/stock";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingSection } from "@/server/rbac/guards";
-import { recordAuditEvent } from "@/server/audit/record";
+import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
+import type { AuditEventInput } from "@/server/audit/types";
 import {
   FBA_FORECAST_DISABLED_MESSAGE,
   fbaForecastReportingDisabled,
@@ -422,8 +429,21 @@ export async function updateFbaForecastSettings(actorUserId: string, raw: unknow
 
 const retailaPlanningInput = z.object({
   justification: z.string().trim().min(20).max(2000),
-  scope: z.string().trim().min(10).max(1000),
 });
+
+type RetailaPlanningAuditWriter = (
+  tx: Prisma.TransactionClient,
+  input: AuditEventInput,
+) => Promise<void>;
+
+let retailaPlanningAuditWriter: RetailaPlanningAuditWriter = recordAuditEventInTransaction;
+
+/** Test-only hook so audit persistence failures can prove transactional rollback. */
+export function setRetailaPlanningAuditWriterForTests(
+  writer: RetailaPlanningAuditWriter | null,
+): void {
+  retailaPlanningAuditWriter = writer ?? recordAuditEventInTransaction;
+}
 
 export async function approveRetailaPlanning(actorUserId: string, raw: unknown) {
   assertFbaForecastReportingEnabled();
@@ -431,49 +451,53 @@ export async function approveRetailaPlanning(actorUserId: string, raw: unknown) 
   const input = retailaPlanningInput.parse(raw);
   const now = new Date();
   const before = await prisma.fbaForecastSettings.findUnique({ where: { id: "default" } });
-  const saved = await prisma.fbaForecastSettings.upsert({
-    where: { id: "default" },
-    create: {
-      id: "default",
-      retailaPlanningEnabled: true,
-      retailaPlanningJustification: input.justification,
-      retailaPlanningScope: input.scope,
-      retailaPlanningApprovedByUserId: actorUserId,
-      retailaPlanningApprovedAt: now,
-      retailaPlanningDisabledByUserId: null,
-      retailaPlanningDisabledAt: null,
-      updatedByUserId: actorUserId,
-    },
-    update: {
-      retailaPlanningEnabled: true,
-      retailaPlanningJustification: input.justification,
-      retailaPlanningScope: input.scope,
-      retailaPlanningApprovedByUserId: actorUserId,
-      retailaPlanningApprovedAt: now,
-      retailaPlanningDisabledByUserId: null,
-      retailaPlanningDisabledAt: null,
-      updatedByUserId: actorUserId,
-    },
-  });
-  await recordAuditEvent({
-    action: "fba.retaila_planning.approve",
-    entityType: "FbaForecastSettings",
-    entityId: saved.id,
-    actorUserId,
-    before: before
-      ? {
-          enabled: before.retailaPlanningEnabled,
-          approvedByUserId: before.retailaPlanningApprovedByUserId,
-          approvedAt: before.retailaPlanningApprovedAt?.toISOString() ?? null,
-        }
-      : null,
-    after: {
-      enabled: true,
-      justification: input.justification,
-      scope: input.scope,
-      approvedByUserId: actorUserId,
-      approvedAt: now.toISOString(),
-    },
+  const saved = await prisma.$transaction(async (tx) => {
+    const row = await tx.fbaForecastSettings.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        retailaPlanningEnabled: true,
+        retailaPlanningJustification: input.justification,
+        retailaPlanningScope: RETAILA_PLANNING_SCOPE_POLICY,
+        retailaPlanningApprovedByUserId: actorUserId,
+        retailaPlanningApprovedAt: now,
+        retailaPlanningDisabledByUserId: null,
+        retailaPlanningDisabledAt: null,
+        updatedByUserId: actorUserId,
+      },
+      update: {
+        retailaPlanningEnabled: true,
+        retailaPlanningJustification: input.justification,
+        retailaPlanningScope: RETAILA_PLANNING_SCOPE_POLICY,
+        retailaPlanningApprovedByUserId: actorUserId,
+        retailaPlanningApprovedAt: now,
+        retailaPlanningDisabledByUserId: null,
+        retailaPlanningDisabledAt: null,
+        updatedByUserId: actorUserId,
+      },
+    });
+    await retailaPlanningAuditWriter(tx, {
+      action: "fba.retaila_planning.approve",
+      entityType: "FbaForecastSettings",
+      entityId: row.id,
+      actorUserId,
+      before: before
+        ? {
+            enabled: before.retailaPlanningEnabled,
+            scopePolicy: before.retailaPlanningScope,
+            approvedByUserId: before.retailaPlanningApprovedByUserId,
+            approvedAt: before.retailaPlanningApprovedAt?.toISOString() ?? null,
+          }
+        : null,
+      after: {
+        enabled: true,
+        justification: input.justification,
+        scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+        approvedByUserId: actorUserId,
+        approvedAt: now.toISOString(),
+      },
+    });
+    return row;
   });
   return retailaPlanningState(saved);
 }
@@ -483,39 +507,45 @@ export async function disableRetailaPlanning(actorUserId: string) {
   await requireSuperAdmin(actorUserId);
   const now = new Date();
   const before = await prisma.fbaForecastSettings.findUnique({ where: { id: "default" } });
-  const saved = await prisma.fbaForecastSettings.upsert({
-    where: { id: "default" },
-    create: {
-      id: "default",
-      retailaPlanningEnabled: false,
-      retailaPlanningDisabledByUserId: actorUserId,
-      retailaPlanningDisabledAt: now,
-      updatedByUserId: actorUserId,
-    },
-    update: {
-      retailaPlanningEnabled: false,
-      retailaPlanningDisabledByUserId: actorUserId,
-      retailaPlanningDisabledAt: now,
-      updatedByUserId: actorUserId,
-    },
-  });
-  await recordAuditEvent({
-    action: "fba.retaila_planning.disable",
-    entityType: "FbaForecastSettings",
-    entityId: saved.id,
-    actorUserId,
-    before: before
-      ? {
-          enabled: before.retailaPlanningEnabled,
-          approvedByUserId: before.retailaPlanningApprovedByUserId,
-          approvedAt: before.retailaPlanningApprovedAt?.toISOString() ?? null,
-        }
-      : null,
-    after: {
-      enabled: false,
-      disabledByUserId: actorUserId,
-      disabledAt: now.toISOString(),
-    },
+  const saved = await prisma.$transaction(async (tx) => {
+    const row = await tx.fbaForecastSettings.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        retailaPlanningEnabled: false,
+        retailaPlanningScope: RETAILA_PLANNING_SCOPE_POLICY,
+        retailaPlanningDisabledByUserId: actorUserId,
+        retailaPlanningDisabledAt: now,
+        updatedByUserId: actorUserId,
+      },
+      update: {
+        retailaPlanningEnabled: false,
+        retailaPlanningDisabledByUserId: actorUserId,
+        retailaPlanningDisabledAt: now,
+        updatedByUserId: actorUserId,
+      },
+    });
+    await retailaPlanningAuditWriter(tx, {
+      action: "fba.retaila_planning.disable",
+      entityType: "FbaForecastSettings",
+      entityId: row.id,
+      actorUserId,
+      before: before
+        ? {
+            enabled: before.retailaPlanningEnabled,
+            scopePolicy: before.retailaPlanningScope,
+            approvedByUserId: before.retailaPlanningApprovedByUserId,
+            approvedAt: before.retailaPlanningApprovedAt?.toISOString() ?? null,
+          }
+        : null,
+      after: {
+        enabled: false,
+        scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+        disabledByUserId: actorUserId,
+        disabledAt: now.toISOString(),
+      },
+    });
+    return row;
   });
   return retailaPlanningState(saved);
 }
@@ -532,12 +562,32 @@ function retailaPlanningState(row: {
   return {
     enabled: row.retailaPlanningEnabled,
     justification: row.retailaPlanningJustification,
-    scope: row.retailaPlanningScope,
+    /** Always global for eligible RETAILA SKUs — free text does not filter products. */
+    scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+    scope: RETAILA_PLANNING_SCOPE_POLICY,
     approvedByUserId: row.retailaPlanningApprovedByUserId,
     approvedAt: row.retailaPlanningApprovedAt?.toISOString() ?? null,
     disabledByUserId: row.retailaPlanningDisabledByUserId,
     disabledAt: row.retailaPlanningDisabledAt?.toISOString() ?? null,
   };
+}
+
+async function loadRetailaReportingCoverage(today: string) {
+  const windowFrom = lastNDaysRange(today, 30).from;
+  const fromInstant = new Date(`${windowFrom}T00:00:00.000Z`);
+  const runs = await prisma.autopartCustomerImportRun.findMany({
+    where: {
+      status: "COMMITTED",
+      type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] },
+      OR: [{ completedAt: { gte: fromInstant } }, { createdAt: { gte: fromInstant } }],
+    },
+    select: { type: true, completedAt: true, createdAt: true },
+  });
+  const marks: RetailaImportDayMark[] = runs.map((run) => ({
+    type: run.type as "ONGOING_504" | "ONGOING_TRM21QC",
+    londonDay: todayLondonDateOnly(run.completedAt ?? run.createdAt),
+  }));
+  return assessRetailaReportingCoverage({ marks, today, includeToday: false });
 }
 
 const inboundInput = z.object({
@@ -623,7 +673,10 @@ const listInput = z.object({
   sort: z.enum(["priority", "cover", "velocity", "suggested", "sales"]).optional().nullable(),
   sold: z.enum(["365", "90", "30", "all"]).optional().nullable(),
   plan: z.enum(["fba", "retaila"]).optional().nullable(),
-  focus: z.enum(["low_cover", "no_fba", "no_studley", "shortfall", "unavailable"]).optional().nullable(),
+  focus: z
+    .enum(["low_cover", "no_fba", "no_studley", "shortfall", "unavailable", "needs_review"])
+    .optional()
+    .nullable(),
   blocker: z.enum(FBA_FORECAST_BLOCKERS).optional().nullable(),
   page: z.number().int().positive().optional().nullable(),
   exportAll: z.boolean().optional().nullable(),
@@ -674,7 +727,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     : {
         enabled: false,
         justification: null,
-        scope: null,
+        scopePolicy: RETAILA_PLANNING_SCOPE_POLICY,
+        scope: RETAILA_PLANNING_SCOPE_POLICY,
         approvedByUserId: null,
         approvedAt: null,
         disabledByUserId: null,
@@ -686,13 +740,14 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     input.blocker && (FBA_FORECAST_BLOCKERS as readonly string[]).includes(input.blocker)
       ? input.blocker
       : null;
-  const [salesImport, fbaImport, overrides] = await Promise.all([
+  const [salesImport, fbaImport, overrides, retailaReporting] = await Promise.all([
     prisma.fbaAmazonSalesImport.findFirst({ orderBy: { importedAt: "desc" } }),
     prisma.autopartFbaStockImport.findFirst({
       orderBy: { importedAt: "desc" },
       select: { importedAt: true, fileName: true },
     }),
     prisma.fbaSkuForecastOverride.findMany(),
+    loadRetailaReportingCoverage(today),
   ]);
   const stale = fbaStockIsStale(fbaImport?.importedAt ?? null);
   const ranges = {
@@ -910,6 +965,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
       retailaNetUnits30: item.customerSales.d30,
       retailaPlanningApproved: retailaPlanning.enabled,
+      retailaReportingComplete: retailaReporting.planningAllowed,
+      retailaReportingReason: retailaReporting.reason,
     });
     const customerWeekly = averageWeeklySales(item.customerSales.d30);
     const projected: FbaForecastResult = projectFbaShipment({
@@ -994,13 +1051,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     lowCover: activityRows.filter(
       (row) => row.activeCoverWeeks != null && row.activeCoverWeeks <= leadWeeks,
     ).length,
-    needsReview: activityRows.filter(
-      (row) =>
-        row.forecast.recommendation === "SEND_NOW" ||
-        row.forecast.recommendation === "SEND_SOON" ||
-        row.forecast.recommendation === "INSUFFICIENT_DATA" ||
-        (row.forecast.studleyShortfallQty != null && row.forecast.studleyShortfallQty > 0),
-    ).length,
+    needsReview: activityRows.filter((row) => rowNeedsReview(row)).length,
     blockers: blockerCounts,
   };
   const brands = [
@@ -1027,6 +1078,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
           return false;
       } else if (focusFilter === "unavailable") {
         if (row.forecast.recommendation !== "INSUFFICIENT_DATA") return false;
+      } else if (focusFilter === "needs_review") {
+        if (!rowNeedsReview(row)) return false;
       }
       if (!q) return true;
       return (
@@ -1081,6 +1134,17 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     salesActivityUnavailable,
     planningMode,
     retailaPlanning,
+    retailaReporting: {
+      complete: retailaReporting.complete,
+      stale: retailaReporting.stale,
+      planningAllowed: retailaReporting.planningAllowed,
+      missingWeekdays: retailaReporting.missingWeekdays,
+      last504Day: retailaReporting.last504Day,
+      lastTrmDay: retailaReporting.lastTrmDay,
+      windowFrom: retailaReporting.windowFrom,
+      windowTo: retailaReporting.windowTo,
+      reason: retailaReporting.reason,
+    },
     canApproveRetailaPlanning: profile.systemRoles.includes("SUPER_ADMIN"),
     brands,
     oin: oinHealth,

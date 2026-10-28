@@ -196,7 +196,6 @@ function FbaForecastPage() {
     caseMultiple: "",
   });
   const [retailaJustification, setRetailaJustification] = useState("");
-  const [retailaScope, setRetailaScope] = useState("");
 
   function patch(next: Partial<Search>) {
     void navigate({ search: { ...search, ...next } });
@@ -241,7 +240,6 @@ function FbaForecastPage() {
         );
         setOverstock(String(result.data.settings.overstockCoverWeeks));
         setRetailaJustification(result.data.retailaPlanning.justification ?? "");
-        setRetailaScope(result.data.retailaPlanning.scope ?? "");
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
@@ -549,9 +547,7 @@ function FbaForecastPage() {
           canApprove={data.canApproveRetailaPlanning}
           retailaPlanning={data.retailaPlanning}
           retailaJustification={retailaJustification}
-          retailaScope={retailaScope}
           setRetailaJustification={setRetailaJustification}
-          setRetailaScope={setRetailaScope}
           lead={lead}
           cover={cover}
           safety={safety}
@@ -584,7 +580,6 @@ function FbaForecastPage() {
                 approveRetailaPlanningFn({
                   data: {
                     justification: retailaJustification.trim(),
-                    scope: retailaScope.trim(),
                   },
                 }),
               "RETAILA planning mode approved. Recommendations stay estimates until Amazon sell-through is verified separately.",
@@ -903,7 +898,35 @@ function ImportsPanel(props: {
 }) {
   const { data, inbound, setInbound } = props;
   return (
-    <div className="grid gap-6 px-4 py-4 sm:px-6 xl:grid-cols-2">
+    <div className="space-y-6 px-4 py-4 sm:px-6">
+      <section className="space-y-3 border border-border p-4" data-fba-stock-upload>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg">FBA UK Stock Upload</h2>
+            <p className="mt-1 text-[13px] text-steel">
+              Central place to import OPTIMUS 231PO3NEW Amazon FBA UK stock. This updates FBA
+              availability used by stock planning. Studley warehouse stock is unchanged.
+            </p>
+          </div>
+          <dl className="grid min-w-[14rem] gap-1 text-[12px] text-steel sm:text-right">
+            <div>
+              <dt className="inline font-semibold uppercase tracking-[0.12em]">Latest file · </dt>
+              <dd className="inline">{data.fbaFileName ?? "None"}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold uppercase tracking-[0.12em]">Imported · </dt>
+              <dd className="inline">{ukDate(data.fbaImportedAt?.slice(0, 10))}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold uppercase tracking-[0.12em]">Stale SKUs · </dt>
+              <dd className="inline">{data.unverifiedFbaSkus.toLocaleString("en-GB")}</dd>
+            </div>
+          </dl>
+        </div>
+        <FbaStockImportPanel canManage={data.canManage} onImported={props.onImported} />
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-2">
       <section className="space-y-3 border border-border p-4">
         <h2 className="font-display text-lg">Amazon UK sales</h2>
         <p className="text-[13px] text-steel">
@@ -971,15 +994,22 @@ function ImportsPanel(props: {
         </button>
       </section>
       <section className="space-y-3 border border-border p-4">
-        <h2 className="font-display text-lg">FBA stock freshness</h2>
+        <h2 className="font-display text-lg">Source & import status</h2>
         <p className="text-[13px] text-steel">
           {data.fbaFileName
-            ? `${data.fbaFileName} was imported ${ukDate(data.fbaImportedAt?.slice(0, 10))}. ${data.unverifiedFbaSkus.toLocaleString("en-GB")} SKUs are not fresh enough to ship against.`
+            ? `FBA stock file ${data.fbaFileName} was imported ${ukDate(data.fbaImportedAt?.slice(0, 10))}. ${data.unverifiedFbaSkus.toLocaleString("en-GB")} SKUs are older than ${data.staleAfterDays} days.`
             : "No OPTIMUS FBA snapshot is stored. A partial file does not refresh SKUs it leaves out."}
         </p>
-        <FbaStockImportPanel canManage={data.canManage} onImported={props.onImported} />
+        <p className="text-[13px] text-steel">
+          {data.sales
+            ? `Amazon UK extract ${data.sales.filename} covers ${ukDate(data.sales.coverageFrom)} to ${ukDate(data.sales.coverageTo)}.`
+            : "No covered Amazon UK FBA sales extract is stored."}
+        </p>
+        <p className="text-[13px] text-steel">{data.retailaReporting.reason}</p>
       </section>
-      <section className="space-y-3 border border-border p-4 xl:col-span-2">
+      </div>
+
+      <section className="space-y-3 border border-border p-4">
         <h2 className="font-display text-lg">Confirmed inbound</h2>
         <p className="text-[13px] text-steel">
           Only stock confirmed in transit reduces the suggested send. An OIN invoice is not in
@@ -1070,9 +1100,7 @@ function SettingsPanel(props: {
   canApprove: boolean;
   retailaPlanning: Data["retailaPlanning"];
   retailaJustification: string;
-  retailaScope: string;
   setRetailaJustification: (value: string) => void;
-  setRetailaScope: (value: string) => void;
   lead: string;
   cover: string;
   safety: string;
@@ -1126,16 +1154,18 @@ function SettingsPanel(props: {
         <p className="text-[13px] text-steel">
           RETAILA OIN invoices are customer sales, not verified Amazon UK FBA sell-through. A Super
           Admin must record the business relationship before this mode can produce planning
-          estimates. Approval does not create orders, shipments, purchases or stock movements.
+          estimates. Approval is global for every eligible RETAILA SKU — it does not filter brands or
+          products. Approval does not create orders, shipments, purchases or stock movements.
+          Planning still requires verified Autopart 504/TRM reporting coverage for the window.
         </p>
         {props.retailaPlanning.enabled ? (
           <div className="space-y-1 border border-border bg-background/40 px-3 py-2 text-[13px]">
             <p>Status: approved planning proxy</p>
+            <p>Scope policy: all eligible RETAILA SKUs</p>
             <p>Approved at: {ukDate(props.retailaPlanning.approvedAt?.slice(0, 10))}</p>
             <p className="font-mono text-[12px]">
               Approver: {props.retailaPlanning.approvedByUserId ?? "—"}
             </p>
-            <p>Scope: {props.retailaPlanning.scope ?? "—"}</p>
             <p>Justification: {props.retailaPlanning.justification ?? "—"}</p>
           </div>
         ) : (
@@ -1150,17 +1180,7 @@ function SettingsPanel(props: {
             className={`${controlClass} mt-1 min-h-24 w-full`}
             value={props.retailaJustification}
             onChange={(event) => props.setRetailaJustification(event.target.value)}
-            placeholder="Explain why RETAILA invoice demand should plan FBA stock for this scope."
-            disabled={!props.canApprove || props.busy}
-          />
-        </label>
-        <label className="block text-[13px]">
-          Scope
-          <textarea
-            className={`${controlClass} mt-1 min-h-20 w-full`}
-            value={props.retailaScope}
-            onChange={(event) => props.setRetailaScope(event.target.value)}
-            placeholder="Brands, SKUs, fulfilment path, or time window covered by this approval."
+            placeholder="Explain why RETAILA invoice demand should plan FBA stock for all eligible RETAILA SKUs."
             disabled={!props.canApprove || props.busy}
           />
         </label>
@@ -1171,8 +1191,7 @@ function SettingsPanel(props: {
             disabled={
               props.busy ||
               !props.canApprove ||
-              props.retailaJustification.trim().length < 20 ||
-              props.retailaScope.trim().length < 10
+              props.retailaJustification.trim().length < 20
             }
             onClick={props.onApproveRetaila}
           >

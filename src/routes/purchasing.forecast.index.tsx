@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { guardStaffPage } from "@/lib/guard-staff-page";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { useEffect, useState } from "react";
@@ -30,7 +30,6 @@ import {
   type ForecastSearch,
   type ForecastSearchPatch,
 } from "@/components/purchasing/workspace";
-import { FbaStockImportPanel } from "@/components/purchasing/fba-stock-import";
 import { BrandSalesTrendDialog, SkuSalesTrendSheet } from "@/components/purchasing/sales-trend-panel";
 import { SalesHistoryVerifyDialog } from "@/components/purchasing/sales-history-verify";
 import { exportStockForecastCsvFn, listPurchasingForecastFn } from "@/server/phase2/fns";
@@ -144,9 +143,17 @@ function StockForecastPage() {
           <SalesHistoryConfidenceBanner />
         </>
       ) : null}
-      {data ? (
-        <FbaStockImportPanel canManage={data.canManage} onImported={() => setReload((value) => value + 1)} />
-      ) : null}
+      <div className="border-b border-border/70 px-4 py-3 text-[13px] text-steel sm:px-6">
+        Upload and manage Amazon FBA UK stock in{" "}
+        <Link
+          to="/purchasing/fba-forecast"
+          search={{ tab: "imports" }}
+          className="font-semibold text-foreground underline-offset-2 hover:underline"
+        >
+          Amazon FBA → Data &amp; Imports
+        </Link>
+        . This page keeps the read-only Studley and FBA stock view.
+      </div>
       {error ? <ErrorState message={error} /> : null}
       <form
         className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6"

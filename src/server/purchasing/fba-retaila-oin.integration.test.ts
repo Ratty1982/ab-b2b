@@ -8,7 +8,8 @@ import { PrismaClient } from "@prisma/client";
 import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { skuMatchKey } from "@/domain/stock";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
-import { projectFbaShipment } from "@/domain/fba-replenishment";
+import { projectFbaShipment, RETAILA_PLANNING_SCOPE_POLICY } from "@/domain/fba-replenishment";
+import { retailaReportingRequiredWeekdays } from "@/domain/fba-retaila-reporting-coverage";
 import {
   approveRetailaPlanning,
   disableRetailaPlanning,
@@ -17,6 +18,7 @@ import {
   getFbaForecastWorkspace,
   getFbaOinHistory,
   importFbaAmazonSales,
+  setRetailaPlanningAuditWriterForTests,
   updateFbaForecastSettings,
 } from "@/server/purchasing/fba-forecast";
 
@@ -987,9 +989,17 @@ describe("RETAILA OIN forecast history", () => {
   });
 
   it("locks RETAILA planning until a Super Admin approves and audits the relationship", async () => {
+    await prisma.autopartCustomerImportRun.deleteMany({
+      where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
+    });
+    await prisma.fbaForecastSettings.update({
+      where: { id: "default" },
+      data: { retailaPlanningEnabled: false },
+    }).catch(() => undefined);
     const locked = await getFbaForecastWorkspace(adminId, { plan: "retaila", sold: "all", q: skuCase });
     expect(locked.retailaPlanning.enabled).toBe(false);
     expect(locked.canApproveRetailaPlanning).toBe(true);
+    expect(locked.retailaPlanning.scopePolicy).toBe(RETAILA_PLANNING_SCOPE_POLICY);
     const lockedRow = locked.rows.find((item) => item.matchKey === skuMatchKey(skuCase));
     expect(lockedRow?.forecast.blocker).toBe("PLANNING_NOT_APPROVED");
     expect(lockedRow?.forecast.suggestedSendQty).toBeNull();
@@ -998,27 +1008,26 @@ describe("RETAILA OIN forecast history", () => {
     await expect(
       approveRetailaPlanning(viewerId, {
         justification: "RETAILA invoices replenish the Amazon FBA UK branch for this account.",
-        scope: "All Automotive Brands SKUs fulfilled via RETAILA OIN.",
       }),
     ).rejects.toThrow(/Purchasing access required|Super Admin/);
 
     const approved = await approveRetailaPlanning(adminId, {
       justification: "RETAILA invoices replenish the Amazon FBA UK branch for this account.",
-      scope: "All Automotive Brands SKUs fulfilled via RETAILA OIN.",
     });
     expect(approved.enabled).toBe(true);
     expect(approved.approvedByUserId).toBe(adminId);
+    expect(approved.scopePolicy).toBe(RETAILA_PLANNING_SCOPE_POLICY);
 
     const planned = await getFbaForecastWorkspace(adminId, {
       plan: "retaila",
       sold: "all",
       q: skuCase,
-      focus: "unavailable",
     });
     expect(planned.retailaPlanning.enabled).toBe(true);
-    // Without RETAILA sales on skuCase, coverage stays incomplete rather than Amazon-unverified.
+    expect(planned.retailaReporting.planningAllowed).toBe(false);
+    // Without verified 504/TRM coverage, recommendations stay blocked while sales stay visible.
     const plannedRow = planned.rows.find((item) => item.matchKey === skuMatchKey(skuCase));
-    expect(plannedRow?.forecast.blocker).toBe("RETAILA_SALES_UNKNOWN");
+    expect(plannedRow?.forecast.blocker).toBe("RETAILA_REPORTING_INCOMPLETE");
     expect(plannedRow?.forecast.planningEstimate).toBe(false);
 
     const audit = await prisma.auditEvent.findFirst({
@@ -1034,5 +1043,143 @@ describe("RETAILA OIN forecast history", () => {
     expect(after.rows.find((item) => item.matchKey === skuMatchKey(skuCase))?.forecast.blocker).toBe(
       "PLANNING_NOT_APPROVED",
     );
+  });
+
+  it("rolls approval and disable back when the audit write fails", async () => {
+    setRetailaPlanningAuditWriterForTests(null);
+    await prisma.fbaForecastSettings.upsert({
+      where: { id: "default" },
+      create: { id: "default", retailaPlanningEnabled: false },
+      update: { retailaPlanningEnabled: false },
+    });
+    setRetailaPlanningAuditWriterForTests(async () => {
+      throw new Error("Simulated retaila planning audit failure");
+    });
+    try {
+      await expect(
+        approveRetailaPlanning(adminId, {
+          justification: "This approval must not persist without an audit row.",
+        }),
+      ).rejects.toThrow("Simulated retaila planning audit failure");
+      const settings = await prisma.fbaForecastSettings.findUnique({ where: { id: "default" } });
+      expect(settings?.retailaPlanningEnabled).toBe(false);
+
+      setRetailaPlanningAuditWriterForTests(null);
+      await approveRetailaPlanning(adminId, {
+        justification: "Enable first so disable rollback can be proven.",
+      });
+      setRetailaPlanningAuditWriterForTests(async () => {
+        throw new Error("Simulated retaila planning disable audit failure");
+      });
+      await expect(disableRetailaPlanning(adminId)).rejects.toThrow(
+        "Simulated retaila planning disable audit failure",
+      );
+      const stillEnabled = await prisma.fbaForecastSettings.findUnique({ where: { id: "default" } });
+      expect(stillEnabled?.retailaPlanningEnabled).toBe(true);
+    } finally {
+      setRetailaPlanningAuditWriterForTests(null);
+      await prisma.fbaForecastSettings.update({
+        where: { id: "default" },
+        data: { retailaPlanningEnabled: false },
+      });
+    }
+  });
+
+  it("blocks RETAILA planning on incomplete reporting and allows zero sales when coverage is verified", async () => {
+    // Disposable DB only: isolate coverage marks for this assertion.
+    await prisma.autopartCustomerImportRun.deleteMany({
+      where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
+    });
+    const londonToday = todayLondonDateOnly();
+    const windowFrom = addDaysIso(londonToday, -29);
+    const required = retailaReportingRequiredWeekdays(windowFrom, addDaysIso(londonToday, -1));
+    expect(required.length).toBeGreaterThan(2);
+    // Leave one weekday without TRM so coverage is incomplete.
+    for (const day of required) {
+      const at = new Date(`${day}T17:00:00.000Z`);
+      await prisma.autopartCustomerImportRun.create({
+        data: {
+          type: "ONGOING_504",
+          status: "COMMITTED",
+          dryRun: false,
+          filename: `504-${day}-${stamp}.txt`,
+          createdAt: at,
+          completedAt: at,
+        },
+      });
+      if (day !== required[0]) {
+        await prisma.autopartCustomerImportRun.create({
+          data: {
+            type: "ONGOING_TRM21QC",
+            status: "COMMITTED",
+            dryRun: false,
+            filename: `trm-${day}-${stamp}.csv`,
+            createdAt: at,
+            completedAt: at,
+          },
+        });
+      }
+    }
+
+    await approveRetailaPlanning(adminId, {
+      justification: "Coverage tests require an approved global RETAILA planning relationship.",
+    });
+    const incomplete = await getFbaForecastWorkspace(adminId, {
+      plan: "retaila",
+      sold: "all",
+      q: skuCase,
+    });
+    expect(incomplete.retailaReporting.planningAllowed).toBe(false);
+    expect(incomplete.rows.find((item) => item.matchKey === skuMatchKey(skuCase))?.forecast.blocker).toBe(
+      "RETAILA_REPORTING_INCOMPLETE",
+    );
+
+    const missingDay = required[0]!;
+    await prisma.autopartCustomerImportRun.create({
+      data: {
+        type: "ONGOING_TRM21QC",
+        status: "COMMITTED",
+        dryRun: false,
+        filename: `trm-fill-${missingDay}-${stamp}.csv`,
+        createdAt: new Date(`${missingDay}T17:30:00.000Z`),
+        completedAt: new Date(`${missingDay}T17:30:00.000Z`),
+      },
+    });
+
+    const complete = await getFbaForecastWorkspace(adminId, {
+      plan: "retaila",
+      sold: "all",
+      q: skuCase,
+    });
+    expect(complete.retailaReporting.planningAllowed).toBe(true);
+    const zeroRow = complete.rows.find((item) => item.matchKey === skuMatchKey(skuCase));
+    // skuCase has no RETAILA invoices; with verified coverage that is zero planning demand.
+    expect(zeroRow?.demand.source).toBe("RETAILA_PLANNING");
+    expect(zeroRow?.forecast.blocker).toBeNull();
+    expect(zeroRow?.forecast.planningEstimate).toBe(true);
+    expect(zeroRow?.forecast.weeklyRate).toBe(0);
+    expect(zeroRow?.forecast.suggestedSendQty).toBe(0);
+
+    // Needs-review focus must match the summary card exactly (send, shortfall, unavailable).
+    const needsReview = await getFbaForecastWorkspace(adminId, {
+      plan: "fba",
+      sold: "all",
+      focus: "needs_review",
+    });
+    expect(needsReview.total).toBe(needsReview.summary.needsReview);
+    expect(needsReview.rows).toHaveLength(needsReview.total);
+    for (const row of needsReview.rows) {
+      const send =
+        row.forecast.recommendation === "SEND_NOW" || row.forecast.recommendation === "SEND_SOON";
+      const unavailable = row.forecast.recommendation === "INSUFFICIENT_DATA";
+      const shortfall =
+        row.forecast.studleyShortfallQty != null && row.forecast.studleyShortfallQty > 0;
+      expect(send || unavailable || shortfall).toBe(true);
+    }
+
+    await disableRetailaPlanning(adminId);
+    await prisma.autopartCustomerImportRun.deleteMany({
+      where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
+    });
   });
 });

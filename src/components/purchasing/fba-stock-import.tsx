@@ -30,8 +30,9 @@ function warningText(warnings: unknown): string {
 }
 
 /**
- * Manual Amazon FBA stock import on Stock Forecast.
- * purchasing.view can read history. purchasing.manage can upload.
+ * Manual Amazon FBA UK stock import (231PO3NEW / OPTIMUS).
+ * Hosted on Amazon FBA → Data & Imports. purchasing.view can read history;
+ * purchasing.manage can upload.
  */
 export function FbaStockImportPanel({
   canManage,
@@ -96,14 +97,17 @@ export function FbaStockImportPanel({
     }
   }
 
+  const latest = history[0] ?? null;
+
   return (
-    <section className="border-b border-border/70 px-4 py-4 sm:px-6" data-fba-import>
+    <section className="border border-border/70 bg-surface/30 px-4 py-4" data-fba-import>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-semibold uppercase">FBA UK Stock Import</h2>
+          <h3 className="font-display text-base font-semibold">Upload 231PO3NEW / OPTIMUS file</h3>
           <p className="mt-1 max-w-3xl text-[13px] text-steel">
             Import Amazon FBA UK stock from the exported 231PO3NEW file. FBA UK stays separate from
-            Studley warehouse stock and is not B2B sellable.
+            Studley warehouse stock and is not B2B sellable. Partial snapshots do not refresh SKUs
+            they omit.
           </p>
         </div>
         {canManage ? (
@@ -120,14 +124,26 @@ export function FbaStockImportPanel({
                 event.currentTarget.value = "";
               }}
             />
-            <label htmlFor="fba-stock-file" className={`${btnClass} ${busy ? "pointer-events-none opacity-50" : ""}`}>
-              Import FBA UK Stock
+            <label htmlFor="fba-stock-file" className={`${primaryBtnClass} ${busy ? "pointer-events-none opacity-50" : ""}`}>
+              Choose FBA stock file
             </label>
           </div>
         ) : (
           <p className="text-[12px] text-steel">Import FBA UK Stock requires purchasing.manage.</p>
         )}
       </div>
+
+      {latest ? (
+        <dl className="mt-3 grid gap-2 border border-border/70 bg-background/40 p-3 text-[13px] sm:grid-cols-2 lg:grid-cols-5">
+          <Stat label="Last import" value={when(latest.importedAt)} />
+          <Stat label="Filename" value={latest.fileName} />
+          <Stat label="Imported by" value={latest.importedBy} />
+          <Stat label="FBA units" value={qty(latest.totalUnits)} />
+          <Stat label="SKUs with stock" value={qty(latest.productsWithStock)} />
+        </dl>
+      ) : (
+        <p className="mt-3 text-[13px] text-steel">No FBA stock imports are stored yet.</p>
+      )}
 
       {error ? (
         <p className="mt-3 border border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive" data-fba-error>

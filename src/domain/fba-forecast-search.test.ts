@@ -33,6 +33,7 @@ describe("FBA forecast sales activity search", () => {
     expect(planningModeSearchValue("retaila")).toBe("retaila");
     expect(isFbaFocusFilter("low_cover")).toBe(true);
     expect(isFbaFocusFilter("unavailable")).toBe(true);
+    expect(isFbaFocusFilter("needs_review")).toBe(true);
     expect(isFbaFocusFilter("missing")).toBe(false);
   });
 });
