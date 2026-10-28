@@ -32,6 +32,7 @@ import {
   fbaStockIsStale,
 } from "@/domain/fba-stock";
 import {
+  compareCustomerSalesRows,
   defaultFbaForecastSort,
   isFbaSalesActivity,
   type FbaForecastSort,
@@ -1014,22 +1015,13 @@ function productSoldIn(sold: RetailaSalesActivity, activity: FbaSalesActivity): 
   return sold.d365;
 }
 
-function netRank(value: number | null): number {
-  return value == null ? Number.NEGATIVE_INFINITY : value;
-}
-
 function compareForecastRows(
   a: { sku: string; customerSales: RetailaSalesWindows; forecast: FbaForecastResult },
   b: { sku: string; customerSales: RetailaSalesWindows; forecast: FbaForecastResult },
   sort: FbaForecastSort,
 ): number {
   if (sort === "sales") {
-    const d30 = netRank(b.customerSales.d30) - netRank(a.customerSales.d30);
-    if (d30 !== 0) return d30;
-    const d90 = netRank(b.customerSales.d90) - netRank(a.customerSales.d90);
-    if (d90 !== 0) return d90;
-    const d365 = netRank(b.customerSales.d365) - netRank(a.customerSales.d365);
-    if (d365 !== 0) return d365;
+    return compareCustomerSalesRows(a, b);
   } else if (sort === "cover") {
     const left = a.forecast.coverWeeks ?? Number.POSITIVE_INFINITY;
     const right = b.forecast.coverWeeks ?? Number.POSITIVE_INFINITY;

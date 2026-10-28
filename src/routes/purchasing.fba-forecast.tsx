@@ -204,6 +204,8 @@ function FbaForecastPage() {
     let cancelled = false;
     setWorkspaceLoading(true);
     setWorkspaceError(null);
+    // Drop the previous page so counts, rows and export cannot belong to another filter.
+    setData(null);
     void settle(
       getFbaForecastWorkspaceFn({
         data: {
@@ -219,6 +221,7 @@ function FbaForecastPage() {
       .then((result) => {
         if (cancelled) return;
         if (!result.ok) {
+          setData(null);
           setWorkspaceError(result.error ?? "The FBA forecast could not be loaded.");
           return;
         }
@@ -235,6 +238,7 @@ function FbaForecastPage() {
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
+        setData(null);
         setWorkspaceError(
           caught instanceof Error ? caught.message : "The FBA forecast could not be loaded.",
         );
@@ -689,15 +693,19 @@ function Overview({
 }) {
   const activity: FbaSalesActivity = search.sold ?? "365";
   const countsHidden = Boolean(data?.salesActivityUnavailable);
-  const count = (value: number | undefined) => (data && !countsHidden ? String(value ?? 0) : "—");
+  const resultsReady = Boolean(data) && !loading;
+  const count = (value: number | undefined) =>
+    resultsReady && !countsHidden ? String(value ?? 0) : "—";
   return (
     <>
       <p className="px-4 pt-4 text-[12px] text-steel sm:px-6">
-        {countsHidden
-          ? "Sales activity could not be checked. Counts stay blank so a failed read is not shown as zero sales."
-          : activity === "all"
-            ? "Counts include every stock product, including products with no RETAILA sales."
-            : `Counts are limited to products with a verified RETAILA invoice in the last ${activity} days.`}
+        {loading
+          ? "Loading products for the selected sales activity…"
+          : countsHidden
+            ? "Sales activity could not be checked. Counts stay blank so a failed read is not shown as zero sales."
+            : activity === "all"
+              ? "Counts include every stock product, including products with no RETAILA sales."
+              : `Counts are limited to products with a verified RETAILA invoice in the last ${activity} days.`}
       </p>
       <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 xl:grid-cols-4">
         <SummaryCard
@@ -813,11 +821,16 @@ function Overview({
         <button className={btnClass} type="submit">
           Search
         </button>
-        <button className={btnClass} type="button" onClick={onExport} disabled={countsHidden}>
+        <button
+          className={btnClass}
+          type="button"
+          onClick={onExport}
+          disabled={!resultsReady || countsHidden}
+        >
           Export
         </button>
       </form>
-      {loading && !data ? <LoadingState label="Loading forecast…" /> : null}
+      {loading ? <LoadingState label="Loading forecast…" /> : null}
       {data?.salesActivityUnavailable ? (
         <div className="space-y-3 px-4 py-6 sm:px-6">
           <EmptyState
