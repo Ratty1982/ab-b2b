@@ -5,7 +5,8 @@
  * within 8 seconds and must not pin the pooled connection afterwards.
  */
 import "@/server/testing/use-protect-integration-database";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { todayLondonDateOnly } from "@/domain/sales-history-period";
@@ -293,7 +294,11 @@ describe("bounded RETAILA OIN report", () => {
     expect(Number(execution?.[1] ?? 99999)).toBeLessThan(RETAILA_OIN_QUERY_BUDGET_MS);
     expect(plan).toMatch(/Index|Bitmap/);
     expect(plan).not.toMatch(/Seq Scan on "AutopartSalesLine"/);
-    writeFileSync("/opt/cursor/artifacts/retaila-oin-explain.txt", plan);
+    const explainPath = process.env["FBA_OIN_EXPLAIN_PATH"]?.trim();
+    if (explainPath) {
+      mkdirSync(dirname(explainPath), { recursive: true });
+      writeFileSync(explainPath, plan);
+    }
 
     const history = await listRetailaOinHistory({ range, page: 1, pageSize: 20, q: stamp, sort: "units" });
     const once = history.documents.find((item) => item.documentReference === `OIN${stamp}A`);
