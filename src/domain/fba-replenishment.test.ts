@@ -398,6 +398,7 @@ describe("FBA shipment forecast", () => {
       retailaNetUnits30: 90,
       retailaPlanningApproved: false,
       retailaReportingComplete: false,
+      retailaInvoicesAvailable: true,
     });
     expect(blocked.source).toBe("NONE");
     expect(blocked.netUnits30).toBeNull();
@@ -420,6 +421,7 @@ describe("FBA shipment forecast", () => {
       retailaNetUnits30: 90,
       retailaPlanningApproved: false,
       retailaReportingComplete: false,
+      retailaInvoicesAvailable: true,
     });
     expect(chosen.source).toBe("AMAZON_UK_FBA_CSV");
     expect(chosen.netUnits30).toBe(10);
@@ -434,6 +436,7 @@ describe("FBA shipment forecast", () => {
       retailaNetUnits30: 90,
       retailaPlanningApproved: false,
       retailaReportingComplete: true,
+      retailaInvoicesAvailable: true,
     });
     expect(locked.source).toBe("NONE");
     expect(locked.blocker).toBe("PLANNING_NOT_APPROVED");
@@ -445,9 +448,23 @@ describe("FBA shipment forecast", () => {
       retailaPlanningApproved: true,
       retailaReportingComplete: false,
       retailaReportingReason: "Missing import days",
+      retailaInvoicesAvailable: true,
     });
     expect(incomplete.blocker).toBe("RETAILA_REPORTING_INCOMPLETE");
     expect(incomplete.salesSupported).toBe(false);
+    const failedInvoices = selectFbaDemand({
+      plan: "retaila",
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: null,
+      retailaPlanningApproved: true,
+      retailaReportingComplete: true,
+      retailaInvoicesAvailable: false,
+    });
+    expect(failedInvoices.source).toBe("NONE");
+    expect(failedInvoices.netUnits30).toBeNull();
+    expect(failedInvoices.blocker).toBe("RETAILA_SALES_UNKNOWN");
+    expect(failedInvoices.reason).toMatch(/not treated as zero/i);
     const zeroSales = selectFbaDemand({
       plan: "retaila",
       amazonWindowSupported: false,
@@ -455,6 +472,7 @@ describe("FBA shipment forecast", () => {
       retailaNetUnits30: null,
       retailaPlanningApproved: true,
       retailaReportingComplete: true,
+      retailaInvoicesAvailable: true,
     });
     expect(zeroSales.source).toBe("RETAILA_PLANNING");
     expect(zeroSales.netUnits30).toBe(0);
@@ -466,6 +484,7 @@ describe("FBA shipment forecast", () => {
       retailaNetUnits30: 90,
       retailaPlanningApproved: true,
       retailaReportingComplete: true,
+      retailaInvoicesAvailable: true,
     });
     expect(proxy.source).toBe("RETAILA_PLANNING");
     expect(proxy.netUnits30).toBe(90);

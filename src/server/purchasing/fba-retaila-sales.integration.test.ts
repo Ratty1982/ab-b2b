@@ -320,15 +320,94 @@ describe("RETAILA OIN customer sales windows", () => {
     const win = report.units.find((row) => row.matchKey === skuMatchKey(`WIN${stamp}`));
     expect(win?.windows).toEqual({ d7: 3, d30: 3, d60: 11, d90: 11, d365: 13 });
     expect(win?.sold).toEqual({ d30: true, d90: true, d365: true });
+    // Display d30 includes today; planning demand uses 30 completed days ending yesterday.
+    expect(win?.planningNet30).toBe(0);
     const duplicated = report.units.find((row) => row.matchKey === skuMatchKey(`DUP${stamp}`));
     expect(duplicated?.windows.d30).toBe(5);
     expect(duplicated?.sold.d30).toBe(true);
+    expect(duplicated?.planningNet30).toBe(0);
     const credited = report.units.find((row) => row.matchKey === skuMatchKey(`NEG${stamp}`));
     expect(credited?.windows.d30).toBe(-2);
     expect(credited?.sold).toEqual({ d30: false, d90: false, d365: false });
+    expect(credited?.planningNet30).toBe(0);
     expect(report.units.some((row) => row.matchKey === skuMatchKey(`AMB${stamp}`))).toBe(false);
     expect(report.units.some((row) => row.matchKey === skuMatchKey(`UND${stamp}`))).toBe(false);
     expect(report.units.some((row) => row.sku.includes("NOISE"))).toBe(false);
+  }, 30_000);
+
+  it("puts yesterday's sales in planning demand while keeping today's sales on the display window", async () => {
+    const planRef = `OIN${stamp}P`;
+    const planSku = `PLAN${stamp}`;
+    const yesterdayDoc = await prisma.autopartSalesDocument.create({
+      data: {
+        id: `${stamp}-plan-y`,
+        companyId: retailaId,
+        autopartCustomerCode: "RETAILA",
+        documentType: "INVOICE",
+        documentReference: planRef,
+        documentDate: at(1),
+        has504: false,
+        hasTrm21qc: true,
+        source: "ONGOING_504",
+        goodsNet: "70.00",
+      },
+    });
+    const todayDoc = await prisma.autopartSalesDocument.create({
+      data: {
+        id: `${stamp}-plan-t`,
+        companyId: retailaId,
+        autopartCustomerCode: "RETAILA",
+        documentType: "INVOICE",
+        documentReference: `${planRef}T`,
+        documentDate: at(0),
+        has504: false,
+        hasTrm21qc: true,
+        source: "ONGOING_504",
+        goodsNet: "20.00",
+      },
+    });
+    await prisma.autopartSalesLine.createMany({
+      data: [
+        {
+          id: `${stamp}-plan-yl`,
+          documentId: yesterdayDoc.id,
+          companyId: retailaId,
+          autopartCustomerCode: "RETAILA",
+          documentType: "INVOICE",
+          documentReference: planRef,
+          lineNumber: 1,
+          sku: planSku,
+          units: 7,
+          salesNet: "70.00",
+          source: "ONGOING_TRM21QC",
+        },
+        {
+          id: `${stamp}-plan-tl`,
+          documentId: todayDoc.id,
+          companyId: retailaId,
+          autopartCustomerCode: "RETAILA",
+          documentType: "INVOICE",
+          documentReference: `${planRef}T`,
+          lineNumber: 1,
+          sku: planSku,
+          units: 2,
+          salesNet: "20.00",
+          source: "ONGOING_TRM21QC",
+        },
+      ],
+    });
+
+    const report = await loadRetailaOinReport(retailaOinRange(today, 365));
+    const row = report.units.find((item) => item.matchKey === skuMatchKey(planSku));
+    expect(row?.windows.d30).toBe(9);
+    expect(row?.planningNet30).toBe(7);
+    expect(row?.sold.d30).toBe(true);
+
+    const workspace = await getFbaForecastWorkspace(adminId, { q: planSku, sold: "all" });
+    const forecastRow = workspace.rows.find((item) => item.matchKey === skuMatchKey(planSku));
+    expect(forecastRow?.customerSales.d30).toBe(9);
+    expect(workspace.planningWindow.to).toBe(addDaysIso(today, -1));
+    expect(workspace.planningWindow.days).toBe(30);
   }, 30_000);
 
   it("shows the RETAILA sales and does not recommend a shipment from them", async () => {

@@ -75,6 +75,13 @@ type Workspace = {
     windowTo: string;
     reason: string;
   };
+  planningWindow: {
+    from: string;
+    to: string;
+    days: number;
+    label: string;
+  };
+  retailaInvoicesAvailable: boolean;
   canApproveRetailaPlanning: boolean;
   brands: string[];
   oin: {
@@ -247,6 +254,8 @@ export function FbaStockPlanningOverview({
   const activity: FbaSalesActivity = search.sold ?? "365";
   const plan: FbaPlanningModeSearch = search.plan ?? "fba";
   const countsHidden = Boolean(data?.salesActivityUnavailable);
+  const retailaPlanningBlocked =
+    plan === "retaila" && data != null && !data.retailaInvoicesAvailable;
   const resultsReady = Boolean(data) && !loading;
   const count = (value: number | undefined) =>
     resultsReady && !countsHidden ? String(value ?? 0) : "—";
@@ -286,10 +295,22 @@ export function FbaStockPlanningOverview({
             are a Super Admin. Approval applies globally to every eligible RETAILA SKU.
           </p>
         ) : null}
-        {plan === "retaila" && data?.retailaPlanning.enabled && data.retailaReporting ? (
-          <p className="border border-border bg-surface/50 px-3 py-2 text-[13px] text-steel">
-            {data.retailaReporting.reason}
-          </p>
+        {plan === "retaila" && data ? (
+          <div className="space-y-2 border border-border bg-surface/50 px-3 py-2 text-[13px] text-steel">
+            <p>
+              Planning window: {data.planningWindow.label} ({ukDate(data.planningWindow.from)}–
+              {ukDate(data.planningWindow.to)}). Today is excluded so the evening Autopart report is
+              not required during the day.
+            </p>
+            {!data.retailaInvoicesAvailable ? (
+              <p>
+                RETAILA invoice reconciliation failed. Planning estimates stay disabled — missing
+                sales are not treated as zero demand.
+              </p>
+            ) : data.retailaPlanning.enabled ? (
+              <p>{data.retailaReporting.reason}</p>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -537,7 +558,12 @@ export function FbaStockPlanningOverview({
           className={btnClass}
           type="button"
           onClick={onExport}
-          disabled={!resultsReady || countsHidden}
+          disabled={!resultsReady || countsHidden || retailaPlanningBlocked}
+          title={
+            retailaPlanningBlocked
+              ? "RETAILA invoices are unavailable — export is blocked so missing sales are not written as zero demand."
+              : undefined
+          }
         >
           Export
         </button>

@@ -6,7 +6,17 @@ import "@/server/testing/use-protect-integration-database";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { skuMatchKey } from "@/domain/stock";
-import { exportFbaForecastCsv, getFbaForecastWorkspace } from "@/server/purchasing/fba-forecast";
+import {
+  retailaCompletedDaysWindow,
+  retailaReportingRequiredWeekdays,
+} from "@/domain/fba-retaila-reporting-coverage";
+import { todayLondonDateOnly } from "@/domain/sales-history-period";
+import {
+  approveRetailaPlanning,
+  disableRetailaPlanning,
+  exportFbaForecastCsv,
+  getFbaForecastWorkspace,
+} from "@/server/purchasing/fba-forecast";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 
 const control = vi.hoisted(() => ({ failOin: false }));
@@ -107,10 +117,78 @@ describe("failed RETAILA sales do not become zero sales", () => {
     const catalogue = await getFbaForecastWorkspace(adminId, { q: stockSku, sold: "all" });
     expect(catalogue.salesActivityUnavailable).toBe(false);
     expect(catalogue.oinUnavailable ?? "").toMatch(/too long/);
+    expect(catalogue.retailaInvoicesAvailable).toBe(false);
     const row = catalogue.rows.find((item) => item.matchKey === skuMatchKey(stockSku));
     expect(row?.customerSales.d365).toBeNull();
     expect(row?.customerSales.d30).toBeNull();
     expect(row?.forecast.recommendation).toBe("INSUFFICIENT_DATA");
     expect(row?.forecast.suggestedSendQty).toBeNull();
   }, 30_000);
+
+  it("does not treat a failed invoice read as zero RETAILA planning demand", async () => {
+    const today = todayLondonDateOnly();
+    const { from, to } = retailaCompletedDaysWindow(today, 30);
+    await prisma.autopartCustomerImportRun.deleteMany({
+      where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
+    });
+    for (const day of retailaReportingRequiredWeekdays(from, to)) {
+      const at = new Date(`${day}T17:00:00.000Z`);
+      for (const type of ["ONGOING_504", "ONGOING_TRM21QC"] as const) {
+        await prisma.autopartCustomerImportRun.create({
+          data: {
+            type,
+            status: "COMMITTED",
+            dryRun: false,
+            filename: `${type}-${day}-${stamp}.dat`,
+            createdAt: at,
+            completedAt: at,
+          },
+        });
+      }
+    }
+
+    await approveRetailaPlanning(adminId, {
+      justification: "Approved so a failed invoice read cannot fabricate zero planning demand.",
+    });
+    control.failOin = true;
+    try {
+      const failed = await getFbaForecastWorkspace(adminId, {
+        plan: "retaila",
+        sold: "all",
+        q: stockSku,
+      });
+      expect(failed.retailaReporting.planningAllowed).toBe(true);
+      expect(failed.retailaInvoicesAvailable).toBe(false);
+      expect(failed.oinUnavailable ?? "").toMatch(/too long/);
+      const row = failed.rows.find((item) => item.matchKey === skuMatchKey(stockSku));
+      expect(row?.fbaAvailable).toBe(2);
+      expect(row?.studleyAvailable).toBe(2);
+      expect(row?.customerSales.d30).toBeNull();
+      expect(row?.forecast.blocker).toBe("RETAILA_SALES_UNKNOWN");
+      expect(row?.forecast.recommendation).toBe("INSUFFICIENT_DATA");
+      expect(row?.forecast.suggestedSendQty).toBeNull();
+      expect(row?.forecast.planningEstimate).toBe(false);
+      expect(row?.demand.source).toBe("NONE");
+      await expect(
+        exportFbaForecastCsv(adminId, { plan: "retaila", sold: "all", q: stockSku }),
+      ).rejects.toThrow(/not created|unavailable|too long|zero demand/i);
+
+      // Verified Amazon FBA mode must keep working when RETAILA invoices fail.
+      const amazonMode = await getFbaForecastWorkspace(adminId, {
+        plan: "fba",
+        sold: "all",
+        q: stockSku,
+      });
+      expect(amazonMode.retailaInvoicesAvailable).toBe(false);
+      expect(amazonMode.rows.find((item) => item.matchKey === skuMatchKey(stockSku))?.demand.source).toBe(
+        "NONE",
+      );
+    } finally {
+      control.failOin = false;
+      await disableRetailaPlanning(adminId).catch(() => undefined);
+      await prisma.autopartCustomerImportRun.deleteMany({
+        where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
+      });
+    }
+  }, 60_000);
 });

@@ -9,7 +9,10 @@ import { addDaysIso, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { skuMatchKey } from "@/domain/stock";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { projectFbaShipment, RETAILA_PLANNING_SCOPE_POLICY } from "@/domain/fba-replenishment";
-import { retailaReportingRequiredWeekdays } from "@/domain/fba-retaila-reporting-coverage";
+import {
+  retailaCompletedDaysWindow,
+  retailaReportingRequiredWeekdays,
+} from "@/domain/fba-retaila-reporting-coverage";
 import {
   approveRetailaPlanning,
   disableRetailaPlanning,
@@ -1091,8 +1094,8 @@ describe("RETAILA OIN forecast history", () => {
       where: { type: { in: ["ONGOING_504", "ONGOING_TRM21QC"] } },
     });
     const londonToday = todayLondonDateOnly();
-    const windowFrom = addDaysIso(londonToday, -29);
-    const required = retailaReportingRequiredWeekdays(windowFrom, addDaysIso(londonToday, -1));
+    const { from: windowFrom, to: windowTo } = retailaCompletedDaysWindow(londonToday, 30);
+    const required = retailaReportingRequiredWeekdays(windowFrom, windowTo);
     expect(required.length).toBeGreaterThan(2);
     // Leave one weekday without TRM so coverage is incomplete.
     for (const day of required) {

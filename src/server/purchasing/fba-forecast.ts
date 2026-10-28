@@ -32,6 +32,8 @@ import {
 } from "@/domain/fba-replenishment";
 import {
   assessRetailaReportingCoverage,
+  retailaCompletedDaysWindow,
+  RETAILA_REPORTING_WINDOW_DAYS,
   type RetailaImportDayMark,
 } from "@/domain/fba-retaila-reporting-coverage";
 import {
@@ -573,7 +575,7 @@ function retailaPlanningState(row: {
 }
 
 async function loadRetailaReportingCoverage(today: string) {
-  const windowFrom = lastNDaysRange(today, 30).from;
+  const { from: windowFrom } = retailaCompletedDaysWindow(today, RETAILA_REPORTING_WINDOW_DAYS);
   const fromInstant = new Date(`${windowFrom}T00:00:00.000Z`);
   const runs = await prisma.autopartCustomerImportRun.findMany({
     where: {
@@ -587,7 +589,7 @@ async function loadRetailaReportingCoverage(today: string) {
     type: run.type as "ONGOING_504" | "ONGOING_TRM21QC",
     londonDay: todayLondonDateOnly(run.completedAt ?? run.createdAt),
   }));
-  return assessRetailaReportingCoverage({ marks, today, includeToday: false });
+  return assessRetailaReportingCoverage({ marks, today });
 }
 
 const inboundInput = z.object({
@@ -695,6 +697,8 @@ type SkuBucket = {
   inbound: number;
   oinUnits90: number | null;
   customerSales: RetailaSalesWindows;
+  /** Planning demand for 30 completed days ending yesterday. Null until OIN succeeds. */
+  planningNet30: number | null;
   sold: RetailaSalesActivity;
   amazon: { d7: number; d30: number; d60: number; d90: number; d365: number } | null;
 };
@@ -861,7 +865,9 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         AND p.id IS NULL
     `),
   ]);
+  // Display / sold flags include today. Planning demand uses completed days ending yesterday.
   const oinRange = retailaOinRange(today, 365);
+  const planningWindow = retailaCompletedDaysWindow(today, RETAILA_REPORTING_WINDOW_DAYS);
   let oinHealth: RetailaOinHealth = {
     account: "RETAILA",
     days: oinRange.days,
@@ -879,6 +885,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     matchKey: string;
     sku: string;
     windows: RetailaSalesWindows;
+    planningNet30: number | null;
     sold: RetailaSalesActivity;
   }> = [];
   let oinUnavailable: string | null = null;
@@ -889,6 +896,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       matchKey: row.matchKey,
       sku: row.sku,
       windows: row.windows,
+      planningNet30: row.planningNet30,
       sold: row.sold,
     }));
   } catch (error) {
@@ -898,6 +906,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         ? error.message
         : "RETAILA customer sales are unavailable. Amazon FBA and Studley stock are still shown.";
   }
+  const retailaInvoicesAvailable = oinUnavailable == null;
 
   const buckets = new Map<string, SkuBucket>();
   function bucket(matchKey: string, sku: string, description: string | null = null): SkuBucket {
@@ -919,6 +928,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       inbound: 0,
       oinUnits90: null,
       customerSales: { ...EMPTY_CUSTOMER_SALES },
+      planningNet30: null,
       sold: { ...EMPTY_SOLD },
       amazon: null,
     };
@@ -938,6 +948,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   for (const row of oinRows) {
     const item = bucket(row.matchKey, row.sku);
     item.customerSales = row.windows;
+    item.planningNet30 = row.planningNet30;
     item.sold = row.sold;
     item.oinUnits90 = row.windows.d90;
   }
@@ -963,10 +974,13 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       plan: planningMode,
       amazonWindowSupported: windows.d30,
       amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
-      retailaNetUnits30: item.customerSales.d30,
+      // Planning demand uses completed days ending yesterday (matches coverage).
+      // Display windows stay today-inclusive for sales history.
+      retailaNetUnits30: item.planningNet30,
       retailaPlanningApproved: retailaPlanning.enabled,
       retailaReportingComplete: retailaReporting.planningAllowed,
       retailaReportingReason: retailaReporting.reason,
+      retailaInvoicesAvailable,
     });
     const customerWeekly = averageWeeklySales(item.customerSales.d30);
     const projected: FbaForecastResult = projectFbaShipment({
@@ -1145,6 +1159,13 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       windowTo: retailaReporting.windowTo,
       reason: retailaReporting.reason,
     },
+    planningWindow: {
+      from: planningWindow.from,
+      to: planningWindow.to,
+      days: planningWindow.days,
+      label: `${planningWindow.days} completed days ending ${planningWindow.to}`,
+    },
+    retailaInvoicesAvailable,
     canApproveRetailaPlanning: profile.systemRoles.includes("SUPER_ADMIN"),
     brands,
     oin: oinHealth,
@@ -1203,6 +1224,12 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
     throw new ForecastQueryError(
       data.oinUnavailable ??
         "RETAILA customer sales are unavailable, so this export was not created. It is not a file of zero sales.",
+    );
+  }
+  if (data.planningMode === "retaila" && !data.retailaInvoicesAvailable) {
+    throw new ForecastQueryError(
+      data.oinUnavailable ??
+        "RETAILA invoices are unavailable, so a RETAILA planning export was not created. Missing sales are not exported as zero demand.",
     );
   }
   const header = [

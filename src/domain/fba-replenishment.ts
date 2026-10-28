@@ -676,6 +676,12 @@ export function selectFbaDemand(input: {
   /** Successful daily 504+TRM import coverage for the planning window. */
   retailaReportingComplete: boolean;
   retailaReportingReason?: string;
+  /**
+   * True only after loadRetailaOinReport succeeds.
+   * Null retailaNetUnits30 then means reconciled zero for that SKU.
+   * False means the invoice query failed — never fabricate zero demand.
+   */
+  retailaInvoicesAvailable: boolean;
 }): FbaDemandDecision {
   if (input.plan === "fba") {
     if (input.amazonWindowSupported) {
@@ -714,6 +720,17 @@ export function selectFbaDemand(input: {
       blocker: "PLANNING_NOT_APPROVED",
     };
   }
+  if (!input.retailaInvoicesAvailable) {
+    return {
+      source: "NONE",
+      salesSupported: false,
+      netUnits30: null,
+      label: "RETAILA invoices unavailable",
+      reason:
+        "RETAILA customer invoices could not be read for this planning window. Missing sales figures are not treated as zero demand. FBA and Studley stock stay visible — retry the RETAILA read before planning.",
+      blocker: "RETAILA_SALES_UNKNOWN",
+    };
+  }
   if (!input.retailaReportingComplete) {
     return {
       source: "NONE",
@@ -726,7 +743,7 @@ export function selectFbaDemand(input: {
       blocker: "RETAILA_REPORTING_INCOMPLETE",
     };
   }
-  // With verified reporting coverage, a SKU absent from RETAILA invoices is zero for the window.
+  // Successful invoice reconciliation + verified feed coverage: absent SKU sales are zero.
   const units = input.retailaNetUnits30 ?? 0;
   return {
     source: "RETAILA_PLANNING",
@@ -735,8 +752,8 @@ export function selectFbaDemand(input: {
     label: "RETAILA customer sales (planning proxy)",
     reason:
       input.retailaNetUnits30 == null
-        ? "Autopart reporting covers the window and this SKU has no RETAILA invoices in the last 30 days, so planning demand is zero. This is not verified Amazon UK FBA sell-through."
-        : "RETAILA invoice sales are used as an explicitly approved planning proxy for all eligible RETAILA SKUs. They are not proven Amazon UK FBA sell-through and are not combined with an Amazon extract.",
+        ? "Autopart reporting and invoice reconciliation cover the planning window ending yesterday, and this SKU has no RETAILA invoices in that window, so planning demand is zero. This is not verified Amazon UK FBA sell-through."
+        : "RETAILA invoice sales for the planning window ending yesterday are used as an explicitly approved planning proxy for all eligible RETAILA SKUs. They are not proven Amazon UK FBA sell-through and are not combined with an Amazon extract.",
     blocker: null,
   };
 }
