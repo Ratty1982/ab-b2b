@@ -4957,6 +4957,30 @@ export const updateFbaForecastSettingsFn = createServerFn({ method: "POST" })
     }
   });
 
+export const approveRetailaPlanningFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.approveRetailaPlanning(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const disableRetailaPlanningFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const fba = await import("@/server/purchasing/fba-forecast");
+      return { ok: true as const, data: await fba.disableRetailaPlanning(userId) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const saveFbaInboundShipmentFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

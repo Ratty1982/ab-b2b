@@ -74,6 +74,31 @@ export function roundDownToCaseMultiple(qty: number, multiple: number | null): n
   return Math.floor(whole / multiple) * multiple;
 }
 
+export const FBA_FORECAST_BLOCKERS = [
+  "DEMAND_SOURCE_UNVERIFIED",
+  "PLANNING_NOT_APPROVED",
+  "RETAILA_SALES_UNKNOWN",
+  "MISSING_FBA_STOCK",
+  "STALE_FBA_STOCK",
+  "SETTINGS_INCOMPLETE",
+] as const;
+export type FbaForecastBlocker = (typeof FBA_FORECAST_BLOCKERS)[number];
+
+export const FBA_FORECAST_BLOCKER_LABEL: Record<FbaForecastBlocker, string> = {
+  DEMAND_SOURCE_UNVERIFIED: "Demand source not verified",
+  PLANNING_NOT_APPROVED: "RETAILA planning not approved",
+  RETAILA_SALES_UNKNOWN: "Sales coverage incomplete",
+  MISSING_FBA_STOCK: "FBA stock missing",
+  STALE_FBA_STOCK: "FBA stock snapshot stale",
+  SETTINGS_INCOMPLETE: "Forecast settings incomplete",
+};
+
+export type FbaCoverBasis = "verified_amazon" | "retaila_planning" | "illustrative" | "none";
+
+export type FbaDemandSource = "AMAZON_UK_FBA_CSV" | "RETAILA_PLANNING" | "NONE";
+
+export type FbaPlanningMode = "fba" | "retaila";
+
 export type FbaForecastInput = {
   /** Null when OPTIMUS has never been imported for this SKU. */
   fbaAvailable: number | null;
@@ -82,10 +107,14 @@ export type FbaForecastInput = {
   /** Null when Studley Avail is not on the current warehouse feed. */
   studleyAvailable: number | null;
   confirmedInboundQty: number;
-  /** True only when the 30-day Amazon window is covered by a complete extract. */
+  /** True only when the selected demand source covers the last 30 days. */
   salesSupported: boolean;
-  /** Net Amazon units in that 30-day window. Ignored when salesSupported is false. */
-  amazonNetUnits30: number | null;
+  /**
+   * Net units for the selected demand source. Amazon extract when verified;
+   * RETAILA customer sales only when planning mode is approved. Never a sum.
+   */
+  demandNetUnits30: number | null;
+  demandSource: FbaDemandSource;
   leadTimeDays: number;
   targetCoverWeeks: number;
   safetyStockQty: number;
@@ -100,6 +129,12 @@ export type FbaForecastResult = {
   reason: string;
   confidence: "NONE" | "LOW" | "MEDIUM" | "HIGH";
   assumptions: string[];
+  blocker: FbaForecastBlocker | null;
+  demandSource: FbaDemandSource;
+  /** True when the suggested quantity comes from the RETAILA planning proxy. */
+  planningEstimate: boolean;
+  coverBasis: FbaCoverBasis;
+  dailyRate: number | null;
   weeklyRate: number | null;
   projectedRequiredQty: number | null;
   rawSendQty: number | null;
@@ -114,13 +149,23 @@ export type FbaForecastResult = {
   fbaStockVerified: boolean;
 };
 
-function insufficient(reason: string, assumptions: string[]): FbaForecastResult {
+function insufficient(
+  reason: string,
+  assumptions: string[],
+  blocker: FbaForecastBlocker,
+  demandSource: FbaDemandSource,
+): FbaForecastResult {
   return {
     recommendation: "INSUFFICIENT_DATA",
     recommendationLabel: FBA_RECOMMENDATION_LABEL.INSUFFICIENT_DATA,
     reason,
     confidence: "NONE",
     assumptions,
+    blocker,
+    demandSource,
+    planningEstimate: false,
+    coverBasis: "none",
+    dailyRate: null,
     weeklyRate: null,
     projectedRequiredQty: null,
     rawSendQty: null,
@@ -140,42 +185,56 @@ function round1(n: number): number {
 }
 
 /**
- * Suggested FBA send from verified sell-through.
- * OIN quantities must not be passed in as amazonNetUnits30.
+ * Suggested FBA send from one selected demand source.
+ * RETAILA units must not be passed as Amazon demand unless planning mode is approved,
+ * and Amazon units must never be added to RETAILA units.
  */
 export function projectFbaShipment(input: FbaForecastInput): FbaForecastResult {
+  const planning = input.demandSource === "RETAILA_PLANNING";
   const assumptions = [
-    "A shipment uses one demand source. RETAILA OIN invoices are customer sales and are not added to an Amazon extract.",
-    "RETAILA invoices have no marketplace and no Amazon fulfilment channel, so they do not prove FBA UK sell-through.",
+    planning
+      ? "This is a RETAILA sales-based planning estimate. It is not verified Amazon UK FBA sell-through."
+      : "A shipment uses one demand source. RETAILA OIN invoices are customer sales and are not added to an Amazon extract.",
+    "RETAILA invoices have no marketplace and no Amazon fulfilment channel, so they do not prove FBA UK sell-through on their own.",
     "Suggested quantity is not an order and does not move stock.",
     "Invoice creation is not treated as stock in transit.",
   ];
-  if (!input.salesSupported || input.amazonNetUnits30 == null) {
+  if (!input.salesSupported || input.demandNetUnits30 == null) {
     return insufficient(
-      "No verified Amazon UK FBA sales extract covers the last 30 days. RETAILA customer sales stay visible and are not turned into a shipment.",
+      planning
+        ? "RETAILA customer sales for the last 30 days are unknown for this SKU. A blank sales row is not treated as zero demand."
+        : "No verified Amazon UK FBA sales extract covers the last 30 days. RETAILA customer sales stay visible and are not turned into a verified shipment.",
       assumptions,
+      planning ? "RETAILA_SALES_UNKNOWN" : "DEMAND_SOURCE_UNVERIFIED",
+      input.demandSource,
     );
   }
   if (!input.fbaStockKnown || input.fbaAvailable == null) {
     return insufficient(
       "No OPTIMUS FBA stock snapshot exists for this SKU. Stale or missing stock is not treated as zero sellable units.",
       assumptions,
+      "MISSING_FBA_STOCK",
+      input.demandSource,
     );
   }
   if (input.fbaStockStale) {
     return insufficient(
       "The OPTIMUS FBA snapshot is stale and is not verified sellable inventory. No shipment quantity is suggested from it.",
       [...assumptions, "FBA stock older than 14 days is stale."],
+      "STALE_FBA_STOCK",
+      input.demandSource,
     );
   }
   if (input.leadTimeDays <= 0 || input.targetCoverWeeks < 0) {
     return insufficient(
       "Replenishment lead time and target cover must be configured before a shipment is suggested.",
       assumptions,
+      "SETTINGS_INCOMPLETE",
+      input.demandSource,
     );
   }
 
-  const net = input.amazonNetUnits30;
+  const net = input.demandNetUnits30;
   const weeklyRate = Math.max(0, net) * (7 / 30);
   if (net < 0) {
     assumptions.push(
@@ -257,11 +316,14 @@ export function projectFbaShipment(input: FbaForecastInput): FbaForecastResult {
   }
 
   let recommendation: FbaRecommendation = "HEALTHY";
-  let reason =
-    "Verified FBA stock and confirmed inbound cover the lead time, target cover and safety stock.";
+  let reason = planning
+    ? "Estimated FBA stock and confirmed inbound cover the lead time, target cover and safety stock under the RETAILA planning proxy."
+    : "Verified FBA stock and confirmed inbound cover the lead time, target cover and safety stock.";
   if (weeklyRate <= 0 && input.fbaAvailable > 0) {
     recommendation = "OVERSTOCKED";
-    reason = "Amazon net sell-through is zero and FBA stock is still on hand.";
+    reason = planning
+      ? "RETAILA net customer sales are zero and FBA stock is still on hand."
+      : "Amazon net sell-through is zero and FBA stock is still on hand.";
   } else if (
     coverWithInbound != null &&
     coverWithInbound >= input.overstockCoverWeeks &&
@@ -271,21 +333,28 @@ export function projectFbaShipment(input: FbaForecastInput): FbaForecastResult {
     reason = `Cover including confirmed inbound is ${coverWithInbound} weeks, at or above the ${input.overstockCoverWeeks}-week overstock line.`;
   } else if (suggested > 0 && (coverWeeks == null || coverWeeks <= input.leadTimeDays / 7)) {
     recommendation = "SEND_NOW";
-    reason =
-      "FBA cover is inside the replenishment lead time. A shipment is suggested from verified sell-through.";
+    reason = planning
+      ? "Estimated cover is inside the replenishment lead time. This is a RETAILA planning estimate, not verified Amazon UK FBA sell-through."
+      : "FBA cover is inside the replenishment lead time. A shipment is suggested from verified sell-through.";
   } else if (suggested > 0) {
     recommendation = "SEND_SOON";
-    reason =
-      "A shipment is suggested so stock arrives with the target cover, and current cover is still beyond the lead time.";
+    reason = planning
+      ? "A planning estimate suggests a shipment so stock arrives with the target cover. This is not verified Amazon UK FBA sell-through."
+      : "A shipment is suggested so stock arrives with the target cover, and current cover is still beyond the lead time.";
   }
 
-  const confidence = weeklyRate >= 0 && input.salesSupported ? "MEDIUM" : "NONE";
+  const confidence = planning ? "LOW" : weeklyRate >= 0 && input.salesSupported ? "MEDIUM" : "NONE";
   return {
     recommendation,
     recommendationLabel: FBA_RECOMMENDATION_LABEL[recommendation],
     reason,
     confidence,
     assumptions,
+    blocker: null,
+    demandSource: input.demandSource,
+    planningEstimate: planning,
+    coverBasis: planning ? "retaila_planning" : "verified_amazon",
+    dailyRate: round1(daily),
     weeklyRate: round1(weeklyRate),
     projectedRequiredQty: Math.ceil(projectedRequired),
     rawSendQty: Math.ceil(raw),
@@ -576,47 +645,84 @@ export const RETAILA_OIN_PROVEN_AS_FBA_UK = false;
 export const RETAILA_OIN_DEMAND_LIMIT =
   "RETAILA OIN invoices are customer sales to that Autopart account. They are not proven Amazon UK FBA sell-through, so they are shown separately and do not produce a shipment recommendation.";
 
-export type FbaDemandSource = "AMAZON_UK_FBA_CSV" | "NONE";
-
 export type FbaDemandDecision = {
   source: FbaDemandSource;
   salesSupported: boolean;
-  /** Units passed into the shipment formula. Null when no source is proven. */
+  /** Units passed into the shipment formula. Null when no source is selected. */
   netUnits30: number | null;
   label: string;
   reason: string;
+  blocker: FbaForecastBlocker | null;
 };
 
 /**
  * One source, never a sum.
- * Amazon UK FBA CSV wins only when its own coverage, marketplace and fulfilment are proven.
- * RETAILA OIN units are ignored here even when they are present.
+ * Verified FBA mode uses the Amazon UK FBA extract only when coverage, marketplace and fulfilment are proven.
+ * RETAILA planning mode uses verified customer sales only after Super Admin approval of the business relationship.
  */
 export function selectFbaDemand(input: {
+  plan: FbaPlanningMode;
   amazonWindowSupported: boolean;
   amazonNetUnits30: number | null;
   retailaNetUnits30: number | null;
+  retailaPlanningApproved: boolean;
 }): FbaDemandDecision {
-  if (input.amazonWindowSupported) {
-    const amazon = input.amazonNetUnits30 ?? 0;
-    const retaila = input.retailaNetUnits30;
+  if (input.plan === "fba") {
+    if (input.amazonWindowSupported) {
+      const amazon = input.amazonNetUnits30 ?? 0;
+      const retaila = input.retailaNetUnits30;
+      return {
+        source: "AMAZON_UK_FBA_CSV",
+        salesSupported: true,
+        netUnits30: amazon,
+        label: "Amazon UK FBA sales extract",
+        reason:
+          retaila == null
+            ? "The latest Amazon extract covers Amazon UK FBA for the last 30 days. A missing SKU in that extract is zero for this window."
+            : `The latest Amazon extract covers Amazon UK FBA for the last 30 days. RETAILA customer sales of ${retaila} units are not added to ${amazon}.`,
+        blocker: null,
+      };
+    }
     return {
-      source: "AMAZON_UK_FBA_CSV",
-      salesSupported: true,
-      netUnits30: amazon,
-      label: "Amazon UK FBA sales extract",
+      source: "NONE",
+      salesSupported: false,
+      netUnits30: null,
+      label: "Verified FBA demand unavailable",
+      reason: RETAILA_OIN_DEMAND_LIMIT,
+      blocker: "DEMAND_SOURCE_UNVERIFIED",
+    };
+  }
+
+  if (!input.retailaPlanningApproved) {
+    return {
+      source: "NONE",
+      salesSupported: false,
+      netUnits30: null,
+      label: "RETAILA planning locked",
       reason:
-        retaila == null
-          ? "The latest Amazon extract covers Amazon UK FBA for the last 30 days. A missing SKU in that extract is zero for this window."
-          : `The latest Amazon extract covers Amazon UK FBA for the last 30 days. RETAILA customer sales of ${retaila} units are not added to ${amazon}.`,
+        "A Super Admin must record the business relationship between RETAILA invoice sales and FBA stock before this planning mode can produce recommendations. Sales and illustrative cover stay visible.",
+      blocker: "PLANNING_NOT_APPROVED",
+    };
+  }
+  if (input.retailaNetUnits30 == null) {
+    return {
+      source: "NONE",
+      salesSupported: false,
+      netUnits30: null,
+      label: "RETAILA sales unknown",
+      reason:
+        "No verified RETAILA customer-sales figure covers the last 30 days for this SKU. A missing sales row is not treated as zero demand.",
+      blocker: "RETAILA_SALES_UNKNOWN",
     };
   }
   return {
-    source: "NONE",
-    salesSupported: false,
-    netUnits30: null,
-    label: "Insufficient for an FBA recommendation",
-    reason: RETAILA_OIN_DEMAND_LIMIT,
+    source: "RETAILA_PLANNING",
+    salesSupported: true,
+    netUnits30: input.retailaNetUnits30,
+    label: "RETAILA customer sales (planning proxy)",
+    reason:
+      "RETAILA invoice sales are used as an explicitly approved planning proxy. They are not proven Amazon UK FBA sell-through and are not combined with an Amazon extract.",
+    blocker: null,
   };
 }
 
@@ -624,6 +730,12 @@ export function selectFbaDemand(input: {
 export function averageWeeklySales(netUnits30: number | null): number | null {
   if (netUnits30 == null || !Number.isFinite(netUnits30)) return null;
   return Math.round((netUnits30 / 30) * 7 * 10) / 10;
+}
+
+/** Average daily customer sales from a 30-day net. Null when the 30-day figure is unknown. */
+export function averageDailySales(netUnits30: number | null): number | null {
+  if (netUnits30 == null || !Number.isFinite(netUnits30)) return null;
+  return Math.round((netUnits30 / 30) * 10) / 10;
 }
 
 /**

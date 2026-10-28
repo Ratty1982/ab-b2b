@@ -1752,14 +1752,22 @@ model FbaInboundShipment {
 }
 
 model FbaForecastSettings {
-  id                  String   @id @default("default")
-  leadTimeDays        Int      @default(14)
-  targetCoverWeeks    Decimal  @default(6) @db.Decimal(6, 2)
-  safetyStockQty      Int      @default(0)
-  caseMultiple        Int?
-  overstockCoverWeeks Decimal  @default(16) @db.Decimal(6, 2)
-  updatedByUserId     String?
-  updatedAt           DateTime @updatedAt
+  id                             String    @id @default("default")
+  leadTimeDays                   Int       @default(14)
+  targetCoverWeeks               Decimal   @default(6) @db.Decimal(6, 2)
+  safetyStockQty                 Int       @default(0)
+  caseMultiple                   Int?
+  overstockCoverWeeks            Decimal   @default(16) @db.Decimal(6, 2)
+  /// Explicit Super Admin approval to use RETAILA invoices as a planning proxy. Not Amazon proof.
+  retailaPlanningEnabled         Boolean   @default(false)
+  retailaPlanningJustification   String?   @db.Text
+  retailaPlanningScope           String?   @db.Text
+  retailaPlanningApprovedByUserId String?
+  retailaPlanningApprovedAt      DateTime?
+  retailaPlanningDisabledByUserId String?
+  retailaPlanningDisabledAt      DateTime?
+  updatedByUserId                String?
+  updatedAt                      DateTime  @updatedAt
 }
 
 model FbaSkuForecastOverride {

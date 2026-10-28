@@ -10,6 +10,8 @@ import { skuMatchKey } from "@/domain/stock";
 import { bootstrapRbac } from "../../../prisma/bootstrap/rbac";
 import { projectFbaShipment } from "@/domain/fba-replenishment";
 import {
+  approveRetailaPlanning,
+  disableRetailaPlanning,
   exportFbaForecastCsv,
   getFbaForecastSku,
   getFbaForecastWorkspace,
@@ -89,6 +91,13 @@ describe("RETAILA OIN forecast history", () => {
     caseMultiple: number | null;
     overstockCoverWeeks: { toString(): string };
     updatedByUserId: string | null;
+    retailaPlanningEnabled: boolean;
+    retailaPlanningJustification: string | null;
+    retailaPlanningScope: string | null;
+    retailaPlanningApprovedByUserId: string | null;
+    retailaPlanningApprovedAt: Date | null;
+    retailaPlanningDisabledByUserId: string | null;
+    retailaPlanningDisabledAt: Date | null;
   } | null = null;
   const today = todayLondonDateOnly();
 
@@ -220,6 +229,13 @@ describe("RETAILA OIN forecast history", () => {
           caseMultiple: previousSettings.caseMultiple,
           overstockCoverWeeks: previousSettings.overstockCoverWeeks.toString(),
           updatedByUserId: previousSettings.updatedByUserId,
+          retailaPlanningEnabled: previousSettings.retailaPlanningEnabled,
+          retailaPlanningJustification: previousSettings.retailaPlanningJustification,
+          retailaPlanningScope: previousSettings.retailaPlanningScope,
+          retailaPlanningApprovedByUserId: previousSettings.retailaPlanningApprovedByUserId,
+          retailaPlanningApprovedAt: previousSettings.retailaPlanningApprovedAt,
+          retailaPlanningDisabledByUserId: previousSettings.retailaPlanningDisabledByUserId,
+          retailaPlanningDisabledAt: previousSettings.retailaPlanningDisabledAt,
         },
       });
     } else {
@@ -888,7 +904,8 @@ describe("RETAILA OIN forecast history", () => {
       studleyAvailable: 7,
       confirmedInboundQty: 0,
       salesSupported: true,
-      amazonNetUnits30: 30,
+      demandNetUnits30: 30,
+      demandSource: "AMAZON_UK_FBA_CSV",
       leadTimeDays: 14,
       targetCoverWeeks: 6,
       safetyStockQty: 0,
@@ -964,6 +981,58 @@ describe("RETAILA OIN forecast history", () => {
     const csv = await exportFbaForecastCsv(adminId, { q: skuCase, sold: "all" });
     expect(csv.csv).toContain(skuCase);
     expect(csv.csv).toContain("Suggested replenishment");
+    expect(csv.csv).toContain("Unavailable reason");
+    expect(csv.csv).toContain("Planning estimate");
     await expect(exportFbaForecastCsv(deniedId, { q: skuCase })).rejects.toThrow(/Purchasing access required/);
+  });
+
+  it("locks RETAILA planning until a Super Admin approves and audits the relationship", async () => {
+    const locked = await getFbaForecastWorkspace(adminId, { plan: "retaila", sold: "all", q: skuCase });
+    expect(locked.retailaPlanning.enabled).toBe(false);
+    expect(locked.canApproveRetailaPlanning).toBe(true);
+    const lockedRow = locked.rows.find((item) => item.matchKey === skuMatchKey(skuCase));
+    expect(lockedRow?.forecast.blocker).toBe("PLANNING_NOT_APPROVED");
+    expect(lockedRow?.forecast.suggestedSendQty).toBeNull();
+    expect(locked.summary.blockers.PLANNING_NOT_APPROVED).toBeGreaterThan(0);
+
+    await expect(
+      approveRetailaPlanning(viewerId, {
+        justification: "RETAILA invoices replenish the Amazon FBA UK branch for this account.",
+        scope: "All Automotive Brands SKUs fulfilled via RETAILA OIN.",
+      }),
+    ).rejects.toThrow(/Purchasing access required|Super Admin/);
+
+    const approved = await approveRetailaPlanning(adminId, {
+      justification: "RETAILA invoices replenish the Amazon FBA UK branch for this account.",
+      scope: "All Automotive Brands SKUs fulfilled via RETAILA OIN.",
+    });
+    expect(approved.enabled).toBe(true);
+    expect(approved.approvedByUserId).toBe(adminId);
+
+    const planned = await getFbaForecastWorkspace(adminId, {
+      plan: "retaila",
+      sold: "all",
+      q: skuCase,
+      focus: "unavailable",
+    });
+    expect(planned.retailaPlanning.enabled).toBe(true);
+    // Without RETAILA sales on skuCase, coverage stays incomplete rather than Amazon-unverified.
+    const plannedRow = planned.rows.find((item) => item.matchKey === skuMatchKey(skuCase));
+    expect(plannedRow?.forecast.blocker).toBe("RETAILA_SALES_UNKNOWN");
+    expect(plannedRow?.forecast.planningEstimate).toBe(false);
+
+    const audit = await prisma.auditEvent.findFirst({
+      where: { action: "fba.retaila_planning.approve", actorUserId: adminId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit).not.toBeNull();
+
+    const disabled = await disableRetailaPlanning(adminId);
+    expect(disabled.enabled).toBe(false);
+    const after = await getFbaForecastWorkspace(adminId, { plan: "retaila", sold: "all", q: skuCase });
+    expect(after.retailaPlanning.enabled).toBe(false);
+    expect(after.rows.find((item) => item.matchKey === skuMatchKey(skuCase))?.forecast.blocker).toBe(
+      "PLANNING_NOT_APPROVED",
+    );
   });
 });
