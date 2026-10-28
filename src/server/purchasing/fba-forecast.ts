@@ -34,6 +34,10 @@ import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingSection } from "@/server/rbac/guards";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
+  FBA_FORECAST_DISABLED_MESSAGE,
+  fbaForecastReportingDisabled,
+} from "@/server/purchasing/fba-forecast-switch";
+import {
   listRetailaOinHistory,
   listRetailaOinLinesForSku,
   DEFAULT_RETAILA_OIN_WINDOW_DAYS,
@@ -44,6 +48,12 @@ import {
   type RetailaOinHistoryDocument,
   type RetailaOinHistorySort,
 } from "@/server/purchasing/fba-retaila-oin";
+
+function assertFbaForecastReportingEnabled(): void {
+  if (fbaForecastReportingDisabled()) {
+    throw new Error(FBA_FORECAST_DISABLED_MESSAGE);
+  }
+}
 
 const PAGE_SIZE = 50;
 
@@ -478,6 +488,7 @@ type SkuBucket = {
 };
 
 export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown = {}) {
+  assertFbaForecastReportingEnabled();
   const profile = await requireView(actorUserId);
   const input = listInput.parse(raw ?? {});
   const today = todayLondonDateOnly();
@@ -841,6 +852,7 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
 }
 
 export async function getFbaOinHistory(actorUserId: string, raw: unknown) {
+  assertFbaForecastReportingEnabled();
   await requireView(actorUserId);
   const input = z
     .object({
@@ -863,6 +875,7 @@ export async function getFbaOinHistory(actorUserId: string, raw: unknown) {
 }
 
 export async function getFbaForecastSku(actorUserId: string, raw: unknown) {
+  assertFbaForecastReportingEnabled();
   await requireView(actorUserId);
   const input = z
     .object({

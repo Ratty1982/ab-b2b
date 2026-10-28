@@ -26,6 +26,8 @@ The RETAILA read runs in its own transaction with `statement_timeout` of 8 secon
 
 Migration `20261028013000_fba_retaila_oin_window_indexes` adds partial indexes for those windowed reads. It is not applied to production by this change.
 
+If the report has to be stopped without reverting the portal, set `FBA_FORECAST_DISABLED=1` (also `true`, `yes`, or `on`) and restart the app. Overview, OIN History, product invoices, and the CSV export then return before any forecast or RETAILA sales query. `/admin` and the other routes stay up. Unset the variable and restart to turn reporting back on. Do not roll the application back to `5c784da` (PR #62): that is the unbounded query. GitHub has no deployment record for this app. On 28 October 2026 (Europe/London) `https://b2b.automotivebrands.co.uk/api/build` reported `5c784da2eae0151b814cffa49e11144276ba767b`. The first parent of that merge is `ade3a97721cf35d0fe9b694daa012227ae27760f` (PR #61), and that SHA was not confirmed here as a successful Coolify deployment, so it is not a rollback target. Leave the database and any valid indexes in place.
+
 Historical 561L/SLRB lines stay customer sales history. They are not retargeted as Amazon sell-through. If an OIN reference is already on `AutopartSalesDocument`, the workspace counts that overlap and leaves the financial row in place.
 
 ## Purchasing demand
