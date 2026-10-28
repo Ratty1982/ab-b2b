@@ -34,12 +34,26 @@ import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingSection } from "@/server/rbac/guards";
 import { recordAuditEvent } from "@/server/audit/record";
 import {
+  FBA_FORECAST_DISABLED_MESSAGE,
+  fbaForecastReportingDisabled,
+} from "@/server/purchasing/fba-forecast-switch";
+import {
   listRetailaOinHistory,
   listRetailaOinLinesForSku,
-  loadRetailaOinHealth,
-  loadRetailaOinUnits,
+  DEFAULT_RETAILA_OIN_WINDOW_DAYS,
+  loadRetailaOinReport,
+  retailaOinRange,
+  retailaWindowDays,
+  type RetailaOinHealth,
   type RetailaOinHistoryDocument,
+  type RetailaOinHistorySort,
 } from "@/server/purchasing/fba-retaila-oin";
+
+function assertFbaForecastReportingEnabled(): void {
+  if (fbaForecastReportingDisabled()) {
+    throw new Error(FBA_FORECAST_DISABLED_MESSAGE);
+  }
+}
 
 const PAGE_SIZE = 50;
 
@@ -474,6 +488,7 @@ type SkuBucket = {
 };
 
 export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown = {}) {
+  assertFbaForecastReportingEnabled();
   const profile = await requireView(actorUserId);
   const input = listInput.parse(raw ?? {});
   const today = todayLondonDateOnly();
@@ -485,14 +500,13 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     caseMultiple: settingsRow?.caseMultiple ?? null,
     overstockCoverWeeks: num(settingsRow?.overstockCoverWeeks ?? 16),
   };
-  const [salesImport, fbaImport, overrides, oinHealth] = await Promise.all([
+  const [salesImport, fbaImport, overrides] = await Promise.all([
     prisma.fbaAmazonSalesImport.findFirst({ orderBy: { importedAt: "desc" } }),
     prisma.autopartFbaStockImport.findFirst({
       orderBy: { importedAt: "desc" },
       select: { importedAt: true, fileName: true },
     }),
     prisma.fbaSkuForecastOverride.findMany(),
-    loadRetailaOinHealth(),
   ]);
   const stale = fbaStockIsStale(fbaImport?.importedAt ?? null);
   const ranges = {
@@ -536,7 +550,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       windowTo: ranges.d365.to,
     }),
   };
-  const [fbaRows, oinRows, amazonRows, inboundRows, unmatched] = await Promise.all([
+  const [fbaRows, amazonRows, inboundRows, unmatched] = await Promise.all([
     prisma.$queryRaw<
       Array<{
         matchKey: string;
@@ -562,10 +576,6 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       LEFT JOIN "Brand" b ON b.id = pr."brandId"
       WHERE loc."locationCode" = ${FBA_LOCATION_CODE}
     `),
-    loadRetailaOinUnits({
-      from: asDate(ranges.d90.from)!,
-      toExclusive: addDaysIsoSafe(ranges.d90.to),
-    }),
     salesImport
       ? prisma.$queryRaw<
           Array<{
@@ -602,6 +612,33 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         AND p.id IS NULL
     `),
   ]);
+  const oinRange = retailaOinRange(today, DEFAULT_RETAILA_OIN_WINDOW_DAYS);
+  let oinHealth: RetailaOinHealth = {
+    account: "RETAILA",
+    days: oinRange.days,
+    documents: 0,
+    lines: 0,
+    latestDocumentDate: null,
+    historicDocuments: 0,
+    ongoingDocuments: 0,
+    ledgerOnlyDocuments: 0,
+    issueCount: 0,
+    undatedLines: 0,
+    warning: null,
+  };
+  let oinRows: Array<{ matchKey: string; sku: string; units: number }> = [];
+  let oinUnavailable: string | null = null;
+  try {
+    const report = await loadRetailaOinReport(oinRange);
+    oinHealth = report.health;
+    oinRows = report.units;
+  } catch (error) {
+    console.error("[fba-oin]", error);
+    oinUnavailable =
+      error instanceof Error && error.message
+        ? error.message
+        : "RETAILA replenishment history is unavailable. Amazon FBA and Studley stock are still shown.";
+  }
 
   const buckets = new Map<string, SkuBucket>();
   function bucket(matchKey: string, sku: string, description: string | null = null): SkuBucket {
@@ -742,6 +779,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     summary,
     brands,
     oin: oinHealth,
+    oinUnavailable,
     canManage: hasPermission(profile, "purchasing.fba_forecast.manage"),
     settings,
     overlapDocuments: oinHealth.ledgerOnlyDocuments,
@@ -814,20 +852,40 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
 }
 
 export async function getFbaOinHistory(actorUserId: string, raw: unknown) {
+  assertFbaForecastReportingEnabled();
   await requireView(actorUserId);
   const input = z
-    .object({ page: z.number().int().positive().optional().nullable() })
+    .object({
+      page: z.number().int().positive().optional().nullable(),
+      days: z.number().int().optional().nullable(),
+      q: z.string().max(80).optional().nullable(),
+      sort: z.enum(["date", "reference", "units"]).optional().nullable(),
+    })
     .parse(raw ?? {});
   const page = input.page ?? 1;
-  const history = await listRetailaOinHistory({ page, pageSize: PAGE_SIZE });
-  return { ...history, page, pageSize: PAGE_SIZE };
+  const days = retailaWindowDays(input.days);
+  const history = await listRetailaOinHistory({
+    range: retailaOinRange(todayLondonDateOnly(), days),
+    page,
+    pageSize: PAGE_SIZE,
+    ...(input.q ? { q: input.q } : {}),
+    sort: input.sort ?? "date",
+  });
+  return { ...history, page, pageSize: PAGE_SIZE, days };
 }
 
 export async function getFbaForecastSku(actorUserId: string, raw: unknown) {
+  assertFbaForecastReportingEnabled();
   await requireView(actorUserId);
-  const input = z.object({ matchKey: z.string().trim().min(1).max(80) }).parse(raw ?? {});
+  const input = z
+    .object({
+      matchKey: z.string().trim().min(1).max(80),
+      days: z.number().int().optional().nullable(),
+    })
+    .parse(raw ?? {});
   const documents: RetailaOinHistoryDocument[] = await listRetailaOinLinesForSku(
     input.matchKey.trim().toUpperCase(),
+    retailaOinRange(todayLondonDateOnly(), input.days ?? DEFAULT_RETAILA_OIN_WINDOW_DAYS),
   );
   return { matchKey: input.matchKey.trim().toUpperCase(), documents };
 }
@@ -861,9 +919,4 @@ function compareForecastRows(
     return recommendationRank(a.forecast.recommendation) - recommendationRank(b.forecast.recommendation);
   }
   return a.sku.localeCompare(b.sku);
-}
-
-function addDaysIsoSafe(iso: string): Date {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d! + 1));
 }
