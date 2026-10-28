@@ -374,7 +374,7 @@ describe("FBA replenishment ledger", () => {
     });
     expect(sparseImport.completeDaily).toBe(false);
     expect(sparseImport.coverageHasGaps).toBe(true);
-    const incomplete = await getFbaForecastWorkspace(actorUserId, { q: freshSku });
+    const incomplete = await getFbaForecastWorkspace(actorUserId, { q: freshSku, sold: "all" });
     const incompleteRow = incomplete.rows.find((row) => row.matchKey === skuMatchKey(freshSku));
     expect(incomplete.sales?.completeDaily).toBe(false);
     expect(incompleteRow?.forecast.recommendation).toBe("INSUFFICIENT_DATA");
@@ -409,7 +409,7 @@ describe("FBA replenishment ledger", () => {
       caseMultiple: 4,
       overstockCoverWeeks: 16,
     });
-    const forecast = await getFbaForecastWorkspace(actorUserId, { q: stamp });
+    const forecast = await getFbaForecastWorkspace(actorUserId, { q: stamp, sold: "all" });
     expect(forecast.stale).toBe(false);
     const fresh = forecast.rows.find((row) => row.matchKey === skuMatchKey(freshSku));
     const stale = forecast.rows.find((row) => row.matchKey === skuMatchKey(staleSku));
@@ -430,7 +430,7 @@ describe("FBA replenishment ledger", () => {
       qty: 100,
       status: "PLANNED",
     });
-    const planned = await getFbaForecastWorkspace(actorUserId, { q: freshSku });
+    const planned = await getFbaForecastWorkspace(actorUserId, { q: freshSku, sold: "all" });
     expect(
       planned.rows.find((row) => row.matchKey === skuMatchKey(freshSku))?.forecast.suggestedSendQty,
     ).toBe(48);
@@ -440,7 +440,7 @@ describe("FBA replenishment ledger", () => {
       qty: 8,
       status: "CONFIRMED_IN_TRANSIT",
     });
-    const inbound = await getFbaForecastWorkspace(actorUserId, { q: freshSku });
+    const inbound = await getFbaForecastWorkspace(actorUserId, { q: freshSku, sold: "all" });
     expect(
       inbound.rows.find((row) => row.matchKey === skuMatchKey(freshSku))?.forecast.suggestedSendQty,
     ).toBe(40);

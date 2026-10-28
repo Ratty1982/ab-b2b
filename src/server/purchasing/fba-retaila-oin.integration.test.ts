@@ -953,7 +953,7 @@ describe("RETAILA OIN forecast history", () => {
       caseMultiple: 12,
       overstockCoverWeeks: 16,
     });
-    const workspace = await getFbaForecastWorkspace(adminId, { q: skuCase });
+    const workspace = await getFbaForecastWorkspace(adminId, { q: skuCase, sold: "all" });
     const row = workspace.rows.find((item) => item.matchKey === skuMatchKey(skuCase));
     expect(row?.amazonUnits.d30).toBe(30);
     expect(row?.forecast.suggestedSendQty).toBe(12);
@@ -961,7 +961,7 @@ describe("RETAILA OIN forecast history", () => {
     expect(row?.forecast.looseStudleyQty).toBe(7);
     expect(row?.forecast.studleyShortfallQty).toBe(5);
     expect(row?.oinUnits90 ?? 0).toBe(0);
-    const csv = await exportFbaForecastCsv(adminId, { q: skuCase });
+    const csv = await exportFbaForecastCsv(adminId, { q: skuCase, sold: "all" });
     expect(csv.csv).toContain(skuCase);
     expect(csv.csv).toContain("Suggested replenishment");
     await expect(exportFbaForecastCsv(deniedId, { q: skuCase })).rejects.toThrow(/Purchasing access required/);

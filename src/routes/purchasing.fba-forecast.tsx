@@ -25,6 +25,12 @@ import {
 } from "@/components/ui/sheet";
 import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
+  defaultFbaForecastSort,
+  salesActivitySearchValue,
+  type FbaForecastSort,
+  type FbaSalesActivity,
+} from "@/domain/fba-forecast-search";
+import {
   FBA_INBOUND_STATUSES,
   FBA_RECOMMENDATIONS,
   FBA_RECOMMENDATION_LABEL,
@@ -45,8 +51,9 @@ import {
 
 const TABS = ["overview", "history", "imports", "settings"] as const;
 type Tab = (typeof TABS)[number];
-const SORTS = ["priority", "cover", "velocity", "suggested"] as const;
+const SORTS = ["priority", "cover", "velocity", "suggested", "sales"] as const;
 type Sort = (typeof SORTS)[number];
+const SALES_ACTIVITIES = ["365", "90", "30", "all"] as const;
 
 const HISTORY_WINDOWS = [30, 90, 180, 365] as const;
 type HistoryWindow = (typeof HISTORY_WINDOWS)[number];
@@ -58,6 +65,7 @@ type Search = {
   recommendation?: FbaRecommendation | undefined;
   brand?: string | undefined;
   sort?: Sort | undefined;
+  sold?: "90" | "30" | "all" | undefined;
   tab?: Tab | undefined;
   sku?: string | undefined;
   days?: HistoryWindow | undefined;
@@ -78,13 +86,16 @@ function parseSearch(raw: Record<string, unknown>): Search {
   if (typeof brand === "string" && brand) out.brand = brand;
   const sort = raw["sort"];
   if (SORTS.some((item) => item === sort)) out.sort = sort as Sort;
+  const sold = raw["sold"];
+  if (sold === "90" || sold === "30" || sold === "all") out.sold = sold;
   const tab = raw["tab"];
   if (TABS.some((item) => item === tab)) out.tab = tab as Tab;
   const sku = raw["sku"];
   if (typeof sku === "string" && sku) out.sku = sku;
   const daysRaw = raw["days"];
   const days = typeof daysRaw === "number" ? daysRaw : Number(daysRaw);
-  if (HISTORY_WINDOWS.some((item) => item === days) && days !== 90) out.days = days as HistoryWindow;
+  if (HISTORY_WINDOWS.some((item) => item === days) && days !== 90)
+    out.days = days as HistoryWindow;
   return out;
 }
 
@@ -201,6 +212,7 @@ function FbaForecastPage() {
           recommendation: search.recommendation,
           brand: search.brand,
           sort: search.sort,
+          sold: search.sold ?? "365",
         },
       }),
     )
@@ -215,13 +227,17 @@ function FbaForecastPage() {
         setCover(String(result.data.settings.targetCoverWeeks));
         setSafety(String(result.data.settings.safetyStockQty));
         setMultiple(
-          result.data.settings.caseMultiple == null ? "" : String(result.data.settings.caseMultiple),
+          result.data.settings.caseMultiple == null
+            ? ""
+            : String(result.data.settings.caseMultiple),
         );
         setOverstock(String(result.data.settings.overstockCoverWeeks));
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
-        setWorkspaceError(caught instanceof Error ? caught.message : "The FBA forecast could not be loaded.");
+        setWorkspaceError(
+          caught instanceof Error ? caught.message : "The FBA forecast could not be loaded.",
+        );
       })
       .finally(() => {
         if (!cancelled) setWorkspaceLoading(false);
@@ -229,7 +245,15 @@ function FbaForecastPage() {
     return () => {
       cancelled = true;
     };
-  }, [search.q, search.page, search.recommendation, search.brand, search.sort, reload]);
+  }, [
+    search.q,
+    search.page,
+    search.recommendation,
+    search.brand,
+    search.sort,
+    search.sold,
+    reload,
+  ]);
 
   useEffect(() => {
     if (tab !== "history") return;
@@ -237,7 +261,9 @@ function FbaForecastPage() {
     setHistoryLoading(true);
     setHistoryError(null);
     setHistory(null);
-    void settle(getFbaOinHistoryFn({ data: { page: search.page, days: search.days ?? 90, q: search.q } }))
+    void settle(
+      getFbaOinHistoryFn({ data: { page: search.page, days: search.days ?? 90, q: search.q } }),
+    )
       .then((result) => {
         if (cancelled) return;
         if (!result.ok) {
@@ -248,7 +274,9 @@ function FbaForecastPage() {
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
-        setHistoryError(caught instanceof Error ? caught.message : "RETAILA OIN history could not be loaded.");
+        setHistoryError(
+          caught instanceof Error ? caught.message : "RETAILA OIN history could not be loaded.",
+        );
       })
       .finally(() => {
         if (!cancelled) setHistoryLoading(false);
@@ -281,7 +309,9 @@ function FbaForecastPage() {
       .catch((caught: unknown) => {
         if (cancelled) return;
         setDetailError(
-          caught instanceof Error ? caught.message : "RETAILA invoices for this product could not be loaded.",
+          caught instanceof Error
+            ? caught.message
+            : "RETAILA invoices for this product could not be loaded.",
         );
       })
       .finally(() => {
@@ -324,14 +354,20 @@ function FbaForecastPage() {
             <span className="inline-flex h-9 items-center border border-border px-3 text-[11px] font-semibold uppercase tracking-[0.12em]">
               Amazon UK
             </span>
-            <button className={btnClass} type="button" onClick={() => setStatusOpen((open) => !open)}>
+            <button
+              className={btnClass}
+              type="button"
+              onClick={() => setStatusOpen((open) => !open)}
+            >
               Data status
             </button>
           </>
         }
       />
       {notice ? (
-        <p className="border-b border-good/30 bg-good/10 px-4 py-2 text-[13px] text-good sm:px-6">{notice}</p>
+        <p className="border-b border-good/30 bg-good/10 px-4 py-2 text-[13px] text-good sm:px-6">
+          {notice}
+        </p>
       ) : null}
       {error ? (
         <div className="px-4 py-3 sm:px-6">
@@ -341,7 +377,11 @@ function FbaForecastPage() {
       {workspaceError ? (
         <div className="space-y-2 px-4 py-3 sm:px-6">
           <ErrorState message={workspaceError} />
-          <button className={btnClass} type="button" onClick={() => setReload((value) => value + 1)}>
+          <button
+            className={btnClass}
+            type="button"
+            onClick={() => setReload((value) => value + 1)}
+          >
             Retry
           </button>
         </div>
@@ -349,7 +389,11 @@ function FbaForecastPage() {
       {data?.oinUnavailable ? (
         <div className="space-y-2 px-4 py-3 sm:px-6">
           <ErrorState message={data.oinUnavailable} />
-          <button className={btnClass} type="button" onClick={() => setReload((value) => value + 1)}>
+          <button
+            className={btnClass}
+            type="button"
+            onClick={() => setReload((value) => value + 1)}
+          >
             Retry RETAILA history
           </button>
         </div>
@@ -393,6 +437,7 @@ function FbaForecastPage() {
                 recommendation: search.recommendation,
                 brand: search.brand,
                 sort: search.sort,
+                sold: search.sold ?? "365",
               },
             }).then((result) => {
               if (!result.ok) {
@@ -545,7 +590,9 @@ function FbaForecastPage() {
           ) : (
             <SheetHeader>
               <SheetTitle>Product</SheetTitle>
-              <SheetDescription>This product is not on the current page of results.</SheetDescription>
+              <SheetDescription>
+                This product is not on the current page of results.
+              </SheetDescription>
             </SheetHeader>
           )}
         </SheetContent>
@@ -584,8 +631,12 @@ function DataStatus({ data }: { data: Data }) {
         }
       />
       <StatusBlock
-        title="Unresolved products"
-        body={`${data.summary.dataIssues.toLocaleString("en-GB")} products cannot be forecast yet. RETAILA invoices are customer sales and are not proven Amazon UK FBA sell-through.`}
+        title="Forecast unavailable"
+        body={
+          data.salesActivityUnavailable
+            ? "RETAILA customer sales could not be loaded, so sold-product counts are hidden. This is not zero sales."
+            : `${data.summary.forecastUnavailable.toLocaleString("en-GB")} products in ${salesScopeLabel(data.salesActivity)} have no shipment figure. A missing Amazon UK FBA extract is not a product-data error. RETAILA invoices stay customer sales.`
+        }
       />
       {data.oin.warning ? (
         <p className="border border-warn/40 bg-warn/10 px-3 py-2 text-warn sm:col-span-2 xl:col-span-4">
@@ -599,10 +650,22 @@ function DataStatus({ data }: { data: Data }) {
 function StatusBlock({ title, body }: { title: string; body: string }) {
   return (
     <div className="border border-border bg-surface/60 p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">{title}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel">
+        {title}
+      </div>
       <p className="mt-1 text-[13px]">{body}</p>
     </div>
   );
+}
+
+function salesScopeLabel(activity: FbaSalesActivity): string {
+  if (activity === "all") return "the full catalogue";
+  return `products sold in the last ${activity} days`;
+}
+
+function activeSort(search: Search): FbaForecastSort {
+  if (search.sort) return search.sort;
+  return defaultFbaForecastSort(search.sold ?? "365");
 }
 
 function Overview({
@@ -624,34 +687,44 @@ function Overview({
   onOpen: (row: Row) => void;
   onExport: () => void;
 }) {
+  const activity: FbaSalesActivity = search.sold ?? "365";
+  const countsHidden = Boolean(data?.salesActivityUnavailable);
+  const count = (value: number | undefined) => (data && !countsHidden ? String(value ?? 0) : "—");
   return (
     <>
+      <p className="px-4 pt-4 text-[12px] text-steel sm:px-6">
+        {countsHidden
+          ? "Sales activity could not be checked. Counts stay blank so a failed read is not shown as zero sales."
+          : activity === "all"
+            ? "Counts include every stock product, including products with no RETAILA sales."
+            : `Counts are limited to products with a verified RETAILA invoice in the last ${activity} days.`}
+      </p>
       <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 xl:grid-cols-4">
         <SummaryCard
           label="Send Now"
-          value={data ? String(data.summary.sendNow) : "—"}
+          value={count(data?.summary.sendNow)}
           hint="Needs a shipment now"
           active={search.recommendation === "SEND_NOW"}
           onClick={() => patch({ recommendation: "SEND_NOW", page: undefined, tab: undefined })}
         />
         <SummaryCard
           label="Send Soon"
-          value={data ? String(data.summary.sendSoon) : "—"}
+          value={count(data?.summary.sendSoon)}
           hint="Replenish shortly"
           active={search.recommendation === "SEND_SOON"}
           onClick={() => patch({ recommendation: "SEND_SOON", page: undefined, tab: undefined })}
         />
         <SummaryCard
           label="Healthy Stock"
-          value={data ? String(data.summary.healthy) : "—"}
+          value={count(data?.summary.healthy)}
           hint="Cover is adequate"
           active={search.recommendation === "HEALTHY"}
           onClick={() => patch({ recommendation: "HEALTHY", page: undefined, tab: undefined })}
         />
         <SummaryCard
-          label="Data Issues"
-          value={data ? String(data.summary.dataIssues) : "—"}
-          hint="Forecast cannot be calculated"
+          label="Forecast Unavailable"
+          value={count(data?.summary.forecastUnavailable)}
+          hint="No covered Amazon UK FBA extract, or stock is missing"
           active={search.recommendation === "INSUFFICIENT_DATA"}
           onClick={() =>
             patch({ recommendation: "INSUFFICIENT_DATA", page: undefined, tab: undefined })
@@ -659,7 +732,7 @@ function Overview({
         />
       </div>
       <form
-        className="grid gap-2 border-y border-border/70 px-4 py-3 sm:px-6 md:grid-cols-[minmax(12rem,1fr)_11rem_11rem_10rem_auto_auto]"
+        className="grid gap-2 border-y border-border/70 px-4 py-3 sm:px-6 md:grid-cols-[minmax(12rem,1fr)_14rem_11rem_11rem_11rem_auto_auto]"
         onSubmit={(event) => {
           event.preventDefault();
           patch({ q: q.trim() || undefined, page: undefined });
@@ -674,6 +747,21 @@ function Overview({
         />
         <select
           className={controlClass}
+          aria-label="Sales activity"
+          value={activity}
+          onChange={(event) => {
+            const next = event.target.value as FbaSalesActivity;
+            patch({ sold: salesActivitySearchValue(next), page: undefined });
+          }}
+        >
+          {SALES_ACTIVITIES.map((item) => (
+            <option key={item} value={item}>
+              {item === "all" ? "All products" : `Sold in last ${item} days`}
+            </option>
+          ))}
+        </select>
+        <select
+          className={controlClass}
           aria-label="Recommendation"
           value={search.recommendation ?? ""}
           onChange={(event) =>
@@ -686,7 +774,9 @@ function Overview({
           <option value="">All statuses</option>
           {FBA_RECOMMENDATIONS.map((item) => (
             <option key={item} value={item}>
-              {FBA_RECOMMENDATION_LABEL[item]}
+              {item === "INSUFFICIENT_DATA"
+                ? "Forecast unavailable"
+                : FBA_RECOMMENDATION_LABEL[item]}
             </option>
           ))}
         </select>
@@ -707,9 +797,14 @@ function Overview({
         <select
           className={controlClass}
           aria-label="Sort"
-          value={search.sort ?? "priority"}
-          onChange={(event) => patch({ sort: event.target.value as Sort, page: undefined })}
+          value={activeSort(search)}
+          onChange={(event) => {
+            const next = event.target.value as Sort;
+            const implicit = defaultFbaForecastSort(activity);
+            patch({ sort: next === implicit ? undefined : next, page: undefined });
+          }}
         >
+          <option value="sales">Customer sales</option>
           <option value="priority">Priority</option>
           <option value="cover">Weeks cover</option>
           <option value="velocity">Sales velocity</option>
@@ -718,18 +813,54 @@ function Overview({
         <button className={btnClass} type="submit">
           Search
         </button>
-        <button className={btnClass} type="button" onClick={onExport}>
+        <button className={btnClass} type="button" onClick={onExport} disabled={countsHidden}>
           Export
         </button>
       </form>
       {loading && !data ? <LoadingState label="Loading forecast…" /> : null}
-      {data && data.rows.length === 0 ? (
-        <EmptyState
-          title="Nothing matches"
-          body="No products match these filters. Clear the search, or import OPTIMUS FBA stock and a covered Amazon UK FBA sales file before a shipment can be suggested."
-        />
+      {data?.salesActivityUnavailable ? (
+        <div className="space-y-3 px-4 py-6 sm:px-6">
+          <EmptyState
+            title="Sales data unavailable"
+            body="RETAILA customer sales could not be loaded, so products sold in this period are not listed. This is not a report of zero sales. Retry the sales read, or view every stock product."
+          />
+          <button
+            className={btnClass}
+            type="button"
+            onClick={() => patch({ sold: "all", page: undefined })}
+          >
+            View all stock products
+          </button>
+        </div>
       ) : null}
-      {data && data.rows.length > 0 ? (
+      {data && !data.salesActivityUnavailable && data.rows.length === 0 ? (
+        <div className="space-y-3 px-4 py-6 sm:px-6">
+          <EmptyState
+            title={
+              activity === "all" || search.q || search.brand || search.recommendation
+                ? "Nothing matches"
+                : "No sales in this period"
+            }
+            body={
+              activity === "all"
+                ? "No products match these filters. Clear the search, or import OPTIMUS FBA stock and a covered Amazon UK FBA sales file before a shipment can be suggested."
+                : search.q || search.brand || search.recommendation
+                  ? `No product sold in the last ${activity} days matches these filters. Clear the search or choose a wider period.`
+                  : `No product has a verified RETAILA invoice in the last ${activity} days. Choose a wider period, or view all products.`
+            }
+          />
+          {activity !== "all" ? (
+            <button
+              className={btnClass}
+              type="button"
+              onClick={() => patch({ sold: "all", page: undefined })}
+            >
+              View all products
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {data && !data.salesActivityUnavailable && data.rows.length > 0 ? (
         <>
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full min-w-[72rem] text-left text-[14px]">
@@ -741,10 +872,16 @@ function Overview({
                   <th className="px-3 py-3">Sales 30d</th>
                   <th className="px-3 py-3">Sales 90d</th>
                   <th className="px-3 py-3">Weekly sales</th>
-                  <th className="px-3 py-3" title="Weeks of cover from the Amazon UK FBA extract. Blank when that extract does not cover this SKU.">
+                  <th
+                    className="px-3 py-3"
+                    title="Weeks of cover from the Amazon UK FBA extract. Blank when that extract does not cover this SKU."
+                  >
                     FBA cover
                   </th>
-                  <th className="px-3 py-3" title="Unverified comparison of current FBA stock with RETAILA weekly customer sales. Not Amazon consumption and not used for a shipment.">
+                  <th
+                    className="px-3 py-3"
+                    title="Unverified comparison of current FBA stock with RETAILA weekly customer sales. Not Amazon consumption and not used for a shipment."
+                  >
                     Illustrative cover
                   </th>
                   <th className="px-3 py-3">Studley</th>
@@ -772,7 +909,9 @@ function Overview({
                     <td className="px-3 py-3">{qty(row.customerSales.d90)}</td>
                     <td className="px-3 py-3">{rate(row.customerWeekly)}</td>
                     <td className="px-3 py-3">
-                      {row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)}`}
+                      {row.forecast.coverWeeks == null
+                        ? "—"
+                        : `${row.forecast.coverWeeks.toFixed(1)}`}
                     </td>
                     <td className="px-3 py-3">
                       {row.customerCoverWeeks == null ? "—" : row.customerCoverWeeks.toFixed(1)}
@@ -793,8 +932,8 @@ function Overview({
             </table>
           </div>
           <p className="px-4 pt-3 text-[12px] text-steel md:hidden">
-            FBA cover comes from the Amazon UK FBA extract. Illustrative cover compares FBA stock with
-            RETAILA weekly customer sales and is not used for a shipment.
+            FBA cover comes from the Amazon UK FBA extract. Illustrative cover compares FBA stock
+            with RETAILA weekly customer sales and is not used for a shipment.
           </p>
           <div className="space-y-3 px-4 py-4 md:hidden">
             {data.rows.map((row) => (
@@ -819,11 +958,19 @@ function Overview({
                   <Fact label="Weekly sales" value={rate(row.customerWeekly)} />
                   <Fact
                     label="FBA cover"
-                    value={row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`}
+                    value={
+                      row.forecast.coverWeeks == null
+                        ? "—"
+                        : `${row.forecast.coverWeeks.toFixed(1)} wks`
+                    }
                   />
                   <Fact
                     label="Illustrative cover"
-                    value={row.customerCoverWeeks == null ? "—" : `${row.customerCoverWeeks.toFixed(1)} wks`}
+                    value={
+                      row.customerCoverWeeks == null
+                        ? "—"
+                        : `${row.customerCoverWeeks.toFixed(1)} wks`
+                    }
                   />
                   <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
                 </dl>
@@ -863,7 +1010,9 @@ function SummaryCard({
       onClick={onClick}
       className={`border p-4 text-left ${active ? "border-primary bg-primary/10" : "border-border bg-surface/60"}`}
     >
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-steel">
+        {label}
+      </div>
       <div className="mt-1 font-display text-2xl font-semibold">{value}</div>
       <div className="mt-1 text-[12px] text-steel">{hint}</div>
     </button>
@@ -903,9 +1052,9 @@ function HistoryPanel({
   return (
     <div className="space-y-4 px-4 py-4 sm:px-6">
       <p className="max-w-3xl text-[13px] text-steel">
-        These are RETAILA customer invoices already stored from 561L history and the ongoing 504/TRM feed.
-        The list defaults to the last 90 days. A credit reduces the quantity. An invoice is not a shipment
-        in transit, and these rows do not record an Amazon marketplace.
+        These are RETAILA customer invoices already stored from 561L history and the ongoing 504/TRM
+        feed. The list defaults to the last 90 days. A credit reduces the quantity. An invoice is
+        not a shipment in transit, and these rows do not record an Amazon marketplace.
       </p>
       <label className="block max-w-xs text-[13px]">
         Period
@@ -922,7 +1071,11 @@ function HistoryPanel({
           ))}
         </select>
       </label>
-      {warning ? <p className="border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] text-warn">{warning}</p> : null}
+      {warning ? (
+        <p className="border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+          {warning}
+        </p>
+      ) : null}
       {error ? (
         <div className="space-y-2">
           <ErrorState message={error} />
@@ -941,7 +1094,10 @@ function HistoryPanel({
       {history && history.documents.length > 0 ? (
         <div className="space-y-3">
           {history.documents.map((document) => (
-            <article key={`${document.status}-${document.documentReference}`} className="border border-border p-3">
+            <article
+              key={`${document.status}-${document.documentReference}`}
+              className="border border-border p-3"
+            >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="font-mono text-[14px]">{document.documentReference}</h2>
                 <span className="text-[12px] text-steel">
@@ -959,12 +1115,19 @@ function HistoryPanel({
               </ul>
             </article>
           ))}
-          <Pager page={history.page} pageSize={history.pageSize} total={history.total} onPage={onPage} />
+          <Pager
+            page={history.page}
+            pageSize={history.pageSize}
+            total={history.total}
+            onPage={onPage}
+          />
         </div>
       ) : null}
       {exceptions.length ? (
         <div>
-          <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em]">Earlier ledger exceptions</h2>
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em]">
+            Earlier ledger exceptions
+          </h2>
           <ul className="mt-2 space-y-1 text-[13px] text-steel">
             {exceptions.map((item, index) => (
               <li key={`${item.code}-${index}`}>
@@ -1063,7 +1226,12 @@ function ImportsPanel(props: {
             reject the file.
           </p>
         </details>
-        <button className={primaryBtnClass} type="button" disabled={props.busy || !data.canManage} onClick={props.onImportSales}>
+        <button
+          className={primaryBtnClass}
+          type="button"
+          disabled={props.busy || !data.canManage}
+          onClick={props.onImportSales}
+        >
           Import Amazon sales
         </button>
       </section>
@@ -1079,7 +1247,8 @@ function ImportsPanel(props: {
       <section className="space-y-3 border border-border p-4 xl:col-span-2">
         <h2 className="font-display text-lg">Confirmed inbound</h2>
         <p className="text-[13px] text-steel">
-          Only stock confirmed in transit reduces the suggested send. An OIN invoice is not in transit.
+          Only stock confirmed in transit reduces the suggested send. An OIN invoice is not in
+          transit.
         </p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-[13px]">
@@ -1123,7 +1292,12 @@ function ImportsPanel(props: {
             </select>
           </label>
         </div>
-        <button className={btnClass} type="button" disabled={props.busy || !data.canManage} onClick={props.onInbound}>
+        <button
+          className={btnClass}
+          type="button"
+          disabled={props.busy || !data.canManage}
+          onClick={props.onInbound}
+        >
           Save inbound
         </button>
       </section>
@@ -1162,8 +1336,17 @@ function SettingsPanel(props: {
         <Field label="Lead time (days)" value={props.lead} onChange={props.setLead} />
         <Field label="Target cover (weeks)" value={props.cover} onChange={props.setCover} />
         <Field label="Safety units" value={props.safety} onChange={props.setSafety} />
-        <Field label="Case multiple" value={props.multiple} onChange={props.setMultiple} placeholder="No case rule" />
-        <Field label="Overstock threshold (weeks)" value={props.overstock} onChange={props.setOverstock} />
+        <Field
+          label="Case multiple"
+          value={props.multiple}
+          onChange={props.setMultiple}
+          placeholder="No case rule"
+        />
+        <Field
+          label="Overstock threshold (weeks)"
+          value={props.overstock}
+          onChange={props.setOverstock}
+        />
       </div>
       <button className={primaryBtnClass} type="submit" disabled={props.busy || !props.canManage}>
         Save settings
@@ -1237,7 +1420,9 @@ function SkuDrawer({
         <SheetTitle className="font-mono">{row.sku}</SheetTitle>
         <SheetDescription>{row.description || "No description stored"}</SheetDescription>
       </SheetHeader>
-      <StatusBadge tone={tone(row.forecast.recommendation)}>{row.forecast.recommendationLabel}</StatusBadge>
+      <StatusBadge tone={tone(row.forecast.recommendation)}>
+        {row.forecast.recommendationLabel}
+      </StatusBadge>
       <p className="text-[13px]">{row.forecast.reason}</p>
       <dl className="grid grid-cols-2 gap-3 text-[13px]">
         <Fact label="Demand source" value={row.demand.label} />
@@ -1251,8 +1436,16 @@ function SkuDrawer({
         <Fact label="RETAILA sales 365d" value={qty(row.customerSales.d365)} />
         <Fact label="Weekly customer sales" value={rate(row.customerWeekly)} />
         <Fact label="Amazon UK FBA 30d" value={qty(row.amazonUnits.d30)} />
-        <Fact label="Amazon FBA cover" value={row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`} />
-        <Fact label="Illustrative cover" value={row.customerCoverWeeks == null ? "—" : `${row.customerCoverWeeks.toFixed(1)} wks`} />
+        <Fact
+          label="Amazon FBA cover"
+          value={
+            row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`
+          }
+        />
+        <Fact
+          label="Illustrative cover"
+          value={row.customerCoverWeeks == null ? "—" : `${row.customerCoverWeeks.toFixed(1)} wks`}
+        />
         <Fact label="Recommendation velocity" value={rate(row.forecast.weeklyRate)} />
         <Fact label="Confidence" value={row.forecast.confidence} />
         <Fact label="Stockout" value={ukDate(row.forecast.stockoutDate)} />
@@ -1272,7 +1465,9 @@ function SkuDrawer({
         </p>
       ) : null}
       <details open>
-        <summary className="cursor-pointer text-[13px] font-semibold">How this quantity was calculated</summary>
+        <summary className="cursor-pointer text-[13px] font-semibold">
+          How this quantity was calculated
+        </summary>
         <p className="mt-2 text-[13px] text-steel">{row.demand.reason}</p>
         <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px] text-steel">
           {row.forecast.assumptions.map((item) => (
@@ -1281,9 +1476,15 @@ function SkuDrawer({
         </ul>
       </details>
       <section>
-        <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em]">RETAILA customer invoices</h3>
-        <p className="mt-1 text-[12px] text-steel">Last 90 days. Stock balances above are the current snapshot, not this invoice window.</p>
-        {detailLoading && !detail ? <p className="mt-2 text-[13px] text-steel">Loading invoices…</p> : null}
+        <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em]">
+          RETAILA customer invoices
+        </h3>
+        <p className="mt-1 text-[12px] text-steel">
+          Last 90 days. Stock balances above are the current snapshot, not this invoice window.
+        </p>
+        {detailLoading && !detail ? (
+          <p className="mt-2 text-[13px] text-steel">Loading invoices…</p>
+        ) : null}
         {detailError ? (
           <div className="mt-2 space-y-2">
             <ErrorState message={detailError} />
@@ -1293,14 +1494,20 @@ function SkuDrawer({
           </div>
         ) : null}
         {detail && detail.documents.length === 0 ? (
-          <p className="mt-2 text-[13px] text-steel">No RETAILA OIN lines for this SKU in the last 90 days.</p>
+          <p className="mt-2 text-[13px] text-steel">
+            No RETAILA OIN lines for this SKU in the last 90 days.
+          </p>
         ) : null}
         <ul className="mt-2 space-y-2 text-[13px]">
           {detail?.documents.map((document) => (
-            <li key={`${document.status}-${document.documentReference}`} className="border border-border p-2">
+            <li
+              key={`${document.status}-${document.documentReference}`}
+              className="border border-border p-2"
+            >
               <div className="font-mono">{document.documentReference}</div>
               <div className="text-steel">
-                {ukDate(document.documentDate)} · {document.source} · {document.status} · {qty(document.units)}
+                {ukDate(document.documentDate)} · {document.source} · {document.status} ·{" "}
+                {qty(document.units)}
               </div>
             </li>
           ))}
@@ -1315,10 +1522,26 @@ function SkuDrawer({
           }}
         >
           <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em]">This SKU</h3>
-          <Field label="Lead days" value={override.leadTimeDays} onChange={(value) => setOverride({ ...override, leadTimeDays: value })} />
-          <Field label="Target cover weeks" value={override.targetCoverWeeks} onChange={(value) => setOverride({ ...override, targetCoverWeeks: value })} />
-          <Field label="Safety units" value={override.safetyStockQty} onChange={(value) => setOverride({ ...override, safetyStockQty: value })} />
-          <Field label="Case multiple" value={override.caseMultiple} onChange={(value) => setOverride({ ...override, caseMultiple: value })} />
+          <Field
+            label="Lead days"
+            value={override.leadTimeDays}
+            onChange={(value) => setOverride({ ...override, leadTimeDays: value })}
+          />
+          <Field
+            label="Target cover weeks"
+            value={override.targetCoverWeeks}
+            onChange={(value) => setOverride({ ...override, targetCoverWeeks: value })}
+          />
+          <Field
+            label="Safety units"
+            value={override.safetyStockQty}
+            onChange={(value) => setOverride({ ...override, safetyStockQty: value })}
+          />
+          <Field
+            label="Case multiple"
+            value={override.caseMultiple}
+            onChange={(value) => setOverride({ ...override, caseMultiple: value })}
+          />
           <button className={btnClass} type="submit" disabled={busy}>
             Save SKU settings
           </button>

@@ -31,6 +31,12 @@ import {
   fbaLocationQtyIsVerified,
   fbaStockIsStale,
 } from "@/domain/fba-stock";
+import {
+  defaultFbaForecastSort,
+  isFbaSalesActivity,
+  type FbaForecastSort,
+  type FbaSalesActivity,
+} from "@/domain/fba-forecast-search";
 import { lastNDaysRange, todayLondonDateOnly } from "@/domain/sales-history-period";
 import { skuMatchKey } from "@/domain/stock";
 import { hasPermission } from "@/server/rbac/access";
@@ -41,6 +47,7 @@ import {
   fbaForecastReportingDisabled,
 } from "@/server/purchasing/fba-forecast-switch";
 import {
+  ForecastQueryError,
   listRetailaOinHistory,
   listRetailaOinLinesForSku,
   DEFAULT_RETAILA_OIN_WINDOW_DAYS,
@@ -50,6 +57,7 @@ import {
   type RetailaOinHealth,
   type RetailaOinHistoryDocument,
   type RetailaOinHistorySort,
+  type RetailaSalesActivity,
   type RetailaSalesWindows,
 } from "@/server/purchasing/fba-retaila-oin";
 
@@ -471,7 +479,8 @@ const listInput = z.object({
     .optional()
     .nullable(),
   brand: z.string().trim().max(80).optional().nullable(),
-  sort: z.enum(["priority", "cover", "velocity", "suggested"]).optional().nullable(),
+  sort: z.enum(["priority", "cover", "velocity", "suggested", "sales"]).optional().nullable(),
+  sold: z.enum(["365", "90", "30", "all"]).optional().nullable(),
   page: z.number().int().positive().optional().nullable(),
   exportAll: z.boolean().optional().nullable(),
 });
@@ -489,8 +498,11 @@ type SkuBucket = {
   inbound: number;
   oinUnits90: number | null;
   customerSales: RetailaSalesWindows;
+  sold: RetailaSalesActivity;
   amazon: { d7: number; d30: number; d60: number; d90: number; d365: number } | null;
 };
+
+const EMPTY_SOLD: RetailaSalesActivity = { d30: false, d90: false, d365: false };
 
 const EMPTY_CUSTOMER_SALES: RetailaSalesWindows = {
   d7: null,
@@ -647,12 +659,22 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     undatedLines: 0,
     warning: null,
   };
-  let oinRows: Array<{ matchKey: string; sku: string; windows: RetailaSalesWindows }> = [];
+  let oinRows: Array<{
+    matchKey: string;
+    sku: string;
+    windows: RetailaSalesWindows;
+    sold: RetailaSalesActivity;
+  }> = [];
   let oinUnavailable: string | null = null;
   try {
     const report = await loadRetailaOinReport(oinRange);
     oinHealth = report.health;
-    oinRows = report.units.map((row) => ({ matchKey: row.matchKey, sku: row.sku, windows: row.windows }));
+    oinRows = report.units.map((row) => ({
+      matchKey: row.matchKey,
+      sku: row.sku,
+      windows: row.windows,
+      sold: row.sold,
+    }));
   } catch (error) {
     console.error("[fba-oin]", error);
     oinUnavailable =
@@ -681,6 +703,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       inbound: 0,
       oinUnits90: null,
       customerSales: { ...EMPTY_CUSTOMER_SALES },
+      sold: { ...EMPTY_SOLD },
       amazon: null,
     };
     buckets.set(matchKey, created);
@@ -699,6 +722,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   for (const row of oinRows) {
     const item = bucket(row.matchKey, row.sku);
     item.customerSales = row.windows;
+    item.sold = row.sold;
     item.oinUnits90 = row.windows.d90;
   }
   for (const row of amazonRows) {
@@ -716,62 +740,73 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   const q = input.q?.trim().toLowerCase() ?? "";
   const brandFilter = input.brand?.trim() || null;
   let unverifiedFbaSkus = 0;
-  const forecastRows = [...buckets.values()]
-    .map((item) => {
-      if (item.fbaStockKnown && item.fbaStockStale) unverifiedFbaSkus += 1;
-      const override = overrideByKey.get(item.matchKey);
-      const demand: FbaDemandDecision = selectFbaDemand({
-        amazonWindowSupported: windows.d30,
-        amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
-        retailaNetUnits30: item.customerSales.d30,
-      });
-      const customerWeekly = averageWeeklySales(item.customerSales.d30);
-      const forecast: FbaForecastResult = projectFbaShipment({
-        fbaAvailable: item.fbaAvailable,
-        fbaStockKnown: item.fbaStockKnown,
-        fbaStockStale: item.fbaStockStale,
-        studleyAvailable: item.studleyAvailable,
-        confirmedInboundQty: item.inbound,
-        salesSupported: demand.salesSupported,
-        amazonNetUnits30: demand.netUnits30,
-        leadTimeDays: override?.leadTimeDays ?? settings.leadTimeDays,
-        targetCoverWeeks: num(override?.targetCoverWeeks ?? settings.targetCoverWeeks),
-        safetyStockQty: override?.safetyStockQty ?? settings.safetyStockQty,
-        caseMultiple: override?.caseMultiple ?? settings.caseMultiple,
-        overstockCoverWeeks: settings.overstockCoverWeeks,
-        today,
-      });
-      return {
-        ...item,
-        forecast,
-        demand,
-        customerWeekly,
-        // Illustrative only. projectFbaShipment above does not receive this figure.
-        customerCoverWeeks: stockCoverWeeks(item.fbaAvailable, customerWeekly),
-        oinWeekly: customerWeekly,
-        amazonUnits: {
-          d7: windows.d7 ? (item.amazon?.d7 ?? 0) : null,
-          d30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
-          d60: windows.d60 ? (item.amazon?.d60 ?? 0) : null,
-          d90: windows.d90 ? (item.amazon?.d90 ?? 0) : null,
-          d365: windows.d365 ? (item.amazon?.d365 ?? 0) : null,
-        },
-      };
+  const forecastRows = [...buckets.values()].map((item) => {
+    if (item.fbaStockKnown && item.fbaStockStale) unverifiedFbaSkus += 1;
+    const override = overrideByKey.get(item.matchKey);
+    const demand: FbaDemandDecision = selectFbaDemand({
+      amazonWindowSupported: windows.d30,
+      amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
+      retailaNetUnits30: item.customerSales.d30,
     });
+    const customerWeekly = averageWeeklySales(item.customerSales.d30);
+    const forecast: FbaForecastResult = projectFbaShipment({
+      fbaAvailable: item.fbaAvailable,
+      fbaStockKnown: item.fbaStockKnown,
+      fbaStockStale: item.fbaStockStale,
+      studleyAvailable: item.studleyAvailable,
+      confirmedInboundQty: item.inbound,
+      salesSupported: demand.salesSupported,
+      amazonNetUnits30: demand.netUnits30,
+      leadTimeDays: override?.leadTimeDays ?? settings.leadTimeDays,
+      targetCoverWeeks: num(override?.targetCoverWeeks ?? settings.targetCoverWeeks),
+      safetyStockQty: override?.safetyStockQty ?? settings.safetyStockQty,
+      caseMultiple: override?.caseMultiple ?? settings.caseMultiple,
+      overstockCoverWeeks: settings.overstockCoverWeeks,
+      today,
+    });
+    return {
+      ...item,
+      forecast,
+      demand,
+      customerWeekly,
+      // Illustrative only. projectFbaShipment above does not receive this figure.
+      customerCoverWeeks: stockCoverWeeks(item.fbaAvailable, customerWeekly),
+      oinWeekly: customerWeekly,
+      amazonUnits: {
+        d7: windows.d7 ? (item.amazon?.d7 ?? 0) : null,
+        d30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
+        d60: windows.d60 ? (item.amazon?.d60 ?? 0) : null,
+        d90: windows.d90 ? (item.amazon?.d90 ?? 0) : null,
+        d365: windows.d365 ? (item.amazon?.d365 ?? 0) : null,
+      },
+    };
+  });
+  const salesActivity: FbaSalesActivity = isFbaSalesActivity(input.sold) ? input.sold : "365";
+  // A failed sales read must not become an empty "nobody sold" catalogue.
+  const salesActivityUnavailable = oinUnavailable != null && salesActivity !== "all";
+  const activityRows = salesActivityUnavailable
+    ? []
+    : forecastRows.filter((row) => productSoldIn(row.sold, salesActivity));
   const summary = {
-    sendNow: forecastRows.filter((row) => row.forecast.recommendation === "SEND_NOW").length,
-    sendSoon: forecastRows.filter((row) => row.forecast.recommendation === "SEND_SOON").length,
-    healthy: forecastRows.filter((row) => row.forecast.recommendation === "HEALTHY").length,
-    dataIssues: forecastRows.filter((row) => row.forecast.recommendation === "INSUFFICIENT_DATA")
-      .length,
-    overstocked: forecastRows.filter((row) => row.forecast.recommendation === "OVERSTOCKED").length,
+    sendNow: activityRows.filter((row) => row.forecast.recommendation === "SEND_NOW").length,
+    sendSoon: activityRows.filter((row) => row.forecast.recommendation === "SEND_SOON").length,
+    healthy: activityRows.filter((row) => row.forecast.recommendation === "HEALTHY").length,
+    forecastUnavailable: activityRows.filter(
+      (row) => row.forecast.recommendation === "INSUFFICIENT_DATA",
+    ).length,
+    overstocked: activityRows.filter((row) => row.forecast.recommendation === "OVERSTOCKED").length,
+    productCount: activityRows.length,
   };
-  const brands = [...new Set(forecastRows.map((row) => row.brand).filter((brand): brand is string => Boolean(brand)))].sort(
-    (a, b) => a.localeCompare(b),
-  );
-  const rows = forecastRows
+  const brands = [
+    ...new Set(
+      activityRows.map((row) => row.brand).filter((brand): brand is string => Boolean(brand)),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  const sortMode: FbaForecastSort = input.sort ?? defaultFbaForecastSort(salesActivity);
+  const rows = activityRows
     .filter((row) => {
-      if (input.recommendation && row.forecast.recommendation !== input.recommendation) return false;
+      if (input.recommendation && row.forecast.recommendation !== input.recommendation)
+        return false;
       if (brandFilter === "__unbranded" && row.brand) return false;
       if (brandFilter && brandFilter !== "__unbranded" && row.brand !== brandFilter) return false;
       if (!q) return true;
@@ -782,7 +817,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         (row.brand ?? "").toLowerCase().includes(q)
       );
     })
-    .sort((a, b) => compareForecastRows(a, b, input.sort ?? "priority"));
+    .sort((a, b) => compareForecastRows(a, b, sortMode));
 
   const page = input.page ?? 1;
   const start = (page - 1) * PAGE_SIZE;
@@ -815,6 +850,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         }
       : null,
     summary,
+    salesActivity,
+    salesActivityUnavailable,
     brands,
     oin: oinHealth,
     oinUnavailable,
@@ -855,7 +892,17 @@ function csvCell(value: string | number | null | undefined): string {
 }
 
 export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
-  const data = await getFbaForecastWorkspace(actorUserId, { ...(raw as object), exportAll: true, page: 1 });
+  const data = await getFbaForecastWorkspace(actorUserId, {
+    ...(raw as object),
+    exportAll: true,
+    page: 1,
+  });
+  if (data.salesActivityUnavailable) {
+    throw new ForecastQueryError(
+      data.oinUnavailable ??
+        "RETAILA customer sales are unavailable, so this export was not created. It is not a file of zero sales.",
+    );
+  }
   const header = [
     "SKU",
     "Description",
@@ -960,12 +1007,30 @@ function recommendationRank(value: string): number {
   return 4;
 }
 
+function productSoldIn(sold: RetailaSalesActivity, activity: FbaSalesActivity): boolean {
+  if (activity === "all") return true;
+  if (activity === "30") return sold.d30;
+  if (activity === "90") return sold.d90;
+  return sold.d365;
+}
+
+function netRank(value: number | null): number {
+  return value == null ? Number.NEGATIVE_INFINITY : value;
+}
+
 function compareForecastRows(
-  a: { sku: string; forecast: FbaForecastResult },
-  b: { sku: string; forecast: FbaForecastResult },
-  sort: "priority" | "cover" | "velocity" | "suggested",
+  a: { sku: string; customerSales: RetailaSalesWindows; forecast: FbaForecastResult },
+  b: { sku: string; customerSales: RetailaSalesWindows; forecast: FbaForecastResult },
+  sort: FbaForecastSort,
 ): number {
-  if (sort === "cover") {
+  if (sort === "sales") {
+    const d30 = netRank(b.customerSales.d30) - netRank(a.customerSales.d30);
+    if (d30 !== 0) return d30;
+    const d90 = netRank(b.customerSales.d90) - netRank(a.customerSales.d90);
+    if (d90 !== 0) return d90;
+    const d365 = netRank(b.customerSales.d365) - netRank(a.customerSales.d365);
+    if (d365 !== 0) return d365;
+  } else if (sort === "cover") {
     const left = a.forecast.coverWeeks ?? Number.POSITIVE_INFINITY;
     const right = b.forecast.coverWeeks ?? Number.POSITIVE_INFINITY;
     if (left !== right) return left - right;
@@ -977,8 +1042,12 @@ function compareForecastRows(
     const left = a.forecast.suggestedSendQty ?? Number.NEGATIVE_INFINITY;
     const right = b.forecast.suggestedSendQty ?? Number.NEGATIVE_INFINITY;
     if (left !== right) return right - left;
-  } else if (recommendationRank(a.forecast.recommendation) !== recommendationRank(b.forecast.recommendation)) {
-    return recommendationRank(a.forecast.recommendation) - recommendationRank(b.forecast.recommendation);
+  } else if (
+    recommendationRank(a.forecast.recommendation) !== recommendationRank(b.forecast.recommendation)
+  ) {
+    return (
+      recommendationRank(a.forecast.recommendation) - recommendationRank(b.forecast.recommendation)
+    );
   }
   return a.sku.localeCompare(b.sku);
 }
