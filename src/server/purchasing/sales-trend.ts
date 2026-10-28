@@ -1,7 +1,7 @@
 /**
  * Monthly sales trends from AutopartSalesLine.
  * FBA stock and FBA report usage are not read.
- * OIN replenishment documents are excluded from the same purchasing view.
+ * OIN customer invoices are excluded from B2B purchasing demand so a RETAILA sale is not counted as trade demand.
  */
 import { z } from "zod";
 import { Prisma } from "@prisma/client";

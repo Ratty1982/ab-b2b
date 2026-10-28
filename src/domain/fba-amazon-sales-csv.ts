@@ -2,7 +2,7 @@
  * Manual Amazon UK FBA sell-through CSV.
  * Coverage comes from declared metadata, not the first and last sale dates.
  * MFN and FBM rows reject the file. A missing marketplace is not treated as UK.
- * OIN replenishment is not consumer sales.
+ * An Autopart OIN invoice is a customer sale. It is not imported again as Amazon sell-through.
  */
 
 import { isAutopart504Report } from "@/domain/autopart-504";
@@ -125,7 +125,7 @@ export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
     return {
       ok: false,
       error:
-        "This file is an Autopart 504 or TRM21QC report. OIN replenishment quantities are not Amazon consumer sales.",
+        "This file is an Autopart 504 or TRM21QC report. OIN customer invoices are not imported again as Amazon sales.",
     };
   }
   const lines = source.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith("#"));
@@ -235,7 +235,7 @@ export function parseFbaAmazonSalesCsv(text: string): FbaAmazonSalesParse {
     if (isOinReplenishmentReference(document)) {
       return {
         ok: false,
-        error: `Row ${i + 1} is an OIN replenishment document. It was not imported as Amazon sales.`,
+        error: `Row ${i + 1} is an OIN customer invoice. It was not imported again as Amazon sales.`,
       };
     }
     if (!normalizedFbaOnly) {

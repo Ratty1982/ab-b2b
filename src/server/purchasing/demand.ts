@@ -1,7 +1,7 @@
 /**
  * Purchasing demand from AutopartSalesLine — grouped SQL, never per-SKU N+1.
- * OIN document references are Amazon FBA replenishment, not B2B customer demand,
- * and are excluded so a later mapped internal account cannot inflate the forecast.
+ * OIN document references are RETAILA customer invoices, not B2B trade demand,
+ * and are excluded so those sales cannot inflate the purchasing forecast.
  */
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";

@@ -6,11 +6,14 @@ import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
   amazonExtractIsComplete,
   amazonWindowSupported,
+  averageWeeklySales,
   buildOinReplenishmentBatch,
   eligibleFbaInboundQty,
   isOinReplenishmentReference,
   projectFbaShipment,
   provisionalReplenishmentWeekly,
+  RETAILA_OIN_PROVEN_AS_FBA_UK,
+  selectFbaDemand,
   reconcileOinDocumentLines,
   rejectUnprovenFbaSales,
   rejectUnprovenUkMarketplace,
@@ -351,7 +354,59 @@ describe("FBA shipment forecast", () => {
     expect(roundDownToCaseMultiple(7, 4)).toBe(4);
   });
 
-  it("keeps OIN cadence separate from the shipment quantity", () => {
+  it("uses verified 30-day demand for the worked replenishment example", () => {
+    const result = projectFbaShipment({
+      ...base,
+      fbaAvailable: 50,
+      studleyAvailable: 70,
+      confirmedInboundQty: 10,
+      salesSupported: true,
+      amazonNetUnits30: 90,
+      leadTimeDays: 14,
+      targetCoverWeeks: 6,
+      safetyStockQty: 0,
+      caseMultiple: 1,
+      overstockCoverWeeks: 16,
+    });
+    expect(averageWeeklySales(90)).toBe(21);
+    expect(result.weeklyRate).toBe(21);
+    expect(result.projectedRequiredQty).toBe(168);
+    expect(result.suggestedSendQty).toBe(108);
+    expect(result.dispatchableQty).toBe(70);
+    expect(result.studleyShortfallQty).toBe(38);
+    expect(result.recommendation).not.toBe("INSUFFICIENT_DATA");
+  });
+
+  it("does not treat RETAILA invoices as proven FBA UK demand or add them to an Amazon extract", () => {
+    expect(RETAILA_OIN_PROVEN_AS_FBA_UK).toBe(false);
+    const blocked = selectFbaDemand({
+      amazonWindowSupported: false,
+      amazonNetUnits30: null,
+      retailaNetUnits30: 90,
+    });
+    expect(blocked.source).toBe("NONE");
+    expect(blocked.netUnits30).toBeNull();
+    const fromOin = projectFbaShipment({
+      ...base,
+      salesSupported: blocked.salesSupported,
+      amazonNetUnits30: blocked.netUnits30,
+      fbaAvailable: 50,
+      confirmedInboundQty: 10,
+      studleyAvailable: 70,
+    });
+    expect(fromOin.recommendation).toBe("INSUFFICIENT_DATA");
+    expect(fromOin.suggestedSendQty).toBeNull();
+    const chosen = selectFbaDemand({
+      amazonWindowSupported: true,
+      amazonNetUnits30: 10,
+      retailaNetUnits30: 90,
+    });
+    expect(chosen.source).toBe("AMAZON_UK_FBA_CSV");
+    expect(chosen.netUnits30).toBe(10);
+    expect(chosen.reason).toMatch(/not added/);
+  });
+
+  it("keeps OIN customer sales separate from the shipment quantity", () => {
     expect(provisionalReplenishmentWeekly(14, 7)).toBe(14);
     const trm = parseAutopartTrm21qcReport(
       `Cust,Group,Document,Date,Part Number,Description,Qty,Sales,Cost,Margin,Perc%

@@ -8,7 +8,7 @@ Architecture audit and the first safe phase. This does not change financial invo
 | ------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | FBA UK on-hand            | OPTIMUS branch via manual 231PO3NEW, stored on `AutopartLocationStock` location `FBA` | Yes, only while that SKU's own `sourceImportedAt` is under 14 days old. A later partial file does not refresh SKUs it omits.       |
 | Studley warehouse         | `AutopartProduct.availQty` when `presentInLatestFeed`                                 | Yes, as a separate balance. It is not added to FBA.                                                                                |
-| OIN replenishment history | 504 headers joined to TRM21QC lines on the parsed document number                     | Only after a paired upload into the FBA ledger. The mailbox poller does not copy them.                                             |
+| RETAILA OIN customer sales | `AutopartSalesDocument` / `AutopartSalesLine` for account RETAILA, windowed         | Visible as customer sales. Not a shipment quantity: the rows have no marketplace and no Amazon fulfilment channel.                 |
 | Amazon consumer sales     | Not in this database                                                                  | No. A declared complete FBA extract is required, and marketplace must be Amazon UK. MFN/FBM and other markets are rejected. Gaps are not inferred from the first and last sale. |
 | Confirmed inbound         | No carrier or Amazon inbound feed                                                     | Only a staff status of `CONFIRMED_IN_TRANSIT`. An OIN invoice is not in transit.                                                   |
 
@@ -20,7 +20,20 @@ Ongoing 504/TRM writes go through `assessOngoingSalesWrite`. A header and its li
 
 An Amazon or internal account that is not an Active B2B customer therefore leaves no OIN row to reconstruct. Changing cutover or financial ownership to capture those movements is out of scope. The FBA ledger remains for older manual uploads. It does not hook the poller.
 
-RETAILA OIN history is read from `AutopartSalesDocument` and `AutopartSalesLine`, and only for a selected document-date window. The dashboard and the 90-day cadence use the last 90 days. OIN History can show 30, 90, 180 or 365 days. The date and the RETAILA account (or a verified RETAILA company) are applied before reconciliation, so other customers' historic sales are not scanned. Both 561L and TRM21QC copies of an invoice inside that window are still reconciled, including a copy whose company link is null. A verified RETAILA company on the document is the owner for every proven copy. Two verified RETAILA owners, or a `RETAILA` code stored on a different verified customer and no RETAILA owner, are left for review and are not counted. Lines that belong to a different verified customer are not added to a RETAILA invoice. When both sources agree, the ongoing copy is kept; when they disagree, or the 504 goods value does not match, neither copy is added to the cadence. Credits use a negative quantity. A manual ledger document is added only when its customer account is `RETAILA` or a verified RETAILA alias, its date is inside the window, and that reference is not already a RETAILA sales document. A blank ledger account is shown for review and is not counted. Another customer's ledger row stays in the ledger for audit and is not counted as RETAILA. These quantities stay replenishment history. They are not Amazon consumer sales. FBA and Studley balances stay current snapshots and are not limited to the invoice window.
+RETAILA OIN history is read from `AutopartSalesDocument` and `AutopartSalesLine`, and only for a selected document-date window. The overview reconciles the last 365 days once, then sums 7, 30, 60, 90 and 365 days inside that result. OIN History can show 30, 90, 180 or 365 days and loads only when that tab is opened. The date and the RETAILA account (or a verified RETAILA company) are applied before reconciliation, so other customers' historic sales are not scanned. Both 561L and TRM21QC copies of an invoice inside that window are still reconciled, including a copy whose company link is null. A verified RETAILA company on the document is the owner for every proven copy. Two verified RETAILA owners, or a `RETAILA` code stored on a different verified customer and no RETAILA owner, are left for review and are not counted. Lines that belong to a different verified customer are not added to a RETAILA invoice. When both sources agree, the ongoing copy is kept; when they disagree, or the 504 goods value does not match, neither copy is added to the sales total. Credits use a negative quantity, including a credit whose stored units are already negative. A manual ledger document is added only when its customer account is `RETAILA` or a verified RETAILA alias, its date is inside the window, and that reference is not already a RETAILA sales document. A blank ledger account is shown for review and is not counted. Another customer's ledger row stays in the ledger for audit and is not counted as RETAILA. A line with no document date is left out of the window totals. A SKU with no counted invoice is blank, not zero. FBA and Studley balances stay current snapshots and are not limited to the invoice window.
+
+## Demand source
+
+An OIN invoice is a sale to the customer account on the document. It is not a replenishment shipment into Amazon and it is not confirmed inbound stock.
+
+It is also not proven Amazon UK FBA sell-through. `AutopartSalesDocument` and `AutopartSalesLine` have no marketplace column and no Amazon fulfilment channel. `fulfilmentStatus` is Autopart order matching (`WAITING_FOR_504`, `FULFILMENT_APPLIED`, and the other document states). The account code `RETAILA` does not supply that proof.
+
+The shipment formula therefore uses one source:
+
+1. The latest Amazon sales extract, only when it declares marketplace `AMAZON_UK`, fulfilment `FBA`, and complete coverage for the last 30 days. A SKU missing from that complete extract is zero for the covered window.
+2. Otherwise no shipment is suggested. Verified RETAILA quantities for 7, 30, 60, 90 and 365 days stay on the row, with weekly sales `net 30 / 30 × 7` and an informational cover, and the recommendation stays Insufficient Data.
+
+RETAILA units are never added to Amazon units, and the page does not switch between them for overlapping days. `RETAILA_OIN_PROVEN_AS_FBA_UK` stays false until a stored marketplace and fulfilment channel exist.
 
 The RETAILA read runs in its own transaction with `statement_timeout` of 8 seconds, set locally so the pooled connection is not left restricted. If that read fails or times out, the forecast still returns FBA and Studley stock. The page shows the error and a Retry button instead of waiting forever. OIN History and a product's invoices load only when that tab or product is opened.
 
@@ -48,7 +61,7 @@ A checkbox does not make an extract complete. Completeness requires the file to 
 
 ## Forecast
 
-Demand is the 30-day Amazon net (sold minus credited), and only when that window is supported. Weekly rate = `max(0, net 30) × 7/30`. Returns above sales become zero demand, not a negative shipment.
+Demand is the 30-day net from the one selected source above (sold minus credited), and only when that source covers the window. Weekly rate = `max(0, net 30) × 7/30`. Returns above sales become zero demand, not a negative shipment. RETAILA customer sales use the same weekly display, and they do not feed this rate.
 
 Projected required stock = demand during lead time + target weeks of cover after arrival + safety stock.
 

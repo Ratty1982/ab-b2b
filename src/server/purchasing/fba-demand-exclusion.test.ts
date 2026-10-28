@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-describe("purchasing demand excludes OIN replenishment", () => {
+describe("purchasing demand excludes OIN customer invoices", () => {
   it("keeps OIN document references out of B2B demand and sales-trend SQL", () => {
     const demand = readFileSync(new URL("./demand.ts", import.meta.url), "utf8");
     const trend = readFileSync(new URL("./sales-trend.ts", import.meta.url), "utf8");

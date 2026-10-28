@@ -572,7 +572,7 @@ function DataStatus({ data }: { data: Data }) {
             ? "RETAILA history is unavailable. FBA and Studley stock on this page are still current."
             : data.oin.documents
               ? `${data.oin.documents.toLocaleString("en-GB")} invoices in the last ${data.oin.days} days, latest ${ukDate(data.oin.latestDocumentDate)}. ${data.oin.historicDocuments.toLocaleString("en-GB")} from 561L and ${data.oin.ongoingDocuments.toLocaleString("en-GB")} from TRM21QC.`
-              : `No RETAILA OIN invoices in the last ${data.oin.days} days.`
+              : `No RETAILA customer invoices in the last ${data.oin.days} days.`
         }
       />
       <StatusBlock
@@ -585,7 +585,7 @@ function DataStatus({ data }: { data: Data }) {
       />
       <StatusBlock
         title="Unresolved products"
-        body={`${data.summary.dataIssues.toLocaleString("en-GB")} products cannot be forecast yet. OIN invoices are replenishment history, not consumer sales.`}
+        body={`${data.summary.dataIssues.toLocaleString("en-GB")} products cannot be forecast yet. RETAILA invoices are customer sales and are not proven Amazon UK FBA sell-through.`}
       />
       {data.oin.warning ? (
         <p className="border border-warn/40 bg-warn/10 px-3 py-2 text-warn sm:col-span-2 xl:col-span-4">
@@ -722,25 +722,31 @@ function Overview({
           Export
         </button>
       </form>
-      {loading && !data ? <LoadingState label="Loading replenishment…" /> : null}
+      {loading && !data ? <LoadingState label="Loading forecast…" /> : null}
       {data && data.rows.length === 0 ? (
         <EmptyState
           title="Nothing matches"
-          body="No products match these filters. Clear the search, or import OPTIMUS FBA stock and an Amazon UK sales file before a shipment can be suggested."
+          body="No products match these filters. Clear the search, or import OPTIMUS FBA stock and a covered Amazon UK FBA sales file before a shipment can be suggested."
         />
       ) : null}
       {data && data.rows.length > 0 ? (
         <>
-          <div className="hidden md:block">
-            <table className="w-full text-left text-[14px]">
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[72rem] text-left text-[14px]">
               <thead className="bg-secondary/40 text-[11px] font-semibold uppercase tracking-[0.12em] text-steel">
                 <tr>
                   <th className="px-4 py-3">Product / SKU</th>
-                  <th className="px-3 py-3">FBA Stock</th>
-                  <th className="px-3 py-3">Sold 30d</th>
-                  <th className="px-3 py-3">Weeks Cover</th>
-                  <th className="px-3 py-3">Studley Stock</th>
-                  <th className="px-3 py-3">Suggested Send</th>
+                  <th className="px-3 py-3">FBA stock</th>
+                  <th className="px-3 py-3">Sales 7d</th>
+                  <th className="px-3 py-3">Sales 30d</th>
+                  <th className="px-3 py-3">Sales 90d</th>
+                  <th className="px-3 py-3">Weekly</th>
+                  <th className="px-3 py-3">Cover</th>
+                  <th className="px-3 py-3">Studley</th>
+                  <th className="px-3 py-3">Inbound</th>
+                  <th className="px-3 py-3">Suggested</th>
+                  <th className="px-3 py-3">Dispatch</th>
+                  <th className="px-3 py-3">Shortfall</th>
                   <th className="px-4 py-3">Status</th>
                 </tr>
               </thead>
@@ -756,12 +762,18 @@ function Overview({
                       <div className="max-w-[16rem] text-[12px] text-steel">{row.description}</div>
                     </td>
                     <td className="px-3 py-3">{qty(row.fbaAvailable)}</td>
-                    <td className="px-3 py-3">{qty(row.amazonUnits.d30)}</td>
+                    <td className="px-3 py-3">{qty(row.customerSales.d7)}</td>
+                    <td className="px-3 py-3">{qty(row.customerSales.d30)}</td>
+                    <td className="px-3 py-3">{qty(row.customerSales.d90)}</td>
+                    <td className="px-3 py-3">{rate(row.customerWeekly)}</td>
                     <td className="px-3 py-3">
                       {row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)}`}
                     </td>
                     <td className="px-3 py-3">{qty(row.studleyAvailable)}</td>
+                    <td className="px-3 py-3">{qty(row.confirmedInbound)}</td>
                     <td className="px-3 py-3">{qty(row.forecast.suggestedSendQty)}</td>
+                    <td className="px-3 py-3">{qty(row.forecast.dispatchableQty)}</td>
+                    <td className="px-3 py-3">{qty(row.forecast.studleyShortfallQty)}</td>
                     <td className="px-4 py-3">
                       <StatusBadge tone={tone(row.forecast.recommendation)}>
                         {row.forecast.recommendationLabel}
@@ -791,12 +803,13 @@ function Overview({
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
                   <Fact label="FBA" value={qty(row.fbaAvailable)} />
-                  <Fact label="Sold 30d" value={qty(row.amazonUnits.d30)} />
+                  <Fact label="Sales 30d" value={qty(row.customerSales.d30)} />
+                  <Fact label="Weekly" value={rate(row.customerWeekly)} />
                   <Fact
                     label="Cover"
                     value={row.forecast.coverWeeks == null ? "—" : `${row.forecast.coverWeeks.toFixed(1)} wks`}
                   />
-                  <Fact label="Send" value={qty(row.forecast.suggestedSendQty)} />
+                  <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
                 </dl>
               </button>
             ))}
@@ -874,9 +887,9 @@ function HistoryPanel({
   return (
     <div className="space-y-4 px-4 py-4 sm:px-6">
       <p className="max-w-3xl text-[13px] text-steel">
-        These are RETAILA invoices already stored from 561L history and the ongoing 504/TRM feed.
-        The list defaults to the last 90 days. They are not Amazon shopper sales, and an invoice is not a
-        shipment in transit.
+        These are RETAILA customer invoices already stored from 561L history and the ongoing 504/TRM feed.
+        The list defaults to the last 90 days. A credit reduces the quantity. An invoice is not a shipment
+        in transit, and these rows do not record an Amazon marketplace.
       </p>
       <label className="block max-w-xs text-[13px]">
         Period
@@ -905,7 +918,7 @@ function HistoryPanel({
       {loading && !history ? <LoadingState label="Loading RETAILA OIN history…" /> : null}
       {history && history.documents.length === 0 ? (
         <EmptyState
-          title="No RETAILA OIN history"
+          title="No RETAILA customer invoices"
           body="Nothing beginning with OIN is stored for Autopart account RETAILA in this period. Do not upload the same 504 and TRM files here."
         />
       ) : null}
@@ -1211,16 +1224,21 @@ function SkuDrawer({
       <StatusBadge tone={tone(row.forecast.recommendation)}>{row.forecast.recommendationLabel}</StatusBadge>
       <p className="text-[13px]">{row.forecast.reason}</p>
       <dl className="grid grid-cols-2 gap-3 text-[13px]">
+        <Fact label="Demand source" value={row.demand.label} />
         <Fact label="FBA UK" value={qty(row.fbaAvailable)} />
         <Fact label="FBA updated" value={ukDate(row.sourceImportedAt?.slice(0, 10))} />
         <Fact label="Studley" value={qty(row.studleyAvailable)} />
-        <Fact label="Sold 7d" value={qty(row.amazonUnits.d7)} />
-        <Fact label="Sold 30d" value={qty(row.amazonUnits.d30)} />
-        <Fact label="Sold 90d" value={qty(row.amazonUnits.d90)} />
-        <Fact label="Sold 365d" value={qty(row.amazonUnits.d365)} />
-        <Fact label="Velocity" value={rate(row.forecast.weeklyRate)} />
+        <Fact label="RETAILA sales 7d" value={qty(row.customerSales.d7)} />
+        <Fact label="RETAILA sales 30d" value={qty(row.customerSales.d30)} />
+        <Fact label="RETAILA sales 60d" value={qty(row.customerSales.d60)} />
+        <Fact label="RETAILA sales 90d" value={qty(row.customerSales.d90)} />
+        <Fact label="RETAILA sales 365d" value={qty(row.customerSales.d365)} />
+        <Fact label="Weekly customer sales" value={rate(row.customerWeekly)} />
+        <Fact label="Cover from RETAILA sales" value={row.customerCoverWeeks == null ? "—" : row.customerCoverWeeks.toFixed(1)} />
+        <Fact label="Amazon UK 30d" value={qty(row.amazonUnits.d30)} />
+        <Fact label="Recommendation velocity" value={rate(row.forecast.weeklyRate)} />
         <Fact label="Confidence" value={row.forecast.confidence} />
-        <Fact label="Weeks cover" value={row.forecast.coverWeeks == null ? "—" : row.forecast.coverWeeks.toFixed(1)} />
+        <Fact label="FBA weeks cover" value={row.forecast.coverWeeks == null ? "—" : row.forecast.coverWeeks.toFixed(1)} />
         <Fact label="Stockout" value={ukDate(row.forecast.stockoutDate)} />
         <Fact label="Next dispatch" value={ukDate(row.forecast.nextSendDate)} />
         <Fact label="Suggested" value={qty(row.forecast.suggestedSendQty)} />
@@ -1233,8 +1251,9 @@ function SkuDrawer({
           {qty(row.forecast.looseStudleyQty)} Studley units are loose and are not a shipment.
         </p>
       ) : null}
-      <details>
+      <details open>
         <summary className="cursor-pointer text-[13px] font-semibold">How this quantity was calculated</summary>
+        <p className="mt-2 text-[13px] text-steel">{row.demand.reason}</p>
         <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px] text-steel">
           {row.forecast.assumptions.map((item) => (
             <li key={item}>{item}</li>
@@ -1242,8 +1261,8 @@ function SkuDrawer({
         </ul>
       </details>
       <section>
-        <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em]">RETAILA OIN invoices</h3>
-        <p className="mt-1 text-[12px] text-steel">Last 90 days. Stock balances above are the current snapshot.</p>
+        <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em]">RETAILA customer invoices</h3>
+        <p className="mt-1 text-[12px] text-steel">Last 90 days. Stock balances above are the current snapshot, not this invoice window.</p>
         {detailLoading && !detail ? <p className="mt-2 text-[13px] text-steel">Loading invoices…</p> : null}
         {detailError ? (
           <div className="mt-2 space-y-2">
