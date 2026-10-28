@@ -1,10 +1,11 @@
 /**
- * RETAILA OIN replenishment for the Amazon FBA forecast.
+ * RETAILA OIN customer sales for the Amazon FBA forecast.
  * The date window and RETAILA account are applied before reconciliation, so a
  * dashboard request does not read every customer's historic sales lines.
  * 561L and ongoing TRM21QC copies of one invoice in that window are counted once.
  * A manual ledger row is used only for a proven RETAILA account in the same window.
- * These quantities are replenishment history, not Amazon consumer sales.
+ * The units are customer sales. They are not FBA inbound and they are not proven
+ * Amazon UK sell-through: the rows have no marketplace or fulfilment channel.
  */
 import { Prisma } from "@prisma/client";
 import { addDaysIso, lastNDaysRange } from "@/domain/sales-history-period";
@@ -40,6 +41,61 @@ export type RetailaOinHealth = {
   undatedLines: number;
   warning: string | null;
 };
+
+export type RetailaSalesWindows = {
+  d7: number | null;
+  d30: number | null;
+  d60: number | null;
+  d90: number | null;
+  d365: number | null;
+};
+
+export type RetailaSkuSales = {
+  matchKey: string;
+  sku: string;
+  /** Dated units inside the requested range. Null when every counted line is undated. */
+  units: number | null;
+  windows: RetailaSalesWindows;
+};
+
+/** Start of an inner window, or null when that window is wider than the rows already scanned. */
+export function salesWindowCutoff(range: RetailaOinRange, days: number): Date | null {
+  const endDay = addDaysIso(range.toExclusive.toISOString().slice(0, 10), -1);
+  const start = new Date(`${addDaysIso(endDay, -(days - 1))}T00:00:00.000Z`);
+  if (start.getTime() < range.from.getTime()) return null;
+  return start;
+}
+
+function salesWindowCutoffs(range: RetailaOinRange): {
+  d7: Date | null;
+  d30: Date | null;
+  d60: Date | null;
+  d90: Date | null;
+  d365: Date | null;
+} {
+  return {
+    d7: salesWindowCutoff(range, 7),
+    d30: salesWindowCutoff(range, 30),
+    d60: salesWindowCutoff(range, 60),
+    d90: salesWindowCutoff(range, 90),
+    d365: salesWindowCutoff(range, 365),
+  };
+}
+
+/** Sum dated quantities in one window. A window wider than the scan stays null. */
+function datedWindowSum(cutoff: Date | null, range: RetailaOinRange, dateSql: Prisma.Sql, qtySql: Prisma.Sql): Prisma.Sql {
+  if (!cutoff) return Prisma.sql`NULL::numeric`;
+  return Prisma.sql`COALESCE(SUM(${qtySql}) FILTER (WHERE ${dateSql} >= ${cutoff} AND ${dateSql} < ${range.toExclusive}), 0)`;
+}
+
+/**
+ * Read-time sign for a manual ledger line. Credits always reduce sales, including
+ * a quantity that was already stored as negative. Invoice quantities keep their sign.
+ * Stored rows are not updated.
+ */
+function signedLedgerQty(documentType: Prisma.Sql, qty: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(CASE WHEN ${documentType} = 'CREDIT' THEN -ABS(${qty}) ELSE ${qty} END)`;
+}
 
 export type RetailaOinHistoryLine = {
   sku: string;
@@ -100,7 +156,7 @@ export async function withForecastQuery<T>(run: (db: Prisma.TransactionClient) =
       )
     ) {
       throw new ForecastQueryError(
-        "RETAILA replenishment history took too long and was stopped. Amazon FBA and Studley stock are unchanged. Retry in a moment.",
+        "RETAILA customer sales took too long and were stopped. Amazon FBA and Studley stock are unchanged. Retry in a moment.",
       );
     }
     throw error;
@@ -494,12 +550,12 @@ function healthFrom(range: RetailaOinRange, row: {
   const issueCount = row?.issues ?? 0;
   let warning: string | null = null;
   if (documents === 0 && issueCount === 0) {
-    warning = `No RETAILA OIN invoices are in the last ${range.days} days of Autopart sales history. Replenishment history stays empty until those invoices are stored there. This page does not ask for the same 504 and TRM files again.`;
+    warning = `No RETAILA OIN invoices are in the last ${range.days} days of Autopart sales history. Customer sales stay empty until those invoices are stored there. This page does not ask for the same 504 and TRM files again.`;
   } else if (issueCount > 0) {
     warning = `${issueCount.toLocaleString("en-GB")} RETAILA OIN document${issueCount === 1 ? "" : "s"} in the last ${range.days} days need review. Those quantities are left out so a correction is not counted twice.`;
   } else if ((row?.undatedLines ?? 0) > 0) {
     warning =
-      "Some RETAILA OIN lines in this window have no document date, so they are shown in history and left out of the cadence.";
+      "Some RETAILA OIN lines in this window have no document date, so they are shown in history and left out of the sales totals.";
   }
   return {
     account: RETAILA_AUTOPART_ACCOUNT,
@@ -518,20 +574,31 @@ function healthFrom(range: RetailaOinRange, row: {
 
 export async function loadRetailaOinReport(
   range: RetailaOinRange,
-): Promise<{ health: RetailaOinHealth; units: Array<{ matchKey: string; sku: string; units: number }> }> {
+): Promise<{ health: RetailaOinHealth; units: RetailaSkuSales[] }> {
   return withForecastQuery((db) => readRetailaOinReport(range, db));
+}
+
+function skuWindow(cutoff: Date | null, range: RetailaOinRange): Prisma.Sql {
+  if (!cutoff) return Prisma.sql`NULL::numeric`;
+  return Prisma.sql`CASE WHEN bool_or(doc_date IS NOT NULL) THEN ${datedWindowSum(cutoff, range, Prisma.sql`doc_date`, Prisma.sql`signed_qty`)} ELSE NULL END`;
 }
 
 async function readRetailaOinReport(
   range: RetailaOinRange,
   db: ForecastDb,
-): Promise<{ health: RetailaOinHealth; units: Array<{ matchKey: string; sku: string; units: number }> }> {
+): Promise<{ health: RetailaOinHealth; units: RetailaSkuSales[] }> {
+  const cuts = salesWindowCutoffs(range);
   const rows = await db.$queryRaw<
     Array<{
       section: string;
       matchKey: string | null;
       sku: string | null;
       units: Prisma.Decimal | null;
+      d7: Prisma.Decimal | null;
+      d30: Prisma.Decimal | null;
+      d60: Prisma.Decimal | null;
+      d90: Prisma.Decimal | null;
+      d365: Prisma.Decimal | null;
       documents: number | null;
       lines: number | null;
       latest: Date | null;
@@ -544,18 +611,31 @@ async function readRetailaOinReport(
   >`
     ${retailaOinWith(range)}
     , sku_totals AS (
-      SELECT sku_key AS "matchKey", MAX(sku) AS sku, SUM(signed_qty) AS units
+      SELECT sku_key AS "matchKey", MAX(sku) AS sku,
+        ${skuWindow(range.from, range)} AS units,
+        ${skuWindow(cuts.d7, range)} AS d7,
+        ${skuWindow(cuts.d30, range)} AS d30,
+        ${skuWindow(cuts.d60, range)} AS d60,
+        ${skuWindow(cuts.d90, range)} AS d90,
+        ${skuWindow(cuts.d365, range)} AS d365
       FROM counted_oin_lines
       GROUP BY sku_key
     ),
     ledger_totals AS (
-      SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku, SUM(l.qty) AS units
+      SELECT l."matchKey" AS "matchKey", MAX(l.sku) AS sku,
+        COALESCE(SUM(${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}), 0) AS units,
+        ${datedWindowSum(cuts.d7, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d7,
+        ${datedWindowSum(cuts.d30, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d30,
+        ${datedWindowSum(cuts.d60, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d60,
+        ${datedWindowSum(cuts.d90, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d90,
+        ${datedWindowSum(cuts.d365, range, Prisma.sql`d."documentDate"`, signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`))} AS d365
       FROM "FbaReplenishmentLine" l
       INNER JOIN proven_ledger d ON d.id = l."documentId"
       WHERE l."supersededAt" IS NULL
       GROUP BY l."matchKey"
     )
-    SELECT 'sku'::text AS section, "matchKey", MAX(sku) AS sku, SUM(units) AS units,
+    SELECT 'sku'::text AS section, "matchKey", MAX(sku) AS sku,
+      SUM(units) AS units, SUM(d7) AS d7, SUM(d30) AS d30, SUM(d60) AS d60, SUM(d90) AS d90, SUM(d365) AS d365,
       NULL::int AS documents, NULL::int AS lines, NULL::date AS latest,
       NULL::int AS "historicDocuments", NULL::int AS "ongoingDocuments",
       NULL::int AS issues, NULL::int AS "undatedLines", NULL::int AS "ledgerOnlyDocuments"
@@ -567,6 +647,7 @@ async function readRetailaOinReport(
     GROUP BY "matchKey"
     UNION ALL
     SELECT 'health'::text, NULL::text, NULL::text, NULL::numeric,
+      NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric, NULL::numeric,
       (SELECT COUNT(DISTINCT doc_ref)::int FROM counted_oin_lines),
       (SELECT COUNT(*)::int FROM counted_oin_lines),
       (SELECT MAX(doc_date) FROM counted_oin_lines),
@@ -581,15 +662,33 @@ async function readRetailaOinReport(
     health: healthFrom(range, healthRow),
     units: rows
       .filter((row) => row.section === "sku" && row.matchKey)
-      .map((row) => ({ matchKey: row.matchKey ?? "", sku: row.sku ?? "", units: num(row.units) })),
+      .map((row) => ({
+        matchKey: row.matchKey ?? "",
+        sku: row.sku ?? "",
+        units: row.units == null ? null : num(row.units),
+        windows: {
+          d7: row.d7 == null ? null : num(row.d7),
+          d30: row.d30 == null ? null : num(row.d30),
+          d60: row.d60 == null ? null : num(row.d60),
+          d90: row.d90 == null ? null : num(row.d90),
+          d365: row.d365 == null ? null : num(row.d365),
+        },
+      })),
   };
 }
 
 export async function explainRetailaOinReport(range: RetailaOinRange): Promise<string> {
+  const cuts = salesWindowCutoffs(range);
   const rows = await prisma.$queryRaw<Array<{ "QUERY PLAN": string }>>`
     EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
     ${retailaOinWith(range)}
-    SELECT sku_key AS "matchKey", SUM(signed_qty) AS units
+    SELECT sku_key AS "matchKey",
+      ${skuWindow(range.from, range)} AS units,
+      ${skuWindow(cuts.d7, range)} AS d7,
+      ${skuWindow(cuts.d30, range)} AS d30,
+      ${skuWindow(cuts.d60, range)} AS d60,
+      ${skuWindow(cuts.d90, range)} AS d90,
+      ${skuWindow(cuts.d365, range)} AS d365
     FROM counted_oin_lines
     GROUP BY sku_key
   `;
@@ -663,7 +762,7 @@ export async function listRetailaOinHistory(input: {
       GROUP BY i.doc_ref, i.issue
       UNION ALL
       SELECT UPPER(btrim(d."documentReference")), d.id, d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
-        COALESCE(SUM(l.qty), 0)
+        COALESCE(SUM(${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}), 0)
       FROM proven_ledger d
       LEFT JOIN "FbaReplenishmentLine" l ON l."documentId" = d.id AND l."supersededAt" IS NULL
       GROUP BY d.id, d."documentReference", d."documentType", d."documentDate"
@@ -707,7 +806,10 @@ export async function listRetailaOinHistory(input: {
             AND paged.status NOT IN ('COUNTED', 'LEDGER_ONLY', 'LEDGER_REVIEW')
           UNION ALL
           SELECT l.sku, l.description,
-            CASE WHEN paged.status = 'LEDGER_REVIEW' THEN 0::numeric ELSE l.qty END,
+            CASE
+              WHEN paged.status = 'LEDGER_REVIEW' THEN 0::numeric
+              ELSE ${signedLedgerQty(Prisma.sql`paged.doc_type`, Prisma.sql`l.qty`)}
+            END,
             'LEDGER'
           FROM "FbaReplenishmentLine" l
           WHERE l."documentId" = paged.ledger_id
@@ -778,7 +880,7 @@ export async function listRetailaOinLinesForSku(
     WHERE s.sku_key = ${matchKey}
     UNION ALL
     SELECT UPPER(btrim(d."documentReference")), d."documentType", d."documentDate", 'LEDGER', 'LEDGER_ONLY',
-      l.sku, l.description, l.qty
+      l.sku, l.description, ${signedLedgerQty(Prisma.sql`d."documentType"`, Prisma.sql`l.qty`)}
     FROM "FbaReplenishmentLine" l
     INNER JOIN proven_ledger d ON d.id = l."documentId"
     WHERE l."supersededAt" IS NULL

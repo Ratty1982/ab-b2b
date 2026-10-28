@@ -1,9 +1,13 @@
 /**
  * Amazon FBA UK replenishment forecast.
  *
- * OIN Autopart documents are replenishment into FBA, not consumer sales.
- * Sell-through comes only from an Amazon sales extract. Missing sales stay
- * insufficient — a weekly rate is never invented from OIN cadence.
+ * RETAILA OIN documents are customer invoices and credits, not shipments into FBA.
+ * AutopartSalesDocument and AutopartSalesLine record the account, date and units.
+ * They do not record a marketplace or an Amazon fulfilment channel, and
+ * fulfilmentStatus is Autopart order matching. Those invoices are therefore
+ * shown as verified RETAILA customer sales and are not used as FBA UK demand.
+ * A shipment quantity uses an Amazon UK FBA extract only when that extract's
+ * coverage is proven. The two sources are never added together.
  */
 
 import type { Autopart504Row } from "@/domain/autopart-504";
@@ -46,7 +50,10 @@ export function eligibleFbaInboundQty(rows: Array<{ status: string; qty: number 
   }, 0);
 }
 
-/** Parsed Autopart document number, not the raw fixed-width cell. */
+/**
+ * Parsed Autopart OIN document number, not the raw fixed-width cell.
+ * The name is historical. The document is a customer invoice or credit.
+ */
 export function isOinReplenishmentReference(documentNumber: string | null | undefined): boolean {
   const ref = (documentNumber ?? "").trim().toUpperCase().replace(/\s+/g, "");
   return /^OIN[A-Z0-9]+$/.test(ref);
@@ -138,13 +145,14 @@ function round1(n: number): number {
  */
 export function projectFbaShipment(input: FbaForecastInput): FbaForecastResult {
   const assumptions = [
-    "Demand is Amazon UK sell-through. OIN replenishment invoices are not consumer sales.",
+    "A shipment uses one demand source. RETAILA OIN invoices are customer sales and are not added to an Amazon extract.",
+    "RETAILA invoices have no marketplace and no Amazon fulfilment channel, so they do not prove FBA UK sell-through.",
     "Suggested quantity is not an order and does not move stock.",
     "Invoice creation is not treated as stock in transit.",
   ];
   if (!input.salesSupported || input.amazonNetUnits30 == null) {
     return insufficient(
-      "No complete Amazon UK sales extract covers the last 30 days. A weekly rate is not estimated from OIN dispatches.",
+      "No verified Amazon UK FBA sales extract covers the last 30 days. RETAILA customer sales stay visible and are not turned into a shipment.",
       assumptions,
     );
   }
@@ -380,7 +388,7 @@ export function buildOinReplenishmentBatch(input: {
       exceptions.push({
         code: "CREDIT_CORRECTION",
         documentReference: ref,
-        message: `${ref} is an OIN credit. It reduces replenishment quantity and is not an Amazon customer return.`,
+        message: `${ref} is an OIN credit. It reduces customer sales once and is not stock in transit.`,
       });
     }
     const seenKeys = new Set<string>();
@@ -552,8 +560,77 @@ export function reconcileOinDocumentLines(input: {
   return { upsert, supersedeIds, exceptions };
 }
 
-/** Provisional OIN dispatch cadence. Never a substitute for Amazon sell-through. */
+/** Display helper for a counted quantity over a number of days. Not FBA demand. */
 export function provisionalReplenishmentWeekly(netUnits: number, days: number): number | null {
   if (!Number.isFinite(netUnits) || !Number.isFinite(days) || days <= 0) return null;
   return Math.round((netUnits / (days / 7)) * 10) / 10;
+}
+
+/**
+ * False on purpose. Nothing on an Autopart OIN invoice proves Amazon UK FBA:
+ * there is no marketplace column and no AFN/FBA channel. Do not flip this
+ * because the account code is RETAILA.
+ */
+export const RETAILA_OIN_PROVEN_AS_FBA_UK = false;
+
+export const RETAILA_OIN_DEMAND_LIMIT =
+  "RETAILA OIN invoices are customer sales to that Autopart account. They are not proven Amazon UK FBA sell-through, so they are shown separately and do not produce a shipment recommendation.";
+
+export type FbaDemandSource = "AMAZON_UK_FBA_CSV" | "NONE";
+
+export type FbaDemandDecision = {
+  source: FbaDemandSource;
+  salesSupported: boolean;
+  /** Units passed into the shipment formula. Null when no source is proven. */
+  netUnits30: number | null;
+  label: string;
+  reason: string;
+};
+
+/**
+ * One source, never a sum.
+ * Amazon UK FBA CSV wins only when its own coverage, marketplace and fulfilment are proven.
+ * RETAILA OIN units are ignored here even when they are present.
+ */
+export function selectFbaDemand(input: {
+  amazonWindowSupported: boolean;
+  amazonNetUnits30: number | null;
+  retailaNetUnits30: number | null;
+}): FbaDemandDecision {
+  if (input.amazonWindowSupported) {
+    const amazon = input.amazonNetUnits30 ?? 0;
+    const retaila = input.retailaNetUnits30;
+    return {
+      source: "AMAZON_UK_FBA_CSV",
+      salesSupported: true,
+      netUnits30: amazon,
+      label: "Amazon UK FBA sales extract",
+      reason:
+        retaila == null
+          ? "The latest Amazon extract covers Amazon UK FBA for the last 30 days. A missing SKU in that extract is zero for this window."
+          : `The latest Amazon extract covers Amazon UK FBA for the last 30 days. RETAILA customer sales of ${retaila} units are not added to ${amazon}.`,
+    };
+  }
+  return {
+    source: "NONE",
+    salesSupported: false,
+    netUnits30: null,
+    label: "Insufficient for an FBA recommendation",
+    reason: RETAILA_OIN_DEMAND_LIMIT,
+  };
+}
+
+/** Average weekly customer sales from a 30-day net. Null when the 30-day figure is unknown. */
+export function averageWeeklySales(netUnits30: number | null): number | null {
+  if (netUnits30 == null || !Number.isFinite(netUnits30)) return null;
+  return Math.round((netUnits30 / 30) * 7 * 10) / 10;
+}
+
+/**
+ * Unverified comparison of stock against a weekly rate. Dividing FBA stock by
+ * RETAILA customer sales is not Amazon FBA cover and must not feed a shipment.
+ */
+export function stockCoverWeeks(stock: number | null, weekly: number | null): number | null {
+  if (stock == null || weekly == null || !Number.isFinite(stock) || weekly <= 0) return null;
+  return Math.round((stock / weekly) * 10) / 10;
 }

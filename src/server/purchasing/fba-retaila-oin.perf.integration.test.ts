@@ -283,8 +283,12 @@ describe("bounded RETAILA OIN report", () => {
     const started = Date.now();
     const report = await loadRetailaOinReport(range);
     const elapsed = Date.now() - started;
-    const units = report.units.find((row) => row.matchKey === skuMatchKey(`NOW${stamp}`))?.units ?? 0;
-    expect(units).toBe(3);
+    const current = report.units.find((row) => row.matchKey === skuMatchKey(`NOW${stamp}`));
+    expect(current?.units).toBe(3);
+    expect(current?.windows.d7).toBe(3);
+    expect(current?.windows.d30).toBe(3);
+    expect(current?.windows.d90).toBe(3);
+    expect(current?.windows.d365).toBeNull();
     expect(report.units.some((row) => row.matchKey === skuMatchKey(`OLD${stamp}`))).toBe(false);
     expect(report.units.some((row) => row.sku.includes("NOISE"))).toBe(false);
     expect(elapsed).toBeLessThan(RETAILA_OIN_QUERY_BUDGET_MS);

@@ -13,12 +13,15 @@ import { parseFbaAmazonSalesCsv } from "@/domain/fba-amazon-sales-csv";
 import {
   amazonExtractIsComplete,
   amazonWindowSupported,
+  averageWeeklySales,
   buildOinReplenishmentBatch,
   projectFbaShipment,
-  provisionalReplenishmentWeekly,
+  selectFbaDemand,
+  stockCoverWeeks,
   reconcileOinDocumentLines,
   rejectUnprovenFbaSales,
   rejectUnprovenUkMarketplace,
+  type FbaDemandDecision,
   type FbaForecastResult,
   type OinException,
 } from "@/domain/fba-replenishment";
@@ -47,6 +50,7 @@ import {
   type RetailaOinHealth,
   type RetailaOinHistoryDocument,
   type RetailaOinHistorySort,
+  type RetailaSalesWindows,
 } from "@/server/purchasing/fba-retaila-oin";
 
 function assertFbaForecastReportingEnabled(): void {
@@ -483,8 +487,17 @@ type SkuBucket = {
   fbaStockStale: boolean;
   studleyAvailable: number | null;
   inbound: number;
-  oinUnits90: number;
-  amazon: { d7: number; d30: number; d90: number; d365: number } | null;
+  oinUnits90: number | null;
+  customerSales: RetailaSalesWindows;
+  amazon: { d7: number; d30: number; d60: number; d90: number; d365: number } | null;
+};
+
+const EMPTY_CUSTOMER_SALES: RetailaSalesWindows = {
+  d7: null,
+  d30: null,
+  d60: null,
+  d90: null,
+  d365: null,
 };
 
 export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown = {}) {
@@ -512,6 +525,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
   const ranges = {
     d7: lastNDaysRange(today, 7),
     d30: lastNDaysRange(today, 30),
+    d60: lastNDaysRange(today, 60),
     d90: lastNDaysRange(today, 90),
     d365: lastNDaysRange(today, 365),
   };
@@ -538,6 +552,11 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       ...windowBase,
       windowFrom: ranges.d30.from,
       windowTo: ranges.d30.to,
+    }),
+    d60: amazonWindowSupported({
+      ...windowBase,
+      windowFrom: ranges.d60.from,
+      windowTo: ranges.d60.to,
     }),
     d90: amazonWindowSupported({
       ...windowBase,
@@ -583,6 +602,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
             sku: string;
             d7: Prisma.Decimal;
             d30: Prisma.Decimal;
+            d60: Prisma.Decimal;
             d90: Prisma.Decimal;
             d365: Prisma.Decimal;
           }>
@@ -590,6 +610,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
           SELECT "matchKey", MAX(sku) AS sku,
             COALESCE(SUM("unitsSold" - "unitsCredited") FILTER (WHERE "saleDate" >= ${asDate(ranges.d7.from)}), 0) AS d7,
             COALESCE(SUM("unitsSold" - "unitsCredited") FILTER (WHERE "saleDate" >= ${asDate(ranges.d30.from)}), 0) AS d30,
+            COALESCE(SUM("unitsSold" - "unitsCredited") FILTER (WHERE "saleDate" >= ${asDate(ranges.d60.from)}), 0) AS d60,
             COALESCE(SUM("unitsSold" - "unitsCredited") FILTER (WHERE "saleDate" >= ${asDate(ranges.d90.from)}), 0) AS d90,
             COALESCE(SUM("unitsSold" - "unitsCredited") FILTER (WHERE "saleDate" >= ${asDate(ranges.d365.from)}), 0) AS d365
           FROM "FbaAmazonSalesLine"
@@ -612,7 +633,7 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
         AND p.id IS NULL
     `),
   ]);
-  const oinRange = retailaOinRange(today, DEFAULT_RETAILA_OIN_WINDOW_DAYS);
+  const oinRange = retailaOinRange(today, 365);
   let oinHealth: RetailaOinHealth = {
     account: "RETAILA",
     days: oinRange.days,
@@ -626,18 +647,18 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     undatedLines: 0,
     warning: null,
   };
-  let oinRows: Array<{ matchKey: string; sku: string; units: number }> = [];
+  let oinRows: Array<{ matchKey: string; sku: string; windows: RetailaSalesWindows }> = [];
   let oinUnavailable: string | null = null;
   try {
     const report = await loadRetailaOinReport(oinRange);
     oinHealth = report.health;
-    oinRows = report.units;
+    oinRows = report.units.map((row) => ({ matchKey: row.matchKey, sku: row.sku, windows: row.windows }));
   } catch (error) {
     console.error("[fba-oin]", error);
     oinUnavailable =
       error instanceof Error && error.message
         ? error.message
-        : "RETAILA replenishment history is unavailable. Amazon FBA and Studley stock are still shown.";
+        : "RETAILA customer sales are unavailable. Amazon FBA and Studley stock are still shown.";
   }
 
   const buckets = new Map<string, SkuBucket>();
@@ -658,7 +679,8 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       fbaStockStale: true,
       studleyAvailable: null,
       inbound: 0,
-      oinUnits90: 0,
+      oinUnits90: null,
+      customerSales: { ...EMPTY_CUSTOMER_SALES },
       amazon: null,
     };
     buckets.set(matchKey, created);
@@ -674,11 +696,16 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     item.fbaStockStale = !fbaLocationQtyIsVerified(sourceImportedAt);
     item.studleyAvailable = row.present ? row.studley : null;
   }
-  for (const row of oinRows) bucket(row.matchKey, row.sku).oinUnits90 = row.units;
+  for (const row of oinRows) {
+    const item = bucket(row.matchKey, row.sku);
+    item.customerSales = row.windows;
+    item.oinUnits90 = row.windows.d90;
+  }
   for (const row of amazonRows) {
     bucket(row.matchKey, row.sku).amazon = {
       d7: num(row.d7),
       d30: num(row.d30),
+      d60: num(row.d60),
       d90: num(row.d90),
       d365: num(row.d365),
     };
@@ -693,14 +720,20 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
     .map((item) => {
       if (item.fbaStockKnown && item.fbaStockStale) unverifiedFbaSkus += 1;
       const override = overrideByKey.get(item.matchKey);
+      const demand: FbaDemandDecision = selectFbaDemand({
+        amazonWindowSupported: windows.d30,
+        amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
+        retailaNetUnits30: item.customerSales.d30,
+      });
+      const customerWeekly = averageWeeklySales(item.customerSales.d30);
       const forecast: FbaForecastResult = projectFbaShipment({
         fbaAvailable: item.fbaAvailable,
         fbaStockKnown: item.fbaStockKnown,
         fbaStockStale: item.fbaStockStale,
         studleyAvailable: item.studleyAvailable,
         confirmedInboundQty: item.inbound,
-        salesSupported: windows.d30,
-        amazonNetUnits30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
+        salesSupported: demand.salesSupported,
+        amazonNetUnits30: demand.netUnits30,
         leadTimeDays: override?.leadTimeDays ?? settings.leadTimeDays,
         targetCoverWeeks: num(override?.targetCoverWeeks ?? settings.targetCoverWeeks),
         safetyStockQty: override?.safetyStockQty ?? settings.safetyStockQty,
@@ -711,10 +744,15 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       return {
         ...item,
         forecast,
-        oinWeekly: provisionalReplenishmentWeekly(item.oinUnits90, 90),
+        demand,
+        customerWeekly,
+        // Illustrative only. projectFbaShipment above does not receive this figure.
+        customerCoverWeeks: stockCoverWeeks(item.fbaAvailable, customerWeekly),
+        oinWeekly: customerWeekly,
         amazonUnits: {
           d7: windows.d7 ? (item.amazon?.d7 ?? 0) : null,
           d30: windows.d30 ? (item.amazon?.d30 ?? 0) : null,
+          d60: windows.d60 ? (item.amazon?.d60 ?? 0) : null,
           d90: windows.d90 ? (item.amazon?.d90 ?? 0) : null,
           d365: windows.d365 ? (item.amazon?.d365 ?? 0) : null,
         },
@@ -800,6 +838,10 @@ export async function getFbaForecastWorkspace(actorUserId: string, raw: unknown 
       confirmedInbound: row.inbound,
       oinUnits90: row.oinUnits90,
       oinWeekly: row.oinWeekly,
+      customerSales: row.customerSales,
+      customerWeekly: row.customerWeekly,
+      customerCoverWeeks: row.customerCoverWeeks,
+      demand: { source: row.demand.source, label: row.demand.label, reason: row.demand.reason },
       amazonUnits: row.amazonUnits,
       forecast: row.forecast,
     })),
@@ -819,13 +861,23 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
     "Description",
     "Brand",
     "FBA stock",
-    "Sold 30d",
-    "Weeks cover",
+    "RETAILA sales 7d",
+    "RETAILA sales 30d",
+    "RETAILA sales 60d",
+    "RETAILA sales 90d",
+    "RETAILA sales 365d",
+    "Weekly customer sales",
+    "Illustrative cover from RETAILA sales (unverified, not a shipment)",
+    "Amazon UK FBA sales 30d",
+    "Amazon FBA weeks cover",
     "Studley stock",
-    "Suggested send",
+    "Confirmed inbound",
+    "Suggested replenishment",
     "Dispatchable",
-    "Buy shortfall",
-    "Status",
+    "Studley shortfall",
+    "Recommendation",
+    "Confidence",
+    "Demand source",
   ];
   const lines = data.rows.map((row) =>
     [
@@ -833,13 +885,23 @@ export async function exportFbaForecastCsv(actorUserId: string, raw: unknown) {
       row.description,
       row.brand,
       row.fbaAvailable,
+      row.customerSales.d7,
+      row.customerSales.d30,
+      row.customerSales.d60,
+      row.customerSales.d90,
+      row.customerSales.d365,
+      row.customerWeekly,
+      row.customerCoverWeeks,
       row.amazonUnits.d30,
       row.forecast.coverWeeks,
       row.studleyAvailable,
+      row.confirmedInbound,
       row.forecast.suggestedSendQty,
       row.forecast.dispatchableQty,
       row.forecast.studleyShortfallQty,
       row.forecast.recommendationLabel,
+      row.forecast.confidence,
+      row.demand.label,
     ]
       .map((value) => csvCell(value))
       .join(","),

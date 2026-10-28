@@ -963,7 +963,7 @@ describe("RETAILA OIN forecast history", () => {
     expect(row?.oinUnits90 ?? 0).toBe(0);
     const csv = await exportFbaForecastCsv(adminId, { q: skuCase });
     expect(csv.csv).toContain(skuCase);
-    expect(csv.csv).toContain("Suggested send");
+    expect(csv.csv).toContain("Suggested replenishment");
     await expect(exportFbaForecastCsv(deniedId, { q: skuCase })).rejects.toThrow(/Purchasing access required/);
   });
 });
