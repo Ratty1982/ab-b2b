@@ -1,14 +1,53 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /portal
+Disallow: /sales
+Disallow: /crm
+Disallow: /purchasing
+Disallow: /login
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /activate
+Disallow: /api/internal
+Disallow: /api/auth
+Disallow: /api/autopart-imports
+Disallow: /api/customer-sales-uploads
+
 User-agent: Googlebot
 Allow: /
+Disallow: /admin
+Disallow: /portal
+Disallow: /sales
+Disallow: /crm
+Disallow: /purchasing
+Disallow: /login
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /activate
+Disallow: /api/internal
+Disallow: /api/auth
+Disallow: /api/autopart-imports
+Disallow: /api/customer-sales-uploads
 
 User-agent: Bingbot
 Allow: /
+Disallow: /admin
+Disallow: /portal
+Disallow: /sales
+Disallow: /crm
+Disallow: /purchasing
+Disallow: /login
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /activate
+Disallow: /api/internal
+Disallow: /api/auth
+Disallow: /api/autopart-imports
+Disallow: /api/customer-sales-uploads
 
 User-agent: Twitterbot
 Allow: /
 
 User-agent: facebookexternalhit
-Allow: /
-
-User-agent: *
 Allow: /

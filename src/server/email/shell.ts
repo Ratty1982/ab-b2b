@@ -55,9 +55,9 @@ export function steelSealLogoUrl(): string {
   return `${appBaseUrl()}/brand/steel-seal-logo.png`;
 }
 
+/** Public site origin from APP_URL. No separate marketing hostname. */
 export function publicSiteUrl(): string {
-  // Prefer public marketing site when APP_URL is the B2B host; still linked from APP_URL origin docs.
-  return "https://automotivebrands.co.uk";
+  return appBaseUrl();
 }
 
 export type EmailShellOptions = {
@@ -142,6 +142,12 @@ export function renderTransactionalEmailShell(options: EmailShellOptions): strin
   const powerMaxed = powerMaxedLogoUrl();
   const steelSeal = steelSealLogoUrl();
   const site = publicSiteUrl();
+  let siteHost = site;
+  try {
+    siteHost = new URL(site).host;
+  } catch {
+    siteHost = site;
+  }
   const internal = options.variant === "internal";
   const preheader = options.preheader
     ? `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">${escapeEmailHtml(options.preheader)}</div>`
@@ -235,7 +241,7 @@ ${preheader}
         <tr>
           <td class="ab-email-pad" style="padding:${footerPad};border-top:1px solid ${BORDER};font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:${MUTED};">
             <strong style="color:${TEXT};">${escapeEmailHtml(footerName)}</strong><br/>
-            <a href="${escapeEmailHtml(site)}" style="color:${BRAND_RED};text-decoration:none;">automotivebrands.co.uk</a>
+            <a href="${escapeEmailHtml(site)}" style="color:${BRAND_RED};text-decoration:none;">${escapeEmailHtml(siteHost)}</a>
             ${replyHint ? `<br/>${replyHint}` : ""}
           </td>
         </tr>

@@ -28,6 +28,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as SalesRouteImport } from './routes/sales'
 import { Route as TradeSolutionsRouteImport } from './routes/trade-solutions'
+import { Route as UsIncorporationDocumentsRouteImport } from './routes/us-incorporation-documents'
 import { Route as WhyAutomotiveBrandsRouteImport } from './routes/why-automotive-brands'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminBrandsRouteImport } from './routes/admin.brands'
@@ -239,6 +240,12 @@ const TradeSolutionsRoute = TradeSolutionsRouteImport.update({
   path: '/trade-solutions',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UsIncorporationDocumentsRoute =
+  UsIncorporationDocumentsRouteImport.update({
+    id: '/us-incorporation-documents',
+    path: '/us-incorporation-documents',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const WhyAutomotiveBrandsRoute = WhyAutomotiveBrandsRouteImport.update({
   id: '/why-automotive-brands',
   path: '/why-automotive-brands',
@@ -853,6 +860,7 @@ export interface FileRoutesByFullPath {
   '/resources': typeof ResourcesRoute
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
+  '/us-incorporation-documents': typeof UsIncorporationDocumentsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
@@ -983,6 +991,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/resources': typeof ResourcesRoute
   '/trade-solutions': typeof TradeSolutionsRoute
+  '/us-incorporation-documents': typeof UsIncorporationDocumentsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
@@ -1107,6 +1116,7 @@ export interface FileRoutesById {
   '/resources': typeof ResourcesRoute
   '/sales': typeof SalesRouteWithChildren
   '/trade-solutions': typeof TradeSolutionsRoute
+  '/us-incorporation-documents': typeof UsIncorporationDocumentsRoute
   '/why-automotive-brands': typeof WhyAutomotiveBrandsRoute
   '/admin/brands': typeof AdminBrandsRoute
   '/admin/categories': typeof AdminCategoriesRoute
@@ -1244,6 +1254,7 @@ export interface FileRouteTypes {
     | '/resources'
     | '/sales'
     | '/trade-solutions'
+    | '/us-incorporation-documents'
     | '/why-automotive-brands'
     | '/admin/brands'
     | '/admin/categories'
@@ -1374,6 +1385,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/resources'
     | '/trade-solutions'
+    | '/us-incorporation-documents'
     | '/why-automotive-brands'
     | '/admin/brands'
     | '/admin/categories'
@@ -1497,6 +1509,7 @@ export interface FileRouteTypes {
     | '/resources'
     | '/sales'
     | '/trade-solutions'
+    | '/us-incorporation-documents'
     | '/why-automotive-brands'
     | '/admin/brands'
     | '/admin/categories'
@@ -1633,6 +1646,7 @@ export interface RootRouteChildren {
   ResourcesRoute: typeof ResourcesRoute
   SalesRoute: typeof SalesRouteWithChildren
   TradeSolutionsRoute: typeof TradeSolutionsRoute
+  UsIncorporationDocumentsRoute: typeof UsIncorporationDocumentsRoute
   WhyAutomotiveBrandsRoute: typeof WhyAutomotiveBrandsRoute
   ApiBuildRoute: typeof ApiBuildRoute
   ApiCustomerSalesUploadsRoute: typeof ApiCustomerSalesUploadsRoute
@@ -1784,6 +1798,13 @@ declare module '@tanstack/react-router' {
       path: '/trade-solutions'
       fullPath: '/trade-solutions'
       preLoaderRoute: typeof TradeSolutionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/us-incorporation-documents': {
+      id: '/us-incorporation-documents'
+      path: '/us-incorporation-documents'
+      fullPath: '/us-incorporation-documents'
+      preLoaderRoute: typeof UsIncorporationDocumentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/why-automotive-brands': {
@@ -2983,6 +3004,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResourcesRoute: ResourcesRoute,
   SalesRoute: SalesRouteWithChildren,
   TradeSolutionsRoute: TradeSolutionsRoute,
+  UsIncorporationDocumentsRoute: UsIncorporationDocumentsRoute,
   WhyAutomotiveBrandsRoute: WhyAutomotiveBrandsRoute,
   ApiBuildRoute: ApiBuildRoute,
   ApiCustomerSalesUploadsRoute: ApiCustomerSalesUploadsRoute,

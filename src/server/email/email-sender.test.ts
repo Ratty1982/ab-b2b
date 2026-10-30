@@ -12,6 +12,7 @@ import {
   EMAIL_SHELL_COLORS,
   brandLogoUrl,
   powerMaxedLogoUrl,
+  publicSiteUrl,
   renderTransactionalEmailShell,
   steelSealLogoUrl,
 } from "@/server/email/shell";
@@ -126,7 +127,8 @@ describe("branded transactional email shell", () => {
     expect(html).toContain('alt="Automotive Brands"');
     // Supporting brands degrade as text when remote images are blocked.
     expect(html).toContain("Power Maxed · Steel Seal");
-    expect(html).toContain("automotivebrands.co.uk");
+    expect(html).toContain(`href="${publicSiteUrl()}"`);
+    expect(html).toContain(new URL(publicSiteUrl()).host);
     expect(html).toContain("Automotive Brands");
     expect(html).toContain("orders@automotivebrands.co.uk");
     expect(html).not.toMatch(/Trade Supply/i);

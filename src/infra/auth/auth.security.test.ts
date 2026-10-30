@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { STRICT_TRANSPORT_SECURITY } from "@/domain/transport-security";
 
 describe("auth and transport security configuration", () => {
   it("keeps Better Auth rate limits and secure cookie settings", () => {
@@ -10,6 +11,9 @@ describe("auth and transport security configuration", () => {
     expect(source).toContain('"/forget-password"');
     expect(source).toContain("sameSite: \"lax\"");
     expect(source).toContain("httpOnly: true");
+    expect(source).toContain("baseURL: env.APP_URL");
+    expect(source).not.toContain("crossSubDomainCookies");
+    expect(source).not.toContain("domain:");
     expect(source).toContain("twoFactor");
     expect(source).toContain("Automotive Brands");
   });
@@ -19,6 +23,10 @@ describe("auth and transport security configuration", () => {
     expect(source).toContain("createCsrfMiddleware");
     expect(source).toContain('handlerType === "serverFn"');
     expect(source).toContain("Strict-Transport-Security");
+    expect(source).toContain("STRICT_TRANSPORT_SECURITY");
+    expect(source).not.toContain("includeSubDomains");
+    expect(STRICT_TRANSPORT_SECURITY).toBe("max-age=31536000");
+    expect(source).toContain("migrationRequestDecision");
     expect(source).toContain("Content-Security-Policy");
     expect(source).toContain("frame-ancestors 'none'");
     expect(source).toContain("object-src 'none'");

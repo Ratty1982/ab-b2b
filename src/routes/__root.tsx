@@ -12,7 +12,9 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportClientError } from "../lib/error-reporting";
 import { Toaster } from "@/components/ui/sonner";
+import { absoluteCanonical } from "@/domain/public-origin";
 import { getClientSession, type ClientSession } from "@/server/auth/session";
+import { getPublicOrigin } from "@/server/http/public-origin";
 
 function NotFoundComponent() {
   return (
@@ -78,6 +80,8 @@ export type RootRouterContext = {
   queryClient: QueryClient;
   /** Authoritative Better Auth session for SSR + client chrome (one actor). */
   session: ClientSession;
+  /** APP_URL origin. Empty until beforeLoad. Cookies stay host-only. */
+  publicOrigin: string;
 };
 
 export const Route = createRootRouteWithContext<RootRouterContext>()({
@@ -88,14 +92,18 @@ export const Route = createRootRouteWithContext<RootRouterContext>()({
   headers: () => ({
     "Cache-Control": "private, no-store",
   }),
-  beforeLoad: async (): Promise<{ session: ClientSession }> => {
+  beforeLoad: async (): Promise<{ session: ClientSession; publicOrigin: string }> => {
     // Same createServerFn + getRequestHeaders path as product pricing.
     // Do not swallow failures into a silent guest — that caused YOUR PRICE
     // (loader cookies worked) while the public header stayed anonymous.
-    const session = await getClientSession();
-    return { session };
+    const [session, publicOrigin] = await Promise.all([getClientSession(), getPublicOrigin()]);
+    return { session, publicOrigin };
   },
-  head: () => ({
+  head: ({ matches }) => {
+    const origin = matches[0]?.context.publicOrigin ?? "";
+    const pathname = matches[matches.length - 1]?.pathname ?? "/";
+    const canonical = absoluteCanonical(origin, pathname);
+    return {
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
@@ -108,8 +116,10 @@ export const Route = createRootRouteWithContext<RootRouterContext>()({
       { name: "author", content: "Automotive Brands" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
+      ...(canonical ? [{ property: "og:url", content: canonical }] : []),
     ],
     links: [
+      ...(canonical ? [{ rel: "canonical" as const, href: canonical }] : []),
       { rel: "stylesheet", href: appCss },
       { rel: "icon", type: "image/png", href: "/favicon.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -119,7 +129,8 @@ export const Route = createRootRouteWithContext<RootRouterContext>()({
         href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap",
       },
     ],
-  }),
+  };
+  },
   shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,

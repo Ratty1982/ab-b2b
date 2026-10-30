@@ -148,7 +148,7 @@ Security-relevant actions include (non-exhaustive):
 ## L. Network / transport security
 
 - Production assumes HTTPS termination (Coolify)
-- `Strict-Transport-Security` set in production responses
+- `Strict-Transport-Security` is `max-age=31536000` on this host only. It does not send `includeSubDomains` or `preload`, so a policy learned on the apex cannot force HTTPS onto other names in the zone.
 - CSP with `frame-ancestors 'none'`, `object-src 'none'`, plus existing font allowances
 - `X-Content-Type-Options: nosniff`, Referrer-Policy, Permissions-Policy, COOP
 

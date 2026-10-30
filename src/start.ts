@@ -1,5 +1,8 @@
 import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/react-start";
 
+import { migrationRequestDecision } from "@/domain/legacy-redirects";
+import { STRICT_TRANSPORT_SECURITY } from "@/domain/transport-security";
+
 import { renderErrorPage } from "./lib/error-page";
 
 const errorMiddleware = createMiddleware().server(async ({ next }) => {
@@ -37,8 +40,8 @@ const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => 
   );
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   if (process.env["NODE_ENV"] === "production") {
-    // HTTPS termination is expected in Coolify/production.
-    headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    // This host only. Do not widen the policy to other names in the zone.
+    headers.set("Strict-Transport-Security", STRICT_TRANSPORT_SECURITY);
   }
   // Modest CSP compatible with TanStack/Vite + Google Fonts currently in use.
   // Do not add remote script hosts without an explicit review.
@@ -70,6 +73,26 @@ const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => 
   };
 });
 
+/**
+ * Explicit WordPress paths, plus www → the APP_URL origin.
+ * Does not redirect the b2b hostname. API callers on b2b stay on that host.
+ */
+const migrationRedirectMiddleware = createMiddleware().server(async ({ request, next }) => {
+  const decision = migrationRequestDecision({
+    method: request.method,
+    requestUrl: request.url,
+    appUrl: process.env["APP_URL"],
+  });
+  if (!decision) return next();
+  if (decision.status === 410) {
+    return new Response("Gone", {
+      status: 410,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  return Response.redirect(decision.location, decision.status);
+});
+
 // Start installs CSRF automatically when src/start.ts is absent; defining the
 // file opts out, so re-add it explicitly to keep server functions protected.
 const csrfMiddleware = createCsrfMiddleware({
@@ -77,5 +100,10 @@ const csrfMiddleware = createCsrfMiddleware({
 });
 
 export const startInstance = createStart(() => ({
-  requestMiddleware: [errorMiddleware, securityHeadersMiddleware, csrfMiddleware],
+  requestMiddleware: [
+    errorMiddleware,
+    securityHeadersMiddleware,
+    migrationRedirectMiddleware,
+    csrfMiddleware,
+  ],
 }));

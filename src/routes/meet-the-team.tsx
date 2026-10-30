@@ -26,7 +26,6 @@ export const Route = createFileRoute("/meet-the-team")({
       { property: "og:description", content: SEO_DESCRIPTION },
       { name: "robots", content: "index,follow" },
     ],
-    links: [{ rel: "canonical", href: "/meet-the-team" }],
   }),
   component: MeetTheTeamPage,
 });

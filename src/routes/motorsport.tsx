@@ -27,7 +27,6 @@ export const Route = createFileRoute("/motorsport")({
       },
       { name: "robots", content: "index,follow" },
     ],
-    links: [{ rel: "canonical", href: "/motorsport" }],
   }),
   component: MotorsportPage,
 });

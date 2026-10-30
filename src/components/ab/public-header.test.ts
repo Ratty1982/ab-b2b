@@ -69,6 +69,7 @@ vi.mock("@tanstack/react-router", () => ({
     return options?.select ? options.select(state) : state;
   },
   useNavigate: () => async () => undefined,
+  useRouteContext: () => ({ publicOrigin: "" }),
 }));
 
 import {

@@ -7,7 +7,7 @@
 import { moneyToString, parseMoney } from "@/domain/money";
 import type { EmailMessage } from "@/infra/email";
 import { formatDate } from "@/lib/datetime";
-import { renderTransactionalEmailShell } from "@/server/email/shell";
+import { publicSiteUrl, renderTransactionalEmailShell } from "@/server/email/shell";
 import {
   emailAccountManagerCard,
   emailHero,
@@ -210,7 +210,7 @@ export function buildOrderReceivedCustomerBodies(
     ...(am ? ["", "YOUR ACCOUNT MANAGER", am.name] : []),
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ].join("\n");
 
   const refRows = [
@@ -300,7 +300,7 @@ export function buildOrderUpdatedCustomerBodies(
     ...(am ? ["", "YOUR ACCOUNT MANAGER", am.name] : []),
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ].join("\n");
 
   const refRows = [
@@ -474,7 +474,7 @@ export function buildOrderPartDespatchedCustomerBodies(
     `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ].join("\n");
 
   const bodyHtml = `
@@ -534,7 +534,7 @@ export function buildOrderRemainingDespatchedCustomerBodies(
     `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ].join("\n");
 
   const bodyHtml = `
@@ -588,7 +588,7 @@ export function buildOrderDespatchedCustomerBodies(
     `VIEW YOUR ORDER: ${order.portalOrderUrl}`,
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ].join("\n");
 
   const bodyHtml = `
