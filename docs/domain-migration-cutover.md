@@ -13,7 +13,7 @@ The same Coolify application, the same `DATABASE_URL`, and the same `/data/autop
 - `/sample-page` 301s to `/`.
 - Trailing-slash WordPress URLs for `/brands`, `/customer-survey`, `/free-prize-draw-terms-conditions`, and `/us-incorporation-documents` 301 to the slashless path.
 - `/wp-login.php`, `/wp-admin`, `/wp-json`, `/wp-content`, `/xmlrpc.php`, `/feed`, and `/author` return 410. `/wp-login.php` is not sent to `/login`.
-- The b2b hostname is not redirected. `/api/internal/stock-sync` and other `/api` paths on b2b stay on that host.
+- GET and HEAD pages on `b2b.{APP_URL host}` return a temporary 302 to the same path and query on the `APP_URL` origin. `/api` (including auth callbacks, webhooks, and `/api/internal/stock-sync`), other methods, and static files stay on the request host. Set `B2B_LEGACY_REDIRECT=off` to remove that redirect. See [Temporary b2b redirect](#temporary-b2b-redirect).
 - The three PDFs from the WordPress incorporation page are served at `/us-incorporation-documents`.
 - Indexable public pages emit an absolute canonical and `og:url` from the `APP_URL` origin. Staff, portal, and API paths do not.
 
@@ -136,13 +136,27 @@ After the restart, Coolify logs should show the stock scheduler started. Do not 
 5. Password resets and invitations sent while `APP_URL` was the apex will open WordPress again after this rollback. Reissue those links. Freeze resets and invitations across the window if a rollback is likely.
 6. Sessions started on the apex are not valid on b2b. People sign in again.
 
+## Temporary b2b redirect
+
+The production application answers on `https://automotivebrands.co.uk`. `APP_URL` must remain that origin. While `b2b.automotivebrands.co.uk` still reaches this same application, ordinary page navigations on that old hostname are sent to the apex.
+
+- Method is GET or HEAD, and the path is a normal public, customer, or staff page: HTTP 302 to `https://automotivebrands.co.uk` plus the same path and query string. This is temporary. It is not a 301.
+- `/our-story` on b2b goes to `https://automotivebrands.co.uk/why-automotive-brands` in that same response. On the apex, `/our-story` stays a 301.
+- `/wp-login.php` and the other WordPress paths that are gone still return 410. They are not sent to `/login`.
+- Never redirected: `/api` and `/api/*` (auth callbacks, webhooks, stock sync, imports, media, `/api/build`), any method other than GET or HEAD, and static or machine-readable resources (`/assets/`, `/brand/`, `/company-documents/`, `/favicon.png`, `/robots.txt`, and paths with a static file extension).
+- The request host is compared with the hostname of `APP_URL`. A request that is already on that hostname is not redirected, so the rule cannot loop. If `APP_URL` itself is the b2b host, the redirect does not run.
+- Session cookies stay host-only. This redirect does not set a `Domain` attribute.
+
+The redirect is on when `B2B_LEGACY_REDIRECT` is unset. `off`, `false`, `0`, and `no` disable it. Any other value leaves it on. Restart the process after changing it.
+
 ## Releasing b2b for the Virtual Warehouse
 
-Not part of this change. While b2b still reaches this application, bookmarks and old email links keep working, and `/api/internal/stock-sync` stays on the host external callers already use.
+Do this before `b2b.automotivebrands.co.uk` is assigned to the Virtual Warehouse Portal. Do not change DNS or Coolify domains from the application repository.
 
-When the warehouse portal is ready:
+1. On this application, set `B2B_LEGACY_REDIRECT=off` and restart the same container. `APP_URL` stays `https://automotivebrands.co.uk`.
+2. While this app still answers the b2b host, confirm `GET https://b2b.automotivebrands.co.uk/` and `GET https://b2b.automotivebrands.co.uk/login` are no longer 302 responses. Confirm `GET https://automotivebrands.co.uk/` is unchanged.
+3. Move any external caller of `/api/internal/stock-sync` or other `/api` routes to the apex before the b2b host stops reaching this app. The in-process Autopart scheduler does not call that URL. Do not change import, order, or stock behaviour as part of turning the redirect off.
+4. Keep cookies host-only. Do not add a `Domain` attribute. The warehouse must not receive the trade session.
+5. Remove `b2b.automotivebrands.co.uk` from this Coolify service only when the warehouse is ready to own that hostname. After that, the flag on this app no longer affects the hostname.
 
-1. Do not add a permanent blanket redirect from the whole b2b host to the apex.
-2. Keep `/api/` on b2b until each external caller is moved. That includes `POST /api/internal/stock-sync` if an operator has configured one. The in-process scheduler does not need that URL.
-3. Only then, and only for known trade paths (`/portal`, `/login`, `/activate`, `/forgot-password`, `/reset-password`, `/admin`, `/sales`, `/crm`, `/purchasing`, and the public catalogue), add a temporary path-preserving redirect to the apex. Leave the warehouse's own paths on b2b.
-4. Keep cookies host-only so the warehouse cannot receive the trade session.
+With the flag off, the www redirect and the explicit WordPress path rules still apply. There is no permanent blanket redirect from the b2b host.

@@ -74,14 +74,17 @@ const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => 
 });
 
 /**
- * Explicit WordPress paths, plus www → the APP_URL origin.
- * Does not redirect the b2b hostname. API callers on b2b stay on that host.
+ * WordPress paths, www → the APP_URL origin, and a temporary 302 from the
+ * legacy b2b host to that origin for GET and HEAD pages.
+ * /api, auth callbacks, webhooks, static files, and other methods stay put.
+ * Set B2B_LEGACY_REDIRECT=off before the warehouse portal takes the b2b host.
  */
 const migrationRedirectMiddleware = createMiddleware().server(async ({ request, next }) => {
   const decision = migrationRequestDecision({
     method: request.method,
     requestUrl: request.url,
     appUrl: process.env["APP_URL"],
+    b2bLegacyRedirect: process.env["B2B_LEGACY_REDIRECT"],
   });
   if (!decision) return next();
   if (decision.status === 410) {
