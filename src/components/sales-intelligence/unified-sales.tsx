@@ -151,7 +151,7 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
           label="Last dated invoice"
           value={dateUk(summary.lastDatedInvoice, "None dated")}
         />
-        <SiMetricCard label="Last successful refresh" value={dateTimeUk(refresh.latestAt)} />
+        <SiMetricCard label="Last ongoing refresh" value={dateTimeUk(refresh.latestAt)} />
         <SiMetricCard label="Undated lines" value={String(summary.undatedLineCount)} />
         <SiMetricCard
           label="Duplicates suppressed"
@@ -188,9 +188,10 @@ export function UnifiedSalesFigures({ figures }: { figures: UnifiedFigures }) {
         </ul>
       ) : null}
       <p className="text-[11px] text-steel">
-        Refreshes: TRM21QC {dateTimeUk(refresh.ongoingTrm21qcAt)} · 504{" "}
-        {dateTimeUk(refresh.ongoing504At)} · customer import {dateTimeUk(refresh.customerImportAt)}.
-        New invoices and credits arrive through the existing 504 and TRM21QC runs only.
+        Ongoing refreshes: TRM21QC {dateTimeUk(refresh.ongoingTrm21qcAt)} · 504{" "}
+        {dateTimeUk(refresh.ongoing504At)}. Historical 561L/SLRB import{" "}
+        {dateTimeUk(refresh.customerImportAt)} is coverage, not ongoing freshness.
+        New invoices and credits arrive through 504 and TRM21QC only.
       </p>
     </div>
   );

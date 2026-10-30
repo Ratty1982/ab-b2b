@@ -11,7 +11,6 @@ const ready = {
   hasAccountCode: true,
   ownershipAmbiguous: false,
   historyStatus: "NOT_STARTED" as const,
-  ongoingImportCount: 0,
 };
 
 describe("customer Autopart workspace stages", () => {
@@ -33,19 +32,34 @@ describe("customer Autopart workspace stages", () => {
     expect(customerAutopartStages(ready).find((stage) => stage.id === "history")?.state).toBe("ACTION_REQUIRED");
   });
 
-  it("blocks current sales and points at exception review", () => {
+  it("blocks automatic updates and points at exception review", () => {
     const input = { ...ready, historyStatus: "REVIEW" as const };
     const stages = customerAutopartStages(input);
     expect(stages.find((stage) => stage.id === "exceptions")?.state).toBe("ACTION_REQUIRED");
     expect(stages.find((stage) => stage.id === "current")?.state).toBe("NOT_STARTED");
+    expect(stages.find((stage) => stage.id === "current")?.label).toBe("Automatic sales updates");
     expect(customerAutopartPrimaryAction(input)).toBe("review-exceptions");
   });
 
-  it("opens current sales after a completed cutover, then Sales Enquiry after an import", () => {
+  it("completes historical setup without requiring a 504/TRM21QC import run", () => {
     const complete = { ...ready, historyStatus: "COMPLETE" as const };
-    expect(customerAutopartPrimaryAction(complete)).toBe("import-current");
-    expect(customerAutopartStages(complete).find((stage) => stage.id === "enquiry")?.state).toBe("COMPLETE");
-    expect(customerAutopartPrimaryAction({ ...complete, ongoingImportCount: 2 })).toBe("view-enquiry");
+    const stages = customerAutopartStages(complete);
+    expect(stages.find((stage) => stage.id === "current")?.state).toBe("COMPLETE");
+    expect(stages.find((stage) => stage.id === "current")?.label).toBe("Automatic sales updates");
+    expect(stages.find((stage) => stage.id === "enquiry")?.state).toBe("COMPLETE");
+    expect(customerAutopartPrimaryAction(complete)).toBe("view-enquiry");
+  });
+
+  it("flags automatic updates only for genuine outstanding import issues", () => {
+    const input = {
+      ...ready,
+      historyStatus: "COMPLETE" as const,
+      outstandingImportIssues: true,
+    };
+    expect(customerAutopartStages(input).find((stage) => stage.id === "current")?.state).toBe(
+      "ACTION_REQUIRED",
+    );
+    expect(customerAutopartPrimaryAction(input)).toBe("view-enquiry");
   });
 
   it("asks for activation before history when the account is verified but not active", () => {
