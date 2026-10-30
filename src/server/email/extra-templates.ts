@@ -3,7 +3,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { renderTransactionalEmailShell } from "@/server/email/shell";
+import { publicSiteUrl, renderTransactionalEmailShell } from "@/server/email/shell";
 import {
   emailHero,
   emailParagraph,
@@ -28,7 +28,7 @@ ${input.resetUrl}
 If you didn't request this, you can safely ignore this email.
 
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("Reset your password", "A password reset was requested")}
@@ -70,7 +70,7 @@ Activate your account:
 ${input.activationPath}
 
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("You've been invited", input.companyName)}

@@ -5,6 +5,7 @@
 import { formatDateTime } from "@/lib/datetime";
 import {
   escapeEmailHtml,
+  publicSiteUrl,
   renderTransactionalEmailShell,
 } from "@/server/email/shell";
 import type { EmailFooterMeta } from "@/server/orders/email";
@@ -31,7 +32,7 @@ export function buildDiagnosticTestEmailBodies(input: {
     "This is a test message sent from Automotive Brands Admin → Settings → Email.",
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ]
     .filter((line) => line !== null)
     .join("\n");

@@ -26,7 +26,7 @@ runs migrate, remove it to avoid double-running (harmless but redundant).
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | Coolify Postgres connection string |
 | `AUTH_SECRET` | Yes | ≥ 32 chars; not the repo default |
-| `APP_URL` | Yes | `https://b2b.automotivebrands.co.uk` |
+| `APP_URL` | Yes | `https://b2b.automotivebrands.co.uk` until cutover. The apex change is `https://automotivebrands.co.uk` and is sequenced in [domain-migration-cutover.md](domain-migration-cutover.md). Do not change it on a routine redeploy. |
 | `NODE_ENV` | Yes | `production` |
 | `CUSTOMER_SALES_UPLOAD_DIR` | Before customer sales imports | `/data/autopart-imports/customer-sales-uploads` |
 

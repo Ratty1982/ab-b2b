@@ -8,7 +8,7 @@ import { moneyToString, parseMoney } from "@/domain/money";
 import { dateOnlyFromValidUntil } from "@/domain/quote";
 import { getServerEnv } from "@/server/env";
 import { getEmailFooterMeta } from "@/server/email/settings";
-import { renderTransactionalEmailShell } from "@/server/email/shell";
+import { publicSiteUrl, renderTransactionalEmailShell } from "@/server/email/shell";
 import {
   emailAccountManagerCard,
   emailHero,
@@ -94,7 +94,7 @@ export function buildQuoteSentBodies(
     `VIEW QUOTATION: ${snap.portalUrl}`,
     "",
     "Automotive Brands",
-    "https://automotivebrands.co.uk",
+    publicSiteUrl(),
   ].join("\n");
 
   const bodyHtml = `

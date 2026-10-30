@@ -1,4 +1,4 @@
-import { Link, useRouter, useRouterState } from "@tanstack/react-router";
+import { Link, useRouteContext, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { Logo } from "./Logo";
@@ -41,6 +41,7 @@ const footerCompany = [
   { label: "Meet the Team", to: "/meet-the-team" as const },
   { label: "Motorsport", to: "/motorsport" as const },
   { label: "About", to: "/about" as const },
+  { label: "US company documents", href: "/us-incorporation-documents" },
 ] as const;
 
 const navLinkClass =
@@ -250,7 +251,20 @@ function FooterColumn({
   );
 }
 
+function footerHost(publicOrigin: string | undefined): string | null {
+  if (!publicOrigin) return null;
+  try {
+    const host = new URL(publicOrigin).host;
+    if (!host || host.startsWith("localhost") || host.startsWith("127.0.0.1")) return null;
+    return host;
+  } catch {
+    return null;
+  }
+}
+
 export function PublicFooter() {
+  const { publicOrigin } = useRouteContext({ from: "__root__" });
+  const host = footerHost(publicOrigin);
   return (
     <footer className="border-t border-border/60 bg-ink">
       <div className="mx-auto max-w-[1400px] px-4 py-12 sm:px-6 lg:px-10">
@@ -267,7 +281,7 @@ export function PublicFooter() {
           <FooterColumn title="Company" links={footerCompany} />
         </div>
         <div className="mt-10 border-t border-border/50 pt-6 text-[12px] text-steel">
-          © 2026 Automotive Brands · automotivebrands.co.uk
+          © 2026 Automotive Brands{host ? ` · ${host}` : ""}
         </div>
       </div>
     </footer>

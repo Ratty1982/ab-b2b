@@ -2,7 +2,7 @@
  * Admin staff invitation + set-password email templates.
  */
 
-import { renderTransactionalEmailShell } from "@/server/email/shell";
+import { publicSiteUrl, renderTransactionalEmailShell } from "@/server/email/shell";
 import { emailHero, emailParagraph, emailReferencePanel } from "@/server/email/layout";
 import type { EmailFooterMeta } from "@/server/orders/email";
 
@@ -31,7 +31,7 @@ ${input.activationUrl}
 If you were not expecting this invitation, you can ignore this email.
 
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("Your Automotive Brands account is ready", input.displayName || input.email)}

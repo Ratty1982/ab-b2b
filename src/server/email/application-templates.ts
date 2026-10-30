@@ -4,7 +4,7 @@
  */
 
 import { getServerEnv } from "@/server/env";
-import { escapeEmailHtml, renderTransactionalEmailShell } from "@/server/email/shell";
+import { escapeEmailHtml, publicSiteUrl, renderTransactionalEmailShell } from "@/server/email/shell";
 import {
   emailAccountManagerCard,
   emailBulletList,
@@ -56,7 +56,7 @@ WHAT HAPPENS NEXT
 3. Once approved, you'll receive an activation email to set up your account.
 
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("Trade application received", `Thanks ${first}`)}
@@ -136,7 +136,7 @@ ${message}
 Please reply to this email with the requested information.
 
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("We need a little more information", `Hello ${first}`)}
@@ -178,7 +178,7 @@ ${snap.reference ? `Application reference: ${snap.reference}\n` : ""}
 The next step is to activate your account and set your password.
 ${activateBlock}
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("Your trade account has been approved", `Hello ${first}`)}
@@ -223,7 +223,7 @@ ${message ? `\n${message}\n` : ""}
 If you have questions, please reply to this email.
 
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("Application update", `Hello ${first}`)}
@@ -286,7 +286,7 @@ Open the trade portal:
 ${portalUrl}
 ${amLines}
 Automotive Brands
-https://automotivebrands.co.uk`;
+${publicSiteUrl()}`;
 
   const bodyHtml = `
 ${emailHero("Welcome to Automotive Brands", `Hi ${first},`)}

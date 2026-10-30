@@ -8,8 +8,8 @@ import { PublicLayout, PublicPageBreadcrumbs } from "@/components/ab/PublicLayou
  * - “14 Days” is capitalised in section 6 and lower case elsewhere.
  * - The survey privacy note says “Automotive Brands Ltd”. These terms say
  *   “Steel Seal Ltd t/a Automotive Brands”.
- * - The portal does not host a privacy policy page, so the privacy link
- *   points at the published automotivebrands.co.uk policy.
+ * - No approved privacy policy is in the repository or CMS. The link is the
+ *   path /privacy-policy and stays unresolved until legal supplies the page.
  * - The original HTML used target="blank", which is not a valid target.
  */
 export const Route = createFileRoute("/free-prize-draw-terms-conditions")({
@@ -189,7 +189,7 @@ function PrizeDrawTermsPage() {
             <li>
               Data will be processed in accordance with the Promoter’s Privacy Policy (available at{" "}
               <a
-                href="https://automotivebrands.co.uk/privacy-policy"
+                href="/privacy-policy"
                 className="font-semibold underline"
               >
                 Privacy Policy
