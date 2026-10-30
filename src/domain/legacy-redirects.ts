@@ -1,10 +1,14 @@
 /**
- * Explicit legacy WordPress paths only.
- * This does not redirect the b2b hostname and does not rewrite unknown URLs.
+ * Explicit legacy WordPress paths, www → APP_URL, and a temporary redirect
+ * from the old b2b hostname to the APP_URL origin.
+ *
+ * The b2b redirect is HTTP 302 for GET and HEAD page navigations only.
+ * It does not rewrite unknown URLs on the apex, and it does not move API,
+ * webhook, auth-callback, or static responses.
  */
 
 export type MigrationRedirect =
-  | { status: 301 | 308; location: string }
+  | { status: 301 | 302 | 308; location: string }
   | { status: 410 };
 
 const APP_TRAILING_SLASH = new Set([
@@ -12,6 +16,33 @@ const APP_TRAILING_SLASH = new Set([
   "/customer-survey",
   "/free-prize-draw-terms-conditions",
   "/us-incorporation-documents",
+]);
+
+const STATIC_EXTENSIONS = new Set([
+  ".js",
+  ".mjs",
+  ".css",
+  ".map",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".svg",
+  ".webp",
+  ".avif",
+  ".ico",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".otf",
+  ".pdf",
+  ".txt",
+  ".xml",
+  ".json",
+  ".webmanifest",
+  ".wasm",
+  ".csv",
 ]);
 
 function withoutTrailingSlash(pathname: string): string {
@@ -46,30 +77,81 @@ export function legacyPathLocation(pathname: string): string | 410 | null {
   return null;
 }
 
-function wwwApexOrigin(request: URL, appUrl: string | undefined): string | null {
+function canonicalAppUrl(appUrl: string | undefined): URL | null {
   if (!appUrl) return null;
-  let canonical: URL;
   try {
-    canonical = new URL(appUrl);
+    const canonical = new URL(appUrl);
+    if (!canonical.hostname) return null;
+    return canonical;
   } catch {
     return null;
   }
+}
+
+function wwwApexOrigin(request: URL, appUrl: string | undefined): string | null {
+  const canonical = canonicalAppUrl(appUrl);
+  if (!canonical) return null;
   const apex = canonical.hostname.toLowerCase();
-  if (!apex) return null;
   if (request.hostname.toLowerCase() !== `www.${apex}`) return null;
   return canonical.origin;
 }
 
 /**
+ * Temporary hostname redirect is on unless explicitly disabled.
+ * `off`, `false`, `0`, and `no` turn it off so b2b can be given to the warehouse.
+ */
+export function isTemporaryB2bRedirectEnabled(flag: string | undefined): boolean {
+  if (flag == null) return true;
+  const value = flag.trim().toLowerCase();
+  if (value === "") return true;
+  return value !== "0" && value !== "false" && value !== "off" && value !== "no";
+}
+
+/**
+ * Origin to send the legacy b2b host to, or null when this request must stay.
+ * The request host must be exactly `b2b.` plus the APP_URL hostname, and must
+ * not already be that origin.
+ */
+function temporaryB2bOrigin(request: URL, appUrl: string | undefined): string | null {
+  const canonical = canonicalAppUrl(appUrl);
+  if (!canonical) return null;
+  const apex = canonical.hostname.toLowerCase();
+  const host = request.hostname.toLowerCase();
+  if (host !== `b2b.${apex}`) return null;
+  if (host === apex || request.origin === canonical.origin) return null;
+  return canonical.origin;
+}
+
+function isMachineReadablePath(pathname: string): boolean {
+  const path = pathname.toLowerCase();
+  const bare = withoutTrailingSlash(path);
+  if (bare === "/api" || path.startsWith("/api/")) return true;
+  if (bare === "/assets" || path.startsWith("/assets/")) return true;
+  if (bare === "/brand" || path.startsWith("/brand/")) return true;
+  if (bare === "/company-documents" || path.startsWith("/company-documents/")) return true;
+  if (bare === "/.well-known" || path.startsWith("/.well-known/")) return true;
+  if (bare === "/favicon" || bare === "/favicon.ico" || bare === "/robots.txt") return true;
+  const dot = bare.lastIndexOf(".");
+  if (dot >= 0 && STATIC_EXTENSIONS.has(bare.slice(dot))) return true;
+  return false;
+}
+
+function locationOn(origin: string, pathname: string, search: string): string {
+  return new URL(`${pathname}${search}`, origin).toString();
+}
+
+/**
  * One response for a public request.
  * www redirects to the APP_URL origin and keeps path plus query.
- * Any other host, including b2b, is left unchanged except for the explicit
- * WordPress paths above. API paths on b2b are not redirected.
+ * The legacy b2b host 302s GET and HEAD pages to that same origin.
+ * API, auth callbacks, webhooks, static files, and other methods stay put.
  */
 export function migrationRequestDecision(input: {
   method: string;
   requestUrl: string;
   appUrl?: string | undefined;
+  /** Unset enables the temporary b2b redirect. `off` / `false` / `0` / `no` disable it. */
+  b2bLegacyRedirect?: string | undefined;
 }): MigrationRedirect | null {
   let request: URL;
   try {
@@ -79,19 +161,31 @@ export function migrationRequestDecision(input: {
   }
 
   const pathTarget = legacyPathLocation(request.pathname);
-  const apex = wwwApexOrigin(request, input.appUrl);
   if (pathTarget === 410) return { status: 410 };
+
+  const method = input.method.toUpperCase();
+  const b2bOrigin = isTemporaryB2bRedirectEnabled(input.b2bLegacyRedirect)
+    ? temporaryB2bOrigin(request, input.appUrl)
+    : null;
+  if (b2bOrigin && (method === "GET" || method === "HEAD") && !isMachineReadablePath(request.pathname)) {
+    const pathname = typeof pathTarget === "string" ? pathTarget : request.pathname;
+    return {
+      status: 302,
+      location: locationOn(b2bOrigin, pathname, request.search),
+    };
+  }
+
+  const apex = wwwApexOrigin(request, input.appUrl);
   if (typeof pathTarget === "string") {
     const origin = apex ?? request.origin;
     return {
       status: 301,
-      location: new URL(`${pathTarget}${request.search}`, origin).toString(),
+      location: locationOn(origin, pathTarget, request.search),
     };
   }
   if (!apex) return null;
-  const method = input.method.toUpperCase();
   return {
     status: method === "GET" || method === "HEAD" ? 301 : 308,
-    location: new URL(`${request.pathname}${request.search}`, apex).toString(),
+    location: locationOn(apex, request.pathname, request.search),
   };
 }

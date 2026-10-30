@@ -27,6 +27,7 @@ describe("auth and transport security configuration", () => {
     expect(source).not.toContain("includeSubDomains");
     expect(STRICT_TRANSPORT_SECURITY).toBe("max-age=31536000");
     expect(source).toContain("migrationRequestDecision");
+    expect(source).toContain("B2B_LEGACY_REDIRECT");
     expect(source).toContain("Content-Security-Policy");
     expect(source).toContain("frame-ancestors 'none'");
     expect(source).toContain("object-src 'none'");
