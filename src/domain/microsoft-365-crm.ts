@@ -1,9 +1,10 @@
 /**
  * Microsoft 365 CRM connection policy.
- * Pure functions: scopes, PKCE, OAuth state, redirect checks, and public status.
- * No tokens are accepted from the browser. No network calls.
+ * Scopes, PKCE, OAuth state, redirect checks, and ID token signature checks.
+ * Signing keys are supplied by the caller. This module does not fetch them.
+ * No tokens are accepted from the browser.
  */
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, createVerify } from "node:crypto";
 
 import { MICROSOFT_LOGIN_HOST, resolveMicrosoftTokenUrl } from "@/domain/microsoft-graph-security";
 
@@ -174,6 +175,8 @@ export function readMicrosoft365Gate(env: {
   clientSecret?: string | undefined;
   redirectUri?: string | undefined;
   appUrl?: string | undefined;
+  /** Dedicated token key. Presence is checked; the value is not retained on the gate. */
+  encryptionKey?: string | undefined;
 }): Microsoft365Gate {
   const redirectUri = resolveMicrosoft365RedirectUri(env.appUrl, env.redirectUri);
   const tenantRaw = env.tenantId?.trim() ?? "";
@@ -189,7 +192,8 @@ export function readMicrosoft365Gate(env: {
   } catch {
     tenantOk = false;
   }
-  const configured = Boolean(tenantOk && clientId && clientSecret && redirectUri);
+  const encryptionKeyOk = (env.encryptionKey?.trim().length ?? 0) >= 32;
+  const configured = Boolean(tenantOk && clientId && clientSecret && redirectUri && encryptionKeyOk);
   if (!isMicrosoft365CrmEnabled(env.enabledFlag)) return { state: "disabled", configured };
   if (!configured || !redirectUri) return { state: "not_configured" };
   return {
@@ -247,38 +251,118 @@ export type IdTokenClaims = {
   preferredUsername: string | null;
 };
 
-export function readIdTokenClaims(
-  idToken: string,
-  expected: { tenantId: string; clientId: string; nonce: string; now: Date },
-): IdTokenClaims {
-  const parts = idToken.split(".");
-  if (parts.length !== 3 || !parts[1]) {
-    throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
+/** RSA signing key from the tenant JWKS. Only `n` and `e` are used, and only after `alg` is RS256. */
+export type MicrosoftSigningKey = {
+  kid: string;
+  n: string;
+  e: string;
+};
+
+const CLOCK_SKEW_MS = 120_000;
+
+export function microsoftSigningKeysUrl(tenantId: string): string {
+  const tid = assertSingleTenantId(tenantId);
+  return `https://${MICROSOFT_LOGIN_HOST}/${tid}/discovery/v2.0/keys`;
+}
+
+export function parseMicrosoftSigningKeys(body: unknown): MicrosoftSigningKey[] {
+  if (!body || typeof body !== "object" || !Array.isArray((body as { keys?: unknown }).keys)) {
+    throw new Microsoft365Error("TOKEN", "Microsoft signing keys were rejected");
   }
-  let payload: Record<string, unknown>;
+  const keys: MicrosoftSigningKey[] = [];
+  for (const item of (body as { keys: unknown[] }).keys) {
+    if (!item || typeof item !== "object") continue;
+    const jwk = item as Record<string, unknown>;
+    if (jwk["kty"] !== "RSA") continue;
+    if (jwk["use"] != null && jwk["use"] !== "sig") continue;
+    if (jwk["alg"] != null && jwk["alg"] !== "RS256") continue;
+    if (typeof jwk["kid"] !== "string" || typeof jwk["n"] !== "string" || typeof jwk["e"] !== "string") continue;
+    if (!jwk["kid"] || !jwk["n"] || !jwk["e"]) continue;
+    keys.push({ kid: jwk["kid"], n: jwk["n"], e: jwk["e"] });
+  }
+  if (keys.length === 0) throw new Microsoft365Error("TOKEN", "Microsoft signing keys were rejected");
+  return keys;
+}
+
+function decodeJwtPart(part: string): Record<string, unknown> {
   try {
-    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+    const parsed = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("shape");
+    }
+    return parsed as Record<string, unknown>;
   } catch {
     throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
   }
+}
+
+function issuerMatches(iss: string, tenantId: string): boolean {
+  const trimmed = iss.endsWith("/") ? iss.slice(0, -1) : iss;
+  return trimmed.toLowerCase() === `https://login.microsoftonline.com/${tenantId}/v2.0`.toLowerCase();
+}
+
+/**
+ * Accept an ID token only after RS256 signature verification against the supplied Microsoft keys.
+ * Claim checks run after the signature check. Unsigned tokens are rejected.
+ */
+export function verifyMicrosoftIdToken(
+  idToken: string,
+  expected: { tenantId: string; clientId: string; nonce: string; now: Date; keys: readonly MicrosoftSigningKey[] },
+): IdTokenClaims {
+  const parts = idToken.split(".");
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
+  }
+  const header = decodeJwtPart(parts[0]);
+  if (header["alg"] !== "RS256" || header["crit"] != null || typeof header["kid"] !== "string") {
+    throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
+  }
+  const key = expected.keys.find((item) => item.kid === header["kid"]);
+  if (!key) throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
+
+  let signatureOk = false;
+  try {
+    const publicKey = createPublicKey({ key: { kty: "RSA", n: key.n, e: key.e }, format: "jwk" });
+    const verifier = createVerify("RSA-SHA256");
+    verifier.update(`${parts[0]}.${parts[1]}`);
+    verifier.end();
+    signatureOk = verifier.verify(publicKey, Buffer.from(parts[2], "base64url"));
+  } catch {
+    signatureOk = false;
+  }
+  if (!signatureOk) throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
+
+  const payload = decodeJwtPart(parts[1]);
   const tid = typeof payload["tid"] === "string" ? payload["tid"] : "";
   const oid = typeof payload["oid"] === "string" ? payload["oid"] : "";
   const nonce = typeof payload["nonce"] === "string" ? payload["nonce"] : "";
   const aud = payload["aud"];
   const iss = typeof payload["iss"] === "string" ? payload["iss"] : "";
-  const exp = typeof payload["exp"] === "number" ? payload["exp"] : 0;
+  const exp = payload["exp"];
+  const nbf = payload["nbf"];
+  const iat = payload["iat"];
   const audienceOk = aud === expected.clientId || (Array.isArray(aud) && aud.includes(expected.clientId));
-  const issuerOk =
-    iss === `https://login.microsoftonline.com/${expected.tenantId}/v2.0` ||
-    iss === `https://login.microsoftonline.com/${expected.tenantId}/v2.0/`;
-  if (!audienceOk || !issuerOk || tid.toLowerCase() !== expected.tenantId.toLowerCase() || !oid) {
+  if (!audienceOk) {
+    throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
+  }
+  if (!issuerMatches(iss, expected.tenantId) || tid.toLowerCase() !== expected.tenantId.toLowerCase() || !oid) {
     throw new Microsoft365Error("TENANT", "Microsoft account is not in the authorised organisation");
   }
   if (nonce !== expected.nonce) {
     throw new Microsoft365Error("STATE", "Microsoft sign-in could not be confirmed");
   }
-  if (exp * 1000 < expected.now.getTime() - 120_000) {
+  if (typeof exp !== "number" || !Number.isFinite(exp)) {
     throw new Microsoft365Error("TOKEN", "Microsoft identity token has expired");
+  }
+  const nowMs = expected.now.getTime();
+  if (exp * 1000 < nowMs - CLOCK_SKEW_MS) {
+    throw new Microsoft365Error("TOKEN", "Microsoft identity token has expired");
+  }
+  if (typeof nbf === "number" && nbf * 1000 > nowMs + CLOCK_SKEW_MS) {
+    throw new Microsoft365Error("TOKEN", "Microsoft identity token is not valid yet");
+  }
+  if (typeof iat === "number" && iat * 1000 > nowMs + CLOCK_SKEW_MS) {
+    throw new Microsoft365Error("TOKEN", "Microsoft identity token was rejected");
   }
   return {
     oid,
@@ -286,6 +370,49 @@ export function readIdTokenClaims(
     name: typeof payload["name"] === "string" ? payload["name"] : null,
     preferredUsername: typeof payload["preferred_username"] === "string" ? payload["preferred_username"] : null,
   };
+}
+
+/** Require the delegated task scopes and refuse mailbox or tenant-wide permissions. */
+export function assertAcceptedMicrosoftScopes(scope: string | undefined): string {
+  const granted = grantedScopeSet(scope);
+  for (const forbidden of MICROSOFT_365_FORBIDDEN_SCOPES) {
+    if (granted.has(forbidden)) {
+      throw new Microsoft365Error("TOKEN", "Microsoft returned a permission this integration does not accept");
+    }
+  }
+  if (!granted.has("User.Read") || !granted.has("Tasks.ReadWrite")) {
+    throw new Microsoft365Error("TOKEN", "Microsoft did not grant the required permissions");
+  }
+  return [...granted].join(" ");
+}
+
+export function isOAuthTransactionOpen(
+  row: { consumedAt: Date | null; expiresAt: Date },
+  now: Date,
+): boolean {
+  return row.consumedAt == null && row.expiresAt.getTime() > now.getTime();
+}
+
+/** Database filter for a single successful consume. Expired or already-used rows match nothing. */
+export function oauthTransactionConsumeFilter(
+  id: string,
+  now: Date,
+): { id: string; consumedAt: null; expiresAt: { gt: Date } } {
+  return { id, consumedAt: null, expiresAt: { gt: now } };
+}
+
+/** Header `kid` only. Payload claims are not read and are not trusted. */
+export function readMicrosoftIdTokenKeyId(idToken: string): string | null {
+  const part = idToken.split(".")[0];
+  if (!part) return null;
+  try {
+    const header = JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as unknown;
+    if (!header || typeof header !== "object" || Array.isArray(header)) return null;
+    const kid = (header as { kid?: unknown }).kid;
+    return typeof kid === "string" && kid ? kid : null;
+  } catch {
+    return null;
+  }
 }
 
 export function sanitizeMicrosoftMessage(raw: string): string {

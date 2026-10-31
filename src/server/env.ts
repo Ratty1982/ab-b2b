@@ -62,6 +62,8 @@ const envSchema = z.object({
   MICROSOFT_365_CLIENT_ID: z.string().optional(),
   MICROSOFT_365_CLIENT_SECRET: z.string().optional(),
   MICROSOFT_365_REDIRECT_URI: z.string().optional(),
+  /** AES-256-GCM key for CRM Microsoft tokens. Independent of AUTH_SECRET. Min 32 characters. */
+  MICROSOFT_365_ENCRYPTION_KEY: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

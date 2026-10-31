@@ -60,13 +60,16 @@ MICROSOFT_365_TENANT_ID=
 MICROSOFT_365_CLIENT_ID=
 MICROSOFT_365_CLIENT_SECRET=
 MICROSOFT_365_REDIRECT_URI=
+MICROSOFT_365_ENCRYPTION_KEY=
 ```
 
 `MICROSOFT_365_REDIRECT_URI` is optional. When unset, the app uses `{APP_URL}/api/microsoft-365/callback`. A value on any other origin or path is rejected. `APP_URL` stays `https://automotivebrands.co.uk`.
 
-The flag accepts only `true`, `1`, `on`, or `yes`. Anything else, including an empty value, keeps the integration off. Restart the process after changing it.
+The flag accepts only `true`, `1`, `on`, or `yes`. Anything else, including an empty value, keeps the integration off. While it is off, connect, token refresh, and Microsoft API calls do not run. Restart the process after changing it.
 
-`AUTH_SECRET` encrypts refresh tokens with the same AES-256-GCM helper used for other server secrets. Rotating `AUTH_SECRET` makes stored Microsoft tokens unreadable. Staff reconnect after a rotation.
+`MICROSOFT_365_ENCRYPTION_KEY` is required before the integration can be considered configured. Generate it with `openssl rand -base64 48` and keep it at least 32 characters. New access tokens, refresh tokens, and PKCE verifiers are AES-256-GCM ciphertext prefixed `v2:`, keyed from this value. It is separate from `AUTH_SECRET`, so rotating the session secret does not invalidate Microsoft connections. Rotating `MICROSOFT_365_ENCRYPTION_KEY` does. Ciphertext written as `v1:` by the shared secret helper can still be read with `AUTH_SECRET`. The gate stays not configured when this key is missing or shorter than 32 characters.
+
+The callback accepts an ID token only from Microsoft's token endpoint, and only after an RS256 signature check against the tenant's signing keys. The issuer, tenant id, audience (this app's client id), expiry, and the nonce stored with the OAuth transaction must all match. Unsigned tokens and tokens whose claims were altered are rejected. A token response that includes mailbox or tenant-wide task scopes is not stored.
 
 ## Staff behaviour
 

@@ -31,6 +31,7 @@ export function currentMicrosoft365Gate(): Microsoft365Gate {
     clientSecret: process.env["MICROSOFT_365_CLIENT_SECRET"],
     redirectUri: process.env["MICROSOFT_365_REDIRECT_URI"],
     appUrl: process.env["APP_URL"],
+    encryptionKey: process.env["MICROSOFT_365_ENCRYPTION_KEY"],
   });
 }
 

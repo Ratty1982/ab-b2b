@@ -3,6 +3,7 @@
  */
 import { Prisma } from "@prisma/client";
 
+import { isOAuthTransactionOpen, oauthTransactionConsumeFilter } from "@/domain/microsoft-365-crm";
 import { prisma } from "@/infra/database/client";
 import {
   MicrosoftIdentityConflict,
@@ -43,13 +44,23 @@ export function createPrismaMicrosoft365Store(): Microsoft365Store {
     },
     async consumeTransaction(stateHash, now) {
       const row = await prisma.microsoftOAuthTransaction.findUnique({ where: { stateHash } });
-      if (!row || row.consumedAt || row.expiresAt.getTime() <= now.getTime()) return null;
+      if (!row || !isOAuthTransactionOpen(row, now)) return null;
       const updated = await prisma.microsoftOAuthTransaction.updateMany({
-        where: { id: row.id, consumedAt: null },
+        where: oauthTransactionConsumeFilter(row.id, now),
         data: { consumedAt: now },
       });
       if (updated.count !== 1) return null;
-      return row;
+      return {
+        id: row.id,
+        userId: row.userId,
+        stateHash: row.stateHash,
+        codeVerifierEncrypted: row.codeVerifierEncrypted,
+        nonce: row.nonce,
+        includeCalendar: row.includeCalendar,
+        redirectUri: row.redirectUri,
+        expiresAt: row.expiresAt,
+        consumedAt: now,
+      };
     },
     async deleteTransactionsForUser(userId) {
       await prisma.microsoftOAuthTransaction.deleteMany({ where: { userId } });

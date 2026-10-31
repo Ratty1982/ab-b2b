@@ -144,6 +144,7 @@ Security-relevant actions include (non-exhaustive):
 - PostgreSQL via Prisma
 - Product document bytes via existing media storage abstraction
 - Graph credentials: env and/or AES-GCM encrypted DB field keyed from `AUTH_SECRET`
+- CRM Microsoft 365 tokens: AES-GCM ciphertext keyed from `MICROSOFT_365_ENCRYPTION_KEY`, separate from `AUTH_SECRET`
 
 ---
 

@@ -6,46 +6,49 @@ import { randomBytes } from "node:crypto";
 
 import {
   activeIdentityKey,
+  assertAcceptedMicrosoftScopes,
   assertAppRelativeLocation,
   assertCanConnect,
   assertMicrosoftAuthorizeUrl,
   buildMicrosoftAuthorizeUrl,
-  grantedScopeSet,
   hasCalendarConsent,
   hashOAuthState,
   microsoft365BrowserLocation,
   pkceChallengeS256,
-  readIdTokenClaims,
+  readMicrosoftIdTokenKeyId,
   sanitizeMicrosoftMessage,
   scopesForConnect,
+  verifyMicrosoftIdToken,
   type Microsoft365Actor,
   type Microsoft365AppConfig,
   type Microsoft365Gate,
   type Microsoft365HealthRow,
   type Microsoft365Status,
+  type MicrosoftSigningKey,
   Microsoft365Error,
 } from "@/domain/microsoft-365-crm";
 import { resolveMicrosoftGraphUrl, resolveMicrosoftTokenUrl } from "@/domain/microsoft-graph-security";
-import { decryptSecret, encryptSecret } from "@/server/crypto/secret";
+import type { MicrosoftFetch } from "@/server/microsoft-365/http";
+import { fetchMicrosoftSigningKeys } from "@/server/microsoft-365/signing-keys";
 import {
   MicrosoftIdentityConflict,
   type Microsoft365Store,
   type StoredConnection,
 } from "@/server/microsoft-365/store";
+import { decryptMicrosoftToken, encryptMicrosoftToken } from "@/server/microsoft-365/token-cipher";
+
+export type { MicrosoftFetch };
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 const ACCESS_SKEW_MS = 120_000;
-
-export type MicrosoftFetch = (
-  input: string,
-  init?: { method?: string; headers?: HeadersInit; body?: string | URLSearchParams },
-) => Promise<Response>;
 
 export type Microsoft365Deps = {
   store: Microsoft365Store;
   fetchImpl?: MicrosoftFetch;
   now?: () => Date;
   random?: (size: number) => Buffer;
+  /** Test hook. Production loads the tenant JWKS. */
+  signingKeys?: (tenantId: string) => Promise<MicrosoftSigningKey[]>;
 };
 
 function deps(input: Microsoft365Deps) {
@@ -142,7 +145,7 @@ export async function beginMicrosoftConnect(
     id: newId(random),
     userId: actor.userId,
     stateHash: hashOAuthState(state),
-    codeVerifierEncrypted: encryptSecret(verifier),
+    codeVerifierEncrypted: encryptMicrosoftToken(verifier),
     nonce,
     includeCalendar,
     redirectUri: gate.config.redirectUri,
@@ -212,7 +215,7 @@ export async function completeMicrosoftCallback(
   const transaction = await store.consumeTransaction(hashOAuthState(query.state), current);
   if (!transaction) return finish("state");
   if (transaction.userId !== actor.userId) return finish("forbidden");
-  const verifier = decryptSecret(transaction.codeVerifierEncrypted);
+  const verifier = decryptMicrosoftToken(transaction.codeVerifierEncrypted);
   if (!verifier) return finish("token");
 
   let token: { status: number; json: TokenJson };
@@ -240,16 +243,40 @@ export async function completeMicrosoftCallback(
 
   let claims;
   try {
-    claims = readIdTokenClaims(token.json.id_token, {
+    const kid = readMicrosoftIdTokenKeyId(token.json.id_token);
+    let keys = input.signingKeys
+      ? await input.signingKeys(gate.config.tenantId)
+      : await fetchMicrosoftSigningKeys(gate.config.tenantId, fetchImpl, current.getTime());
+    if (!input.signingKeys && kid && !keys.some((item) => item.kid === kid)) {
+      keys = await fetchMicrosoftSigningKeys(gate.config.tenantId, fetchImpl, current.getTime(), { refresh: true });
+    }
+    claims = verifyMicrosoftIdToken(token.json.id_token, {
       tenantId: gate.config.tenantId,
       clientId: gate.config.clientId,
       nonce: transaction.nonce,
       now: current,
+      keys,
     });
   } catch (error) {
-    const reason = error instanceof Microsoft365Error && error.code === "STATE" ? "state" : "tenant";
-    await record(store, current, actor.userId, null, "TENANT_REJECTED", error);
+    const code = error instanceof Microsoft365Error ? error.code : "TOKEN";
+    const reason = code === "STATE" ? "state" : code === "TENANT" ? "tenant" : "token";
+    await record(
+      store,
+      current,
+      actor.userId,
+      null,
+      code === "TENANT" ? "TENANT_REJECTED" : "IDENTITY_REJECTED",
+      error,
+    );
     return finish(reason);
+  }
+
+  let scopes: string;
+  try {
+    scopes = assertAcceptedMicrosoftScopes(token.json.scope);
+  } catch (error) {
+    await record(store, current, actor.userId, null, "SCOPES_REJECTED", error);
+    return finish("token");
   }
 
   let profile: { id?: string; displayName?: string; mail?: string; userPrincipalName?: string };
@@ -266,7 +293,7 @@ export async function completeMicrosoftCallback(
     await record(store, current, actor.userId, null, "PROFILE_FAILED", error);
     return finish("token");
   }
-  if (profile.id !== claims.oid) {
+  if (profile.id.toLowerCase() !== claims.oid.toLowerCase()) {
     await record(store, current, actor.userId, null, "PROFILE_MISMATCH", "Microsoft profile did not match the identity token");
     return finish("tenant");
   }
@@ -276,7 +303,6 @@ export async function completeMicrosoftCallback(
   if (other && other.userId !== actor.userId) return finish("forbidden");
 
   const existing = await store.findConnectionByUser(actor.userId);
-  const scopes = [...grantedScopeSet(token.json.scope)].join(" ");
   const calendarOk = hasCalendarConsent(scopes);
   const row: StoredConnection = {
     id: existing?.id ?? newId(random),
@@ -290,8 +316,8 @@ export async function completeMicrosoftCallback(
     scopes,
     taskSyncEnabled: existing?.taskSyncEnabled ?? false,
     calendarSyncEnabled: calendarOk ? (existing?.calendarSyncEnabled ?? false) : false,
-    accessTokenEncrypted: encryptSecret(token.json.access_token),
-    refreshTokenEncrypted: encryptSecret(token.json.refresh_token),
+    accessTokenEncrypted: encryptMicrosoftToken(token.json.access_token),
+    refreshTokenEncrypted: encryptMicrosoftToken(token.json.refresh_token),
     accessTokenExpiresAt: new Date(current.getTime() + Math.max(60, Number(token.json.expires_in) || 3600) * 1000),
     lastTokenRefreshAt: current,
     lastTaskSyncAt: existing?.lastTaskSyncAt ?? null,
@@ -395,7 +421,7 @@ export async function refreshMicrosoftConnection(
   ) {
     return { refreshed: false };
   }
-  const refreshToken = decryptSecret(existing.refreshTokenEncrypted);
+  const refreshToken = decryptMicrosoftToken(existing.refreshTokenEncrypted);
   if (!refreshToken) {
     await revoke(store, existing, current, "Microsoft 365 needs to be connected again");
     throw new Microsoft365Error("REVOKED", "Microsoft 365 needs to be connected again");
@@ -439,15 +465,27 @@ export async function refreshMicrosoftConnection(
     await record(store, current, actor.userId, existing.id, "TOKEN_REFRESH_FAILED", tokenError(token.json, token.status));
     throw new Microsoft365Error("REVOKED", "Microsoft 365 authorisation expired. Connect the account again.");
   }
-  const nextRefresh = token.json.refresh_token ? encryptSecret(token.json.refresh_token) : existing.refreshTokenEncrypted;
+  let nextScopes = existing.scopes;
+  if (token.json.scope) {
+    try {
+      nextScopes = assertAcceptedMicrosoftScopes(token.json.scope);
+    } catch (error) {
+      await revoke(store, existing, current, "Microsoft returned a permission this integration does not accept");
+      await record(store, current, actor.userId, existing.id, "SCOPES_REJECTED", error);
+      throw new Microsoft365Error("REVOKED", "Microsoft returned a permission this integration does not accept");
+    }
+  }
+  const nextRefresh = token.json.refresh_token
+    ? encryptMicrosoftToken(token.json.refresh_token)
+    : existing.refreshTokenEncrypted;
   await store.saveConnection({
     ...existing,
-    accessTokenEncrypted: encryptSecret(token.json.access_token),
+    accessTokenEncrypted: encryptMicrosoftToken(token.json.access_token),
     refreshTokenEncrypted: nextRefresh,
     accessTokenExpiresAt: new Date(current.getTime() + Math.max(60, Number(token.json.expires_in) || 3600) * 1000),
     lastTokenRefreshAt: current,
     lastError: null,
-    scopes: token.json.scope ? [...grantedScopeSet(token.json.scope)].join(" ") : existing.scopes,
+    scopes: nextScopes,
   });
   await record(store, current, actor.userId, existing.id, "TOKEN_REFRESHED", "Microsoft access token refreshed");
   return { refreshed: true };
