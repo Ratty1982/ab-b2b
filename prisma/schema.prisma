@@ -617,6 +617,29 @@ enum TaskPriority {
   HIGH
 }
 
+enum MicrosoftConnectionStatus {
+  CONNECTED
+  REVOKED
+  ERROR
+}
+
+enum MicrosoftSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  CONFLICT
+  SKIPPED
+  TOMBSTONED
+}
+
+enum MicrosoftSyncJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
 enum DocumentVisibility {
   PUBLIC
   TRADE
@@ -708,6 +731,12 @@ model User {
   invitations        UserInvitation[]  @relation("InvitationUser")
   assignedTasks      Task[]            @relation("TaskAssignee")
   createdTasks       Task[]            @relation("TaskCreator")
+  microsoftConnection MicrosoftAccountConnection?
+  microsoftOAuthTransactions MicrosoftOAuthTransaction[]
+  microsoftTaskMappings MicrosoftTaskMapping[]
+  microsoftCalendarMappings MicrosoftCalendarMapping[]
+  microsoftSyncJobs MicrosoftSyncJob[]
+  microsoftSyncEvents MicrosoftSyncEvent[]
   activities         Activity[]
   notes              Note[]
   auditEvents        AuditEvent[]      @relation("AuditActor")
@@ -3746,6 +3775,8 @@ model Task {
   assignee  User?    @relation("TaskAssignee", fields: [assigneeId], references: [id])
   createdBy User?    @relation("TaskCreator", fields: [createdById], references: [id])
   product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  microsoftTaskMappings MicrosoftTaskMapping[]
+  microsoftCalendarMappings MicrosoftCalendarMapping[]
 
   @@index([assigneeId, status])
   @@index([companyId, status])
@@ -3754,6 +3785,162 @@ model Task {
   @@index([productId])
   @@index([dueAt, status])
   @@index([taskType, status])
+}
+
+/// One Microsoft 365 work account per CRM user. Refresh tokens are encrypted.
+/// activeIdentityKey is `${tenantId}:${microsoftUserId}` only while CONNECTED.
+model MicrosoftAccountConnection {
+  id                      String                    @id @default(cuid())
+  userId                  String                    @unique
+  status                  MicrosoftConnectionStatus @default(REVOKED)
+  tenantId                String
+  microsoftUserId         String
+  activeIdentityKey       String?                   @unique
+  microsoftEmail          String?
+  displayName             String?
+  scopes                  String                    @default("")
+  taskSyncEnabled         Boolean                   @default(false)
+  calendarSyncEnabled     Boolean                   @default(false)
+  accessTokenEncrypted    String?
+  refreshTokenEncrypted   String?
+  accessTokenExpiresAt    DateTime?
+  lastTokenRefreshAt      DateTime?
+  lastTaskSyncAt          DateTime?
+  lastCalendarSyncAt      DateTime?
+  lastError               String?
+  connectedAt             DateTime?
+  disconnectedAt          DateTime?
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+
+  user             User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskMappings     MicrosoftTaskMapping[]
+  calendarMappings MicrosoftCalendarMapping[]
+  cursors          MicrosoftSyncCursor[]
+  jobs             MicrosoftSyncJob[]
+  events           MicrosoftSyncEvent[]
+
+  @@index([status])
+  @@index([tenantId, microsoftUserId])
+}
+
+/// Single-use OAuth state. The raw state and code verifier are not stored in plaintext.
+model MicrosoftOAuthTransaction {
+  id                     String    @id @default(cuid())
+  userId                 String
+  stateHash              String    @unique
+  codeVerifierEncrypted  String
+  nonce                  String
+  includeCalendar        Boolean   @default(false)
+  redirectUri            String
+  expiresAt              DateTime
+  consumedAt             DateTime?
+  createdAt              DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+/// CRM task to one Microsoft To Do task. Unused until outbound sync is enabled.
+model MicrosoftTaskMapping {
+  id               String              @id @default(cuid())
+  taskId           String?
+  userId           String
+  connectionId     String
+  tenantId         String
+  microsoftUserId  String
+  listId           String
+  microsoftTaskId  String
+  remoteEtag       String?
+  syncStatus       MicrosoftSyncStatus @default(PENDING)
+  lastError        String?
+  lastSyncedAt     DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  task       Task?                      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection MicrosoftAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, taskId])
+  @@unique([tenantId, microsoftUserId, microsoftTaskId])
+  @@index([connectionId, syncStatus])
+}
+
+model MicrosoftSyncCursor {
+  id                 String   @id @default(cuid())
+  connectionId       String
+  resource           String
+  deltaLinkEncrypted String?
+  updatedAt          DateTime @updatedAt
+
+  connection MicrosoftAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, resource])
+}
+
+model MicrosoftSyncJob {
+  id           String                 @id @default(cuid())
+  connectionId String
+  userId       String
+  kind         String
+  status       MicrosoftSyncJobStatus @default(QUEUED)
+  attempt      Int                    @default(0)
+  runAfter     DateTime               @default(now())
+  leaseOwner   String?
+  leaseUntil   DateTime?
+  lastError    String?
+  payload      Json?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  connection MicrosoftAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAfter])
+  @@index([connectionId, kind, status])
+}
+
+model MicrosoftSyncEvent {
+  id           String   @id @default(cuid())
+  connectionId String?
+  userId       String?
+  kind         String
+  message      String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  connection MicrosoftAccountConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  user       User?                       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([connectionId, createdAt])
+}
+
+/// Optional Outlook event linked to a CRM task. Creation is never automatic.
+model MicrosoftCalendarMapping {
+  id                 String              @id @default(cuid())
+  taskId             String?
+  userId             String
+  connectionId       String
+  microsoftEventId   String
+  syncStatus         MicrosoftSyncStatus @default(PENDING)
+  externalAttendees  Boolean             @default(false)
+  lastError          String?
+  lastSyncedAt       DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  task       Task?                      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection MicrosoftAccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, microsoftEventId])
+  @@unique([userId, taskId])
+  @@index([connectionId, syncStatus])
 }
 
 model Note {

@@ -56,6 +56,12 @@ const envSchema = z.object({
   AUTOPART_STOCK_IMAP_FILENAME_PATTERN: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /** CRM Microsoft 365. Off unless set to true/1/on/yes. Distinct from the SDS Graph app. */
+  MICROSOFT_365_CRM_ENABLED: z.string().optional(),
+  MICROSOFT_365_TENANT_ID: z.string().optional(),
+  MICROSOFT_365_CLIENT_ID: z.string().optional(),
+  MICROSOFT_365_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_365_REDIRECT_URI: z.string().optional(),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

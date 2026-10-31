@@ -64,6 +64,8 @@ There is **no** browser → Graph path. The browser never supplies arbitrary Gra
 
 **App-side allowlist:** Every scan/download validates against persisted `tenantId` / `driveId` / `folderItemId`. Scan sessions that do not match the authorised folder are rejected.
 
+CRM staff connections are a separate delegated Entra application. Do not add `Tasks.ReadWrite` or `Calendars.ReadWrite` to the SDS app. Setup and the default-off flag are in `docs/microsoft-365-crm.md`.
+
 ---
 
 ## E. Exact Microsoft permission requested
