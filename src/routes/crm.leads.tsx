@@ -96,13 +96,13 @@ function CrmLeadsPage() {
 
       <div className="flex flex-wrap gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
         <input
-          className="h-10 min-w-[200px] flex-1 rounded-md border border-border bg-background px-3 text-sm"
+          className="h-11 min-h-11 w-full min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-base sm:w-auto sm:min-w-[12rem] lg:h-10 lg:min-h-10 lg:text-sm"
           placeholder="Search business, contact, email, telephone"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         <select
-          className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+          className="h-11 min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:w-auto lg:h-10 lg:min-h-10 lg:text-sm"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
         >
@@ -129,7 +129,7 @@ function CrmLeadsPage() {
           No leads yet. New leads will appear here when they are created.
         </p>
       ) : (
-        <div className="overflow-x-auto px-4 py-4 sm:px-6">
+        <div className="min-w-0 overflow-x-auto px-4 py-4 sm:px-6">
           <table className="w-full min-w-[720px] text-left text-[13px]">
             <thead className="text-[11px] uppercase tracking-wide text-steel">
               <tr>

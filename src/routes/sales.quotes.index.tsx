@@ -148,7 +148,7 @@ function QuotesList() {
         {rows.length > 0 ? (
           <>
             <p className="mb-3 text-[12px] text-steel">{total} quotation{total === 1 ? "" : "s"}</p>
-            <div className="overflow-x-auto">
+            <div className="min-w-0 overflow-x-auto">
               <table className="w-full min-w-[720px] text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-border text-[11px] uppercase tracking-wide text-steel">
