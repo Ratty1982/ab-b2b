@@ -113,7 +113,7 @@ export function resolveAutopart216vFreshness(input: {
         expectedBusinessDate: lastWorking,
         nextExpectedLabel,
         warning:
-          "REVIEW REQUIRED. The only 216V snapshot is dated on a weekend. The file and its outstanding lines are kept. No Saturday or Sunday report is expected.",
+          "REVIEW REQUIRED. The only snapshot is dated on a weekend. Outstanding lines are kept.",
       };
     }
     const stale = Boolean(lastBusinessDate && lastBusinessDate < lastWorking);
@@ -168,7 +168,7 @@ export function resolveAutopart216vFreshness(input: {
       expectedBusinessDate,
       nextExpectedLabel,
       warning:
-        "REVIEW REQUIRED. The only 216V snapshot is dated on a weekend. The file and its outstanding lines are kept. No Saturday or Sunday report is expected.",
+        "REVIEW REQUIRED. The only snapshot is dated on a weekend. Outstanding lines are kept.",
     };
   }
 

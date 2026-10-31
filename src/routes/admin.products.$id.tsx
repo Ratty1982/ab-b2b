@@ -883,7 +883,7 @@ function QuantityBreaksPanel({ variantId }: { variantId: string }) {
       <h3 className="font-display text-lg font-semibold uppercase">Quantity breaks</h3>
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
         Fixed unit prices at a quantity threshold. The minQty=1 catalogue mirror is not a customer volume discount.
-        Case quantity {caseQty ?? "not set"}. Phase 6 enforces full-case ordering; this editor does not change stored thresholds.
+        Case quantity {caseQty ?? "not set"}. Orders must be placed in full cases. This editor does not change the stored case size.
       </p>
       <form
         className="mt-4 grid max-w-xl gap-2 sm:grid-cols-[8rem_8rem_auto]"
@@ -978,7 +978,7 @@ function PriceAsCustomerPanel({ variantId, sku }: { variantId: string; sku: stri
     <section>
       <h3 className="font-display text-lg font-semibold uppercase">Price as customer</h3>
       <p className="mt-1 max-w-2xl text-[13px] text-steel">
-        Diagnostic only for {sku}. Prices come from the Phase 4A resolver. Quantity can be changed because volume breaks depend on it.
+        Shows the price this customer would pay for {sku}. Change the quantity to see volume breaks.
       </p>
       <div className="mt-4 grid max-w-xl gap-2">
         <Field label="Search customer">

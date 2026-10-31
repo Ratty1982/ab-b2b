@@ -9,10 +9,11 @@ import { prisma } from "@/infra/database/client";
 import { hasPermission } from "@/server/rbac/access";
 import { AuthError, requirePurchasingAccess } from "@/server/rbac/guards";
 import {
-  describe216vWeekendReportReview,
+  concise216vWeekendDateWarning,
   previous216vBaseline,
   resolveAutopart216vReportDate,
   verified216vReportDate,
+  weekend216vReviewDetail,
 } from "@/domain/autopart-216v-report-date";
 import { currentCommitted216vSnapshot, listCommitted216vSnapshots } from "@/server/purchasing/backorder-chronology";
 import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
@@ -711,14 +712,17 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
   const now = new Date();
   const report = snapshot ? resolveAutopart216vReportDate(snapshot) : null;
   const lastBusinessDate = verified216vReportDate(report?.iso ?? null);
-  const weekendReview = headers
-    .map((header) => {
-      const resolved = resolveAutopart216vReportDate(header);
-      if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") return null;
-      return describe216vWeekendReportReview({ filename: header.filename, observedDate: resolved.iso });
-    })
-    .filter((line): line is string => Boolean(line))
-    .join(" ");
+  const warningDetails = headers.flatMap((header) => {
+    const resolved = resolveAutopart216vReportDate(header);
+    if (resolved.review !== "WEEKEND_DATE_UNVERIFIED") return [];
+    return [
+      weekend216vReviewDetail({
+        filename: header.filename,
+        observedDate: resolved.iso,
+        becameCurrent: snapshot?.id === header.id,
+      }),
+    ];
+  });
   const freshness = resolveAutopart216vFreshness({
     lastSuccessAt: snapshot?.importedAt ?? settings.lastSuccessAt,
     lastBusinessDate: report?.iso ?? null,
@@ -793,7 +797,20 @@ export async function getBackorderWorkspace(actorUserId: string, raw: unknown = 
         lastError: settings.lastError,
         lastBusinessDate,
       }),
-      warning: [freshness.warning, weekendReview].filter(Boolean).join(" ") || null,
+      warning:
+        freshness.status === "WEEKEND_DATE_REVIEW"
+          ? freshness.warning
+          : freshness.warning ??
+            (warningDetails.length > 0
+              ? concise216vWeekendDateWarning({
+                  count: warningDetails.length,
+                  weekdaySnapshotRemains: Boolean(report?.verifiedWorkingDay),
+                  ...(warningDetails.length === 1 && warningDetails[0]?.observedDate
+                    ? { observedDate: warningDetails[0].observedDate }
+                    : {}),
+                })
+              : null),
+      warningDetails,
       lastReceivedLabel: snapshot
         ? formatOrDash(formatOperationalDateTime(snapshot.receivedAt ?? snapshot.importedAt))
         : "Never",

@@ -50,7 +50,7 @@ import {
   type Autopart216vMovement,
 } from "@/domain/autopart-216v-movement";
 import { AUTOPART_216V_SCHEDULE_LABEL } from "@/domain/autopart-216v-freshness";
-import { weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
+import { weekend216vImportDetail, weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
 import { FBA_STOCK_LABEL, WAREHOUSE_STOCK_LABEL } from "@/domain/fba-stock";
 import { ROUTES } from "@/lib/app-nav";
 import { formatDate, formatOperationalDateTime, formatOrDash } from "@/lib/datetime";
@@ -83,7 +83,7 @@ type LineDetail = Extract<Awaited<ReturnType<typeof getPurchasingBackorderLineFn
 type LineRow = Data["lines"]["rows"][number];
 type MovementData = NonNullable<Data["movement"]>;
 type MovementRow = MovementData["rows"][number];
-type ImportNotice = { tone: "good" | "warn" | "bad"; message: string };
+type ImportNotice = { tone: "good" | "warn" | "bad"; message: string; details?: string[] };
 
 function uncachedFetch(input: RequestInfo | URL, init?: RequestInit) {
   return fetch(input, { ...init, cache: "no-store" });
@@ -112,6 +112,11 @@ function describePoll(data: {
   if (data.processed > 0) {
     const historical = data.notes?.find((note) => note.includes("older than the current snapshot"));
     const detail = data.notes?.find((note) => note.includes(": imported "));
+    const review = data.notes?.find((note) => note.includes("Review the report date"));
+    if (review && !detail) {
+      const message = review.replace(/^[^:]+:\s*/, "").split(" Detail:")[0]?.trim() || review;
+      return { tone: "warn", message };
+    }
     if (historical && !detail) return { tone: "warn", message: historical };
     return {
       tone: "good",
@@ -246,6 +251,13 @@ function BackordersPage() {
             observedDate: imported.reportDate,
             becameCurrent: imported.becameCurrent,
           }),
+          details: [
+            weekend216vImportDetail({
+              filename: file.name,
+              observedDate: imported.reportDate,
+              becameCurrent: imported.becameCurrent,
+            }),
+          ],
         });
       } else if (imported.duplicate) {
         setNotice({
@@ -511,6 +523,16 @@ function FreshnessBar({ freshness }: { freshness: Data["freshness"] }) {
         </span>
       </div>
       {freshness.warning ? <p className="mt-1">{freshness.warning}</p> : null}
+      {freshness.warningDetails.length > 0 ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[12px] font-semibold">Date review details</summary>
+          <ul className="mt-2 grid gap-1 text-[12px] text-steel">
+            {freshness.warningDetails.map((item) => (
+              <li key={`${item.filename ?? "file"}-${item.observedDate}`}>{item.detail}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -910,6 +932,16 @@ function ImportNoticeBanner({ notice }: { notice: ImportNotice }) {
     <div className={cn("border px-4 py-3 text-[13px]", toneClass)} role="status">
       <p className="text-[10px] font-semibold uppercase tracking-[0.12em]">{label}</p>
       <p className="mt-1 whitespace-pre-wrap">{notice.message}</p>
+      {notice.details?.length ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[12px] font-semibold">Date review details</summary>
+          <ul className="mt-2 grid gap-1 text-[12px]">
+            {notice.details.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }

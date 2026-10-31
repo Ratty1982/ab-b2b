@@ -18,7 +18,11 @@ import {
   isAutopart216vReport,
   isCommitted216vSnapshotHash,
 } from "@/domain/autopart-216v";
-import { compare216vSnapshotChronology, weekend216vImportNotice } from "@/domain/autopart-216v-report-date";
+import {
+  compare216vSnapshotChronology,
+  weekend216vImportDetail,
+  weekend216vImportNotice,
+} from "@/domain/autopart-216v-report-date";
 import {
   confirmAutopart216vImport,
   requireBackorderManage,
@@ -208,6 +212,10 @@ export async function process216vEmailBatch(input: {
         result.processed += 1;
         result.notes.push(
           `${label}: ${weekend216vImportNotice({
+            filename: label,
+            observedDate: imported.reportDate,
+            becameCurrent: imported.becameCurrent,
+          })} Detail: ${weekend216vImportDetail({
             filename: label,
             observedDate: imported.reportDate,
             becameCurrent: imported.becameCurrent,
