@@ -54,8 +54,7 @@ function Support() {
             How can we help?
           </h2>
           <p className="mt-2 text-[13px] text-steel">
-            Use your account manager contact when assigned, or continue shopping while we expand
-            in-portal messaging.
+            Contact your account manager, or use the general trade support details.
           </p>
           {error ? <p className="mt-3 text-[13px] text-bad">{error}</p> : null}
           <div className="mt-4 flex flex-wrap gap-2">

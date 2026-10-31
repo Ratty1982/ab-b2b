@@ -240,7 +240,7 @@ describe("canonical navigation contract", () => {
     expect(ids).not.toContain("portal-favourites");
     expect(ids).not.toContain("portal-downloads");
     expect(ids).not.toContain("portal-users");
-    expect(ids).not.toContain("portal-quick-order");
+    expect(ids).toContain("portal-quick-order");
     expect(ids).not.toContain("purchasing-dashboard");
     expect(ids).not.toContain("purchasing-stock");
     expect(ids).not.toContain("integrations-autopart-imports");
