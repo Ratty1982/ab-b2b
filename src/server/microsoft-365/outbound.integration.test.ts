@@ -86,7 +86,7 @@ describe("outbound job durability", () => {
     expect(second).toBe("exists");
     const jobs = await prisma.microsoftSyncJob.findMany({ where: { userId, dedupeKey: `todo:${userId}:${taskId}:upsert` } });
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.payload).toEqual({ taskId });
+    expect(jobs[0]?.payload).toEqual({ taskId, explicit: true });
 
     const store = createPrismaOutboundStore();
     const now = new Date();
@@ -102,6 +102,38 @@ describe("outbound job durability", () => {
     expect(winner.attempt).toBe(1);
     const stored = await prisma.microsoftSyncJob.findUniqueOrThrow({ where: { id: winner.id } });
     expect(stored.leaseOwner === "worker-a" || stored.leaseOwner === "worker-b").toBe(true);
+
+    const dirty = await enqueueOutboundJob({
+      connection,
+      taskId,
+      release: false,
+      explicit: false,
+      taskRevision: "2026-11-01T12:30:00.000Z",
+    });
+    expect(dirty).toBe("marked_dirty");
+    const afterDirty = await prisma.microsoftSyncJob.findUniqueOrThrow({ where: { id: winner.id } });
+    expect(afterDirty.payload).toMatchObject({
+      taskId,
+      explicit: true,
+      revisionDirty: true,
+      taskRevision: "2026-11-01T12:30:00.000Z",
+    });
+    expect(afterDirty.status).toBe("RUNNING");
+
+    const stolen = await store.saveJob(
+      {
+        ...winner,
+        status: "SUCCEEDED",
+        leaseOwner: null,
+        leaseUntil: null,
+        payload: { taskId, createUncertain: false },
+      },
+      { requireLeaseOwner: "stale-worker" },
+    );
+    expect(stolen).toBe(false);
+    const stillRunning = await prisma.microsoftSyncJob.findUniqueOrThrow({ where: { id: winner.id } });
+    expect(stillRunning.status).toBe("RUNNING");
+    expect(stillRunning.payload).toMatchObject({ revisionDirty: true });
   });
 
   it("does not turn a revoked account back on when a job saves the list id", async () => {

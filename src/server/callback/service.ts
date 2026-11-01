@@ -330,6 +330,7 @@ async function persistTradeCallback(opts: {
     taskId: task.id,
     assigneeId: task.assigneeId,
     createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
     reason: "created",
   });
 

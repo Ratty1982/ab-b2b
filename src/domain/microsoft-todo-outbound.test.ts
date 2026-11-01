@@ -11,11 +11,13 @@ import {
   classifyOutboundTask,
   crmTaskReference,
   isMicrosoftTodoOutboundEnabled,
+  mayPostMicrosoftTodoCreate,
   microsoftDueDateTime,
   microsoftSyncIndicator,
   microsoftTaskBody,
   outboundGraphAllowed,
   outboundRetryDelayMs,
+  taskRevisionOf,
 } from "@/domain/microsoft-todo-outbound";
 
 const enabledAt = new Date("2026-10-01T00:00:00.000Z");
@@ -28,6 +30,13 @@ describe("Microsoft To Do outbound flags", () => {
     expect(outboundGraphAllowed({ crmFlag: "true", outboundFlag: "false" })).toBe(false);
     expect(outboundGraphAllowed({ crmFlag: "false", outboundFlag: "true" })).toBe(false);
     expect(outboundGraphAllowed({ crmFlag: "true", outboundFlag: "on" })).toBe(true);
+  });
+
+  it("blocks automatic Graph create after an uncertain outcome", () => {
+    expect(mayPostMicrosoftTodoCreate({ createUncertain: true })).toBe(false);
+    expect(mayPostMicrosoftTodoCreate({ createUncertain: true, reviewed: true })).toBe(true);
+    expect(mayPostMicrosoftTodoCreate({ knownMicrosoftTaskId: "ms-1", reviewed: true })).toBe(false);
+    expect(taskRevisionOf({ updatedAt: new Date("2026-10-15T00:00:00.000Z") })).toBe("2026-10-15T00:00:00.000Z");
   });
 });
 

@@ -31,6 +31,31 @@ export function crmTaskReference(taskId: string): string {
   return `${MICROSOFT_TODO_REFERENCE_PREFIX}${taskId}`;
 }
 
+/**
+ * Graph task POST is not idempotent. After a timeout, interruption, or HTTP 5xx the remote
+ * task may already exist even when a later lookup finds nothing. Those jobs keep
+ * `createUncertain` until an operator reviews them. A reviewed job may create once more
+ * only after lookup still finds no match. A known remote id is never created again.
+ */
+export function mayPostMicrosoftTodoCreate(payload: {
+  createUncertain?: boolean | undefined;
+  reviewed?: boolean | undefined;
+  knownMicrosoftTaskId?: string | undefined;
+}): boolean {
+  if (payload.knownMicrosoftTaskId) return false;
+  if (payload.createUncertain && !payload.reviewed) return false;
+  return true;
+}
+
+export function taskRevisionOf(task: Pick<{ updatedAt: Date }, "updatedAt">): string {
+  return task.updatedAt.toISOString();
+}
+
+export function isSameTaskRevision(task: Pick<{ updatedAt: Date }, "updatedAt">, revision: string | undefined): boolean {
+  if (!revision) return false;
+  return taskRevisionOf(task) === revision;
+}
+
 export type OutboundTaskSnapshot = {
   id: string;
   assigneeId: string | null;

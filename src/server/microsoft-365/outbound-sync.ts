@@ -2,7 +2,10 @@
  * Outbound CRM → Microsoft To Do worker step.
  * Microsoft task creation does not support an idempotency header.
  * A create that times out is reconciled by `ab-crm-task:{taskId}` in the dedicated list
- * before another task is posted. If that lookup is incomplete, the job becomes NEEDS_REVIEW.
+ * before another task is posted. If that lookup is incomplete, or a completed lookup still
+ * cannot prove the first POST failed, the job becomes NEEDS_REVIEW with createUncertain.
+ * CRM task.updatedAt is treated as the revision. A successful write of an older revision
+ * leaves the latest revision queued.
  */
 import { MICROSOFT_365_TASK_LIST_NAME, sanitizeMicrosoftMessage } from "@/domain/microsoft-365-crm";
 import {
@@ -15,8 +18,11 @@ import {
   classifyOutboundTask,
   crmTaskReference,
   hasTasksReadWrite,
+  isSameTaskRevision,
+  mayPostMicrosoftTodoCreate,
   outboundRetryDelayMs,
   taskBodyContainsReference,
+  taskRevisionOf,
   type OutboundTaskSnapshot,
 } from "@/domain/microsoft-todo-outbound";
 
@@ -27,6 +33,14 @@ export type OutboundJobPayload = {
   explicit?: boolean;
   release?: boolean;
   reviewed?: boolean;
+  /** Set after an uncertain Graph create. Blocks automatic POST until reviewed. */
+  createUncertain?: boolean;
+  /** Remote id known after Graph accepted a create but the local mapping write failed. */
+  knownMicrosoftTaskId?: string;
+  /** CRM Task.updatedAt when this job last observed the row. */
+  taskRevision?: string;
+  /** A newer CRM edit arrived while this job was RUNNING. */
+  revisionDirty?: boolean;
 };
 
 export type OutboundJob = {
@@ -98,7 +112,11 @@ export type OutboundStore = {
   findTask(taskId: string): Promise<OutboundTaskSnapshot | null>;
   findMapping(userId: string, taskId: string): Promise<OutboundMapping | null>;
   saveMapping(row: OutboundMapping): Promise<void>;
-  saveJob(job: OutboundJob): Promise<void>;
+  findJob(jobId: string): Promise<OutboundJob | null>;
+  /** Returns false when a stale worker no longer holds the lease. */
+  saveJob(job: OutboundJob, opts?: { requireLeaseOwner?: string | null }): Promise<boolean>;
+  /** True only while this worker still owns the RUNNING lease. */
+  holdsJobLease(jobId: string, owner: string): Promise<boolean>;
   appendEvent(event: { userId: string | null; connectionId: string | null; kind: string; message: string; createdAt: Date }): Promise<void>;
   claimJobs(now: Date, owner: string, limit: number, leaseMs: number): Promise<OutboundJob[]>;
 };
@@ -134,6 +152,10 @@ function requeue(job: OutboundJob, now: Date, message: string, retryAfter: strin
   };
 }
 
+function withPayload(job: OutboundJob, patch: Partial<OutboundJobPayload>): OutboundJob {
+  return { ...job, payload: { ...job.payload, ...patch } };
+}
+
 async function callGraph(
   runtime: OutboundRuntime,
   connection: OutboundConnection,
@@ -145,11 +167,8 @@ async function callGraph(
   let result: GraphResult;
   try {
     result = await runtime.graph.request({ ...input, token });
-  } catch (error) {
+  } catch {
     result = { status: 0, json: null, retryAfter: null, networkError: true };
-    if (!(error instanceof Error)) {
-      result = { status: 0, json: null, retryAfter: null, networkError: true };
-    }
   }
   if (result.status === 401 && !refreshed) {
     const next = await runtime.tokenFor(connection);
@@ -267,6 +286,7 @@ async function ensureList(
       false,
     );
     if ("stop" in created) return { error: null, message: "Microsoft 365 needs to be connected again", ambiguous: false };
+    // Network / 5xx after list POST is reconciled on the next tick by GET-before-create under the lock.
     if (created.result.networkError || created.result.status >= 500) {
       return { error: created.result, message: "Microsoft To Do list could not be created", ambiguous: false };
     }
@@ -300,10 +320,22 @@ function mappingFrom(connection: OutboundConnection, taskId: string, listId: str
   };
 }
 
+function uncertainCreate(job: OutboundJob, now: Date, message: string, knownMicrosoftTaskId?: string): OutboundJob {
+  return withPayload(
+    requeue(job, now, message, null, "NEEDS_REVIEW"),
+    {
+      createUncertain: true,
+      reviewed: false,
+      ...(knownMicrosoftTaskId ? { knownMicrosoftTaskId } : {}),
+    },
+  );
+}
+
 export async function processOutboundJob(job: OutboundJob, runtime: OutboundRuntime): Promise<void> {
   const now = runtime.now();
+  const leaseOwner = job.leaseOwner;
   const finish = async (next: OutboundJob) => {
-    await runtime.store.saveJob(next);
+    await runtime.store.saveJob(next, leaseOwner ? { requireLeaseOwner: leaseOwner } : undefined);
   };
   if (!runtime.graphAllowed()) {
     await finish({ ...job, status: "QUEUED", leaseOwner: null, leaseUntil: null, updatedAt: now });
@@ -328,6 +360,7 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
     await finish(requeue(job, now, "CRM task no longer exists", null, "CANCELLED"));
     return;
   }
+  const processedRevision = taskRevisionOf(task);
   const mapping = await runtime.store.findMapping(job.userId, task.id);
   const active = Boolean(mapping && mapping.deletedAt == null && mapping.syncStatus !== "TOMBSTONED");
   const kind = classifyOutboundTask({
@@ -339,7 +372,7 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
     hasActiveMapping: active,
   });
   if (kind === "skip") {
-    await finish({ ...job, status: "SUCCEEDED", leaseOwner: null, leaseUntil: null, lastError: null, updatedAt: now });
+    await finish({ ...job, status: "SUCCEEDED", leaseOwner: null, leaseUntil: null, lastError: null, updatedAt: now, payload: { ...job.payload, revisionDirty: false, taskRevision: processedRevision } });
     return;
   }
   const tokenResult = await runtime.tokenFor(connection);
@@ -371,20 +404,34 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
     return;
   }
   const body = buildTodoTaskBody(task, mode);
-  const existingId = mapping?.microsoftTaskId && mapping.listId === list.listId ? mapping.microsoftTaskId : null;
+  const knownId = job.payload.knownMicrosoftTaskId && isSafeKnownId(job.payload.knownMicrosoftTaskId) ? job.payload.knownMicrosoftTaskId : null;
+  const existingId =
+    (mapping?.microsoftTaskId && mapping.listId === list.listId ? mapping.microsoftTaskId : null) ??
+    knownId;
+  const allowCreate = mode === "sync" && mayPostMicrosoftTodoCreate(job.payload);
 
-  const write = async (microsoftTaskId: string | null, allowCreate: boolean): Promise<{ id: string } | { held: OutboundJob } | { absent: true }> => {
+  const write = async (microsoftTaskId: string | null, canCreate: boolean): Promise<{ id: string } | { held: OutboundJob } | { absent: true }> => {
     if (!microsoftTaskId) {
       const found = await lookupTask(runtime, latest, list.listId, task.id, token);
       token = found.token;
       if (found.rate) {
-        return { held: requeue(job, now, "Microsoft To Do lookup did not finish", found.rate.retryAfter, found.ambiguous && !found.rate.networkError && found.rate.status !== 429 && found.rate.status < 500 ? "NEEDS_REVIEW" : null) };
+        const review = found.ambiguous && !found.rate.networkError && found.rate.status !== 429 && found.rate.status < 500;
+        return {
+          held: review
+            ? uncertainCreate(job, now, "Microsoft To Do lookup did not finish")
+            : requeue(job, now, "Microsoft To Do lookup did not finish", found.rate.retryAfter, null),
+        };
       }
       if (found.ambiguous && !found.id) {
-        return { held: requeue(job, now, "Microsoft To Do create needs review before retrying", null, "NEEDS_REVIEW") };
+        return { held: uncertainCreate(job, now, "Microsoft To Do create needs review before retrying") };
       }
       if (found.id) microsoftTaskId = found.id;
-      else if (!allowCreate) return { absent: true };
+      else if (!canCreate) {
+        if (job.payload.createUncertain && !job.payload.reviewed) {
+          return { held: uncertainCreate(job, now, "Microsoft To Do create remains uncertain until reviewed") };
+        }
+        return { absent: true };
+      }
     }
     if (microsoftTaskId) {
       const patched = await callGraph(
@@ -397,8 +444,8 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
       if ("stop" in patched) return { held: { ...job, ...patched.stop, id: job.id, payload: job.payload, dedupeKey: job.dedupeKey, attempt: job.attempt, connectionId: job.connectionId } };
       token = patched.token;
       if (patched.result.status === 404) {
-        if (!job.payload.reviewed || !allowCreate) {
-          return { held: requeue(job, now, "Mapped Microsoft To Do task was not found", null, "NEEDS_REVIEW") };
+        if (!job.payload.reviewed || !canCreate) {
+          return { held: uncertainCreate(job, now, "Mapped Microsoft To Do task was not found") };
         }
         return write(null, true);
       }
@@ -416,20 +463,24 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
       token,
       false,
     );
-    if ("stop" in created) return { held: { ...job, ...patchedStop(created.stop, job) } };
+    if ("stop" in created) return { held: { ...patchedStop(created.stop, job) } };
     token = created.token;
+    if (created.result.status === 429) {
+      // Request was rejected before acceptance; a later POST is still allowed.
+      return { held: requeue(job, now, "Microsoft rate limited To Do sync", created.result.retryAfter, null) };
+    }
     if (created.result.networkError || created.result.status >= 500 || created.result.status === 409) {
       const again = await lookupTask(runtime, latest, list.listId, task.id, token);
       token = again.token;
       if (again.id) return { id: again.id };
-      const duplicatePossible = again.ambiguous || created.result.status === 409;
+      // A completed empty lookup is not proof the POST failed. Do not POST again.
       return {
-        held: requeue(
+        held: uncertainCreate(
           job,
           now,
-          duplicatePossible ? "Microsoft To Do create needs review before retrying" : "Microsoft To Do could not be reached",
-          created.result.retryAfter,
-          duplicatePossible ? "NEEDS_REVIEW" : null,
+          created.result.status === 409
+            ? "Microsoft To Do create conflict needs review before retrying"
+            : "Microsoft To Do create outcome is uncertain and needs review before retrying",
         ),
       };
     }
@@ -437,16 +488,15 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
       await runtime.store.saveConnection({ ...latest, todoListId: null });
       return { held: requeue(job, now, "Microsoft To Do list was not found", null, null) };
     }
-    if (created.result.status === 429) return { held: requeue(job, now, "Microsoft rate limited To Do sync", created.result.retryAfter, null) };
     if (created.result.status === 403) return { held: requeue(job, now, "Microsoft To Do permission is missing", null, "FAILED") };
     const id = asRecord(created.result.json)?.["id"];
     if (created.result.status !== 201 || typeof id !== "string") {
-      return { held: requeue(job, now, "Microsoft To Do create was rejected", null, null) };
+      return { held: uncertainCreate(job, now, "Microsoft To Do create was rejected without a confirmed id") };
     }
     return { id };
   };
 
-  const written = await write(mode === "sync" && !active ? null : existingId, mode === "sync");
+  const written = await write(mode === "sync" && !active && !knownId ? null : existingId, allowCreate);
   if ("absent" in written) {
     await finish({ ...job, status: "SUCCEEDED", leaseOwner: null, leaseUntil: null, lastError: null, updatedAt: now });
     return;
@@ -476,10 +526,20 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
     saved.syncStatus = "TOMBSTONED";
     saved.deletedAt = now;
   }
+  if (leaseOwner && !(await runtime.store.holdsJobLease(job.id, leaseOwner))) {
+    return;
+  }
   try {
     await runtime.store.saveMapping(saved);
   } catch {
-    await finish(requeue(job, now, "Microsoft To Do task was saved remotely but the CRM mapping could not be stored", null, null));
+    await finish(
+      uncertainCreate(
+        job,
+        now,
+        "Microsoft To Do task was saved remotely but the CRM mapping could not be stored",
+        written.id,
+      ),
+    );
     return;
   }
   if (mode === "sync") {
@@ -499,8 +559,97 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
       false,
     ).catch(() => undefined);
   }
+
+  if (leaseOwner && !(await runtime.store.holdsJobLease(job.id, leaseOwner))) {
+    return;
+  }
+
+  const latestTask = await runtime.store.findTask(task.id);
+  if (!latestTask) {
+    await finish({
+      ...job,
+      status: "SUCCEEDED",
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: null,
+      updatedAt: now,
+      payload: { taskId: job.payload.taskId, knownMicrosoftTaskId: written.id, createUncertain: false, revisionDirty: false },
+    });
+    return;
+  }
+
+  const liveJob = (await runtime.store.findJob(job.id)) ?? job;
+  const dirty = Boolean(liveJob.payload.revisionDirty);
+  const reassignedAway = mode === "sync" && latestTask.assigneeId !== connection.userId;
+  const revisionMoved = !isSameTaskRevision(latestTask, processedRevision) || dirty;
+
+  if (reassignedAway) {
+    // Content may already be on the previous assignee's list. Scrub next without claiming success for sync.
+    await finish({
+      ...job,
+      status: "QUEUED",
+      attempt: 0,
+      runAfter: now,
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: "CRM task was reassigned during Microsoft sync",
+      updatedAt: now,
+      payload: {
+        taskId: job.payload.taskId,
+        release: true,
+        knownMicrosoftTaskId: written.id,
+        createUncertain: false,
+        revisionDirty: false,
+        taskRevision: taskRevisionOf(latestTask),
+      },
+    });
+    return;
+  }
+
+  if (revisionMoved) {
+    await runtime.store.saveConnection({ ...latest, todoListId: list.listId, lastTaskSyncAt: now, lastError: null });
+    await finish({
+      ...job,
+      status: "QUEUED",
+      attempt: 0,
+      runAfter: now,
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: null,
+      updatedAt: now,
+      payload: {
+        taskId: job.payload.taskId,
+        ...(job.payload.explicit ? { explicit: true } : {}),
+        ...(job.payload.release ? { release: true } : {}),
+        knownMicrosoftTaskId: written.id,
+        createUncertain: false,
+        revisionDirty: false,
+        taskRevision: taskRevisionOf(latestTask),
+      },
+    });
+    return;
+  }
+
   await runtime.store.saveConnection({ ...latest, todoListId: list.listId, lastTaskSyncAt: now, lastError: null });
-  await finish({ ...job, status: "SUCCEEDED", leaseOwner: null, leaseUntil: null, lastError: null, updatedAt: now });
+  await finish({
+    ...job,
+    status: "SUCCEEDED",
+    leaseOwner: null,
+    leaseUntil: null,
+    lastError: null,
+    updatedAt: now,
+    payload: {
+      taskId: job.payload.taskId,
+      knownMicrosoftTaskId: written.id,
+      createUncertain: false,
+      revisionDirty: false,
+      taskRevision: processedRevision,
+    },
+  });
+}
+
+function isSafeKnownId(value: string): boolean {
+  return value.length > 0 && value.length <= 512 && !value.includes("/") && !value.includes("\\") && !value.includes("..");
 }
 
 function patchedStop(stop: OutboundJob, job: OutboundJob): OutboundJob {
@@ -513,13 +662,13 @@ export async function runOutboundBatch(runtime: OutboundRuntime, owner: string, 
   let processed = 0;
   for (const job of jobs) {
     if (!runtime.graphAllowed()) {
-      await runtime.store.saveJob({ ...job, status: "QUEUED", leaseOwner: null, leaseUntil: null, updatedAt: runtime.now() });
+      await runtime.store.saveJob({ ...job, status: "QUEUED", leaseOwner: null, leaseUntil: null, updatedAt: runtime.now() }, { requireLeaseOwner: owner });
       break;
     }
     try {
       await processOutboundJob(job, runtime);
     } catch (error) {
-      await runtime.store.saveJob(requeue(job, runtime.now(), safe(error), null, null));
+      await runtime.store.saveJob(requeue(job, runtime.now(), safe(error), null, null), { requireLeaseOwner: owner });
     }
     processed += 1;
   }
@@ -528,4 +677,22 @@ export async function runOutboundBatch(runtime: OutboundRuntime, owner: string, 
 
 export function outboundDedupeKey(userId: string, taskId: string, release: boolean): string {
   return `todo:${userId}:${taskId}:${release ? "release" : "upsert"}`;
+}
+
+export function mergeOutboundPayload(
+  existing: OutboundJobPayload,
+  next: OutboundJobPayload,
+  options?: { markDirty?: boolean },
+): OutboundJobPayload {
+  return {
+    taskId: next.taskId || existing.taskId,
+    ...(existing.explicit || next.explicit ? { explicit: true } : {}),
+    ...(next.release || existing.release ? { release: Boolean(next.release || existing.release) } : {}),
+    ...(existing.createUncertain ? { createUncertain: true } : {}),
+    ...(existing.knownMicrosoftTaskId ? { knownMicrosoftTaskId: existing.knownMicrosoftTaskId } : {}),
+    ...(next.knownMicrosoftTaskId ? { knownMicrosoftTaskId: next.knownMicrosoftTaskId } : {}),
+    ...(next.taskRevision || existing.taskRevision ? { taskRevision: next.taskRevision ?? existing.taskRevision } : {}),
+    ...(options?.markDirty || existing.revisionDirty || next.revisionDirty ? { revisionDirty: true } : {}),
+    ...(existing.reviewed && !options?.markDirty ? { reviewed: true } : {}),
+  };
 }

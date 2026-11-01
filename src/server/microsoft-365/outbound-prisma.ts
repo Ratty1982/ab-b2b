@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import type { OutboundTaskSnapshot } from "@/domain/microsoft-todo-outbound";
 import {
+  mergeOutboundPayload,
   outboundDedupeKey,
   type OutboundConnection,
   type OutboundJob,
@@ -22,6 +23,10 @@ function asPayload(value: Prisma.JsonValue | null): OutboundJobPayload {
     ...(row["explicit"] === true ? { explicit: true } : {}),
     ...(row["release"] === true ? { release: true } : {}),
     ...(row["reviewed"] === true ? { reviewed: true } : {}),
+    ...(row["createUncertain"] === true ? { createUncertain: true } : {}),
+    ...(typeof row["knownMicrosoftTaskId"] === "string" ? { knownMicrosoftTaskId: row["knownMicrosoftTaskId"] } : {}),
+    ...(typeof row["taskRevision"] === "string" ? { taskRevision: row["taskRevision"] } : {}),
+    ...(row["revisionDirty"] === true ? { revisionDirty: true } : {}),
   };
 }
 
@@ -144,7 +149,27 @@ export function createPrismaOutboundStore(): OutboundStore {
         update: data,
       });
     },
-    async saveJob(job) {
+    async findJob(jobId) {
+      const row = await prisma.microsoftSyncJob.findUnique({ where: { id: jobId } });
+      return row ? mapJob(row) : null;
+    },
+    async saveJob(job, opts) {
+      if (opts?.requireLeaseOwner) {
+        const updated = await prisma.microsoftSyncJob.updateMany({
+          where: { id: job.id, status: "RUNNING", leaseOwner: opts.requireLeaseOwner },
+          data: {
+            status: job.status,
+            attempt: job.attempt,
+            runAfter: job.runAfter,
+            leaseOwner: job.leaseOwner,
+            leaseUntil: job.leaseUntil,
+            lastError: job.lastError,
+            payload: job.payload,
+            dedupeKey: job.dedupeKey,
+          },
+        });
+        return updated.count === 1;
+      }
       await prisma.microsoftSyncJob.update({
         where: { id: job.id },
         data: {
@@ -158,6 +183,14 @@ export function createPrismaOutboundStore(): OutboundStore {
           dedupeKey: job.dedupeKey,
         },
       });
+      return true;
+    },
+    async holdsJobLease(jobId, owner) {
+      const row = await prisma.microsoftSyncJob.findFirst({
+        where: { id: jobId, status: "RUNNING", leaseOwner: owner },
+        select: { id: true },
+      });
+      return Boolean(row);
     },
     async appendEvent(event) {
       await prisma.microsoftSyncEvent.create({
@@ -232,12 +265,14 @@ export async function enqueueOutboundJob(input: {
   taskId: string;
   release: boolean;
   explicit: boolean;
-}): Promise<"created" | "exists" | "requeued"> {
+  taskRevision?: string;
+}): Promise<"created" | "exists" | "requeued" | "marked_dirty"> {
   const dedupeKey = outboundDedupeKey(input.connection.userId, input.taskId, input.release);
   const payload: OutboundJobPayload = {
     taskId: input.taskId,
     ...(input.release ? { release: true } : {}),
     ...(input.explicit ? { explicit: true } : {}),
+    ...(input.taskRevision ? { taskRevision: input.taskRevision } : {}),
   };
   const existing = await prisma.microsoftSyncJob.findUnique({ where: { dedupeKey } });
   if (!existing) {
@@ -259,10 +294,33 @@ export async function enqueueOutboundJob(input: {
   }
   const current = existing ?? (await prisma.microsoftSyncJob.findUnique({ where: { dedupeKey } }));
   if (!current) throw new Error("Microsoft To Do job could not be queued");
-  if (current.status === "QUEUED" || current.status === "RUNNING" || current.status === "NEEDS_REVIEW") return "exists";
+  if (current.status === "QUEUED" || current.status === "RUNNING") {
+    const merged = mergeOutboundPayload(asPayload(current.payload), payload, { markDirty: current.status === "RUNNING" });
+    await prisma.microsoftSyncJob.update({
+      where: { id: current.id },
+      data: { payload: merged },
+    });
+    return current.status === "RUNNING" ? "marked_dirty" : "exists";
+  }
+  if (current.status === "NEEDS_REVIEW") {
+    const merged = mergeOutboundPayload(asPayload(current.payload), payload, { markDirty: true });
+    await prisma.microsoftSyncJob.update({
+      where: { id: current.id },
+      data: { payload: merged },
+    });
+    return "exists";
+  }
   await prisma.microsoftSyncJob.update({
     where: { id: current.id },
-    data: { status: "QUEUED", runAfter: new Date(), attempt: 0, leaseOwner: null, leaseUntil: null, lastError: null, payload },
+    data: {
+      status: "QUEUED",
+      runAfter: new Date(),
+      attempt: 0,
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: null,
+      payload: mergeOutboundPayload(asPayload(current.payload), payload),
+    },
   });
   return "requeued";
 }

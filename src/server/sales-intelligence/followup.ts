@@ -723,6 +723,7 @@ export async function createSalesIntelligenceFollowUp(actorUserId: string, raw: 
       status: true,
       assigneeId: true,
       createdAt: true,
+      updatedAt: true,
       assignee: { select: { id: true, name: true, email: true } },
     },
   });
@@ -730,6 +731,7 @@ export async function createSalesIntelligenceFollowUp(actorUserId: string, raw: 
     taskId: task.id,
     assigneeId: task.assigneeId,
     createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
     reason: "created",
   });
 
@@ -1007,12 +1009,13 @@ export async function completeCrmTask(actorUserId: string, raw: unknown) {
   const updated = await prisma.task.update({
     where: { id: taskId },
     data: { status: "DONE", completedAt: new Date() },
-    select: { id: true, status: true, completedAt: true, sourceModule: true, assigneeId: true, createdAt: true },
+    select: { id: true, status: true, completedAt: true, sourceModule: true, assigneeId: true, createdAt: true, updatedAt: true },
   });
   await notifyCrmTaskOutboundSafely({
     taskId: updated.id,
     assigneeId: updated.assigneeId,
     createdAt: updated.createdAt,
+    updatedAt: updated.updatedAt,
     reason: "updated",
   });
   if (existing.sourceModule) {
@@ -1047,12 +1050,13 @@ export async function rescheduleCrmTask(actorUserId: string, raw: unknown) {
   const updated = await prisma.task.update({
     where: { id: input.taskId },
     data: { dueAt: dueAtFromDateOnly(input.dueDate) },
-    select: { id: true, dueAt: true, assigneeId: true, createdAt: true },
+    select: { id: true, dueAt: true, assigneeId: true, createdAt: true, updatedAt: true },
   });
   await notifyCrmTaskOutboundSafely({
     taskId: updated.id,
     assigneeId: updated.assigneeId,
     createdAt: updated.createdAt,
+    updatedAt: updated.updatedAt,
     reason: "updated",
   });
   return { id: updated.id, dueAt: updated.dueAt?.toISOString() ?? null };
@@ -1093,13 +1097,14 @@ export async function patchCrmTask(actorUserId: string, raw: unknown) {
         : {}),
       ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
     },
-    select: { id: true, assigneeId: true, createdAt: true, status: true, priority: true, title: true },
+    select: { id: true, assigneeId: true, createdAt: true, updatedAt: true, status: true, priority: true, title: true },
   });
   await notifyCrmTaskOutboundSafely({
     taskId: updated.id,
     assigneeId: updated.assigneeId,
     previousAssigneeId: current.assigneeId,
     createdAt: updated.createdAt,
+    updatedAt: updated.updatedAt,
     reason: input.assigneeId && input.assigneeId !== current.assigneeId ? "assigned" : "updated",
   });
   return {
@@ -1122,12 +1127,13 @@ export async function exportCrmTaskToMicrosoft(actorUserId: string, raw: unknown
   if (existing.assignee?.id !== actorUserId) {
     throw new AuthError("Only the assignee can copy this task to Microsoft To Do", "FORBIDDEN", 403);
   }
-  const current = await prisma.task.findUnique({ where: { id: taskId }, select: { createdAt: true, assigneeId: true } });
+  const current = await prisma.task.findUnique({ where: { id: taskId }, select: { createdAt: true, updatedAt: true, assigneeId: true } });
   if (!current) throw new AuthError("Task not found", "NOT_FOUND", 404);
   await notifyCrmTaskOutboundSafely({
     taskId,
     assigneeId: current.assigneeId,
     createdAt: current.createdAt,
+    updatedAt: current.updatedAt,
     reason: "explicit",
   });
   return { queued: true as const };

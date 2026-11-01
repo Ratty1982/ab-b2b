@@ -898,7 +898,7 @@ export async function deleteStaffUser(actorUserId: string, raw: unknown) {
   }
 
   const movedTasks = transferToUserId
-    ? await prisma.task.findMany({ where: { assigneeId: id }, select: { id: true, createdAt: true } })
+    ? await prisma.task.findMany({ where: { assigneeId: id }, select: { id: true, createdAt: true, updatedAt: true } })
     : [];
   if (transferToUserId) {
     await releaseMappedTasksBeforeUserRemoval(id);
@@ -925,6 +925,7 @@ export async function deleteStaffUser(actorUserId: string, raw: unknown) {
         taskId: task.id,
         assigneeId: transferToUserId,
         createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
         reason: "updated",
       });
     }

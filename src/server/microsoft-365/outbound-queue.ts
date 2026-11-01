@@ -15,6 +15,7 @@ export type OutboundNotice = {
   assigneeId: string | null;
   previousAssigneeId?: string | null;
   createdAt: Date;
+  updatedAt?: Date;
   reason: "created" | "updated" | "assigned" | "explicit";
 };
 
@@ -22,7 +23,13 @@ type QueueDeps = {
   graphAllowed: () => boolean;
   findConnection: (userId: string) => Promise<OutboundConnection | null>;
   hasActiveMapping: (userId: string, taskId: string) => Promise<boolean>;
-  enqueue: (input: { connection: OutboundConnection; taskId: string; release: boolean; explicit: boolean }) => Promise<unknown>;
+  enqueue: (input: {
+    connection: OutboundConnection;
+    taskId: string;
+    release: boolean;
+    explicit: boolean;
+    taskRevision?: string;
+  }) => Promise<unknown>;
   record: (message: string) => Promise<void>;
 };
 
@@ -33,10 +40,17 @@ function ready(connection: OutboundConnection | null): connection is OutboundCon
 export async function notifyCrmTaskOutbound(input: OutboundNotice, deps: QueueDeps = defaultQueueDeps()): Promise<void> {
   if (!deps.graphAllowed()) return;
   try {
+    const taskRevision = input.updatedAt?.toISOString();
     if (input.previousAssigneeId && input.previousAssigneeId !== input.assigneeId) {
       const previous = await deps.findConnection(input.previousAssigneeId);
       if (ready(previous) && (await deps.hasActiveMapping(previous.userId, input.taskId))) {
-        await deps.enqueue({ connection: previous, taskId: input.taskId, release: true, explicit: false });
+        await deps.enqueue({
+          connection: previous,
+          taskId: input.taskId,
+          release: true,
+          explicit: false,
+          ...(taskRevision ? { taskRevision } : {}),
+        });
       }
     }
     if (!input.assigneeId) return;
@@ -49,7 +63,13 @@ export async function notifyCrmTaskOutbound(input: OutboundNotice, deps: QueueDe
       mapped ||
       (connection.taskOutboundEnabledAt != null && input.createdAt.getTime() >= connection.taskOutboundEnabledAt.getTime());
     if (!eligible) return;
-    await deps.enqueue({ connection, taskId: input.taskId, release: false, explicit });
+    await deps.enqueue({
+      connection,
+      taskId: input.taskId,
+      release: false,
+      explicit,
+      ...(taskRevision ? { taskRevision } : {}),
+    });
   } catch (error) {
     await deps.record(sanitizeMicrosoftMessage(error instanceof Error ? error.message : "Microsoft To Do queue failed"));
   }

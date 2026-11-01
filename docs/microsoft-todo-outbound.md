@@ -83,15 +83,19 @@ Deleting a staff user removes the connection and tokens. The scrub runs before t
 
 ## Jobs
 
-`MicrosoftSyncJob.kind` is `TODO_OUTBOUND`. `dedupeKey` is `todo:{userId}:{taskId}:upsert` or `:release`, and it is unique. A second event while the row is `QUEUED`, `RUNNING`, or `NEEDS_REVIEW` does not insert another row. `FAILED`, `SUCCEEDED`, and `CANCELLED` rows are reused.
+`MicrosoftSyncJob.kind` is `TODO_OUTBOUND`. `dedupeKey` is `todo:{userId}:{taskId}:upsert` or `:release`, and it is unique. A second event while the row is `QUEUED` or `RUNNING` updates the payload and, when the job is already running, sets `revisionDirty`. `NEEDS_REVIEW` is not cleared by another CRM edit; the payload can still record that a newer revision exists. `FAILED`, `SUCCEEDED`, and `CANCELLED` rows are reused.
 
-Workers claim with `updateMany`. A second worker sees a count of zero. A running job whose lease is older than two minutes can be claimed again. Attempts stop at five, then the row is `FAILED`. Backoff is 30 seconds, 2 minutes, 8 minutes, then 30 minutes, unless Microsoft sends `Retry-After` (seconds or an HTTP date, capped at 24 hours).
+Workers claim with `updateMany`. A second worker sees a count of zero. A running job whose lease is older than two minutes can be claimed again. Job completion writes use the same lease owner, so a stale worker cannot mark success after losing the lease. Attempts stop at five for ordinary retries, then the row is `FAILED`. Backoff is 30 seconds, 2 minutes, 8 minutes, then 30 minutes, unless Microsoft sends `Retry-After` (seconds or an HTTP date, capped at 24 hours).
 
-`NEEDS_REVIEW` is not cleared by another CRM edit. **Retry failed sync** on `/crm/microsoft` queues those rows again and marks them reviewed, which allows one recreate when Microsoft returns 404 for a mapped task.
+`NEEDS_REVIEW` is not cleared by another CRM edit. **Retry failed sync** on `/crm/microsoft` queues those rows again and marks them reviewed, which allows one create after lookup still finds nothing, or a recreate when Microsoft returns 404 for a mapped task.
 
-Graph task creation does not accept an application idempotency header. This app does not send one. Before creating a task, and again after a timeout, HTTP 409, or HTTP 5xx, the worker reads up to four pages of 50 tasks from the dedicated list and matches `ab-crm-task:{taskId}` in the body. `nextLink` must stay on `https://graph.microsoft.com`. If the task is found, it is patched and adopted. If the scan cannot be finished, or Microsoft returns 409 and the task still cannot be found, the job becomes `NEEDS_REVIEW` and no further create is sent. A completed scan that finds nothing after a network error or HTTP 5xx is queued for retry.
+Graph task creation does not accept an application idempotency header. This app does not send one. Before creating a task, and again after a timeout, interruption, HTTP 409, or HTTP 5xx, the worker reads up to four pages of 50 tasks from the dedicated list and matches `ab-crm-task:{taskId}` in the body. `nextLink` must stay on `https://graph.microsoft.com`. If the task is found, it is patched and adopted. If the scan cannot be finished, or a completed scan still finds nothing after an uncertain POST, the job becomes `NEEDS_REVIEW` with durable `createUncertain` and no further automatic create is sent. An empty lookup is not treated as proof that Microsoft never created the task. When Graph returns a task id but the local mapping write fails, the job stores `knownMicrosoftTaskId` and needs review; the next reviewed run patches that id instead of posting another task.
 
-HTTP 401 refreshes the token once. HTTP 403 fails the job as a missing permission. HTTP 404 on create clears the stored list id so the next attempt can find or create the list. HTTP 429 uses `Retry-After`.
+CRM `Task.updatedAt` is the revision. The worker captures it before calling Microsoft. After a successful write it reads the task again. If the revision moved, or `revisionDirty` was set while the job was running, the mapping is kept and the job is left `QUEUED` for the latest revision instead of `SUCCEEDED`. If the assignee changed during the write, the job is requeued as a release for the previous owner's Microsoft task.
+
+HTTP 401 refreshes the token once. HTTP 403 fails the job as a missing permission. HTTP 404 on create clears the stored list id so the next attempt can find or create the list. HTTP 429 uses `Retry-After` and does not set `createUncertain`, because the request was rejected before acceptance.
+
+List creation always lists existing lists under a connection lock before posting a list. Linked-resource creation stays best-effort after the mapping is stored and does not fail the job.
 
 The worker writes only `todoListId`, `lastTaskSyncAt`, and `lastError`, and only while the connection is still `CONNECTED`. It does not turn a disconnected account back on.
 
@@ -129,9 +133,10 @@ Both accept only `true`, `1`, `on`, or `yes`. The outbound variable is optional 
 
 ## Residual risks
 
-- An edit saved while a job has already read the task can be overwritten by that job's patch. A later edit queues again.
+- A successful write of an older revision can briefly leave Microsoft showing that older title until the queued follow-up job runs.
 - Staff deletion with outbound off, or a Graph failure during deletion, can leave the old To Do text in place after the tokens are removed.
 - Two connections can briefly share an advisory lock if `hashtext` collides. That only serialises them.
 - A Microsoft id that contains `/` or `\` is refused. The documented To Do id shape, including a trailing `=`, is accepted.
-- `linkedResource` is best-effort. Lookup uses the body reference.
+- `linkedResource` is best-effort and may be posted more than once if a job is retried after mapping success; lookup still uses the body reference.
+- Operator review after `createUncertain` can still create a duplicate if Microsoft later surfaces a delayed task that the reviewed lookup missed.
 - Inbound sync and Outlook appointments are not implemented.

@@ -233,6 +233,7 @@ export async function logCrmActivity(actorUserId: string, raw: unknown) {
       taskId: task.id,
       assigneeId: task.assigneeId,
       createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
       reason: "created",
     });
   }
@@ -331,6 +332,7 @@ export async function createCrmTask(actorUserId: string, raw: unknown) {
     taskId: task.id,
     assigneeId: task.assigneeId,
     createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
     reason: "created",
   });
 
