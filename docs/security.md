@@ -64,6 +64,8 @@ There is **no** browser → Graph path. The browser never supplies arbitrary Gra
 
 **App-side allowlist:** Every scan/download validates against persisted `tenantId` / `driveId` / `folderItemId`. Scan sessions that do not match the authorised folder are rejected.
 
+CRM staff connections are a separate delegated Entra application. Do not add `Tasks.ReadWrite` or `Calendars.ReadWrite` to the SDS app. Setup and the default-off flag are in `docs/microsoft-365-crm.md`.
+
 ---
 
 ## E. Exact Microsoft permission requested
@@ -142,6 +144,7 @@ Security-relevant actions include (non-exhaustive):
 - PostgreSQL via Prisma
 - Product document bytes via existing media storage abstraction
 - Graph credentials: env and/or AES-GCM encrypted DB field keyed from `AUTH_SECRET`
+- CRM Microsoft 365 tokens: AES-GCM ciphertext keyed from `MICROSOFT_365_ENCRYPTION_KEY`, separate from `AUTH_SECRET`
 
 ---
 

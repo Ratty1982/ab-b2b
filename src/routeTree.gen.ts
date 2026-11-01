@@ -51,6 +51,7 @@ import { Route as CrmActivitiesRouteImport } from './routes/crm.activities'
 import { Route as CrmApplicationsRouteImport } from './routes/crm.applications'
 import { Route as CrmLeadsRouteImport } from './routes/crm.leads'
 import { Route as CrmManagerRouteImport } from './routes/crm.manager'
+import { Route as CrmMicrosoftRouteImport } from './routes/crm.microsoft'
 import { Route as CrmOverviewRouteImport } from './routes/crm.overview'
 import { Route as CrmTasksRouteImport } from './routes/crm.tasks'
 import { Route as PortalIndexRouteImport } from './routes/portal.index'
@@ -106,6 +107,7 @@ import { Route as ApiAutopartImportsHistoryAllRouteImport } from './routes/api/a
 import { Route as ApiAutopartImportsUploadRouteImport } from './routes/api/autopart-imports/upload'
 import { Route as ApiCmsMediaIdRouteImport } from './routes/api/cms-media/$id'
 import { Route as ApiInternalStockSyncRouteImport } from './routes/api.internal.stock-sync'
+import { Route as ApiMicrosoft365CallbackRouteImport } from './routes/api/microsoft-365/callback'
 import { Route as ApiProductDocumentsIdRouteImport } from './routes/api/product-documents/$id'
 import { Route as PortalOrdersIndexRouteImport } from './routes/portal.orders.index'
 import { Route as PortalOrdersOrderIdRouteImport } from './routes/portal.orders.$orderId'
@@ -354,6 +356,11 @@ const CrmLeadsRoute = CrmLeadsRouteImport.update({
 const CrmManagerRoute = CrmManagerRouteImport.update({
   id: '/manager',
   path: '/manager',
+  getParentRoute: () => CrmRoute,
+} as any)
+const CrmMicrosoftRoute = CrmMicrosoftRouteImport.update({
+  id: '/microsoft',
+  path: '/microsoft',
   getParentRoute: () => CrmRoute,
 } as any)
 const CrmOverviewRoute = CrmOverviewRouteImport.update({
@@ -637,6 +644,11 @@ const ApiInternalStockSyncRoute = ApiInternalStockSyncRouteImport.update({
   path: '/api/internal/stock-sync',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMicrosoft365CallbackRoute = ApiMicrosoft365CallbackRouteImport.update({
+  id: '/api/microsoft-365/callback',
+  path: '/api/microsoft-365/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiProductDocumentsIdRoute = ApiProductDocumentsIdRouteImport.update({
   id: '/api/product-documents/$id',
   path: '/api/product-documents/$id',
@@ -880,6 +892,7 @@ export interface FileRoutesByFullPath {
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/microsoft': typeof CrmMicrosoftRoute
   '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
   '/portal/autopart-history': typeof PortalAutopartHistoryRoute
@@ -931,6 +944,7 @@ export interface FileRoutesByFullPath {
   '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/api/microsoft-365/callback': typeof ApiMicrosoft365CallbackRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
@@ -1006,6 +1020,7 @@ export interface FileRoutesByTo {
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/microsoft': typeof CrmMicrosoftRoute
   '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
   '/portal/autopart-history': typeof PortalAutopartHistoryRoute
@@ -1051,6 +1066,7 @@ export interface FileRoutesByTo {
   '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/api/microsoft-365/callback': typeof ApiMicrosoft365CallbackRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
   '/products/category/$slug': typeof ProductsCategorySlugRoute
@@ -1136,6 +1152,7 @@ export interface FileRoutesById {
   '/crm/applications': typeof CrmApplicationsRoute
   '/crm/leads': typeof CrmLeadsRoute
   '/crm/manager': typeof CrmManagerRoute
+  '/crm/microsoft': typeof CrmMicrosoftRoute
   '/crm/overview': typeof CrmOverviewRoute
   '/crm/tasks': typeof CrmTasksRoute
   '/portal/autopart-history': typeof PortalAutopartHistoryRoute
@@ -1187,6 +1204,7 @@ export interface FileRoutesById {
   '/api/autopart-imports/upload': typeof ApiAutopartImportsUploadRoute
   '/api/cms-media/$id': typeof ApiCmsMediaIdRoute
   '/api/internal/stock-sync': typeof ApiInternalStockSyncRoute
+  '/api/microsoft-365/callback': typeof ApiMicrosoft365CallbackRoute
   '/api/product-documents/$id': typeof ApiProductDocumentsIdRoute
   '/portal/orders/$orderId': typeof PortalOrdersOrderIdRouteWithChildren
   '/portal/quotes/$quoteId': typeof PortalQuotesQuoteIdRoute
@@ -1274,6 +1292,7 @@ export interface FileRouteTypes {
     | '/crm/applications'
     | '/crm/leads'
     | '/crm/manager'
+    | '/crm/microsoft'
     | '/crm/overview'
     | '/crm/tasks'
     | '/portal/autopart-history'
@@ -1325,6 +1344,7 @@ export interface FileRouteTypes {
     | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/api/microsoft-365/callback'
     | '/api/product-documents/$id'
     | '/portal/orders/$orderId'
     | '/portal/quotes/$quoteId'
@@ -1400,6 +1420,7 @@ export interface FileRouteTypes {
     | '/crm/applications'
     | '/crm/leads'
     | '/crm/manager'
+    | '/crm/microsoft'
     | '/crm/overview'
     | '/crm/tasks'
     | '/portal/autopart-history'
@@ -1445,6 +1466,7 @@ export interface FileRouteTypes {
     | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/api/microsoft-365/callback'
     | '/api/product-documents/$id'
     | '/portal/quotes/$quoteId'
     | '/products/category/$slug'
@@ -1529,6 +1551,7 @@ export interface FileRouteTypes {
     | '/crm/applications'
     | '/crm/leads'
     | '/crm/manager'
+    | '/crm/microsoft'
     | '/crm/overview'
     | '/crm/tasks'
     | '/portal/autopart-history'
@@ -1580,6 +1603,7 @@ export interface FileRouteTypes {
     | '/api/autopart-imports/upload'
     | '/api/cms-media/$id'
     | '/api/internal/stock-sync'
+    | '/api/microsoft-365/callback'
     | '/api/product-documents/$id'
     | '/portal/orders/$orderId'
     | '/portal/quotes/$quoteId'
@@ -1659,6 +1683,7 @@ export interface RootRouteChildren {
   ApiAutopartImportsUploadRoute: typeof ApiAutopartImportsUploadRoute
   ApiCmsMediaIdRoute: typeof ApiCmsMediaIdRoute
   ApiInternalStockSyncRoute: typeof ApiInternalStockSyncRoute
+  ApiMicrosoft365CallbackRoute: typeof ApiMicrosoft365CallbackRoute
   ApiProductDocumentsIdRoute: typeof ApiProductDocumentsIdRoute
   ProductsCategorySlugRoute: typeof ProductsCategorySlugRoute
   ApiAutopartImportsProspectExceptionsCsvRoute: typeof ApiAutopartImportsProspectExceptionsCsvRoute
@@ -1959,6 +1984,13 @@ declare module '@tanstack/react-router' {
       path: '/manager'
       fullPath: '/crm/manager'
       preLoaderRoute: typeof CrmManagerRouteImport
+      parentRoute: typeof CrmRoute
+    }
+    '/crm/microsoft': {
+      id: '/crm/microsoft'
+      path: '/microsoft'
+      fullPath: '/crm/microsoft'
+      preLoaderRoute: typeof CrmMicrosoftRouteImport
       parentRoute: typeof CrmRoute
     }
     '/crm/overview': {
@@ -2344,6 +2376,13 @@ declare module '@tanstack/react-router' {
       path: '/api/internal/stock-sync'
       fullPath: '/api/internal/stock-sync'
       preLoaderRoute: typeof ApiInternalStockSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/microsoft-365/callback': {
+      id: '/api/microsoft-365/callback'
+      path: '/api/microsoft-365/callback'
+      fullPath: '/api/microsoft-365/callback'
+      preLoaderRoute: typeof ApiMicrosoft365CallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/product-documents/$id': {
@@ -2781,6 +2820,7 @@ interface CrmRouteChildren {
   CrmApplicationsRoute: typeof CrmApplicationsRoute
   CrmLeadsRoute: typeof CrmLeadsRoute
   CrmManagerRoute: typeof CrmManagerRoute
+  CrmMicrosoftRoute: typeof CrmMicrosoftRoute
   CrmOverviewRoute: typeof CrmOverviewRoute
   CrmTasksRoute: typeof CrmTasksRoute
   CrmIndexRoute: typeof CrmIndexRoute
@@ -2791,6 +2831,7 @@ const CrmRouteChildren: CrmRouteChildren = {
   CrmApplicationsRoute: CrmApplicationsRoute,
   CrmLeadsRoute: CrmLeadsRoute,
   CrmManagerRoute: CrmManagerRoute,
+  CrmMicrosoftRoute: CrmMicrosoftRoute,
   CrmOverviewRoute: CrmOverviewRoute,
   CrmTasksRoute: CrmTasksRoute,
   CrmIndexRoute: CrmIndexRoute,
@@ -3017,6 +3058,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAutopartImportsUploadRoute: ApiAutopartImportsUploadRoute,
   ApiCmsMediaIdRoute: ApiCmsMediaIdRoute,
   ApiInternalStockSyncRoute: ApiInternalStockSyncRoute,
+  ApiMicrosoft365CallbackRoute: ApiMicrosoft365CallbackRoute,
   ApiProductDocumentsIdRoute: ApiProductDocumentsIdRoute,
   ProductsCategorySlugRoute: ProductsCategorySlugRoute,
   ApiAutopartImportsProspectExceptionsCsvRoute:

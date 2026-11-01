@@ -13,6 +13,7 @@ Disallow: /api/internal
 Disallow: /api/auth
 Disallow: /api/autopart-imports
 Disallow: /api/customer-sales-uploads
+Disallow: /api/microsoft-365
 
 User-agent: Googlebot
 Allow: /
@@ -29,6 +30,7 @@ Disallow: /api/internal
 Disallow: /api/auth
 Disallow: /api/autopart-imports
 Disallow: /api/customer-sales-uploads
+Disallow: /api/microsoft-365
 
 User-agent: Bingbot
 Allow: /
@@ -45,6 +47,7 @@ Disallow: /api/internal
 Disallow: /api/auth
 Disallow: /api/autopart-imports
 Disallow: /api/customer-sales-uploads
+Disallow: /api/microsoft-365
 
 User-agent: Twitterbot
 Allow: /

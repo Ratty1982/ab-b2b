@@ -70,6 +70,7 @@ export const ROUTES = {
   crmApplications: "/crm/applications",
   crmManager: "/crm/manager",
   crmTasks: "/crm/tasks",
+  crmMicrosoft: "/crm/microsoft",
 
   portal: "/portal",
   portalBasket: "/portal/basket",
@@ -362,6 +363,15 @@ export const BACK_OFFICE_NAV: NavSectionDef[] = [
         icon: "list-todo",
         to: ROUTES.crmTasks,
         matchPrefixes: [ROUTES.crmTasks],
+        permission: "tasks.view",
+        implemented: true,
+      },
+      {
+        id: "crm-microsoft",
+        label: "Microsoft 365",
+        icon: "shield",
+        to: ROUTES.crmMicrosoft,
+        matchPrefixes: [ROUTES.crmMicrosoft],
         permission: "tasks.view",
         implemented: true,
       },
