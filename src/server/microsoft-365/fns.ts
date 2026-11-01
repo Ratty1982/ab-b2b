@@ -6,8 +6,11 @@ import { sanitizeMicrosoftMessage } from "@/domain/microsoft-365-crm";
 import { auth } from "@/infra/auth";
 import { AuthError } from "@/server/rbac/guards";
 import {
+  microsoft365ApproveUncertainOutboundCreate,
   microsoft365BeginConnect,
   microsoft365Disconnect,
+  microsoft365RecheckUncertainOutbound,
+  microsoft365RetryOutbound,
   microsoft365StatusFor,
   microsoft365UpdatePreferences,
 } from "@/server/microsoft-365/service";
@@ -56,6 +59,47 @@ export const disconnectMicrosoft365Fn = createServerFn({ method: "POST" }).handl
     return toError(error);
   }
 });
+
+export const retryMicrosoftTodoOutboundFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await microsoft365RetryOutbound(userId) };
+  } catch (error) {
+    return toError(error);
+  }
+});
+
+export const recheckMicrosoftTodoUncertainFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => z.object({ jobId: z.string().min(1) }).parse(data))
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await microsoft365RecheckUncertainOutbound(userId, data.jobId) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const approveMicrosoftTodoUncertainCreateFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) =>
+    z
+      .object({
+        jobId: z.string().min(1),
+        acknowledgedDuplicateRisk: z.literal(true),
+      })
+      .parse(data),
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return {
+        ok: true as const,
+        data: await microsoft365ApproveUncertainOutboundCreate(userId, data.jobId, data.acknowledgedDuplicateRisk),
+      };
+    } catch (error) {
+      return toError(error);
+    }
+  });
 
 export const updateMicrosoft365PreferencesFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) =>

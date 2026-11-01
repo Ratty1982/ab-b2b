@@ -7,6 +7,7 @@
 import { ZodError } from "zod";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
+import { notifyCrmTaskOutboundSafely } from "@/server/microsoft-365/outbound-queue";
 import { AuthError } from "@/server/rbac/guards";
 import { loadAccessProfile } from "@/server/rbac/access";
 import {
@@ -324,6 +325,13 @@ async function persistTradeCallback(opts: {
       status: "OPEN",
       priority: "NORMAL",
     },
+  });
+  await notifyCrmTaskOutboundSafely({
+    taskId: task.id,
+    assigneeId: task.assigneeId,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    reason: "created",
   });
 
   await recordAuditEvent({

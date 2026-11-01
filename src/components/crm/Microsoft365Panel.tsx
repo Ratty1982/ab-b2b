@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { microsoft365ReturnNotice, type Microsoft365Status } from "@/domain/microsoft-365-crm";
 
 export function Microsoft365Panel({
@@ -12,6 +14,9 @@ export function Microsoft365Panel({
   onTaskSync,
   onCalendarSync,
   onAllowCalendar,
+  onRetryOutbound,
+  onRecheckUncertain,
+  onApproveUncertainCreate,
 }: {
   status: Microsoft365Status;
   noticeCode?: string | undefined;
@@ -24,10 +29,19 @@ export function Microsoft365Panel({
   onTaskSync: (value: boolean) => void;
   onCalendarSync: (value: boolean) => void;
   onAllowCalendar: () => void;
+  onRetryOutbound: () => void;
+  onRecheckUncertain: (jobId: string) => void;
+  onApproveUncertainCreate: (jobId: string) => void;
 }) {
   const notice = microsoft365ReturnNotice(noticeCode);
   const connection = status.connection;
   const connected = connection?.status === "CONNECTED";
+  const uncertainJobs = status.outbound?.uncertainJobs ?? [];
+  const ordinaryRetryAvailable =
+    (status.outbound?.failed ?? 0) > 0 ||
+    (status.outbound?.needsReview ?? 0) > uncertainJobs.length;
+  const [confirmJobId, setConfirmJobId] = useState<string | null>(null);
+  const [ackDuplicate, setAckDuplicate] = useState(false);
   return (
     <div className="mx-4 my-6 max-w-3xl space-y-4 sm:mx-6">
       {notice ? (
@@ -67,7 +81,8 @@ export function Microsoft365Panel({
         </dl>
         {connection?.lastError ? <p className="mt-3 text-sm text-destructive">{connection.lastError}</p> : null}
         <p className="mt-3 text-[12px] text-steel">
-          Connecting does not export existing CRM tasks. Sync now is not available in this release.
+          Connecting does not export existing CRM tasks. New tasks can sync after you turn task synchronisation on
+          and an administrator enables the outbound engine.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {!connected ? (
@@ -99,8 +114,7 @@ export function Microsoft365Panel({
               onChange={(event) => onIncludeCalendar(event.target.checked)}
             />
             <span>
-              Also request Outlook Calendar permission. Calendar events are created only when you ask. If attendees
-              are added later, Microsoft may send invitations.
+              Also request Outlook Calendar permission. This release does not create Outlook appointments.
             </span>
           </label>
         ) : null}
@@ -117,7 +131,41 @@ export function Microsoft365Panel({
       <section className="rounded-md border border-border p-4">
         <h2 className="font-display text-sm font-semibold uppercase tracking-tight">Preferences</h2>
         <p className="mt-2 text-[12px] text-steel">
-          These switches are saved for a later sync release. They do not send tasks or create appointments now.
+          Task synchronisation sends eligible new CRM tasks to a Microsoft To Do list named Automotive Brands CRM.
+          It does not export older tasks unless you copy one task across. Calendar synchronisation still does not
+          create appointments.
+        </p>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-steel">Outbound engine</dt>
+            <dd>{status.outbound?.engineEnabled ? "Enabled" : "Off"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Waiting</dt>
+            <dd>{status.outbound?.pending ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Failed</dt>
+            <dd>{status.outbound?.failed ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Needs review</dt>
+            <dd>{status.outbound?.needsReview ?? 0}</dd>
+          </div>
+        </dl>
+        {ordinaryRetryAvailable ? (
+          <button
+            type="button"
+            disabled={busy || !status.canConnect}
+            onClick={onRetryOutbound}
+            className="mt-3 h-10 rounded-md border border-border px-4 text-[13px] font-bold"
+          >
+            Retry failed sync
+          </button>
+        ) : null}
+        <p className="mt-2 text-[12px] text-steel">
+          Retry failed sync retries ordinary failures only. It does not authorise another Microsoft create after an
+          uncertain outcome.
         </p>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input
@@ -148,6 +196,109 @@ export function Microsoft365Panel({
           </button>
         ) : null}
       </section>
+
+      {uncertainJobs.length > 0 ? (
+        <section className="rounded-md border border-border p-4">
+          <h2 className="font-display text-sm font-semibold uppercase tracking-tight">Review uncertain creation</h2>
+          <p className="mt-2 text-[12px] text-steel">
+            Microsoft may already have created these tasks after a timeout or interruption. Recheck looks for an
+            existing To Do item. Approving another create requires an explicit acknowledgement and CRM manager or
+            administrator permission.
+          </p>
+          <ul className="mt-4 space-y-4">
+            {uncertainJobs.map((job) => (
+              <li key={job.jobId} className="rounded-md border border-border p-3 text-sm">
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-steel">CRM task</dt>
+                    <dd>{job.taskTitle || job.taskId}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Salesperson</dt>
+                    <dd>{job.assigneeName || job.assigneeEmail || "—"}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-steel">Last error</dt>
+                    <dd>{job.lastError || "Microsoft To Do create needs review"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Known Microsoft task id</dt>
+                    <dd>{job.knownMicrosoftTaskId || "Not known"}</dd>
+                  </div>
+                </dl>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || !status.canConnect || !status.outbound?.engineEnabled}
+                    onClick={() => onRecheckUncertain(job.jobId)}
+                    className="h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+                  >
+                    Recheck Microsoft To Do
+                  </button>
+                  {status.outbound?.canApproveUncertainCreate ? (
+                    <button
+                      type="button"
+                      disabled={busy || !status.outbound.engineEnabled}
+                      onClick={() => {
+                        setConfirmJobId(job.jobId);
+                        setAckDuplicate(false);
+                      }}
+                      className="h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+                    >
+                      Authorise another create
+                    </button>
+                  ) : null}
+                </div>
+                {confirmJobId === job.jobId ? (
+                  <div className="mt-3 space-y-3 rounded-md border border-border bg-muted/40 p-3">
+                    <p className="text-[12px] text-steel">
+                      Microsoft may already have created the original task. Another create may produce a duplicate in
+                      To Do.
+                    </p>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={ackDuplicate}
+                        onChange={(event) => setAckDuplicate(event.target.checked)}
+                      />
+                      <span>
+                        I understand Microsoft may already have created this task and that another create may cause a
+                        duplicate.
+                      </span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy || !ackDuplicate}
+                        onClick={() => {
+                          onApproveUncertainCreate(job.jobId);
+                          setConfirmJobId(null);
+                          setAckDuplicate(false);
+                        }}
+                        className="h-10 rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground disabled:opacity-50"
+                      >
+                        Confirm create authorisation
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          setConfirmJobId(null);
+                          setAckDuplicate(false);
+                        }}
+                        className="h-10 rounded-md border border-border px-4 text-[13px] font-bold"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {status.health ? (
         <section className="rounded-md border border-border p-4">

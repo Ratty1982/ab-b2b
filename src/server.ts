@@ -82,6 +82,14 @@ function ensureStockScheduler() {
         error: error instanceof Error ? error.message : error,
       });
     });
+  void import("./server/microsoft-365/outbound-scheduler")
+    .then((mod) => mod.startMicrosoftTodoOutboundScheduler())
+    .catch((error) => {
+      console.error("[ab:microsoft-todo]", {
+        event: "OUTBOUND_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();

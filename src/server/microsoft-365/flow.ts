@@ -323,6 +323,8 @@ export async function completeMicrosoftCallback(
     lastTaskSyncAt: existing?.lastTaskSyncAt ?? null,
     lastCalendarSyncAt: existing?.lastCalendarSyncAt ?? null,
     lastError: null,
+    todoListId: existing?.todoListId ?? null,
+    taskOutboundEnabledAt: existing?.taskOutboundEnabledAt ?? null,
     connectedAt: existing?.connectedAt ?? current,
     disconnectedAt: null,
   };
@@ -389,10 +391,12 @@ export async function updateMicrosoft365Preferences(
     return { needsCalendarConsent: true, status: await getMicrosoft365Status(actor, gate, depsInput) };
   }
   const current = now();
+  const enablingTasks = inputPrefs.taskSyncEnabled && !existing.taskSyncEnabled;
   await store.saveConnection({
     ...existing,
     taskSyncEnabled: inputPrefs.taskSyncEnabled,
     calendarSyncEnabled: inputPrefs.calendarSyncEnabled,
+    taskOutboundEnabledAt: enablingTasks ? current : existing.taskOutboundEnabledAt,
     lastError: null,
   });
   await record(store, current, actor.userId, existing.id, "PREFERENCES_UPDATED", "Microsoft sync preferences updated");

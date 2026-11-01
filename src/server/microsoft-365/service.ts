@@ -19,7 +19,19 @@ import {
   refreshMicrosoftConnection,
   updateMicrosoft365Preferences,
 } from "@/server/microsoft-365/flow";
+import { recordAuditEvent } from "@/server/audit/record";
+import {
+  approveUncertainOutboundCreate,
+  cancelQueuedOutboundJobs,
+  listUncertainOutboundJobs,
+  outboundCounts,
+  prepareUncertainRecheckJob,
+  retryOutboundJobs,
+} from "@/server/microsoft-365/outbound-prisma";
+import { processOutboundJob } from "@/server/microsoft-365/outbound-sync";
+import { productionOutboundRuntime } from "@/server/microsoft-365/outbound-runtime";
 import { createPrismaMicrosoft365Store } from "@/server/microsoft-365/prisma-store";
+import { outboundGraphAllowed } from "@/domain/microsoft-todo-outbound";
 
 const store = createPrismaMicrosoft365Store();
 
@@ -58,10 +70,34 @@ function asAuth(error: unknown): never {
   throw error;
 }
 
+function canApproveUncertainCreate(profile: LoadedAccessProfile): boolean {
+  return grants(profile, "crm.manage", "admin.access");
+}
+
 export async function microsoft365StatusFor(userId: string) {
   try {
+    const profile: LoadedAccessProfile = await requireSystemPermission(userId, "tasks.view");
+    if (profile.actorType !== "INTERNAL") {
+      throw new AuthError("Microsoft 365 is available to staff only", "FORBIDDEN", 403);
+    }
     const actor = await actorFromProfile(userId);
-    return await getMicrosoft365Status(actor, currentMicrosoft365Gate(), { store });
+    const status = await getMicrosoft365Status(actor, currentMicrosoft365Gate(), { store });
+    const counts = await outboundCounts(userId);
+    const uncertainJobs = await listUncertainOutboundJobs(userId);
+    return {
+      ...status,
+      outbound: {
+        engineEnabled: outboundGraphAllowed({
+          crmFlag: process.env["MICROSOFT_365_CRM_ENABLED"],
+          outboundFlag: process.env["MICROSOFT_365_TASK_OUTBOUND_ENABLED"],
+        }),
+        pending: counts.pending,
+        failed: counts.failed,
+        needsReview: counts.needsReview,
+        canApproveUncertainCreate: canApproveUncertainCreate(profile),
+        uncertainJobs,
+      },
+    };
   } catch (error) {
     asAuth(error);
   }
@@ -79,8 +115,109 @@ export async function microsoft365BeginConnect(userId: string, includeCalendar: 
 export async function microsoft365Disconnect(userId: string) {
   try {
     const actor = await actorFromProfile(userId);
-    return await disconnectMicrosoftAccount(actor, currentMicrosoft365Gate(), { store });
+    const status = await disconnectMicrosoftAccount(actor, currentMicrosoft365Gate(), { store });
+    await cancelQueuedOutboundJobs(userId);
+    return status;
   } catch (error) {
+    asAuth(error);
+  }
+}
+
+export async function microsoft365RetryOutbound(userId: string) {
+  try {
+    const actor = await actorFromProfile(userId);
+    if (!actor.canConnect) {
+      throw new AuthError("Not permitted to retry Microsoft To Do sync", "FORBIDDEN", 403);
+    }
+    const retried = await retryOutboundJobs(userId);
+    const status = await microsoft365StatusFor(userId);
+    return { retried, status };
+  } catch (error) {
+    asAuth(error);
+  }
+}
+
+export async function microsoft365RecheckUncertainOutbound(userId: string, jobId: string) {
+  try {
+    const actor = await actorFromProfile(userId);
+    if (!actor.canConnect) {
+      throw new AuthError("Not permitted to review Microsoft To Do sync", "FORBIDDEN", 403);
+    }
+    if (!outboundGraphAllowed({
+      crmFlag: process.env["MICROSOFT_365_CRM_ENABLED"],
+      outboundFlag: process.env["MICROSOFT_365_TASK_OUTBOUND_ENABLED"],
+    })) {
+      throw new AuthError("Microsoft To Do outbound synchronisation is turned off", "FORBIDDEN", 403);
+    }
+    const job = await prepareUncertainRecheckJob(userId, jobId);
+    await processOutboundJob(job, productionOutboundRuntime());
+    await recordAuditEvent({
+      action: "microsoft_todo.uncertain_recheck",
+      entityType: "MicrosoftSyncJob",
+      entityId: job.id,
+      actorUserId: userId,
+      metadata: {
+        taskId: job.payload.taskId,
+        connectionId: job.connectionId,
+        knownMicrosoftTaskId: job.payload.knownMicrosoftTaskId ?? null,
+      },
+    });
+    const status = await microsoft365StatusFor(userId);
+    return { status };
+  } catch (error) {
+    if (error instanceof Error && !(error instanceof AuthError) && !(error instanceof Microsoft365Error)) {
+      throw new AuthError(error.message, "VALIDATION", 400);
+    }
+    asAuth(error);
+  }
+}
+
+export async function microsoft365ApproveUncertainOutboundCreate(
+  userId: string,
+  jobId: string,
+  acknowledgedDuplicateRisk: boolean,
+) {
+  try {
+    const profile: LoadedAccessProfile = await requireSystemPermission(userId, "tasks.view");
+    if (profile.actorType !== "INTERNAL") {
+      throw new AuthError("Microsoft 365 is available to staff only", "FORBIDDEN", 403);
+    }
+    if (!canApproveUncertainCreate(profile)) {
+      throw new AuthError("Only CRM managers or administrators can approve a potentially duplicate Microsoft To Do create", "FORBIDDEN", 403);
+    }
+    if (acknowledgedDuplicateRisk !== true) {
+      throw new AuthError("Confirm that Microsoft may already have created this task before approving another create", "VALIDATION", 400);
+    }
+    if (!outboundGraphAllowed({
+      crmFlag: process.env["MICROSOFT_365_CRM_ENABLED"],
+      outboundFlag: process.env["MICROSOFT_365_TASK_OUTBOUND_ENABLED"],
+    })) {
+      throw new AuthError("Microsoft To Do outbound synchronisation is turned off", "FORBIDDEN", 403);
+    }
+    const job = await approveUncertainOutboundCreate({
+      userId,
+      jobId,
+      acknowledgedDuplicateRisk: true,
+    });
+    await recordAuditEvent({
+      action: "microsoft_todo.uncertain_create_approved",
+      entityType: "MicrosoftSyncJob",
+      entityId: job.id,
+      actorUserId: userId,
+      metadata: {
+        taskId: job.payload.taskId,
+        connectionId: job.connectionId,
+        knownMicrosoftTaskId: job.payload.knownMicrosoftTaskId ?? null,
+        approvedAt: job.payload.createApproval?.approvedAt ?? null,
+        acknowledgedDuplicateRisk: true,
+      },
+    });
+    const status = await microsoft365StatusFor(userId);
+    return { queued: true as const, jobId: job.id, status };
+  } catch (error) {
+    if (error instanceof Error && !(error instanceof AuthError) && !(error instanceof Microsoft365Error)) {
+      throw new AuthError(error.message, "VALIDATION", 400);
+    }
     asAuth(error);
   }
 }

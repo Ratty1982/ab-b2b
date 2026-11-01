@@ -12,8 +12,10 @@ import {
 } from "@/domain/sales-followup";
 import {
   completeCrmTaskFn,
+  exportCrmTaskToMicrosoftFn,
   getCrmTaskFn,
   listCrmTasksFn,
+  patchCrmTaskFn,
   rescheduleCrmTaskFn,
 } from "@/server/phase2/fns";
 
@@ -223,7 +225,12 @@ function CrmTasksPage() {
                         ? new Date(t.dueAt).toLocaleDateString("en-GB")
                         : "—"}
                     </td>
-                    <td className="py-2 pr-3">{t.status}</td>
+                    <td className="py-2 pr-3">
+                      {t.status}
+                      {t.microsoftSync ? (
+                        <div className="text-[10px] uppercase tracking-wide text-steel">To Do {t.microsoftSync}</div>
+                      ) : null}
+                    </td>
                     <td className="py-2">
                       {t.status === "OPEN" || t.status === "IN_PROGRESS" ? (
                         <div className="flex flex-wrap gap-2">
@@ -330,6 +337,61 @@ function CrmTasksPage() {
                 ? ` · Due ${new Date(detail.dueAt).toLocaleDateString("en-GB")}`
                 : ""}
             </p>
+            {detail.microsoftSync ? (
+              <p className="text-[11px] font-bold uppercase tracking-wide text-steel">Microsoft To Do · {detail.microsoftSync}</p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="h-9 rounded-md border border-border px-3 text-[12px] font-bold"
+                onClick={() => {
+                  if (!search.taskId) return;
+                  void exportCrmTaskToMicrosoftFn({ data: { taskId: search.taskId } }).then((r) => {
+                    if (!r.ok) setError(r.error);
+                    else setError(null);
+                  });
+                }}
+              >
+                Copy this task to Microsoft To Do
+              </button>
+              {detail.status === "DONE" || detail.status === "CANCELLED" ? (
+                <button
+                  type="button"
+                  className="h-9 rounded-md border border-border px-3 text-[12px] font-bold"
+                  onClick={() => {
+                    if (!search.taskId) return;
+                    void patchCrmTaskFn({ data: { taskId: search.taskId, status: "OPEN" } }).then(async (r) => {
+                      if (!r.ok) setError(r.error);
+                      else {
+                        const refreshed = await getCrmTaskFn({ data: { taskId: search.taskId! } });
+                        if (refreshed.ok) setDetail(refreshed.data);
+                        reloadList();
+                      }
+                    });
+                  }}
+                >
+                  Reopen
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="h-9 rounded-md border border-border px-3 text-[12px] font-bold"
+                  onClick={() => {
+                    if (!search.taskId) return;
+                    void patchCrmTaskFn({ data: { taskId: search.taskId, status: "CANCELLED" } }).then(async (r) => {
+                      if (!r.ok) setError(r.error);
+                      else {
+                        const refreshed = await getCrmTaskFn({ data: { taskId: search.taskId! } });
+                        if (refreshed.ok) setDetail(refreshed.data);
+                        reloadList();
+                      }
+                    });
+                  }}
+                >
+                  Cancel task
+                </button>
+              )}
+            </div>
             {detail.snapshot ? (
               <div className="rounded-md border border-border/70 bg-muted/20 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-steel">

@@ -487,6 +487,24 @@ export type Microsoft365Status = {
     connectedAt: string | null;
   };
   health: Microsoft365HealthRow[] | null;
+  outbound?: {
+    engineEnabled: boolean;
+    pending: number;
+    failed: number;
+    needsReview: number;
+    canApproveUncertainCreate: boolean;
+    uncertainJobs: Array<{
+      jobId: string;
+      taskId: string;
+      taskTitle: string | null;
+      assigneeName: string | null;
+      assigneeEmail: string | null;
+      lastError: string | null;
+      knownMicrosoftTaskId: string | null;
+      connectionId: string;
+      updatedAt: string;
+    }>;
+  };
 };
 
 const RETURN_NOTICES: Record<Microsoft365ReturnReason, string> = {
