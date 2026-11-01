@@ -638,6 +638,7 @@ enum MicrosoftSyncJobStatus {
   SUCCEEDED
   FAILED
   CANCELLED
+  NEEDS_REVIEW
 }
 
 enum DocumentVisibility {
@@ -3808,6 +3809,10 @@ model MicrosoftAccountConnection {
   lastTaskSyncAt          DateTime?
   lastCalendarSyncAt      DateTime?
   lastError               String?
+  /// Microsoft To Do list id for "Automotive Brands CRM". Null until that list is found or created.
+  todoListId              String?
+  /// When the user last turned task sync on. Older unmapped tasks are not exported automatically.
+  taskOutboundEnabledAt   DateTime?
   connectedAt             DateTime?
   disconnectedAt          DateTime?
   createdAt               DateTime                  @default(now())
@@ -3893,6 +3898,8 @@ model MicrosoftSyncJob {
   leaseUntil   DateTime?
   lastError    String?
   payload      Json?
+  /// One open logical job per user, task, and role. Cleared only when the row is removed.
+  dedupeKey    String?                @unique
   createdAt    DateTime               @default(now())
   updatedAt    DateTime               @updatedAt
 

@@ -8,6 +8,7 @@ import { AuthError } from "@/server/rbac/guards";
 import {
   microsoft365BeginConnect,
   microsoft365Disconnect,
+  microsoft365RetryOutbound,
   microsoft365StatusFor,
   microsoft365UpdatePreferences,
 } from "@/server/microsoft-365/service";
@@ -52,6 +53,15 @@ export const disconnectMicrosoft365Fn = createServerFn({ method: "POST" }).handl
   try {
     const userId = await requireUserId();
     return { ok: true as const, data: await microsoft365Disconnect(userId) };
+  } catch (error) {
+    return toError(error);
+  }
+});
+
+export const retryMicrosoftTodoOutboundFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await microsoft365RetryOutbound(userId) };
   } catch (error) {
     return toError(error);
   }

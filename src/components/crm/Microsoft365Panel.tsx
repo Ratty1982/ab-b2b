@@ -12,6 +12,7 @@ export function Microsoft365Panel({
   onTaskSync,
   onCalendarSync,
   onAllowCalendar,
+  onRetryOutbound,
 }: {
   status: Microsoft365Status;
   noticeCode?: string | undefined;
@@ -24,6 +25,7 @@ export function Microsoft365Panel({
   onTaskSync: (value: boolean) => void;
   onCalendarSync: (value: boolean) => void;
   onAllowCalendar: () => void;
+  onRetryOutbound: () => void;
 }) {
   const notice = microsoft365ReturnNotice(noticeCode);
   const connection = status.connection;
@@ -67,7 +69,8 @@ export function Microsoft365Panel({
         </dl>
         {connection?.lastError ? <p className="mt-3 text-sm text-destructive">{connection.lastError}</p> : null}
         <p className="mt-3 text-[12px] text-steel">
-          Connecting does not export existing CRM tasks. Sync now is not available in this release.
+          Connecting does not export existing CRM tasks. New tasks can sync after you turn task synchronisation on
+          and an administrator enables the outbound engine.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {!connected ? (
@@ -99,8 +102,7 @@ export function Microsoft365Panel({
               onChange={(event) => onIncludeCalendar(event.target.checked)}
             />
             <span>
-              Also request Outlook Calendar permission. Calendar events are created only when you ask. If attendees
-              are added later, Microsoft may send invitations.
+              Also request Outlook Calendar permission. This release does not create Outlook appointments.
             </span>
           </label>
         ) : null}
@@ -117,8 +119,38 @@ export function Microsoft365Panel({
       <section className="rounded-md border border-border p-4">
         <h2 className="font-display text-sm font-semibold uppercase tracking-tight">Preferences</h2>
         <p className="mt-2 text-[12px] text-steel">
-          These switches are saved for a later sync release. They do not send tasks or create appointments now.
+          Task synchronisation sends eligible new CRM tasks to a Microsoft To Do list named Automotive Brands CRM.
+          It does not export older tasks unless you copy one task across. Calendar synchronisation still does not
+          create appointments.
         </p>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-steel">Outbound engine</dt>
+            <dd>{status.outbound?.engineEnabled ? "Enabled" : "Off"}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Waiting</dt>
+            <dd>{status.outbound?.pending ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Failed</dt>
+            <dd>{status.outbound?.failed ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-steel">Needs review</dt>
+            <dd>{status.outbound?.needsReview ?? 0}</dd>
+          </div>
+        </dl>
+        {(status.outbound?.failed ?? 0) + (status.outbound?.needsReview ?? 0) > 0 ? (
+          <button
+            type="button"
+            disabled={busy || !status.canConnect}
+            onClick={onRetryOutbound}
+            className="mt-3 h-10 rounded-md border border-border px-4 text-[13px] font-bold"
+          >
+            Retry failed sync
+          </button>
+        ) : null}
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input
             type="checkbox"

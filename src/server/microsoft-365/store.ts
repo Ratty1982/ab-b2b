@@ -35,6 +35,8 @@ export type StoredConnection = {
   lastTaskSyncAt: Date | null;
   lastCalendarSyncAt: Date | null;
   lastError: string | null;
+  todoListId: string | null;
+  taskOutboundEnabledAt: Date | null;
   connectedAt: Date | null;
   disconnectedAt: Date | null;
 };

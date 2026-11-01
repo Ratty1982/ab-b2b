@@ -22,6 +22,8 @@ import {
   type SiFollowupSnapshot,
   type SiFollowupSourceModule,
 } from "@/domain/sales-followup";
+import { microsoftSyncIndicator } from "@/domain/microsoft-todo-outbound";
+import { notifyCrmTaskOutboundSafely } from "@/server/microsoft-365/outbound-queue";
 import { getCustomerGapAnalysis } from "@/server/sales-intelligence/gap";
 import { getCustomerRangeOpportunities } from "@/server/sales-intelligence/opportunity";
 import { getCustomerSalesEnquiry } from "@/server/sales-intelligence/enquiry";
@@ -719,8 +721,16 @@ export async function createSalesIntelligenceFollowUp(actorUserId: string, raw: 
       dueAt: true,
       priority: true,
       status: true,
+      assigneeId: true,
+      createdAt: true,
       assignee: { select: { id: true, name: true, email: true } },
     },
+  });
+  await notifyCrmTaskOutboundSafely({
+    taskId: task.id,
+    assigneeId: task.assigneeId,
+    createdAt: task.createdAt,
+    reason: "created",
   });
 
   await prisma.activity.create({
@@ -860,6 +870,7 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
 
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 25;
+  const canSeeOthers = grants(profile, "crm.manage", "admin.access");
   const [total, rows] = await Promise.all([
     prisma.task.count({ where }),
     prisma.task.findMany({
@@ -882,6 +893,13 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
       },
     }),
   ]);
+  const syncRows = rows.length
+    ? await prisma.microsoftTaskMapping.findMany({
+        where: { taskId: { in: rows.map((row) => row.id) }, deletedAt: null },
+        select: { taskId: true, userId: true, syncStatus: true },
+      })
+    : [];
+  const syncByTask = new Map(syncRows.map((row) => [`${row.userId}:${row.taskId}`, row.syncStatus]));
 
   return {
     items: rows.map((t) => ({
@@ -899,6 +917,12 @@ export async function listCrmTasks(actorUserId: string, raw: unknown) {
       company: t.company,
       assigneeName: t.assignee?.name || t.assignee?.email || null,
       createdAt: t.createdAt.toISOString(),
+      microsoftSync: microsoftSyncIndicator({
+        viewerId: actorUserId,
+        assigneeId: t.assignee?.id ?? null,
+        canSeeOthers,
+        syncStatus: syncByTask.get(`${t.assignee?.id ?? ""}:${t.id}`) ?? null,
+      }),
     })),
     page,
     pageSize,
@@ -921,6 +945,7 @@ export async function getCrmTask(actorUserId: string, raw: unknown) {
       assignee: { select: { id: true, name: true, email: true } },
       createdBy: { select: { id: true, name: true, email: true } },
       product: { select: { id: true, name: true } },
+      microsoftTaskMappings: { select: { userId: true, syncStatus: true, deletedAt: true } },
     },
   });
   if (!task) throw new AuthError("Task not found", "NOT_FOUND", 404);
@@ -963,6 +988,12 @@ export async function getCrmTask(actorUserId: string, raw: unknown) {
     product: task.product,
     snapshot,
     deepLinkPath: snapshot?.deepLinkPath ?? null,
+    microsoftSync: microsoftSyncIndicator({
+      viewerId: actorUserId,
+      assigneeId: task.assigneeId,
+      canSeeOthers: grants(profile, "crm.manage", "admin.access"),
+      syncStatus: task.microsoftTaskMappings.find((row) => row.userId === task.assigneeId && row.deletedAt == null)?.syncStatus ?? null,
+    }),
   };
 }
 
@@ -976,7 +1007,13 @@ export async function completeCrmTask(actorUserId: string, raw: unknown) {
   const updated = await prisma.task.update({
     where: { id: taskId },
     data: { status: "DONE", completedAt: new Date() },
-    select: { id: true, status: true, completedAt: true, sourceModule: true },
+    select: { id: true, status: true, completedAt: true, sourceModule: true, assigneeId: true, createdAt: true },
+  });
+  await notifyCrmTaskOutboundSafely({
+    taskId: updated.id,
+    assigneeId: updated.assigneeId,
+    createdAt: updated.createdAt,
+    reason: "updated",
   });
   if (existing.sourceModule) {
     await recordAuditEvent({
@@ -1010,7 +1047,88 @@ export async function rescheduleCrmTask(actorUserId: string, raw: unknown) {
   const updated = await prisma.task.update({
     where: { id: input.taskId },
     data: { dueAt: dueAtFromDateOnly(input.dueDate) },
-    select: { id: true, dueAt: true },
+    select: { id: true, dueAt: true, assigneeId: true, createdAt: true },
+  });
+  await notifyCrmTaskOutboundSafely({
+    taskId: updated.id,
+    assigneeId: updated.assigneeId,
+    createdAt: updated.createdAt,
+    reason: "updated",
   });
   return { id: updated.id, dueAt: updated.dueAt?.toISOString() ?? null };
+}
+
+export async function patchCrmTask(actorUserId: string, raw: unknown) {
+  const profile = await requireSystemPermission(actorUserId, "tasks.manage");
+  if (profile.actorType === "TRADE") {
+    throw new AuthError("Tasks are internal only", "FORBIDDEN", 403);
+  }
+  const input = z
+    .object({
+      taskId: z.string().min(1),
+      title: z.string().min(1).max(200).optional(),
+      notes: z.string().max(4000).nullable().optional(),
+      priority: z.enum(["LOW", "NORMAL", "HIGH"]).optional(),
+      status: z.enum(["OPEN", "IN_PROGRESS", "DONE", "CANCELLED"]).optional(),
+      assigneeId: z.string().min(1).optional(),
+    })
+    .parse(raw ?? {});
+  const existing = await getCrmTask(actorUserId, { taskId: input.taskId });
+  const current = await prisma.task.findUnique({
+    where: { id: input.taskId },
+    select: { assigneeId: true, createdAt: true, companyId: true },
+  });
+  if (!current) throw new AuthError("Task not found", "NOT_FOUND", 404);
+  if (input.assigneeId && current.companyId) {
+    await assertAssignable(profile, input.assigneeId, current.companyId);
+  }
+  const updated = await prisma.task.update({
+    where: { id: input.taskId },
+    data: {
+      ...(input.title ? { title: input.title.trim() } : {}),
+      ...(input.notes !== undefined ? { description: input.notes?.trim() || null } : {}),
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.status
+        ? { status: input.status, completedAt: input.status === "DONE" ? new Date() : null }
+        : {}),
+      ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
+    },
+    select: { id: true, assigneeId: true, createdAt: true, status: true, priority: true, title: true },
+  });
+  await notifyCrmTaskOutboundSafely({
+    taskId: updated.id,
+    assigneeId: updated.assigneeId,
+    previousAssigneeId: current.assigneeId,
+    createdAt: updated.createdAt,
+    reason: input.assigneeId && input.assigneeId !== current.assigneeId ? "assigned" : "updated",
+  });
+  return {
+    id: updated.id,
+    title: updated.title,
+    status: updated.status,
+    priority: updated.priority,
+    assigneeId: updated.assigneeId,
+    previousTitle: existing.title,
+  };
+}
+
+export async function exportCrmTaskToMicrosoft(actorUserId: string, raw: unknown) {
+  const profile = await requireSystemPermission(actorUserId, "tasks.manage");
+  if (profile.actorType === "TRADE") {
+    throw new AuthError("Tasks are internal only", "FORBIDDEN", 403);
+  }
+  const { taskId } = z.object({ taskId: z.string().min(1) }).parse(raw ?? {});
+  const existing = await getCrmTask(actorUserId, { taskId });
+  if (existing.assignee?.id !== actorUserId) {
+    throw new AuthError("Only the assignee can copy this task to Microsoft To Do", "FORBIDDEN", 403);
+  }
+  const current = await prisma.task.findUnique({ where: { id: taskId }, select: { createdAt: true, assigneeId: true } });
+  if (!current) throw new AuthError("Task not found", "NOT_FOUND", 404);
+  await notifyCrmTaskOutboundSafely({
+    taskId,
+    assigneeId: current.assigneeId,
+    createdAt: current.createdAt,
+    reason: "explicit",
+  });
+  return { queued: true as const };
 }

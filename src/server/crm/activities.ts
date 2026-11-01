@@ -4,6 +4,7 @@ import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError } from "@/server/rbac/guards";
 import { dueAtFromDateOnly } from "@/domain/sales-followup";
+import { notifyCrmTaskOutboundSafely } from "@/server/microsoft-365/outbound-queue";
 import { CALL_OUTCOMES } from "@/domain/crm";
 import {
   assertCrmCompanyAccess,
@@ -228,6 +229,12 @@ export async function logCrmActivity(actorUserId: string, raw: unknown) {
       },
     });
     taskId = task.id;
+    await notifyCrmTaskOutboundSafely({
+      taskId: task.id,
+      assigneeId: task.assigneeId,
+      createdAt: task.createdAt,
+      reason: "created",
+    });
   }
 
   // Notes also persist to Note model when type NOTE + company
@@ -319,6 +326,12 @@ export async function createCrmTask(actorUserId: string, raw: unknown) {
     entityId: task.id,
     actorUserId,
     companyId: input.companyId,
+  });
+  await notifyCrmTaskOutboundSafely({
+    taskId: task.id,
+    assigneeId: task.assigneeId,
+    createdAt: task.createdAt,
+    reason: "created",
   });
 
   return { id: task.id };

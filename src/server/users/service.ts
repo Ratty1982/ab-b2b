@@ -3,6 +3,7 @@ import { hashPassword } from "better-auth/crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
+import { notifyCrmTaskOutboundSafely, releaseMappedTasksBeforeUserRemoval } from "@/server/microsoft-365/outbound-queue";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import type { SystemRoleKey } from "@/domain/permissions";
 import { SYSTEM_ROLE_META } from "@/domain/role-permissions";
@@ -896,6 +897,13 @@ export async function deleteStaffUser(actorUserId: string, raw: unknown) {
     }
   }
 
+  const movedTasks = transferToUserId
+    ? await prisma.task.findMany({ where: { assigneeId: id }, select: { id: true, createdAt: true } })
+    : [];
+  if (transferToUserId) {
+    await releaseMappedTasksBeforeUserRemoval(id);
+  }
+
   await prisma.$transaction(async (tx) => {
     if (transferToUserId) {
       await transferStaffOwnershipInTx(tx, existing.id, transferToUserId);
@@ -909,6 +917,18 @@ export async function deleteStaffUser(actorUserId: string, raw: unknown) {
     await tx.userInvitation.deleteMany({ where: { userId: existing.id } });
     await tx.user.delete({ where: { id: existing.id } });
   });
+
+  if (transferToUserId) {
+    for (const task of movedTasks) {
+      // A staff deletion can move many older tasks. That is not an explicit export.
+      await notifyCrmTaskOutboundSafely({
+        taskId: task.id,
+        assigneeId: transferToUserId,
+        createdAt: task.createdAt,
+        reason: "updated",
+      });
+    }
+  }
 
   await recordAuditEvent({
     action: "USER_DELETED",

@@ -19,7 +19,9 @@ import {
   refreshMicrosoftConnection,
   updateMicrosoft365Preferences,
 } from "@/server/microsoft-365/flow";
+import { cancelQueuedOutboundJobs, outboundCounts, retryOutboundJobs } from "@/server/microsoft-365/outbound-prisma";
 import { createPrismaMicrosoft365Store } from "@/server/microsoft-365/prisma-store";
+import { outboundGraphAllowed } from "@/domain/microsoft-todo-outbound";
 
 const store = createPrismaMicrosoft365Store();
 
@@ -61,7 +63,20 @@ function asAuth(error: unknown): never {
 export async function microsoft365StatusFor(userId: string) {
   try {
     const actor = await actorFromProfile(userId);
-    return await getMicrosoft365Status(actor, currentMicrosoft365Gate(), { store });
+    const status = await getMicrosoft365Status(actor, currentMicrosoft365Gate(), { store });
+    const counts = await outboundCounts(userId);
+    return {
+      ...status,
+      outbound: {
+        engineEnabled: outboundGraphAllowed({
+          crmFlag: process.env["MICROSOFT_365_CRM_ENABLED"],
+          outboundFlag: process.env["MICROSOFT_365_TASK_OUTBOUND_ENABLED"],
+        }),
+        pending: counts.pending,
+        failed: counts.failed,
+        needsReview: counts.needsReview,
+      },
+    };
   } catch (error) {
     asAuth(error);
   }
@@ -79,7 +94,23 @@ export async function microsoft365BeginConnect(userId: string, includeCalendar: 
 export async function microsoft365Disconnect(userId: string) {
   try {
     const actor = await actorFromProfile(userId);
-    return await disconnectMicrosoftAccount(actor, currentMicrosoft365Gate(), { store });
+    const status = await disconnectMicrosoftAccount(actor, currentMicrosoft365Gate(), { store });
+    await cancelQueuedOutboundJobs(userId);
+    return status;
+  } catch (error) {
+    asAuth(error);
+  }
+}
+
+export async function microsoft365RetryOutbound(userId: string) {
+  try {
+    const actor = await actorFromProfile(userId);
+    if (!actor.canConnect) {
+      throw new AuthError("Not permitted to retry Microsoft To Do sync", "FORBIDDEN", 403);
+    }
+    const retried = await retryOutboundJobs(userId);
+    const status = await microsoft365StatusFor(userId);
+    return { retried, status };
   } catch (error) {
     asAuth(error);
   }

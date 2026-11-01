@@ -487,6 +487,12 @@ export type Microsoft365Status = {
     connectedAt: string | null;
   };
   health: Microsoft365HealthRow[] | null;
+  outbound?: {
+    engineEnabled: boolean;
+    pending: number;
+    failed: number;
+    needsReview: number;
+  };
 };
 
 const RETURN_NOTICES: Record<Microsoft365ReturnReason, string> = {

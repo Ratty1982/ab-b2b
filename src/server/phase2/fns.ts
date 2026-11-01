@@ -4565,6 +4565,30 @@ export const completeCrmTaskFn = createServerFn({ method: "POST" })
     }
   });
 
+export const patchCrmTaskFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.patchCrmTask(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const exportCrmTaskToMicrosoftFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const followup = await import("@/server/sales-intelligence/followup");
+      return { ok: true as const, data: await followup.exportCrmTaskToMicrosoft(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const rescheduleCrmTaskFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

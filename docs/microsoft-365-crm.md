@@ -1,6 +1,6 @@
 # Microsoft 365 CRM connection
 
-This release connects a salesperson's own Microsoft 365 work account. It does not synchronise tasks or create calendar events. Both stay off until a later release and an operator turns the integration on.
+This release connects a salesperson's own Microsoft 365 work account. Outbound task synchronisation is a separate switch, documented in `docs/microsoft-todo-outbound.md`. It stays off when only `MICROSOFT_365_CRM_ENABLED` is on. This connection does not create Outlook appointments.
 
 The CRM `Task` record remains the authority for customer, opportunity, assignment, and permissions. Microsoft To Do is not a second task system.
 
@@ -77,18 +77,16 @@ CRM → Microsoft 365, for internal users with `tasks.view`. Connecting requires
 
 - Connect Microsoft 365 starts the authorisation-code flow with PKCE. The browser returns to the fixed callback. It is not an open redirect.
 - The page shows the Microsoft display name, email, and connection status. It does not show tokens.
-- Task and calendar switches are saved only. They do not export tasks or create events in this release.
+- Task synchronisation is a preference. It exports tasks only when outbound sync is also enabled. See `docs/microsoft-todo-outbound.md`. Calendar synchronisation still does not create appointments.
 - Outlook Calendar permission is requested only when the user opts in.
 - Disconnect deletes the stored tokens and marks the row revoked. It does not sign the user out of Microsoft 365.
 - Administrators with `admin.access` or `crm.manage` see connection health: staff email, Microsoft email, status, flags, and the last error. Task titles and descriptions are not included.
 
-## Not in this release
+## Not in this connection release
 
-- Creating or updating Microsoft To Do tasks
-- Delta sync, conflict handling, or reassignment sync
+- Inbound or delta sync from Microsoft To Do
 - Outlook appointments
 - A bulk export of existing tasks
-- A second background scheduler
 - Changes to DNS, Coolify domains, Autopart, orders, invoices, or pricing
 
-Do not set `MICROSOFT_365_CRM_ENABLED=true` until the Entra app is registered and a named pilot group is agreed. Connecting an account still does not copy CRM tasks.
+Outbound CRM → To Do behaviour, including why older tasks are not copied at connect time, is in `docs/microsoft-todo-outbound.md`. Do not set `MICROSOFT_365_CRM_ENABLED=true` until the Entra app is registered and a named pilot group is agreed. Leave `MICROSOFT_365_TASK_OUTBOUND_ENABLED` false until that pilot explicitly includes task export.
