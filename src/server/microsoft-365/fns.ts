@@ -10,8 +10,11 @@ import {
   microsoft365BeginConnect,
   microsoft365Disconnect,
   microsoft365RecheckUncertainOutbound,
+  microsoft365RecreateInboundMapping,
+  microsoft365RequestInboundCheck,
   microsoft365RetryOutbound,
   microsoft365StatusFor,
+  microsoft365UnlinkInboundMapping,
   microsoft365UpdatePreferences,
 } from "@/server/microsoft-365/service";
 
@@ -114,6 +117,37 @@ export const updateMicrosoft365PreferencesFn = createServerFn({ method: "POST" }
     try {
       const userId = await requireUserId();
       return { ok: true as const, data: await microsoft365UpdatePreferences(userId, data) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const requestMicrosoftTodoInboundCheckFn = createServerFn({ method: "POST" }).handler(async () => {
+  try {
+    const userId = await requireUserId();
+    return { ok: true as const, data: await microsoft365RequestInboundCheck(userId) };
+  } catch (error) {
+    return toError(error);
+  }
+});
+
+export const unlinkMicrosoftTodoInboundMappingFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => z.object({ mappingId: z.string().min(1) }).parse(data))
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await microsoft365UnlinkInboundMapping(userId, data.mappingId) };
+    } catch (error) {
+      return toError(error);
+    }
+  });
+
+export const recreateMicrosoftTodoInboundMappingFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => z.object({ mappingId: z.string().min(1) }).parse(data))
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      return { ok: true as const, data: await microsoft365RecreateInboundMapping(userId, data.mappingId) };
     } catch (error) {
       return toError(error);
     }

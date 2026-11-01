@@ -42,6 +42,29 @@ function status(partial: Partial<Microsoft365Status> = {}): Microsoft365Status {
         },
       ],
     },
+    inbound: {
+      engineEnabled: false,
+      pending: 0,
+      failed: 0,
+      conflicts: 1,
+      removed: 1,
+      lastInboundSyncAt: null,
+      inboundBaselineAt: null,
+      canReconcile: true,
+      conflictsList: [
+        {
+          mappingId: "map-1",
+          taskId: "task-2",
+          taskTitle: "Chase quote",
+          taskStatus: "OPEN",
+          microsoftTaskId: "ms-2",
+          syncStatus: "REMOVED",
+          lastError: "Microsoft To Do task was deleted or moved out of the dedicated list",
+          updatedAt: "2026-11-01T12:20:00.000Z",
+        },
+      ],
+      syncedFields: ["status (complete/reopen)", "due date", "priority", "title", "description"],
+    },
     ...partial,
   };
 }
@@ -56,6 +79,9 @@ const handlers = {
   onRetryOutbound: () => undefined,
   onRecheckUncertain: () => undefined,
   onApproveUncertainCreate: () => undefined,
+  onRequestInboundCheck: () => undefined,
+  onUnlinkInboundMapping: () => undefined,
+  onRecreateInboundMapping: () => undefined,
 };
 
 describe("Microsoft 365 outbound panel", () => {
@@ -71,16 +97,21 @@ describe("Microsoft 365 outbound panel", () => {
     );
     expect(html).toContain("Alex Sales");
     expect(html).toContain("Outbound engine");
+    expect(html).toContain("Inbound engine");
     expect(html).toContain("Retry failed sync");
     expect(html).toContain("does not authorise another Microsoft create");
     expect(html).toContain("Review uncertain creation");
     expect(html).toContain("Call the workshop");
     expect(html).toContain("Recheck Microsoft To Do");
     expect(html).toContain("Authorise another create");
-    expect(html).toContain("Not known");
+    expect(html).toContain("Inbound from Microsoft To Do");
+    expect(html).toContain("Request inbound sync check");
+    expect(html).toContain("Chase quote");
+    expect(html).toContain("Unlink mapping");
     expect(html).not.toContain("access_token");
     expect(html).not.toContain("refresh_token");
     expect(html).not.toContain("eyJ");
+    expect(html).not.toContain("deltaLink");
   });
 
   it("hides ordinary retry when there are only uncertain review jobs", () => {

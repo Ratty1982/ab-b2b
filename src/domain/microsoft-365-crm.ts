@@ -505,6 +505,27 @@ export type Microsoft365Status = {
       updatedAt: string;
     }>;
   };
+  inbound?: {
+    engineEnabled: boolean;
+    pending: number;
+    failed: number;
+    conflicts: number;
+    removed: number;
+    lastInboundSyncAt: string | null;
+    inboundBaselineAt: string | null;
+    canReconcile: boolean;
+    conflictsList: Array<{
+      mappingId: string;
+      taskId: string | null;
+      taskTitle: string | null;
+      taskStatus: string | null;
+      microsoftTaskId: string;
+      syncStatus: string;
+      lastError: string | null;
+      updatedAt: string;
+    }>;
+    syncedFields: string[];
+  };
 };
 
 const RETURN_NOTICES: Record<Microsoft365ReturnReason, string> = {

@@ -325,6 +325,9 @@ export async function completeMicrosoftCallback(
     lastError: null,
     todoListId: existing?.todoListId ?? null,
     taskOutboundEnabledAt: existing?.taskOutboundEnabledAt ?? null,
+    taskInboundEnabledAt: existing?.taskInboundEnabledAt ?? null,
+    lastInboundSyncAt: existing?.lastInboundSyncAt ?? null,
+    inboundBaselineAt: existing?.inboundBaselineAt ?? null,
     connectedAt: existing?.connectedAt ?? current,
     disconnectedAt: null,
   };
@@ -397,6 +400,7 @@ export async function updateMicrosoft365Preferences(
     taskSyncEnabled: inputPrefs.taskSyncEnabled,
     calendarSyncEnabled: inputPrefs.calendarSyncEnabled,
     taskOutboundEnabledAt: enablingTasks ? current : existing.taskOutboundEnabledAt,
+    taskInboundEnabledAt: enablingTasks ? current : existing.taskInboundEnabledAt,
     lastError: null,
   });
   await record(store, current, actor.userId, existing.id, "PREFERENCES_UPDATED", "Microsoft sync preferences updated");

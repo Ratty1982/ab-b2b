@@ -630,6 +630,8 @@ enum MicrosoftSyncStatus {
   CONFLICT
   SKIPPED
   TOMBSTONED
+  /// Mapped Microsoft To Do task was deleted or moved out of the dedicated list.
+  REMOVED
 }
 
 enum MicrosoftSyncJobStatus {
@@ -3813,6 +3815,12 @@ model MicrosoftAccountConnection {
   todoListId              String?
   /// When the user last turned task sync on. Older unmapped tasks are not exported automatically.
   taskOutboundEnabledAt   DateTime?
+  /// When inbound To Do → CRM processing became eligible for this connection.
+  taskInboundEnabledAt    DateTime?
+  /// Last successful inbound delta round (baseline or incremental).
+  lastInboundSyncAt       DateTime?
+  /// When the inbound baseline finished without applying historical Microsoft edits to CRM.
+  inboundBaselineAt       DateTime?
   connectedAt             DateTime?
   disconnectedAt          DateTime?
   createdAt               DateTime                  @default(now())
@@ -3847,7 +3855,7 @@ model MicrosoftOAuthTransaction {
   @@index([userId, expiresAt])
 }
 
-/// CRM task to one Microsoft To Do task. Unused until outbound sync is enabled.
+/// CRM task to one Microsoft To Do task.
 model MicrosoftTaskMapping {
   id               String              @id @default(cuid())
   taskId           String?
@@ -3858,6 +3866,12 @@ model MicrosoftTaskMapping {
   listId           String
   microsoftTaskId  String
   remoteEtag       String?
+  /// CRM Task.updatedAt ISO when this mapping last agreed with both sides.
+  lastCrmRevision  String?
+  /// Comparable field snapshot used for inbound conflict detection and echo suppression.
+  syncedSnapshot   Json?
+  /// Previous CRM status before a Microsoft completion, used when reopening when possible.
+  priorCrmStatus   String?
   syncStatus       MicrosoftSyncStatus @default(PENDING)
   lastError        String?
   lastSyncedAt     DateTime?

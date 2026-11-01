@@ -90,6 +90,14 @@ function ensureStockScheduler() {
         error: error instanceof Error ? error.message : error,
       });
     });
+  void import("./server/microsoft-365/inbound-scheduler")
+    .then((mod) => mod.startMicrosoftTodoInboundScheduler())
+    .catch((error) => {
+      console.error("[ab:microsoft-todo-inbound]", {
+        event: "INBOUND_SCHEDULER_START_FAILED",
+        error: error instanceof Error ? error.message : error,
+      });
+    });
 }
 
 ensureStockScheduler();

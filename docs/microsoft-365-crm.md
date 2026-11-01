@@ -89,4 +89,4 @@ CRM → Microsoft 365, for internal users with `tasks.view`. Connecting requires
 - A bulk export of existing tasks
 - Changes to DNS, Coolify domains, Autopart, orders, invoices, or pricing
 
-Outbound CRM → To Do behaviour, including why older tasks are not copied at connect time, is in `docs/microsoft-todo-outbound.md`. Do not set `MICROSOFT_365_CRM_ENABLED=true` until the Entra app is registered and a named pilot group is agreed. Leave `MICROSOFT_365_TASK_OUTBOUND_ENABLED` false until that pilot explicitly includes task export.
+Outbound CRM → To Do behaviour, including why older tasks are not copied at connect time, is in `docs/microsoft-todo-outbound.md`. Inbound To Do → CRM behaviour is in `docs/microsoft-todo-inbound.md`. Do not set `MICROSOFT_365_CRM_ENABLED=true` until the Entra app is registered and a named pilot group is agreed. Leave `MICROSOFT_365_TASK_OUTBOUND_ENABLED` and `MICROSOFT_365_TASK_INBOUND_ENABLED` false until that pilot explicitly includes each direction.

@@ -103,7 +103,7 @@ export type OutboundMapping = {
   microsoftUserId: string;
   listId: string;
   microsoftTaskId: string;
-  syncStatus: "PENDING" | "SYNCED" | "FAILED" | "CONFLICT" | "SKIPPED" | "TOMBSTONED";
+  syncStatus: "PENDING" | "SYNCED" | "FAILED" | "CONFLICT" | "SKIPPED" | "TOMBSTONED" | "REMOVED";
   lastError: string | null;
   lastSyncedAt: Date | null;
   deletedAt: Date | null;
