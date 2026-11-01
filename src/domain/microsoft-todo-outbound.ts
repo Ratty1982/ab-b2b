@@ -34,17 +34,39 @@ export function crmTaskReference(taskId: string): string {
 /**
  * Graph task POST is not idempotent. After a timeout, interruption, or HTTP 5xx the remote
  * task may already exist even when a later lookup finds nothing. Those jobs keep
- * `createUncertain` until an operator reviews them. A reviewed job may create once more
- * only after lookup still finds no match. A known remote id is never created again.
+ * `createUncertain` until an operator explicitly authorises one create for that job.
+ * Ordinary "Retry failed sync" must never set that authorisation. A known remote id is
+ * never created again. Recheck-only runs look up and adopt, but never POST.
  */
 export function mayPostMicrosoftTodoCreate(payload: {
   createUncertain?: boolean | undefined;
   reviewed?: boolean | undefined;
+  authorizeCreateOnce?: boolean | undefined;
+  recheckOnly?: boolean | undefined;
   knownMicrosoftTaskId?: string | undefined;
 }): boolean {
   if (payload.knownMicrosoftTaskId) return false;
-  if (payload.createUncertain && !payload.reviewed) return false;
+  if (payload.recheckOnly) return false;
+  if (payload.createUncertain) return payload.authorizeCreateOnce === true;
   return true;
+}
+
+export function isUncertainCreatePayload(payload: {
+  createUncertain?: boolean | undefined;
+}): boolean {
+  return payload.createUncertain === true;
+}
+
+/**
+ * Ordinary "Retry failed sync" may requeue FAILED rows and non-uncertain NEEDS_REVIEW rows.
+ * Jobs marked createUncertain stay on the review workflow only.
+ */
+export function ordinaryRetryIncludesJob(input: {
+  status: string;
+  createUncertain?: boolean | undefined;
+}): boolean {
+  if (input.createUncertain) return false;
+  return input.status === "FAILED" || input.status === "NEEDS_REVIEW";
 }
 
 export function taskRevisionOf(task: Pick<{ updatedAt: Date }, "updatedAt">): string {

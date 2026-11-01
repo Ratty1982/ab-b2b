@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { microsoft365ReturnNotice, type Microsoft365Status } from "@/domain/microsoft-365-crm";
 
 export function Microsoft365Panel({
@@ -13,6 +15,8 @@ export function Microsoft365Panel({
   onCalendarSync,
   onAllowCalendar,
   onRetryOutbound,
+  onRecheckUncertain,
+  onApproveUncertainCreate,
 }: {
   status: Microsoft365Status;
   noticeCode?: string | undefined;
@@ -26,10 +30,18 @@ export function Microsoft365Panel({
   onCalendarSync: (value: boolean) => void;
   onAllowCalendar: () => void;
   onRetryOutbound: () => void;
+  onRecheckUncertain: (jobId: string) => void;
+  onApproveUncertainCreate: (jobId: string) => void;
 }) {
   const notice = microsoft365ReturnNotice(noticeCode);
   const connection = status.connection;
   const connected = connection?.status === "CONNECTED";
+  const uncertainJobs = status.outbound?.uncertainJobs ?? [];
+  const ordinaryRetryAvailable =
+    (status.outbound?.failed ?? 0) > 0 ||
+    (status.outbound?.needsReview ?? 0) > uncertainJobs.length;
+  const [confirmJobId, setConfirmJobId] = useState<string | null>(null);
+  const [ackDuplicate, setAckDuplicate] = useState(false);
   return (
     <div className="mx-4 my-6 max-w-3xl space-y-4 sm:mx-6">
       {notice ? (
@@ -141,7 +153,7 @@ export function Microsoft365Panel({
             <dd>{status.outbound?.needsReview ?? 0}</dd>
           </div>
         </dl>
-        {(status.outbound?.failed ?? 0) + (status.outbound?.needsReview ?? 0) > 0 ? (
+        {ordinaryRetryAvailable ? (
           <button
             type="button"
             disabled={busy || !status.canConnect}
@@ -151,6 +163,10 @@ export function Microsoft365Panel({
             Retry failed sync
           </button>
         ) : null}
+        <p className="mt-2 text-[12px] text-steel">
+          Retry failed sync retries ordinary failures only. It does not authorise another Microsoft create after an
+          uncertain outcome.
+        </p>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -180,6 +196,109 @@ export function Microsoft365Panel({
           </button>
         ) : null}
       </section>
+
+      {uncertainJobs.length > 0 ? (
+        <section className="rounded-md border border-border p-4">
+          <h2 className="font-display text-sm font-semibold uppercase tracking-tight">Review uncertain creation</h2>
+          <p className="mt-2 text-[12px] text-steel">
+            Microsoft may already have created these tasks after a timeout or interruption. Recheck looks for an
+            existing To Do item. Approving another create requires an explicit acknowledgement and CRM manager or
+            administrator permission.
+          </p>
+          <ul className="mt-4 space-y-4">
+            {uncertainJobs.map((job) => (
+              <li key={job.jobId} className="rounded-md border border-border p-3 text-sm">
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-steel">CRM task</dt>
+                    <dd>{job.taskTitle || job.taskId}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Salesperson</dt>
+                    <dd>{job.assigneeName || job.assigneeEmail || "—"}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-steel">Last error</dt>
+                    <dd>{job.lastError || "Microsoft To Do create needs review"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-steel">Known Microsoft task id</dt>
+                    <dd>{job.knownMicrosoftTaskId || "Not known"}</dd>
+                  </div>
+                </dl>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || !status.canConnect || !status.outbound?.engineEnabled}
+                    onClick={() => onRecheckUncertain(job.jobId)}
+                    className="h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+                  >
+                    Recheck Microsoft To Do
+                  </button>
+                  {status.outbound?.canApproveUncertainCreate ? (
+                    <button
+                      type="button"
+                      disabled={busy || !status.outbound.engineEnabled}
+                      onClick={() => {
+                        setConfirmJobId(job.jobId);
+                        setAckDuplicate(false);
+                      }}
+                      className="h-10 rounded-md border border-border px-4 text-[13px] font-bold disabled:opacity-50"
+                    >
+                      Authorise another create
+                    </button>
+                  ) : null}
+                </div>
+                {confirmJobId === job.jobId ? (
+                  <div className="mt-3 space-y-3 rounded-md border border-border bg-muted/40 p-3">
+                    <p className="text-[12px] text-steel">
+                      Microsoft may already have created the original task. Another create may produce a duplicate in
+                      To Do.
+                    </p>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={ackDuplicate}
+                        onChange={(event) => setAckDuplicate(event.target.checked)}
+                      />
+                      <span>
+                        I understand Microsoft may already have created this task and that another create may cause a
+                        duplicate.
+                      </span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy || !ackDuplicate}
+                        onClick={() => {
+                          onApproveUncertainCreate(job.jobId);
+                          setConfirmJobId(null);
+                          setAckDuplicate(false);
+                        }}
+                        className="h-10 rounded-md bg-primary px-4 text-[13px] font-bold text-primary-foreground disabled:opacity-50"
+                      >
+                        Confirm create authorisation
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          setConfirmJobId(null);
+                          setAckDuplicate(false);
+                        }}
+                        className="h-10 rounded-md border border-border px-4 text-[13px] font-bold"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {status.health ? (
         <section className="rounded-md border border-border p-4">

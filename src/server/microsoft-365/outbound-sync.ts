@@ -28,13 +28,30 @@ import {
 
 export type OutboundJobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "NEEDS_REVIEW";
 
+export type OutboundCreateApproval = {
+  approvedByUserId: string;
+  approvedAt: string;
+  jobId: string;
+  taskId: string;
+  connectionId: string;
+  /** CRM Task.updatedAt at approval time. A newer revision invalidates the one-time create. */
+  taskRevision: string;
+  acknowledgedDuplicateRisk: true;
+};
+
 export type OutboundJobPayload = {
   taskId: string;
   explicit?: boolean;
   release?: boolean;
+  /** Allows one recreate after mapped-task 404 for ordinary failed retries. Never authorises uncertain create. */
   reviewed?: boolean;
-  /** Set after an uncertain Graph create. Blocks automatic POST until reviewed. */
+  /** Set after an uncertain Graph create. Blocks automatic POST until authorizeCreateOnce. */
   createUncertain?: boolean;
+  /** One-time, job-scoped authorisation to POST after uncertain create review. */
+  authorizeCreateOnce?: boolean;
+  /** Lookup/adopt only. Never authorises a Graph create. */
+  recheckOnly?: boolean;
+  createApproval?: OutboundCreateApproval;
   /** Remote id known after Graph accepted a create but the local mapping write failed. */
   knownMicrosoftTaskId?: string;
   /** CRM Task.updatedAt when this job last observed the row. */
@@ -325,10 +342,32 @@ function uncertainCreate(job: OutboundJob, now: Date, message: string, knownMicr
     requeue(job, now, message, null, "NEEDS_REVIEW"),
     {
       createUncertain: true,
+      authorizeCreateOnce: false,
+      recheckOnly: false,
       reviewed: false,
       ...(knownMicrosoftTaskId ? { knownMicrosoftTaskId } : {}),
     },
   );
+}
+
+function clearOneTimeCreateAuth(payload: OutboundJobPayload): OutboundJobPayload {
+  const next = { ...payload };
+  delete next.authorizeCreateOnce;
+  delete next.createApproval;
+  delete next.recheckOnly;
+  return next;
+}
+
+function approvalAllowsCreate(job: OutboundJob, liveTaskRevision: string): boolean {
+  const approval = job.payload.createApproval;
+  if (!job.payload.authorizeCreateOnce || !approval) return false;
+  if (job.payload.revisionDirty) return false;
+  if (approval.jobId !== job.id) return false;
+  if (approval.taskId !== job.payload.taskId) return false;
+  if (approval.connectionId !== job.connectionId) return false;
+  if (approval.acknowledgedDuplicateRisk !== true) return false;
+  if (approval.taskRevision !== liveTaskRevision) return false;
+  return true;
 }
 
 export async function processOutboundJob(job: OutboundJob, runtime: OutboundRuntime): Promise<void> {
@@ -408,7 +447,12 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
   const existingId =
     (mapping?.microsoftTaskId && mapping.listId === list.listId ? mapping.microsoftTaskId : null) ??
     knownId;
-  const allowCreate = mode === "sync" && mayPostMicrosoftTodoCreate(job.payload);
+  const createAuthorised =
+    !job.payload.createUncertain || approvalAllowsCreate(job, processedRevision);
+  const allowCreate =
+    mode === "sync" &&
+    createAuthorised &&
+    mayPostMicrosoftTodoCreate(job.payload);
 
   const write = async (microsoftTaskId: string | null, canCreate: boolean): Promise<{ id: string } | { held: OutboundJob } | { absent: true }> => {
     if (!microsoftTaskId) {
@@ -427,8 +471,21 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
       }
       if (found.id) microsoftTaskId = found.id;
       else if (!canCreate) {
-        if (job.payload.createUncertain && !job.payload.reviewed) {
-          return { held: uncertainCreate(job, now, "Microsoft To Do create remains uncertain until reviewed") };
+        if (job.payload.createUncertain) {
+          return {
+            held: withPayload(
+              requeue(job, now, job.payload.recheckOnly
+                ? "Microsoft To Do recheck found no matching task"
+                : "Microsoft To Do create remains uncertain until an explicit review authorises another create", null, "NEEDS_REVIEW"),
+              {
+                createUncertain: true,
+                authorizeCreateOnce: false,
+                recheckOnly: false,
+                reviewed: false,
+                ...(job.payload.knownMicrosoftTaskId ? { knownMicrosoftTaskId: job.payload.knownMicrosoftTaskId } : {}),
+              },
+            ),
+          };
         }
         return { absent: true };
       }
@@ -498,24 +555,43 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
 
   const written = await write(mode === "sync" && !active && !knownId ? null : existingId, allowCreate);
   if ("absent" in written) {
-    await finish({ ...job, status: "SUCCEEDED", leaseOwner: null, leaseUntil: null, lastError: null, updatedAt: now });
+    await finish({
+      ...job,
+      status: "SUCCEEDED",
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: null,
+      updatedAt: now,
+      payload: clearOneTimeCreateAuth(job.payload),
+    });
     return;
   }
   if ("held" in written) {
-    await finish(written.held);
-    if (written.held.status === "NEEDS_REVIEW" || written.held.status === "FAILED") {
+    // One-time create approval and recheck-only flags are consumed on this attempt.
+    const held: OutboundJob =
+      job.payload.authorizeCreateOnce || job.payload.recheckOnly || written.held.payload.createUncertain
+        ? {
+            ...written.held,
+            payload: {
+              ...clearOneTimeCreateAuth(written.held.payload),
+              ...(written.held.payload.createUncertain || job.payload.createUncertain ? { createUncertain: true } : {}),
+            },
+          }
+        : written.held;
+    await finish(held);
+    if (held.status === "NEEDS_REVIEW" || held.status === "FAILED") {
       await runtime.store.appendEvent({
         userId: connection.userId,
         connectionId: connection.id,
-        kind: written.held.status === "NEEDS_REVIEW" ? "TODO_NEEDS_REVIEW" : "TODO_FAILED",
-        message: written.held.lastError ?? "Microsoft To Do sync needs attention",
+        kind: held.status === "NEEDS_REVIEW" ? "TODO_NEEDS_REVIEW" : "TODO_FAILED",
+        message: held.lastError ?? "Microsoft To Do sync needs attention",
         createdAt: now,
       });
       if (mapping) {
         await runtime.store.saveMapping({
           ...mapping,
-          syncStatus: written.held.status === "NEEDS_REVIEW" ? "CONFLICT" : "FAILED",
-          lastError: written.held.lastError,
+          syncStatus: held.status === "NEEDS_REVIEW" ? "CONFLICT" : "FAILED",
+          lastError: held.lastError,
         });
       }
     }
@@ -638,13 +714,13 @@ export async function processOutboundJob(job: OutboundJob, runtime: OutboundRunt
     leaseUntil: null,
     lastError: null,
     updatedAt: now,
-    payload: {
+    payload: clearOneTimeCreateAuth({
       taskId: job.payload.taskId,
       knownMicrosoftTaskId: written.id,
       createUncertain: false,
       revisionDirty: false,
       taskRevision: processedRevision,
-    },
+    }),
   });
 }
 
@@ -679,6 +755,24 @@ export function outboundDedupeKey(userId: string, taskId: string, release: boole
   return `todo:${userId}:${taskId}:${release ? "release" : "upsert"}`;
 }
 
+function keepOneTimeCreateApproval(
+  existing: OutboundJobPayload,
+  next: OutboundJobPayload,
+  options?: { markDirty?: boolean },
+): boolean {
+  if (!existing.createApproval || existing.authorizeCreateOnce !== true) return false;
+  // Concurrent CRM edits and dirty running jobs must re-enter explicit review.
+  if (options?.markDirty || existing.revisionDirty || next.revisionDirty) return false;
+  if (
+    existing.createApproval.taskRevision &&
+    next.taskRevision &&
+    existing.createApproval.taskRevision !== next.taskRevision
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function mergeOutboundPayload(
   existing: OutboundJobPayload,
   next: OutboundJobPayload,
@@ -689,10 +783,14 @@ export function mergeOutboundPayload(
     ...(existing.explicit || next.explicit ? { explicit: true } : {}),
     ...(next.release || existing.release ? { release: Boolean(next.release || existing.release) } : {}),
     ...(existing.createUncertain ? { createUncertain: true } : {}),
+    // One-time create approval is never introduced by a concurrent enqueue.
     ...(existing.knownMicrosoftTaskId ? { knownMicrosoftTaskId: existing.knownMicrosoftTaskId } : {}),
     ...(next.knownMicrosoftTaskId ? { knownMicrosoftTaskId: next.knownMicrosoftTaskId } : {}),
     ...(next.taskRevision || existing.taskRevision ? { taskRevision: next.taskRevision ?? existing.taskRevision } : {}),
     ...(options?.markDirty || existing.revisionDirty || next.revisionDirty ? { revisionDirty: true } : {}),
     ...(existing.reviewed && !options?.markDirty ? { reviewed: true } : {}),
+    ...(keepOneTimeCreateApproval(existing, next, options)
+      ? { createApproval: existing.createApproval, authorizeCreateOnce: true as const }
+      : {}),
   };
 }

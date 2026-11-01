@@ -4,7 +4,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/infra/database/client";
-import type { OutboundTaskSnapshot } from "@/domain/microsoft-todo-outbound";
+import { ordinaryRetryIncludesJob, type OutboundTaskSnapshot } from "@/domain/microsoft-todo-outbound";
 import {
   mergeOutboundPayload,
   outboundDedupeKey,
@@ -18,15 +18,42 @@ import {
 function asPayload(value: Prisma.JsonValue | null): OutboundJobPayload {
   const row = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const taskId = typeof row["taskId"] === "string" ? row["taskId"] : "";
+  const approvalRaw = row["createApproval"];
+  const approval =
+    approvalRaw && typeof approvalRaw === "object" && !Array.isArray(approvalRaw)
+      ? (approvalRaw as Record<string, unknown>)
+      : null;
   return {
     taskId,
     ...(row["explicit"] === true ? { explicit: true } : {}),
     ...(row["release"] === true ? { release: true } : {}),
     ...(row["reviewed"] === true ? { reviewed: true } : {}),
     ...(row["createUncertain"] === true ? { createUncertain: true } : {}),
+    ...(row["authorizeCreateOnce"] === true ? { authorizeCreateOnce: true } : {}),
+    ...(row["recheckOnly"] === true ? { recheckOnly: true } : {}),
     ...(typeof row["knownMicrosoftTaskId"] === "string" ? { knownMicrosoftTaskId: row["knownMicrosoftTaskId"] } : {}),
     ...(typeof row["taskRevision"] === "string" ? { taskRevision: row["taskRevision"] } : {}),
     ...(row["revisionDirty"] === true ? { revisionDirty: true } : {}),
+    ...(approval &&
+    typeof approval["approvedByUserId"] === "string" &&
+    typeof approval["approvedAt"] === "string" &&
+    typeof approval["jobId"] === "string" &&
+    typeof approval["taskId"] === "string" &&
+    typeof approval["connectionId"] === "string" &&
+    typeof approval["taskRevision"] === "string" &&
+    approval["acknowledgedDuplicateRisk"] === true
+      ? {
+          createApproval: {
+            approvedByUserId: approval["approvedByUserId"],
+            approvedAt: approval["approvedAt"],
+            jobId: approval["jobId"],
+            taskId: approval["taskId"],
+            connectionId: approval["connectionId"],
+            taskRevision: approval["taskRevision"],
+            acknowledgedDuplicateRisk: true as const,
+          },
+        }
+      : {}),
   };
 }
 
@@ -325,12 +352,25 @@ export async function enqueueOutboundJob(input: {
   return "requeued";
 }
 
+/**
+ * Ordinary retry for FAILED jobs and non-uncertain NEEDS_REVIEW rows.
+ * Never sets authorizeCreateOnce and never retries createUncertain jobs.
+ */
 export async function retryOutboundJobs(userId: string): Promise<number> {
   const rows = await prisma.microsoftSyncJob.findMany({
     where: { userId, kind: "TODO_OUTBOUND", status: { in: ["FAILED", "NEEDS_REVIEW"] } },
   });
+  let retried = 0;
   for (const row of rows) {
     const payload = asPayload(row.payload);
+    if (!ordinaryRetryIncludesJob({ status: row.status, createUncertain: payload.createUncertain })) continue;
+    const nextPayload: OutboundJobPayload = {
+      ...payload,
+      ...(row.status === "FAILED" ? { reviewed: true } : {}),
+    };
+    delete nextPayload.authorizeCreateOnce;
+    delete nextPayload.createApproval;
+    delete nextPayload.recheckOnly;
     await prisma.microsoftSyncJob.update({
       where: { id: row.id },
       data: {
@@ -339,11 +379,140 @@ export async function retryOutboundJobs(userId: string): Promise<number> {
         leaseOwner: null,
         leaseUntil: null,
         lastError: null,
-        payload: { ...payload, reviewed: true },
+        payload: nextPayload,
       },
     });
+    retried += 1;
   }
-  return rows.length;
+  return retried;
+}
+
+export type UncertainOutboundJobView = {
+  jobId: string;
+  taskId: string;
+  taskTitle: string | null;
+  assigneeName: string | null;
+  assigneeEmail: string | null;
+  lastError: string | null;
+  knownMicrosoftTaskId: string | null;
+  connectionId: string;
+  updatedAt: string;
+};
+
+export async function listUncertainOutboundJobs(userId: string): Promise<UncertainOutboundJobView[]> {
+  const rows = await prisma.microsoftSyncJob.findMany({
+    where: { userId, kind: "TODO_OUTBOUND", status: "NEEDS_REVIEW" },
+    orderBy: { updatedAt: "desc" },
+    take: 50,
+  });
+  const uncertain = rows.filter((row) => asPayload(row.payload).createUncertain);
+  const taskIds = uncertain.map((row) => asPayload(row.payload).taskId).filter(Boolean);
+  const tasks = taskIds.length
+    ? await prisma.task.findMany({
+        where: { id: { in: taskIds } },
+        select: {
+          id: true,
+          title: true,
+          assignee: { select: { name: true, email: true } },
+        },
+      })
+    : [];
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  return uncertain.map((row) => {
+    const payload = asPayload(row.payload);
+    const task = byId.get(payload.taskId);
+    return {
+      jobId: row.id,
+      taskId: payload.taskId,
+      taskTitle: task?.title ?? null,
+      assigneeName: task?.assignee?.name ?? null,
+      assigneeEmail: task?.assignee?.email ?? null,
+      lastError: row.lastError,
+      knownMicrosoftTaskId: payload.knownMicrosoftTaskId ?? null,
+      connectionId: row.connectionId,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  });
+}
+
+export async function prepareUncertainRecheckJob(userId: string, jobId: string): Promise<OutboundJob> {
+  const row = await prisma.microsoftSyncJob.findFirst({
+    where: { id: jobId, userId, kind: "TODO_OUTBOUND", status: "NEEDS_REVIEW" },
+  });
+  if (!row) throw new Error("Uncertain Microsoft To Do job was not found");
+  const payload = asPayload(row.payload);
+  if (!payload.createUncertain) throw new Error("That job is not waiting for uncertain create review");
+  const nextPayload: OutboundJobPayload = {
+    ...payload,
+    recheckOnly: true,
+    authorizeCreateOnce: false,
+  };
+  delete nextPayload.createApproval;
+  const updated = await prisma.microsoftSyncJob.update({
+    where: { id: row.id },
+    data: {
+      status: "RUNNING",
+      attempt: Math.max(row.attempt, 1),
+      leaseOwner: `recheck-${userId}`,
+      leaseUntil: new Date(Date.now() + 120_000),
+      lastError: null,
+      payload: nextPayload,
+    },
+  });
+  return mapJob(updated);
+}
+
+export async function approveUncertainOutboundCreate(input: {
+  userId: string;
+  jobId: string;
+  acknowledgedDuplicateRisk: true;
+}): Promise<OutboundJob> {
+  const row = await prisma.microsoftSyncJob.findFirst({
+    where: { id: input.jobId, userId: input.userId, kind: "TODO_OUTBOUND", status: "NEEDS_REVIEW" },
+  });
+  if (!row) throw new Error("Uncertain Microsoft To Do job was not found");
+  const payload = asPayload(row.payload);
+  if (!payload.createUncertain) throw new Error("That job is not waiting for uncertain create review");
+  const connection = await prisma.microsoftAccountConnection.findUnique({ where: { id: row.connectionId } });
+  if (!connection || connection.userId !== input.userId || connection.status !== "CONNECTED") {
+    throw new Error("The Microsoft connection for this job is no longer available");
+  }
+  const task = await prisma.task.findUnique({ where: { id: payload.taskId } });
+  if (!task) throw new Error("The CRM task for this job no longer exists");
+  if (task.assigneeId !== input.userId) {
+    throw new Error("The CRM task is no longer assigned to this Microsoft account");
+  }
+  const taskRevision = task.updatedAt.toISOString();
+  const approval = {
+    approvedByUserId: input.userId,
+    approvedAt: new Date().toISOString(),
+    jobId: row.id,
+    taskId: payload.taskId,
+    connectionId: row.connectionId,
+    taskRevision,
+    acknowledgedDuplicateRisk: true as const,
+  };
+  const nextPayload: OutboundJobPayload = {
+    ...payload,
+    authorizeCreateOnce: true,
+    recheckOnly: false,
+    createApproval: approval,
+    taskRevision,
+    revisionDirty: false,
+  };
+  const updated = await prisma.microsoftSyncJob.update({
+    where: { id: row.id },
+    data: {
+      status: "QUEUED",
+      runAfter: new Date(),
+      attempt: 0,
+      leaseOwner: null,
+      leaseUntil: null,
+      lastError: null,
+      payload: nextPayload,
+    },
+  });
+  return mapJob(updated);
 }
 
 export async function outboundCounts(userId: string): Promise<{ pending: number; failed: number; needsReview: number }> {

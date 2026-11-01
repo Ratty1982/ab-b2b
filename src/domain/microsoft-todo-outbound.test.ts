@@ -15,6 +15,7 @@ import {
   microsoftDueDateTime,
   microsoftSyncIndicator,
   microsoftTaskBody,
+  ordinaryRetryIncludesJob,
   outboundGraphAllowed,
   outboundRetryDelayMs,
   taskRevisionOf,
@@ -34,8 +35,12 @@ describe("Microsoft To Do outbound flags", () => {
 
   it("blocks automatic Graph create after an uncertain outcome", () => {
     expect(mayPostMicrosoftTodoCreate({ createUncertain: true })).toBe(false);
-    expect(mayPostMicrosoftTodoCreate({ createUncertain: true, reviewed: true })).toBe(true);
-    expect(mayPostMicrosoftTodoCreate({ knownMicrosoftTaskId: "ms-1", reviewed: true })).toBe(false);
+    expect(mayPostMicrosoftTodoCreate({ createUncertain: true, reviewed: true })).toBe(false);
+    expect(mayPostMicrosoftTodoCreate({ createUncertain: true, authorizeCreateOnce: true })).toBe(true);
+    expect(mayPostMicrosoftTodoCreate({ createUncertain: true, recheckOnly: true, authorizeCreateOnce: true })).toBe(false);
+    expect(mayPostMicrosoftTodoCreate({ knownMicrosoftTaskId: "ms-1", authorizeCreateOnce: true })).toBe(false);
+    expect(ordinaryRetryIncludesJob({ status: "NEEDS_REVIEW", createUncertain: true })).toBe(false);
+    expect(ordinaryRetryIncludesJob({ status: "FAILED" })).toBe(true);
     expect(taskRevisionOf({ updatedAt: new Date("2026-10-15T00:00:00.000Z") })).toBe("2026-10-15T00:00:00.000Z");
   });
 });

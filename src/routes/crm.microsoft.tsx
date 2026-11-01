@@ -6,9 +6,11 @@ import { Microsoft365Panel } from "@/components/crm/Microsoft365Panel";
 import { assertMicrosoftAuthorizeUrl, type Microsoft365Status } from "@/domain/microsoft-365-crm";
 import { guardStaffPage } from "@/lib/guard-staff-page";
 import {
+  approveMicrosoftTodoUncertainCreateFn,
   beginMicrosoft365ConnectFn,
   disconnectMicrosoft365Fn,
   getMicrosoft365StatusFn,
+  recheckMicrosoftTodoUncertainFn,
   retryMicrosoftTodoOutboundFn,
   updateMicrosoft365PreferencesFn,
 } from "@/server/microsoft-365/fns";
@@ -128,6 +130,24 @@ function CrmMicrosoftPage() {
           onRetryOutbound={() => {
             setBusy(true);
             void retryMicrosoftTodoOutboundFn().then((result) => {
+              setBusy(false);
+              if (!result.ok) setError(result.error);
+              load();
+            });
+          }}
+          onRecheckUncertain={(jobId) => {
+            setBusy(true);
+            void recheckMicrosoftTodoUncertainFn({ data: { jobId } }).then((result) => {
+              setBusy(false);
+              if (!result.ok) setError(result.error);
+              load();
+            });
+          }}
+          onApproveUncertainCreate={(jobId) => {
+            setBusy(true);
+            void approveMicrosoftTodoUncertainCreateFn({
+              data: { jobId, acknowledgedDuplicateRisk: true },
+            }).then((result) => {
               setBusy(false);
               if (!result.ok) setError(result.error);
               load();

@@ -458,14 +458,128 @@ describe("outbound Microsoft To Do sync", () => {
     expect(state.jobs[0]?.payload.knownMicrosoftTaskId).toBe("ms-1");
     expect(state.mapping).toBeNull();
 
-    state.jobs = [job({ payload: { taskId: "task-1", createUncertain: true, knownMicrosoftTaskId: "ms-1", reviewed: true } })];
+    const approvedPayload = {
+      taskId: "task-1",
+      createUncertain: true,
+      knownMicrosoftTaskId: "ms-1",
+      authorizeCreateOnce: true,
+      createApproval: {
+        approvedByUserId: "user-a",
+        approvedAt: NOW.toISOString(),
+        jobId: "job-1",
+        taskId: "task-1",
+        connectionId: "conn-a",
+        taskRevision: "2026-10-15T00:00:00.000Z",
+        acknowledgedDuplicateRisk: true as const,
+      },
+    };
+    state.jobs = [job({ payload: approvedPayload })];
     const retry = happyGraph();
-    await processOutboundJob(job({ payload: { taskId: "task-1", createUncertain: true, knownMicrosoftTaskId: "ms-1", reviewed: true } }), runtime(store, retry.graph));
+    await processOutboundJob(job({ payload: approvedPayload }), runtime(store, retry.graph));
     expect(retry.calls.some((call) => call.method === "POST" && call.path.endsWith("/tasks"))).toBe(false);
     expect(retry.calls.some((call) => call.method === "PATCH")).toBe(true);
     expect(state.mapping?.microsoftTaskId).toBe("ms-1");
     expect(state.jobs[0]?.status).toBe("SUCCEEDED");
     expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/tasks"))).toHaveLength(1);
+  });
+
+  it("does not treat ordinary reviewed retry as authorisation for an uncertain create", async () => {
+    const { state, store } = memory();
+    state.jobs = [job({ payload: { taskId: "task-1", createUncertain: true, reviewed: true } })];
+    let posts = 0;
+    const { graph } = graphOf((method, path) => {
+      if (method === "GET" && path.includes("/tasks")) return { status: 200, json: { value: [] } };
+      if (method === "POST" && path.endsWith("/tasks")) {
+        posts += 1;
+        return { status: 201, json: { id: "ms-dup" } };
+      }
+      return { status: 200, json: {} };
+    });
+    await processOutboundJob(job({ payload: { taskId: "task-1", createUncertain: true, reviewed: true } }), runtime(store, graph));
+    expect(posts).toBe(0);
+    expect(state.jobs[0]?.status).toBe("NEEDS_REVIEW");
+    expect(state.jobs[0]?.payload.authorizeCreateOnce).not.toBe(true);
+  });
+
+  it("posts once after explicit job-scoped create approval matching the live revision", async () => {
+    const { state, store } = memory();
+    const approvedPayload = {
+      taskId: "task-1",
+      createUncertain: true,
+      authorizeCreateOnce: true,
+      createApproval: {
+        approvedByUserId: "user-a",
+        approvedAt: NOW.toISOString(),
+        jobId: "job-1",
+        taskId: "task-1",
+        connectionId: "conn-a",
+        taskRevision: "2026-10-15T00:00:00.000Z",
+        acknowledgedDuplicateRisk: true as const,
+      },
+    };
+    state.jobs = [job({ payload: approvedPayload })];
+    const { graph, calls } = happyGraph();
+    await processOutboundJob(job({ payload: approvedPayload }), runtime(store, graph));
+    expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/tasks"))).toHaveLength(1);
+    expect(state.jobs[0]?.status).toBe("SUCCEEDED");
+    expect(state.mapping?.microsoftTaskId).toBe("ms-1");
+
+    const stale = memory();
+    const stalePayload = {
+      ...approvedPayload,
+      createApproval: {
+        ...approvedPayload.createApproval,
+        taskRevision: "2026-10-14T00:00:00.000Z",
+      },
+    };
+    stale.state.jobs = [job({ payload: stalePayload })];
+    let posts = 0;
+    const staleGraph = graphOf((method, path) => {
+      if (method === "GET" && path.includes("/tasks")) return { status: 200, json: { value: [] } };
+      if (method === "POST" && path.endsWith("/tasks")) {
+        posts += 1;
+        return { status: 201, json: { id: "ms-stale" } };
+      }
+      return { status: 200, json: {} };
+    });
+    await processOutboundJob(job({ payload: stalePayload }), runtime(stale.store, staleGraph.graph));
+    expect(posts).toBe(0);
+    expect(stale.state.jobs[0]?.status).toBe("NEEDS_REVIEW");
+  });
+
+  it("rechecks without posting when recheckOnly is set", async () => {
+    const missing = memory();
+    missing.state.jobs = [job({ payload: { taskId: "task-1", createUncertain: true, recheckOnly: true } })];
+    let posts = 0;
+    const missingGraph = graphOf((method, path) => {
+      if (method === "GET" && path.includes("/tasks")) return { status: 200, json: { value: [] } };
+      if (method === "POST" && path.endsWith("/tasks")) {
+        posts += 1;
+        return { status: 201, json: { id: "ms-dup" } };
+      }
+      return { status: 200, json: {} };
+    });
+    await processOutboundJob(job({ payload: { taskId: "task-1", createUncertain: true, recheckOnly: true } }), runtime(missing.store, missingGraph.graph));
+    expect(posts).toBe(0);
+    expect(missing.state.jobs[0]?.status).toBe("NEEDS_REVIEW");
+
+    const found = memory();
+    found.state.jobs = [job({ payload: { taskId: "task-1", createUncertain: true, recheckOnly: true } })];
+    const foundGraph = graphOf((method, path) => {
+      if (method === "GET" && path.includes("/tasks")) {
+        return { status: 200, json: { value: [{ id: "ms-found", body: { content: `CRM reference: ${crmTaskReference("task-1")}` } }] } };
+      }
+      if (method === "POST" && path.endsWith("/tasks")) {
+        posts += 1;
+        return { status: 201, json: { id: "ms-dup" } };
+      }
+      if (method === "PATCH") return { status: 200, json: { id: "ms-found" } };
+      return { status: 201, json: { id: "link-1" } };
+    });
+    await processOutboundJob(job({ payload: { taskId: "task-1", createUncertain: true, recheckOnly: true } }), runtime(found.store, foundGraph.graph));
+    expect(posts).toBe(0);
+    expect(found.state.mapping?.microsoftTaskId).toBe("ms-found");
+    expect(found.state.jobs[0]?.status).toBe("SUCCEEDED");
   });
 
   it("leaves the latest CRM revision queued after a successful write of an older revision", async () => {
