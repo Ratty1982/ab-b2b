@@ -837,14 +837,13 @@ export async function loadUnifiedRefreshStatus(
       select: { completedAt: true },
     }),
   ]);
-  const stamps = [
-    settings?.lastSuccess504At ?? null,
-    settings?.lastSuccessTrm21qcAt ?? null,
-    batch?.completedAt ?? null,
-    run?.completedAt ?? null,
-  ].filter((value): value is Date => value instanceof Date);
-  const latest = stamps.length
-    ? new Date(Math.max(...stamps.map((value) => value.getTime())))
+  // Ongoing freshness is 504/TRM21QC only. Historical 561L/SLRB import times must not
+  // present as a successful ongoing refresh when the feeds have not run yet.
+  const ongoingStamps = [settings?.lastSuccess504At ?? null, settings?.lastSuccessTrm21qcAt ?? null].filter(
+    (value): value is Date => value instanceof Date,
+  );
+  const latest = ongoingStamps.length
+    ? new Date(Math.max(...ongoingStamps.map((value) => value.getTime())))
     : null;
   return {
     ongoing504At: settings?.lastSuccess504At?.toISOString() ?? null,
