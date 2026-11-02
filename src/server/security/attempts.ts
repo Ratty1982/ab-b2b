@@ -6,7 +6,9 @@ import { securityLimiter, type FixedWindowLimiter } from "@/server/security/rate
 export type AttemptDecision = {
   allowed: boolean;
   accountKey: string | null;
-  ip: string;
+  /** Hash of the sign-in cookie for authenticator attempts. Not an IP address. */
+  clientKey: string | null;
+  trustedAddress: null;
 };
 
 function allow(decision: { allowed: boolean }[]): boolean {
@@ -15,7 +17,8 @@ function allow(decision: { allowed: boolean }[]): boolean {
 
 /**
  * Limit credential attempts before a password or reset token is checked.
- * An unknown IP is not used as a shared bucket.
+ * Forwarding headers are ignored. A missing address does not remove the
+ * per-account, per-token, or per-cookie limit.
  */
 export function assessAttempt(input: {
   scope: AttemptScope;
@@ -26,10 +29,12 @@ export function assessAttempt(input: {
   pepper?: string;
 }): AttemptDecision {
   const limiter = input.limiter ?? securityLimiter;
-  const ip = clientAddress(input.headers);
+  const address = clientAddress(input.headers);
   const subject = input.subject?.trim() ?? "";
   const pepper = input.pepper ?? securityPepper();
   const accountKey = subject ? securityAccountKey(subject, pepper) : null;
+  const cookie = input.headers.get("cookie")?.trim() ?? "";
+  const clientKey = cookie ? securityAccountKey(cookie, pepper) : null;
   const checks = [];
 
   if (input.scope === "login") {
@@ -37,41 +42,28 @@ export function assessAttempt(input: {
       const rule = SECURITY_POLICY.loginAccount;
       checks.push(limiter.take(`login:account:${accountKey}`, rule.limit, rule.windowMs));
     }
-    if (ip !== "unknown") {
-      const rule = SECURITY_POLICY.loginIp;
-      checks.push(limiter.take(`login:ip:${ip}`, rule.limit, rule.windowMs));
-    }
   } else if (input.scope === "mfa") {
-    const rule = SECURITY_POLICY.mfaIp;
-    const cookie = input.headers.get("cookie")?.trim() ?? "";
-    const bucket =
-      ip !== "unknown"
-        ? `mfa:ip:${ip}`
-        : cookie
-          ? `mfa:cookie:${securityAccountKey(cookie, pepper)}`
-          : null;
-    if (bucket) checks.push(limiter.take(bucket, rule.limit, rule.windowMs));
+    if (clientKey) {
+      const rule = SECURITY_POLICY.mfaCookie;
+      checks.push(limiter.take(`mfa:cookie:${clientKey}`, rule.limit, rule.windowMs));
+    }
   } else if (input.scope === "password-reset") {
     if (accountKey) {
       const rule = SECURITY_POLICY.passwordResetAccount;
       checks.push(limiter.take(`reset:account:${accountKey}`, rule.limit, rule.windowMs));
     }
-    if (ip !== "unknown") {
-      const rule = SECURITY_POLICY.passwordResetIp;
-      checks.push(limiter.take(`reset:ip:${ip}`, rule.limit, rule.windowMs));
-    }
-  } else {
-    const rule = SECURITY_POLICY.passwordResetCompleteIp;
-    if (ip !== "unknown") {
-      checks.push(limiter.take(`reset-complete:ip:${ip}`, rule.limit, rule.windowMs));
-    }
-    if (accountKey) {
-      checks.push(limiter.take(`reset-complete:token:${accountKey}`, rule.limit, rule.windowMs));
-    }
+  } else if (accountKey) {
+    const rule = SECURITY_POLICY.passwordResetCompleteToken;
+    checks.push(limiter.take(`reset-complete:token:${accountKey}`, rule.limit, rule.windowMs));
   }
 
+  const decision = {
+    accountKey,
+    clientKey,
+    trustedAddress: address.address,
+  };
   if (checks.length === 0) {
-    return { allowed: true, accountKey, ip };
+    return { allowed: true, ...decision };
   }
-  return { allowed: allow(checks), accountKey, ip };
+  return { allowed: allow(checks), ...decision };
 }

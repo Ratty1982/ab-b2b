@@ -7,8 +7,16 @@ export type RateDecision = {
 type Bucket = { start: number; count: number };
 
 /**
- * Fixed-window counter. Isolated instances are used in tests; the process
- * shares `securityLimiter` so limits survive across requests in one server.
+ * Fixed-window counter kept in this process.
+ *
+ * Isolated instances are used in tests. Request handling shares
+ * `securityLimiter` for the life of that process. A restart clears it.
+ * Two running copies do not share it, so each copy has its own allowance.
+ *
+ * `REDIS_URL` is an unused optional environment variable. Redis is not on
+ * this path. A shared store would need a connect timeout and a defined
+ * result when Redis is down or slow, so that sign-in does not wait on it
+ * or fail open without a record. That design is not in this repository.
  */
 export function createFixedWindowLimiter(now: () => number = Date.now, maxKeys = 5_000) {
   const buckets = new Map<string, Bucket>();

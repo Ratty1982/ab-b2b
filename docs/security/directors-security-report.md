@@ -137,26 +137,33 @@ These changes are in this pull request. They are tested on the development machi
 
 **Original weakness.** Better Auth's own limit applies to the HTTP sign-in route (`onRequest` in Better Auth 1.7.4 `dist/api/index.mjs`). The website's sign-in page does not use that route. It calls a server function, `signInWithPassword` (`src/routes/login.tsx`). Password guessing through the real page was not covered by that HTTP limit. The public trade-application, callback, and motorsport forms also had no general rate limit.
 
-**What changed.** The server functions now count attempts before the password is checked:
+**What changed.** The server functions now count attempts before the password is checked. The count is per account, per email, per telephone, per reset token, or per sign-in cookie. It is not per network address.
+
+The repository describes Coolify and a reverse proxy. It does not name that proxy, list its addresses, or show that Cloudflare is in front of the site. `CF-Connecting-IP`, `X-Real-IP` and `X-Forwarded-For` can be typed by the visitor. They are not treated as the visitor's identity. No proxy allowlist was added.
+
+The limits are:
 
 - 10 sign-in attempts per account in 15 minutes
-- 80 sign-in attempts per network address in 15 minutes, and only when a real address is present
-- 10 authenticator attempts in 10 minutes
-- 5 password-reset requests per account in an hour, and 12 per address
-- 10 attempts to finish a reset per token and per address in an hour
-- Trade applications: 5 an hour per address, 3 an hour per email, and 30 in 10 minutes for the whole site
-- Callback requests: 8 an hour per address, and 40 in 10 minutes for the whole site
-- Motorsport enquiries: 5 an hour per address, and 20 in 10 minutes for the whole site
+- 10 authenticator attempts in 10 minutes for the same sign-in cookie
+- 5 password-reset requests per account in an hour
+- 10 attempts to finish one reset link in an hour
+- 3 trade applications an hour for the same email, and 5 an hour for the same telephone
+- 8 callback requests an hour for the same email, and 8 an hour for the same telephone
+- 5 motorsport enquiries an hour for the same email, and 5 an hour for the same telephone when a telephone is supplied
+
+There is no single counter for the whole website. One sender cannot use up the allowance of a different email address or a different telephone number. A form with neither a usable email nor a usable telephone is not poured into a shared counter either. The form rules still reject that message.
 
 A blocked password reset still shows the normal sentence, so it does not reveal whether the email exists. A blocked public form asks the person to wait.
 
-The counters are in `src/server/security/policy.ts` and `src/server/security/attempts.ts`.
+The counters are in `src/server/security/policy.ts`, `src/server/security/attempts.ts` and `src/server/security/public-forms.ts`.
 
-**Attack this helps stop.** Repeated password guessing, repeated authenticator guessing, and a flood of public forms.
+**Attack this helps stop.** Repeated password guessing against one account, repeated authenticator guessing in one browser, and the same person submitting the same enquiry identity again and again. It also stops one attacker from blocking everyone else by filling a shared counter.
 
-**Test.** `src/server/security/controls.test.ts`.
+**Test.** `src/server/security/controls.test.ts` covers forged and conflicting forwarding headers, a missing address, a header set shaped like a proxy, and two different senders who do not share an allowance.
 
-**Limitation.** The counters live in the memory of each running copy of the website. A restart clears them. Two copies do not share them. If the hosting proxy does not replace the visitor address header, a forged address could dodge the address limit. The per-account limit still applies, and it does not depend on that header. A missing address is **not** treated as one bucket for every visitor, because that could lock out the whole company.
+**Limitation.** The counters live in the memory of each running copy of the website. A restart clears them. Two copies do not share them, so each copy has its own allowance. Redis is declared as an optional unused setting (`REDIS_URL` in `src/server/env.ts`) and is not used here. Putting Redis on the sign-in path would need a timeout and a clear rule for when Redis is down. That design is not in this repository, so it was not added.
+
+Someone who uses a new email address for every enquiry is not stopped by these counters. That is a job for Cloudflare rate limiting and bot protection, which this review could not see. The required rules are in `docs/security/cloudflare-checklist.md`. The proxy configuration that would be required before this application could trust a visitor address is in `docs/security/coolify-infrastructure-checklist.md`.
 
 ### 5. Serious events can raise a notice, without flooding the inbox
 
@@ -196,9 +203,9 @@ The email text does not include passwords, tokens, or customer email addresses (
 
 ### Someone tries to guess a password
 
-The sign-in page does not say whether the email is on file. After this release, the same account can be tried 10 times in 15 minutes, and then the application stops checking the password and can record one security notice. The notice does not contain the password. A long list of different accounts from one address is also slowed, when the visitor address can be trusted.
+The sign-in page does not say whether the email is on file. After this release, the same account can be tried 10 times in 15 minutes, and then the application stops checking the password and can record one security notice. The notice does not contain the password. The limit follows the account, not a network header the sender can invent.
 
-This is not a guarantee against a slow guess spread over many days, or against guessing from many different addresses. A firewall in front of the site (Cloudflare) should add its own limit. That firewall was not confirmed.
+This is not a guarantee against a slow guess spread over many days, or against guessing many different accounts. A firewall in front of the site (Cloudflare) should add its own limit. That firewall was not confirmed.
 
 ### Someone steals a staff sign-in
 
@@ -291,7 +298,7 @@ Those checks are in the infrastructure checklist. They need someone with server 
 | This pull request is not released | The live site still allows the public account route, can keep a switched-off session for up to five minutes, and does not apply the new sign-in limits. |
 | Authenticator codes are not compulsory for Super Admin and Accounts | A stolen staff password is enough to enter the administration area, unless production has already set `MFA_ENFORCE_PRIVILEGED` to true. This review could not see that setting. |
 | Cloudflare and the server firewall were not inspected | A large share of attacks against a public website are stopped at the edge, or are not. The business cannot yet show a director that this layer exists. |
-| Sign-in limits are inside each running copy of the website | A restart, or more than one copy, weakens the new guessing limit. The edge firewall should carry the durable limit. |
+| Sign-in and form limits are inside each running copy of the website | A restart clears them. A second copy has its own allowance. Redis was not added, because the application does not use it and a failed Redis call must not take sign-in down. Cloudflare should limit sign-in and the public forms. That Cloudflare configuration was not seen. |
 | Backups and restore have not been demonstrated from this repository | If the database were damaged, this review cannot say how quickly, or how completely, it could be recovered. |
 
 ### Medium
@@ -303,7 +310,7 @@ Those checks are in the infrastructure checklist. They need someone with server 
 | The content security policy allows inline scripts | If an attacker ever managed to store a script in page content, the browser policy would not block it as strongly as a stricter policy would. No such bug was confirmed. |
 | The optional stock-sync secret can be put in the web address | If that optional recovery address is used, the secret can end up in logs. The normal stock import does not need this address. |
 | The stock-sync status page is public | It reveals the schedule and whether a secret is configured. It does not reveal customer data. |
-| Visitor address headers are only trustworthy if the proxy overwrites them | A forged header can dodge the address-based limit. The per-account limit remains. |
+| The application does not know the visitor's network address | Coolify's proxy is not named, and Cloudflare is not confirmed. Forwarding headers are ignored for limits, so a forged header cannot unlock a new allowance or block someone else. A flood that uses a new email every time is not stopped in the application. |
 | Audit rows are kept until someone deletes them, and there is no separate audit login | An investigator can use them, but there is no agreed retention period, and anyone with the database can read or delete them. |
 | Security emails are not switched on | Until `SECURITY_ALERT_EMAIL` is set, notices exist only in the audit table. Someone has to look. |
 | Microsoft synchronisation can be turned on later by environment flags | The code is capable of writing tasks and calendar entries. It is off unless the flags are set. Turning it on is a business decision, not part of this project. |
@@ -370,7 +377,7 @@ Those checks are in the infrastructure checklist. They need someone with server 
 
 - Forgotten-password resets sign the person out of other browsers.
 - Ten wrong passwords on one account in 15 minutes produces "Too many sign-in attempts. Please wait and try again."
-- A burst of public forms produces "Please wait a few minutes before sending another message."
+- The same email or telephone submitting a public form too often produces "Please wait a few minutes before sending another message." A different sender is not blocked by that.
 - Everyday ordering, pricing, Autopart import, and Microsoft synchronisation behaviour are unchanged. Microsoft synchronisation is not switched on by this release.
 
 **Rollback.** Revert this pull request and redeploy the previous release.

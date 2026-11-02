@@ -65,26 +65,106 @@ describe("security rate limits", () => {
       pepper: "test-pepper",
     });
     expect(next.allowed).toBe(true);
-    expect(next.ip).toBe("unknown");
+    expect(next.trustedAddress).toBeNull();
   });
 
-  it("uses a single IP header and ignores a value that is not an IP", () => {
-    expect(clientAddress(headers({ "x-forwarded-for": "not an address" }))).toBe("unknown");
-    expect(clientAddress(headers({ "x-forwarded-for": "203.0.113.8, 10.0.0.1" }))).toBe(
-      "203.0.113.8",
+  it("does not give a fresh sign-in allowance when forwarding headers change", () => {
+    const limiter = createFixedWindowLimiter(() => 5_000);
+    const email = "buyer@customer.example";
+    for (let i = 0; i < SECURITY_POLICY.loginAccount.limit; i += 1) {
+      expect(
+        assessAttempt({
+          scope: "login",
+          headers: headers({
+            "cf-connecting-ip": `203.0.113.${i}`,
+            "x-real-ip": `198.51.100.${i}`,
+            "x-forwarded-for": `203.0.113.${i}, 10.0.0.${i}`,
+          }),
+          subject: email,
+          limiter,
+          pepper: "test-pepper",
+        }).allowed,
+      ).toBe(true);
+    }
+    const blocked = assessAttempt({
+      scope: "login",
+      headers: headers({ "x-forwarded-for": "203.0.113.200" }),
+      subject: email,
+      limiter,
+      pepper: "test-pepper",
+    });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.trustedAddress).toBeNull();
+  });
+
+  it("limits authenticator guesses per sign-in cookie, not per forwarded address", () => {
+    const limiter = createFixedWindowLimiter(() => 6_000);
+    const first = headers({ cookie: "session=one", "x-forwarded-for": "203.0.113.1" });
+    const second = headers({ cookie: "session=two", "cf-connecting-ip": "203.0.113.1" });
+    for (let i = 0; i < SECURITY_POLICY.mfaCookie.limit; i += 1) {
+      expect(
+        assessAttempt({ scope: "mfa", headers: first, limiter, pepper: "test-pepper" }).allowed,
+      ).toBe(true);
+    }
+    expect(assessAttempt({ scope: "mfa", headers: first, limiter, pepper: "test-pepper" }).allowed).toBe(
+      false,
     );
-    expect(clientAddress(headers({ "cf-connecting-ip": "203.0.113.9" }))).toBe("203.0.113.9");
+    expect(assessAttempt({ scope: "mfa", headers: second, limiter, pepper: "test-pepper" }).allowed).toBe(
+      true,
+    );
+    for (let i = 0; i < 30; i += 1) {
+      expect(
+        assessAttempt({
+          scope: "mfa",
+          headers: headers({ "x-real-ip": `198.51.100.${i}` }),
+          limiter,
+          pepper: "test-pepper",
+        }).allowed,
+      ).toBe(true);
+    }
+    expect(assessAttempt({ scope: "mfa", headers: second, limiter, pepper: "test-pepper" }).allowed).toBe(
+      true,
+    );
   });
 
-  it("limits public trade applications by email and by a site-wide ceiling", () => {
+  it("ignores forged, conflicting, missing and proxy-shaped forwarding headers", () => {
+    const forged = clientAddress(
+      headers({
+        "cf-connecting-ip": "203.0.113.9",
+        "x-real-ip": "198.51.100.8",
+        "x-forwarded-for": "203.0.113.8, 10.0.0.1",
+      }),
+    );
+    const missing = clientAddress(headers({}));
+    const notAnAddress = clientAddress(headers({ "x-forwarded-for": "not an address" }));
+    const proxyShaped = clientAddress(
+      headers({
+        "cf-connecting-ip": "203.0.113.50",
+        "x-real-ip": "203.0.113.50",
+        "x-forwarded-for": "203.0.113.50, 172.16.0.1",
+      }),
+    );
+    for (const result of [forged, missing, notAnAddress, proxyShaped]) {
+      expect(result.trusted).toBe(false);
+      expect(result.address).toBeNull();
+      expect(result.reason).toBe("no-trusted-proxy-configured");
+    }
+  });
+
+  it("does not let one trade-application sender use up another sender's allowance", () => {
     const limiter = createFixedWindowLimiter(() => 9_000);
-    const requestHeaders = headers({ "x-real-ip": "198.51.100.20" });
+    const attacker = {
+      primaryContact: { email: "office@garage.example", phone: "0121 000 0000" },
+    };
     for (let i = 0; i < SECURITY_POLICY.tradeApplicationEmail.limit; i += 1) {
       expect(
         assessPublicForm({
           form: "trade-application",
-          headers: requestHeaders,
-          email: "office@garage.example",
+          headers: headers({
+            "cf-connecting-ip": "203.0.113.20",
+            "x-forwarded-for": "198.51.100.20, 10.0.0.1",
+          }),
+          payload: attacker,
           limiter,
           pepper: "test-pepper",
         }).allowed,
@@ -93,22 +173,84 @@ describe("security rate limits", () => {
     expect(
       assessPublicForm({
         form: "trade-application",
-        headers: headers({ "x-real-ip": "198.51.100.21" }),
-        email: "office@garage.example",
+        headers: headers({}),
+        payload: attacker,
         limiter,
         pepper: "test-pepper",
       }).allowed,
     ).toBe(false);
+    expect(
+      assessPublicForm({
+        form: "trade-application",
+        headers: headers({ "cf-connecting-ip": "203.0.113.21", "x-real-ip": "198.51.100.99" }),
+        payload: { primaryContact: { email: "other@garage.example", phone: "0121 111 1111" } },
+        limiter,
+        pepper: "test-pepper",
+      }).allowed,
+    ).toBe(true);
+  });
+
+  it("does not let anonymous callback traffic exhaust a shared form bucket", () => {
+    const limiter = createFixedWindowLimiter(() => 9_000);
+    for (let i = 0; i < 45; i += 1) {
+      expect(
+        assessPublicForm({
+          form: "callback",
+          headers: headers({ "x-forwarded-for": `203.0.113.${i % 20}` }),
+          payload: { email: `person-${i}@customer.example`, message: "please call" },
+          limiter,
+          pepper: "test-pepper",
+        }).allowed,
+      ).toBe(true);
+    }
+    for (let i = 0; i < 20; i += 1) {
+      expect(
+        assessPublicForm({
+          form: "callback",
+          headers: headers({}),
+          payload: { message: `no contact ${i}` },
+          limiter,
+          pepper: "test-pepper",
+        }).allowed,
+      ).toBe(true);
+    }
+    for (let i = 0; i < SECURITY_POLICY.callbackEmail.limit; i += 1) {
+      expect(
+        assessPublicForm({
+          form: "callback",
+          payload: { email: "kept@customer.example" },
+          limiter,
+          pepper: "test-pepper",
+        }).allowed,
+      ).toBe(true);
+    }
+    expect(
+      assessPublicForm({
+        form: "callback",
+        headers: headers({ "cf-connecting-ip": "203.0.113.77" }),
+        payload: { email: "kept@customer.example" },
+        limiter,
+        pepper: "test-pepper",
+      }).allowed,
+    ).toBe(false);
+    expect(
+      assessPublicForm({
+        form: "motorsport",
+        payload: { email: "partner@example.com" },
+        limiter,
+        pepper: "test-pepper",
+      }).allowed,
+    ).toBe(true);
   });
 
   it("limits password-reset completion without keeping the raw token", () => {
     const limiter = createFixedWindowLimiter(() => 9_000);
     const token = "reset-token-value-not-stored";
-    for (let i = 0; i < SECURITY_POLICY.passwordResetCompleteIp.limit; i += 1) {
+    for (let i = 0; i < SECURITY_POLICY.passwordResetCompleteToken.limit; i += 1) {
       expect(
         assessAttempt({
           scope: "password-reset-complete",
-          headers: headers({ "x-real-ip": "198.51.100.30" }),
+          headers: headers({ "x-real-ip": `198.51.100.${i}` }),
           subject: token,
           limiter,
           pepper: "test-pepper",
@@ -117,7 +259,7 @@ describe("security rate limits", () => {
     }
     const blocked = assessAttempt({
       scope: "password-reset-complete",
-      headers: headers({ "x-real-ip": "198.51.100.31" }),
+      headers: headers({ "cf-connecting-ip": "203.0.113.31", "x-forwarded-for": "10.1.1.1" }),
       subject: token,
       limiter,
       pepper: "test-pepper",
@@ -125,6 +267,7 @@ describe("security rate limits", () => {
     expect(blocked.allowed).toBe(false);
     expect(blocked.accountKey).not.toContain(token);
     expect(blocked.accountKey).not.toContain("reset-token");
+    expect(blocked.trustedAddress).toBeNull();
   });
 });
 

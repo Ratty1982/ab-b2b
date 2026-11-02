@@ -48,9 +48,9 @@ export const signInWithPassword = createServerFn({ method: "POST" })
       if (!attempt.allowed) {
         await publishSecurityAlert({
           kind: "REPEATED_LOGIN_FAILURE",
-          dedupeKey: `login:${attempt.accountKey ?? attempt.ip}`,
+          dedupeKey: `login:${attempt.accountKey ?? "unknown-account"}`,
           summary: "Repeated sign-in attempts were blocked before the password was checked.",
-          metadata: { ip: attempt.ip === "unknown" ? null : attempt.ip },
+          metadata: { trustedAddress: attempt.trustedAddress },
         });
         return {
           ok: false,
@@ -121,9 +121,9 @@ export const verifyTwoFactorLogin = createServerFn({ method: "POST" })
     if (!attempt.allowed) {
       await publishSecurityAlert({
         kind: "REPEATED_MFA_FAILURE",
-        dedupeKey: `mfa:${attempt.ip}`,
+        dedupeKey: `mfa:${attempt.clientKey ?? "no-cookie"}`,
         summary: "Repeated authenticator attempts were blocked.",
-        metadata: { ip: attempt.ip === "unknown" ? null : attempt.ip },
+        metadata: { trustedAddress: attempt.trustedAddress },
       });
       return { ok: false, error: "Too many authentication attempts. Please wait and try again." };
     }
@@ -203,9 +203,9 @@ export const requestPasswordReset = createServerFn({ method: "POST" })
     if (!attempt.allowed) {
       await publishSecurityAlert({
         kind: "REPEATED_PASSWORD_RESET",
-        dedupeKey: `reset:${attempt.accountKey ?? attempt.ip}`,
+        dedupeKey: `reset:${attempt.accountKey ?? "unknown-account"}`,
         summary: "Repeated password-reset requests were ignored.",
-        metadata: { ip: attempt.ip === "unknown" ? null : attempt.ip },
+        metadata: { trustedAddress: attempt.trustedAddress },
       });
       return {
         ok: true as const,

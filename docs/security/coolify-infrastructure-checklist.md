@@ -44,12 +44,14 @@ Record the date and the person. Do not copy secret values into git, tickets, or 
 | Server access logs | SSH and Coolify access are retained and reviewed after an incident | Needed to see whether the host itself was entered |
 | Audit log access | Only administrators can read `AuditEvent`. There is no application screen that was confirmed as a complete audit console in this review | The table is the investigation record. It has no automatic expiry in code |
 | Optional stock secret | If `POST /api/internal/stock-sync` is used, the secret is sent as a header (`x-autopart-cron-secret` or `Authorization: Bearer`), not in the web address | Addresses are copied into logs |
+| Visitor address, before the application may trust one | Write down the real chain. Name the Coolify proxy (the repository does not). Say whether Cloudflare is in front. Confirm the origin accepts web traffic only from that proxy. Confirm the proxy overwrites `X-Forwarded-For` and, if Cloudflare is used, that `CF-Connecting-IP` cannot be supplied by the public. Until that note exists, the application ignores those headers (`src/server/security/client-address.ts`) | A header the visitor can set must not be the rate-limit identity |
+| Redis | Do not add Redis to sign-in only to share rate limits. `REDIS_URL` is unused. A shared limiter needs a short timeout and a defined result when Redis is unavailable, so a Redis fault does not stop staff signing in or silently remove the account limit | The current limiter is process-local on purpose |
 
 ## Incident investigation, from what the application can support
 
 1. Note the time in Europe/London and what the user saw.
 2. In the database, read `AuditEvent` for that time. Useful actions include `LOGIN_FAILED`, `LOGIN_SUCCESS`, `LOGIN_MFA_FAILED`, `PASSWORD_RESET_REQUESTED`, `SECURITY_ALERT`, `CUSTOMER_DATA_EXPORTED`, `ROLE_ASSIGNED`, `USER_CREATED`, `USER_REACTIVATED`, `USER_DEACTIVATED`, and `USER_PERMISSIONS_UPDATED`.
-3. Do not expect the row to contain a password, a Microsoft token, or a reset link. Failed sign-in rows store an email domain and a one-way account key, not the full email address.
+3. Do not expect the row to contain a password, a Microsoft token, or a reset link. Failed sign-in rows store an email domain and a one-way account key, not the full email address. An `ipAddress` on an older-style row is copied from forwarding headers and is not proof of who connected. Rate limits do not use it.
 4. Security notices are also written as `SECURITY_ALERT`. The same event is not written again inside the cooldown (one hour, or six hours for export bursts).
 5. If `SECURITY_ALERT_EMAIL` is set and mail is working, one message is sent. The message is a summary only.
 6. To remove access: disable the user in staff administration. That deletes session rows. After this pull request is deployed, the next request must sign in again.

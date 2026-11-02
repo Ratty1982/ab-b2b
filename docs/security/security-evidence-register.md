@@ -82,11 +82,20 @@ Owners are roles, not named people.
 ### Sign-in rate limit on the real page
 
 - **Threat:** password guessing
-- **Evidence:** login page calls `signInWithPassword` (`src/routes/login.tsx`). Better Auth's limiter runs in the HTTP router (`dist/api/index.mjs` `onRequest`), which that server function does not use. Application limits are in `src/server/security/policy.ts` and `src/server/security/attempts.ts`, called from `src/server/auth/session.ts`
-- **Verification:** `src/server/security/controls.test.ts` passed 2 November 2026. Library file read
+- **Evidence:** login page calls `signInWithPassword` (`src/routes/login.tsx`). Better Auth's limiter runs in the HTTP router (`dist/api/index.mjs` `onRequest`), which that server function does not use. Application limit is 10 attempts per account in 15 minutes (`src/server/security/policy.ts`, `src/server/security/attempts.ts`). It does not use a forwarding header
+- **Verification:** `src/server/security/controls.test.ts`. Changing `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For` does not create a new allowance. Library file read on 2 November 2026
 - **Status:** Confirmed in code
-- **Outstanding:** memory is per process and clears on restart. Address headers are trustworthy only if the proxy overwrites them. That proxy behaviour was not verified. Add a Cloudflare limit
+- **Outstanding:** each process has its own counter and a restart clears it. Redis was not added. `REDIS_URL` is unused. Cloudflare must limit sign-in volume across all copies. A guess spread across many accounts is not stopped here
 - **Owner:** Development for the application limit; hosting administrator for Cloudflare
+
+### Client address headers
+
+- **Threat:** a forged forwarding header is treated as the visitor, or is used to dodge or share a limit
+- **Evidence:** `src/server/security/client-address.ts` returns `trusted: false` and `address: null` for every request. No proxy allowlist, hop count, or Cloudflare secret exists in the repository. `docs/deployment-coolify.md` says a reverse proxy exists and does not name it
+- **Verification:** unit tests for a forged conflict, a missing header, a non-address, and a header set shaped like Cloudflare plus a proxy
+- **Status:** Gap identified
+- **Outstanding:** do not teach the application a proxy list until Coolify and, if used, Cloudflare are written down as in `docs/security/coolify-infrastructure-checklist.md`. Audit rows may still store the left-most `X-Forwarded-For` from older login code (`clientMetaFromRequestHeaders`). That stored value is not authenticated
+- **Owner:** Hosting administrator for the proxy facts; Development before any later code change that would trust an address
 
 ### HTTP auth rate limit (library)
 
@@ -99,11 +108,11 @@ Owners are roles, not named people.
 
 ### Public form limits
 
-- **Threat:** form spam and enquiry flooding
-- **Evidence:** `assertPublicFormAllowed` in `src/server/phase2/fns.ts` for trade applications, callbacks, and motorsport. Existing honeypot and duplicate window remain in `src/server/applications/service.ts`. Survey limit remains in `src/domain/customer-survey.ts`
-- **Verification:** unit test for the trade-application ceiling. Existing survey behaviour not re-run against a database
+- **Threat:** form spam, and one sender blocking every other sender
+- **Evidence:** `assertPublicFormAllowed` in `src/server/phase2/fns.ts` for trade applications, callbacks, and motorsport. Buckets are the email and the telephone (`src/server/security/public-forms.ts`). There is no site-wide bucket and no forwarding-header bucket. Existing honeypot and duplicate window remain in `src/server/applications/service.ts`. Survey limit remains in `src/domain/customer-survey.ts`
+- **Verification:** unit test that one trade-application email cannot exhaust another, that many different callback emails do not close the form, and that a body with no email or telephone does not create a shared block. Survey behaviour not re-run against a database
 - **Status:** Confirmed in code
-- **Outstanding:** server functions return an application error. They do not rely on an HTTP 429 from a proxy. Cloudflare should still limit volume
+- **Outstanding:** a person who invents a new email for every message is not stopped in the application. Cloudflare rate limiting and bot protection are the compensating control. They were not seen. Server functions return an application error rather than depending on an HTTP 429 from a proxy
 - **Owner:** Development; hosting administrator
 
 ### CSRF on server functions
@@ -274,8 +283,7 @@ Owners are roles, not named people.
 
 Commands, from the security branch:
 
-- `bunx vitest run` on `src/server/security/controls.test.ts`, `src/infra/auth/auth.security.test.ts`, `src/domain/microsoft-graph-security.test.ts`, `src/server/microsoft-365/flow.test.ts`, `src/server/microsoft-365/token-cipher.test.ts`, `src/server/microsoft-365/signing-keys.test.ts`, `src/domain/product-documents.test.ts`, `src/server/rbac/permissions.test.ts` — 8 files, 64 tests, passed
-- Those two security files re-run after the password-reset session flag — 12 tests, passed
+- `bunx vitest run` on `src/server/security/controls.test.ts`, `src/infra/auth/auth.security.test.ts`, `src/domain/microsoft-graph-security.test.ts`, `src/server/microsoft-365/flow.test.ts`, `src/server/microsoft-365/token-cipher.test.ts`, `src/server/microsoft-365/signing-keys.test.ts`, `src/domain/product-documents.test.ts` and `src/server/rbac/permissions.test.ts` — 8 files, 67 tests, passed on 2 November 2026 (Europe/London). This run includes forged, conflicting and missing forwarding headers, a proxy-shaped header set, and separate public-form identities.
 - `NODE_OPTIONS='--max-old-space-size=6144' bunx tsc --noEmit` — passed
 - `NODE_OPTIONS='--max-old-space-size=6144' bun run build` — passed (`vite build` / Nitro output)
 

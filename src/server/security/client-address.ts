@@ -1,24 +1,28 @@
-const IP_RE = /^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-f:]{2,64}$/i;
-
 /**
- * Best-effort client address for rate-limit buckets.
- * A missing or malformed address becomes "unknown" and is not used as an IP
- * bucket, so a proxy that does not send an address cannot lock every user
- * into one shared IP limit.
+ * Client address for rate limiting.
  *
- * These headers are only trustworthy when the reverse proxy overwrites them.
- * That production proxy behaviour was not inspected from this repository.
+ * Production is described as Coolify plus a reverse proxy (`docs/deployment-coolify.md`).
+ * The repository does not name that proxy, does not list its addresses, and does
+ * not record a hop count. Cloudflare is not confirmed to be in front of the site,
+ * and there is no shared secret that would prove a header was set by our proxy.
+ *
+ * `CF-Connecting-IP`, `X-Real-IP` and `X-Forwarded-For` are therefore not
+ * authenticated client identity. A visitor, or anyone who can open the origin
+ * directly, can set all three. This module does not invent an allowlist.
+ *
+ * Rate limits must use an application identity (account, email, telephone, reset
+ * token, or the sign-in cookie). They must not use these headers.
  */
-export function clientAddress(headers: Headers): string {
-  const candidates = [
-    headers.get("cf-connecting-ip"),
-    headers.get("x-real-ip"),
-    headers.get("x-forwarded-for")?.split(",")[0],
-  ];
-  for (const raw of candidates) {
-    const value = raw?.trim() ?? "";
-    if (!value || value.length > 64) continue;
-    if (IP_RE.test(value)) return value;
-  }
-  return "unknown";
+export type ClientAddress = {
+  address: null;
+  trusted: false;
+  reason: "no-trusted-proxy-configured";
+};
+
+export function clientAddress(_headers: Headers): ClientAddress {
+  return {
+    address: null,
+    trusted: false,
+    reason: "no-trusted-proxy-configured",
+  };
 }
