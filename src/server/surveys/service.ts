@@ -9,6 +9,7 @@ import { z } from "zod";
 import { prisma } from "@/infra/database/client";
 import type { EmailAdapter } from "@/infra/email/types";
 import { recordAuditEvent } from "@/server/audit/record";
+import { noteCustomerExport } from "@/server/security/alerts";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { deliverSurveyEmails } from "@/server/surveys/email";
 import {
@@ -611,7 +612,13 @@ export async function exportCustomerSurveysCsv(actorUserId: string, raw: unknown
     "prize_draw_accepted",
     "business_name",
   ];
-  return buildSurveyCsv(headers, exportRows(rows));
+  const csv = buildSurveyCsv(headers, exportRows(rows));
+  await noteCustomerExport({
+    actorUserId,
+    kind: "customer-surveys",
+    rowCount: rows.length,
+  });
+  return csv;
 }
 
 export async function exportPrizeDrawEntriesCsv(actorUserId: string, raw: unknown) {
@@ -625,7 +632,7 @@ export async function exportPrizeDrawEntriesCsv(actorUserId: string, raw: unknow
     where: { ...listWhere(input), prizeDrawAccepted: true },
     orderBy: { submittedAt: "asc" },
   });
-  return buildSurveyCsv(
+  const csv = buildSurveyCsv(
     [
       "reference",
       "submitted_at",
@@ -645,6 +652,12 @@ export async function exportPrizeDrawEntriesCsv(actorUserId: string, raw: unknow
       row.eligibilityDeclarationsHeld ? "yes" : "no",
     ]),
   );
+  await noteCustomerExport({
+    actorUserId,
+    kind: "prize-draw-entries",
+    rowCount: rows.length,
+  });
+  return csv;
 }
 
 function parseWpTimestamp(value: string): Date | null {

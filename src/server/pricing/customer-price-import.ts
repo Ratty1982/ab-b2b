@@ -12,6 +12,7 @@ import {
   type CustomerPriceImportLineDraft,
 } from "@/domain/customer-price-import";
 import { recordAuditEvent, recordAuditEventInTransaction } from "@/server/audit/record";
+import { noteCustomerExport } from "@/server/security/alerts";
 import type { AuditEventInput } from "@/server/audit/types";
 import { listCustomerPrices } from "@/server/pricing/service";
 import { grants, hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
@@ -277,6 +278,12 @@ export async function exportCustomerNegotiatedPricesCsv(actorUserId: string, com
       endsAt: iso(row.endsAt),
     })),
   );
+  await noteCustomerExport({
+    actorUserId,
+    kind: "customer-negotiated-prices",
+    companyId,
+    rowCount: rows.length,
+  });
   return { filename: "customer-trade-prices.csv", csv };
 }
 

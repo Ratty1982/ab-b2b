@@ -3,6 +3,7 @@ import { hashPassword } from "better-auth/crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
+import { publishSecurityAlert } from "@/server/security/alerts";
 import { notifyCrmTaskOutboundSafely, releaseMappedTasksBeforeUserRemoval } from "@/server/microsoft-365/outbound-queue";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import type { SystemRoleKey } from "@/domain/permissions";
@@ -441,6 +442,16 @@ export async function createStaffUser(actorUserId: string, raw: unknown) {
     after: { email, role: input.role, status: "INVITED" },
   });
 
+  if (input.role === "SUPER_ADMIN") {
+    await publishSecurityAlert({
+      kind: "NEW_ADMINISTRATOR",
+      dedupeKey: `created:${user.id}:SUPER_ADMIN`,
+      summary: "A new Super Admin account was created.",
+      actorUserId,
+      targetUserId: user.id,
+    });
+  }
+
   const invite = await issueStaffInvitation({
     userId: user.id,
     email,
@@ -716,6 +727,13 @@ export async function reactivateStaffUser(actorUserId: string, raw: unknown) {
       targetUserId: existing.id,
     });
   }
+  await publishSecurityAlert({
+    kind: "ACCOUNT_REACTIVATED",
+    dedupeKey: `reactivate:${existing.id}`,
+    summary: "A disabled staff account was switched back on.",
+    actorUserId,
+    targetUserId: existing.id,
+  });
 
   return mapStaffUser(existing.id);
 }

@@ -5,6 +5,8 @@ import { z } from "zod";
 import { auth } from "@/infra/auth";
 import { recordAuditEvent } from "@/server/audit/record";
 import { resolvePostLoginPath, safeReturnPath } from "@/server/auth/redirects";
+import { assessAttempt } from "@/server/security/attempts";
+import { publishSecurityAlert } from "@/server/security/alerts";
 import {
   clientMetaFromRequestHeaders,
   resolveRequestClientSession,
@@ -42,6 +44,19 @@ export const signInWithPassword = createServerFn({ method: "POST" })
     > => {
       const headers = getRequestHeaders();
       const meta = clientMetaFromRequestHeaders(headers);
+      const attempt = assessAttempt({ scope: "login", headers, subject: data.email });
+      if (!attempt.allowed) {
+        await publishSecurityAlert({
+          kind: "REPEATED_LOGIN_FAILURE",
+          dedupeKey: `login:${attempt.accountKey ?? attempt.ip}`,
+          summary: "Repeated sign-in attempts were blocked before the password was checked.",
+          metadata: { ip: attempt.ip === "unknown" ? null : attempt.ip },
+        });
+        return {
+          ok: false,
+          error: "Too many sign-in attempts. Please wait and try again.",
+        };
+      }
 
       try {
         const result = await auth.api.signInEmail({
@@ -78,7 +93,10 @@ export const signInWithPassword = createServerFn({ method: "POST" })
           action: "LOGIN_FAILED",
           entityType: "User",
           entityId: null,
-          metadata: { emailDomain: data.email.split("@")[1] ?? null },
+          metadata: {
+            emailDomain: data.email.split("@")[1]?.toLowerCase() ?? null,
+            accountKey: attempt.accountKey,
+          },
           ipAddress: meta.ipAddress,
           userAgent: meta.userAgent,
         });
@@ -99,6 +117,16 @@ export const verifyTwoFactorLogin = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<{ ok: true } | { ok: false; error: string }> => {
     const headers = getRequestHeaders();
     const meta = clientMetaFromRequestHeaders(headers);
+    const attempt = assessAttempt({ scope: "mfa", headers });
+    if (!attempt.allowed) {
+      await publishSecurityAlert({
+        kind: "REPEATED_MFA_FAILURE",
+        dedupeKey: `mfa:${attempt.ip}`,
+        summary: "Repeated authenticator attempts were blocked.",
+        metadata: { ip: attempt.ip === "unknown" ? null : attempt.ip },
+      });
+      return { ok: false, error: "Too many authentication attempts. Please wait and try again." };
+    }
     const code = data.code.replace(/\s+/g, "");
     try {
       if (/^\d{6}$/.test(code)) {
@@ -167,6 +195,24 @@ export const requestPasswordReset = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => forgotSchema.parse(data))
   .handler(async ({ data }) => {
     const headers = getRequestHeaders();
+    const attempt = assessAttempt({
+      scope: "password-reset",
+      headers,
+      subject: data.email,
+    });
+    if (!attempt.allowed) {
+      await publishSecurityAlert({
+        kind: "REPEATED_PASSWORD_RESET",
+        dedupeKey: `reset:${attempt.accountKey ?? attempt.ip}`,
+        summary: "Repeated password-reset requests were ignored.",
+        metadata: { ip: attempt.ip === "unknown" ? null : attempt.ip },
+      });
+      return {
+        ok: true as const,
+        message:
+          "If an account exists for that email address, we've sent instructions to reset the password.",
+      };
+    }
     try {
       await auth.api.requestPasswordReset({
         body: {
@@ -194,6 +240,17 @@ export const completePasswordReset = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => resetSchema.parse(data))
   .handler(async ({ data }) => {
     const headers = getRequestHeaders();
+    const attempt = assessAttempt({
+      scope: "password-reset-complete",
+      headers,
+      subject: data.token,
+    });
+    if (!attempt.allowed) {
+      return {
+        ok: false as const,
+        error: "Unable to reset password. The link may have expired.",
+      };
+    }
     try {
       await auth.api.resetPassword({
         body: {

@@ -1,5 +1,6 @@
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
+import { publishSecurityAlert } from "@/server/security/alerts";
 import { tradeAccessToCompanyRole } from "@/server/rbac/access";
 import type { TradeAccessKey } from "@/domain/permissions";
 
@@ -98,6 +99,16 @@ export async function assignSystemRole(opts: {
     ipAddress: opts.ipAddress,
     userAgent: opts.userAgent,
   });
+
+  if (opts.roleKey === "SUPER_ADMIN") {
+    await publishSecurityAlert({
+      kind: "NEW_ADMINISTRATOR",
+      dedupeKey: `role:${opts.targetUserId}:SUPER_ADMIN`,
+      summary: "The Super Admin role was assigned to a staff account.",
+      actorUserId: opts.actorUserId,
+      targetUserId: opts.targetUserId,
+    });
+  }
 }
 
 export async function removeSystemRole(opts: {

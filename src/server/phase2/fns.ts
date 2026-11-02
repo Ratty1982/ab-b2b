@@ -22,6 +22,7 @@ import * as stock from "@/server/stock/service";
 import * as basket from "@/server/basket/service";
 import * as motorsport from "@/server/motorsport/service";
 import * as callback from "@/server/callback/service";
+import { assertPublicFormAllowed, emailFromPublicPayload } from "@/server/security/public-forms";
 
 async function requireUserId(): Promise<string> {
   const headers = getRequestHeaders();
@@ -343,6 +344,11 @@ export const submitTradeApplicationFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const headers = getRequestHeaders();
+      assertPublicFormAllowed({
+        form: "trade-application",
+        headers,
+        email: emailFromPublicPayload(data),
+      });
       const ip =
         headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
       const result = await applications.submitTradeApplication(data, { ip });
@@ -357,6 +363,11 @@ export const submitMotorsportPartnershipEnquiryFn = createServerFn({ method: "PO
   .handler(async ({ data }) => {
     try {
       const headers = getRequestHeaders();
+      assertPublicFormAllowed({
+        form: "motorsport",
+        headers,
+        email: emailFromPublicPayload(data),
+      });
       const ip =
         headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
       const result = await motorsport.submitMotorsportPartnershipEnquiry(data, { ip });
@@ -388,6 +399,11 @@ export const submitCallbackEnquiryFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const headers = getRequestHeaders();
+      assertPublicFormAllowed({
+        form: "callback",
+        headers,
+        email: emailFromPublicPayload(data),
+      });
       const ip =
         headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || null;
       const userId = await optionalUserId();

@@ -4,6 +4,13 @@ import type { Prisma } from "@prisma/client";
 
 const SECRET_KEY_PATTERN = /(password|token|secret|authorization|cookie|credential|hash)/i;
 
+function boundText(value: string | null | undefined, max: number): string | null {
+  if (value == null) return null;
+  const cleaned = value.replace(/[\u0000\r\n]/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned.slice(0, max);
+}
+
 function scrub(value: unknown): unknown {
   if (value == null) return value;
   if (Array.isArray(value)) return value.map(scrub);
@@ -28,8 +35,8 @@ export function auditEventCreateData(input: AuditEventInput): Prisma.AuditEventU
     actorUserId: input.actorUserId ?? null,
     targetUserId: input.targetUserId ?? null,
     companyId: input.companyId ?? null,
-    ipAddress: input.ipAddress ?? null,
-    userAgent: input.userAgent ?? null,
+    ipAddress: boundText(input.ipAddress, 64),
+    userAgent: boundText(input.userAgent, 300),
   };
   if (input.metadata) {
     data.metadata = scrub(input.metadata) as Prisma.InputJsonValue;

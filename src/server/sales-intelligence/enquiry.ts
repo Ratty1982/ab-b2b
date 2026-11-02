@@ -12,6 +12,7 @@
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/infra/database/client";
+import { noteCustomerExport } from "@/server/security/alerts";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission, type LoadedAccessProfile } from "@/server/rbac/access";
 import { resolveSalesIntelligenceCompanyScope } from "@/server/sales-intelligence/scope";
@@ -1160,6 +1161,12 @@ export async function exportCustomerSalesEnquiryCsv(actorUserId: string, raw: un
     p.credits,
     p.netSales,
   ]);
+  await noteCustomerExport({
+    actorUserId,
+    kind: "customer-sales-enquiry",
+    companyId: meta.company.id,
+    rowCount: items.length,
+  });
   return {
     filename: `sales-enquiry-customer-${meta.company.autopartCustomerCode ?? meta.company.id}-${primary.from}_${primary.to}.csv`,
     csv: buildCsv(headers, rows),
