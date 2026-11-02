@@ -1,18 +1,24 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { PublicLayout, PublicPageBreadcrumbs } from "@/components/ab/PublicLayout";
+import { AboutCertificationsSection } from "@/components/public/PublicCertifications";
 import { PublicWhyUs, type WhyUsTeamProfile } from "@/components/public/PublicWhyUs";
 import { marketingCmsPageBySlug } from "@/domain/cms-marketing-pages";
 import { parseWhyUsContent } from "@/domain/why-us-content";
 import { getClientSession } from "@/server/auth/session";
-import { getPublicCmsPageFn, listFeaturedPublicTeamMembersFn } from "@/server/phase2/fns";
+import {
+  getPublicCmsPageFn,
+  listFeaturedPublicTeamMembersFn,
+  listPublicCertificationsFn,
+} from "@/server/phase2/fns";
 
 const FALLBACK = marketingCmsPageBySlug("why-automotive-brands")!;
 
 export const Route = createFileRoute("/why-automotive-brands")({
   loader: async () => {
-    const [cms, requestSession] = await Promise.all([
+    const [cms, requestSession, certifications] = await Promise.all([
       getPublicCmsPageFn({ data: { slug: "why-automotive-brands" } }),
       getClientSession(),
+      listPublicCertificationsFn({ data: { placement: "about" } }),
     ]);
     if (!cms.ok || !cms.data) throw notFound();
     const section = cms.data.sections.find((item) => item.type === "WHY_US");
@@ -39,6 +45,7 @@ export const Route = createFileRoute("/why-automotive-brands")({
       requestSession,
       content,
       team,
+      certifications: certifications.ok ? certifications.data : [],
       seoTitle: cms.data.seoTitle?.trim() || FALLBACK.seoTitle,
       metaDescription: cms.data.metaDescription?.trim() || FALLBACK.metaDescription,
     };
@@ -58,11 +65,12 @@ export const Route = createFileRoute("/why-automotive-brands")({
 });
 
 function Why() {
-  const { requestSession, content, team } = Route.useLoaderData();
+  const { requestSession, content, team, certifications } = Route.useLoaderData();
   return (
     <PublicLayout requestSession={requestSession}>
       <PublicPageBreadcrumbs items={[{ label: "Home", to: "/" }, { label: "Why Automotive Brands" }]} />
       <PublicWhyUs content={content} session={requestSession} team={team} />
+      <AboutCertificationsSection certifications={certifications} />
     </PublicLayout>
   );
 }

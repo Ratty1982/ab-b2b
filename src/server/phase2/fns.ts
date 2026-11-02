@@ -2940,6 +2940,132 @@ export const listTeamMembersFn = createServerFn({ method: "GET" })
     }
   });
 
+export const listPublicCertificationsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const certs = await import("@/server/certifications/service");
+      const placement =
+        data && typeof data === "object" && "placement" in data
+          ? (data as { placement?: "homepage" | "footer" | "about" }).placement
+          : undefined;
+      return {
+        ok: true as const,
+        data: await certs.listPublicCertifications(placement),
+      };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const listCertificationsFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.listCertificationsAdmin(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const getCertificationFn = createServerFn({ method: "GET" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.getCertificationAdmin(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const upsertCertificationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.upsertCertification(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const archiveCertificationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.archiveCertification(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const deleteCertificationFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.deleteCertification(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const attachCertificationBadgeFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.attachCertificationBadge(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const removeCertificationBadgeFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.removeCertificationBadge(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const uploadCertificationPdfFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.uploadCertificationPdf(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
+export const removeCertificationPdfFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data)
+  .handler(async ({ data }) => {
+    try {
+      const userId = await requireUserId();
+      const certs = await import("@/server/certifications/service");
+      return { ok: true as const, data: await certs.removeCertificationPdf(userId, data) };
+    } catch (e) {
+      return toError(e);
+    }
+  });
+
 export const upsertTeamMemberFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data)
   .handler(async ({ data }) => {

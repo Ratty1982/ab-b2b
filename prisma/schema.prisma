@@ -4277,9 +4277,51 @@ model CmsMedia {
   productMedia  ProductMedia[] @relation("ProductMedia")
   teamPhotos    TeamMember[]   @relation("TeamMemberPhoto")
   salesRepPhotos SalesRep[]    @relation("SalesRepPhoto")
+  certificationBadges SiteCertification[] @relation("CertificationBadge")
 
   @@index([contentType])
   @@index([uploadedById])
+}
+
+/// Website certifications and accreditations (ISO, etc.). Unpublished by default.
+model SiteCertification {
+  id                       String    @id @default(cuid())
+  title                    String
+  issuingOrganisation      String
+  certificateNumber        String?
+  /// Human-readable standards lines, e.g. "ISO 9001:2015".
+  standards                String[]  @default([])
+  scope                    String?
+  description              String?
+  imageMediaId             String?
+  imageAltText             String?
+  /// Optional PDF certificate stored via CMS object storage (not CmsMedia — images only).
+  certificatePdfStorageKey String?
+  certificatePdfStorageProvider String?
+  certificatePdfFilename   String?
+  certificatePdfContentType String?
+  certificatePdfSizeBytes  Int?
+  certificatePdfBytes      Bytes?
+  issueDate                DateTime?
+  expiryDate               DateTime?
+  /// Must stay false until badge and details are reviewed.
+  published                Boolean   @default(false)
+  archived                 Boolean   @default(false)
+  showOnHomepage           Boolean   @default(true)
+  showInFooter             Boolean   @default(true)
+  showOnAboutPage          Boolean   @default(true)
+  displayOrder             Int       @default(0)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+  createdById              String?
+  updatedById              String?
+
+  imageMedia CmsMedia? @relation("CertificationBadge", fields: [imageMediaId], references: [id], onDelete: SetNull)
+
+  @@index([published, archived, displayOrder])
+  @@index([showOnHomepage, published, archived])
+  @@index([showInFooter, published, archived])
+  @@index([showOnAboutPage, published, archived])
 }
 
 model TeamDepartment {

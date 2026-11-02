@@ -145,6 +145,8 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   "cms.homepage.edit": "Edit homepage",
   "cms.team.view": "View team page",
   "cms.team.edit": "Edit team page",
+  "cms.certifications.view": "View certifications",
+  "cms.certifications.edit": "Edit certifications",
   "sales.team.view": "View sales team",
   "sales.team.manage": "Manage sales team",
 };
