@@ -106,6 +106,8 @@ export type CalendarAppointmentSnapshot = {
   attendees?: readonly AppointmentAttendee[] | undefined;
   /** External invites are only attached when the caller confirms after an explicit prompt. */
   attendeesConfirmed?: boolean | undefined;
+  /** Durable consent fingerprint from CrmAppointment.inviteConsentFingerprint. */
+  inviteConsentFingerprint?: string | null | undefined;
   updatedAt: Date;
 };
 

@@ -45,6 +45,12 @@ function asPayload(value: Prisma.JsonValue | null): CalendarOutboundJobPayload {
       : {}),
     ...(row["revisionDirty"] === true ? { revisionDirty: true } : {}),
     ...(row["attendeesConfirmed"] === true ? { attendeesConfirmed: true } : {}),
+    ...(typeof row["attendeesConsentFingerprint"] === "string"
+      ? { attendeesConsentFingerprint: row["attendeesConsentFingerprint"] }
+      : {}),
+    ...(typeof row["attendeesConsentRevision"] === "string"
+      ? { attendeesConsentRevision: row["attendeesConsentRevision"] }
+      : {}),
     ...(approval &&
     typeof approval["approvedByUserId"] === "string" &&
     typeof approval["approvedAt"] === "string" &&
@@ -241,6 +247,8 @@ export function createPrismaCalendarOutboundStore(): CalendarOutboundStore {
         attendees: parseAppointmentAttendees(row.attendees),
         updatedAt: row.updatedAt,
         syncToOutlook: row.syncToOutlook,
+        inviteConsentFingerprint: row.inviteConsentFingerprint,
+        inviteConsentRevision: row.inviteConsentRevision,
       };
       return appointment;
     },
@@ -377,6 +385,8 @@ export async function enqueueCalendarOutboundJob(input: {
   explicit: boolean;
   appointmentRevision?: string;
   attendeesConfirmed?: boolean;
+  attendeesConsentFingerprint?: string;
+  attendeesConsentRevision?: string;
 }): Promise<"created" | "exists" | "requeued" | "marked_dirty"> {
   const dedupeKey = calendarOutboundDedupeKey(input.connection.userId, input.appointmentId, input.release);
   const payload: CalendarOutboundJobPayload = {
@@ -384,7 +394,17 @@ export async function enqueueCalendarOutboundJob(input: {
     ...(input.release ? { release: true } : {}),
     ...(input.explicit ? { explicit: true } : {}),
     ...(input.appointmentRevision ? { appointmentRevision: input.appointmentRevision } : {}),
-    ...(input.attendeesConfirmed ? { attendeesConfirmed: true } : {}),
+    ...(input.attendeesConfirmed
+      ? {
+          attendeesConfirmed: true,
+          ...(input.attendeesConsentFingerprint
+            ? { attendeesConsentFingerprint: input.attendeesConsentFingerprint }
+            : {}),
+          ...(input.attendeesConsentRevision
+            ? { attendeesConsentRevision: input.attendeesConsentRevision }
+            : {}),
+        }
+      : {}),
   };
   const existing = await prisma.microsoftSyncJob.findUnique({ where: { dedupeKey } });
   if (!existing) {
@@ -484,6 +504,18 @@ export async function retryCalendarOutboundJobs(userId: string): Promise<number>
   for (const row of rows) {
     const payload = asPayload(row.payload);
     if (!ordinaryRetryIncludesJob({ status: row.status, createUncertain: payload.createUncertain })) continue;
+    // Admin/job retries must never mint invite authorisation. Durable appointment consent
+    // (or a fresh explicit confirmation) is re-checked by the worker before Graph writes.
+    const nextPayload: CalendarOutboundJobPayload = {
+      ...payload,
+      reviewed: true,
+      authorizeCreateOnce: false,
+    };
+    delete nextPayload.attendeesConfirmed;
+    delete nextPayload.attendeesConsentFingerprint;
+    delete nextPayload.attendeesConsentRevision;
+    delete nextPayload.authorizeCreateOnce;
+    delete nextPayload.createApproval;
     await prisma.microsoftSyncJob.update({
       where: { id: row.id },
       data: {
@@ -492,7 +524,7 @@ export async function retryCalendarOutboundJobs(userId: string): Promise<number>
         leaseOwner: null,
         leaseUntil: null,
         lastError: null,
-        payload: { ...payload, reviewed: true, authorizeCreateOnce: false },
+        payload: nextPayload,
       },
     });
     retried += 1;

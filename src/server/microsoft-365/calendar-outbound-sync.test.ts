@@ -403,7 +403,7 @@ describe("outbound Microsoft Calendar sync", () => {
     expect(state.jobs[0]?.status).toBe("SUCCEEDED");
   });
 
-  it("requires attendeesConfirmed before attaching attendees", async () => {
+  it("requires revision-scoped invite consent before attaching attendees", async () => {
     const withAttendees = appointment({
       attendees: [{ email: "buyer@example.com", name: "Buyer", type: "required" }],
     });
@@ -416,11 +416,45 @@ describe("outbound Microsoft Calendar sync", () => {
     };
     expect(deniedBody.attendees).toBeUndefined();
 
-    const allowed = memory({ appointment: withAttendees });
-    allowed.state.jobs = [job({ payload: { appointmentId: "appt-1", attendeesConfirmed: true } })];
-    const allowedGraph = happyGraph();
+    // Bare attendeesConfirmed without fingerprint must not authorise invites.
+    const staleFlag = memory({ appointment: withAttendees });
+    staleFlag.state.jobs = [job({ payload: { appointmentId: "appt-1", attendeesConfirmed: true } })];
+    const staleGraph = happyGraph();
     await processCalendarOutboundJob(
       job({ payload: { appointmentId: "appt-1", attendeesConfirmed: true } }),
+      runtime(staleFlag.store, staleGraph.graph),
+    );
+    expect(
+      (staleGraph.calls.find((call) => call.method === "POST")?.body as { attendees?: unknown })
+        ?.attendees,
+    ).toBeUndefined();
+
+    const allowed = memory({
+      appointment: {
+        ...withAttendees,
+        inviteConsentFingerprint: "buyer@example.com",
+      },
+    });
+    allowed.state.jobs = [
+      job({
+        payload: {
+          appointmentId: "appt-1",
+          attendeesConfirmed: true,
+          attendeesConsentFingerprint: "buyer@example.com",
+          attendeesConsentRevision: withAttendees.updatedAt.toISOString(),
+        },
+      }),
+    ];
+    const allowedGraph = happyGraph();
+    await processCalendarOutboundJob(
+      job({
+        payload: {
+          appointmentId: "appt-1",
+          attendeesConfirmed: true,
+          attendeesConsentFingerprint: "buyer@example.com",
+          attendeesConsentRevision: withAttendees.updatedAt.toISOString(),
+        },
+      }),
       runtime(allowed.store, allowedGraph.graph),
     );
     const allowedBody = allowedGraph.calls.find((call) => call.method === "POST")?.body as {
@@ -428,6 +462,60 @@ describe("outbound Microsoft Calendar sync", () => {
     };
     expect(allowedBody.attendees?.[0]?.emailAddress.address).toBe("buyer@example.com");
     expect(allowed.state.mapping?.externalAttendees).toBe(true);
+  });
+
+  it("rejects job consent for a different attendee list or older revision", async () => {
+    const live = appointment({
+      attendees: [
+        { email: "buyer@example.com", name: "Buyer", type: "required" },
+        { email: "ops@example.com", name: "Ops", type: "optional" },
+      ],
+      inviteConsentFingerprint: "buyer@example.com",
+      updatedAt: new Date("2026-11-02T10:00:00.000Z"),
+    });
+    const wrongList = memory({ appointment: live });
+    wrongList.state.jobs = [
+      job({
+        payload: {
+          appointmentId: "appt-1",
+          attendeesConfirmed: true,
+          attendeesConsentFingerprint: "buyer@example.com",
+          attendeesConsentRevision: "2026-11-02T10:00:00.000Z",
+        },
+      }),
+    ];
+    const wrongGraph = happyGraph();
+    await processCalendarOutboundJob(wrongList.state.jobs[0]!, runtime(wrongList.store, wrongGraph.graph));
+    expect(
+      (wrongGraph.calls.find((call) => call.method === "POST")?.body as { attendees?: unknown })
+        ?.attendees,
+    ).toBeUndefined();
+
+    const staleRevision = memory({
+      appointment: {
+        ...live,
+        inviteConsentFingerprint: null,
+      },
+    });
+    staleRevision.state.jobs = [
+      job({
+        payload: {
+          appointmentId: "appt-1",
+          attendeesConfirmed: true,
+          attendeesConsentFingerprint: "buyer@example.com,ops@example.com",
+          attendeesConsentRevision: "2026-10-01T00:00:00.000Z",
+        },
+      }),
+    ];
+    const staleGraph = happyGraph();
+    await processCalendarOutboundJob(
+      staleRevision.state.jobs[0]!,
+      runtime(staleRevision.store, staleGraph.graph),
+    );
+    expect(
+      (staleGraph.calls.find((call) => call.method === "POST")?.body as { attendees?: unknown })
+        ?.attendees,
+    ).toBeUndefined();
   });
 
   it("patches an existing mapped event and does not create a duplicate", async () => {

@@ -94,3 +94,110 @@ export function requiresExternalInviteConfirmation(
   }
   return false;
 }
+
+/** Durable invite consent stored on CrmAppointment. Fingerprint-scoped to the attendee list. */
+export type AppointmentInviteConsent = {
+  fingerprint: string | null;
+  revision: string | null;
+  consentedAt: Date | null;
+  consentedById: string | null;
+};
+
+/**
+ * Durable consent is valid only when it matches the live attendee fingerprint.
+ * An earlier confirmation must not authorise a later attendee-list change.
+ */
+export function hasValidInviteConsent(input: {
+  attendees: readonly AppointmentAttendee[];
+  consentFingerprint: string | null | undefined;
+}): boolean {
+  if (!input.attendees.length) return true;
+  const live = attendeesFingerprint(input.attendees);
+  if (!live) return true;
+  return Boolean(input.consentFingerprint && input.consentFingerprint === live);
+}
+
+/**
+ * Job-scoped invite flags are never enough alone. They must name the live attendee
+ * fingerprint (and optionally the live appointment revision) at approval time.
+ */
+export function jobAttendeesConsentAllowsInvites(input: {
+  attendees: readonly AppointmentAttendee[];
+  appointmentRevision: string;
+  attendeesConfirmed?: boolean | undefined;
+  attendeesConsentFingerprint?: string | null | undefined;
+  attendeesConsentRevision?: string | null | undefined;
+}): boolean {
+  if (!input.attendees.length) return true;
+  if (input.attendeesConfirmed !== true) return false;
+  const live = attendeesFingerprint(input.attendees);
+  if (!live || input.attendeesConsentFingerprint !== live) return false;
+  if (
+    input.attendeesConsentRevision &&
+    input.attendeesConsentRevision !== input.appointmentRevision
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Resolve whether Outlook invites may be attached for this appointment revision. */
+export function resolveAttendeesInviteAuthorisation(input: {
+  attendees: readonly AppointmentAttendee[];
+  appointmentRevision: string;
+  consentFingerprint?: string | null | undefined;
+  attendeesConfirmed?: boolean | undefined;
+  attendeesConsentFingerprint?: string | null | undefined;
+  attendeesConsentRevision?: string | null | undefined;
+}): boolean {
+  if (!input.attendees.length) return true;
+  if (hasValidInviteConsent({ attendees: input.attendees, consentFingerprint: input.consentFingerprint })) {
+    return true;
+  }
+  return jobAttendeesConsentAllowsInvites(input);
+}
+
+/** True when Outlook may include the current attendee list (no external invite, or durable consent). */
+export function outlookInvitesAuthorised(input: {
+  attendees: readonly AppointmentAttendee[];
+  ownerEmail: string | null | undefined;
+  consentFingerprint?: string | null | undefined;
+}): boolean {
+  if (!input.attendees.length) return true;
+  if (!requiresExternalInviteConfirmation(input.attendees, input.ownerEmail)) return true;
+  return hasValidInviteConsent({
+    attendees: input.attendees,
+    consentFingerprint: input.consentFingerprint,
+  });
+}
+
+/**
+ * API gate for create/update/retry. Enabling Outlook on a CRM-only appointment that already
+ * has attendees requires the same explicit confirmation as changing the attendee list.
+ */
+export function mustConfirmOutlookInvites(input: {
+  syncToOutlook: boolean;
+  enablingOutlook?: boolean;
+  attendeesChanged?: boolean;
+  attendees: readonly AppointmentAttendee[];
+  ownerEmail: string | null | undefined;
+  existingConsentFingerprint?: string | null | undefined;
+  confirmExternalInvites?: boolean | undefined;
+}): { required: boolean; blocked: boolean; emails: string[] } {
+  const emails = input.attendees.map((item) => item.email);
+  const needs =
+    input.syncToOutlook &&
+    input.attendees.length > 0 &&
+    requiresExternalInviteConfirmation(input.attendees, input.ownerEmail);
+  if (!needs) return { required: false, blocked: false, emails };
+  const consentValid = hasValidInviteConsent({
+    attendees: input.attendees,
+    consentFingerprint: input.existingConsentFingerprint,
+  });
+  // Enabling Outlook with existing attendees, or changing the attendee list, always
+  // re-prompts. Retry only prompts when durable consent is missing or stale.
+  const required =
+    Boolean(input.attendeesChanged) || Boolean(input.enablingOutlook) || !consentValid;
+  const blocked = required && input.confirmExternalInvites !== true;
+  return { required, blocked, emails };
+}

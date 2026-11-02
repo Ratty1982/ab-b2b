@@ -24,7 +24,11 @@ import {
   type CalendarAppointmentSnapshot,
   type CalendarSyncedSnapshot,
 } from "@/domain/microsoft-calendar";
-import { normalizeAttendees, type AppointmentAttendee } from "@/domain/crm-appointments";
+import {
+  normalizeAttendees,
+  resolveAttendeesInviteAuthorisation,
+  type AppointmentAttendee,
+} from "@/domain/crm-appointments";
 
 export type CalendarOutboundJobStatus =
   | "QUEUED"
@@ -57,7 +61,13 @@ export type CalendarOutboundJobPayload = {
   knownMicrosoftEventId?: string;
   appointmentRevision?: string;
   revisionDirty?: boolean;
+  /**
+   * Legacy / queue hint only. Never sufficient alone — worker re-validates against the live
+   * appointment revision and durable invite consent fingerprint immediately before Graph writes.
+   */
   attendeesConfirmed?: boolean;
+  attendeesConsentFingerprint?: string;
+  attendeesConsentRevision?: string;
 };
 
 export type CalendarOutboundJob = {
@@ -139,6 +149,8 @@ export type CalendarOutboundToken =
 /** Appointment row used by the outbound worker, including the Outlook opt-in flag. */
 export type CalendarOutboundAppointment = CalendarAppointmentSnapshot & {
   syncToOutlook: boolean;
+  inviteConsentFingerprint?: string | null;
+  inviteConsentRevision?: string | null;
 };
 
 export type CalendarOutboundStore = {
@@ -702,7 +714,16 @@ export async function processCalendarOutboundJob(
     return;
   }
 
-  const attendeesConfirmed = job.payload.attendeesConfirmed === true;
+  // Stale queued attendeesConfirmed flags are never enough. Re-check durable consent and
+  // revision-scoped job approval against the live appointment immediately before Graph.
+  const attendeesConfirmed = resolveAttendeesInviteAuthorisation({
+    attendees: appointment.attendees ?? [],
+    appointmentRevision: appointmentRevisionOf(appointment),
+    consentFingerprint: appointment.inviteConsentFingerprint,
+    attendeesConfirmed: job.payload.attendeesConfirmed,
+    attendeesConsentFingerprint: job.payload.attendeesConsentFingerprint,
+    attendeesConsentRevision: job.payload.attendeesConsentRevision,
+  });
   const appointmentForBody: CalendarAppointmentSnapshot = {
     ...appointment,
     attendeesConfirmed,
@@ -1037,7 +1058,7 @@ export async function processCalendarOutboundJob(
         appointmentId: job.payload.appointmentId,
         ...(job.payload.explicit ? { explicit: true } : {}),
         ...(job.payload.release ? { release: true } : {}),
-        ...(job.payload.attendeesConfirmed ? { attendeesConfirmed: true } : {}),
+        // Do not copy stale invite flags across revisions — worker re-reads durable consent.
         knownMicrosoftEventId: written.id,
         createUncertain: false,
         revisionDirty: false,
@@ -1061,7 +1082,6 @@ export async function processCalendarOutboundJob(
       createUncertain: false,
       revisionDirty: false,
       appointmentRevision: processedRevision,
-      ...(job.payload.attendeesConfirmed ? { attendeesConfirmed: true } : {}),
     }),
   });
 }
@@ -1113,6 +1133,42 @@ function keepOneTimeCreateApproval(
   return true;
 }
 
+function mergeAttendeeConsent(
+  existing: CalendarOutboundJobPayload,
+  next: CalendarOutboundJobPayload,
+): Pick<
+  CalendarOutboundJobPayload,
+  "attendeesConfirmed" | "attendeesConsentFingerprint" | "attendeesConsentRevision"
+> {
+  // Prefer the newest explicit consent. Never OR bare flags across different fingerprints.
+  if (next.attendeesConfirmed === true && next.attendeesConsentFingerprint) {
+    return {
+      attendeesConfirmed: true,
+      attendeesConsentFingerprint: next.attendeesConsentFingerprint,
+      ...(next.attendeesConsentRevision
+        ? { attendeesConsentRevision: next.attendeesConsentRevision }
+        : {}),
+    };
+  }
+  if (existing.attendeesConfirmed === true && existing.attendeesConsentFingerprint) {
+    if (
+      next.attendeesConsentFingerprint &&
+      next.attendeesConsentFingerprint !== existing.attendeesConsentFingerprint
+    ) {
+      // A later enqueue for a different attendee list without confirmation invalidates prior consent.
+      return {};
+    }
+    return {
+      attendeesConfirmed: true,
+      attendeesConsentFingerprint: existing.attendeesConsentFingerprint,
+      ...(existing.attendeesConsentRevision
+        ? { attendeesConsentRevision: existing.attendeesConsentRevision }
+        : {}),
+    };
+  }
+  return {};
+}
+
 export function mergeCalendarOutboundPayload(
   existing: CalendarOutboundJobPayload,
   next: CalendarOutboundJobPayload,
@@ -1130,7 +1186,7 @@ export function mergeCalendarOutboundPayload(
       : {}),
     ...(options?.markDirty || existing.revisionDirty || next.revisionDirty ? { revisionDirty: true } : {}),
     ...(existing.reviewed && !options?.markDirty ? { reviewed: true } : {}),
-    ...(existing.attendeesConfirmed || next.attendeesConfirmed ? { attendeesConfirmed: true } : {}),
+    ...mergeAttendeeConsent(existing, next),
     ...(keepOneTimeCreateApproval(existing, next, options)
       ? { createApproval: existing.createApproval, authorizeCreateOnce: true as const }
       : {}),

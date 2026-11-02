@@ -20,6 +20,8 @@ export type CalendarOutboundNotice = {
   updatedAt?: Date;
   syncToOutlook?: boolean;
   attendeesConfirmed?: boolean;
+  attendeesConsentFingerprint?: string;
+  attendeesConsentRevision?: string;
   reason: "created" | "updated" | "assigned" | "explicit";
 };
 
@@ -34,6 +36,8 @@ type QueueDeps = {
     explicit: boolean;
     appointmentRevision?: string;
     attendeesConfirmed?: boolean;
+    attendeesConsentFingerprint?: string;
+    attendeesConsentRevision?: string;
   }) => Promise<unknown>;
   record: (message: string) => Promise<void>;
 };
@@ -80,7 +84,17 @@ export async function notifyCrmAppointmentOutbound(
       release: false,
       explicit,
       ...(appointmentRevision ? { appointmentRevision } : {}),
-      ...(input.attendeesConfirmed ? { attendeesConfirmed: true } : {}),
+      ...(input.attendeesConfirmed
+        ? {
+            attendeesConfirmed: true,
+            ...(input.attendeesConsentFingerprint
+              ? { attendeesConsentFingerprint: input.attendeesConsentFingerprint }
+              : {}),
+            ...(input.attendeesConsentRevision
+              ? { attendeesConsentRevision: input.attendeesConsentRevision }
+              : {}),
+          }
+        : {}),
     });
   } catch (error) {
     await deps.record(

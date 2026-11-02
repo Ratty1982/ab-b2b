@@ -48,6 +48,8 @@ function CrmAppointmentsPage() {
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [q, setQ] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [retryConfirmInvites, setRetryConfirmInvites] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
 
   function reloadList() {
     void listCrmAppointmentsFn({
@@ -300,20 +302,62 @@ function CrmAppointmentsPage() {
               (detail.calendarSync.syncStatus === "FAILED" ||
                 detail.calendarSync.syncStatus === "CONFLICT" ||
                 detail.calendarSync.syncStatus === "PENDING") ? (
-                <button
-                  type="button"
-                  className="h-9 rounded-md border border-border px-3 text-[12px] font-bold uppercase"
-                  onClick={() => {
-                    void retryCrmAppointmentCalendarSyncFn({
-                      data: { appointmentId: detail.id },
-                    }).then((result) => {
-                      if (!result.ok) setError(result.error);
-                      reloadList();
-                    });
-                  }}
-                >
-                  Retry Outlook sync
-                </button>
+                <div className="w-full space-y-2">
+                  {detail.attendees.length > 0 && !detail.inviteConsentValid ? (
+                    <label className="flex items-start gap-2 text-[12px] text-steel">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={retryConfirmInvites}
+                        onChange={(event) => setRetryConfirmInvites(event.target.checked)}
+                      />
+                      <span>
+                        Confirm Outlook invitations to{" "}
+                        <span className="font-semibold text-foreground">
+                          {detail.attendees.map((item) => item.email).join(", ")}
+                        </span>{" "}
+                        before retrying sync. Retry never silently re-authorises invitations.
+                      </span>
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="h-9 rounded-md border border-border px-3 text-[12px] font-bold uppercase disabled:opacity-50"
+                    disabled={
+                      retryBusy ||
+                      (detail.attendees.length > 0 &&
+                        !detail.inviteConsentValid &&
+                        !retryConfirmInvites)
+                    }
+                    onClick={() => {
+                      setRetryBusy(true);
+                      void retryCrmAppointmentCalendarSyncFn({
+                        data: {
+                          appointmentId: detail.id,
+                          confirmExternalInvites:
+                            detail.attendees.length > 0 && !detail.inviteConsentValid
+                              ? retryConfirmInvites
+                              : false,
+                        },
+                      }).then((result) => {
+                        setRetryBusy(false);
+                        if (!result.ok) {
+                          setError(result.error);
+                          return;
+                        }
+                        setRetryConfirmInvites(false);
+                        reloadList();
+                        void getCrmAppointmentFn({ data: { appointmentId: detail.id } }).then(
+                          (fresh) => {
+                            if (fresh.ok) setDetail(fresh.data);
+                          },
+                        );
+                      });
+                    }}
+                  >
+                    Retry Outlook sync
+                  </button>
+                </div>
               ) : null}
             </div>
             {detail.calendarSync?.lastError ? (

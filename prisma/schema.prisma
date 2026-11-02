@@ -3838,6 +3838,13 @@ model CrmAppointment {
   syncToOutlook    Boolean           @default(false)
   /// Reserved for a later Teams meeting phase. Always false in this release.
   teamsMeetingEnabled Boolean        @default(false)
+  /// Sorted attendee fingerprint that was explicitly confirmed for Outlook invitations.
+  /// A later attendee-list change invalidates this consent until confirmed again.
+  inviteConsentFingerprint String?
+  /// CrmAppointment.updatedAt ISO captured when invite consent was recorded.
+  inviteConsentRevision    String?
+  inviteConsentedAt        DateTime?
+  inviteConsentedById      String?
   completedAt      DateTime?
   cancelledAt      DateTime?
   createdAt        DateTime          @default(now())

@@ -8,13 +8,20 @@ import { Prisma } from "@prisma/client";
 import {
   APPOINTMENT_STATUSES,
   APPOINTMENT_TYPES,
+  attendeesFingerprint,
   defaultSyncToOutlook,
+  hasValidInviteConsent,
+  mustConfirmOutlookInvites,
   normalizeAttendees,
-  requiresExternalInviteConfirmation,
+  outlookInvitesAuthorised,
   type AppointmentAttendee,
 } from "@/domain/crm-appointments";
 import { BUSINESS_TIME_ZONE, londonWallTimeToUtc } from "@/lib/datetime";
-import { validateAppointmentRange, wallTimeInZoneToUtc } from "@/domain/microsoft-calendar";
+import {
+  appointmentRevisionOf,
+  validateAppointmentRange,
+  wallTimeInZoneToUtc,
+} from "@/domain/microsoft-calendar";
 import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError } from "@/server/rbac/guards";
@@ -138,6 +145,66 @@ function mapAttendees(value: Prisma.JsonValue | null | undefined): AppointmentAt
   return normalizeAttendees(value ?? []);
 }
 
+function clearInviteConsentData() {
+  return {
+    inviteConsentFingerprint: null as string | null,
+    inviteConsentRevision: null as string | null,
+    inviteConsentedAt: null as Date | null,
+    inviteConsentedById: null as string | null,
+  };
+}
+
+async function recordInviteConsent(input: {
+  appointmentId: string;
+  actorUserId: string;
+  attendees: readonly AppointmentAttendee[];
+}) {
+  const fingerprint = attendeesFingerprint(input.attendees);
+  if (!fingerprint) {
+    return prisma.crmAppointment.update({
+      where: { id: input.appointmentId },
+      data: clearInviteConsentData(),
+    });
+  }
+  // Capture revision after the confirming write so consent is bound to this attendee list revision.
+  const stamped = await prisma.crmAppointment.update({
+    where: { id: input.appointmentId },
+    data: {
+      inviteConsentFingerprint: fingerprint,
+      inviteConsentedAt: new Date(),
+      inviteConsentedById: input.actorUserId,
+    },
+  });
+  const revision = appointmentRevisionOf(stamped);
+  return prisma.crmAppointment.update({
+    where: { id: input.appointmentId },
+    data: { inviteConsentRevision: revision },
+  });
+}
+
+function enqueueAttendeeConsent(input: {
+  attendees: readonly AppointmentAttendee[];
+  confirmed: boolean;
+  appointmentRevision: string;
+}): {
+  attendeesConfirmed: boolean;
+  attendeesConsentFingerprint?: string;
+  attendeesConsentRevision?: string;
+} {
+  if (!input.attendees.length) {
+    return { attendeesConfirmed: true };
+  }
+  if (!input.confirmed) {
+    return { attendeesConfirmed: false };
+  }
+  const fingerprint = attendeesFingerprint(input.attendees);
+  return {
+    attendeesConfirmed: true,
+    attendeesConsentFingerprint: fingerprint,
+    attendeesConsentRevision: input.appointmentRevision,
+  };
+}
+
 function serializeAppointment(row: {
   id: string;
   title: string;
@@ -157,6 +224,8 @@ function serializeAppointment(row: {
   attendees: Prisma.JsonValue | null;
   syncToOutlook: boolean;
   teamsMeetingEnabled: boolean;
+  inviteConsentFingerprint?: string | null;
+  inviteConsentRevision?: string | null;
   completedAt: Date | null;
   cancelledAt: Date | null;
   createdAt: Date;
@@ -201,6 +270,13 @@ function serializeAppointment(row: {
     attendees: mapAttendees(row.attendees),
     syncToOutlook: row.syncToOutlook,
     teamsMeetingEnabled: row.teamsMeetingEnabled,
+    inviteConsentFingerprint: row.inviteConsentFingerprint ?? null,
+    inviteConsentRevision: row.inviteConsentRevision ?? null,
+    inviteConsentValid: outlookInvitesAuthorised({
+      attendees: mapAttendees(row.attendees),
+      ownerEmail: row.owner?.email,
+      consentFingerprint: row.inviteConsentFingerprint,
+    }),
     completedAt: row.completedAt?.toISOString() ?? null,
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -347,15 +423,19 @@ export async function createCrmAppointment(actorUserId: string, raw: unknown) {
     select: { email: true },
   });
   const syncToOutlook = input.syncToOutlook === true ? true : defaultSyncToOutlook();
-
-  if (attendees.length > 0 && syncToOutlook) {
-    if (requiresExternalInviteConfirmation(attendees, owner?.email) && input.confirmExternalInvites !== true) {
-      throw new AuthError(
-        "Confirm external Outlook invitations before adding attendees",
-        "VALIDATION",
-        400,
-      );
-    }
+  const inviteGate = mustConfirmOutlookInvites({
+    syncToOutlook,
+    attendeesChanged: attendees.length > 0,
+    attendees,
+    ownerEmail: owner?.email,
+    confirmExternalInvites: input.confirmExternalInvites,
+  });
+  if (inviteGate.blocked) {
+    throw new AuthError(
+      `Confirm Outlook invitations before inviting: ${inviteGate.emails.join(", ")}`,
+      "VALIDATION",
+      400,
+    );
   }
 
   if (input.relatedTaskId) {
@@ -383,7 +463,7 @@ export async function createCrmAppointment(actorUserId: string, raw: unknown) {
     }
   }
 
-  const appointment = await prisma.crmAppointment.create({
+  let appointment = await prisma.crmAppointment.create({
     data: {
       title: input.title.trim(),
       description: input.description?.trim() || null,
@@ -402,8 +482,17 @@ export async function createCrmAppointment(actorUserId: string, raw: unknown) {
       attendees: attendees.length ? (attendees as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
       syncToOutlook,
       teamsMeetingEnabled: false,
+      ...clearInviteConsentData(),
     },
   });
+
+  if (inviteGate.required && input.confirmExternalInvites === true) {
+    appointment = await recordInviteConsent({
+      appointmentId: appointment.id,
+      actorUserId,
+      attendees,
+    });
+  }
 
   if (input.companyId) {
     await prisma.activity.create({
@@ -433,6 +522,7 @@ export async function createCrmAppointment(actorUserId: string, raw: unknown) {
       syncToOutlook: appointment.syncToOutlook,
       attendeeCount: attendees.length,
       confirmExternalInvites: input.confirmExternalInvites === true,
+      inviteConsentFingerprint: appointment.inviteConsentFingerprint,
     },
   });
 
@@ -440,12 +530,21 @@ export async function createCrmAppointment(actorUserId: string, raw: unknown) {
     const { notifyCrmAppointmentOutboundSafely } = await import(
       "@/server/microsoft-365/calendar-outbound-queue"
     );
+    const consent = enqueueAttendeeConsent({
+      attendees,
+      confirmed: outlookInvitesAuthorised({
+        attendees,
+        ownerEmail: owner?.email,
+        consentFingerprint: appointment.inviteConsentFingerprint,
+      }),
+      appointmentRevision: appointmentRevisionOf(appointment),
+    });
     await notifyCrmAppointmentOutboundSafely({
       appointmentId: appointment.id,
       ownerId: appointment.ownerId,
       createdAt: appointment.createdAt,
       syncToOutlook: true,
-      attendeesConfirmed: input.confirmExternalInvites === true || attendees.length === 0,
+      ...consent,
       updatedAt: appointment.updatedAt,
       reason: "created",
     });
@@ -493,31 +592,46 @@ export async function updateCrmAppointment(actorUserId: string, raw: unknown) {
   let attendeesChanged = false;
   if (input.clearAttendees) {
     attendees = [];
-    attendeesChanged = true;
+    attendeesChanged = attendeesFingerprint(mapAttendees(existing.attendees)) !== "";
   } else if (input.attendees) {
     attendees = normalizeAttendees(input.attendees);
-    attendeesChanged = true;
+    attendeesChanged =
+      attendeesFingerprint(mapAttendees(existing.attendees)) !== attendeesFingerprint(attendees);
   }
 
   const syncToOutlook =
     input.syncToOutlook === undefined ? existing.syncToOutlook : input.syncToOutlook === true;
+  const enablingOutlook = !existing.syncToOutlook && syncToOutlook;
 
-  if (attendeesChanged && attendees.length > 0 && syncToOutlook) {
-    const owner = await prisma.user.findUnique({
-      where: { id: existing.ownerId },
-      select: { email: true },
-    });
-    if (requiresExternalInviteConfirmation(attendees, owner?.email) && input.confirmExternalInvites !== true) {
-      throw new AuthError(
-        "Confirm external Outlook invitations before changing attendees",
-        "VALIDATION",
-        400,
-      );
-    }
+  const owner = await prisma.user.findUnique({
+    where: { id: existing.ownerId },
+    select: { email: true },
+  });
+  const inviteGate = mustConfirmOutlookInvites({
+    syncToOutlook,
+    enablingOutlook,
+    attendeesChanged,
+    attendees,
+    ownerEmail: owner?.email,
+    existingConsentFingerprint: existing.inviteConsentFingerprint,
+    confirmExternalInvites: input.confirmExternalInvites,
+  });
+  if (inviteGate.blocked) {
+    throw new AuthError(
+      `Confirm Outlook invitations before syncing with attendees: ${inviteGate.emails.join(", ")}`,
+      "VALIDATION",
+      400,
+    );
   }
 
   const status = input.status ?? existing.status;
-  const appointment = await prisma.crmAppointment.update({
+  const consentStillValid =
+    !attendeesChanged &&
+    hasValidInviteConsent({
+      attendees,
+      consentFingerprint: existing.inviteConsentFingerprint,
+    });
+  let appointment = await prisma.crmAppointment.update({
     where: { id: existing.id },
     data: {
       title: input.title?.trim() ?? existing.title,
@@ -535,8 +649,19 @@ export async function updateCrmAppointment(actorUserId: string, raw: unknown) {
       syncToOutlook,
       completedAt: status === "COMPLETED" ? existing.completedAt ?? new Date() : null,
       cancelledAt: status === "CANCELLED" ? existing.cancelledAt ?? new Date() : null,
+      ...(!attendees.length || (!consentStillValid && input.confirmExternalInvites !== true)
+        ? clearInviteConsentData()
+        : {}),
     },
   });
+
+  if (inviteGate.required && input.confirmExternalInvites === true) {
+    appointment = await recordInviteConsent({
+      appointmentId: appointment.id,
+      actorUserId,
+      attendees,
+    });
+  }
 
   await recordAuditEvent({
     action: status === "CANCELLED" ? "crm.appointment.cancelled" : "crm.appointment.updated",
@@ -547,7 +672,9 @@ export async function updateCrmAppointment(actorUserId: string, raw: unknown) {
     metadata: {
       syncToOutlook: appointment.syncToOutlook,
       attendeesChanged,
+      enablingOutlook,
       confirmExternalInvites: input.confirmExternalInvites === true,
+      inviteConsentFingerprint: appointment.inviteConsentFingerprint,
     },
   });
 
@@ -555,13 +682,21 @@ export async function updateCrmAppointment(actorUserId: string, raw: unknown) {
     const { notifyCrmAppointmentOutboundSafely } = await import(
       "@/server/microsoft-365/calendar-outbound-queue"
     );
+    const consent = enqueueAttendeeConsent({
+      attendees,
+      confirmed: outlookInvitesAuthorised({
+        attendees,
+        ownerEmail: owner?.email,
+        consentFingerprint: appointment.inviteConsentFingerprint,
+      }),
+      appointmentRevision: appointmentRevisionOf(appointment),
+    });
     await notifyCrmAppointmentOutboundSafely({
       appointmentId: appointment.id,
       ownerId: appointment.ownerId,
       createdAt: appointment.createdAt,
       syncToOutlook: appointment.syncToOutlook,
-      attendeesConfirmed:
-        !attendeesChanged || input.confirmExternalInvites === true || attendees.length === 0,
+      ...consent,
       updatedAt: appointment.updatedAt,
       reason: "updated",
     });
@@ -579,27 +714,87 @@ export async function cancelCrmAppointment(actorUserId: string, raw: unknown) {
 
 export async function retryCrmAppointmentCalendarSync(actorUserId: string, raw: unknown) {
   const profile = await requireCrmViewer(actorUserId, "crm.activities.view");
-  const { appointmentId } = z.object({ appointmentId: z.string().min(1) }).parse(raw ?? {});
-  const row = await prisma.crmAppointment.findUnique({ where: { id: appointmentId } });
-  if (!row) throw new AuthError("Appointment not found", "NOT_FOUND", 404);
-  await assertAppointmentAccess(profile, row);
-  if (row.ownerId !== actorUserId && !canManageAllAppointments(profile)) {
+  const input = z
+    .object({
+      appointmentId: z.string().min(1),
+      /** Required when retry would send Outlook invitations and durable consent is missing/stale. */
+      confirmExternalInvites: z.boolean().optional(),
+    })
+    .parse(raw ?? {});
+  const existing = await prisma.crmAppointment.findUnique({ where: { id: input.appointmentId } });
+  if (!existing) throw new AuthError("Appointment not found", "NOT_FOUND", 404);
+  await assertAppointmentAccess(profile, existing);
+  if (existing.ownerId !== actorUserId && !canManageAllAppointments(profile)) {
     throw new AuthError("Only the organiser can retry Outlook sync", "FORBIDDEN", 403);
   }
-  if (!row.syncToOutlook) {
+  if (!existing.syncToOutlook) {
     throw new AuthError("This appointment is not opted into Outlook", "VALIDATION", 400);
   }
+
+  const attendees = mapAttendees(existing.attendees);
+  const owner = await prisma.user.findUnique({
+    where: { id: existing.ownerId },
+    select: { email: true },
+  });
+  const inviteGate = mustConfirmOutlookInvites({
+    syncToOutlook: true,
+    attendees,
+    ownerEmail: owner?.email,
+    existingConsentFingerprint: existing.inviteConsentFingerprint,
+    confirmExternalInvites: input.confirmExternalInvites,
+  });
+  if (inviteGate.blocked) {
+    throw new AuthError(
+      `Confirm Outlook invitations before retrying sync: ${inviteGate.emails.join(", ")}`,
+      "VALIDATION",
+      400,
+    );
+  }
+  let row = existing;
+  if (inviteGate.required && input.confirmExternalInvites === true) {
+    row = await recordInviteConsent({
+      appointmentId: row.id,
+      actorUserId,
+      attendees,
+    });
+  }
+
   const { notifyCrmAppointmentOutboundSafely } = await import(
     "@/server/microsoft-365/calendar-outbound-queue"
   );
+  const consent = enqueueAttendeeConsent({
+    attendees,
+    confirmed: outlookInvitesAuthorised({
+      attendees,
+      ownerEmail: owner?.email,
+      consentFingerprint: row.inviteConsentFingerprint,
+    }),
+    appointmentRevision: appointmentRevisionOf(row),
+  });
   await notifyCrmAppointmentOutboundSafely({
     appointmentId: row.id,
     ownerId: row.ownerId,
     createdAt: row.createdAt,
     syncToOutlook: true,
-    attendeesConfirmed: true,
+    ...consent,
     updatedAt: row.updatedAt,
     reason: "explicit",
   });
-  return { ok: true as const };
+  await recordAuditEvent({
+    action: "crm.appointment.calendar_retry",
+    entityType: "CrmAppointment",
+    entityId: row.id,
+    actorUserId,
+    companyId: row.companyId,
+    metadata: {
+      attendeesConfirmed: consent.attendeesConfirmed,
+      inviteConsentFingerprint: row.inviteConsentFingerprint,
+      attendeeEmails: attendees.map((item) => item.email),
+    },
+  });
+  return {
+    ok: true as const,
+    attendeesConfirmed: consent.attendeesConfirmed,
+    attendeeEmails: attendees.map((item) => item.email),
+  };
 }
