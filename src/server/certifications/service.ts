@@ -9,7 +9,6 @@ import { z } from "zod";
 import {
   CERTIFICATION_BADGE_MAX_BYTES,
   CERTIFICATION_DEFAULT_ALT,
-  CERTIFICATION_PDF_MAX_BYTES,
   INITIAL_ISO_CERTIFICATION_DRAFT,
   certificationListQuerySchema,
   certificationPdfPublicPath,
@@ -17,6 +16,7 @@ import {
   isCertificationPubliclyVisible,
   isPdfBytes,
   parseStandardsInput,
+  publishingRequirementsMet,
   type PublicCertification,
   type PublicCertificationPlacement,
 } from "@/domain/certifications";
@@ -25,12 +25,30 @@ import { prisma } from "@/infra/database/client";
 import { recordAuditEvent } from "@/server/audit/record";
 import { AuthError, requireSystemPermission } from "@/server/rbac/guards";
 import { hasPermission } from "@/server/rbac/access";
+import { getMediaObjectBytes } from "@/server/cms/storage";
 import {
-  deleteMediaObject,
-  getMediaObjectBytes,
-  putMediaObject,
-} from "@/server/cms/storage";
-import { sniffImageType } from "@/server/media/process-image";
+  assertImageBufferForBadge,
+  isAllowedCertificationBadgeContentType,
+} from "@/server/certifications/badge";
+import {
+  cleanupDeletedCertificationPdf,
+  clearCertificatePdfObject,
+  defaultCertificatePdfStorageDeps,
+  replaceCertificatePdfObject,
+  type CertificatePdfStorageDeps,
+  validateCertificatePdfUpload,
+} from "@/server/certifications/pdf-storage";
+
+export { assertImageBufferForBadge } from "@/server/certifications/badge";
+
+let pdfStorageDeps: CertificatePdfStorageDeps = defaultCertificatePdfStorageDeps();
+
+/** Test-only override for PDF storage side effects. */
+export function setCertificationPdfStorageDepsForTests(
+  deps: CertificatePdfStorageDeps | null,
+): void {
+  pdfStorageDeps = deps ?? defaultCertificatePdfStorageDeps();
+}
 
 function sanitizeFilename(name: string): string {
   const base = name.replaceAll("\\", "/").split("/").pop() ?? "file";
@@ -199,21 +217,18 @@ export async function upsertCertification(actorUserId: string, raw: unknown) {
     ),
   });
 
-  if (parsed.published) {
-    if (!parsed.imageMediaId) {
-      throw new AuthError("Upload a certification badge before publishing", "VALIDATION", 400);
-    }
-    if (!parsed.title.trim() || !parsed.issuingOrganisation.trim()) {
-      throw new AuthError("Title and issuing organisation are required to publish", "VALIDATION", 400);
-    }
+  const publishGate = publishingRequirementsMet({
+    published: parsed.published,
+    imageMediaId: parsed.imageMediaId,
+    title: parsed.title,
+    issuingOrganisation: parsed.issuingOrganisation,
+  });
+  if (!publishGate.ok) {
+    throw new AuthError(publishGate.error, "VALIDATION", 400);
   }
 
   if (parsed.imageMediaId) {
-    const media = await prisma.cmsMedia.findUnique({ where: { id: parsed.imageMediaId } });
-    if (!media) throw new AuthError("Badge media not found", "NOT_FOUND", 404);
-    if (!media.contentType.startsWith("image/")) {
-      throw new AuthError("Certification badge must be an image", "VALIDATION", 400);
-    }
+    await assertBadgeMedia(parsed.imageMediaId);
   }
 
   const data = {
@@ -293,23 +308,19 @@ export async function deleteCertification(actorUserId: string, raw: unknown) {
       400,
     );
   }
-  if (existing.certificatePdfStorageKey) {
-    try {
-      await deleteMediaObject({
-        storageProvider: existing.certificatePdfStorageProvider || "database",
-        storageKey: existing.certificatePdfStorageKey,
-      });
-    } catch {
-      // Continue — DB row removal still required.
-    }
-  }
+  // Delete the DB row first so public fetches cannot keep serving the PDF.
   await prisma.siteCertification.delete({ where: { id } });
+  await cleanupDeletedCertificationPdf(pdfStorageDeps, existing);
   await recordAuditEvent({
     action: "cms.certification.deleted",
     entityType: "SiteCertification",
     entityId: id,
     actorUserId,
-    metadata: { confirmed: confirm, title: existing.title },
+    metadata: {
+      confirmed: confirm,
+      title: existing.title,
+      hadCertificatePdf: Boolean(existing.certificatePdfStorageKey),
+    },
   });
   return { ok: true as const };
 }
@@ -323,13 +334,7 @@ export async function attachCertificationBadge(actorUserId: string, raw: unknown
       altText: z.string().max(300).optional().nullable(),
     })
     .parse(raw ?? {});
-  const media = await prisma.cmsMedia.findUnique({ where: { id: input.mediaId } });
-  if (!media || !media.contentType.startsWith("image/")) {
-    throw new AuthError("Select a valid badge image from the media library", "VALIDATION", 400);
-  }
-  if ((media.sizeBytes ?? 0) > CERTIFICATION_BADGE_MAX_BYTES) {
-    throw new AuthError("Badge image is too large", "VALIDATION", 400);
-  }
+  const media = await assertBadgeMedia(input.mediaId);
   const row = await prisma.siteCertification.update({
     where: { id: input.certificationId },
     data: {
@@ -382,48 +387,31 @@ export async function uploadCertificationPdf(actorUserId: string, raw: unknown) 
     .parse(raw ?? {});
 
   const bytes = decodeBase64Body(input.bodyBase64);
-  if (bytes.length === 0 || bytes.length > CERTIFICATION_PDF_MAX_BYTES) {
-    throw new AuthError("Certificate PDF must be between 1 byte and 20 MB", "VALIDATION", 400);
-  }
-  if (!isPdfBytes(bytes) || !input.contentType.toLowerCase().includes("pdf")) {
-    throw new AuthError("Certificate file must be a PDF", "VALIDATION", 400);
-  }
+  validateCertificatePdfUpload({ bytes, contentType: input.contentType });
 
   const existing = await prisma.siteCertification.findUnique({
     where: { id: input.certificationId },
   });
   if (!existing) throw new AuthError("Certification not found", "NOT_FOUND", 404);
 
-  const filename = sanitizeFilename(input.filename.endsWith(".pdf") ? input.filename : `${input.filename}.pdf`);
+  const filename = sanitizeFilename(
+    input.filename.endsWith(".pdf") ? input.filename : `${input.filename}.pdf`,
+  );
   const storageKey = `certifications/${input.certificationId}/${randomBytes(12).toString("hex")}-${filename}`;
-  const stored = await putMediaObject({
-    storageKey,
-    contentType: "application/pdf",
+
+  await replaceCertificatePdfObject({
+    prisma,
+    deps: pdfStorageDeps,
+    certificationId: existing.id,
+    existing,
+    filename,
     bytes,
+    storageKey,
+    actorUserId,
   });
 
-  if (existing.certificatePdfStorageKey && existing.certificatePdfStorageKey !== storageKey) {
-    try {
-      await deleteMediaObject({
-        storageProvider: existing.certificatePdfStorageProvider || "database",
-        storageKey: existing.certificatePdfStorageKey,
-      });
-    } catch {
-      // Ignore orphan cleanup failure.
-    }
-  }
-
-  const row = await prisma.siteCertification.update({
-    where: { id: input.certificationId },
-    data: {
-      certificatePdfStorageKey: stored.storageKey,
-      certificatePdfStorageProvider: stored.provider,
-      certificatePdfFilename: filename,
-      certificatePdfContentType: "application/pdf",
-      certificatePdfSizeBytes: bytes.length,
-      certificatePdfBytes: stored.bytes ? Buffer.from(stored.bytes) : null,
-      updatedById: actorUserId,
-    },
+  const row = await prisma.siteCertification.findUniqueOrThrow({
+    where: { id: existing.id },
     include: adminInclude,
   });
 
@@ -442,27 +430,17 @@ export async function removeCertificationPdf(actorUserId: string, raw: unknown) 
   const { id } = z.object({ id: z.string().min(1) }).parse(raw ?? {});
   const existing = await prisma.siteCertification.findUnique({ where: { id } });
   if (!existing) throw new AuthError("Certification not found", "NOT_FOUND", 404);
-  if (existing.certificatePdfStorageKey) {
-    try {
-      await deleteMediaObject({
-        storageProvider: existing.certificatePdfStorageProvider || "database",
-        storageKey: existing.certificatePdfStorageKey,
-      });
-    } catch {
-      // continue
-    }
-  }
-  const row = await prisma.siteCertification.update({
-    where: { id },
-    data: {
-      certificatePdfStorageKey: null,
-      certificatePdfStorageProvider: null,
-      certificatePdfFilename: null,
-      certificatePdfContentType: null,
-      certificatePdfSizeBytes: null,
-      certificatePdfBytes: null,
-      updatedById: actorUserId,
-    },
+
+  await clearCertificatePdfObject({
+    prisma,
+    deps: pdfStorageDeps,
+    certificationId: existing.id,
+    existing,
+    actorUserId,
+  });
+
+  const row = await prisma.siteCertification.findUniqueOrThrow({
+    where: { id: existing.id },
     include: adminInclude,
   });
   await recordAuditEvent({
@@ -536,12 +514,27 @@ export async function getAdminCertificationPdfBytes(
   };
 }
 
-export function assertImageBufferForBadge(bytes: Buffer): void {
-  const type = sniffImageType(bytes);
-  if (!type || !["image/png", "image/jpeg", "image/webp"].includes(type)) {
-    throw new AuthError("Badge must be a PNG, JPEG, or WebP image", "VALIDATION", 400);
+async function assertBadgeMedia(mediaId: string) {
+  const media = await prisma.cmsMedia.findUnique({ where: { id: mediaId } });
+  if (!media) throw new AuthError("Badge media not found", "NOT_FOUND", 404);
+  if (!isAllowedCertificationBadgeContentType(media.contentType)) {
+    throw new AuthError("Certification badge must be a PNG, JPEG, or WebP image", "VALIDATION", 400);
   }
-  if (bytes.length > CERTIFICATION_BADGE_MAX_BYTES) {
+  if ((media.sizeBytes ?? 0) > CERTIFICATION_BADGE_MAX_BYTES) {
     throw new AuthError("Badge image is too large", "VALIDATION", 400);
   }
+  if (media.bytes && media.bytes.length) {
+    assertImageBufferForBadge(Buffer.from(media.bytes));
+  } else if (media.storageProvider === "s3" && media.storageKey) {
+    const fromStore = await getMediaObjectBytes({
+      storageProvider: media.storageProvider,
+      storageKey: media.storageKey,
+      bytes: null,
+    });
+    if (!fromStore) {
+      throw new AuthError("Badge media could not be read for validation", "VALIDATION", 400);
+    }
+    assertImageBufferForBadge(fromStore);
+  }
+  return media;
 }

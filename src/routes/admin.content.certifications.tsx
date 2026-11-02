@@ -687,6 +687,7 @@ function AdminCertifications() {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={(media) => void onPickMedia(media)}
+        usage="CMS_GENERAL"
       />
     </div>
   );

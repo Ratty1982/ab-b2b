@@ -123,6 +123,36 @@ export function certificationPdfPublicPath(id: string): string {
   return `/api/certifications/${encodeURIComponent(id)}/certificate`;
 }
 
+/**
+ * Certificate PDFs can be unpublished, archived, expired or replaced.
+ * Never allow long-lived public/CDN caches of potentially revoked documents.
+ */
+export function certificationPdfCacheControl(kind: "public" | "admin" | "missing"): string {
+  if (kind === "missing") return "private, no-store";
+  if (kind === "admin") return "private, no-store";
+  return "private, no-store";
+}
+
+/** Shared publish gate used by admin upsert and regression tests. */
+export function publishingRequirementsMet(input: {
+  published: boolean;
+  imageMediaId: string | null | undefined;
+  title: string;
+  issuingOrganisation: string;
+}): { ok: true } | { ok: false; error: string } {
+  if (!input.published) return { ok: true };
+  if (!input.imageMediaId) {
+    return { ok: false, error: "Upload a certification badge before publishing" };
+  }
+  if (!input.title.trim() || !input.issuingOrganisation.trim()) {
+    return {
+      ok: false,
+      error: "Title and issuing organisation are required to publish",
+    };
+  }
+  return { ok: true };
+}
+
 export function isPdfBytes(buf: Buffer): boolean {
   if (buf.length < 5) return false;
   return buf.subarray(0, 5).toString("ascii") === "%PDF-";
